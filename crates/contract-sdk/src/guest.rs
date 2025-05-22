@@ -135,6 +135,7 @@ pub fn execute<Z>(commitment_metadata: &[u8], calldata: &[Calldata]) -> Vec<Hyle
 where
     Z: ZkContract + BorshDeserialize + 'static,
 {
+    #[allow(clippy::expect_used, reason = "Required to generate valid proofs")]
     let mut contract: Z =
         borsh::from_slice(commitment_metadata).expect("Failed to decode commitment metadata");
     let mut initial_state_commitment = contract.commit();
