@@ -257,14 +257,17 @@ async fn native_blobs_should_fail_tx_if_failure_if_regular_blob_settled_as_faile
     let register_c1 = make_register_contract_effect(c1.clone());
     state.handle_register_contract_effect(&register_c1);
 
-    let n1 = ContractName::new("n1");
+    let n1 = ContractName::new("sha3_256");
     let register_n1 = make_register_native_contract_effect(n1.clone());
     state.handle_register_contract_effect(&register_n1);
 
     let identity_1 = Identity::new("test@c1");
     let blob_tx_1 = BlobTransaction::new(
         identity_1.clone(),
-        vec![new_blob("c1"), new_native_blob("n1", identity_1.clone())],
+        vec![
+            new_blob("c1"),
+            new_native_blob("sha3_256", identity_1.clone()),
+        ],
     );
 
     let blob_tx_id_1 = blob_tx_1.hashed();
@@ -289,6 +292,63 @@ async fn native_blobs_should_fail_tx_if_failure_if_regular_blob_settled_as_faile
 
     // Check state did not transition
     assert_eq!(state.contracts.get(&c1).unwrap().state.0, vec![0, 1, 2, 3]);
+}
+
+// Create a native blob with index 1, with a blob on index 2
+#[test_log::test(tokio::test)]
+async fn native_blobs_dont_mess_blob_indexes() {
+    let mut state = new_node_state().await;
+
+    let c1 = ContractName::new("c1");
+    let register_c1 = make_register_contract_effect(c1.clone());
+    state.handle_register_contract_effect(&register_c1);
+
+    let n1 = ContractName::new("sha3_256");
+    let register_n1 = make_register_native_contract_effect(n1.clone());
+    state.handle_register_contract_effect(&register_n1);
+
+    let identity_1 = Identity::new("test@c1");
+    let blob_tx_1 = BlobTransaction::new(
+        identity_1.clone(),
+        vec![
+            new_blob("c1"),
+            new_native_blob("sha3_256", identity_1.clone()),
+            new_blob("c1"),
+        ],
+    );
+
+    let blob_tx_id_1 = blob_tx_1.hashed();
+
+    let ctx = bogus_tx_context();
+
+    // Transition state from 0123 to 456
+    let mut hyle_output_1 = make_hyle_output(blob_tx_1.clone(), BlobIndex(0));
+    let verified_proof_1 = new_proof_tx(&c1, &hyle_output_1, &blob_tx_id_1);
+
+    // Transition state from 456 to 789 in same tx (blob after successful native one)
+    let mut hyle_output_2 = make_hyle_output_bis(blob_tx_1.clone(), BlobIndex(2));
+    let verified_proof_2 = new_proof_tx(&c1, &hyle_output_2, &blob_tx_id_1);
+
+    // Submit failing tx with successful native blob
+    let block = state.craft_block_and_handle(1, vec![blob_tx_1.clone().into()]);
+    assert_eq!(block.blob_proof_outputs.len(), 0);
+    assert_eq!(block.failed_txs.len(), 0);
+    assert_eq!(block.successful_txs.len(), 0);
+
+    // Submitting a proof for c1 should do nothing (no settlement)
+    let block = state.craft_block_and_handle(
+        2,
+        vec![
+            verified_proof_1.clone().into(),
+            verified_proof_2.clone().into(),
+        ],
+    );
+    assert_eq!(block.blob_proof_outputs.len(), 2);
+    assert_eq!(block.failed_txs.len(), 0);
+    assert_eq!(block.successful_txs.len(), 1);
+
+    // Check state did not transition twice
+    assert_eq!(state.contracts.get(&c1).unwrap().state.0, vec![7, 8, 9]);
 }
 
 #[test_log::test(tokio::test)]
@@ -413,7 +473,7 @@ async fn two_proof_for_same_blob() {
             .get(&blob_tx_hash)
             .unwrap()
             .blobs
-            .first()
+            .get(&BlobIndex(0))
             .unwrap()
             .possible_proofs
             .len(),
