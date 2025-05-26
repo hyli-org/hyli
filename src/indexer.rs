@@ -16,12 +16,10 @@ use axum::{
     routing::get,
     Router,
 };
-use chrono::{DateTime, Utc};
 use futures::{SinkExt, StreamExt};
 use hyle_model::api::{
     BlobWithStatus, TransactionStatusDb, TransactionTypeDb, TransactionWithBlobs,
 };
-use hyle_model::utils::TimestampMs;
 use hyle_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,

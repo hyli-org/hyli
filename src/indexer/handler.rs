@@ -217,7 +217,7 @@ impl Indexer {
         Ok(())
     }
 
-    async fn handle_processed_block(&mut self, block: Block) -> Result<(), Error> {
+    pub(crate) async fn handle_processed_block(&mut self, block: Block) -> Result<(), Error> {
         trace!("Indexing block at height {:?}", block.block_height);
         let mut transaction: sqlx::PgTransaction = self.state.db.begin().await?;
 
