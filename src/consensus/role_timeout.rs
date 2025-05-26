@@ -92,7 +92,7 @@ impl Consensus {
         // Two options
         match received_proposal_qc {
             TCKind::NilProposal => {
-                // If this is a Nil timout certificate, then we should be receiving  2f+1 signatures of a full timeout message with nil proposal
+                // If this is a Nil timeout certificate, then we should be receiving  2f+1 signatures of a full timeout message with nil proposal
                 self.verify_quorum_certificate(
                     (
                         received_slot,
@@ -108,7 +108,7 @@ impl Consensus {
                 ))?;
             }
             TCKind::PrepareQC((qc, cp)) => {
-                // This is a PQC timout certificate, check the 'limited' signature
+                // This is a PQC timeout certificate, check the 'limited' signature
                 self.verify_quorum_certificate(
                     (
                         received_slot,
