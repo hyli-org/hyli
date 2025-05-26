@@ -90,7 +90,22 @@ impl MempoolMetrics {
     }
 
     pub fn add_api_tx(&self, kind: &'static str) {
-        self.api_tx.add(1, &[KeyValue::new("tx_kind", kind)]);
+        self.api_tx.add(
+            1,
+            &[
+                KeyValue::new("status", "included"),
+                KeyValue::new("tx_kind", kind),
+            ],
+        );
+    }
+    pub fn drop_api_tx(&self, kind: &'static str) {
+        self.api_tx.add(
+            1,
+            &[
+                KeyValue::new("status", "dropped"),
+                KeyValue::new("tx_kind", kind),
+            ],
+        );
     }
 
     pub fn add_dp_vote(&self, sender: &ValidatorPublicKey, dest: &ValidatorPublicKey) {

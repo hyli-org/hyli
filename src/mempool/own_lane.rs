@@ -219,26 +219,24 @@ impl super::Mempool {
             return Ok(None);
         }
 
-        let mut collect_up_to = 0;
-        let mut cumsize = 0;
-        for (i, tx) in self.waiting_dissemination_txs.iter().enumerate() {
-            collect_up_to = i;
-            cumsize += tx.estimate_size();
-            // Keep this one in anyways, we have a per-TX limit.
-            // To assert < self.config.p2p.max_frame_length
-            if cumsize > 40_000_000 {
-                break;
+        let mut cumulative_size = 0;
+        let mut current_idx = 0;
+        while cumulative_size < 40_000 && current_idx < self.waiting_dissemination_txs.len() {
+            if let Some((_tx_hash, tx)) = self.waiting_dissemination_txs.get_index(current_idx) {
+                cumulative_size += tx.estimate_size();
+                current_idx += 1;
             }
         }
-        let collected_txs = self
+        let collected_txs: Vec<Transaction> = self
             .waiting_dissemination_txs
-            .drain(0..=collect_up_to)
-            .collect::<Vec<_>>();
+            .drain(0..current_idx)
+            .map(|(_tx_hash, tx)| tx)
+            .collect();
 
         debug!(
             "🌝 Creating new data proposals with {} txs (est. size {}). {} tx remain.",
             collected_txs.len(),
-            cumsize,
+            cumulative_size,
             self.waiting_dissemination_txs.len()
         );
 
@@ -357,22 +355,32 @@ impl super::Mempool {
 
         let tx_type: &'static str = (&tx.transaction_data).into();
 
-        self.metrics.add_api_tx(tx_type);
-        self.waiting_dissemination_txs.push(tx.clone());
+        let tx_hash = tx.hashed();
+        if self.waiting_dissemination_txs.contains_key(&tx_hash) {
+            debug!("Dropping duplicate tx {}", tx_hash);
+            self.metrics.drop_api_tx(tx_type);
+        } else {
+            self.waiting_dissemination_txs
+                .insert(tx_hash.clone(), tx.clone());
+
+            // dbg!(&self.waiting);
+
+            self.metrics.add_api_tx(tx_type);
+            let status_event = MempoolStatusEvent::WaitingDissemination {
+                // TODO: handle this differently somehow. For now, this works as we always drain waiting tx right up.
+                parent_data_proposal_hash: self
+                    .get_last_data_prop_hash_in_own_lane()
+                    .unwrap_or(DataProposalHash(self.crypto.validator_pubkey().to_string())),
+                tx,
+            };
+
+            self.bus
+                .send(status_event)
+                .context("Sending Status event for TX")?;
+        }
+
         self.metrics
             .snapshot_pending_tx(self.waiting_dissemination_txs.len());
-
-        let status_event = MempoolStatusEvent::WaitingDissemination {
-            // TODO: handle this differently somehow. For now, this works as we always drain waiting tx right up.
-            parent_data_proposal_hash: self
-                .get_last_data_prop_hash_in_own_lane()
-                .unwrap_or(DataProposalHash(self.crypto.validator_pubkey().to_string())),
-            tx,
-        };
-
-        self.bus
-            .send(status_event)
-            .context("Sending Status event for TX")?;
 
         Ok(())
     }
@@ -461,13 +469,19 @@ pub mod test {
     use crate::mempool::test::*;
 
     #[test_log::test(tokio::test)]
-    async fn test_single_mempool_receiving_new_tx() -> Result<()> {
+    async fn test_single_mempool_receiving_new_txs() -> Result<()> {
         let mut ctx = MempoolTestCtx::new("mempool").await;
 
         // Sending transaction to mempool as RestApiMessage
         let register_tx = make_register_contract_tx(ContractName::new("test1"));
+        let register_tx_2 = make_register_contract_tx(ContractName::new("test2"));
+        let register_tx_3 = make_register_contract_tx(ContractName::new("test3"));
 
         ctx.submit_tx(&register_tx);
+        ctx.submit_tx(&register_tx);
+        ctx.submit_tx(&register_tx_2);
+        ctx.submit_tx(&register_tx);
+        ctx.submit_tx(&register_tx_3);
 
         assert_chanmsg_matches!(
             ctx.mempool_status_event_receiver,
@@ -476,6 +490,22 @@ pub mod test {
                 assert_eq!(tx,register_tx);
             }
         );
+        assert_chanmsg_matches!(
+            ctx.mempool_status_event_receiver,
+            MempoolStatusEvent::WaitingDissemination { parent_data_proposal_hash, tx } => {
+                assert_eq!(parent_data_proposal_hash, DataProposalHash(ctx.mempool.crypto.validator_pubkey().to_string()));
+                assert_eq!(tx,register_tx_2);
+            }
+        );
+        assert_chanmsg_matches!(
+            ctx.mempool_status_event_receiver,
+            MempoolStatusEvent::WaitingDissemination { parent_data_proposal_hash, tx } => {
+                assert_eq!(parent_data_proposal_hash, DataProposalHash(ctx.mempool.crypto.validator_pubkey().to_string()));
+                assert_eq!(tx,register_tx_3);
+            }
+        );
+
+        assert!(ctx.mempool_status_event_receiver.is_empty());
 
         ctx.timer_tick().await?;
 
@@ -491,7 +521,14 @@ pub mod test {
             .unwrap()
             .unwrap();
 
-        assert_eq!(dp.txs, vec![register_tx.clone()]);
+        assert_eq!(
+            dp.txs,
+            vec![
+                register_tx.clone(),
+                register_tx_2.clone(),
+                register_tx_3.clone(),
+            ]
+        );
 
         // Assert that pending_tx has been flushed
         assert!(ctx.mempool.waiting_dissemination_txs.is_empty());
@@ -501,6 +538,7 @@ pub mod test {
             MempoolStatusEvent::DataProposalCreated { data_proposal_hash, txs_metadatas } => {
                 assert_eq!(data_proposal_hash, dp.hashed());
                 assert_eq!(txs_metadatas.len(), dp.txs.len());
+                assert_eq!(txs_metadatas.len(), 3);
             }
         );
 
