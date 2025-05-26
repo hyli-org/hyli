@@ -472,7 +472,7 @@ impl NodeState {
             unsettled_tx.tx_context.lane_id.clone(),
         );
 
-        // TODO: add diverse verifications ? (without the inital state checks!).
+        // TODO: add diverse verifications ? (without the initial state checks!).
         // TODO: success to false is valid outcome and can be settled.
         Self::verify_hyle_output(unsettled_tx, &blob_proof_data.hyle_output)?;
 
@@ -654,7 +654,7 @@ impl NodeState {
         events: &mut Vec<TransactionStateEvent>,
         _metrics: &NodeStateMetrics,
     ) -> Option<Result<SettlementResult, ()>> {
-        // Recursion end-case: we succesfully settled all prior blobs, so success.
+        // Recursion end-case: we successfully settled all prior blobs, so success.
         let Some(current_blob) = blob_iter.next() else {
             tracing::trace!("Settlement - Done");
             return Some(Ok(SettlementResult {
