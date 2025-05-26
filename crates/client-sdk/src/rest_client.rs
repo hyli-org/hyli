@@ -359,6 +359,7 @@ pub mod test {
     #[derive(Clone)]
     pub struct NodeApiMockClient {
         pub block_height: Arc<Mutex<BlockHeight>>,
+        pub settled_height: Arc<Mutex<BlockHeight>>,
         pub consensus_info: Arc<Mutex<ConsensusInfo>>,
         pub node_info: Arc<Mutex<NodeInfo>>,
         pub staking_state: Arc<Mutex<APIStaking>>,
@@ -372,6 +373,7 @@ pub mod test {
         pub fn new() -> Self {
             Self {
                 block_height: Arc::new(Mutex::new(BlockHeight(0))),
+                settled_height: Arc::new(Mutex::new(BlockHeight(0))),
                 consensus_info: Arc::new(Mutex::new(ConsensusInfo {
                     slot: 0,
                     view: 0,
@@ -393,6 +395,10 @@ pub mod test {
 
         pub fn set_block_height(&self, height: BlockHeight) {
             *self.block_height.lock().unwrap() = height;
+        }
+
+        pub fn set_settled_height(&self, height: BlockHeight) {
+            *self.settled_height.lock().unwrap() = height;
         }
 
         pub fn set_consensus_info(&self, info: ConsensusInfo) {
@@ -507,7 +513,7 @@ pub mod test {
             &self,
             _contract_name: ContractName,
         ) -> Pin<Box<dyn Future<Output = Result<BlockHeight>> + Send + '_>> {
-            todo!()
+            Box::pin(async move { Ok(*self.settled_height.lock().unwrap()) })
         }
     }
 }

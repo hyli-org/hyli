@@ -10,7 +10,7 @@ use sdk::{
     BlobIndex, BlobTransaction, Block, BlockHeight, Calldata, ContractName, Hashed, NodeStateEvent,
     ProofTransaction, TransactionData, TxContext, TxHash, HYLE_TESTNET_CHAIN_ID,
 };
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
 /// `AutoProver` is a module that handles the proving of transactions
 /// It listens to the node state events and processes all blobs in the block's transactions
@@ -25,7 +25,9 @@ pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
     bus: AutoProverBusClient<Contract>,
     ctx: Arc<AutoProverCtx<Contract>>,
     store: AutoProverStore<Contract>,
+    // The last block where the contract is settled
     settled_height: BlockHeight,
+    // If Some, represents the block height we need to start generating proofs
     catching_up: Option<BlockHeight>,
     catching_blobs: Vec<(BlobIndex, BlobTransaction, TxContext)>,
 }
@@ -163,13 +165,6 @@ where
                 "Processing block {}",
                 block.block_height
             );
-        } else {
-            trace!(
-                cn =% self.ctx.contract_name,
-                block_height =% block.block_height,
-                "Processing block {}",
-                block.block_height
-            );
         }
         for (_, tx) in block.txs {
             if let TransactionData::Blob(tx) = tx.transaction_data {
@@ -194,6 +189,19 @@ where
                 blobs.extend(self.handle_blob(tx, tx_ctx));
             }
         }
+
+        for tx in block.successful_txs {
+            self.settle_tx_success(&tx)?;
+        }
+
+        for tx in block.timed_out_txs {
+            self.settle_tx_failed(&tx)?;
+        }
+
+        for tx in block.failed_txs {
+            self.settle_tx_failed(&tx)?;
+        }
+
         if let Some(catching_up) = self.catching_up {
             if block.block_height.0 >= catching_up.0 {
                 debug!(
@@ -212,18 +220,6 @@ where
             }
         }
         self.prove_supported_blob(blobs)?;
-
-        for tx in block.successful_txs {
-            self.settle_tx_success(&tx)?;
-        }
-
-        for tx in block.timed_out_txs {
-            self.settle_tx_failed(&tx)?;
-        }
-
-        for tx in block.failed_txs {
-            self.settle_tx_failed(&tx)?;
-        }
 
         Ok(())
     }
@@ -318,14 +314,6 @@ where
             warn!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "Reverting to default state. History: {tx_history:?}");
             self.store.contract = self.ctx.default_state.clone();
         }
-        if self.catching_up.is_some() {
-            debug!(
-                cn =% self.ctx.contract_name,
-                tx_hash =% failed_tx,
-                "Catching up, not re-executing blobs"
-            );
-            return Ok(());
-        }
         let mut blobs = vec![];
         for (tx, ctx) in self.store.unsettled_txs.clone().iter().skip(idx) {
             for (index, blob) in tx.blobs.iter().enumerate() {
@@ -352,7 +340,7 @@ where
         }
         debug!(
             cn =% self.ctx.contract_name,
-            "Proving {} blobs",
+            "Handling {} txs",
             blobs.len()
         );
         let mut calldatas = vec![];
@@ -603,22 +591,28 @@ mod tests {
         };
         node_state.handle_register_contract_effect(&register);
 
-        let temp_dir = tempdir()?;
-        let data_dir = temp_dir.path().to_path_buf();
         let api_client = Arc::new(NodeApiMockClient::new());
 
+        let auto_prover = new_auto_prover(api_client.clone()).await?;
+
+        Ok((node_state, auto_prover, api_client))
+    }
+
+    async fn new_auto_prover(
+        api_client: Arc<NodeApiMockClient>,
+    ) -> Result<AutoProver<TestContract>> {
+        let temp_dir = tempdir()?;
+        let data_dir = temp_dir.path().to_path_buf();
         let ctx = Arc::new(AutoProverCtx {
             data_directory: data_dir,
             prover: Arc::new(TxExecutorTestProver::<TestContract>::new()),
             contract_name: ContractName("test".into()),
-            node: api_client.clone(),
+            node: api_client,
             default_state: TestContract::default(),
         });
 
         let bus = SharedMessageBus::new(BusMetrics::global("default".to_string()));
-        let auto_prover = AutoProver::<TestContract>::build(bus.new_handle(), ctx).await?;
-
-        Ok((node_state, auto_prover, api_client))
+        AutoProver::<TestContract>::build(bus.new_handle(), ctx).await
     }
 
     async fn get_txs(api_client: &Arc<NodeApiMockClient>) -> Vec<Transaction> {
@@ -737,6 +731,342 @@ mod tests {
         let _block_11 = node_state.craft_block_and_handle(16, proofs);
         assert_eq!(read_contract_state(&node_state).value, 16);
 
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_auto_prover_catchup() -> Result<()> {
+        let (mut node_state, mut auto_prover, api_client) = setup().await?;
+
+        let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
+        let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
+        let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
+
+        auto_prover.handle_processed_block(block_1.clone()).await?;
+        auto_prover.handle_processed_block(block_2.clone()).await?;
+        auto_prover.handle_processed_block(block_3.clone()).await?;
+
+        let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]);
+        auto_prover.handle_processed_block(block_4.clone()).await?;
+
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 4);
+
+        let block_5 = node_state.craft_block_and_handle(5, proofs);
+        auto_prover.handle_processed_block(block_5.clone()).await?;
+
+        assert_eq!(read_contract_state(&node_state).value, 10);
+
+        let block_6 = node_state.craft_block_and_handle(6, vec![new_blob_tx(6)]);
+        let block_7 = node_state.craft_block_and_handle(7, vec![new_blob_tx(7)]);
+        let block_8 = node_state.craft_block_and_handle(8, vec![new_blob_tx(8)]);
+
+        tracing::info!("✨ New prover catching up with blocks 6 and 7");
+        api_client.set_block_height(BlockHeight(8));
+        api_client.set_settled_height(BlockHeight(5));
+
+        let mut auto_prover_catchup = new_auto_prover(api_client.clone())
+            .await
+            .expect("Failed to create new auto prover");
+
+        auto_prover_catchup
+            .handle_processed_block(block_1.clone())
+            .await?;
+        auto_prover_catchup
+            .handle_processed_block(block_2.clone())
+            .await?;
+        auto_prover_catchup
+            .handle_processed_block(block_3.clone())
+            .await?;
+        auto_prover_catchup
+            .handle_processed_block(block_4.clone())
+            .await?;
+        auto_prover_catchup
+            .handle_processed_block(block_5.clone())
+            .await?;
+        auto_prover_catchup
+            .handle_processed_block(block_6.clone())
+            .await?;
+        auto_prover_catchup
+            .handle_processed_block(block_7.clone())
+            .await?;
+        auto_prover_catchup
+            .handle_processed_block(block_8.clone())
+            .await?;
+
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 1); // Txs from mutliple catching blocs are batched
+        let _ = node_state.craft_block_and_handle(9, proofs);
+
+        assert_eq!(read_contract_state(&node_state).value, 10 + 6 + 7 + 8);
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_auto_prover_catchup_timeout_1() -> Result<()> {
+        let (mut node_state, mut auto_prover, api_client) = setup().await?;
+
+        let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
+        let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
+        let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
+
+        auto_prover.handle_processed_block(block_1.clone()).await?;
+        auto_prover.handle_processed_block(block_2.clone()).await?;
+        auto_prover.handle_processed_block(block_3.clone()).await?;
+
+        let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]);
+        auto_prover.handle_processed_block(block_4.clone()).await?;
+
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 4);
+
+        let block_5 = node_state.craft_block_and_handle(5, proofs);
+        auto_prover.handle_processed_block(block_5.clone()).await?;
+
+        assert_eq!(read_contract_state(&node_state).value, 10);
+
+        let block_6 = node_state.craft_block_and_handle(
+            6,
+            vec![
+                new_blob_tx(6), /* This one will timeout */
+                new_blob_tx(6), /* This one will timeout */
+                new_blob_tx(6),
+                new_blob_tx(6),
+            ],
+        );
+
+        let block_7 = node_state.craft_block_and_handle(7, vec![new_blob_tx(7)]);
+        let block_8 = node_state.craft_block_and_handle(8, vec![new_blob_tx(8)]);
+
+        let mut blocks = vec![
+            block_1, block_2, block_3, block_4, block_5, block_6, block_7, block_8,
+        ];
+        for i in 9..20 {
+            tracing::info!("✨ Block {i}");
+            let block = node_state.craft_block_and_handle(i, vec![]);
+            blocks.push(block);
+        }
+
+        tracing::info!("✨ New prover catching up with blocks");
+        api_client.set_block_height(BlockHeight(19));
+        api_client.set_settled_height(BlockHeight(5));
+
+        let mut auto_prover_catchup = new_auto_prover(api_client.clone())
+            .await
+            .expect("Failed to create new auto prover");
+
+        for block in blocks {
+            auto_prover_catchup.handle_processed_block(block).await?;
+        }
+
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 1); // Txs from mutliple catching blocs are batched
+        let _ = node_state.craft_block_and_handle(20, proofs);
+
+        assert_eq!(read_contract_state(&node_state).value, 10 + 6 + 6 + 7 + 8);
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_auto_prover_catchup_timeout_2() -> Result<()> {
+        let (mut node_state, mut auto_prover, api_client) = setup().await?;
+
+        let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
+        let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
+        let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
+
+        auto_prover.handle_processed_block(block_1.clone()).await?;
+        auto_prover.handle_processed_block(block_2.clone()).await?;
+        auto_prover.handle_processed_block(block_3.clone()).await?;
+
+        let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]);
+        auto_prover.handle_processed_block(block_4.clone()).await?;
+
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 4);
+
+        let block_5 = node_state.craft_block_and_handle(5, proofs);
+        auto_prover.handle_processed_block(block_5.clone()).await?;
+
+        assert_eq!(read_contract_state(&node_state).value, 10);
+
+        let block_6 = node_state.craft_block_and_handle(
+            6,
+            vec![
+                new_blob_tx(6), /* This one will timeout */
+                new_blob_tx(6), /* This one will timeout */
+                new_blob_tx(6), /* This one will timeout in first catching block */
+                new_blob_tx(6),
+            ],
+        );
+
+        let block_7 = node_state.craft_block_and_handle(7, vec![new_blob_tx(7)]);
+        let block_8 = node_state.craft_block_and_handle(8, vec![new_blob_tx(8)]);
+
+        let mut blocks = vec![
+            block_1, block_2, block_3, block_4, block_5, block_6, block_7, block_8,
+        ];
+        let stop_height = 22;
+        for i in 9..stop_height {
+            tracing::info!("✨ Block {i}");
+            let block = node_state.craft_block_and_handle(i, vec![]);
+            blocks.push(block);
+        }
+
+        tracing::info!("✨ New prover catching up");
+        api_client.set_block_height(BlockHeight(stop_height - 1));
+        api_client.set_settled_height(BlockHeight(5));
+
+        let mut auto_prover_catchup = new_auto_prover(api_client.clone())
+            .await
+            .expect("Failed to create new auto prover");
+
+        for block in blocks {
+            auto_prover_catchup.handle_processed_block(block).await?;
+        }
+
+        let proofs = get_txs(&api_client).await;
+        let _ = node_state.craft_block_and_handle(stop_height, proofs);
+
+        assert_eq!(read_contract_state(&node_state).value, 10 + 6 + 7 + 8);
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_auto_prover_catchup_timeout_multiple_blocks() -> Result<()> {
+        let (mut node_state, mut auto_prover, api_client) = setup().await?;
+
+        let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
+        let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
+        let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
+
+        auto_prover.handle_processed_block(block_1.clone()).await?;
+        auto_prover.handle_processed_block(block_2.clone()).await?;
+        auto_prover.handle_processed_block(block_3.clone()).await?;
+
+        let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]);
+        auto_prover.handle_processed_block(block_4.clone()).await?;
+
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 4);
+
+        let block_5 = node_state.craft_block_and_handle(5, proofs);
+        auto_prover.handle_processed_block(block_5.clone()).await?;
+
+        assert_eq!(read_contract_state(&node_state).value, 10);
+
+        let block_6 =
+            node_state.craft_block_and_handle(6, vec![new_blob_tx(6) /* This one will timeout */]);
+
+        let block_7 =
+            node_state.craft_block_and_handle(7, vec![new_blob_tx(7) /* This one will timeout */]);
+        let block_8 =
+            node_state.craft_block_and_handle(8, vec![new_blob_tx(8) /* This one will timeout */]);
+        let block_9 = node_state.craft_block_and_handle(9, vec![new_blob_tx(9)]);
+        let block_10 = node_state.craft_block_and_handle(10, vec![new_blob_tx(10)]);
+
+        let mut blocks = vec![
+            block_1, block_2, block_3, block_4, block_5, block_6, block_7, block_8, block_9,
+            block_10,
+        ];
+        let stop_height = 24;
+        for i in 11..stop_height {
+            tracing::info!("✨ Block {i}");
+            let block = node_state.craft_block_and_handle(i, vec![]);
+            blocks.push(block);
+        }
+
+        tracing::info!("✨ New prover catching up");
+        api_client.set_block_height(BlockHeight(stop_height - 1));
+        api_client.set_settled_height(BlockHeight(5));
+
+        let mut auto_prover_catchup = new_auto_prover(api_client.clone())
+            .await
+            .expect("Failed to create new auto prover");
+
+        for block in blocks {
+            auto_prover_catchup.handle_processed_block(block).await?;
+        }
+
+        let proofs = get_txs(&api_client).await;
+        let _ = node_state.craft_block_and_handle(stop_height, proofs);
+
+        assert_eq!(read_contract_state(&node_state).value, 10 + 9 + 10);
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_auto_prover_catchup_timeout_between_settled() -> Result<()> {
+        let (mut node_state, mut auto_prover, api_client) = setup().await?;
+
+        let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
+        let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
+        let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
+
+        auto_prover.handle_processed_block(block_1.clone()).await?;
+        auto_prover.handle_processed_block(block_2.clone()).await?;
+        auto_prover.handle_processed_block(block_3.clone()).await?;
+
+        let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]);
+        auto_prover.handle_processed_block(block_4.clone()).await?;
+
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 4);
+
+        let block_5 = node_state.craft_block_and_handle(5, proofs);
+        auto_prover.handle_processed_block(block_5.clone()).await?;
+
+        assert_eq!(read_contract_state(&node_state).value, 10);
+
+        let block_6 =
+            node_state.craft_block_and_handle(6, vec![new_blob_tx(6) /* This one will timeout */]);
+
+        let block_7 =
+            node_state.craft_block_and_handle(7, vec![new_blob_tx(7) /* This one will timeout */]);
+        let block_8 =
+            node_state.craft_block_and_handle(8, vec![new_blob_tx(8) /* This one will timeout */]);
+        let block_9 = node_state.craft_block_and_handle(9, vec![new_blob_tx(9)]);
+        let block_10 = node_state.craft_block_and_handle(10, vec![new_blob_tx(10)]);
+
+        let mut blocks = vec![
+            block_1, block_2, block_3, block_4, block_5, block_6, block_7, block_8, block_9,
+            block_10,
+        ];
+        let stop_height = 24;
+        for i in 11..stop_height {
+            tracing::info!("✨ Block {i}");
+            let block = node_state.craft_block_and_handle(i, vec![]);
+            blocks.push(block);
+        }
+
+        for i in 6..stop_height {
+            tracing::info!("♻️ Handle block {}", i);
+            auto_prover
+                .handle_processed_block(blocks[i as usize - 1].clone())
+                .await?;
+        }
+        let proofs = get_txs(&api_client).await;
+        let block_24 = node_state.craft_block_and_handle(stop_height, proofs);
+        let block_25 = node_state.craft_block_and_handle(stop_height + 1, vec![new_blob_tx(25)]);
+        blocks.push(block_24);
+        blocks.push(block_25);
+
+        tracing::info!("✨ New prover catching up");
+        api_client.set_block_height(BlockHeight(stop_height + 1));
+        api_client.set_settled_height(BlockHeight(stop_height));
+
+        let mut auto_prover_catchup = new_auto_prover(api_client.clone())
+            .await
+            .expect("Failed to create new auto prover");
+
+        for block in blocks {
+            auto_prover_catchup.handle_processed_block(block).await?;
+        }
+
+        let proofs = get_txs(&api_client).await;
+        let _ = node_state.craft_block_and_handle(stop_height + 2, proofs);
+
+        assert_eq!(read_contract_state(&node_state).value, 10 + 9 + 10 + 25);
         Ok(())
     }
 }
