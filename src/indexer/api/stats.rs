@@ -160,7 +160,7 @@ pub async fn get_stats(
     tag = "Indexer",
     path = "/stats/proofs",
     responses(
-        (status = OK, body = NetworkStats)
+        (status = OK, body = Vec<ProofStat>)
     )
 )]
 pub async fn get_proof_stats(
@@ -185,7 +185,7 @@ ORDER BY
         )
         .fetch_all(&state.db)
         .await,
-        "Failed to fetch transactions by height"
+        "Failed to fetch proof stats"
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

@@ -31,8 +31,8 @@ pub struct NetworkStats {
 #[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
 #[derive(Clone, Serialize, Deserialize, Debug, ToSchema)]
 pub struct ProofStat {
-    verifier: String,
-    proof_count: i64,
+    pub verifier: String,
+    pub proof_count: i64,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, ToSchema)]
