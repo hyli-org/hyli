@@ -28,6 +28,9 @@ pub use sdk::NodeStateEvent;
 pub struct QueryBlockHeight {}
 
 #[derive(Clone)]
+pub struct QuerySettledHeight(pub ContractName);
+
+#[derive(Clone)]
 pub struct QueryUnsettledTx(pub TxHash);
 
 module_bus_client! {
@@ -36,6 +39,7 @@ pub struct NodeStateBusClient {
     sender(NodeStateEvent),
     receiver(DataEvent),
     receiver(Query<ContractName, Contract>),
+    receiver(Query<QuerySettledHeight, BlockHeight>),
     receiver(Query<QueryBlockHeight , BlockHeight>),
     receiver(Query<QueryUnsettledTx, UnsettledBlobTransaction>),
 }
@@ -86,6 +90,13 @@ impl Module for NodeStateModule {
             command_response<ContractName, Contract> cmd => {
                 self.inner.contracts.get(cmd).cloned().context("Contract not found")
             }
+            command_response<QuerySettledHeight, BlockHeight> cmd => {
+                if !self.inner.contracts.contains_key(&cmd.0) {
+                    return Err(anyhow::anyhow!("Contract not found"));
+                }
+                let height = self.inner.unsettled_transactions.get_earliest_unsettled_height(&cmd.0).unwrap_or(self.inner.current_height);
+                Ok(BlockHeight(height.0 - 1))
+        }
             command_response<QueryUnsettledTx, UnsettledBlobTransaction> tx_hash => {
                 match self.inner.unsettled_transactions.get(&tx_hash.0) {
                     Some(tx) => Ok(tx.clone()),

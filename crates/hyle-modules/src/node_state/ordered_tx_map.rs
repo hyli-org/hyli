@@ -35,6 +35,14 @@ impl OrderedTxMap {
         self.tx_order.get(contract).and_then(|v| v.front())
     }
 
+    pub fn get_earliest_unsettled_height(&self, contract: &ContractName) -> Option<BlockHeight> {
+        self.tx_order
+            .get(contract)
+            .and_then(|v| v.front())
+            .and_then(|tx_hash| self.map.get(tx_hash))
+            .map(|tx| tx.tx_context.block_height)
+    }
+
     pub fn get_for_settlement(
         &mut self,
         hash: &TxHash,
