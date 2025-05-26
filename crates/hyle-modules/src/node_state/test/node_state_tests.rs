@@ -329,13 +329,13 @@ async fn native_blobs_dont_mess_blob_indexes() {
     let mut hyle_output_2 = make_hyle_output_bis(blob_tx_1.clone(), BlobIndex(2));
     let verified_proof_2 = new_proof_tx(&c1, &hyle_output_2, &blob_tx_id_1);
 
-    // Submit failing tx with successful native blob
+    // Submit tx with successful native blob
     let block = state.craft_block_and_handle(1, vec![blob_tx_1.clone().into()]);
     assert_eq!(block.blob_proof_outputs.len(), 0);
     assert_eq!(block.failed_txs.len(), 0);
     assert_eq!(block.successful_txs.len(), 0);
 
-    // Submitting a proof for c1 should do nothing (no settlement)
+    // Submitting proofs for blob 0 and 2, on same contract, should settle.
     let block = state.craft_block_and_handle(
         2,
         vec![

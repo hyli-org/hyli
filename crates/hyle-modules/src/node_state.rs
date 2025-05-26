@@ -622,15 +622,11 @@ impl NodeState {
         *lane_id = unsettled_tx.tx_context.lane_id.clone();
 
         // Sanity check: if some of the blob contracts are not registered, we can't proceed
-        if !unsettled_tx
-            .blobs
-            .iter()
-            .all(|(_blob_index, blob_metadata)| {
-                tracing::trace!("Checking contract: {:?}", blob_metadata.blob.contract_name);
-                self.contracts
-                    .contains_key(&blob_metadata.blob.contract_name)
-            })
-        {
+        if !unsettled_tx.blobs.values().all(|blob_metadata| {
+            tracing::trace!("Checking contract: {:?}", blob_metadata.blob.contract_name);
+            self.contracts
+                .contains_key(&blob_metadata.blob.contract_name)
+        }) {
             bail!("Cannot settle TX: some blob contracts are not registered");
         }
 
@@ -641,7 +637,7 @@ impl NodeState {
         Fail fast: try to find a stateless (native verifiers are considered stateless for now) contract
         with a hyle output to success false (in all possible combinations)
         */
-        unsettled_tx.blobs.iter().any(|(_blob_index, blob)| {
+        unsettled_tx.blobs.values().any(|blob| {
             NATIVE_VERIFIERS_CONTRACT_LIST.contains(&blob.blob.contract_name.0.as_str())
                 && blob
                     .possible_proofs
@@ -830,12 +826,11 @@ impl NodeState {
         let next_txs_to_try_and_settle = settled_tx
             .blobs
             .iter()
-            .enumerate()
-            .filter_map(|(i, (_blob_index, blob_metadata))| {
+            .filter_map(|(blob_index, blob_metadata)| {
                 block_under_construction.verified_blobs.push((
                     bth.clone(),
-                    BlobIndex(i),
-                    blob_proof_output_indices.get(i).cloned(),
+                    *blob_index,
+                    blob_proof_output_indices.get(blob_index.0).cloned(),
                 ));
 
                 self.unsettled_transactions
