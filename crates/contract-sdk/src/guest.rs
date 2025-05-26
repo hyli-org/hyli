@@ -87,6 +87,7 @@ impl GuestEnv for Risc0Env {
         let len: usize = risc0_zkvm::guest::env::read();
         let mut slice = vec![0u8; len];
         risc0_zkvm::guest::env::read_slice(&mut slice);
+        #[allow(clippy::unwrap_used, reason = "should panic here")]
         borsh::from_slice(&slice).unwrap()
     }
 }
@@ -102,12 +103,14 @@ impl GuestEnv for SP1Env {
     }
 
     fn commit(&self, output: Vec<HyleOutput>) {
+        #[allow(clippy::unwrap_used, reason = "should panic here")]
         let vec = borsh::to_vec(&output).unwrap();
         sp1_zkvm::io::commit_slice(&vec);
     }
 
     fn read<T: BorshDeserialize>(&self) -> T {
         let vec = sp1_zkvm::io::read_vec();
+        #[allow(clippy::unwrap_used, reason = "should panic here")]
         borsh::from_slice(&vec).unwrap()
     }
 }
