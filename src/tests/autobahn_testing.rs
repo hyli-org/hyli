@@ -1379,7 +1379,7 @@ async fn autobahn_missed_a_confirm_message() {
 /// Normal case: P1 -> Cf1 -> C1 -> P2 -> Cf2 -> C2
 /// Test case: P1 -> P2 -> Cf2 -> C2
 ///
-/// Confirm and commit can be ignored if next porposal is received
+/// Confirm and commit can be ignored if next proposal is received
 #[test_log::test(tokio::test)]
 async fn autobahn_missed_confirm_and_commit_messages() {
     let (mut node1, mut node2, mut node3, mut node4) = build_nodes!(4).await;
