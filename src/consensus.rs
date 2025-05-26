@@ -624,6 +624,8 @@ impl Consensus {
                         );
                         self.store.bft_round_state.joining.staking_updated_to =
                             block.block_height.0;
+                        self.store.bft_round_state.slot = block.block_height.0 + 1;
+                        self.store.bft_round_state.view = 0;
                     }
                 }
                 Ok(())
