@@ -384,7 +384,7 @@ impl NodeState {
             );
         }
 
-        let blobs: HashMap<BlobIndex, UnsettledBlobMetadata> = tx
+        let blobs: BTreeMap<BlobIndex, UnsettledBlobMetadata> = tx
             .blobs
             .iter()
             .enumerate()
@@ -1187,7 +1187,7 @@ impl NodeState {
     fn clear_timeouts(&mut self, block_under_construction: &mut Block) {
         let mut txs_at_timeout = self.timeouts.drop(&block_under_construction.block_height);
         txs_at_timeout.retain(|tx| {
-            if let Some(mut tx) = self.unsettled_transactions.remove(tx) {
+            if let Some(tx) = self.unsettled_transactions.remove(tx) {
                 info!("⏰ Blob tx timed out: {}", &tx.hash);
                 self.metrics.add_triggered_timeouts();
                 let hash = tx.hash.clone();
@@ -1204,15 +1204,16 @@ impl NodeState {
                 block_under_construction.lane_ids.insert(hash, lane_id);
 
                 // Attempt to settle following transactions
-                let mut blob_tx_to_try_and_settle = BTreeSet::new();
-                tx.blobs.drain().for_each(|(_blob_index, b)| {
-                    if let Some(tx) = self
-                        .unsettled_transactions
-                        .get_next_unsettled_tx(&b.blob.contract_name)
-                    {
-                        blob_tx_to_try_and_settle.insert(tx.clone());
-                    }
-                });
+                let blob_tx_to_try_and_settle: BTreeSet<TxHash> = tx
+                    .blobs
+                    .into_values()
+                    .filter_map(|b| {
+                        self.unsettled_transactions
+                            .get_next_unsettled_tx(&b.blob.contract_name)
+                    })
+                    .cloned()
+                    .collect();
+
                 // Then try to settle transactions when we can.
                 let next_unsettled_txs =
                     self.settle_txs_until_done(block_under_construction, blob_tx_to_try_and_settle);

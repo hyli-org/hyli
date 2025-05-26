@@ -136,6 +136,8 @@ impl OrderedTxMap {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::indexing_slicing)]
+    use std::collections::BTreeMap;
+
     use sdk::*;
 
     use super::*;
@@ -146,7 +148,7 @@ mod tests {
             hash: TxHash::new(hash),
             parent_dp_hash: DataProposalHash::default(),
             blobs_hash: BlobsHashes::default(),
-            blobs: HashMap::from_iter(vec![(
+            blobs: BTreeMap::from_iter(vec![(
                 BlobIndex(0),
                 UnsettledBlobMetadata {
                     blob: Blob {

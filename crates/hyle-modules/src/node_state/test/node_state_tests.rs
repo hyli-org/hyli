@@ -179,7 +179,15 @@ async fn assert_two_transactions_with_same_contract_using_same_native_contract_s
 
     let ctx = bogus_tx_context();
 
-    let hyle_output_1 = make_hyle_output(blob_tx_1.clone(), BlobIndex(0));
+    let hyle_output_1 = make_hyle_output(
+        blob_tx_1.clone(),
+        if blob_order_reversed {
+            // Provable blob is the last one of the tx
+            BlobIndex(1)
+        } else {
+            BlobIndex(0)
+        },
+    );
     let verified_proof_1 = new_proof_tx(&c1, &hyle_output_1, &blob_tx_id_1);
 
     // Submit failing tx with native blob failing
@@ -349,6 +357,78 @@ async fn native_blobs_dont_mess_blob_indexes() {
 
     // Check state did not transition twice
     assert_eq!(state.contracts.get(&c1).unwrap().state.0, vec![7, 8, 9]);
+}
+
+#[test_log::test(tokio::test)]
+async fn iterate_over_blobs_in_the_right_order() {
+    let mut state = new_node_state().await;
+
+    let c1 = ContractName::new("c1");
+    let mut register_c1 = make_register_contract_effect(c1.clone());
+    register_c1.state_commitment = StateCommitment(vec![0]);
+    state.handle_register_contract_effect(&register_c1);
+
+    let c2 = ContractName::new("c2");
+    let mut register_c2 = make_register_contract_effect(c2.clone());
+    register_c2.state_commitment = StateCommitment(vec![0]);
+    state.handle_register_contract_effect(&register_c2);
+
+    let identity_1 = Identity::new("test@c1");
+
+    let nb_blobs = 10;
+
+    let blob_tx = BlobTransaction::new(
+        identity_1.clone(),
+        (0..nb_blobs)
+            .flat_map(|_| vec![new_blob("c1"), new_blob("c2")])
+            .collect::<Vec<_>>(),
+    );
+
+    let blob_tx_id = blob_tx.hashed();
+
+    let ctx = bogus_tx_context();
+
+    let create_verified_proofs = |index: usize| -> Vec<VerifiedProofTransaction> {
+        let mut hyle_output = make_hyle_output(blob_tx.clone(), BlobIndex(2 * index));
+        hyle_output.initial_state = StateCommitment(vec![index as u8]);
+        hyle_output.next_state = StateCommitment(vec![(index + 1) as u8]);
+        let p1 = new_proof_tx(&c1, &hyle_output, &blob_tx_id);
+
+        let mut hyle_output = make_hyle_output(blob_tx.clone(), BlobIndex(2 * index + 1));
+        hyle_output.initial_state = StateCommitment(vec![index as u8]);
+        hyle_output.next_state = StateCommitment(vec![(index + 1) as u8]);
+        let p2 = new_proof_tx(&c1, &hyle_output, &blob_tx_id);
+
+        vec![p1, p2]
+    };
+
+    // Submit tx with successful native blob
+    let block = state.craft_block_and_handle(1, vec![blob_tx.clone().into()]);
+    assert_eq!(block.blob_proof_outputs.len(), 0);
+    assert_eq!(block.failed_txs.len(), 0);
+    assert_eq!(block.successful_txs.len(), 0);
+
+    // Submitting proofs for blob 0 and 2, on same contract, should settle.
+    let block = state.craft_block_and_handle(
+        2,
+        (0..nb_blobs)
+            .flat_map(create_verified_proofs)
+            .map(|el| el.into())
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(block.blob_proof_outputs.len(), 2 * nb_blobs);
+    assert_eq!(block.failed_txs.len(), 0);
+    assert_eq!(block.successful_txs.len(), 1);
+
+    // Check state did not transition twice
+    assert_eq!(
+        state.contracts.get(&c1).unwrap().state.0,
+        vec![nb_blobs as u8]
+    );
+    assert_eq!(
+        state.contracts.get(&c2).unwrap().state.0,
+        vec![nb_blobs as u8]
+    );
 }
 
 #[test_log::test(tokio::test)]

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
@@ -41,7 +41,7 @@ pub struct UnsettledBlobTransaction {
     pub hash: TxHash,
     pub tx_context: TxContext,
     pub blobs_hash: BlobsHashes,
-    pub blobs: HashMap<BlobIndex, UnsettledBlobMetadata>,
+    pub blobs: BTreeMap<BlobIndex, UnsettledBlobMetadata>,
 }
 
 #[derive(
