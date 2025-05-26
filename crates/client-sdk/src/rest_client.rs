@@ -189,6 +189,11 @@ pub trait NodeApiClient {
         contract_name: ContractName,
     ) -> Pin<Box<dyn Future<Output = Result<Contract>> + Send + '_>>;
 
+    fn get_settled_height(
+        &self,
+        contract_name: ContractName,
+    ) -> Pin<Box<dyn Future<Output = Result<BlockHeight>> + Send + '_>>;
+
     fn get_unsettled_tx(
         &self,
         blob_tx_hash: TxHash,
@@ -316,6 +321,20 @@ impl NodeApiClient for NodeApiHttpClient {
                 .context(format!("getting tx {}", blob_tx_hash))
         })
     }
+
+    fn get_settled_height(
+        &self,
+        contract_name: ContractName,
+    ) -> Pin<Box<dyn Future<Output = Result<BlockHeight>> + Send + '_>> {
+        Box::pin(async move {
+            self.get(&format!("v1/contract/{contract_name}/settled_height"))
+                .await
+                .context(format!(
+                    "getting earliest unsettled height for contract {}",
+                    contract_name
+                ))
+        })
+    }
 }
 impl Deref for NodeApiHttpClient {
     type Target = HttpClient;
@@ -340,6 +359,7 @@ pub mod test {
     #[derive(Clone)]
     pub struct NodeApiMockClient {
         pub block_height: Arc<Mutex<BlockHeight>>,
+        pub settled_height: Arc<Mutex<BlockHeight>>,
         pub consensus_info: Arc<Mutex<ConsensusInfo>>,
         pub node_info: Arc<Mutex<NodeInfo>>,
         pub staking_state: Arc<Mutex<APIStaking>>,
@@ -353,6 +373,7 @@ pub mod test {
         pub fn new() -> Self {
             Self {
                 block_height: Arc::new(Mutex::new(BlockHeight(0))),
+                settled_height: Arc::new(Mutex::new(BlockHeight(0))),
                 consensus_info: Arc::new(Mutex::new(ConsensusInfo {
                     slot: 0,
                     view: 0,
@@ -374,6 +395,10 @@ pub mod test {
 
         pub fn set_block_height(&self, height: BlockHeight) {
             *self.block_height.lock().unwrap() = height;
+        }
+
+        pub fn set_settled_height(&self, height: BlockHeight) {
+            *self.settled_height.lock().unwrap() = height;
         }
 
         pub fn set_consensus_info(&self, info: ConsensusInfo) {
@@ -482,6 +507,13 @@ pub mod test {
                     .cloned()
                     .ok_or_else(|| anyhow::anyhow!("Unsettled transaction not found"))
             })
+        }
+
+        fn get_settled_height(
+            &self,
+            _contract_name: ContractName,
+        ) -> Pin<Box<dyn Future<Output = Result<BlockHeight>> + Send + '_>> {
+            Box::pin(async move { Ok(*self.settled_height.lock().unwrap()) })
         }
     }
 }

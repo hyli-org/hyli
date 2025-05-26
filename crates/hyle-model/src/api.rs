@@ -28,6 +28,13 @@ pub struct NetworkStats {
     pub graph_block_time: Vec<(i64, f64)>, // Graph data for block time
 }
 
+#[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
+#[derive(Clone, Serialize, Deserialize, Debug, ToSchema)]
+pub struct ProofStat {
+    pub verifier: String,
+    pub proof_count: i64,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct APIRegisterContract {
     pub verifier: Verifier,
