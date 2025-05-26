@@ -7,7 +7,7 @@ use contract_registration::{validate_contract_name_registration, validate_state_
 use hyle_tld::handle_blob_for_hyle_tld;
 use metrics::NodeStateMetrics;
 use ordered_tx_map::OrderedTxMap;
-use sdk::verifiers::NativeVerifiers;
+use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
 use sdk::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use timeouts::Timeouts;
@@ -386,7 +386,7 @@ impl NodeState {
             .blobs
             .iter()
             .enumerate()
-            .map(|(index, blob)| {
+            .filter_map(|(index, blob)| {
                 tracing::trace!("Handling blob - {:?}", blob);
                 if let Some(Ok(verifier)) = self
                     .contracts
@@ -400,19 +400,25 @@ impl NodeState {
                         verifier,
                     );
                     tracing::trace!("Native verifier in blob tx - {:?}", hyle_output);
-                    return UnsettledBlobMetadata {
-                        blob: blob.clone(),
-                        possible_proofs: vec![(verifier.into(), hyle_output)],
-                    };
+                    // Verifier contracts won't be updated
+                    // FIXME: When we need stateful native contracts
+                    if hyle_output.success {
+                        return None;
+                    } else {
+                        return Some(UnsettledBlobMetadata {
+                            blob: blob.clone(),
+                            possible_proofs: vec![(verifier.into(), hyle_output)],
+                        });
+                    }
                 } else if blob.contract_name.0 == "hyle" {
                     // 'hyle' is a special case -> See settlement logic.
                 } else {
                     should_try_and_settle = false;
                 }
-                UnsettledBlobMetadata {
+                Some(UnsettledBlobMetadata {
                     blob: blob.clone(),
                     possible_proofs: vec![],
-                }
+                })
             })
             .collect();
 
@@ -618,17 +624,33 @@ impl NodeState {
 
         let updated_contracts = BTreeMap::new();
 
-        let result = match Self::settle_blobs_recursively(
-            &self.contracts,
-            updated_contracts,
-            unsettled_tx.blobs.iter(),
-            vec![],
-            events,
-            &self.metrics,
-        ) {
-            Some(res) => res,
-            None => {
-                bail!("Tx: {} is not ready to settle.", unsettled_tx.hash);
+        let result = if
+        /*
+        Fail fast: try to find a stateless (native verifiers are considered stateless for now) contract
+        with a hyle output to success false (in all possible combinations)
+        */
+        unsettled_tx.blobs.iter().any(|blob| {
+            NATIVE_VERIFIERS_CONTRACT_LIST.contains(&blob.blob.contract_name.0.as_str())
+                && blob
+                    .possible_proofs
+                    .iter()
+                    .any(|possible_proof| !possible_proof.1.success)
+        }) {
+            debug!("Settling fast as failed because native blob was failed");
+            Err(())
+        } else {
+            match Self::settle_blobs_recursively(
+                &self.contracts,
+                updated_contracts,
+                unsettled_tx.blobs.iter(),
+                vec![],
+                events,
+                &self.metrics,
+            ) {
+                Some(res) => res,
+                None => {
+                    bail!("Tx: {} is not ready to settle.", unsettled_tx.hash);
+                }
             }
         };
 
@@ -1228,6 +1250,8 @@ pub mod test {
 
     use super::*;
     use hyle_net::clock::TimestampMsClock;
+    use sdk::verifiers::ShaBlob;
+    use sha3::Digest;
 
     pub(crate) async fn new_node_state() -> NodeState {
         NodeState {
@@ -1240,6 +1264,35 @@ pub mod test {
         Blob {
             contract_name: ContractName::new(contract),
             data: BlobData(vec![0, 1, 2, 3]),
+        }
+    }
+
+    fn new_native_blob(contract: &str, identity: Identity) -> Blob {
+        let data = vec![0, 1, 2, 3];
+        let mut hasher = sha3::Sha3_256::new();
+        hasher.update(&data);
+        let sha = hasher.finalize().to_vec();
+
+        let data = ShaBlob {
+            identity,
+            data,
+            sha,
+        };
+
+        let data = borsh::to_vec(&data).unwrap();
+
+        Blob {
+            contract_name: ContractName::new(contract),
+            data: BlobData(data),
+        }
+    }
+
+    fn new_failing_native_blob(contract: &str, identity: Identity) -> Blob {
+        let data = vec![0, 1, 2, 3];
+
+        Blob {
+            contract_name: ContractName::new(contract),
+            data: BlobData(data),
         }
     }
 
@@ -1279,6 +1332,18 @@ pub mod test {
     pub fn make_register_contract_effect(contract_name: ContractName) -> RegisterContractEffect {
         RegisterContractEffect {
             verifier: "test".into(),
+            program_id: ProgramId(vec![]),
+            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+            contract_name,
+            timeout_window: None,
+        }
+    }
+
+    pub fn make_register_native_contract_effect(
+        contract_name: ContractName,
+    ) -> RegisterContractEffect {
+        RegisterContractEffect {
+            verifier: Verifier("sha3_256".to_string()),
             program_id: ProgramId(vec![]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name,
