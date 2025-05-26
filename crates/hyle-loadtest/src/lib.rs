@@ -603,7 +603,7 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
             let amount = rng.random_range(1..guy_1_balance);
 
             info!(
-                "Transfering amount {} from {} to {}",
+                "Transferring amount {} from {} to {}",
                 amount, guy_1_id, guy_2_id
             );
 
