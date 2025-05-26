@@ -282,7 +282,7 @@ where
         metadata: &Option<Vec<u8>>,
     ) -> Result<()> {
         let state = State::construct_state(contract, metadata)?;
-        tracing::info!(cn = %self.contract_name, "📝 Registered suppored contract '{}'", contract.contract_name);
+        tracing::info!(cn = %self.contract_name, "📝 Registered supported contract '{}'", contract.contract_name);
         self.store.write().await.state = Some(state);
         Ok(())
     }
