@@ -11,7 +11,7 @@ use crate::{
     },
     utils::{
         conf::{P2pMode, SharedConf},
-        serialize::arc_rwlock_borsh,
+        serialize::{arc_rwlock_borsh, BorshableIndexMap},
     },
 };
 use anyhow::{bail, Context, Result};
@@ -104,7 +104,7 @@ pub struct MempoolStore {
     // on cancellation
     #[borsh(skip)]
     processing_txs: OrderedJoinSet<Result<Transaction>>,
-    waiting_dissemination_txs: Vec<Transaction>,
+    waiting_dissemination_txs: BorshableIndexMap<TxHash, Transaction>,
     #[borsh(skip)]
     own_data_proposal_in_preparation: JoinSet<(DataProposalHash, DataProposal)>,
     buffered_proposals: BTreeMap<LaneId, Vec<DataProposal>>,
