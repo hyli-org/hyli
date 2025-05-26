@@ -11015,9 +11015,9 @@ dependencies = [
 
 [[package]]
 name = "utoipa-swagger-ui"
-version = "9.0.0"
+version = "9.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "161166ec520c50144922a625d8bc4925cc801b2dda958ab69878527c0e5c5d61"
+checksum = "d047458f1b5b65237c2f6dc6db136945667f40a7668627b3490b9513a3d43a55"
 dependencies = [
  "axum 0.8.4",
  "base64 0.22.1",
@@ -11028,7 +11028,7 @@ dependencies = [
  "serde_json",
  "url",
  "utoipa",
- "zip 2.4.2",
+ "zip 3.0.0",
 ]
 
 [[package]]
