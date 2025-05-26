@@ -33,7 +33,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 paste = { version = "1.0.15" }
 hex = "0.4.3"
 
-tokio = { version = "1.44.2", features = ["full", "tracing"] }
+tokio = { version = "1.45.1", features = ["full", "tracing"] }
 tokio-util = { version = "0.7.14" }
 
 axum = { version = "0.8.4", features = ["ws"] }
