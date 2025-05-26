@@ -1,6 +1,6 @@
 #![allow(clippy::needless_doctest_main)]
 /*!
-The `guest` module provides the `GuestEnv` trait that defines a common interface for the guests accross different zkvm.
+The `guest` module provides the `GuestEnv` trait that defines a common interface for the guests across different zkvm.
 It provides `Risc0Env` and `SP1Env` structs that implement the `GuestEnv` trait for both zkvm.
 
 The [execute] function is used to execute an action on a given contract using the provided state and contract input.
