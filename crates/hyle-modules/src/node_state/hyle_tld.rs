@@ -5,10 +5,13 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::SideEffect;
 
+pub const HYLI_TLD_HYDENTITY: &str = "hyle@hydentity";
+
 pub fn handle_blob_for_hyle_tld(
     contracts: &HashMap<ContractName, Contract>,
     contract_changes: &mut BTreeMap<ContractName, SideEffect>,
     current_blob: &Blob,
+    identity: &Identity,
 ) -> Result<()> {
     // TODO: check the identity of the caller here.
 
@@ -20,7 +23,7 @@ pub fn handle_blob_for_hyle_tld(
     } else if let Ok(reg) =
         StructuredBlobData::<DeleteContractAction>::try_from(current_blob.data.clone())
     {
-        handle_delete_blob(contracts, contract_changes, &reg.parameters)?;
+        handle_delete_blob(contracts, contract_changes, &reg.parameters, identity)?;
     } else {
         bail!("Invalid blob data for TLD");
     }
@@ -68,7 +71,22 @@ fn handle_delete_blob(
     contracts: &HashMap<ContractName, Contract>,
     contract_changes: &mut BTreeMap<ContractName, SideEffect>,
     delete: &DeleteContractAction,
+    identity: &Identity,
 ) -> Result<()> {
+    // We permission contract deletions to this single identity generated in the genesis
+    if identity != &Identity(HYLI_TLD_HYDENTITY.into()) {
+        bail!(
+            "{} is not allowed to delete contract {}",
+            identity,
+            delete.contract_name
+        );
+    }
+
+    // For now, Hyli is allowed to delete all contracts but itself
+    if delete.contract_name.0 == "hydentity" {
+        bail!("Cannot delete Hydentity contract");
+    }
+
     // For now, Hyli is allowed to delete all contracts but itself
     if delete.contract_name.0 == "hyle" {
         bail!("Cannot delete Hyli contract");

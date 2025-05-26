@@ -13,6 +13,7 @@ sdk = { workspace = true, default-features = false, features = ["full-model"] }
 client-sdk = { workspace = true, features = ["rest", "indexer"] }
 hyle-net = { workspace = true }
 hyle-verifiers = { workspace = true }
+hydentity = { workspace = true }
 
 anyhow = "1.0.98"
 borsh = "1.5.6"

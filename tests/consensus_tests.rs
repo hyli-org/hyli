@@ -22,7 +22,7 @@ mod e2e_consensus {
     use hyle_model::{ContractName, StateCommitment, TxHash};
     use hyllar::client::tx_executor_handler::transfer;
     use hyllar::erc20::ERC20;
-    use hyllar::{Hyllar, FAUCET_ID};
+    use hyllar::{Hyllar, FAUCET_HYDENTITY};
     use staking::client::tx_executor_handler::{delegate, stake};
     use staking::state::Staking;
     use tracing::{info, warn};
@@ -108,7 +108,7 @@ mod e2e_consensus {
             tracing::warn!("Register TX Hash: {:?}", tx_hash);
         }
         {
-            let mut transaction = ProvableBlobTx::new(FAUCET_ID.into());
+            let mut transaction = ProvableBlobTx::new(FAUCET_HYDENTITY.into());
 
             verify_identity(
                 &mut transaction,

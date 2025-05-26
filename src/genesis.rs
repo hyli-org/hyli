@@ -21,8 +21,9 @@ use hyle_modules::{
     bus::{BusClientSender, SharedMessageBus},
     bus_client, handle_messages,
     modules::Module,
+    node_state::HYLI_TLD_HYDENTITY,
 };
-use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
+use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_HYDENTITY};
 use serde::{Deserialize, Serialize};
 use smt_token::account::AccountSMT;
 use staking::{
@@ -260,33 +261,45 @@ impl Genesis {
         // hydentity that checks password
         // The validator will send the signature for the register transaction in the handshake
         // in order to let all genesis validators to create the genesis register
-
         let mut txs = vec![];
 
-        // register faucet identity
-        let identity = Identity(FAUCET_ID.into());
-        let mut transaction = ProvableBlobTx::new(identity.clone());
-        register_identity(
-            &mut transaction,
-            ContractName::new("hydentity"),
-            self.config.genesis.faucet_password.clone(),
-        )?;
-        txs.push(tx_executor.process(transaction)?);
-
-        for peer in peer_pubkey.values() {
-            info!("🌱  Registering identity {peer}");
-
-            let identity = Identity(format!("{peer}@hydentity"));
+        let mut register_hydentity = |hydentity: String, password: String| -> Result<()> {
+            let identity = Identity(hydentity);
             let mut transaction = ProvableBlobTx::new(identity.clone());
 
-            // Register
             register_identity(
                 &mut transaction,
                 ContractName::new("hydentity"),
-                "password".to_owned(),
+                password.to_owned(),
             )?;
 
             txs.push(tx_executor.process(transaction)?);
+
+            Ok(())
+        };
+
+        // register faucet identity
+        info!("🌱  Registering faucet identity {}", FAUCET_HYDENTITY);
+        register_hydentity(
+            FAUCET_HYDENTITY.into(),
+            self.config.genesis.faucet_password.clone(),
+        )?;
+
+        // register hyli tld admin identity
+        info!(
+            "🌱  Registering hyli tld admin identity {}",
+            HYLI_TLD_HYDENTITY
+        );
+        register_hydentity(
+            HYLI_TLD_HYDENTITY.into(),
+            self.config.genesis.hyli_tld_password.clone(),
+        )?;
+
+        // Register peers
+        for peer in peer_pubkey.values() {
+            let identity = format!("{peer}@hydentity");
+            info!("🌱  Registering peer identity {identity}");
+            register_hydentity(identity, "password".into())?;
         }
 
         Ok(txs)
@@ -307,7 +320,7 @@ impl Genesis {
 
             info!("🌱  Fauceting {genesis_faucet} hyllar to {peer}");
 
-            let identity = Identity::new(FAUCET_ID);
+            let identity = Identity::new(FAUCET_HYDENTITY);
             let mut transaction = ProvableBlobTx::new(identity.clone());
 
             // Verify identity

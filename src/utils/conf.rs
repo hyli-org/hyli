@@ -33,8 +33,10 @@ pub enum TimestampCheck {
 pub struct GenesisConf {
     /// Initial bonded stakers and their stakes
     pub stakers: HashMap<String, u64>,
-    /// Faucer configuration
+    /// Faucet configuration
     pub faucet_password: String,
+    /// Hyli TLD admin configuration
+    pub hyli_tld_password: String,
 }
 
 /// Configuration for the P2P layer

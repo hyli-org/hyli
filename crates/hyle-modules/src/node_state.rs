@@ -21,6 +21,8 @@ pub mod module;
 mod ordered_tx_map;
 mod timeouts;
 
+pub use hyle_tld::HYLI_TLD_HYDENTITY;
+
 struct SettledTxOutput {
     // Original blob transaction, now settled.
     pub tx: UnsettledBlobTransaction,
@@ -624,6 +626,7 @@ impl NodeState {
             unsettled_tx.blobs.iter(),
             vec![],
             events,
+            &unsettled_tx.identity,
             &self.metrics,
         ) {
             Some(res) => res,
@@ -652,6 +655,7 @@ impl NodeState {
         mut blob_iter: impl Iterator<Item = &'a UnsettledBlobMetadata> + Clone,
         mut blob_proof_output_indices: Vec<usize>,
         events: &mut Vec<TransactionStateEvent>,
+        identity: &Identity,
         _metrics: &NodeStateMetrics,
     ) -> Option<Result<SettlementResult, ()>> {
         // Recursion end-case: we succesfully settled all prior blobs, so success.
@@ -679,6 +683,7 @@ impl NodeState {
                 contracts,
                 &mut contract_changes,
                 &current_blob.blob,
+                identity,
             ) {
                 Ok(()) => {
                     tracing::trace!("Settlement - OK side effect");
@@ -688,6 +693,7 @@ impl NodeState {
                         blob_iter.clone(),
                         blob_proof_output_indices.clone(),
                         events,
+                        identity,
                         _metrics,
                     )
                 }
@@ -744,6 +750,7 @@ impl NodeState {
                 blob_iter.clone(),
                 blob_proof_output_indices.clone(),
                 events,
+                identity,
                 _metrics,
             ) {
                 // If this proof settles, early return, otherwise try the next one (with continue for explicitness)

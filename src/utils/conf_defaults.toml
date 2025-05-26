@@ -60,6 +60,7 @@ solo = true
 stakers = {}
 
 faucet_password = "password"
+hyli_tld_password = "password"
 
 [websocket]
 enabled = true
