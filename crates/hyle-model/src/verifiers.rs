@@ -40,7 +40,7 @@ impl TryFrom<&Verifier> for NativeVerifiers {
 pub struct BlstSignatureBlob {
     pub identity: Identity,
     pub data: Vec<u8>,
-    /// Signature for contatenated data + identity.as_bytes()
+    /// Signature for concatenated data + identity.as_bytes()
     pub signature: Vec<u8>,
     pub public_key: Vec<u8>,
 }

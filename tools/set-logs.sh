@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Vérifier si la variable d'environnement RUST_LOG est définie, sinon utiliser une valeur par défaut
+# Vérifier si la variable d'environment RUST_LOG est définie, sinon utiliser une valeur par défaut
 if [[ -z "$RUST_LOG" ]]; then
   RUST_LOG="info"
   echo "RUST_LOG is not set. Using default: $RUST_LOG"
