@@ -8,7 +8,7 @@ use hyle_model::api::{TransactionStatusDb, TransactionTypeDb};
 use hyle_model::utils::TimestampMs;
 use hyle_modules::{log_error, log_warn};
 use sqlx::Postgres;
-use sqlx::{PgExecutor, QueryBuilder};
+use sqlx::QueryBuilder;
 use std::collections::HashSet;
 use std::ops::DerefMut;
 use std::sync::Arc;
@@ -27,11 +27,30 @@ pub struct TxDataStore {
     pub verified: bool,
 }
 
+#[derive(Debug)]
+pub struct TxProofStore {
+    pub tx_hash: TxHashDb,
+    pub parent_data_proposal_hash: DataProposalHashDb,
+    pub proof: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub struct TxEventStore {
+    pub block_hash: ConsensusProposalHash,
+    pub block_height: i64,
+    pub index: i32,
+    pub tx_hash: TxHashDb,
+    pub parent_data_proposal_hash: DataProposalHashDb,
+    pub events: String,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct IndexerHandlerStore {
     blocks: Vec<Arc<Block>>,
     block_txs: Vec<(i32, TxId, Arc<Block>, Transaction)>,
     tx_data: Vec<TxDataStore>,
+    tx_data_proofs: Vec<TxProofStore>,
+    transactions_events: Vec<TxEventStore>,
 }
 
 impl Indexer {
@@ -184,6 +203,62 @@ impl Indexer {
             .await
             .context("Inserting blobs")?;
 
+        // Insert proofs into the database
+        let mut query_builder =
+            QueryBuilder::<Postgres>::new("INSERT INTO proofs (parent_dp_hash, tx_hash, proof) ");
+
+        query_builder.push_values(self.handler_store.tx_data_proofs.drain(..), |mut b, s| {
+            let TxProofStore {
+                tx_hash,
+                parent_data_proposal_hash,
+                proof,
+            } = s;
+
+            b.push_bind(parent_data_proposal_hash)
+                .push_bind(tx_hash)
+                .push_bind(proof);
+        });
+
+        query_builder.push(" ON CONFLICT(parent_dp_hash, tx_hash) DO NOTHING");
+
+        query_builder
+            .build()
+            .execute(&mut *transaction)
+            .await
+            .context("Inserting proofs")?;
+
+        // Insert transaction events into the database
+        let mut query_builder = QueryBuilder::<Postgres>::new(
+            "INSERT INTO transactions_events (block_hash, block_height, index, tx_hash, parent_dp_hash, events) ",
+        );
+        query_builder.push_values(
+            self.handler_store.transactions_events.drain(..),
+            |mut b, s| {
+                let TxEventStore {
+                    block_hash,
+                    block_height,
+                    index,
+                    tx_hash,
+                    parent_data_proposal_hash,
+                    events,
+                } = s;
+
+                b.push_bind(block_hash)
+                    .push_bind(block_height)
+                    .push_bind(index)
+                    .push_bind(tx_hash)
+                    .push_bind(parent_data_proposal_hash)
+                    .push_bind(events)
+                    .push_unseparated("::jsonb");
+            },
+        );
+
+        query_builder
+            .build()
+            .execute(&mut *transaction)
+            .await
+            .context("Inserting transactions events")?;
+
         transaction.commit().await?;
 
         Ok(())
@@ -220,13 +295,8 @@ impl Indexer {
                     .await?;
 
                 _ = log_warn!(
-                    self.insert_tx_data(
-                        transaction.deref_mut(),
-                        tx_hash,
-                        &tx,
-                        parent_data_proposal_hash_db,
-                    )
-                    .await,
+                    self.insert_tx_data(tx_hash, &tx, parent_data_proposal_hash_db,)
+                        .await,
                     "Inserting tx data at status 'waiting dissemination'"
                 );
             }
@@ -287,16 +357,12 @@ impl Indexer {
         Ok(())
     }
 
-    async fn insert_tx_data<'a, T>(
+    async fn insert_tx_data(
         &mut self,
-        transaction: T,
         tx_hash: &TxHashDb,
         tx: &Transaction,
         parent_data_proposal_hash: DataProposalHashDb,
-    ) -> Result<()>
-    where
-        T: PgExecutor<'a>,
-    {
+    ) -> Result<()> {
         match &tx.transaction_data {
             TransactionData::Blob(blob_tx) => {
                 blob_tx
@@ -331,12 +397,11 @@ impl Indexer {
                 // Then insert the proof in to the proof table.
                 match &tx_data.proof {
                     Some(proof_data) => {
-                        sqlx::query("INSERT INTO proofs (parent_dp_hash, tx_hash, proof) VALUES ($1, $2, $3) ON CONFLICT(parent_dp_hash, tx_hash) DO NOTHING")
-                            .bind(parent_data_proposal_hash)
-                            .bind(tx_hash)
-                            .bind(proof_data.0.clone())
-                            .execute(transaction)
-                            .await?;
+                        self.handler_store.tx_data_proofs.push(TxProofStore {
+                            tx_hash: tx_hash.clone(),
+                            parent_data_proposal_hash: parent_data_proposal_hash.clone(),
+                            proof: proof_data.0.clone(),
+                        });
                     }
                     None => {
                         tracing::trace!(
@@ -375,13 +440,8 @@ impl Indexer {
             let parent_data_proposal_hash: &DataProposalHashDb = &tx_id.0.into();
 
             _ = log_warn!(
-                self.insert_tx_data(
-                    transaction.deref_mut(),
-                    tx_hash,
-                    &tx,
-                    parent_data_proposal_hash.clone(),
-                )
-                .await,
+                self.insert_tx_data(tx_hash, &tx, parent_data_proposal_hash.clone(),)
+                    .await,
                 "Inserting tx data when tx in block"
             );
 
@@ -414,19 +474,14 @@ impl Indexer {
             let serialized_events = serde_json::to_string(&events)?;
             debug!("Inserting transaction state event {tx_hash}: {serialized_events}");
 
-            log_warn!(sqlx::query(
-                "INSERT INTO transaction_state_events (block_hash, block_height, index, tx_hash, parent_dp_hash, events)
-                VALUES ($1, $2, $3, $4, $5, $6::jsonb)",
-            )
-            .bind(block.hash.clone())
-            .bind(block_height)
-            .bind(i)
-            .bind(tx_hash_db)
-            .bind(parent_data_proposal_hash)
-            .bind(serialized_events)
-            .execute(&mut *transaction)
-            .await,
-            "Inserting transaction state event {:?}", tx_hash)?;
+            self.handler_store.transactions_events.push(TxEventStore {
+                block_hash: block.hash.clone(),
+                block_height,
+                index: i,
+                tx_hash: tx_hash_db.clone(),
+                parent_data_proposal_hash,
+                events: serialized_events,
+            });
         }
 
         // Handling new stakers
