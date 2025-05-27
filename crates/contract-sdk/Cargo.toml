@@ -8,6 +8,13 @@ homepage = { workspace = true }
 repository = { workspace = true }
 rust-version = "1.81"
 
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+unused_result_ok = "warn"
+indexing_slicing = "warn"
+undocumented_unsafe_blocks = "warn"
+
 [dependencies]
 hyle-model = { workspace = true, default-features = false }
 serde = { version = "1.0", default-features = false, features = [
