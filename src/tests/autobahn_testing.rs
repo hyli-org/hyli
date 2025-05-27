@@ -1063,6 +1063,7 @@ async fn autobahn_rejoin_flow() {
     }
 
     let mut ns_event_receiver = get_receiver::<NodeStateEvent>(&joining_node.shared_bus).await;
+    let mut commit_receiver = get_receiver::<ConsensusEvent>(&node1.shared_bus).await;
 
     // Catchup up to the last block, but don't actually process the last block message yet.
     for block in blocks.get(0..blocks.len() - 1).unwrap() {
@@ -1124,19 +1125,19 @@ async fn autobahn_rejoin_flow() {
 
     // Catch up
     for _ in 0..4 {
-        let block = SignedBlock {
-            data_proposals: vec![],
-            certificate: AggregateSignature::default(),
-            consensus_proposal: ConsensusProposal {
-                slot: blocks.len() as u64,
-                parent_hash: blocks[blocks.len() - 1].hashed(),
-                ..ConsensusProposal::default()
-            },
-        };
-        da.handle_signed_block(block.clone(), &mut server).await;
-        blocks.push(block);
+        while let Ok(event) = commit_receiver.try_recv() {
+            let ConsensusEvent::CommitConsensusProposal(ccp) = event;
+            if ccp.consensus_proposal.slot > 2 {
+                let block = SignedBlock {
+                    data_proposals: vec![],
+                    certificate: ccp.certificate,
+                    consensus_proposal: ccp.consensus_proposal,
+                };
+                da.handle_signed_block(block.clone(), &mut server).await;
+                blocks.push(block);
+            }
+        }
         while let Ok(event) = ns_event_receiver.try_recv() {
-            info!("{:?}", event);
             joining_node
                 .consensus_ctx
                 .handle_node_state_event(event)
@@ -1144,6 +1145,8 @@ async fn autobahn_rejoin_flow() {
                 .expect("should handle data event");
         }
     }
+
+    println!("TOTORO2");
 
     // Process round
     node1

@@ -626,6 +626,12 @@ impl Consensus {
                             block.block_height.0;
                         self.store.bft_round_state.slot = block.block_height.0 + 1;
                         self.store.bft_round_state.view = 0;
+                        self.store.bft_round_state.parent_hash = block.hash.clone();
+                        // Some of our internal logic relies on BFT slot + 1 == cp slot to mean we have committed, so do that.
+                        self.store.bft_round_state.current_proposal = ConsensusProposal {
+                            slot: block.block_height.0,
+                            ..Default::default()
+                        }
                     }
                 }
                 Ok(())
