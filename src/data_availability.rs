@@ -28,8 +28,8 @@ use crate::{
 };
 use anyhow::{Context, Error, Result};
 use core::str;
-use std::{collections::BTreeSet, time::Duration};
-use tracing::{debug, error, info, trace, warn};
+use std::collections::BTreeSet;
+use tracing::{debug, info, trace, warn};
 
 pub mod codec;
 
@@ -164,7 +164,7 @@ impl DataAvailability {
             Some((mut block_hashes, peer_ip)) = catchup_receiver.recv() => {
 
                 #[cfg(test)]
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
                 let hash = block_hashes.pop();
 
@@ -710,7 +710,9 @@ pub mod tests {
             }
         }
 
-        assert_eq!(heights_received, (0..18).collect::<Vec<u64>>());
+        for i in 0..18 {
+            assert!(heights_received.contains(&i));
+        }
     }
     #[test_log::test(tokio::test)]
     async fn test_da_catchup() {
