@@ -10,7 +10,7 @@ rust-version.workspace = true
 
 
 [dependencies]
-tokio = "1.44"
+tokio = "1.45"
 hyllar = { workspace = true, features = ["client"] }
 hydentity = { workspace = true, features = ["client"] }
 hyle-contracts = { workspace = true }
