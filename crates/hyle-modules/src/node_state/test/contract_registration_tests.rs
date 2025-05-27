@@ -277,6 +277,28 @@ pub fn make_delete_tx_with_hyli(tld: ContractName, contract_name: ContractName) 
         ],
     )
 }
+#[test_log::test(tokio::test)]
+async fn test_delete_hydentity_should_not_be_possible() {
+    let mut state = new_node_state().await;
+
+    let register_hydentity =
+        make_register_tx("hyle@hyle".into(), "hyle".into(), "hydentity".into());
+
+    let mut delete_tx = make_delete_tx_with_hyli("hyle".into(), "hydentity".into());
+
+    let mut output =
+        make_hyle_output_with_state(delete_tx.clone(), BlobIndex(1), &[0, 1, 2, 3], &[1]);
+    let delete_hyli_proof = new_proof_tx(&"hydentity".into(), &output, &delete_tx.hashed());
+
+    let block = state.craft_block_and_handle(1, vec![register_hydentity.into()]);
+
+    assert_eq!(state.contracts.len(), 2);
+
+    let block = state.craft_block_and_handle(2, vec![delete_tx.into(), delete_hyli_proof.into()]);
+
+    assert_eq!(block.failed_txs.len(), 1);
+    assert_eq!(state.contracts.len(), 2);
+}
 
 #[test_log::test(tokio::test)]
 async fn test_register_contract_and_delete_hyle() {
