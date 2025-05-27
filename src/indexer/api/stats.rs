@@ -10,6 +10,12 @@ pub struct Point<T = i64> {
     pub y: Option<T>,
 }
 
+#[derive(sqlx::FromRow, Debug)]
+struct PeakStat {
+    pub minute_bucket: i64,
+    pub tx_count: i64,
+}
+
 #[utoipa::path(
     get,
     tag = "Indexer",
@@ -145,6 +151,32 @@ pub async fn get_stats(
         .map(|point| (point.x, point.y.unwrap_or(0.)))
         .collect::<Vec<(i64, f64)>>();
 
+    let peak_txs = log_error!(
+        sqlx::query_as::<_, PeakStat>(
+            "
+            SELECT
+              extract(epoch FROM date_trunc('minute', b.timestamp))::bigint  AS minute_bucket,
+              count(*)::bigint                  AS tx_count
+            FROM blocks b
+            JOIN transactions t ON t.block_hash = b.hash
+            WHERE b.timestamp >= now() - interval '24 hours'
+            GROUP BY 1
+            ORDER BY 2 DESC
+            LIMIT 1;
+            "
+        )
+        .fetch_optional(&state.db)
+        .await,
+        "Failed to fetch peak TPM"
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .unwrap_or(PeakStat {
+        minute_bucket: 0,
+        tx_count: 0,
+    });
+
+    let peak_txs = (peak_txs.minute_bucket, peak_txs.tx_count);
+
     Ok(Json(NetworkStats {
         total_transactions,
         txs_last_day,
@@ -152,6 +184,7 @@ pub async fn get_stats(
         contracts_last_day,
         graph_tx_volume,
         graph_block_time,
+        peak_txs,
     }))
 }
 
