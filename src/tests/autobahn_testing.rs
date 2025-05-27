@@ -1146,8 +1146,6 @@ async fn autobahn_rejoin_flow() {
         }
     }
 
-    println!("TOTORO2");
-
     // Process round
     node1
         .start_round_with_cut_from_mempool(TimestampMs(6000))
