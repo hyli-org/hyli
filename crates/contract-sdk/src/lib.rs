@@ -178,6 +178,10 @@ const fn byte_to_u8(byte: u8) -> u8 {
     }
 }
 
+#[allow(
+    clippy::indexing_slicing,
+    reason = "const block, shouldn't be used at runtime."
+)]
 pub const fn str_to_u8(s: &str) -> [u8; 32] {
     let mut bytes = [0u8; 32];
     let chrs = s.as_bytes();
