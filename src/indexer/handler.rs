@@ -127,6 +127,8 @@ impl Indexer {
                 self.dump_store_to_db().await?;
             }
         }
+
+
         Ok(())
     }
 
