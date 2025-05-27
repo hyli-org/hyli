@@ -1,8 +1,10 @@
+use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::transaction_builder::TxExecutorHandler;
 use hyle_verifiers::native::verify;
 use sdk::verifiers::NativeVerifiers;
 
 /// Convenience utility for verifying blobs for native verifiers.
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct NativeVerifierHandler;
 
 impl TxExecutorHandler for NativeVerifierHandler {
