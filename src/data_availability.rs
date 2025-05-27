@@ -762,6 +762,7 @@ pub mod tests {
             .await
             .expect("Error while asking for catchup blocks");
 
+        // Waiting a bit to push the block ten in the middle of all other 1..9 blocks
         tokio::time::sleep(Duration::from_millis(200)).await;
         _ = block_sender.send(MempoolBlockEvent::BuiltSignedBlock(block_ten.clone()));
 
