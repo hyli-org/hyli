@@ -3,7 +3,7 @@ use hyle_verifiers::native::verify;
 use sdk::verifiers::NativeVerifiers;
 
 /// Convenience utility for verifying blobs for native verifiers.
-struct NativeVerifierHandler;
+pub struct NativeVerifierHandler;
 
 impl TxExecutorHandler for NativeVerifierHandler {
     fn handle(&mut self, calldata: &sdk::Calldata) -> anyhow::Result<sdk::HyleOutput> {
