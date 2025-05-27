@@ -8,8 +8,8 @@ use hyle_model::api::{TransactionStatusDb, TransactionTypeDb};
 use hyle_model::utils::TimestampMs;
 use hyle_modules::{log_error, log_warn};
 use hyle_net::clock::TimestampMsClock;
+use sqlx::Postgres;
 use sqlx::QueryBuilder;
-use sqlx::{Execute, Postgres};
 use std::collections::HashSet;
 use std::ops::DerefMut;
 use std::sync::Arc;
@@ -45,14 +45,69 @@ pub struct TxEventStore {
     pub events: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
+pub struct TxContractStore {
+    pub tx_hash: TxHashDb,
+    pub parent_data_proposal_hash: DataProposalHashDb,
+    pub verifier: String,
+    pub program_id: Vec<u8>,
+    pub state_commitment: Vec<u8>,
+    pub contract_name: String,
+}
+
+#[derive(Debug)]
+pub struct TxContractStateStore {
+    pub contract_name: String,
+    pub block_hash: ConsensusProposalHash,
+    pub state_commitment: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub struct TxBlobProofOutputStore {
+    pub proof_tx_hash: TxHashDb,
+    pub proof_parent_dp_hash: DataProposalHashDb,
+    pub blob_tx_hash: TxHashDb,
+    pub blob_parent_dp_hash: DataProposalHashDb,
+    pub blob_index: i32,
+    pub blob_proof_output_index: i32,
+    pub contract_name: String,
+    pub hyle_output: String,
+    pub settled: bool,
+}
+
+#[derive(Default)]
 pub(crate) struct IndexerHandlerStore {
     blocks: Vec<Arc<Block>>,
     block_txs: Vec<(i32, TxId, Arc<Block>, Transaction)>,
     tx_data: Vec<TxDataStore>,
     tx_data_proofs: Vec<TxProofStore>,
     transactions_events: Vec<TxEventStore>,
-    sql_updates: Vec<String>,
+    sql_updates: Vec<
+        sqlx::query::Query<
+            'static,
+            Postgres,
+            <sqlx::Postgres as sqlx::Database>::Arguments<'static>,
+        >,
+    >,
+    contracts: Vec<TxContractStore>,
+    contract_states: Vec<TxContractStateStore>,
+    blob_proof_outputs: Vec<TxBlobProofOutputStore>,
+}
+
+impl std::fmt::Debug for IndexerHandlerStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IndexerHandlerStore")
+            .field("blocks", &self.blocks.len())
+            .field("block_txs", &self.block_txs.len())
+            .field("tx_data", &self.tx_data.len())
+            .field("tx_data_proofs", &self.tx_data_proofs.len())
+            .field("transactions_events", &self.transactions_events.len())
+            .field("sql_updates", &self.sql_updates.len())
+            .field("contracts", &self.contracts.len())
+            .field("contract_states", &self.contract_states.len())
+            .field("blob_proof_outputs", &self.blob_proof_outputs.len())
+            .finish()
+    }
 }
 
 impl Indexer {
@@ -282,17 +337,110 @@ impl Indexer {
                 .context("Inserting transactions events")?;
         }
 
-        if !self.handler_store.sql_updates.is_empty() {
-            let mut query_builder = QueryBuilder::<Postgres>::new("");
-            let mut separated = query_builder.separated("; ");
-            for sql_update in self.handler_store.sql_updates.drain(..) {
-                separated.push(sql_update);
-            }
+        // Insert contracts into the database
+        if !self.handler_store.contracts.is_empty() {
+            let mut query_builder = QueryBuilder::<Postgres>::new(
+                "INSERT INTO contracts (tx_hash, parent_dp_hash, verifier, program_id, state_commitment, contract_name) ",
+            );
+
+            query_builder.push_values(self.handler_store.contracts.drain(..), |mut b, s| {
+                let TxContractStore {
+                    tx_hash,
+                    parent_data_proposal_hash,
+                    verifier,
+                    program_id,
+                    state_commitment,
+                    contract_name,
+                } = s;
+
+                b.push_bind(tx_hash)
+                    .push_bind(parent_data_proposal_hash)
+                    .push_bind(verifier)
+                    .push_bind(program_id)
+                    .push_bind(state_commitment)
+                    .push_bind(contract_name);
+            });
+
             query_builder
                 .build()
                 .execute(&mut *transaction)
                 .await
-                .context("Executing SQL updates")?;
+                .context("Inserting contracts")?;
+        }
+
+        // Insert contract states into the database
+        if !self.handler_store.contract_states.is_empty() {
+            let mut query_builder = QueryBuilder::<Postgres>::new(
+                "INSERT INTO contract_state (contract_name, block_hash, state_commitment) ",
+            );
+
+            query_builder.push_values(self.handler_store.contract_states.drain(..), |mut b, s| {
+                let TxContractStateStore {
+                    contract_name,
+                    block_hash,
+                    state_commitment,
+                } = s;
+
+                b.push_bind(contract_name)
+                    .push_bind(block_hash)
+                    .push_bind(state_commitment);
+            });
+
+            query_builder
+                .build()
+                .execute(&mut *transaction)
+                .await
+                .context("Inserting contract states")?;
+        }
+
+        // Insert blob proof outputs into the database
+        if !self.handler_store.blob_proof_outputs.is_empty() {
+            let mut query_builder = QueryBuilder::<Postgres>::new(
+                "INSERT INTO blob_proof_outputs (proof_tx_hash, proof_parent_dp_hash, blob_tx_hash, blob_parent_dp_hash, blob_index, blob_proof_output_index, contract_name, hyle_output, settled) ",
+            );
+
+            query_builder.push_values(
+                self.handler_store.blob_proof_outputs.drain(..),
+                |mut b, s| {
+                    let TxBlobProofOutputStore {
+                        proof_tx_hash,
+                        proof_parent_dp_hash,
+                        blob_tx_hash,
+                        blob_parent_dp_hash,
+                        blob_index,
+                        blob_proof_output_index,
+                        contract_name,
+                        hyle_output,
+                        settled,
+                    } = s;
+
+                    b.push_bind(proof_tx_hash)
+                        .push_bind(proof_parent_dp_hash)
+                        .push_bind(blob_tx_hash)
+                        .push_bind(blob_parent_dp_hash)
+                        .push_bind(blob_index)
+                        .push_bind(blob_proof_output_index)
+                        .push_bind(contract_name)
+                        .push_bind(hyle_output)
+                        .push_unseparated("::jsonb")
+                        .push_bind(settled);
+                },
+            );
+
+            query_builder
+                .build()
+                .execute(&mut *transaction)
+                .await
+                .context("Inserting blob proof outputs")?;
+        }
+
+        if !self.handler_store.sql_updates.is_empty() {
+            for sql_update in self.handler_store.sql_updates.drain(..) {
+                sql_update
+                    .execute(&mut *transaction)
+                    .await
+                    .context("Executing SQL update")?;
+            }
         }
 
         transaction.commit().await?;
@@ -462,8 +610,6 @@ impl Indexer {
             trace!("Indexing block at height {:?}", block.block_height);
         }
 
-        let mut transaction: sqlx::PgTransaction = self.state.db.begin().await?;
-
         let arc_block = Arc::new(block.clone());
 
         self.handler_store.blocks.push(arc_block.clone());
@@ -542,14 +688,12 @@ impl Indexer {
                 ))?
                 .clone()
                 .into();
-            let tx_hash: &TxHashDb = &settled_blob_tx_hash.into();
+            let tx_hash: TxHashDb = settled_blob_tx_hash.into();
             self.handler_store.sql_updates.push(
                 sqlx::query("UPDATE transactions SET transaction_status = $1 WHERE tx_hash = $2 AND parent_dp_hash = $3")
                     .bind(TransactionStatusDb::Success)
                     .bind(tx_hash)
                     .bind(dp_hash_db)
-                    .sql()
-                    .to_string()
             );
         }
 
@@ -563,14 +707,12 @@ impl Indexer {
                 ))?
                 .clone()
                 .into();
-            let tx_hash: &TxHashDb = &failed_blob_tx_hash.into();
+            let tx_hash: TxHashDb = failed_blob_tx_hash.into();
             self.handler_store.sql_updates.push(
                 sqlx::query("UPDATE transactions SET transaction_status = $1 WHERE tx_hash = $2 AND parent_dp_hash = $3")
                     .bind(TransactionStatusDb::Failure)
                     .bind(tx_hash)
                     .bind(dp_hash_db)
-                    .sql()
-                    .to_string()
             );
         }
 
@@ -585,14 +727,12 @@ impl Indexer {
                 ))?
                 .clone()
                 .into();
-            let tx_hash: &TxHashDb = &timed_out_tx_hash.into();
+            let tx_hash: TxHashDb = timed_out_tx_hash.into();
             self.handler_store.sql_updates.push(
                 sqlx::query("UPDATE transactions SET transaction_status = $1 WHERE tx_hash = $2 AND parent_dp_hash = $3")
                     .bind(TransactionStatusDb::TimedOut)
                     .bind(tx_hash)
                     .bind(dp_hash_db)
-                    .sql()
-                    .to_string()
             );
         }
 
@@ -626,20 +766,19 @@ impl Indexer {
             let serialized_hyle_output =
                 serde_json::to_string(&handled_blob_proof_output.hyle_output)?;
 
-            sqlx::query(
-                "INSERT INTO blob_proof_outputs (proof_tx_hash, proof_parent_dp_hash, blob_tx_hash, blob_parent_dp_hash, blob_index, blob_proof_output_index, contract_name, hyle_output, settled)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, false)",
-            )
-            .bind(proof_tx_hash)
-            .bind(proof_dp_hash)
-            .bind(blob_tx_hash)
-            .bind(blob_dp_hash)
-            .bind(blob_index)
-            .bind(blob_proof_output_index)
-            .bind(handled_blob_proof_output.contract_name.0)
-            .bind(serialized_hyle_output)
-            .execute(&mut *transaction)
-            .await?;
+            self.handler_store
+                .blob_proof_outputs
+                .push(TxBlobProofOutputStore {
+                    proof_tx_hash: proof_tx_hash.clone(),
+                    proof_parent_dp_hash: proof_dp_hash.clone(),
+                    blob_tx_hash: blob_tx_hash.clone(),
+                    blob_parent_dp_hash: blob_dp_hash.clone(),
+                    blob_index,
+                    blob_proof_output_index,
+                    contract_name: handled_blob_proof_output.contract_name.0.clone(),
+                    hyle_output: serialized_hyle_output,
+                    settled: false,
+                });
         }
 
         // Handling verified blob (! must come after blob proof output, as it updates that)
@@ -653,17 +792,15 @@ impl Indexer {
                 ))?
                 .clone()
                 .into();
-            let blob_tx_hash: &TxHashDb = &blob_tx_hash.into();
+            let blob_tx_hash: TxHashDb = blob_tx_hash.into();
             let blob_index = i32::try_from(blob_index.0)
                 .map_err(|_| anyhow::anyhow!("Blob index is too large to fit into an i32"))?;
 
             self.handler_store.sql_updates.push(
                 sqlx::query("UPDATE blobs SET verified = true WHERE tx_hash = $1 AND parent_dp_hash = $2 AND blob_index = $3")
-                    .bind(blob_tx_hash)
+                    .bind(blob_tx_hash.clone())
                     .bind(blob_tx_parent_dp_hash.clone())
                     .bind(blob_index)
-                    .sql()
-                    .to_string()
             );
 
             if let Some(blob_proof_output_index) = blob_proof_output_index {
@@ -678,8 +815,6 @@ impl Indexer {
                         .bind(blob_tx_parent_dp_hash)
                         .bind(blob_index)
                         .bind(blob_proof_output_index)
-                        .sql()
-                        .to_string()
                 );
             }
         }
@@ -702,35 +837,29 @@ impl Indexer {
             let tx_hash: &TxHashDb = &tx_hash.into();
 
             // Adding to Contract table
-            sqlx::query(
-                "INSERT INTO contracts (tx_hash, parent_dp_hash, verifier, program_id, state_commitment, contract_name)
-                VALUES ($1, $2, $3, $4, $5, $6)",
-            )
-            .bind(tx_hash)
-            .bind(tx_parent_dp_hash)
-            .bind(verifier)
-            .bind(program_id)
-            .bind(state_commitment)
-            .bind(contract_name)
-            .execute(&mut *transaction)
-            .await?;
+            self.handler_store.contracts.push(TxContractStore {
+                tx_hash: tx_hash.clone(),
+                parent_data_proposal_hash: tx_parent_dp_hash.clone(),
+                verifier: verifier.clone(),
+                program_id: program_id.clone(),
+                state_commitment: state_commitment.clone(),
+                contract_name: contract_name.clone(),
+            });
 
             // Adding to ContractState table
-            sqlx::query(
-                "INSERT INTO contract_state (contract_name, block_hash, state_commitment)
-                VALUES ($1, $2, $3)",
-            )
-            .bind(contract_name)
-            .bind(block.hash.clone())
-            .bind(state_commitment)
-            .execute(&mut *transaction)
-            .await?;
+            self.handler_store
+                .contract_states
+                .push(TxContractStateStore {
+                    contract_name: contract_name.clone(),
+                    block_hash: block.hash.clone(),
+                    state_commitment: state_commitment.clone(),
+                });
         }
 
         // Handling updated contract state
         for (contract_name, state_commitment) in block.updated_states {
-            let contract_name = &contract_name.0;
-            let state_commitment = &state_commitment.0;
+            let contract_name = contract_name.0;
+            let state_commitment = state_commitment.0;
             self.handler_store.sql_updates.push(
                 sqlx::query(
                     "UPDATE contract_state SET state_commitment = $1 WHERE contract_name = $2 AND block_hash = $3",
@@ -738,8 +867,6 @@ impl Indexer {
                     .bind(state_commitment.clone())
                     .bind(contract_name.clone())
                     .bind(block.hash.clone())
-                    .sql()
-                    .to_string()
             );
 
             self.handler_store.sql_updates.push(
@@ -747,16 +874,9 @@ impl Indexer {
                     "UPDATE contracts SET state_commitment = $1 WHERE contract_name = $2",
                 )
                 .bind(state_commitment)
-                .bind(contract_name)
-                .sql()
-                .to_string(),
+                .bind(contract_name),
             );
         }
-
-        // Commit the transaction
-        transaction.commit().await?;
-
-        tracing::debug!("Indexed block at height {:?}", block.block_height);
 
         Ok(())
     }
