@@ -11,15 +11,182 @@ use sqlx::Postgres;
 use sqlx::{PgExecutor, QueryBuilder};
 use std::collections::HashSet;
 use std::ops::DerefMut;
+use std::sync::Arc;
 use tracing::{debug, trace};
 
 use super::Indexer;
 
+#[derive(Debug)]
+pub struct TxDataStore {
+    pub tx_hash: TxHashDb,
+    pub parent_data_proposal_hash: DataProposalHashDb,
+    pub blob_index: i32,
+    pub identity: String,
+    pub contract_name: String,
+    pub blob_data: Vec<u8>,
+    pub verified: bool,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct IndexerHandlerStore {
+    blocks: Vec<Arc<Block>>,
+    block_txs: Vec<(i32, TxId, Arc<Block>, Transaction)>,
+    tx_data: Vec<TxDataStore>,
+}
+
 impl Indexer {
     pub async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<(), Error> {
         match event {
-            NodeStateEvent::NewBlock(block) => self.handle_processed_block(*block).await,
+            NodeStateEvent::NewBlock(block) => self.handle_processed_block(*block).await?,
+        };
+
+        self.dump_store_to_db().await?;
+
+        Ok(())
+    }
+
+    async fn dump_store_to_db(&mut self) -> Result<()> {
+        if self.handler_store.blocks.is_empty() {
+            return Ok(());
         }
+
+        let mut transaction = self.state.db.begin().await?;
+
+        // Insert blocks into the database
+        let mut query_builder = QueryBuilder::<Postgres>::new(
+            "INSERT INTO blocks (hash, parent_hash, height, timestamp, total_txs) ",
+        );
+
+        query_builder
+            .push_values(self.handler_store.blocks.drain(..), |mut b, block| {
+                let block_hash = block.hash.clone();
+                let block_height = log_error!(
+                    i64::try_from(block.block_height.0).map_err(|_| anyhow::anyhow!(
+                        "Block height is too large to fit into an i64"
+                    )),
+                    "Converting block height into i64"
+                )
+                .unwrap_or_default();
+                let total_txs = block.txs.len() as i64;
+
+                let block_timestamp = into_utc_date_time(&block.block_timestamp)
+                    .context("Block's timestamp is incorrect")
+                    .unwrap_or_else(|_| {
+                        // If the timestamp is incorrect, we can use the current time as a fallback.
+                        Utc::now()
+                    });
+
+                b.push_bind(block_hash)
+                    .push_bind(block.parent_hash.clone())
+                    .push_bind(block_height)
+                    .push_bind(block_timestamp)
+                    .push_bind(total_txs);
+            })
+            .build()
+            .execute(&mut *transaction)
+            .await
+            .context("Inserting blocks")?;
+
+        // Insert transactions into the database
+        let mut query_builder = QueryBuilder::<Postgres>::new(
+            "INSERT INTO transactions (tx_hash, parent_dp_hash, version, transaction_type, transaction_status, block_hash, block_height, index, lane_id) ",
+        );
+
+        query_builder.push_values(
+            self.handler_store.block_txs.drain(..),
+            |mut b, (index, tx_id, block, tx)| {
+                let version = log_error!(
+                    i32::try_from(tx.version)
+                        .map_err(|_| anyhow::anyhow!("Tx version is too large to fit into an i32")),
+                    "Converting tx version into i32"
+                )
+                .unwrap_or_default();
+
+                let block_height = log_error!(
+                    i64::try_from(block.block_height.0).map_err(|_| anyhow::anyhow!(
+                        "Block height is too large to fit into an i64"
+                    )),
+                    "Converting block height into i64"
+                )
+                .unwrap_or_default();
+
+                let tx_type = TransactionTypeDb::from(&tx);
+                let tx_status = match tx.transaction_data {
+                    TransactionData::Blob(_) => TransactionStatusDb::Sequenced,
+                    TransactionData::Proof(_) => TransactionStatusDb::Success,
+                    TransactionData::VerifiedProof(_) => TransactionStatusDb::Success,
+                };
+
+                let lane_id: LaneIdDb = log_error!(
+                    block
+                        .lane_ids
+                        .get(&tx_id.1)
+                        .context(format!("No lane id present for tx {}", tx_id)),
+                    "Getting lane id for tx"
+                )
+                .unwrap_or(&LaneId::default())
+                .clone()
+                .into();
+
+                let parent_data_proposal_hash: &DataProposalHashDb = &tx_id.0.into();
+                let tx_hash: TxHashDb = tx_id.1.into();
+
+                b.push_bind(tx_hash)
+                    .push_bind(parent_data_proposal_hash.clone())
+                    .push_bind(version)
+                    .push_bind(tx_type)
+                    .push_bind(tx_status)
+                    .push_bind(block.hash.clone())
+                    .push_bind(block_height)
+                    .push_bind(index)
+                    .push_bind(lane_id);
+            },
+        );
+        query_builder.push(" ON CONFLICT(tx_hash, parent_dp_hash) DO UPDATE SET ");
+        query_builder.push("transaction_status=EXCLUDED.transaction_status, block_hash=EXCLUDED.block_hash, block_height=EXCLUDED.block_height, index=EXCLUDED.index");
+
+        query_builder
+            .build()
+            .execute(&mut *transaction)
+            .await
+            .context("Inserting transactions")?;
+
+        // Insert blobs into the database
+        let mut query_builder = QueryBuilder::<Postgres>::new(
+            "INSERT INTO blobs (tx_hash, parent_dp_hash, blob_index, identity, contract_name, data, verified) ",
+        );
+
+        query_builder.push_values(self.handler_store.tx_data.drain(..), |mut b, s| {
+            let TxDataStore {
+                tx_hash,
+                parent_data_proposal_hash,
+                blob_index,
+                identity,
+                contract_name,
+                blob_data,
+                verified,
+            } = s;
+
+            b.push_bind(tx_hash)
+                .push_bind(parent_data_proposal_hash)
+                .push_bind(blob_index)
+                .push_bind(identity)
+                .push_bind(contract_name)
+                .push_bind(blob_data)
+                .push_bind(verified);
+        });
+
+        query_builder.push(" ON CONFLICT DO NOTHING");
+
+        query_builder
+            .build()
+            .execute(&mut *transaction)
+            .await
+            .context("Inserting blobs")?;
+
+        transaction.commit().await?;
+
+        Ok(())
     }
 
     pub async fn handle_mempool_status_event(&mut self, event: MempoolStatusEvent) -> Result<()> {
@@ -120,34 +287,6 @@ impl Indexer {
         Ok(())
     }
 
-    async fn insert_block<'a, T: PgExecutor<'a>>(
-        &mut self,
-        transaction: T,
-        block: &Block,
-    ) -> Result<()> {
-        // Insert the block into the blocks table
-        let block_hash = &block.hash;
-        let block_height = i64::try_from(block.block_height.0)
-            .map_err(|_| anyhow::anyhow!("Block height is too large to fit into an i64"))?;
-        let total_txs = block.txs.len() as i64;
-
-        let block_timestamp =
-            into_utc_date_time(&block.block_timestamp).context("Block's timestamp is incorrect")?;
-
-        sqlx::query(
-            "INSERT INTO blocks (hash, parent_hash, height, timestamp, total_txs) VALUES ($1, $2, $3, $4, $5)",
-        )
-        .bind(block_hash)
-        .bind(block.parent_hash.clone())
-        .bind(block_height)
-        .bind(block_timestamp)
-        .bind(total_txs)
-        .execute(transaction)
-        .await?;
-
-        Ok(())
-    }
-
     async fn insert_tx_data<'a, T>(
         &mut self,
         transaction: T,
@@ -160,36 +299,33 @@ impl Indexer {
     {
         match &tx.transaction_data {
             TransactionData::Blob(blob_tx) => {
-                let mut query_builder = QueryBuilder::<Postgres>::new(
-                        "INSERT INTO blobs (tx_hash, parent_dp_hash, blob_index, identity, contract_name, data, verified) ",
-                    );
-
-                query_builder.push_values(
-                    blob_tx.blobs.iter().enumerate(),
-                    |mut b, (blob_index, blob)| {
+                blob_tx
+                    .blobs
+                    .iter()
+                    .enumerate()
+                    .for_each(|(blob_index, blob)| {
                         let blob_index = log_error!(
                             i32::try_from(blob_index),
                             "Blob index is too large to fit into an i32"
                         )
                         .unwrap_or_default();
 
-                        let identity = &blob_tx.identity.0;
-                        let contract_name = &blob.contract_name.0;
-                        let blob_data = &blob.data.0;
-                        b.push_bind(tx_hash)
-                            .push_bind(parent_data_proposal_hash.clone())
-                            .push_bind(blob_index)
-                            .push_bind(identity)
-                            .push_bind(contract_name)
-                            .push_bind(blob_data)
-                            .push_bind(false);
-                    },
-                );
+                        let identity = blob_tx.identity.0.clone();
+                        let contract_name = blob.contract_name.0.clone();
+                        let blob_data = blob.data.0.clone();
+                        let tx_hash = tx_hash.clone();
+                        let parent_data_proposal_hash = parent_data_proposal_hash.clone();
 
-                query_builder.push(" ON CONFLICT DO NOTHING");
-
-                let query = query_builder.build();
-                query.execute(transaction).await?;
+                        self.handler_store.tx_data.push(TxDataStore {
+                            tx_hash,
+                            parent_data_proposal_hash,
+                            blob_index,
+                            identity,
+                            contract_name,
+                            blob_data,
+                            verified: false,
+                        });
+                    });
             }
             TransactionData::VerifiedProof(tx_data) => {
                 // Then insert the proof in to the proof table.
@@ -221,52 +357,22 @@ impl Indexer {
         trace!("Indexing block at height {:?}", block.block_height);
         let mut transaction: sqlx::PgTransaction = self.state.db.begin().await?;
 
-        self.insert_block(transaction.deref_mut(), &block).await?;
+        let arc_block = Arc::new(block.clone());
+
+        self.handler_store.blocks.push(arc_block.clone());
+
         let block_height = i64::try_from(block.block_height.0)
             .map_err(|_| anyhow::anyhow!("Block height is too large to fit into an i64"))?;
 
         let mut i: i32 = 0;
         #[allow(clippy::explicit_counter_loop)]
         for (tx_id, tx) in block.txs {
-            let version = i32::try_from(tx.version)
-                .map_err(|_| anyhow::anyhow!("Tx version is too large to fit into an i32"))?;
+            self.handler_store
+                .block_txs
+                .push((i, tx_id.clone(), arc_block.clone(), tx.clone()));
 
-            // Insert the transaction into the transactions table
-            let tx_type = TransactionTypeDb::from(&tx);
-            let tx_status = match tx.transaction_data {
-                TransactionData::Blob(_) => TransactionStatusDb::Sequenced,
-                TransactionData::Proof(_) => TransactionStatusDb::Success,
-                TransactionData::VerifiedProof(_) => TransactionStatusDb::Success,
-            };
-
-            let lane_id: LaneIdDb = block
-                .lane_ids
-                .get(&tx_id.1)
-                .context(format!("No lane id present for tx {}", tx_id))?
-                .clone()
-                .into();
-
-            let parent_data_proposal_hash: &DataProposalHashDb = &tx_id.0.into();
             let tx_hash: &TxHashDb = &tx_id.1.into();
-
-            // Make sure transaction exists (Missed Mempool Status event)
-            log_warn!(sqlx::query(
-                "INSERT INTO transactions (tx_hash, parent_dp_hash, version, transaction_type, transaction_status, block_hash, block_height, index, lane_id)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                ON CONFLICT(tx_hash, parent_dp_hash) DO UPDATE SET transaction_status=$5, block_hash=$6, block_height=$7, index=$8",
-            )
-            .bind(tx_hash)
-            .bind(parent_data_proposal_hash.clone())
-            .bind(version)
-            .bind(tx_type.clone())
-            .bind(tx_status.clone())
-            .bind(block.hash.clone())
-            .bind(block_height)
-            .bind(i)
-            .bind(lane_id)
-            .execute(&mut *transaction)
-            .await,
-            "Inserting transaction {:?}", tx_hash)?;
+            let parent_data_proposal_hash: &DataProposalHashDb = &tx_id.0.into();
 
             _ = log_warn!(
                 self.insert_tx_data(

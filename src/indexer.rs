@@ -17,6 +17,7 @@ use axum::{
     Router,
 };
 use futures::{SinkExt, StreamExt};
+use handler::IndexerHandlerStore;
 use hyle_model::api::{
     BlobWithStatus, TransactionStatusDb, TransactionTypeDb, TransactionWithBlobs,
 };
@@ -58,6 +59,7 @@ pub struct Indexer {
     state: IndexerApiState,
     new_sub_receiver: tokio::sync::mpsc::Receiver<(ContractName, WebSocket)>,
     subscribers: Subscribers,
+    handler_store: IndexerHandlerStore,
 }
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/indexer/migrations");
@@ -89,6 +91,7 @@ impl Module for Indexer {
             },
             new_sub_receiver,
             subscribers,
+            handler_store: IndexerHandlerStore::default(),
         };
 
         if let Ok(mut guard) = ctx.1.router.lock() {
@@ -351,6 +354,7 @@ mod test {
             },
             new_sub_receiver,
             subscribers: HashMap::new(),
+            handler_store: IndexerHandlerStore::default(),
         }
     }
 
