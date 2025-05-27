@@ -452,7 +452,11 @@ mod test {
             .await;
         transactions_response.assert_status_ok();
         let json_response = transactions_response.json::<APITransaction>();
-        assert_eq!(json_response.transaction_status, tx_status);
+        assert_eq!(
+            json_response.transaction_status, tx_status,
+            "Transaction status mismatch for tx_hash: {}",
+            tx_hash
+        );
     }
 
     async fn assert_tx_not_found(server: &TestServer, tx_hash: TxHash) {
@@ -568,8 +572,11 @@ mod test {
 
         indexer
             .handle_processed_block(block)
-            .await
             .expect("Failed to handle block");
+        indexer
+            .dump_store_to_db()
+            .await
+            .expect("Failed to dump store to DB");
 
         //
         // Handling MempoolStatusEvent
@@ -716,8 +723,11 @@ mod test {
         let block_2_hash = block_2.hash.clone();
         indexer
             .handle_processed_block(block_2)
-            .await
             .expect("Failed to handle block");
+        indexer
+            .dump_store_to_db()
+            .await
+            .expect("Failed to dump store to DB");
 
         assert_tx_status(
             &server,

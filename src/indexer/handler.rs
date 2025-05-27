@@ -10,7 +10,7 @@ use hyle_modules::{log_error, log_warn};
 use hyle_net::clock::TimestampMsClock;
 use sqlx::Postgres;
 use sqlx::QueryBuilder;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::DerefMut;
 use std::sync::Arc;
 use tracing::{debug, info, trace};
@@ -78,7 +78,7 @@ pub struct TxBlobProofOutputStore {
 #[derive(Default)]
 pub(crate) struct IndexerHandlerStore {
     blocks: Vec<Arc<Block>>,
-    block_txs: Vec<(i32, TxId, Arc<Block>, Transaction)>,
+    block_txs: HashMap<TxId, (i32, Arc<Block>, Transaction)>,
     tx_data: Vec<TxDataStore>,
     tx_data_proofs: Vec<TxProofStore>,
     transactions_events: Vec<TxEventStore>,
@@ -113,7 +113,7 @@ impl std::fmt::Debug for IndexerHandlerStore {
 impl Indexer {
     pub async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<(), Error> {
         match event {
-            NodeStateEvent::NewBlock(block) => self.handle_processed_block(*block).await?,
+            NodeStateEvent::NewBlock(block) => self.handle_processed_block(*block)?,
         };
 
         if self.handler_store.blocks.len() >= 1000 {
@@ -127,11 +127,10 @@ impl Indexer {
                 self.dump_store_to_db().await?;
             }
         }
-
         Ok(())
     }
 
-    async fn dump_store_to_db(&mut self) -> Result<()> {
+    pub(crate) async fn dump_store_to_db(&mut self) -> Result<()> {
         if self.handler_store.blocks.is_empty() {
             return Ok(());
         }
@@ -181,8 +180,8 @@ impl Indexer {
             );
 
             query_builder.push_values(
-                self.handler_store.block_txs.drain(..),
-                |mut b, (index, tx_id, block, tx)| {
+                self.handler_store.block_txs.drain(),
+                |mut b, (tx_id, (index, block, tx))| {
                     let version = log_error!(
                         i32::try_from(tx.version).map_err(|_| anyhow::anyhow!(
                             "Tx version is too large to fit into an i32"
@@ -479,8 +478,7 @@ impl Indexer {
                     .await?;
 
                 _ = log_warn!(
-                    self.insert_tx_data(tx_hash, &tx, parent_data_proposal_hash_db,)
-                        .await,
+                    self.insert_tx_data(tx_hash, &tx, parent_data_proposal_hash_db,),
                     "Inserting tx data at status 'waiting dissemination'"
                 );
             }
@@ -541,7 +539,7 @@ impl Indexer {
         Ok(())
     }
 
-    async fn insert_tx_data(
+    fn insert_tx_data(
         &mut self,
         tx_hash: &TxHashDb,
         tx: &Transaction,
@@ -602,7 +600,7 @@ impl Indexer {
         Ok(())
     }
 
-    pub(crate) async fn handle_processed_block(&mut self, block: Block) -> Result<(), Error> {
+    pub(crate) fn handle_processed_block(&mut self, block: Block) -> Result<(), Error> {
         if block.block_height.0 % 1000 == 0 {
             // Log every 1000th block
             info!("Indexing block at height {:?}", block.block_height);
@@ -620,16 +618,19 @@ impl Indexer {
         let mut i: i32 = 0;
         #[allow(clippy::explicit_counter_loop)]
         for (tx_id, tx) in block.txs {
+            info!(
+                "Processing transaction {} at block height {}",
+                tx_id, block_height
+            );
             self.handler_store
                 .block_txs
-                .push((i, tx_id.clone(), arc_block.clone(), tx.clone()));
+                .insert(tx_id.clone(), (i, arc_block.clone(), tx.clone()));
 
             let tx_hash: &TxHashDb = &tx_id.1.into();
             let parent_data_proposal_hash: &DataProposalHashDb = &tx_id.0.into();
 
             _ = log_warn!(
-                self.insert_tx_data(tx_hash, &tx, parent_data_proposal_hash.clone(),)
-                    .await,
+                self.insert_tx_data(tx_hash, &tx, parent_data_proposal_hash.clone(),),
                 "Inserting tx data when tx in block"
             );
 
