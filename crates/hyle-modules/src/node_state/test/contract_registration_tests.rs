@@ -449,9 +449,9 @@ async fn test_register_update_delete_combinations_hyle() {
     let register_hydentity_tx =
         make_register_tx("hyle@hyle".into(), "hyle".into(), "hydentity".into());
     let register_tx = make_register_tx("hyle@hyle".into(), "hyle".into(), "c.hyle".into());
-    let delete_tx = make_delete_tx(HYLI_TLD_HYDENTITY.into(), "hyle".into(), "c.hyle".into());
+    let mut delete_tx = make_delete_tx_with_hyli("hyle".into(), "c.hyle".into());
     let mut output =
-        make_hyle_output_with_state(delete_tx.clone(), BlobIndex(2), &[0, 1, 2, 3], &[1]);
+        make_hyle_output_with_state(delete_tx.clone(), BlobIndex(1), &[0, 1, 2, 3], &[1]);
     let delete_tx_proof = new_proof_tx(&"hydentity".into(), &output, &delete_tx.hashed());
 
     let delete_self_tx = make_delete_tx("hyle@c.hyle".into(), "c.hyle".into(), "c.hyle".into());
@@ -492,6 +492,8 @@ async fn test_register_update_delete_combinations_hyle() {
         }
         let block = state.craft_block_and_handle(1, txs);
 
+        dbg!(&state.contracts);
+
         assert_eq!(state.contracts.len(), expected_ct);
         assert_eq!(block.successful_txs.len(), expected_txs);
         info!("done");
@@ -504,24 +506,24 @@ async fn test_register_update_delete_combinations_hyle() {
         Some(&[&delete_tx_proof]),
         &[&register_hydentity_tx, &register_tx, &delete_tx],
         2,
-        2,
+        3,
     )
     .await;
-    // test_combination(Some(&[&proof_update]), &[&register_tx, &update_tx], 2, 2).await;
-    // test_combination(
-    //     Some(&[&proof_update]),
-    //     &[&register_tx, &update_tx, &delete_tx],
-    //     1,
-    //     3,
-    // )
-    // .await;
-    // test_combination(
-    //     Some(&[&proof_update, &proof_delete]),
-    //     &[&register_tx, &update_tx, &delete_self_tx],
-    //     1,
-    //     3,
-    // )
-    // .await;
+    test_combination(Some(&[&proof_update]), &[&register_tx, &update_tx], 2, 2).await;
+    test_combination(
+        Some(&[&proof_update, &delete_tx_proof]),
+        &[&register_hydentity_tx, &register_tx, &update_tx, &delete_tx],
+        2,
+        4,
+    )
+    .await;
+    test_combination(
+        Some(&[&proof_update, &proof_delete]),
+        &[&register_tx, &update_tx, &delete_self_tx],
+        1,
+        3,
+    )
+    .await;
 }
 
 #[test_log::test(tokio::test)]
