@@ -27,6 +27,8 @@ CREATE TABLE transactions (
     CHECK (length(tx_hash) = 64)
 );
 
+CREATE INDEX idx_transactions_lane_id ON transactions(lane_id);
+
 CREATE TABLE blobs (
     parent_dp_hash TEXT NOT NULL,  -- Foreign key linking to the parent_dp_hash BlobTransactions
     tx_hash TEXT NOT NULL,  -- Foreign key linking to the tx_hash BlobTransactions
@@ -95,3 +97,23 @@ CREATE TABLE transaction_state_events (
     
     events JSONB NOT NULL
 );
+
+
+CREATE INDEX idx_bpo_on_proof_tx
+  ON blob_proof_outputs (proof_tx_hash);
+
+CREATE INDEX idx_proofs_on_tx_hash
+  ON proofs (tx_hash);
+
+CREATE INDEX idx_bpo_prooftx_contract
+  ON blob_proof_outputs (proof_tx_hash, contract_name);
+
+-- Index for get tx by hash
+CREATE INDEX idx_tx_fast_lookup
+  ON transactions (
+    tx_hash,
+    transaction_type,
+    block_height   DESC,
+    index          DESC
+  )
+INCLUDE (block_hash);

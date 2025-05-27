@@ -1,6 +1,6 @@
 use super::IndexerApiState;
 use axum::{extract::State, http::StatusCode, Json};
-use hyle_model::api::NetworkStats;
+use hyle_model::api::{NetworkStats, ProofStat};
 
 use hyle_modules::log_error;
 
@@ -153,4 +153,41 @@ pub async fn get_stats(
         graph_tx_volume,
         graph_block_time,
     }))
+}
+
+#[utoipa::path(
+    get,
+    tag = "Indexer",
+    path = "/stats/proofs",
+    responses(
+        (status = OK, body = Vec<ProofStat>)
+    )
+)]
+pub async fn get_proof_stats(
+    State(state): State<IndexerApiState>,
+) -> Result<Json<Vec<ProofStat>>, StatusCode> {
+    let transactions = log_error!(
+        sqlx::query_as::<_, ProofStat>(
+            r#"
+SELECT
+  c.verifier,
+  COUNT(DISTINCT p.tx_hash) AS proof_count
+FROM proofs p
+  JOIN blob_proof_outputs bpo
+    ON p.tx_hash = bpo.proof_tx_hash
+  JOIN contracts c
+    ON bpo.contract_name = c.contract_name
+GROUP BY
+  c.verifier
+ORDER BY
+  proof_count DESC;
+        "#,
+        )
+        .fetch_all(&state.db)
+        .await,
+        "Failed to fetch proof stats"
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(transactions))
 }
