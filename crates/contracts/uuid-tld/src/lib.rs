@@ -55,7 +55,7 @@ impl ZkContract for UuidTld {
                 UuidTldAction::Claim => {
                     let id = self.claim_contract(calldata)?;
                     let uuid = Uuid::from_u128(id);
-                    return Ok((format!("claimed {}", uuid), exec_ctx, vec![]));
+                    return Ok((format!("claimed {}", uuid).into_bytes(), exec_ctx, vec![]));
                 }
             }
         }
@@ -71,9 +71,9 @@ impl ZkContract for UuidTld {
             self.register_contract(uuid.as_u128(), calldata.identity.0.clone())?;
 
             return Ok((
-                format!("registered {} ({})", uuid, uuid.as_u128()),
+                format!("registered {} ({})", uuid, uuid.as_u128()).into_bytes(),
                 exec_ctx,
-                vec![OnchainEffect::RegisterContract(action)],
+                vec![OnchainEffect::RegisterContract(action.into())],
             ));
         }
 
@@ -183,7 +183,8 @@ mod test {
 
         // First claim a UUID
         let claim_calldata = make_calldata(UuidTldAction::Claim, "toto@test");
-        let (msg, _, _) = state.execute(&claim_calldata).unwrap();
+        let (msg_bytes, _, _) = state.execute(&claim_calldata).unwrap();
+        let msg = String::from_utf8(msg_bytes).unwrap();
         let uuid = msg.replace("claimed ", "");
 
         // Then register it with the same identity

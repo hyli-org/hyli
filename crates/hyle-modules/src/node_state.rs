@@ -31,7 +31,7 @@ struct SettledTxOutput {
 #[derive(Debug, Clone)]
 // Similar to OnchainEffect but slightly more adapted to nodestate settlement
 enum SideEffect {
-    Register(Contract),
+    Register(Contract, Option<Vec<u8>>),
     // Pass a full Contract because it's simpler in the settlement logic
     UpdateState(Contract),
     Delete(ContractName),
@@ -41,7 +41,7 @@ impl SideEffect {
     fn apply(&mut self, other_effect: SideEffect) {
         tracing::trace!("Applying side effect: {:?} -> {:?}", self, other_effect);
         match (self, other_effect) {
-            (SideEffect::Register(reg), SideEffect::UpdateState(contract)) => {
+            (SideEffect::Register(reg, _), SideEffect::UpdateState(contract)) => {
                 reg.state = contract.state
             }
             (SideEffect::Delete(_), SideEffect::UpdateState(_)) => {}
@@ -117,7 +117,6 @@ impl Default for NodeStateStore {
             contracts: HashMap::new(),
             unsettled_transactions: OrderedTxMap::default(),
         };
-        // Insert a default hyle-TLD contract
         ret.contracts.insert(
             "hyle".into(),
             Contract {
@@ -125,7 +124,7 @@ impl Default for NodeStateStore {
                 program_id: ProgramId(vec![]),
                 state: StateCommitment(vec![0]),
                 verifier: Verifier("hyle".to_owned()),
-                timeout_window: TimeoutWindow::NoTimeout,
+                timeout_window: TimeoutWindow::Timeout(BlockHeight(5)),
             },
         );
         ret
@@ -370,7 +369,17 @@ impl NodeState {
             .iter()
             .any(|blob| !self.contracts.contains_key(&blob.contract_name))
         {
-            bail!("Blob Transaction contains blobs for unknown contracts");
+            let contracts = tx
+                .blobs
+                .iter()
+                .filter(|blob| !self.contracts.contains_key(&blob.contract_name))
+                .map(|blob| blob.contract_name.0.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!(
+                "Blob Transaction contains blobs for unknown contracts: {}",
+                contracts
+            );
         }
 
         let blobs: Vec<UnsettledBlobMetadata> = tx
@@ -705,6 +714,7 @@ impl NodeState {
                 &mut current_contracts,
                 contract_name,
                 proof_metadata,
+                current_blob,
             ) {
                 // Not a valid proof, log it and try the next one.
                 let msg = format!(
@@ -855,7 +865,7 @@ impl NodeState {
                         .deleted_contracts
                         .push((bth.clone(), contract_name));
                 }
-                SideEffect::Register(contract) => {
+                SideEffect::Register(contract, metadata) => {
                     let has_contract = self.contracts.contains_key(&contract.name);
                     if has_contract {
                         debug!(
@@ -881,6 +891,7 @@ impl NodeState {
                             verifier: contract.verifier.clone(),
                             timeout_window: Some(contract.timeout_window.clone()),
                         },
+                        metadata,
                     ));
 
                     // TODO: would be nice to have a drain-like API here.
@@ -981,7 +992,7 @@ impl NodeState {
                 )
             };
             if let OnchainEffect::RegisterContract(effect) = eff {
-                if effect != &data.parameters {
+                if effect != &data.parameters.into() {
                     bail!(
                         "Proof for RegisterContractAction blob #{} does not match the onchain effect",
                         hyle_output.index
@@ -1029,7 +1040,7 @@ impl NodeState {
         let Some(contract) = contract_changes
             .get(contract_name)
             .and_then(|c| match c {
-                SideEffect::Register(c) => Some(c),
+                SideEffect::Register(c, _) => Some(c),
                 SideEffect::UpdateState(c) => Some(c),
                 _ => None,
             })
@@ -1051,6 +1062,7 @@ impl NodeState {
         contract_changes: &mut BTreeMap<ContractName, SideEffect>,
         contract_name: &ContractName,
         proof_metadata: &(ProgramId, HyleOutput),
+        current_blob: &UnsettledBlobMetadata,
     ) -> Result<()> {
         validate_state_commitment_size(&proof_metadata.1.next_state)?;
 
@@ -1098,18 +1110,26 @@ impl NodeState {
                         &effect.program_id,
                         &effect.state_commitment,
                     )?;
+
+                    let metadata = StructuredBlobData::<RegisterContractAction>::try_from(
+                        current_blob.blob.data.clone(),
+                    )?;
+
                     contract_changes.insert(
                         effect.contract_name.clone(),
-                        SideEffect::Register(Contract {
-                            name: effect.contract_name.clone(),
-                            program_id: effect.program_id.clone(),
-                            state: effect.state_commitment.clone(),
-                            verifier: effect.verifier.clone(),
-                            timeout_window: effect
-                                .timeout_window
-                                .clone()
-                                .unwrap_or(contract.timeout_window.clone()),
-                        }),
+                        SideEffect::Register(
+                            Contract {
+                                name: effect.contract_name.clone(),
+                                program_id: effect.program_id.clone(),
+                                state: effect.state_commitment.clone(),
+                                verifier: effect.verifier.clone(),
+                                timeout_window: effect
+                                    .timeout_window
+                                    .clone()
+                                    .unwrap_or(contract.timeout_window.clone()),
+                            },
+                            metadata.parameters.constructor_metadata,
+                        ),
                     );
                 }
                 OnchainEffect::DeleteContract(cn) => {
@@ -1209,7 +1229,7 @@ pub mod test {
     use super::*;
     use hyle_net::clock::TimestampMsClock;
 
-    async fn new_node_state() -> NodeState {
+    pub(crate) async fn new_node_state() -> NodeState {
         NodeState {
             metrics: NodeStateMetrics::global("test".to_string(), "test"),
             store: NodeStateStore::default(),
@@ -1231,10 +1251,29 @@ pub mod test {
                 program_id: ProgramId(vec![]),
                 state_commitment: StateCommitment(vec![0, 1, 2, 3]),
                 contract_name: name,
-                timeout_window: None,
+                ..Default::default()
             }
             .as_blob("hyle".into(), None, None)],
         )
+    }
+    pub fn make_register_contract_tx_with_actions(
+        name: ContractName,
+        blobs: Vec<Blob>,
+    ) -> BlobTransaction {
+        let list = [
+            vec![RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: name,
+                ..Default::default()
+            }
+            .as_blob("hyle".into(), None, None)],
+            blobs,
+        ]
+        .concat();
+
+        BlobTransaction::new("hyle@hyle", list)
     }
 
     pub fn make_register_contract_effect(contract_name: ContractName) -> RegisterContractEffect {

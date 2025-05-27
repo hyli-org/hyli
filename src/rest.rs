@@ -9,7 +9,7 @@ mod tests {
         utils::integration_test::NodeIntegrationCtxBuilder,
     };
     use anyhow::Result;
-    use client_sdk::rest_client::NodeApiHttpClient;
+    use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
     use hyle_model::*;
     use hyle_modules::{
         bus::SharedMessageBus,
@@ -88,7 +88,7 @@ mod tests {
             );
             async move {
                 let mut request_count = 0;
-                while client.send_tx_blob(&dummy_tx).await.is_ok() {
+                while client.send_tx_blob(dummy_tx.clone()).await.is_ok() {
                     request_count += 1;
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }

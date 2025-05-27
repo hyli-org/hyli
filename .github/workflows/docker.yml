@@ -30,7 +30,7 @@ jobs:
             push_ghcr: true
             images: |
               europe-west3-docker.pkg.dev/hyle-413414/hyle-docker/hyle
-              ghcr.io/hyle-org/hyle
+              ghcr.io/hyli-org/hyli
           - file: Dockerfile.dependencies
             name: hyle dependencies
             push_ghcr: false

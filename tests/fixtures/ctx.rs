@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context, Result};
 use api::APIContract;
 use assertables::assert_ok;
-use client_sdk::transaction_builder::ProvableBlobTx;
+use client_sdk::{rest_client::NodeApiClient, transaction_builder::ProvableBlobTx};
 use testcontainers_modules::{
     postgres::Postgres,
     testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
@@ -377,16 +377,16 @@ impl E2ECtx {
             program_id: Contract::program_id(),
             state_commitment: Contract::state_commitment(),
             contract_name: name.into(),
-            timeout_window: None,
+            ..Default::default()
         }
         .as_blob("hyle".into(), None, None)];
 
-        let tx = &BlobTransaction::new(sender.clone(), blobs.clone());
+        let tx = BlobTransaction::new(sender.clone(), blobs.clone());
         assert_ok!(self.client().send_tx_blob(tx).await);
 
         tokio::time::timeout(Duration::from_secs(30), async {
             loop {
-                let resp = self.client().get_contract(&name.into()).await;
+                let resp = self.client().get_contract(name.into()).await;
                 if resp.is_err() || resp.is_err() {
                     info!("⏰ Waiting for contract {name} state to be ready");
                     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -401,18 +401,18 @@ impl E2ECtx {
 
     pub async fn send_blob(&self, identity: Identity, blobs: Vec<Blob>) -> Result<TxHash> {
         self.client()
-            .send_tx_blob(&BlobTransaction::new(identity, blobs))
+            .send_tx_blob(BlobTransaction::new(identity, blobs))
             .await
     }
 
     pub async fn send_provable_blob_tx(&self, tx: &ProvableBlobTx) -> Result<TxHash> {
         self.client()
-            .send_tx_blob(&BlobTransaction::new(tx.identity.clone(), tx.blobs.clone()))
+            .send_tx_blob(BlobTransaction::new(tx.identity.clone(), tx.blobs.clone()))
             .await
     }
 
     pub async fn send_proof_single(&self, proof: ProofTransaction) -> Result<()> {
-        assert_ok!(self.client().send_tx_proof(&proof).await);
+        assert_ok!(self.client().send_tx_proof(proof).await);
         Ok(())
     }
 
@@ -424,7 +424,7 @@ impl E2ECtx {
     ) -> Result<()> {
         assert_ok!(
             self.client()
-                .send_tx_proof(&ProofTransaction {
+                .send_tx_proof(ProofTransaction {
                     contract_name: contract_name.clone(),
                     proof: proof.clone(),
                 })
@@ -443,6 +443,6 @@ impl E2ECtx {
     }
 
     pub async fn get_contract(&self, name: &str) -> Result<Contract> {
-        self.client().get_contract(&name.into()).await
+        self.client().get_contract(name.into()).await
     }
 }

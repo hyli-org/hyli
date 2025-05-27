@@ -75,8 +75,8 @@ pub struct RestApi {
 #[derive(OpenApi)]
 #[openapi(
     info(
-        description = "Hyle Node API",
-        title = "Hyle Node API",
+        description = "Hyli Node API",
+        title = "Hyli Node API",
     ),
     // When opening the swagger, if on some endpoint you get the error:
     // Could not resolve reference: JSON Pointer evaluation failed while evaluating token "BlobIndex" against an ObjectElement
@@ -127,15 +127,25 @@ async fn request_logger(req: Request<Body>, next: Next) -> impl IntoResponse {
     let status = response.status();
     let elapsed_time = start_time.elapsed();
 
-    // Will log like:
-    // [GET] /v1/indexer/contract/amm - 200 OK (1484 μs)
-    info!(
-        "[{}] {} - {} ({} μs)",
-        method,
-        uri,
-        status,
-        elapsed_time.as_micros()
-    );
+    // Debug log for metrics and health endpoints, info for others
+    let path = uri.path();
+    if path.starts_with("/v1/metrics") || path == "/_health" || path.starts_with("/v1/info") {
+        tracing::debug!(
+            "[{}] {} - {} ({} μs)",
+            method,
+            uri,
+            status,
+            elapsed_time.as_micros()
+        );
+    } else {
+        info!(
+            "[{}] {} - {} ({} μs)",
+            method,
+            uri,
+            status,
+            elapsed_time.as_micros()
+        );
+    }
 
     response
 }

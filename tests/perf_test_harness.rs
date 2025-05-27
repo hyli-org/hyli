@@ -39,7 +39,7 @@ async fn custom_setup() -> Result<()> {
         let mut nodes = Vec::new();
         let mut confs = Vec::new();
 
-        let default_conf = Conf::new(None, None, None).unwrap();
+        let default_conf = Conf::new(vec![], None, None).unwrap();
 
         let mut peers = Vec::new();
         let mut genesis_stakers = std::collections::HashMap::new();

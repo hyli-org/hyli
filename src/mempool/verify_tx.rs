@@ -571,7 +571,8 @@ pub mod test {
                 ))?;
 
         ctx.mempool
-            .handle_net_message(signed_msg)
+            .handle_net_message(signed_msg, &ctx.mempool_sync_request_sender)
+            .await
             .expect("should handle net message");
 
         ctx.handle_processed_data_proposals().await;
@@ -579,6 +580,7 @@ pub mod test {
         // Assert that we vote for that specific DataProposal
         match ctx
             .assert_send(&ctx.mempool.crypto.validator_pubkey().clone(), "DataVote")
+            .await
             .msg
         {
             MempoolNetMessage::DataVote(SignedByValidator {

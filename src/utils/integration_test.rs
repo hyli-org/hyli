@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context, Result};
 use axum::Router;
-use client_sdk::rest_client::NodeApiHttpClient;
+use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyle_model::api::NodeInfo;
 use hyle_model::TxHash;
 use hyle_modules::modules::{BuildApiContextInner, ModulesHandler};
@@ -98,7 +98,7 @@ impl NodeIntegrationCtxBuilder {
         let bus = SharedMessageBus::new(BusMetrics::global("default".to_string()));
         let crypto = BlstCrypto::new("test").unwrap();
         let mut conf = Conf::new(
-            None,
+            vec![],
             tmpdir.path().to_str().map(|s| s.to_owned()),
             Some(false),
         )

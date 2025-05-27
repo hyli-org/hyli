@@ -1,0 +1,14 @@
+FROM rust:slim-bookworm AS builder
+RUN apt-get update && apt-get -y install curl
+RUN curl -L https://risczero.com/install | bash
+RUN /root/.risc0/bin/rzup install r0vm 2.0.2
+
+FROM ubuntu:noble
+COPY --from=builder /usr/local/cargo/bin/r0vm /usr/local/bin/r0vm
+
+# installing Barrenteberg CLI
+RUN apt-get update && apt-get install -y curl bash
+RUN curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/refs/heads/master/barretenberg/bbup/install | bash
+ENV PATH="/root/.bb:$PATH"
+RUN bbup -v 0.82.2
+RUN apt-get install -y libssl-dev

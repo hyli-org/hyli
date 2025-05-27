@@ -98,6 +98,7 @@ fn main() {
         let pkg = get_package(manifest_dir.join(name));
         let mut guest_opts = GuestOptionsBuilder::default();
 
+        println!("cargo:rerun-if-changed={name}");
         guest_opts.features(vec!["risc0".into()]);
 
         if reproducible {

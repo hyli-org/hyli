@@ -6,6 +6,7 @@ mod fixtures;
 
 use std::time::Duration;
 
+use client_sdk::rest_client::NodeApiClient;
 use fixtures::turmoil::TurmoilHost;
 use hyle_model::{
     BlobTransaction, ContractAction, ContractName, ProgramId, RegisterContractAction,
@@ -239,7 +240,7 @@ pub fn simulation_one_more_node(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyh
 
                 for i in 1..10 {
                     let contract = client_with_retries
-                        .get_contract(&format!("contract-{}", i).into())
+                        .get_contract(format!("contract-{}", i).into())
                         .await?;
                     assert_eq!(contract.name.0, format!("contract-{}", i).as_str());
                 }
@@ -283,7 +284,7 @@ pub async fn submit_10_contracts(node: TurmoilHost) -> anyhow::Result<()> {
             let tx = make_register_contract_tx(format!("contract-{}", i).into());
 
             _ = log_error!(
-                client_with_retries.send_tx_blob(&tx).await,
+                client_with_retries.send_tx_blob(tx).await,
                 "Sending tx blob"
             );
         }
@@ -293,7 +294,7 @@ pub async fn submit_10_contracts(node: TurmoilHost) -> anyhow::Result<()> {
 
     for i in 1..10 {
         let contract = client_with_retries
-            .get_contract(&format!("contract-{}", i).into())
+            .get_contract(format!("contract-{}", i).into())
             .await?;
         assert_eq!(contract.name.0, format!("contract-{}", i).as_str());
     }

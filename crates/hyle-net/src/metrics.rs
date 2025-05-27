@@ -35,7 +35,7 @@ impl P2PMetrics {
             message_closed: build!(my_meter, counter, "message_closed"),
             handshake_connection: build!(my_meter, counter, "handshake_connection"),
             handshake_hello: build!(my_meter, counter, "handshake_hello"),
-            handshake_verack: build!(my_meter, counter, "handshake_verack")
+            handshake_verack: build!(my_meter, counter, "handshake_verack"),
         }
     }
 
@@ -44,42 +44,102 @@ impl P2PMetrics {
     }
 
     pub fn message_received(&self, from: String, canal: Canal) {
-        self.message.add(1, &[KeyValue::new("from", from), KeyValue::new("canal", canal.to_string())]);
+        self.message.add(
+            1,
+            &[
+                KeyValue::new("from", from),
+                KeyValue::new("canal", canal.to_string()),
+            ],
+        );
     }
 
     pub fn message_error(&self, from: String, canal: Canal) {
-        self.message_error.add(1, &[KeyValue::new("from", from), KeyValue::new("canal", canal.to_string())]);
+        self.message_error.add(
+            1,
+            &[
+                KeyValue::new("from", from),
+                KeyValue::new("canal", canal.to_string()),
+            ],
+        );
     }
-    
+
     pub fn message_closed(&self, from: String, canal: Canal) {
-        self.message_closed.add(1, &[KeyValue::new("from", from), KeyValue::new("canal", canal.to_string())]);
+        self.message_closed.add(
+            1,
+            &[
+                KeyValue::new("from", from),
+                KeyValue::new("canal", canal.to_string()),
+            ],
+        );
     }
 
     pub fn ping(&self, peer: String, canal: Canal) {
-        self.ping.add(1, &[KeyValue::new("peer", peer), KeyValue::new("canal", canal.to_string())]);
+        self.ping.add(
+            1,
+            &[
+                KeyValue::new("peer", peer),
+                KeyValue::new("canal", canal.to_string()),
+            ],
+        );
     }
 
     pub fn message_emitted(&self, to: String, canal: Canal) {
-        self.message.add(1, &[KeyValue::new("to", to), KeyValue::new("canal", canal.to_string())]);
+        self.message.add(
+            1,
+            &[
+                KeyValue::new("to", to),
+                KeyValue::new("canal", canal.to_string()),
+            ],
+        );
     }
 
     pub fn handshake_connection_emitted(&self, to: String, canal: Canal) {
-        self.handshake_connection.add(1, &[KeyValue::new("to", to), KeyValue::new("canal", canal.to_string())])
+        self.handshake_connection.add(
+            1,
+            &[
+                KeyValue::new("to", to),
+                KeyValue::new("canal", canal.to_string()),
+            ],
+        )
     }
-    
+
     pub fn handshake_hello_emitted(&self, to: String, canal: Canal) {
-        self.handshake_hello.add(1, &[KeyValue::new("to", to), KeyValue::new("canal", canal.to_string())])
+        self.handshake_hello.add(
+            1,
+            &[
+                KeyValue::new("to", to),
+                KeyValue::new("canal", canal.to_string()),
+            ],
+        )
     }
-   
+
     pub fn handshake_hello_received(&self, from: String, canal: Canal) {
-        self.handshake_hello.add(1, &[KeyValue::new("from", from), KeyValue::new("canal", canal.to_string())])
+        self.handshake_hello.add(
+            1,
+            &[
+                KeyValue::new("from", from),
+                KeyValue::new("canal", canal.to_string()),
+            ],
+        )
     }
 
     pub fn handshake_verack_emitted(&self, to: String, canal: Canal) {
-        self.handshake_verack.add(1, &[KeyValue::new("to", to), KeyValue::new("canal", canal.to_string())])
+        self.handshake_verack.add(
+            1,
+            &[
+                KeyValue::new("to", to),
+                KeyValue::new("canal", canal.to_string()),
+            ],
+        )
     }
 
     pub fn handshake_verack_received(&self, from: String, canal: Canal) {
-        self.handshake_verack.add(1, &[KeyValue::new("from", from), KeyValue::new("canal", canal.to_string())])
+        self.handshake_verack.add(
+            1,
+            &[
+                KeyValue::new("from", from),
+                KeyValue::new("canal", canal.to_string()),
+            ],
+        )
     }
 }

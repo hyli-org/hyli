@@ -9,7 +9,37 @@ use sparse_merkle_tree::{default_store::DefaultStore, traits::Value, SparseMerkl
 
 use crate::{FAUCET_ID, TOTAL_SUPPLY};
 
+#[derive(Debug)]
 pub struct AccountSMT(pub SparseMerkleTree<SHA256Hasher, Account, DefaultStore<Account>>);
+
+impl BorshSerialize for AccountSMT {
+    fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        let store = self.0.store();
+        let map = store.leaves_map();
+        let len = map.len() as u32;
+        borsh::BorshSerialize::serialize(&len, writer)?;
+        for (_, leaf_value) in map.iter() {
+            borsh::BorshSerialize::serialize(leaf_value, writer)?;
+        }
+        Ok(())
+    }
+}
+
+impl BorshDeserialize for AccountSMT {
+    fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+        let len: u32 = borsh::BorshDeserialize::deserialize_reader(reader)?;
+        let mut accounts = SparseMerkleTree::default();
+        for _ in 0..len {
+            let account: Account = borsh::BorshDeserialize::deserialize_reader(reader)?;
+            let key = account.get_key();
+            accounts
+                .update(key, account)
+                .expect("Failed to deserialize account");
+        }
+
+        Ok(AccountSMT(accounts))
+    }
+}
 
 impl Default for AccountSMT {
     fn default() -> Self {

@@ -759,7 +759,7 @@ where
 
 #[cfg(test)]
 pub mod tests {
-    use std::{collections::HashSet, time::Duration};
+    use std::collections::HashSet;
 
     use anyhow::Result;
     use borsh::{BorshDeserialize, BorshSerialize};
@@ -1070,12 +1070,14 @@ pub mod tests {
 
         // Canal A (1 -> 2)
         p2p_server1.broadcast(TestMessage("blabla".to_string()), Canal::new("A"));
-        // Process the waiting job.
-        p2p_server1.listen_next().await;
 
-        tokio::time::sleep(Duration::from_millis(300)).await;
-
-        let evt = receive_event(&mut p2p_server2, "Should be a TestMessage event").await?;
+        let evt = loop {
+            p2p_server1.listen_next().await; // Process the waiting job.
+            if let Ok(evt) = receive_event(&mut p2p_server2, "Should be a TestMessage event").await
+            {
+                break evt;
+            }
+        };
 
         assert!(matches!(
             evt,
@@ -1097,12 +1099,13 @@ pub mod tests {
 
         // Canal B (1 -> 2)
         p2p_server1.broadcast(TestMessage("blabla2".to_string()), Canal::new("B"));
-        // Process the waiting job.
-        p2p_server1.listen_next().await;
-
-        tokio::time::sleep(Duration::from_millis(300)).await;
-
-        let evt = receive_event(&mut p2p_server2, "Should be a TestMessage event").await?;
+        let evt = loop {
+            p2p_server1.listen_next().await; // Process the waiting job.
+            if let Ok(evt) = receive_event(&mut p2p_server2, "Should be a TestMessage event").await
+            {
+                break evt;
+            }
+        };
 
         assert!(matches!(
             evt,
@@ -1124,12 +1127,14 @@ pub mod tests {
 
         // Canal A (2 -> 1)
         p2p_server2.broadcast(TestMessage("babal".to_string()), Canal::new("A"));
-        // Process the waiting job.
-        p2p_server2.listen_next().await;
 
-        tokio::time::sleep(Duration::from_millis(300)).await;
-
-        let evt = receive_event(&mut p2p_server1, "Should be a TestMessage event").await?;
+        let evt = loop {
+            p2p_server2.listen_next().await; // Process the waiting job.
+            if let Ok(evt) = receive_event(&mut p2p_server1, "Should be a TestMessage event").await
+            {
+                break evt;
+            }
+        };
 
         assert!(matches!(
             evt,
@@ -1151,12 +1156,14 @@ pub mod tests {
 
         // Canal B (2 -> 1)
         p2p_server2.broadcast(TestMessage("babal2".to_string()), Canal::new("B"));
-        // Process the waiting job.
-        p2p_server2.listen_next().await;
 
-        tokio::time::sleep(Duration::from_millis(300)).await;
-
-        let evt = receive_event(&mut p2p_server1, "Should be a TestMessage event").await?;
+        let evt = loop {
+            p2p_server2.listen_next().await; // Process the waiting job.
+            if let Ok(evt) = receive_event(&mut p2p_server1, "Should be a TestMessage event").await
+            {
+                break evt;
+            }
+        };
 
         assert!(matches!(
             evt,

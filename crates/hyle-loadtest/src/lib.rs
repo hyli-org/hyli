@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::Result;
 use client_sdk::helpers::risc0::Risc0Prover;
 use client_sdk::helpers::test::{MockProver, TxExecutorTestProver};
-use client_sdk::rest_client::NodeApiHttpClient;
+use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use client_sdk::tcp_client::{TcpApiClient, TcpServerMessage};
 use client_sdk::transaction_builder::{
     ProvableBlobTx, StateUpdater, TxExecutor, TxExecutorBuilder, TxExecutorHandler,
@@ -140,7 +140,7 @@ pub async fn setup(hyllar: Hyllar, url: String, verifier: String) -> Result<()> 
             verifier: verifier.into(),
             program_id: hyle_contracts::HYLLAR_ID.to_vec().into(),
             state_commitment: hyllar.commit(),
-            timeout_window: Some(TimeoutWindow::default()),
+            ..Default::default()
         }
         .as_blob("hyle".into(), None, None)],
     );
@@ -382,7 +382,7 @@ pub async fn send_transaction<S: StateUpdater>(
     let blobs = transaction.blobs.clone();
     let tx_hash = loop {
         match client
-            .send_tx_blob(&BlobTransaction::new(identity.clone(), blobs.clone()))
+            .send_tx_blob(BlobTransaction::new(identity.clone(), blobs.clone()))
             .await
         {
             Ok(res) => break res,
@@ -397,7 +397,7 @@ pub async fn send_transaction<S: StateUpdater>(
     for proof in provable_tx.iter_prove() {
         let tx = proof.await.unwrap();
         loop {
-            match client.send_tx_proof(&tx).await {
+            match client.send_tx_proof(tx.clone()).await {
                 Ok(_) => break,
                 Err(e) => {
                     tracing::warn!("Error when sending tx blob, waiting before retry {:?}", e);
@@ -438,7 +438,7 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
                         random_hydentity_contract
                     ))
                     .commit(),
-                    timeout_window: None,
+                    ..Default::default()
                 }
                 .as_blob("hyle".into(), None, None),
                 RegisterContractAction {
@@ -446,13 +446,13 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
                     verifier: verifier.clone(),
                     program_id: hyle_contracts::HYDENTITY_ID.to_vec().into(),
                     state_commitment: Hydentity::default().commit(),
-                    timeout_window: None,
+                    ..Default::default()
                 }
                 .as_blob("hyle".into(), None, None),
             ],
         );
 
-        client.send_tx_blob(&tx).await?;
+        client.send_tx_blob(tx).await?;
 
         tokio::time::sleep(Duration::from_secs(5)).await;
 
@@ -468,14 +468,11 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
             tx_ctx = tx_ctx
                 .with_prover(
                     random_hydentity_contract.clone(),
-                    TxExecutorTestProver::new(Hydentity::default()),
+                    TxExecutorTestProver::<Hyllar>::new(),
                 )
                 .with_prover(
                     random_hyllar_contract.clone(),
-                    TxExecutorTestProver::new(Hyllar::custom(format!(
-                        "faucet@{}",
-                        random_hydentity_contract
-                    ))),
+                    TxExecutorTestProver::<Hyllar>::new(),
                 );
         } else {
             // Replace prover binaries for non-reproducible mode.
@@ -647,6 +644,7 @@ pub async fn send_massive_blob(users: u32, url: String) -> Result<()> {
             program_id: hyle_contracts::HYLLAR_ID.to_vec().into(),
             state_commitment: StateCommitment(vec![1]),
             timeout_window: Some(TimeoutWindow::Timeout(hyle_contract_sdk::BlockHeight(2))),
+            ..Default::default()
         }
         .as_blob("hyle".into(), None, None)],
     );

@@ -1,4 +1,5 @@
 use crate::{bus::BusClientSender, consensus::CommittedConsensusProposal, model::*};
+use futures::StreamExt;
 use hyle_modules::log_error;
 
 use super::storage::Storage;
@@ -13,12 +14,13 @@ pub struct BlockUnderConstruction {
 }
 
 impl super::Mempool {
-    pub(super) fn try_to_send_full_signed_blocks(&mut self) -> Result<()> {
+    pub(super) async fn try_to_send_full_signed_blocks(&mut self) -> Result<()> {
         let length = self.blocks_under_contruction.len();
         for _ in 0..length {
             if let Some(block_under_contruction) = self.blocks_under_contruction.pop_front() {
                 if self
                     .build_signed_block_and_emit(&block_under_contruction)
+                    .await
                     .context("Processing queued committedConsensusProposal")
                     .is_err()
                 {
@@ -34,7 +36,7 @@ impl super::Mempool {
 
     /// Retrieves data proposals matching the Block under construction.
     /// If data is not available locally, fails and do nothing
-    fn try_get_full_data_for_signed_block(
+    async fn try_get_full_data_for_signed_block(
         &self,
         buc: &BlockUnderConstruction,
     ) -> Result<Vec<(LaneId, Vec<DataProposal>)>> {
@@ -50,30 +52,33 @@ impl super::Mempool {
                 .and_then(|f| f.iter().find(|el| &el.0 == lane_id))
                 .map(|el| &el.1);
 
-            let entries = self
-                .lanes
-                .get_entries_between_hashes(
-                    lane_id, // get start hash for validator
-                    from_hash,
-                    Some(to_hash),
-                )
-                .context(format!(
+            let mut entries = Box::pin(self.lanes.get_entries_between_hashes(
+                lane_id, // get start hash for validator
+                from_hash.cloned(),
+                Some(to_hash.clone()),
+            ));
+
+            let mut dps = vec![];
+
+            while let Some(entry) = entries.next().await {
+                let (_, dp) = entry.context(format!(
                     "Lane entries from {:?} to {:?} not available locally",
                     buc.from, buc.ccp.consensus_proposal.cut
                 ))?;
 
-            result.push((
-                lane_id.clone(),
-                entries.into_iter().map(|(_, dp)| dp).collect(),
-            ))
+                dps.insert(0, dp);
+            }
+
+            result.push((lane_id.clone(), dps));
         }
 
         Ok(result)
     }
 
-    fn build_signed_block_and_emit(&mut self, buc: &BlockUnderConstruction) -> Result<()> {
+    async fn build_signed_block_and_emit(&mut self, buc: &BlockUnderConstruction) -> Result<()> {
         let block_data = self
             .try_get_full_data_for_signed_block(buc)
+            .await
             .context("Processing queued committedConsensusProposal")?;
 
         self.metrics.constructed_block.add(1, &[]);
@@ -206,7 +211,7 @@ pub mod test {
     use crate::model;
 
     #[test_log::test(tokio::test)]
-    async fn test_basic_signed_block() -> Result<()> {
+    async fn signed_block_basic() -> Result<()> {
         let mut ctx = MempoolTestCtx::new("mempool").await;
 
         // Store a DP, process the commit message for the cut containing it.
@@ -219,7 +224,9 @@ pub mod test {
         let key = ctx.validator_pubkey().clone();
         ctx.add_trusted_validator(&key);
 
-        let cut = ctx.process_cut_with_dp(&key, &dp_hash, cumul_size, 1)?;
+        let cut = ctx
+            .process_cut_with_dp(&key, &dp_hash, cumul_size, 1)
+            .await?;
 
         assert_chanmsg_matches!(
             ctx.mempool_event_receiver,
@@ -243,7 +250,58 @@ pub mod test {
     }
 
     #[test_log::test(tokio::test)]
-    async fn test_signed_block_start_building_later() -> Result<()> {
+    async fn signed_block_data_proposals_in_order() -> Result<()> {
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+
+        // Store a DP, process the commit message for the cut containing it.
+        let register_tx = make_register_contract_tx(ContractName::new("test1"));
+        let dp_orig = ctx.create_data_proposal(None, &[register_tx.clone()]);
+        ctx.process_new_data_proposal(dp_orig.clone())?;
+        let cumul_size = LaneBytesSize(dp_orig.estimate_size() as u64);
+        let dp_hash = dp_orig.hashed();
+
+        let register_tx2 = make_register_contract_tx(ContractName::new("test2"));
+        let dp_orig2 = ctx.create_data_proposal(Some(dp_hash.clone()), &[register_tx2.clone()]);
+        ctx.process_new_data_proposal(dp_orig2.clone())?;
+        let cumul_size = LaneBytesSize(cumul_size.0 + dp_orig2.estimate_size() as u64);
+        let dp_hash2 = dp_orig2.hashed();
+
+        let register_tx3 = make_register_contract_tx(ContractName::new("test3"));
+        let dp_orig3 = ctx.create_data_proposal(Some(dp_hash2.clone()), &[register_tx3.clone()]);
+        ctx.process_new_data_proposal(dp_orig3.clone())?;
+        let cumul_size = LaneBytesSize(cumul_size.0 + dp_orig3.estimate_size() as u64);
+        let dp_hash3 = dp_orig3.hashed();
+
+        let key = ctx.validator_pubkey().clone();
+        ctx.add_trusted_validator(&key);
+
+        let cut = ctx
+            .process_cut_with_dp(&key, &dp_hash3, cumul_size, 1)
+            .await?;
+
+        assert_chanmsg_matches!(
+            ctx.mempool_event_receiver,
+            MempoolBlockEvent::StartedBuildingBlocks(height) => {
+                assert_eq!(height, BlockHeight(1));
+            }
+        );
+
+        assert_chanmsg_matches!(
+            ctx.mempool_event_receiver,
+            MempoolBlockEvent::BuiltSignedBlock(sb) => {
+                assert_eq!(sb.consensus_proposal.cut, cut);
+                assert_eq!(
+                    sb.data_proposals,
+                    vec![(LaneId(key.clone()), vec![dp_orig, dp_orig2, dp_orig3])]
+                );
+            }
+        );
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn signed_block_start_building_later() -> Result<()> {
         let mut ctx = MempoolTestCtx::new("mempool").await;
 
         let dp2_size = LaneBytesSize(20);
@@ -260,22 +318,27 @@ pub mod test {
                 .expect_err("Should not build signed block");
         };
 
-        ctx.process_cut_with_dp(&ctx_key, &dp2_hash, dp2_size, 2)?;
+        ctx.process_cut_with_dp(&ctx_key, &dp2_hash, dp2_size, 2)
+            .await?;
         expect_nothing(&mut ctx);
 
-        ctx.process_cut_with_dp(&ctx_key, &dp5_hash, dp5_size, 5)?;
+        ctx.process_cut_with_dp(&ctx_key, &dp5_hash, dp5_size, 5)
+            .await?;
         expect_nothing(&mut ctx);
 
         // Process it twice to check idempotency
-        ctx.process_cut_with_dp(&ctx_key, &dp5_hash, dp5_size, 5)?;
+        ctx.process_cut_with_dp(&ctx_key, &dp5_hash, dp5_size, 5)
+            .await?;
         expect_nothing(&mut ctx);
 
         // Process the old one again as well
-        ctx.process_cut_with_dp(&ctx_key, &dp2_hash, dp2_size, 2)?;
+        ctx.process_cut_with_dp(&ctx_key, &dp2_hash, dp2_size, 2)
+            .await?;
         expect_nothing(&mut ctx);
 
         // Finally process two consecutive ones
-        ctx.process_cut_with_dp(&ctx_key, &dp6_hash, dp6_size, 6)?;
+        ctx.process_cut_with_dp(&ctx_key, &dp6_hash, dp6_size, 6)
+            .await?;
 
         assert_chanmsg_matches!(
             ctx.mempool_event_receiver,
@@ -288,7 +351,7 @@ pub mod test {
     }
 
     #[test_log::test(tokio::test)]
-    async fn test_signed_block_buffer_ccp() -> Result<()> {
+    async fn signed_block_buffer_ccp() -> Result<()> {
         let mut ctx = MempoolTestCtx::new("mempool").await;
 
         let dp1 = DataProposal::new(None, vec![]);
@@ -331,7 +394,8 @@ pub mod test {
                     },
                     certificate: AggregateSignature::default(),
                 },
-            ))?;
+            ))
+            .await?;
 
         // We've received consecutive blocks so start building
         assert_chanmsg_matches!(
@@ -374,7 +438,8 @@ pub mod test {
                     },
                     certificate: AggregateSignature::default(),
                 },
-            ))?;
+            ))
+            .await?;
 
         // We don't have the data so we still don't send anything.
         ctx.mempool_event_receiver
@@ -384,6 +449,7 @@ pub mod test {
         // We send sync requests - we don't have the data.
         match ctx
             .assert_send(&ctx.validator_pubkey().clone(), "SyncRequest")
+            .await
             .msg
         {
             MempoolNetMessage::SyncRequest(from, to) => {
@@ -394,6 +460,7 @@ pub mod test {
         };
         match ctx
             .assert_send(&crypto2.validator_pubkey().clone(), "SyncRequest")
+            .await
             .msg
         {
             MempoolNetMessage::SyncRequest(from, to) => {
@@ -404,6 +471,7 @@ pub mod test {
         };
         match ctx
             .assert_send(&ctx.validator_pubkey().clone(), "SyncRequest")
+            .await
             .msg
         {
             MempoolNetMessage::SyncRequest(from, to) => {
@@ -414,6 +482,7 @@ pub mod test {
         };
         match ctx
             .assert_send(&crypto2.validator_pubkey().clone(), "SyncRequest")
+            .await
             .msg
         {
             MempoolNetMessage::SyncRequest(from, to) => {
@@ -425,9 +494,9 @@ pub mod test {
 
         // Receive the two DPs.
 
-        ctx.mempool.on_sync_reply(
-            &ctx.validator_pubkey().clone(),
-            vec![(
+        ctx.mempool
+            .on_sync_reply(
+                &ctx.validator_pubkey().clone(),
                 LaneEntryMetadata {
                     parent_data_proposal_hash: dp1.parent_data_proposal_hash.clone(),
                     cumul_size: dp1_size,
@@ -438,25 +507,25 @@ pub mod test {
                         .expect("should sign")],
                 },
                 dp1.clone(),
-            )],
-        )?;
+            )
+            .await?;
 
         // We don't have the data so we still don't send anything.
         ctx.mempool_event_receiver
             .try_recv()
             .expect_err("Should not build signed block");
 
-        ctx.mempool.on_sync_reply(
-            &crypto2.validator_pubkey().clone(),
-            vec![(
+        ctx.mempool
+            .on_sync_reply(
+                &crypto2.validator_pubkey().clone(),
                 LaneEntryMetadata {
                     parent_data_proposal_hash: dp1b.parent_data_proposal_hash.clone(),
                     cumul_size: dp1b_size,
                     signatures: vec![crypto2.sign((dp1b_hash, dp1b_size)).expect("should sign")],
                 },
                 dp1b.clone(),
-            )],
-        )?;
+            )
+            .await?;
 
         assert_chanmsg_matches!(
             ctx.mempool_event_receiver,

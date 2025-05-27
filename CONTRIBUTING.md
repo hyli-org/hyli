@@ -2,7 +2,7 @@
 
 We are an open-source project and we welcome contributions.
 
-We’re always happy to talk and answer questions and remarks in [our Telegram group](https://t.me/hyle_org). Please discuss major changes with us in an issue before submitting a PR.
+We’re always happy to talk and answer questions and remarks in [our Telegram group](https://t.me/hyli_org). Please discuss major changes with us in an issue before submitting a PR.
 
 ## **Guidelines**
 
@@ -15,5 +15,4 @@ We’re always happy to talk and answer questions and remarks in [our Telegram g
 
 **We do not provide financial rewards for contributions.**
 
-The exception is online hackathons with OnlyDust: [find all of these issues in our Hackathons repository](https://github.com/Hyle-org/hackathons) and they are usually tagged for a specific event.
-
+The exception is online hackathons with OnlyDust: [find all of these issues in our Hackathons repository](https://github.com/hyli-org/hackathons) and they are usually tagged for a specific event.

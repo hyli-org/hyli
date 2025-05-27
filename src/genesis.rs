@@ -24,6 +24,7 @@ use hyle_modules::{
 };
 use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
 use serde::{Deserialize, Serialize};
+use smt_token::account::AccountSMT;
 use staking::{
     client::tx_executor_handler::{delegate, deposit_for_fees, stake},
     state::Staking,
@@ -418,11 +419,12 @@ impl Genesis {
         .build();
 
         let mut map = BTreeMap::default();
+        map.insert("hyle".into(), ProgramId(vec![0, 0, 0, 0]));
         map.insert("blst".into(), NativeVerifiers::Blst.into());
         map.insert("sha3_256".into(), NativeVerifiers::Sha3_256.into());
         map.insert("secp256k1".into(), NativeVerifiers::Secp256k1.into());
         map.insert("hyllar".into(), ProgramId(hyllar_program_id.clone()));
-        map.insert("smt_token".into(), ProgramId(smt_token_program_id.clone()));
+        map.insert("oranj".into(), ProgramId(smt_token_program_id.clone()));
         map.insert("hydentity".into(), ProgramId(hydentity_program_id.clone()));
         map.insert("staking".into(), ProgramId(staking_program_id.clone()));
         map.insert(
@@ -434,11 +436,23 @@ impl Genesis {
 
         register_hyle_contract(
             &mut register_tx,
+            "hyle".into(),
+            "hyle".into(),
+            ProgramId(vec![0, 0, 0, 0]),
+            StateCommitment::default(),
+            Some(TimeoutWindow::NoTimeout),
+            None,
+        )
+        .expect("register hyle");
+
+        register_hyle_contract(
+            &mut register_tx,
             "blst".into(),
             "blst".into(),
             NativeVerifiers::Blst.into(),
             StateCommitment::default(),
             Some(TimeoutWindow::NoTimeout),
+            None,
         )
         .expect("register blst");
 
@@ -449,6 +463,7 @@ impl Genesis {
             NativeVerifiers::Sha3_256.into(),
             StateCommitment::default(),
             Some(TimeoutWindow::NoTimeout),
+            None,
         )
         .expect("register sha3_256");
 
@@ -459,6 +474,7 @@ impl Genesis {
             NativeVerifiers::Secp256k1.into(),
             StateCommitment::default(),
             Some(TimeoutWindow::NoTimeout),
+            None,
         )
         .expect("register secp256k1");
 
@@ -468,6 +484,7 @@ impl Genesis {
             hyle_model::verifiers::RISC0_1.into(),
             staking_program_id.clone().into(),
             ctx.staking.commit(),
+            None,
             None,
         )
         .expect("register staking");
@@ -479,18 +496,22 @@ impl Genesis {
             hyllar_program_id.clone().into(),
             ctx.hyllar.commit(),
             None,
+            None,
         )
         .expect("register hyllar");
 
+        let smt = AccountSMT::default();
+        let root = *smt.0.root();
         register_hyle_contract(
             &mut register_tx,
-            "smt_token".into(),
+            "oranj".into(),
             hyle_model::verifiers::RISC0_1.into(),
             smt_token_program_id.clone().into(),
-            ctx.hyllar.commit(),
+            StateCommitment(Into::<[u8; 32]>::into(root).to_vec()),
+            None,
             None,
         )
-        .expect("register smt_token");
+        .expect("register oranj");
 
         register_hyle_contract(
             &mut register_tx,
@@ -498,6 +519,7 @@ impl Genesis {
             hyle_model::verifiers::RISC0_1.into(),
             hydentity_program_id.clone().into(),
             ctx.hydentity.commit(),
+            None,
             None,
         )
         .expect("register hydentity");
@@ -508,6 +530,7 @@ impl Genesis {
             hyle_model::verifiers::RISC0_1.into(),
             hyle_contracts::RISC0_RECURSION_ID.to_vec().into(),
             StateCommitment::default(),
+            None,
             None,
         )
         .expect("register risc0-recursion");
@@ -608,7 +631,7 @@ mod tests {
         let tmpdir = tempfile::Builder::new().tempdir().unwrap();
 
         let mut config =
-            Conf::new(None, tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
         config.id = "node-4".to_string();
         config.consensus.solo = false;
         config.genesis.stakers = [("node-1".into(), 100)].into_iter().collect();
@@ -626,7 +649,7 @@ mod tests {
     async fn test_genesis_single() {
         let tmpdir = tempfile::Builder::new().tempdir().unwrap();
         let mut config =
-            Conf::new(None, tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
         config.id = "single-node".to_string();
         config.consensus.solo = true;
         config.genesis.stakers = [("single-node".into(), 100)].into_iter().collect();
@@ -651,7 +674,7 @@ mod tests {
         let tmpdir = tempfile::Builder::new().tempdir().unwrap();
 
         let mut config =
-            Conf::new(None, tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
         config.id = "node-1".to_string();
         config.consensus.solo = false;
         config.genesis.stakers = [("node-1".into(), 100), ("node-2".into(), 100)]
@@ -686,7 +709,7 @@ mod tests {
         let tmpdir = tempfile::Builder::new().tempdir().unwrap();
 
         let mut config =
-            Conf::new(None, tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
         config.id = "node-2".to_string();
         config.consensus.solo = false;
         config.genesis.stakers = [("node-1".into(), 100), ("node-2".into(), 100)]
@@ -724,7 +747,7 @@ mod tests {
         let tmpdir = tempfile::Builder::new().tempdir().unwrap();
 
         let mut config =
-            Conf::new(None, tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
         config.id = "node-1".to_string();
         config.genesis.stakers = [
             ("node-1".into(), 100),
@@ -769,7 +792,7 @@ mod tests {
         let tmpdir = tempfile::Builder::new().tempdir().unwrap();
 
         let mut config =
-            Conf::new(None, tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
         config.id = "node-1".to_string();
         config.consensus.solo = false;
         config.genesis.stakers = [

@@ -9,7 +9,7 @@ use std::{
 use anyhow::{bail, Result};
 use sdk::{
     Blob, BlobIndex, BlobTransaction, Calldata, ContractAction, ContractName, Hashed, HyleOutput,
-    Identity, ProofTransaction, TxContext,
+    Identity, ProofTransaction, RegisterContractEffect, TxContext,
 };
 
 use crate::helpers::ClientSdkProver;
@@ -339,6 +339,9 @@ impl ContractRunner {
     }
 }
 
+// Reexport anyhow to avoid forcing users to include it explicitly.
+pub type TxExecutorHandlerResult<T> = Result<T>;
+pub use anyhow::Context as TxExecutorHandlerContext;
 pub trait TxExecutorHandler {
     /// Entry point for contract execution for the SDK's TxExecutor tool
     /// This handler provides a way to execute contract logic with access to the full provable state,
@@ -346,12 +349,30 @@ pub trait TxExecutorHandler {
     ///
     /// Example: For a contract using a MerkleTrie, this handler can access and update the entire trie,
     /// while the ZkContract would only work with the root hash.
-    fn handle(&mut self, calldata: &Calldata) -> Result<HyleOutput, String>;
+    fn handle(&mut self, calldata: &Calldata) -> anyhow::Result<HyleOutput>;
 
     /// This is the function that creates the commitment metadata.
     /// It provides the minimum information necessary to construct the commitment_medata field of the input
     /// that will be used to execute the program in the zkvm.
-    fn build_commitment_metadata(&self, blob: &Blob) -> Result<Vec<u8>, String>;
+    fn build_commitment_metadata(&self, blob: &Blob) -> anyhow::Result<Vec<u8>>;
+
+    /// This function is used to merge the commitment metadata of the contract.
+    /// Used for contracts that use only a partial state like MerkleTrie.
+    fn merge_commitment_metadata(
+        &self,
+        initial: Vec<u8>,
+        _next: Vec<u8>,
+    ) -> Result<Vec<u8>, String> {
+        Ok(initial)
+    }
+
+    /// Parse a registration blob and construct the initial state of the contract
+    fn construct_state(
+        register_blob: &RegisterContractEffect,
+        metadata: &Option<Vec<u8>>,
+    ) -> anyhow::Result<Self>
+    where
+        Self: Sized;
 }
 
 /// Macro to easily define the full state of a TxExecutor

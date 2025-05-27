@@ -16,6 +16,7 @@ pub fn register_hyle_contract(
     program_id: ProgramId,
     state_commitment: StateCommitment,
     timeout_window: Option<TimeoutWindow>,
+    constructor_metadata: Option<Vec<u8>>,
 ) -> anyhow::Result<()> {
     builder.add_action(
         "hyle".into(),
@@ -25,6 +26,7 @@ pub fn register_hyle_contract(
             program_id,
             state_commitment,
             timeout_window,
+            constructor_metadata,
         },
         None,
         None,
@@ -67,6 +69,11 @@ pub mod risc0 {
                         bonsai_runner::as_input_data(&(commitment_metadata, calldatas))?;
                     bonsai_runner::run_bonsai(self.binary, input_data.clone()).await?
                 }
+                "boundless" => {
+                    let input_data =
+                        bonsai_runner::as_input_data(&(commitment_metadata, calldatas))?;
+                    bonsai_runner::run_boundless(self.binary, input_data).await?
+                }
                 _ => {
                     let input_data = borsh::to_vec(&(commitment_metadata, calldatas))?;
                     let env = risc0_zkvm::ExecutorEnv::builder()
@@ -99,25 +106,56 @@ pub mod risc0 {
 
 #[cfg(feature = "sp1")]
 pub mod sp1 {
-    use sp1_sdk::{EnvProver, ProverClient, SP1ProvingKey, SP1Stdin, SP1VerifyingKey};
+    use sp1_sdk::{
+        network::builder::NetworkProverBuilder, EnvProver, NetworkProver, ProverClient,
+        SP1ProvingKey, SP1Stdin,
+    };
 
     use super::*;
 
     pub struct SP1Prover {
         pk: SP1ProvingKey,
-        pub vk: SP1VerifyingKey,
-        client: EnvProver,
+        client: ProverType,
     }
+
+    enum ProverType {
+        Local(EnvProver),
+        Network(Box<NetworkProver>),
+    }
+
     impl SP1Prover {
-        pub fn new(binary: &[u8]) -> Self {
-            // Setup the program for proving.
-            let client = ProverClient::from_env();
-            let (pk, vk) = client.setup(binary);
-            Self { client, pk, vk }
+        pub async fn new(pk: SP1ProvingKey) -> Self {
+            let prover_type = std::env::var("SP1_PROVER").unwrap_or_default();
+
+            match prover_type.to_lowercase().as_str() {
+                "network" => {
+                    // Setup the program for network proving
+                    let client = NetworkProverBuilder::default().build();
+
+                    tracing::info!("Registering sp1 program on network");
+                    client
+                        .register_program(&pk.vk, &pk.elf)
+                        .await
+                        .expect("registering program");
+
+                    Self {
+                        pk,
+                        client: ProverType::Network(Box::new(client)),
+                    }
+                }
+                _ => {
+                    // Setup the program for local proving
+                    let client = ProverClient::from_env();
+                    Self {
+                        pk,
+                        client: ProverType::Local(client),
+                    }
+                }
+            }
         }
 
         pub fn program_id(&self) -> Result<sdk::ProgramId> {
-            Ok(sdk::ProgramId(serde_json::to_vec(&self.vk)?))
+            Ok(sdk::ProgramId(serde_json::to_vec(&self.pk.vk)?))
         }
 
         pub async fn prove<T: BorshSerialize>(
@@ -130,13 +168,22 @@ pub mod sp1 {
             let encoded = borsh::to_vec(&(commitment_metadata, calldatas))?;
             stdin.write_vec(encoded);
 
-            // Generate the proof
-            let proof = self
-                .client
-                .prove(&self.pk, &stdin)
-                //.compressed()
-                .run()
-                .expect("failed to generate proof");
+            // Generate the proof based on the prover type
+            let proof = match &self.client {
+                ProverType::Local(client) => client
+                    .prove(&self.pk, &stdin)
+                    .compressed()
+                    .run()
+                    .expect("failed to generate proof"),
+                ProverType::Network(client) => client
+                    .prove(&self.pk, &stdin)
+                    // Core proofs are limite to 5M cycles
+                    .compressed()
+                    // Reserved strategy is better for higher usage throughput
+                    .strategy(sp1_sdk::network::FulfillmentStrategy::Reserved)
+                    .run()
+                    .expect("failed to generate proof"),
+            };
 
             let encoded_receipt = bincode::serialize(&proof)?;
             Ok(ProofData(encoded_receipt))
@@ -155,40 +202,41 @@ pub mod sp1 {
 }
 
 pub mod test {
-    use crate::transaction_builder::TxExecutorHandler;
+    use borsh::BorshDeserialize;
+    use sdk::ZkContract;
 
     use super::*;
 
     /// Generates valid proofs for the 'test' verifier using the TxExecutor
-    pub struct TxExecutorTestProver<C: TxExecutorHandler> {
-        contract: std::sync::Arc<std::sync::Mutex<C>>,
+    pub struct TxExecutorTestProver<C: ZkContract> {
+        phantom: std::marker::PhantomData<C>,
     }
 
-    impl<C: TxExecutorHandler> TxExecutorTestProver<C> {
-        pub fn new(contract: C) -> Self {
+    impl<C: ZkContract> TxExecutorTestProver<C> {
+        pub fn new() -> Self {
             Self {
-                contract: std::sync::Arc::new(std::sync::Mutex::new(contract)),
+                phantom: std::marker::PhantomData,
             }
         }
     }
 
-    impl<C: TxExecutorHandler> ClientSdkProver<Vec<Calldata>> for TxExecutorTestProver<C> {
+    impl<C: ZkContract> Default for TxExecutorTestProver<C> {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl<C: ZkContract + BorshDeserialize + 'static> ClientSdkProver<Vec<Calldata>>
+        for TxExecutorTestProver<C>
+    {
         fn prove(
             &self,
-            _commitment_metadata: Vec<u8>,
+            commitment_metadata: Vec<u8>,
             calldatas: Vec<Calldata>,
         ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ProofData>> + Send + '_>>
         {
-            let hos = calldatas
-                .iter()
-                .map(|calldata| self.contract.lock().unwrap().handle(calldata))
-                .collect::<Result<Vec<_>, String>>();
-            Box::pin(async move {
-                match hos {
-                    Ok(hos) => Ok(ProofData(borsh::to_vec(&hos).unwrap())),
-                    Err(e) => Err(anyhow::anyhow!(e)),
-                }
-            })
+            let hos = sdk::guest::execute::<C>(&commitment_metadata, &calldatas);
+            Box::pin(async move { Ok(ProofData(borsh::to_vec(&hos).unwrap())) })
         }
     }
 

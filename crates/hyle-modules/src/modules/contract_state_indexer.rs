@@ -7,7 +7,6 @@ use anyhow::{anyhow, Error, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::contract_indexer::{ContractHandler, ContractStateStore};
 use sdk::*;
-use serde::Serialize;
 use std::{any::TypeId, ops::Deref, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::debug;
@@ -45,12 +44,10 @@ pub struct ContractStateIndexerCtx {
 
 impl<State, Event> Module for ContractStateIndexer<State, Event>
 where
-    State: Serialize
-        + Clone
+    State: Clone
         + Sync
         + Send
         + std::fmt::Debug
-        + Default
         + ContractHandler<Event>
         + BorshSerialize
         + BorshDeserialize
@@ -112,12 +109,10 @@ where
 
 impl<State, Event> ContractStateIndexer<State, Event>
 where
-    State: Serialize
-        + Clone
+    State: Clone
         + Sync
         + Send
         + std::fmt::Debug
-        + Default
         + ContractHandler<Event>
         + BorshSerialize
         + BorshDeserialize
@@ -212,9 +207,9 @@ where
     }
 
     async fn handle_processed_block(&mut self, block: Block) -> Result<()> {
-        for (_, contract) in &block.registered_contracts {
+        for (_, contract, metadata) in &block.registered_contracts {
             if self.contract_name == contract.contract_name {
-                self.handle_register_contract(contract.clone()).await?;
+                self.handle_register_contract(contract, metadata).await?;
             }
         }
 
@@ -281,9 +276,13 @@ where
         Ok(())
     }
 
-    async fn handle_register_contract(&self, contract: RegisterContractEffect) -> Result<()> {
-        let state = State::default();
-        tracing::info!(cn = %self.contract_name, "📝 Registered suppored contract '{}' with initial state '{state:?}'", contract.contract_name);
+    async fn handle_register_contract(
+        &self,
+        contract: &RegisterContractEffect,
+        metadata: &Option<Vec<u8>>,
+    ) -> Result<()> {
+        let state = State::construct_state(contract, metadata)?;
+        tracing::info!(cn = %self.contract_name, "📝 Registered suppored contract '{}'", contract.contract_name);
         self.store.write().await.state = Some(state);
         Ok(())
     }
@@ -293,7 +292,6 @@ where
 mod tests {
     use client_sdk::transaction_builder::TxExecutorHandler;
     use sdk::*;
-    use serde::Deserialize;
     use utoipa::openapi::OpenApi;
 
     use super::*;
@@ -303,7 +301,7 @@ mod tests {
     use crate::node_state::{NodeState, NodeStateStore};
     use std::sync::Arc;
 
-    #[derive(Clone, Debug, Default, BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
+    #[derive(Clone, Debug, Default, BorshSerialize, BorshDeserialize)]
     struct MockState(Vec<u8>);
 
     impl TryFrom<StateCommitment> for MockState {
@@ -325,12 +323,19 @@ mod tests {
     }
 
     impl TxExecutorHandler for MockState {
-        fn handle(&mut self, _: &Calldata) -> Result<HyleOutput, String> {
-            Err("not implemented".into())
+        fn handle(&mut self, _: &Calldata) -> Result<HyleOutput> {
+            anyhow::bail!("not implemented");
         }
 
-        fn build_commitment_metadata(&self, _: &Blob) -> std::result::Result<Vec<u8>, String> {
-            Err("not implemented".into())
+        fn build_commitment_metadata(&self, _: &Blob) -> Result<Vec<u8>> {
+            anyhow::bail!("not implemented");
+        }
+
+        fn construct_state(
+            _register_blob: &RegisterContractEffect,
+            _metadata: &Option<Vec<u8>>,
+        ) -> Result<Self> {
+            Ok(Self::default())
         }
     }
 
@@ -372,9 +377,9 @@ mod tests {
             state_commitment,
             verifier: "test".into(),
             program_id: ProgramId(vec![]),
-            timeout_window: Some(TimeoutWindow::default()),
+            ..Default::default()
         };
-        indexer.handle_register_contract(rce).await.unwrap();
+        indexer.handle_register_contract(&rce, &None).await.unwrap();
     }
 
     #[test_log::test(tokio::test)]

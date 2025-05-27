@@ -21,11 +21,12 @@ use crate::{
     node_state::module::{QueryBlockHeight, QueryUnsettledTx},
 };
 
-use super::module::NodeStateCtx;
+use super::module::{NodeStateCtx, QuerySettledHeight};
 
 bus_client! {
 struct RestBusClient {
     sender(Query<ContractName, Contract>),
+    sender(Query<QuerySettledHeight, BlockHeight>),
     sender(Query<QueryBlockHeight, BlockHeight>),
     sender(Query<QueryUnsettledTx, UnsettledBlobTransaction>),
 }
@@ -45,8 +46,8 @@ pub async fn api(bus: SharedMessageBus, ctx: &NodeStateCtx) -> Router<()> {
 
     let (router, api) = OpenApiRouter::with_openapi(NodeStateAPI::openapi())
         .routes(routes!(get_block_height))
-        // FIXME: we expose this endpoint for testing purposes. This should be removed or adapted
         .routes(routes!(get_contract))
+        .routes(routes!(get_contract_settled_height))
         // TODO: figure out if we want to rely on the indexer instead
         .routes(routes!(get_unsettled_tx))
         .split_for_parts();
@@ -77,6 +78,52 @@ pub async fn get_contract(
     match state.bus.request(name).await {
         Ok(contract) => Ok(Json(contract)),
         err => {
+            if let Err(e) = err.as_ref() {
+                if e.to_string().contains("Contract not found") {
+                    return Err(AppError(
+                        StatusCode::NOT_FOUND,
+                        anyhow!("Contract {} not found", name_clone),
+                    ));
+                }
+            }
+            error!("{:?}", err);
+
+            Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                anyhow!("Error while getting contract {}", name_clone),
+            ))
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/contract/{name}/settled_height",
+    params(
+        ("name" = String, Path, description = "Contract name")
+    ),
+    description = "The block height where the contract was settled",
+    tag = "Node State",
+    responses(
+        (status = OK, body = Contract)
+    )
+)]
+pub async fn get_contract_settled_height(
+    Path(name): Path<ContractName>,
+    State(mut state): State<RouterState>,
+) -> Result<impl IntoResponse, AppError> {
+    let name_clone = name.clone();
+    match state.bus.request(QuerySettledHeight(name)).await {
+        Ok(contract) => Ok(Json::<BlockHeight>(contract)),
+        err => {
+            if let Err(e) = err.as_ref() {
+                if e.to_string().contains("Contract not found") {
+                    return Err(AppError(
+                        StatusCode::NOT_FOUND,
+                        anyhow!("Contract {} not found", name_clone),
+                    ));
+                }
+            }
             error!("{:?}", err);
 
             Err(AppError(
@@ -152,6 +199,12 @@ impl Clone for RouterState {
                 Pick::<tokio::sync::broadcast::Sender<Query<ContractName, Contract>>>::get(
                     &self.bus,
                 )
+                .clone(),
+                Pick::<
+                    tokio::sync::broadcast::Sender<
+                        Query<QuerySettledHeight, BlockHeight>,
+                    >,
+                >::get(&self.bus)
                 .clone(),
                 Pick::<tokio::sync::broadcast::Sender<Query<QueryBlockHeight, BlockHeight>>>::get(
                     &self.bus,

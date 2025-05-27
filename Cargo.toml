@@ -34,8 +34,8 @@ resolver = "2"
 [workspace.package]
 version = "0.13.0-rc.4"
 edition = "2021"
-homepage = "https://hyle.eu/"
-repository = "https://github.com/Hyle-org/hyle/"
+homepage = "https://hyli.org/"
+repository = "https://github.com/hyli-org/hyli/"
 rust-version = "1.84"
 license-file = "LICENSE"
 
@@ -60,7 +60,7 @@ hyle-modules = { version = "0.13.0-rc.4", default-features = false, path = "crat
 
 [package]
 name = "hyle"
-description = "Hyle node"
+description = "Hyli node"
 license-file = { workspace = true }
 version = { workspace = true }
 edition = { workspace = true }
@@ -110,6 +110,7 @@ chrono = { version = "0.4", features = ["serde"] }
 hex = { version = "0.4.3" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1" }
+serde_with = "3.12.0"
 sha3 = "0.10.8"
 strum_macros = "0.27.1"
 tracing = "0.1"
@@ -117,7 +118,7 @@ tracing = "0.1"
 assertables = { version = "9.5.2" }
 axum = { version = "0.8.4", features = ["macros"] }
 bytes = { version = "1.10.0" }
-clap = { version = "4.5.37", features = ["derive"] }
+clap = { version = "4.5.38", features = ["derive"] }
 config = { version = "0.15.9", default-features = false, features = ["toml"] }
 futures = { version = "0.3.31" }
 indexmap = { version = "2.9.0", features = ["serde"] }
@@ -146,8 +147,9 @@ testcontainers-modules = { version = "0.12.0", features = ["postgres"] }
 toml = "0.8.22"
 
 # We force zip version here as later version is not compatible with utoipa-swagger-ui
-zip = "=2.3.0"
+zip = "=3.0.0"
 seq-macro = "0.3.6"
+async-stream = "0.3.6"
 
 [package.metadata.cargo-machete]
 ignored = ["zip", "bytes", "tokio-util"]
@@ -176,7 +178,7 @@ test-log = { version = "0.2.17", features = [
   "trace",
 ], default-features = false }
 tokio-stream = "0.1.17"
-tempfile = "3.19.1"
+tempfile = "3.20.0"
 assert-json-diff = "2.0.2"
 risc0-recursion = { workspace = true }
 risc0-zkvm = { version = "2.0.2", default-features = false, features = [

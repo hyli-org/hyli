@@ -1,6 +1,6 @@
 [package]
 name = "hyle-modules"
-description = "Collection of Hyle Modules"
+description = "Collection of Hyli Modules"
 license-file = { workspace = true }
 version = { workspace = true }
 edition = { workspace = true }
@@ -19,9 +19,6 @@ borsh = "1.5.6"
 serde = "1.0"
 serde_json = { version = "1" }
 tracing = "0.1"
-strum_macros = "0.27.1"
-serde_with = "3.12.0"
-config = { version = "0.15.9", default-features = false, features = ["toml"] }
 assertables = { version = "9.5.2" }
 anymap = { version = "0.12.1" }
 syn = { version = "2.0.101" }
@@ -55,7 +52,7 @@ test-log = { version = "0.2.17", features = [
 ], default-features = false, optional = true }
 
 [dev-dependencies]
-tempfile = "3.19.1"
+tempfile = "3.20.0"
 test-log = { version = "0.2.17", features = [
   "color",
   "trace",

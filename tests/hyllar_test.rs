@@ -10,6 +10,7 @@ mod e2e_hyllar {
     use client_sdk::{
         contract_states,
         helpers::risc0::Risc0Prover,
+        rest_client::NodeApiClient,
         transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
     };
     use hydentity::{

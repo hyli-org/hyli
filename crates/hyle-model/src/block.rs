@@ -27,7 +27,7 @@ pub struct Block {
     pub verified_blobs: Vec<(TxHash, BlobIndex, Option<usize>)>,
     pub new_bounded_validators: Vec<ValidatorPublicKey>,
     pub staking_actions: Vec<(Identity, StakingAction)>,
-    pub registered_contracts: Vec<(TxHash, RegisterContractEffect)>,
+    pub registered_contracts: Vec<(TxHash, RegisterContractEffect, Option<Vec<u8>>)>,
     pub deleted_contracts: Vec<(TxHash, ContractName)>,
     pub updated_states: BTreeMap<ContractName, StateCommitment>,
     pub transactions_events: BTreeMap<TxHash, Vec<TransactionStateEvent>>,

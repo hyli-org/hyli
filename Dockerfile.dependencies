@@ -1,8 +1,4 @@
-FROM rust:alpine AS chef 
-RUN apk add pkgconfig openssl-dev gcc musl-dev
-RUN apk add --no-cache openssl-libs-static
-RUN apk add curl bash
-RUN apk add dbus-dev
+FROM rust:slim-bookworm AS chef 
 RUN cargo install cargo-chef 
 WORKDIR /usr/src/hyle
 
@@ -15,8 +11,8 @@ COPY crates ./crates
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef 
-RUN apk add g++ 
+RUN apt-get update && apt-get install -y g++ curl libdbus-1-dev pkg-config libssl-dev
 COPY --from=planner /usr/src/hyle/recipe.json recipe.json
 
 # Build dependencies 
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN cargo chef cook --release --features sp1,risc0 --recipe-path recipe.json

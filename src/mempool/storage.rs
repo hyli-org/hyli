@@ -1,5 +1,7 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
+use async_stream::try_stream;
 use borsh::{BorshDeserialize, BorshSerialize};
+use futures::Stream;
 use hyle_crypto::BlstCrypto;
 use hyle_model::{DataSized, LaneId};
 use serde::{Deserialize, Serialize};
@@ -176,45 +178,39 @@ pub trait Storage {
     fn get_entries_between_hashes(
         &self,
         lane_id: &LaneId,
-        from_data_proposal_hash: Option<&DataProposalHash>,
-        to_data_proposal_hash: Option<&DataProposalHash>,
-    ) -> Result<Vec<(LaneEntryMetadata, DataProposal)>>;
+        from_data_proposal_hash: Option<DataProposalHash>,
+        to_data_proposal_hash: Option<DataProposalHash>,
+    ) -> impl Stream<Item = Result<(LaneEntryMetadata, DataProposal)>>;
 
     fn get_entries_metadata_between_hashes(
         &self,
         lane_id: &LaneId,
-        from_data_proposal_hash: Option<&DataProposalHash>,
-        to_data_proposal_hash: Option<&DataProposalHash>,
-    ) -> Result<Vec<(LaneEntryMetadata, DataProposalHash)>> {
+        from_data_proposal_hash: Option<DataProposalHash>,
+        to_data_proposal_hash: Option<DataProposalHash>,
+    ) -> impl Stream<Item = Result<(LaneEntryMetadata, DataProposalHash)>> {
         // If no dp hash is provided, we use the tip of the lane
-        let mut dp_hash: DataProposalHash = match to_data_proposal_hash {
-            Some(hash) => hash.clone(),
-            None => match self.get_lane_hash_tip(lane_id) {
-                Some(dp_hash) => dp_hash.clone(),
-                None => {
-                    return Ok(vec![]);
-                }
-            },
-        };
-        let mut entries = vec![];
-        while Some(&dp_hash) != from_data_proposal_hash {
-            let lane_entry = self.get_metadata_by_hash(lane_id, &dp_hash)?;
-            match lane_entry {
-                Some(lane_entry) => {
-                    entries.insert(0, (lane_entry.clone(), dp_hash.clone()));
-                    if let Some(parent_dp_hash) = lane_entry.parent_data_proposal_hash.clone() {
-                        dp_hash = parent_dp_hash;
-                    } else {
-                        break;
+        let initial_dp_hash: Option<DataProposalHash> =
+            to_data_proposal_hash.or(self.get_lane_hash_tip(lane_id).cloned());
+        try_stream! {
+            if let Some(mut some_dp_hash) = initial_dp_hash {
+                while Some(&some_dp_hash) != from_data_proposal_hash.as_ref() {
+                    let lane_entry = self.get_metadata_by_hash(lane_id, &some_dp_hash)?;
+                    match lane_entry {
+                        Some(lane_entry) => {
+                            yield (lane_entry.clone(), some_dp_hash);
+                            if let Some(parent_dp_hash) = lane_entry.parent_data_proposal_hash.clone() {
+                                some_dp_hash = parent_dp_hash;
+                            } else {
+                                break;
+                            }
+                        }
+                        None => {
+                            Err(anyhow::anyhow!("Local lane is incomplete: could not find DP {}", some_dp_hash))?;
+                        }
                     }
-                }
-                None => {
-                    bail!("Local lane is incomplete: could not find DP {}", dp_hash);
                 }
             }
         }
-
-        Ok(entries)
     }
 
     fn get_lane_size_at(
@@ -232,7 +228,7 @@ pub trait Storage {
         &self,
         lane_id: &LaneId,
         last_cut: Option<Cut>,
-    ) -> Result<Vec<(LaneEntryMetadata, DataProposalHash)>> {
+    ) -> impl Stream<Item = Result<(LaneEntryMetadata, DataProposalHash)>> {
         let lane_tip = self.get_lane_hash_tip(lane_id);
 
         let last_committed_dp_hash = match last_cut {
@@ -242,7 +238,11 @@ pub trait Storage {
                 .map(|(_, dp, _, _)| dp.clone()),
             None => None,
         };
-        self.get_entries_metadata_between_hashes(lane_id, last_committed_dp_hash.as_ref(), lane_tip)
+        self.get_entries_metadata_between_hashes(
+            lane_id,
+            last_committed_dp_hash.clone(),
+            lane_tip.cloned(),
+        )
     }
 
     /// For unknown DataProposals in the new cut, we need to remove all DataProposals that we have after the previous cut.
@@ -308,11 +308,12 @@ mod tests {
 
     use super::*;
     use crate::mempool::storage_memory::LanesStorage;
+    use futures::StreamExt;
     use hyle_model::{DataSized, Signature, Transaction, ValidatorSignature};
     use staking::state::Staking;
 
     fn setup_storage() -> LanesStorage {
-        let tmp_dir = tempfile::tempdir().unwrap().into_path();
+        let tmp_dir = tempfile::tempdir().unwrap().keep();
         LanesStorage::new(&tmp_dir, BTreeMap::default()).unwrap()
     }
 
@@ -466,46 +467,73 @@ mod tests {
             .unwrap();
 
         // [start, end] == [1, 2, 3]
-        let all_entries = storage
+        let all_entries: Vec<_> = storage
             .get_entries_between_hashes(lane_id, None, None)
-            .unwrap();
+            .collect()
+            .await;
         assert_eq!(3, all_entries.len());
 
-        // ]1, end] == [2, 3]
-        let entries_from_1_to_end = storage
-            .get_entries_between_hashes(lane_id, Some(&dp1.hashed()), None)
-            .unwrap();
+        // ]1, end] == [3, 2]
+        let entries_from_1_to_end: Vec<_> = storage
+            .get_entries_between_hashes(lane_id, Some(dp1.hashed()), None)
+            .collect()
+            .await;
         assert_eq!(2, entries_from_1_to_end.len());
-        assert_eq!(dp2, entries_from_1_to_end.first().unwrap().1);
-        assert_eq!(dp3, entries_from_1_to_end.last().unwrap().1);
+        dbg!(&dp2);
+        dbg!(&dp3);
+        dbg!(&entries_from_1_to_end);
+        assert_eq!(
+            dp2,
+            entries_from_1_to_end.last().unwrap().as_ref().unwrap().1
+        );
+        assert_eq!(
+            dp3,
+            entries_from_1_to_end.first().unwrap().as_ref().unwrap().1
+        );
 
-        // [start, 2] == [1, 2]
-        let entries_from_start_to_2 = storage
-            .get_entries_between_hashes(lane_id, None, Some(&dp2.hashed()))
-            .unwrap();
+        // [start, 2] == [2, 1]
+        let entries_from_start_to_2: Vec<_> = storage
+            .get_entries_between_hashes(lane_id, None, Some(dp2.hashed()))
+            .collect()
+            .await;
         assert_eq!(2, entries_from_start_to_2.len());
-        assert_eq!(dp1, entries_from_start_to_2.first().unwrap().1);
-        assert_eq!(dp2, entries_from_start_to_2.last().unwrap().1);
+        assert_eq!(
+            dp1,
+            entries_from_start_to_2.last().unwrap().as_ref().unwrap().1
+        );
+        assert_eq!(
+            dp2,
+            entries_from_start_to_2.first().unwrap().as_ref().unwrap().1
+        );
 
         // ]1, 2] == [2]
-        let entries_from_1_to_2 = storage
-            .get_entries_between_hashes(lane_id, Some(&dp1.hashed()), Some(&dp2.hashed()))
-            .unwrap();
+        let entries_from_1_to_2: Vec<_> = storage
+            .get_entries_between_hashes(lane_id, Some(dp1.hashed()), Some(dp2.hashed()))
+            .collect()
+            .await;
         assert_eq!(1, entries_from_1_to_2.len());
-        assert_eq!(dp2, entries_from_1_to_2.first().unwrap().1);
+        assert_eq!(
+            dp2,
+            entries_from_1_to_2.first().unwrap().as_ref().unwrap().1
+        );
 
-        // ]1, 3] == [2, 3]
-        let entries_from_1_to_3 = storage
-            .get_entries_between_hashes(lane_id, Some(&dp1.hashed()), None)
-            .unwrap();
+        // ]1, 3] == [3, 2]
+        let entries_from_1_to_3: Vec<_> = storage
+            .get_entries_between_hashes(lane_id, Some(dp1.hashed()), None)
+            .collect()
+            .await;
         assert_eq!(2, entries_from_1_to_3.len());
-        assert_eq!(dp2, entries_from_1_to_3.first().unwrap().1);
-        assert_eq!(dp3, entries_from_1_to_3.last().unwrap().1);
+        assert_eq!(dp2, entries_from_1_to_3.last().unwrap().as_ref().unwrap().1);
+        assert_eq!(
+            dp3,
+            entries_from_1_to_3.first().unwrap().as_ref().unwrap().1
+        );
 
         // ]1, 1[ == []
-        let entries_from_1_to_1 = storage
-            .get_entries_between_hashes(lane_id, Some(&dp1.hashed()), Some(&dp1.hashed()))
-            .unwrap();
+        let entries_from_1_to_1: Vec<_> = storage
+            .get_entries_between_hashes(lane_id, Some(dp1.hashed()), Some(dp1.hashed()))
+            .collect()
+            .await;
         assert_eq!(0, entries_from_1_to_1.len());
     }
 
@@ -555,7 +583,10 @@ mod tests {
         storage
             .put(lane_id.clone(), (entry, data_proposal))
             .unwrap();
-        let pending = storage.get_pending_entries_in_lane(lane_id, None).unwrap();
+        let pending: Vec<_> = storage
+            .get_pending_entries_in_lane(lane_id, None)
+            .collect()
+            .await;
         assert_eq!(1, pending.len());
     }
 

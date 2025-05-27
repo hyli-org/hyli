@@ -10,6 +10,7 @@ mod e2e_smt_token {
     use client_sdk::{
         contract_states,
         helpers::risc0::Risc0Prover,
+        rest_client::NodeApiClient,
         transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
     };
     use hydentity::{
@@ -25,7 +26,7 @@ mod e2e_smt_token {
     contract_states!(
         struct States {
             hydentity: Hydentity,
-            smt_token: SmtTokenProvableState,
+            oranj: SmtTokenProvableState,
         }
     );
 
@@ -39,18 +40,15 @@ mod e2e_smt_token {
         // TODO: indexer toutes les transactions hihi
         // let token: SmtToken = ctx
         //     .indexer_client()
-        //     .fetch_current_state(&"smt_token".into())
+        //     .fetch_current_state(&"oranj".into())
         //     .await?;
-        let smt_token = SmtTokenProvableState::default();
+        let oranj = SmtTokenProvableState::default();
 
-        let mut executor = TxExecutorBuilder::new(States {
-            hydentity,
-            smt_token,
-        })
-        // Replace prover binaries for non-reproducible mode.
-        .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
-        .with_prover("smt_token".into(), Risc0Prover::new(SMT_TOKEN_ELF))
-        .build();
+        let mut executor = TxExecutorBuilder::new(States { hydentity, oranj })
+            // Replace prover binaries for non-reproducible mode.
+            .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
+            .with_prover("oranj".into(), Risc0Prover::new(SMT_TOKEN_ELF))
+            .build();
 
         info!("➡️  Sending blob to register bob identity");
 
@@ -80,9 +78,9 @@ mod e2e_smt_token {
             "password".to_string(),
         )?;
 
-        executor.smt_token.transfer(
+        executor.oranj.transfer(
             &mut tx,
-            "smt_token".into(),
+            "oranj".into(),
             FAUCET_ID.into(),
             "bob@hydentity".into(),
             25,
@@ -107,9 +105,9 @@ mod e2e_smt_token {
 
         // let state: SmtToken = ctx
         //     .indexer_client()
-        //     .fetch_current_state(&"smt_token".into())
+        //     .fetch_current_state(&"oranj".into())
         //     .await?;
-        let state = executor.smt_token.get_state();
+        let state = executor.oranj.get_state();
         assert_eq!(
             state
                 .get(&"bob@hydentity".into())

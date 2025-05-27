@@ -2,10 +2,7 @@ use anyhow::anyhow;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json, Router};
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyle_contract_sdk::TxHash;
-use hyle_model::{
-    api::APIRegisterContract, BlockHeight, ContractAction, RegisterContractAction,
-    StructuredBlobData, TimeoutWindow,
-};
+use hyle_model::{api::APIRegisterContract, RegisterContractAction, StructuredBlobData};
 use hyle_modules::{
     bus::SharedMessageBus, modules::SharedBuildApiCtx,
     node_state::contract_registration::validate_contract_registration_metadata,
@@ -150,21 +147,7 @@ pub async fn register_contract(
     )
     .map_err(|err| AppError(StatusCode::BAD_REQUEST, anyhow!(err)))?;
 
-    let tx = BlobTransaction::new(
-        "hyle@hyle",
-        vec![RegisterContractAction {
-            verifier: payload.verifier,
-            program_id: payload.program_id,
-            state_commitment: payload.state_commitment,
-            contract_name: payload.contract_name,
-            timeout_window: match payload.timeout_window {
-                Some(0) => Some(TimeoutWindow::NoTimeout),
-                Some(timeout) => Some(TimeoutWindow::Timeout(BlockHeight(timeout))),
-                None => None,
-            },
-        }
-        .as_blob(owner, None, None)],
-    );
+    let tx = BlobTransaction::from(payload);
 
     handle_send(state, TransactionData::Blob(tx)).await
 }

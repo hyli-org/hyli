@@ -442,14 +442,14 @@ pub mod tests {
 
     impl DataAvailabilityTestCtx {
         pub async fn new(shared_bus: crate::bus::SharedMessageBus) -> Self {
-            let path = tempfile::tempdir().unwrap().into_path();
+            let path = tempfile::tempdir().unwrap().keep();
             let tmpdir = path;
             let blocks = Blocks::new(&tmpdir).unwrap();
 
             let bus = super::DABusClient::new_from_bus(shared_bus.new_handle()).await;
             let node_state_bus = NodeStateBusClient::new_from_bus(shared_bus).await;
 
-            let mut config: Conf = Conf::new(None, None, None).unwrap();
+            let mut config: Conf = Conf::new(vec![], None, None).unwrap();
 
             let node_state = NodeState::create(config.id.clone(), "data_availability");
 
@@ -496,7 +496,7 @@ pub mod tests {
 
     #[test_log::test]
     fn test_blocks() -> Result<()> {
-        let tmpdir = tempfile::tempdir().unwrap().into_path();
+        let tmpdir = tempfile::tempdir().unwrap().keep();
         let mut blocks = Blocks::new(&tmpdir).unwrap();
         let block = SignedBlock::default();
         blocks.put(block.clone())?;
@@ -509,7 +509,7 @@ pub mod tests {
 
     #[tokio::test]
     async fn test_pop_buffer_large() {
-        let tmpdir = tempfile::tempdir().unwrap().into_path();
+        let tmpdir = tempfile::tempdir().unwrap().keep();
         let blocks = Blocks::new(&tmpdir).unwrap();
 
         let mut server = DataAvailabilityServer::start(7898, "DaServer")
@@ -551,7 +551,7 @@ pub mod tests {
 
     #[test_log::test(tokio::test)]
     async fn test_da_streaming() {
-        let tmpdir = tempfile::tempdir().unwrap().into_path();
+        let tmpdir = tempfile::tempdir().unwrap().keep();
         let blocks = Blocks::new(&tmpdir).unwrap();
 
         let global_bus = crate::bus::SharedMessageBus::new(
@@ -560,7 +560,7 @@ pub mod tests {
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
         let mut block_sender = TestBusClient::new_from_bus(global_bus).await;
 
-        let mut config: Conf = Conf::new(None, None, None).unwrap();
+        let mut config: Conf = Conf::new(vec![], None, None).unwrap();
         config.da_server_port = find_available_port().await;
         config.da_public_address = format!("127.0.0.1:{}", config.da_server_port);
         let mut da = super::DataAvailability {

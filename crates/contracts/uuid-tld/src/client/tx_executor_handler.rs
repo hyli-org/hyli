@@ -1,9 +1,14 @@
 use crate::UuidTld;
 use client_sdk::{
     helpers::risc0::Risc0Prover,
-    transaction_builder::{StateUpdater, TxExecutorBuilder, TxExecutorHandler},
+    transaction_builder::{
+        StateUpdater, TxExecutorBuilder, TxExecutorHandler, TxExecutorHandlerContext,
+        TxExecutorHandlerResult,
+    },
 };
-use sdk::{utils::as_hyle_output, Blob, Calldata, ContractName, ZkContract};
+use sdk::{
+    utils::as_hyle_output, Blob, Calldata, ContractName, RegisterContractEffect, ZkContract,
+};
 
 pub mod metadata {
     pub const UUID_TLD_ELF: &[u8] = include_bytes!("../../uuid-tld.img");
@@ -21,10 +26,11 @@ impl UuidTld {
 }
 
 impl TxExecutorHandler for UuidTld {
-    fn build_commitment_metadata(&self, _blob: &Blob) -> Result<Vec<u8>, String> {
-        borsh::to_vec(self).map_err(|e| e.to_string())
+    fn build_commitment_metadata(&self, _blob: &Blob) -> TxExecutorHandlerResult<Vec<u8>> {
+        borsh::to_vec(self).context("Failed to serialize UuidTld")
     }
-    fn handle(&mut self, calldata: &Calldata) -> Result<sdk::HyleOutput, String> {
+
+    fn handle(&mut self, calldata: &Calldata) -> TxExecutorHandlerResult<sdk::HyleOutput> {
         let initial_state_commitment = <Self as ZkContract>::commit(self);
         let mut res = <Self as ZkContract>::execute(self, calldata);
         let next_state_commitment = <Self as ZkContract>::commit(self);
@@ -34,5 +40,12 @@ impl TxExecutorHandler for UuidTld {
             calldata,
             &mut res,
         ))
+    }
+
+    fn construct_state(
+        _register_blob: &RegisterContractEffect,
+        _metadata: &Option<Vec<u8>>,
+    ) -> TxExecutorHandlerResult<Self> {
+        Ok(Self::default())
     }
 }

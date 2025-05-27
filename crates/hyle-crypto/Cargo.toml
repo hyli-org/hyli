@@ -1,6 +1,6 @@
 [package]
 name = "hyle-crypto"
-description = "Hyle module for cryptographic operations"
+description = "Hyli module for cryptographic operations"
 license-file = { workspace = true }
 version = { workspace = true }
 edition = { workspace = true }

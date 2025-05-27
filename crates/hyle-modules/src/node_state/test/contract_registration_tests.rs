@@ -14,7 +14,7 @@ pub fn make_register_tx(
             program_id: ProgramId(vec![]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name: name,
-            timeout_window: None,
+            ..Default::default()
         }
         .as_blob(tld, None, None)],
     )
@@ -156,7 +156,7 @@ async fn test_register_contract_composition() {
                 program_id: ProgramId(vec![]),
                 state_commitment: StateCommitment(vec![0, 1, 2, 3]),
                 contract_name: "c1".into(),
-                timeout_window: None,
+                ..Default::default()
             }
             .as_blob("hyle".into(), None, None),
             Blob {
@@ -216,11 +216,11 @@ async fn test_register_contract_composition() {
 
     assert_eq!(state.contracts.len(), 2);
 
-    let block = state.craft_block_and_handle(105, vec![proof_tx.clone().into()]);
+    let mut block = state.craft_block_and_handle(105, vec![proof_tx.clone().into()]);
 
     check_block_is_ok(&block);
 
-    let block = state.craft_block_and_handle(202, vec![]);
+    let block = state.craft_block_and_handle(102 + 5, vec![]);
 
     check_block_is_ok(&block);
 
@@ -300,7 +300,7 @@ async fn test_register_contract_and_delete_hyle() {
         block
             .registered_contracts
             .iter()
-            .map(|(_, rce)| rce.contract_name.0.clone())
+            .map(|(_, rce, _)| rce.contract_name.0.clone())
             .collect::<Vec<_>>(),
         vec!["c1", "c2.hyle", "sub.c2.hyle"]
     );
@@ -568,6 +568,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name: c1.clone(),
             timeout_window: Some(TimeoutWindow::Timeout(custom_timeout)),
+            ..Default::default()
         };
         let upgrade_with_timeout = BlobTransaction::new(
             Identity::new("test@c1"),
@@ -587,7 +588,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
         let mut hyle_output = make_hyle_output(upgrade_with_timeout, BlobIndex(0));
         hyle_output
             .onchain_effects
-            .push(OnchainEffect::RegisterContract(action));
+            .push(OnchainEffect::RegisterContract(action.into()));
         let upgrade_with_timeout_proof =
             new_proof_tx(&c1, &hyle_output, &upgrade_with_timeout_hash);
         state.craft_block_and_handle(3, vec![upgrade_with_timeout_proof.into()]);
@@ -601,6 +602,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
             state_commitment: StateCommitment(vec![4, 5, 6]),
             contract_name: c1.clone(),
             timeout_window: None,
+            ..Default::default()
         };
         let upgrade_with_none = BlobTransaction::new(
             Identity::new("test@c1"),
@@ -620,7 +622,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
             make_hyle_output_with_state(upgrade_with_none, BlobIndex(0), &[4, 5, 6], &[4, 5, 6]);
         hyle_output
             .onchain_effects
-            .push(OnchainEffect::RegisterContract(action));
+            .push(OnchainEffect::RegisterContract(action.into()));
         let upgrade_with_none_proof = new_proof_tx(&c1, &hyle_output, &upgrade_with_none_hash);
         state.craft_block_and_handle(5, vec![upgrade_with_none_proof.into()]);
     }
@@ -634,6 +636,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
             state_commitment: StateCommitment(vec![4, 5, 6]),
             contract_name: c1.clone(),
             timeout_window: Some(TimeoutWindow::Timeout(another_custom_timeout)),
+            ..Default::default()
         };
         let upgrade_with_another_timeout = BlobTransaction::new(
             Identity::new("test@c1"),
@@ -657,7 +660,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
         );
         hyle_output
             .onchain_effects
-            .push(OnchainEffect::RegisterContract(action));
+            .push(OnchainEffect::RegisterContract(action.into()));
         let upgrade_with_another_timeout_proof =
             new_proof_tx(&c1, &hyle_output, &upgrade_with_another_timeout_hash);
         state.craft_block_and_handle(7, vec![upgrade_with_another_timeout_proof.into()]);

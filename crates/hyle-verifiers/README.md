@@ -1,3 +1,3 @@
-# Hyle verifiers
+# Verifiers
 
-This crates holds verifiers for Hyle node.
+This crates holds verifiers for the Hyli node.

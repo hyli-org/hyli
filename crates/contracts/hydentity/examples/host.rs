@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use client_sdk::contract_states;
 use client_sdk::rest_client::IndexerApiHttpClient;
+use client_sdk::rest_client::NodeApiClient;
 use client_sdk::rest_client::NodeApiHttpClient;
 use client_sdk::transaction_builder::ProvableBlobTx;
 use client_sdk::transaction_builder::TxExecutor;
@@ -86,7 +87,7 @@ async fn main() {
             let transaction = ctx.process(transaction).unwrap();
 
             // Send the blob transaction
-            let blob_tx_hash = node.send_tx_blob(&transaction.to_blob_tx()).await.unwrap();
+            let blob_tx_hash = node.send_tx_blob(transaction.to_blob_tx()).await.unwrap();
             println!("✅ Blob tx sent. Tx hash: {}", blob_tx_hash);
 
             // ----
@@ -94,11 +95,14 @@ async fn main() {
             // ----
             for proof in transaction.iter_prove() {
                 let tx = proof.await.unwrap();
-                node.send_tx_proof(&tx).await.unwrap();
+
+                let tx_hash = tx.hashed();
+                let contract_name = tx.contract_name.clone();
+
+                node.send_tx_proof(tx).await.unwrap();
                 println!(
                     "✅ Proof tx sent for {}. Tx hash: {}",
-                    tx.contract_name,
-                    tx.hashed()
+                    contract_name, tx_hash
                 );
             }
         }
@@ -129,7 +133,7 @@ async fn main() {
             let transaction = ctx.process(transaction).unwrap();
 
             // Send the blob transaction
-            let blob_tx_hash = node.send_tx_blob(&transaction.to_blob_tx()).await.unwrap();
+            let blob_tx_hash = node.send_tx_blob(transaction.to_blob_tx()).await.unwrap();
             println!("✅ Blob tx sent. Tx hash: {}", blob_tx_hash);
 
             // ----
@@ -137,11 +141,12 @@ async fn main() {
             // ----
             for proof in transaction.iter_prove() {
                 let tx = proof.await.unwrap();
-                node.send_tx_proof(&tx).await.unwrap();
+                let tx_hash = tx.hashed();
+                let contract_name = tx.contract_name.clone();
+                node.send_tx_proof(tx).await.unwrap();
                 println!(
                     "✅ Proof tx sent for {}. Tx hash: {}",
-                    tx.contract_name,
-                    tx.hashed()
+                    contract_name, tx_hash
                 );
             }
         }

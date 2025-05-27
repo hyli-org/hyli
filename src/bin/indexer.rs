@@ -10,7 +10,7 @@ use hyle_modules::{log_error, utils::logger::setup_tracing};
 #[command(version, about, long_about = None)]
 pub struct Args {
     #[arg(long, default_value = "config.toml")]
-    pub config_file: Option<String>,
+    pub config_file: Vec<String>,
 
     #[clap(long, action)]
     pub pg: bool,

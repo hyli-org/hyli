@@ -1,4 +1,4 @@
-# Hyle net layer
+# Net layer
 
 This crates holds some sdk for network communication.
 

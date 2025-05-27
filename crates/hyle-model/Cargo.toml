@@ -1,6 +1,6 @@
 [package]
 name = "hyle-model"
-description = "Hyle datamodel"
+description = "Hyli datamodel"
 license = "MIT"
 version = { workspace = true }
 edition = { workspace = true }

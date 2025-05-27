@@ -3,7 +3,7 @@
 use anyhow::Result;
 use client_sdk::{
     helpers::risc0::Risc0Prover,
-    rest_client::NodeApiHttpClient,
+    rest_client::{NodeApiClient, NodeApiHttpClient},
     transaction_builder::{ProvableBlobTx, TxExecutorBuilder},
 };
 use fixtures::{ctx::E2ECtx, test_helpers::send_transaction};
@@ -141,12 +141,12 @@ async fn scenario_lane_manager_outside_consensus(mut ctx: E2ECtx, delegate: bool
     let _ = ctx.wait_height(2).await;
 
     let tx_hash = lane_mgr_client
-        .register_contract(&APIRegisterContract {
+        .register_contract(APIRegisterContract {
             verifier: "test".into(),
             program_id: ProgramId(vec![1, 2, 3]),
             state_commitment: StateCommitment(vec![1, 2, 3]),
             contract_name: ContractName::new("test"),
-            timeout_window: None,
+            ..Default::default()
         })
         .await?;
 

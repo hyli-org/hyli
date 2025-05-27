@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
+use anyhow::{anyhow, bail, Context, Result};
 use client_sdk::{
     helpers::risc0::Risc0Prover,
     transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutorBuilder, TxExecutorHandler},
@@ -7,7 +8,8 @@ use client_sdk::{
 use sdk::{
     merkle_utils::BorshableMerkleProof,
     utils::{as_hyle_output, parse_calldata},
-    Calldata, ContractName, HyleOutput, Identity, StateCommitment, StructuredBlob,
+    Calldata, ContractName, HyleOutput, Identity, RegisterContractEffect, StateCommitment,
+    StructuredBlob,
 };
 
 pub mod metadata {
@@ -53,17 +55,25 @@ impl TxExecutorHandler for SmtTokenProvableState {
     /// !!! WARNINGS !!!
     /// This function is only here to keep track of the balances.
     /// No checks are done to verify that this is a legit action.
-    fn handle(&mut self, calldata: &Calldata) -> Result<HyleOutput, String> {
+    fn handle(&mut self, calldata: &Calldata) -> Result<HyleOutput> {
         let root = *self.0.root();
         let initial_state_commitment = StateCommitment(Into::<[u8; 32]>::into(root).to_vec());
-        let (action, execution_ctx) = parse_calldata::<SmtTokenAction>(calldata)?;
+        let (action, execution_ctx) =
+            parse_calldata::<SmtTokenAction>(calldata).map_err(|e| anyhow::anyhow!(e))?;
 
         let output = match action {
             SmtTokenAction::Transfer {
-                mut sender_account,
-                mut recipient_account,
+                sender,
+                recipient,
                 amount,
             } => {
+                let mut sender_account = self
+                    .get_account(&sender)?
+                    .ok_or(anyhow!("Sender account {} not found", sender))?;
+                let mut recipient_account = self
+                    .get_account(&recipient)?
+                    .unwrap_or(Account::new(recipient, 0));
+
                 let sender_key = sender_account.get_key();
                 let recipient_key = recipient_account.get_key();
 
@@ -71,10 +81,10 @@ impl TxExecutorHandler for SmtTokenProvableState {
                 recipient_account.balance += amount;
 
                 if let Err(e) = self.0.update(sender_key, sender_account) {
-                    return Err(format!("Failed to update sender account: {e}"));
+                    bail!("Failed to update sender account: {e}");
                 }
                 if let Err(e) = self.0.update(recipient_key, recipient_account.clone()) {
-                    return Err(format!("Failed to update recipient account: {e}"));
+                    bail!("Failed to update recipient account: {e}");
                 }
                 Ok(format!(
                     "Transferred {} to {}",
@@ -82,21 +92,28 @@ impl TxExecutorHandler for SmtTokenProvableState {
                 ))
             }
             SmtTokenAction::TransferFrom {
-                mut owner_account,
+                owner,
                 spender: _,
-                mut recipient_account,
+                recipient,
                 amount,
             } => {
+                let mut owner_account = self
+                    .get_account(&owner)?
+                    .ok_or(anyhow!("Owner account {} not found", owner))?;
+                let mut recipient_account = self
+                    .get_account(&recipient)?
+                    .unwrap_or(Account::new(recipient, 0));
+
                 let owner_key = owner_account.get_key();
                 let recipient_key = recipient_account.get_key();
 
                 owner_account.balance -= amount;
                 recipient_account.balance += amount;
                 if let Err(e) = self.0.update(owner_key, owner_account) {
-                    return Err(format!("Failed to update owner account: {e}"));
+                    bail!("Failed to update owner account: {e}");
                 }
                 if let Err(e) = self.0.update(recipient_key, recipient_account.clone()) {
-                    return Err(format!("Failed to update recipient account: {e}"));
+                    bail!("Failed to update recipient account: {e}");
                 }
                 Ok(format!(
                     "Transferred {} to {}",
@@ -104,14 +121,17 @@ impl TxExecutorHandler for SmtTokenProvableState {
                 ))
             }
             SmtTokenAction::Approve {
-                mut owner_account,
+                owner,
                 spender,
                 amount,
             } => {
+                let mut owner_account = self
+                    .get_account(&owner)?
+                    .ok_or(anyhow!("Owner account {} not found", owner))?;
                 let owner_key = owner_account.get_key();
                 owner_account.update_allowances(spender.clone(), amount);
                 if let Err(e) = self.0.update(owner_key, owner_account) {
-                    return Err(format!("Failed to update owner account: {e}"));
+                    bail!("Failed to update owner account: {e}");
                 }
                 Ok(format!("Approved {} to {}", amount, spender))
             }
@@ -121,7 +141,7 @@ impl TxExecutorHandler for SmtTokenProvableState {
 
         let mut res = match output {
             Err(e) => Err(e),
-            Ok(output) => Ok((output, execution_ctx, vec![])),
+            Ok(output) => Ok((output.into_bytes(), execution_ctx, vec![])),
         };
         Ok(as_hyle_output(
             initial_state_commitment,
@@ -133,67 +153,133 @@ impl TxExecutorHandler for SmtTokenProvableState {
 
     /// This function provides the metadata needed to reconstruct the SMT Token contract's state.
     /// This state is made up of the rootHash of the MerkleTrie, and the merkle proof used to prove the accounts used in the action.
-    fn build_commitment_metadata(&self, blob: &sdk::Blob) -> Result<Vec<u8>, String> {
+    fn build_commitment_metadata(&self, blob: &sdk::Blob) -> Result<Vec<u8>> {
         let parsed_blob: StructuredBlob<SmtTokenAction> =
             match StructuredBlob::try_from(blob.clone()) {
                 Ok(v) => v,
                 Err(_) => {
-                    return Err(format!("Failed to parse blob: {:?}", blob));
+                    bail!("Failed to parse blob: {:?}", blob);
                 }
             };
+
         let action = parsed_blob.data.parameters;
 
         let root = *self.0.root();
-        let proof = match action {
+        let (proof, accounts) = match action {
             SmtTokenAction::Transfer {
-                sender_account,
-                recipient_account,
+                sender,
+                recipient,
                 amount: _,
             } => {
+                let sender_account = self
+                    .get_account(&sender)?
+                    .ok_or(anyhow!("Sender account {} not found", sender))?;
+                let recipient_account = self
+                    .get_account(&recipient)?
+                    .unwrap_or(Account::new(recipient.clone(), 0));
+
                 // Create keys for the accounts
                 let key1 = sender_account.get_key();
                 let key2 = recipient_account.get_key();
 
-                BorshableMerkleProof(
-                    self.0
-                        .merkle_proof(vec![key1, key2])
-                        .expect("Failed to generate proof"),
+                let keys = if sender == recipient {
+                    vec![key1]
+                } else {
+                    vec![key1, key2]
+                };
+
+                (
+                    BorshableMerkleProof(
+                        self.0.merkle_proof(keys).expect("Failed to generate proof"),
+                    ),
+                    BTreeMap::from([
+                        (sender_account.address.clone(), sender_account.clone()),
+                        (recipient_account.address.clone(), recipient_account),
+                    ]),
                 )
             }
             SmtTokenAction::TransferFrom {
-                owner_account,
+                owner,
                 spender: _,
-                recipient_account,
-                amount: _,
+                recipient,
+                amount,
             } => {
+                let owner_account = self
+                    .get_account(&owner)?
+                    .ok_or(anyhow!("Owner account {} not found", owner))?;
+                let recipient_account = self
+                    .get_account(&recipient)?
+                    .unwrap_or(Account::new(recipient.clone(), amount));
+
                 // Create keys for the accounts
                 let key1 = owner_account.get_key();
                 let key2 = recipient_account.get_key();
 
-                BorshableMerkleProof(
-                    self.0
-                        .merkle_proof(vec![key1, key2])
-                        .expect("Failed to generate proof"),
+                let keys = if owner == recipient {
+                    vec![key1]
+                } else {
+                    vec![key1, key2]
+                };
+
+                (
+                    BorshableMerkleProof(
+                        self.0.merkle_proof(keys).expect("Failed to generate proof"),
+                    ),
+                    BTreeMap::from([
+                        (owner_account.address.clone(), owner_account.clone()),
+                        (recipient_account.address.clone(), recipient_account),
+                    ]),
                 )
             }
             SmtTokenAction::Approve {
-                owner_account,
+                owner,
                 spender: _,
                 amount: _,
             } => {
+                let owner_account = self
+                    .get_account(&owner)?
+                    .ok_or(anyhow!("Owner account {} not found", owner))?;
                 let key = owner_account.get_key();
-                BorshableMerkleProof(
-                    self.0
-                        .merkle_proof(vec![key])
-                        .expect("Failed to generate proof"),
+                (
+                    BorshableMerkleProof(
+                        self.0
+                            .merkle_proof(vec![key])
+                            .expect("Failed to generate proof"),
+                    ),
+                    BTreeMap::from([(owner_account.address.clone(), owner_account)]),
                 )
             }
         };
-        borsh::to_vec(&SmtTokenContract {
-            commitment: StateCommitment(Into::<[u8; 32]>::into(root).to_vec()),
+        borsh::to_vec(&SmtTokenContract::new(
+            StateCommitment(Into::<[u8; 32]>::into(root).to_vec()),
             proof,
-        })
-        .map_err(|e| e.to_string())
+            accounts,
+        ))
+        .context("Failed to serialize SMT Token contract")
+    }
+
+    fn construct_state(
+        _register_blob: &RegisterContractEffect,
+        _metadata: &Option<Vec<u8>>,
+    ) -> Result<Self> {
+        Ok(Self::default())
+    }
+
+    fn merge_commitment_metadata(
+        &self,
+        initial: Vec<u8>,
+        next: Vec<u8>,
+    ) -> anyhow::Result<Vec<u8>, String> {
+        let mut initial_commitment: SmtTokenContract =
+            borsh::from_slice(&initial).map_err(|e| e.to_string())?;
+        let next_commitment: SmtTokenContract =
+            borsh::from_slice(&next).map_err(|e| e.to_string())?;
+
+        initial_commitment
+            .steps
+            .insert(0, next_commitment.steps[0].clone());
+
+        borsh::to_vec(&initial_commitment).map_err(|e| e.to_string())
     }
 }
 
@@ -229,8 +315,8 @@ impl SmtTokenProvableState {
         builder.add_action(
             contract_name,
             SmtTokenAction::Transfer {
-                sender_account,
-                recipient_account,
+                sender: sender_account.address.clone(),
+                recipient: recipient_account.address.clone(),
                 amount,
             },
             None,
@@ -264,9 +350,9 @@ impl SmtTokenProvableState {
         builder.add_action(
             contract_name,
             SmtTokenAction::TransferFrom {
-                owner_account,
+                owner: owner_account.address.clone(),
                 spender,
-                recipient_account,
+                recipient: recipient_account.address.clone(),
                 amount,
             },
             None,
@@ -293,7 +379,7 @@ impl SmtTokenProvableState {
         builder.add_action(
             contract_name,
             SmtTokenAction::Approve {
-                owner_account,
+                owner: owner_account.address.clone(),
                 spender,
                 amount,
             },

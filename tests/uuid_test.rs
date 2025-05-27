@@ -2,6 +2,7 @@
 use client_sdk::{
     contract_states,
     helpers::risc0::Risc0Prover,
+    rest_client::NodeApiClient,
     transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
 };
 use fixtures::ctx::{E2EContract, E2ECtx};
@@ -77,7 +78,7 @@ async fn test_uuid_registration() {
     let blob_tx = BlobTransaction::new(tx.identity.clone(), tx.blobs.clone());
 
     let tx_context = loop {
-        if let Ok(v) = ctx.client().get_unsettled_tx(&blob_tx.hashed()).await {
+        if let Ok(v) = ctx.client().get_unsettled_tx(blob_tx.hashed()).await {
             break v.tx_context.clone();
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
@@ -131,7 +132,7 @@ async fn test_uuid_registration() {
     let blob_tx = BlobTransaction::new(tx.identity.clone(), tx.blobs.clone());
 
     let tx_context = loop {
-        if let Ok(v) = ctx.client().get_unsettled_tx(&blob_tx.hashed()).await {
+        if let Ok(v) = ctx.client().get_unsettled_tx(blob_tx.hashed()).await {
             break v.tx_context.clone();
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;

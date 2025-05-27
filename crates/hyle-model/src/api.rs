@@ -7,7 +7,7 @@ use utoipa::ToSchema;
 
 use crate::{
     utils::TimestampMs, BlockHash, BlockHeight, ConsensusProposalHash, ContractName,
-    DataProposalHash, Identity, LaneBytesSize, ProgramId, StateCommitment, Transaction,
+    DataProposalHash, Identity, LaneBytesSize, LaneId, ProgramId, StateCommitment, Transaction,
     TransactionKind, TxHash, ValidatorPublicKey, Verifier,
 };
 
@@ -28,17 +28,25 @@ pub struct NetworkStats {
     pub graph_block_time: Vec<(i64, f64)>, // Graph data for block time
 }
 
-#[derive(Clone, Serialize, Deserialize, ToSchema)]
+#[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
+#[derive(Clone, Serialize, Deserialize, Debug, ToSchema)]
+pub struct ProofStat {
+    pub verifier: String,
+    pub proof_count: i64,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct APIRegisterContract {
     pub verifier: Verifier,
     pub program_id: ProgramId,
     pub state_commitment: StateCommitment,
     pub contract_name: ContractName,
     pub timeout_window: Option<u64>,
+    pub constructor_metadata: Option<Vec<u8>>,
 }
 
 /// Copy from Staking contract
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Serialize, Deserialize, ToSchema, Clone, PartialEq, Eq)]
 pub struct APIStaking {
     pub stakes: BTreeMap<Identity, u128>,
     pub delegations: BTreeMap<ValidatorPublicKey, Vec<Identity>>,
@@ -60,7 +68,7 @@ pub struct APIFeesBalance {
     pub cumul_size: LaneBytesSize,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Serialize, Deserialize, ToSchema, Clone, PartialEq, Eq)]
 pub struct APIFees {
     /// Balance of each validator
     pub balances: BTreeMap<ValidatorPublicKey, APIFeesBalance>,
@@ -73,6 +81,7 @@ pub struct APIBlock {
     pub parent_hash: ConsensusProposalHash,
     pub height: u64,    // Corresponds to BlockHeight
     pub timestamp: i64, // UNIX timestamp
+    pub total_txs: u64, // Total number of transactions in the block
 }
 
 #[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
@@ -130,6 +139,7 @@ pub struct APITransaction {
     pub block_hash: Option<ConsensusProposalHash>, // Corresponds to the block hash
     pub index: Option<u32>,                        // Index of the transaction within the block
     pub timestamp: Option<TimestampMs>,            // Timestamp of the transaction (block timestamp)
+    pub lane_id: Option<LaneId>,                   // Lane ID where the transaction got disseminated
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq, Eq)]
@@ -172,6 +182,9 @@ pub struct APIContract {
     #[serde_as(as = "serde_with::hex::Hex")]
     pub state_commitment: Vec<u8>, // State commitment of the contract
     pub contract_name: String, // Contract name
+    pub total_tx: u64,    // Total number of transactions associated with the contract
+    pub unsettled_tx: u64, // Total number of unsettled transactions
+    pub earliest_unsettled: Option<BlockHeight>, // Earliest unsettled transaction block height
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

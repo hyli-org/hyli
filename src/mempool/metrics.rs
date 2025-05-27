@@ -8,11 +8,13 @@ use crate::model::ValidatorPublicKey;
 
 use super::QueryNewCut;
 
+#[derive(Clone)]
 pub struct MempoolMetrics {
     api_tx: Counter<u64>,
     dp_vote: Counter<u64>,
     sync_request: Counter<u64>,
     sync_reply: Counter<u64>,
+    mempool_sync: Counter<u64>,
     tx_waiting_dissemination: Gauge<u64>,
     new_cut: Counter<u64>,
 
@@ -42,6 +44,7 @@ impl MempoolMetrics {
             sync_reply: my_meter
                 .u64_counter(format!("{}_sync_reply", mempool))
                 .build(),
+            mempool_sync: my_meter.u64_counter(format!("{}_sync", mempool)).build(),
             tx_waiting_dissemination: my_meter
                 .u64_gauge(format!("{}_tx_waiting_dissemination", mempool))
                 .build(),
@@ -87,7 +90,22 @@ impl MempoolMetrics {
     }
 
     pub fn add_api_tx(&self, kind: &'static str) {
-        self.api_tx.add(1, &[KeyValue::new("tx_kind", kind)]);
+        self.api_tx.add(
+            1,
+            &[
+                KeyValue::new("status", "included"),
+                KeyValue::new("tx_kind", kind),
+            ],
+        );
+    }
+    pub fn drop_api_tx(&self, kind: &'static str) {
+        self.api_tx.add(
+            1,
+            &[
+                KeyValue::new("status", "dropped"),
+                KeyValue::new("tx_kind", kind),
+            ],
+        );
     }
 
     pub fn add_dp_vote(&self, sender: &ValidatorPublicKey, dest: &ValidatorPublicKey) {
@@ -115,28 +133,60 @@ impl MempoolMetrics {
             .add(1, &[KeyValue::new("lane_id", format!("{}", lane_id))])
     }
 
-    pub fn add_sync_request(&self, sender: &ValidatorPublicKey, dest: &ValidatorPublicKey) {
+    /// *emitted* a sync request
+    pub fn sync_request_send(&self, lane: &LaneId, requester: &ValidatorPublicKey) {
         self.sync_request.add(
             1,
             &[
-                KeyValue::new("sender", format!("{}", sender)),
-                KeyValue::new("dest", format!("{}", dest)),
+                KeyValue::new("lane", format!("{}", lane)),
+                KeyValue::new("requester", format!("{}", requester)),
             ],
         );
     }
-    pub fn add_sync_reply(
-        &self,
-        sender: &ValidatorPublicKey,
-        dest: &ValidatorPublicKey,
-        lane_entries: usize,
-    ) {
+    /// *received* a sync reply
+    pub fn sync_reply_receive(&self, lane: &LaneId, requester: &ValidatorPublicKey) {
         self.sync_reply.add(
             1,
             &[
-                KeyValue::new("nb_lane_entries", lane_entries.to_string()),
-                KeyValue::new("sender", format!("{}", sender)),
-                KeyValue::new("dest", format!("{}", dest)),
+                KeyValue::new("lane", format!("{}", lane)),
+                KeyValue::new("requester", format!("{}", requester)),
             ],
         )
+    }
+
+    /// MempoolSync: Prepare a sync reply to *send*
+    pub fn mempool_sync_processed(&self, lane: &LaneId, requester: &ValidatorPublicKey) {
+        self.mempool_sync.add(
+            1,
+            &[
+                KeyValue::new("lane", format!("{}", lane)),
+                KeyValue::new("requester", format!("{}", requester)),
+                KeyValue::new("status", "processed"),
+            ],
+        );
+    }
+
+    /// MempoolSync: Prepare a sync reply to *send*
+    pub fn mempool_sync_failure(&self, lane: &LaneId, requester: &ValidatorPublicKey) {
+        self.mempool_sync.add(
+            1,
+            &[
+                KeyValue::new("lane", format!("{}", lane)),
+                KeyValue::new("requester", format!("{}", requester)),
+                KeyValue::new("status", "failure"),
+            ],
+        );
+    }
+
+    /// MempoolSync: Throttle a sync reply instead of preparing it
+    pub fn mempool_sync_throttled(&self, lane: &LaneId, requester: &ValidatorPublicKey) {
+        self.mempool_sync.add(
+            1,
+            &[
+                KeyValue::new("lane", format!("{}", lane)),
+                KeyValue::new("requester", format!("{}", requester)),
+                KeyValue::new("status", "throttled"),
+            ],
+        );
     }
 }

@@ -279,7 +279,7 @@ As Blob 4 now has a "caller", the identity used by the contract will be "amm" an
 Note that here we are using a TransferFrom in blob 4, contract "amm" got the approval from Bob
 to initate a transfer on its behalf with blob 1.
 
-You can find an example of this implementation in our [amm contract](https://github.com/Hyle-org/hyle/tree/main/crates/contracts/amm/src/lib.rs)
+You can find an example of this implementation in our [amm contract](https://github.com/hyli-org/hyli/tree/main/crates/contracts/amm/src/lib.rs)
 */
 #[derive(Debug, BorshSerialize)]
 pub struct StructuredBlobData<Action> {
@@ -781,6 +781,9 @@ pub struct RegisterContractAction {
     /// Optionally set the timeout window for the contract.
     /// If the contract exists, the timeout window will be unchanged, otherwise, the default value will be used.
     pub timeout_window: Option<TimeoutWindow>,
+    /// Optional data for indexers to construct the initial state of the contract.
+    /// Importantly, this is *never* checked by the node. You should verify manually it matches the state commitment.
+    pub constructor_metadata: Option<Vec<u8>>,
 }
 
 #[cfg(feature = "full")]
@@ -799,6 +802,7 @@ impl Hashed<TxHash> for RegisterContractAction {
                 TimeoutWindow::Timeout(bh) => hasher.update(bh.0.to_le_bytes()),
             }
         }
+        // We don't hash the constructor metadata.
         let hash_bytes = hasher.finalize();
         TxHash(hex::encode(hash_bytes))
     }
@@ -848,10 +852,60 @@ impl ContractAction for DeleteContractAction {
     }
 }
 
-/// Used by the Hylé node to recognize contract registration.
+/// Used by the Hyli node to recognize contract registration.
 /// Simply output this struct in your HyleOutput registered_contracts.
 /// See uuid-tld for examples.
-pub type RegisterContractEffect = RegisterContractAction;
+#[derive(
+    Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
+)]
+#[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
+pub struct RegisterContractEffect {
+    /// Verifier to use for transactions sent to this new contract.
+    pub verifier: Verifier,
+    /// Other verifier data, such as a Risc0 program ID or noir public key.
+    /// Transactions sent to this contract will have to match this program ID.
+    pub program_id: ProgramId,
+    /// Initial state commitment of the contract to register.
+    pub state_commitment: StateCommitment,
+    /// Name of the contract to register.
+    pub contract_name: ContractName,
+    /// Optionally set the timeout window for the contract.
+    /// If the contract exists, the timeout window will be unchanged, otherwise, the default value will be used.
+    pub timeout_window: Option<TimeoutWindow>,
+}
+
+impl From<RegisterContractAction> for RegisterContractEffect {
+    fn from(action: RegisterContractAction) -> Self {
+        RegisterContractEffect {
+            verifier: action.verifier,
+            program_id: action.program_id,
+            state_commitment: action.state_commitment,
+            contract_name: action.contract_name,
+            timeout_window: action.timeout_window,
+        }
+    }
+}
+
+#[cfg(feature = "full")]
+impl Hashed<TxHash> for RegisterContractEffect {
+    fn hashed(&self) -> TxHash {
+        use sha3::{Digest, Sha3_256};
+
+        let mut hasher = Sha3_256::new();
+        hasher.update(self.verifier.0.clone());
+        hasher.update(self.program_id.0.clone());
+        hasher.update(self.state_commitment.0.clone());
+        hasher.update(self.contract_name.0.clone());
+        if let Some(timeout_window) = &self.timeout_window {
+            match timeout_window {
+                TimeoutWindow::NoTimeout => hasher.update(0u8.to_le_bytes()),
+                TimeoutWindow::Timeout(bh) => hasher.update(bh.0.to_le_bytes()),
+            }
+        }
+        let hash_bytes = hasher.finalize();
+        TxHash(hex::encode(hash_bytes))
+    }
+}
 
 #[cfg(feature = "full")]
 pub mod base64_field {

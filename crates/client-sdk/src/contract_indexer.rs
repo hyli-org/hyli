@@ -39,7 +39,7 @@ impl<State> Default for ContractStateStore<State> {
 
 pub trait ContractHandler<Event = ()>
 where
-    Self: Sized + Default + TxExecutorHandler + 'static,
+    Self: Sized + TxExecutorHandler + 'static,
 {
     fn api(
         store: ContractHandlerStore<Self>,
@@ -66,7 +66,7 @@ where
             private_input: vec![],
         };
 
-        let hyle_output = self.handle(&calldata).map_err(|e| anyhow::anyhow!(e))?;
+        let hyle_output = self.handle(&calldata)?;
         let program_outputs = str::from_utf8(&hyle_output.program_outputs).unwrap_or("no output");
 
         info!("🚀 Executed {contract_name}: {}", program_outputs);

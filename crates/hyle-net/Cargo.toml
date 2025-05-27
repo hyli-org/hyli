@@ -1,6 +1,6 @@
 [package]
 name = "hyle-net"
-description = "Hyle network SDK"
+description = "Hyli network SDK"
 license = "MIT"
 version = { workspace = true }
 edition = { workspace = true }

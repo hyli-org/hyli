@@ -1,18 +1,16 @@
-> [!IMPORTANT]
 > `main` is the development branch.
-> When building applications or running examples, use the [latest release](https://github.com/Hyle-org/hyle/releases) instead.
+> When building applications or running examples, use the [latest release](https://github.com/hyli-org/hyli/releases) instead.
 
-# Hylé
+# Hyli
 
 [![Telegram Chat][tg-badge]][tg-url]
 [![Build Status][actions-badge]][actions-url]
 [![Code Coverage][codecov-badge]][codecov-url]
 [![Twitter][twitter-badge]][twitter-url]
 
-_A sequencing and settlement layer to help you build provable apps that are minimally, yet sufficiently, on-chain._
+_Hyli is the new proof-powered L1 to build the next generation of apps onchain._
 
-This repository hosts the **work-in-progress Rust client** for the [Hylé](https://hyle.eu) chain.  
-The older, but still maintained, Cosmos SDK-based client can be found at [hyle-cosmos](https://github.com/Hyle-org/hyle-cosmos).
+This repository hosts the **work-in-progress Rust client** for the [Hyli](https://hyli.org) chain.
 
 **Current Status**: 🚧 Work in Progress (WIP)
 
@@ -20,8 +18,8 @@ The older, but still maintained, Cosmos SDK-based client can be found at [hyle-c
 
 ## 📎 Useful Links
 
-- 🌐 [Hylé Website](https://www.hyle.eu/)
-- 📚 [Hylé Documentation](https://docs.hyle.eu)
+- 🌐 [Hyli Website](https://www.hyli.org/)
+- 📚 [Hyli Documentation](https://docs.hyli.org)
 
 ---
 
@@ -59,10 +57,10 @@ If you want data persistance, you can run the PostgreSQL server:
 
 ```bash
 # Start PostgreSQL with default configuration:
-docker run -d --rm --name pg_hyle -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres
+docker run -d --rm --name pg_hyli -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres
 ```
 
-and then in the `hyle` root:
+and then in the `hyli` root:
 
 ```sh
 cargo run
@@ -70,7 +68,7 @@ cargo run
 
 ### Configuration
 
-You can configure Hylé using environment variables or a configuration file:
+You can configure Hyli using environment variables or a configuration file:
 
 #### Using a Configuration File
 
@@ -154,14 +152,14 @@ cargo run --profile profiling
 
 ### Memory Profiling
 
-Hylé includes built-in support for the `dhat` crate, which uses the Valgrind DHAT viewer for memory profiling.  
+Hyli includes built-in support for the `dhat` crate, which uses the Valgrind DHAT viewer for memory profiling.  
 To enable this feature, add the `dhat` feature flag. Use it selectively, as it has a runtime performance cost.
 
-[actions-badge]: https://img.shields.io/github/actions/workflow/status/Hyle-org/hyle/ci.yml?branch=main
-[actions-url]: https://github.com/Hyle-org/hyle/actions?query=workflow%3ATests+branch%3Amain
-[codecov-badge]: https://codecov.io/gh/Hyle-org/hyle/graph/badge.svg?token=S87GT99Q62
-[codecov-url]: https://codecov.io/gh/Hyle-org/hyle
-[twitter-badge]: https://img.shields.io/twitter/follow/hyle_org
-[twitter-url]: https://x.com/hyle_org
-[tg-badge]: https://img.shields.io/endpoint?url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Fhyle_org%2F&logo=telegram&label=chat&color=neon
-[tg-url]: https://t.me/hyle_org
+[actions-badge]: https://img.shields.io/github/actions/workflow/status/hyli-org/hyli/ci.yml?branch=main
+[actions-url]: https://github.com/hyli-org/hyli/actions?query=workflow%3ATests+branch%3Amain
+[codecov-badge]: https://codecov.io/gh/hyli-org/hyli/graph/badge.svg?token=S87GT99Q62
+[codecov-url]: https://codecov.io/gh/hyli-org/hyli
+[twitter-badge]: https://img.shields.io/twitter/follow/hyli_org
+[twitter-url]: https://x.com/hyli_org
+[tg-badge]: https://img.shields.io/endpoint?url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Fhyli_org%2F&logo=telegram&label=chat&color=neon
+[tg-url]: https://t.me/hyli_org

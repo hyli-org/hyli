@@ -1,9 +1,11 @@
 use std::{collections::BTreeMap, path::Path};
 
 use anyhow::{bail, Result};
+use async_stream::try_stream;
 use fjall::{
     Config, Keyspace, KvSeparationOptions, PartitionCreateOptions, PartitionHandle, Slice,
 };
+use futures::Stream;
 use hyle_model::LaneId;
 use tracing::info;
 
@@ -17,6 +19,7 @@ use super::{
 
 pub use hyle_model::LaneBytesSize;
 
+#[derive(Clone)]
 pub struct LanesStorage {
     pub lanes_tip: BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>,
     db: Keyspace,
@@ -25,6 +28,16 @@ pub struct LanesStorage {
 }
 
 impl LanesStorage {
+    /// Create another set of handles, without the data stored in lanes_tip, to have access and methods to access mempool storage
+    pub fn new_handle(&self) -> LanesStorage {
+        LanesStorage {
+            lanes_tip: Default::default(),
+            db: self.db.clone(),
+            by_hash_metadata: self.by_hash_metadata.clone(),
+            by_hash_data: self.by_hash_data.clone(),
+        }
+    }
+
     pub fn new(
         path: &Path,
         lanes_tip: BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>,
@@ -278,24 +291,28 @@ impl Storage for LanesStorage {
     fn get_entries_between_hashes(
         &self,
         lane_id: &LaneId,
-        from_data_proposal_hash: Option<&DataProposalHash>,
-        to_data_proposal_hash: Option<&DataProposalHash>,
-    ) -> Result<Vec<(LaneEntryMetadata, DataProposal)>> {
-        let metadata = self.get_entries_metadata_between_hashes(
+        from_data_proposal_hash: Option<DataProposalHash>,
+        to_data_proposal_hash: Option<DataProposalHash>,
+    ) -> impl Stream<Item = anyhow::Result<(LaneEntryMetadata, DataProposal)>> {
+        let metadata_stream = self.get_entries_metadata_between_hashes(
             lane_id,
             from_data_proposal_hash,
             to_data_proposal_hash,
-        )?;
-        let mut result = Vec::with_capacity(metadata.len());
-        // TODO: make these a range and use that.
-        for (metadata, dp_hash) in metadata {
-            let data_proposal = self.get_dp_by_hash(lane_id, &dp_hash)?.ok_or_else(|| {
-                anyhow::anyhow!("Data proposal {} not found in lane {}", dp_hash, lane_id)
-            })?;
-            result.push((metadata, data_proposal));
+        );
+
+        try_stream! {
+            for await md in metadata_stream {
+                let (metadata, dp_hash) = md?;
+
+                let data_proposal = self.get_dp_by_hash(lane_id, &dp_hash)?.ok_or_else(|| {
+                    anyhow::anyhow!("Data proposal {} not found in lane {}", dp_hash, lane_id)
+                })?;
+
+                yield (metadata, data_proposal);
+            }
         }
-        Ok(result)
     }
+
     #[cfg(test)]
     fn remove_lane_entry(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) {
         self.by_hash_metadata

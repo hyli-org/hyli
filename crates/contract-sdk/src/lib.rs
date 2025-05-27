@@ -1,9 +1,9 @@
-//! # Hylé Contract SDK
+//! # Hyli Contract SDK
 //!
 //! This crate contains tools to be used in smart contracts that runs on rust zkvm like Risc0 or
 //! SP1.
 //!
-//! ## How to build a contract on Hyle ?
+//! ## How to build a contract on Hyli ?
 //!
 //! To build a contract, you will need to create a contract lib, with a struct that implements
 //! the [ZkContract] trait.
@@ -11,8 +11,8 @@
 //! Then you will need a zkvm binary that will execute this code. Take a look at the
 //! [Guest module for contract zkvm](crate::guest).
 //!
-//! You can start from our templates for [Risc0](https://github.com/Hyle-org/template-risc0)
-//! or [SP1](https://github.com/Hyle-org/template-sp1).
+//! You can start from our templates for [Risc0](https://github.com/hyli-org/template-risc0)
+//! or [SP1](https://github.com/hyli-org/template-sp1).
 //!
 //! If your contract needs to interact with other contracts, take a look at
 //! [StructuredBlobData]. More is coming on that soon.
@@ -65,7 +65,7 @@ macro_rules! info {
     }
 }
 
-pub type RunResult = Result<(String, ExecutionContext, Vec<OnchainEffect>), String>;
+pub type RunResult = Result<(Vec<u8>, ExecutionContext, Vec<OnchainEffect>), String>;
 
 /**
 This trait is used to define the contract's entrypoint.
@@ -101,7 +101,7 @@ impl ZkContract for MyContract {
 
         let output = self.execute_action(action)?;
 
-        Ok((output, exec_ctx, vec![]))
+        Ok((output.into_bytes(), exec_ctx, vec![]))
     }
     fn commit(&self) -> StateCommitment {
         StateCommitment(vec![])
@@ -124,6 +124,12 @@ pub trait ZkContract {
     fn execute(&mut self, calldata: &Calldata) -> RunResult;
 
     fn commit(&self) -> StateCommitment;
+
+    /// A function executed before the contract is executed.
+    /// This might be used to do verifications on the state before validating calldatas.
+    fn initialize(&mut self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 pub const fn to_u8_array(val: &[u32; 8]) -> [u8; 32] {
@@ -172,6 +178,10 @@ const fn byte_to_u8(byte: u8) -> u8 {
     }
 }
 
+#[allow(
+    clippy::indexing_slicing,
+    reason = "const block, shouldn't be used at runtime."
+)]
 pub const fn str_to_u8(s: &str) -> [u8; 32] {
     let mut bytes = [0u8; 32];
     let chrs = s.as_bytes();

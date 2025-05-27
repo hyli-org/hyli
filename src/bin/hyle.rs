@@ -19,7 +19,7 @@ pub struct Args {
     pub run_indexer: Option<bool>,
 
     #[arg(long, default_value = "config.toml")]
-    pub config_file: Option<String>,
+    pub config_file: Vec<String>,
 
     #[clap(long, action)]
     pub pg: bool,

@@ -42,7 +42,7 @@ fn handle_register_blob(
     )?;
 
     // Check it's not already registered
-    if contracts.contains_key(&reg.contract_name)
+    if reg.contract_name.0 != "hyle" && contracts.contains_key(&reg.contract_name)
         || contract_changes.contains_key(&reg.contract_name)
     {
         bail!("Contract {} is already registered", reg.contract_name.0);
@@ -50,13 +50,16 @@ fn handle_register_blob(
 
     contract_changes.insert(
         reg.contract_name.clone(),
-        SideEffect::Register(Contract {
-            name: reg.contract_name.clone(),
-            program_id: reg.program_id.clone(),
-            state: reg.state_commitment.clone(),
-            verifier: reg.verifier.clone(),
-            timeout_window: reg.timeout_window.clone().unwrap_or_default(),
-        }),
+        SideEffect::Register(
+            Contract {
+                name: reg.contract_name.clone(),
+                program_id: reg.program_id.clone(),
+                state: reg.state_commitment.clone(),
+                verifier: reg.verifier.clone(),
+                timeout_window: reg.timeout_window.clone().unwrap_or_default(),
+            },
+            reg.constructor_metadata.clone(),
+        ),
     );
     Ok(())
 }
@@ -66,9 +69,9 @@ fn handle_delete_blob(
     contract_changes: &mut BTreeMap<ContractName, SideEffect>,
     delete: &DeleteContractAction,
 ) -> Result<()> {
-    // For now, Hylé is allowed to delete all contracts but itself
+    // For now, Hyli is allowed to delete all contracts but itself
     if delete.contract_name.0 == "hyle" {
-        bail!("Cannot delete Hylé contract");
+        bail!("Cannot delete Hyli contract");
     }
 
     // Check it's registered

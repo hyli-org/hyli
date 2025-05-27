@@ -1,6 +1,6 @@
 [package]
 name = "hyle-risc0-recursion"
-description = "Hyle Smart Contract"
+description = "Hyli Smart Contract"
 license-file = { workspace = true }
 version = { workspace = true }
 edition = { workspace = true }
@@ -43,7 +43,7 @@ risc0-zkvm = { version = "2.0.2", default-features = false, features = [
   'std',
   'prove',
 ] }
-tempfile = "3.19.1"
+tempfile = "3.20.0"
 test-log = { version = "0.2.17", features = [
   "color",
   "trace",

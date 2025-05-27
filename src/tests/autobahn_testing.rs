@@ -31,7 +31,7 @@ macro_rules! broadcast {
     (description: $description:literal, from: $sender:expr, to: [$($node:expr),*]$(, message_matches: $pattern:pat $(=> $asserts:block)? )?) => {
         {
             // Construct the broadcast message with sender information
-            let message = $sender.assert_broadcast(format!("[broadcast from: {}] {}", stringify!($sender), $description).as_str());
+            let message = $sender.assert_broadcast(format!("[broadcast from: {}] {}", stringify!($sender), $description).as_str()).await;
 
             $({
                 let msg_variant_name: &'static str = message.msg.clone().into();
@@ -44,7 +44,7 @@ macro_rules! broadcast {
 
             // Distribute the message to each specified node
             $(
-                $node.handle_msg(&message, (format!("[handling broadcast message from: {} at: {}] {}", stringify!($sender), stringify!($node), $description).as_str()));
+                $node.handle_msg(&message, (format!("[handling broadcast message from: {} at: {}] {}", stringify!($sender), stringify!($node), $description).as_str())).await;
             )*
 
             message
@@ -64,7 +64,7 @@ macro_rules! send {
             let answer = $node.assert_send(
                 &$to.validator_pubkey(),
                 format!("[send from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            );
+            ).await;
 
             // If `message_matches` is provided, perform the pattern match
             if let $pattern = &answer.msg {
@@ -84,7 +84,7 @@ macro_rules! send {
             $to.handle_msg(
                 &answer,
                 format!("[handling sent message from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            );
+            ).await;
             answer
         },)+)
     };
@@ -99,7 +99,7 @@ macro_rules! send {
             let answer = $node.assert_send(
                 &$to.validator_pubkey(),
                 format!("[send from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            );
+            ).await;
 
             // If `message_matches` is provided, perform the pattern match
             if let $pattern = &answer.msg {
@@ -120,7 +120,7 @@ macro_rules! send {
             $to.handle_msg(
                 &answer,
                 format!("[handling sent message from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            );
+            ).await;
         },)+)
     };
 }
@@ -309,6 +309,8 @@ impl AutobahnTestCtx {
         let consensus = ConsensusTestCtx::build_consensus(&shared_bus, crypto.clone()).await;
         let mempool = MempoolTestCtx::build_mempool(&shared_bus, crypto).await;
 
+        let mempool_sync_request_sender = mempool.start_mempool_sync();
+
         AutobahnTestCtx {
             shared_bus,
             consensus_ctx: ConsensusTestCtx {
@@ -324,6 +326,7 @@ impl AutobahnTestCtx {
                 mempool_event_receiver,
                 mempool_status_event_receiver,
                 mempool,
+                mempool_sync_request_sender,
             },
         }
     }
@@ -565,9 +568,9 @@ async fn mempool_broadcast_multiple_data_proposals() {
         message_matches: MempoolNetMessage::DataVote(..)
     };
 
-    node1.mempool_ctx.assert_broadcast("poda update f+1");
-    node1.mempool_ctx.assert_broadcast("poda update 2f+1");
-    node1.mempool_ctx.assert_broadcast("poda update 3f+1");
+    node1.mempool_ctx.assert_broadcast("poda update f+1").await;
+    node1.mempool_ctx.assert_broadcast("poda update 2f+1").await;
+    node1.mempool_ctx.assert_broadcast("poda update 3f+1").await;
 
     // Second data proposal
 
@@ -661,7 +664,10 @@ async fn mempool_podaupdate_too_early() {
     };
 
     let assert_nb_signatures = |node: &AutobahnTestCtx, n: usize| {
-        assert_eq!(node.mempool_ctx.last_lane_entry(&lane_id).1, dp.hashed());
+        assert_eq!(
+            node.mempool_ctx.last_lane_entry(&lane_id).1,
+            dp.clone().hashed()
+        );
         assert_eq!(
             node.mempool_ctx
                 .last_lane_entry(&lane_id)
@@ -680,9 +686,12 @@ async fn mempool_podaupdate_too_early() {
 
     // Handle Poda before data proposal (simulate a data proposal still being processed, not recorded yet)
 
-    node4.mempool_ctx.handle_msg(&poda, "Poda handling");
-    node4.mempool_ctx.handle_msg(&poda2, "Poda handling 2");
-    node4.mempool_ctx.handle_msg(&dp_msg, "Data Proposal");
+    node4.mempool_ctx.handle_msg(&poda, "Poda handling").await;
+    node4
+        .mempool_ctx
+        .handle_msg(&poda2, "Poda handling 2")
+        .await;
+    node4.mempool_ctx.handle_msg(&dp_msg, "Data Proposal").await;
 
     node4.mempool_ctx.handle_processed_data_proposals().await;
 
@@ -776,10 +785,12 @@ async fn consensus_missed_prepare() {
 
     node1
         .consensus_ctx
-        .assert_broadcast("Timeout Certificate 1");
+        .assert_broadcast("Timeout Certificate 1")
+        .await;
     node2
         .consensus_ctx
-        .assert_broadcast("Timeout Certificate 2");
+        .assert_broadcast("Timeout Certificate 2")
+        .await;
 
     // Node 4 is the next leader slot 3 view 1, has built the tc by joining the mutiny
 
@@ -798,19 +809,23 @@ async fn consensus_missed_prepare() {
 
     let sync_request = node3
         .consensus_ctx
-        .assert_send(&node4.consensus_ctx.pubkey(), "Sync Request");
+        .assert_send(&node4.consensus_ctx.pubkey(), "Sync Request")
+        .await;
 
     node4
         .consensus_ctx
-        .handle_msg(&sync_request, "Handling Sync request");
+        .handle_msg(&sync_request, "Handling Sync request")
+        .await;
 
     let sync_reply = node4
         .consensus_ctx
-        .assert_send(&node3.consensus_ctx.validator_pubkey(), "SyncReply");
+        .assert_send(&node3.consensus_ctx.validator_pubkey(), "SyncReply")
+        .await;
 
     node3
         .consensus_ctx
-        .handle_msg(&sync_reply, "Handling Sync reply");
+        .handle_msg(&sync_reply, "Handling Sync reply")
+        .await;
 
     send! {
         description: "Voting after sync",
@@ -906,9 +921,9 @@ async fn mempool_fail_to_vote_on_fork() {
         message_matches: MempoolNetMessage::DataVote(..)
     };
 
-    node1.mempool_ctx.assert_broadcast("poda update f+1");
-    node1.mempool_ctx.assert_broadcast("poda update 2f+1");
-    node1.mempool_ctx.assert_broadcast("poda update 3f+1");
+    node1.mempool_ctx.assert_broadcast("poda update f+1").await;
+    node1.mempool_ctx.assert_broadcast("poda update 2f+1").await;
+    node1.mempool_ctx.assert_broadcast("poda update 3f+1").await;
 
     // Second data proposal
 
@@ -963,13 +978,16 @@ async fn mempool_fail_to_vote_on_fork() {
 
     node2
         .mempool_ctx
-        .handle_msg(&data_proposal_fork_3, "Fork 3");
+        .handle_msg(&data_proposal_fork_3, "Fork 3")
+        .await;
     node3
         .mempool_ctx
-        .handle_msg(&data_proposal_fork_3, "Fork 3");
+        .handle_msg(&data_proposal_fork_3, "Fork 3")
+        .await;
     node4
         .mempool_ctx
-        .handle_msg(&data_proposal_fork_3, "Fork 3");
+        .handle_msg(&data_proposal_fork_3, "Fork 3")
+        .await;
 
     // Check fork has not been consumed
 
@@ -1552,7 +1570,7 @@ async fn autobahn_buffer_early_messages() {
         message_matches: ConsensusNetMessage::PrepareVote(_)
     };
 
-    let confirm = node3.consensus_ctx.assert_broadcast("Confirm");
+    let confirm = node3.consensus_ctx.assert_broadcast("Confirm").await;
 
     send! {
         description: "SyncRequest - Node4 ask for missed proposal Slot 4",
@@ -1572,18 +1590,27 @@ async fn autobahn_buffer_early_messages() {
         message_matches: ConsensusNetMessage::PrepareVote(_)
     };
 
-    node1.consensus_ctx.handle_msg(
-        &confirm,
-        "[handling broadcast message from: node3 at: node1] Confirm",
-    );
-    node2.consensus_ctx.handle_msg(
-        &confirm,
-        "[handling broadcast message from: node3 at: node2] Confirm",
-    );
-    node4.consensus_ctx.handle_msg(
-        &confirm,
-        "[handling broadcast message from: node3 at: node4] Confirm",
-    );
+    node1
+        .consensus_ctx
+        .handle_msg(
+            &confirm,
+            "[handling broadcast message from: node3 at: node1] Confirm",
+        )
+        .await;
+    node2
+        .consensus_ctx
+        .handle_msg(
+            &confirm,
+            "[handling broadcast message from: node3 at: node2] Confirm",
+        )
+        .await;
+    node4
+        .consensus_ctx
+        .handle_msg(
+            &confirm,
+            "[handling broadcast message from: node3 at: node4] Confirm",
+        )
+        .await;
 
     send! {
         description: "ConfirmAck",
@@ -1685,14 +1712,16 @@ async fn autobahn_got_timed_out_during_sync() {
 
     node0
         .consensus_ctx
-        .assert_broadcast("Timeout Certificate 1");
+        .assert_broadcast("Timeout Certificate 1")
+        .await;
     // Node 2 is next leader, and does not emits a timeout certificate since it will broadcast the next Prepare with it
     node2
         .consensus_ctx
         .assert_no_broadcast("Timeout Certificate 3");
     node3
         .consensus_ctx
-        .assert_broadcast("Timeout Certificate 4");
+        .assert_broadcast("Timeout Certificate 4")
+        .await;
 
     // Slot 6 starts with new leader with node1 disconnected
     node2
@@ -1746,7 +1775,7 @@ async fn autobahn_got_timed_out_during_sync() {
         message_matches: ConsensusNetMessage::PrepareVote(_)
     };
 
-    let confirm = node2.consensus_ctx.assert_broadcast("Confirm");
+    let confirm = node2.consensus_ctx.assert_broadcast("Confirm").await;
 
     send! {
         description: "SyncRequest - Node1 ask for missed proposal Slot 4",
@@ -1766,18 +1795,27 @@ async fn autobahn_got_timed_out_during_sync() {
         message_matches: ConsensusNetMessage::PrepareVote(_)
     };
 
-    node0.consensus_ctx.handle_msg(
-        &confirm,
-        "[handling broadcast message from: node2 at: node0] Confirm",
-    );
-    node1.consensus_ctx.handle_msg(
-        &confirm,
-        "[handling broadcast message from: node2 at: node1] Confirm",
-    );
-    node3.consensus_ctx.handle_msg(
-        &confirm,
-        "[handling broadcast message from: node2 at: node3] Confirm",
-    );
+    node0
+        .consensus_ctx
+        .handle_msg(
+            &confirm,
+            "[handling broadcast message from: node2 at: node0] Confirm",
+        )
+        .await;
+    node1
+        .consensus_ctx
+        .handle_msg(
+            &confirm,
+            "[handling broadcast message from: node2 at: node1] Confirm",
+        )
+        .await;
+    node3
+        .consensus_ctx
+        .handle_msg(
+            &confirm,
+            "[handling broadcast message from: node2 at: node3] Confirm",
+        )
+        .await;
 
     send! {
         description: "ConfirmAck",
@@ -1876,10 +1914,12 @@ async fn autobahn_commit_different_views_for_f() {
         .assert_no_broadcast("Timeout Certificate 1");
     node2
         .consensus_ctx
-        .assert_broadcast("Timeout Certificate 2");
+        .assert_broadcast("Timeout Certificate 2")
+        .await;
     node3
         .consensus_ctx
-        .assert_broadcast("Timeout Certificate 3");
+        .assert_broadcast("Timeout Certificate 3")
+        .await;
 
     node1
         .start_round_with_cut_from_mempool(TimestampMs(2000))
@@ -2029,10 +2069,12 @@ async fn autobahn_commit_byzantine_across_views_attempts() {
     // Check that they sent their vote
     node2
         .consensus_ctx
-        .assert_send(&node0.consensus_ctx.validator_pubkey(), "confirmack");
+        .assert_send(&node0.consensus_ctx.validator_pubkey(), "confirmack")
+        .await;
     node3
         .consensus_ctx
-        .assert_send(&node0.consensus_ctx.validator_pubkey(), "confirmack");
+        .assert_send(&node0.consensus_ctx.validator_pubkey(), "confirmack")
+        .await;
 
     // Nodes 0, 1, 2, 3 ultimately timeout.
     ConsensusTestCtx::timeout(&mut [
@@ -2063,16 +2105,19 @@ async fn autobahn_commit_byzantine_across_views_attempts() {
     // Node 1 is next leader, and does not emits a timeout certificate since it will broadcast the next Prepare with it
     node0
         .consensus_ctx
-        .assert_broadcast("Timeout Certificate 0");
+        .assert_broadcast("Timeout Certificate 0")
+        .await;
     node1
         .consensus_ctx
         .assert_no_broadcast("Timeout Certificate 1");
     node2
         .consensus_ctx
-        .assert_broadcast("Timeout Certificate 2");
+        .assert_broadcast("Timeout Certificate 2")
+        .await;
     node3
         .consensus_ctx
-        .assert_broadcast("Timeout Certificate 3");
+        .assert_broadcast("Timeout Certificate 3")
+        .await;
 
     // Change the proposal.
     let dp = node1.mempool_ctx.create_data_proposal(None, &[]);
@@ -2176,10 +2221,12 @@ async fn autobahn_commit_prepare_qc_across_multiple_views() {
         .assert_no_broadcast("Timeout Certificate 1");
     node2
         .consensus_ctx
-        .assert_broadcast("Timeout Certificate 2");
+        .assert_broadcast("Timeout Certificate 2")
+        .await;
     node3
         .consensus_ctx
-        .assert_broadcast("Timeout Certificate 3");
+        .assert_broadcast("Timeout Certificate 3")
+        .await;
 
     // Second timeout - move to view 2
     ConsensusTestCtx::timeout(&mut [
@@ -2208,13 +2255,15 @@ async fn autobahn_commit_prepare_qc_across_multiple_views() {
     // Node 2 is next leader (slot 5 + view 2 = 7 % 4 = 3), doesn't emit timeout certificate
     node1
         .consensus_ctx
-        .assert_broadcast("Timeout Certificate 1");
+        .assert_broadcast("Timeout Certificate 1")
+        .await;
     node2
         .consensus_ctx
         .assert_no_broadcast("Timeout Certificate 2");
     node3
         .consensus_ctx
-        .assert_broadcast("Timeout Certificate 3");
+        .assert_broadcast("Timeout Certificate 3")
+        .await;
 
     // Start next round with node2 as leader
     node2

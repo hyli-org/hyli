@@ -3,7 +3,6 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::bus::{BusClientSender, SharedMessageBus};
 use crate::modules::Module;
-use crate::utils::conf::NodeWebSocketConfig;
 use crate::{log_warn, module_bus_client, module_handle_messages};
 use anyhow::{anyhow, Context, Error, Result};
 use axum::extract::ConnectInfo;
@@ -68,7 +67,7 @@ pub struct WebSocketBusClient<In: Send + Sync + Clone + 'static, Out: Send + Syn
 // ---- WebSocket Module ----
 
 /// Configuration for the WebSocket module
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSocketConfig {
     /// The port number to bind the WebSocket server to
     pub port: u16,
@@ -87,17 +86,6 @@ impl Default for WebSocketConfig {
             ws_path: "/ws".to_string(),
             health_path: "/ws_health".to_string(),
             peer_check_interval: Duration::from_millis(100),
-        }
-    }
-}
-
-impl From<NodeWebSocketConfig> for WebSocketConfig {
-    fn from(config: NodeWebSocketConfig) -> Self {
-        Self {
-            port: config.server_port,
-            ws_path: config.ws_path,
-            health_path: config.health_path,
-            peer_check_interval: Duration::from_millis(config.peer_check_interval),
         }
     }
 }

@@ -1,3 +1,4 @@
+use anyhow::Result;
 use client_sdk::{
     helpers::risc0::Risc0Prover,
     transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutorBuilder, TxExecutorHandler},
@@ -5,7 +6,8 @@ use client_sdk::{
 use sdk::{
     api::{APIFees, APIFeesBalance, APIStaking},
     utils::as_hyle_output,
-    Blob, Calldata, ContractName, StakingAction, ValidatorPublicKey, ZkContract,
+    Blob, Calldata, ContractName, RegisterContractEffect, StakingAction, ValidatorPublicKey,
+    ZkContract,
 };
 
 use crate::{
@@ -20,10 +22,10 @@ pub mod metadata {
 use metadata::*;
 
 impl TxExecutorHandler for Staking {
-    fn build_commitment_metadata(&self, _blob: &Blob) -> Result<Vec<u8>, String> {
-        borsh::to_vec(self).map_err(|e| e.to_string())
+    fn build_commitment_metadata(&self, _blob: &Blob) -> Result<Vec<u8>> {
+        borsh::to_vec(self).map_err(Into::into)
     }
-    fn handle(&mut self, calldata: &Calldata) -> Result<sdk::HyleOutput, String> {
+    fn handle(&mut self, calldata: &Calldata) -> Result<sdk::HyleOutput> {
         let initial_state_commitment = <Self as ZkContract>::commit(self);
         let mut res = <Self as ZkContract>::execute(self, calldata);
         let next_state_commitment = <Self as ZkContract>::commit(self);
@@ -33,6 +35,12 @@ impl TxExecutorHandler for Staking {
             calldata,
             &mut res,
         ))
+    }
+    fn construct_state(
+        _register_blob: &RegisterContractEffect,
+        _metadata: &Option<Vec<u8>>,
+    ) -> Result<Self> {
+        Ok(Self::default())
     }
 }
 

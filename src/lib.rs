@@ -1,20 +1,19 @@
-//! # Hylé
+//! # Hyli
 //!
 //! *A sequencing and settlement layer to help you build provable apps that are minimally, yet sufficiently, onchain.*
 //!
-//! Repository for the [Hylé](https://hyle.eu) chain. This repository is for the work-in-progress rust client.
-//! The older (but still maintained) Cosmos SDK based client can be found at [hyle-cosmos](https://github.com/Hyle-org/hyle-cosmos).
+//! Repository for the [Hyli](https://hyli.org) chain. This repository is for the work-in-progress rust client.
 //!
 //! **Current status**: Work in progress
 //!
 //! ## Shortcuts to important pages
 //!
-//! * [Hyle contract sdk](../hyle_contract_sdk)
+//! * [Hyli contract sdk](../hyle_contract_sdk)
 //!
 //! ## Useful links
 //!
-//! * [Hylé website](https://www.hyle.eu/)
-//! * [Hylé documentation](https://docs.hyle.eu)
+//! * [Hyli website](https://www.hyli.org/)
+//! * [Hyli documentation](https://docs.hyli.org)
 //!
 //!
 

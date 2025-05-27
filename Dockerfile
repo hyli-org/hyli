@@ -1,5 +1,5 @@
 ARG DEP_IMAGE=hyle-dep
-ARG ALPINE_IMAGE=ghcr.io/hyle-org/alpine:main
+ARG BASE_IMAGE=ghcr.io/hyli-org/base:main
 
 FROM $DEP_IMAGE AS builder
 
@@ -8,10 +8,10 @@ COPY Cargo.toml Cargo.lock ./
 COPY .cargo/config.toml .cargo/config.toml
 COPY src ./src
 COPY crates ./crates
-RUN cargo build --bin hyle --bin indexer --bin hyle-loadtest --release -F node_local_proving -F sp1 -F risc0
+RUN cargo build --bin hyle --bin indexer --bin hyle-loadtest --release -F sp1 -F risc0
 
 # RUNNER
-FROM $ALPINE_IMAGE 
+FROM $BASE_IMAGE 
 
 WORKDIR /hyle
 

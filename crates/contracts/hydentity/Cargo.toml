@@ -1,6 +1,6 @@
 [package]
 name = "hyle-hydentity"
-description = "Hyle Smart Contract"
+description = "Hyli Smart Contract"
 license = "MIT"
 version = { workspace = true }
 edition = { workspace = true }

@@ -1,7 +1,7 @@
 use anyhow::Context;
 use assert_cmd::prelude::*;
 use client_sdk::{
-    rest_client::IndexerApiHttpClient,
+    rest_client::{IndexerApiHttpClient, NodeApiClient},
     transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutor},
 };
 
@@ -66,7 +66,7 @@ impl ConfMaker {
 
 impl Default for ConfMaker {
     fn default() -> Self {
-        let mut default = Conf::new(None, None, None).unwrap();
+        let mut default = Conf::new(vec![], None, None).unwrap();
 
         default.log_format = "node".to_string(); // Activate node name in logs for convenience in tests.
         default.p2p.mode = hyle::utils::conf::P2pMode::FullValidator;
@@ -247,14 +247,14 @@ pub async fn send_transaction<S: StateUpdater>(
     let identity = transaction.identity.clone();
     let blobs = transaction.blobs.clone();
     let tx_hash = client
-        .send_tx_blob(&BlobTransaction::new(identity, blobs))
+        .send_tx_blob(BlobTransaction::new(identity, blobs))
         .await
         .unwrap();
 
     let provable_tx = ctx.process(transaction).unwrap();
     for proof in provable_tx.iter_prove() {
         let tx = proof.await.unwrap();
-        client.send_tx_proof(&tx).await.unwrap();
+        client.send_tx_proof(tx).await.unwrap();
     }
     tx_hash
 }

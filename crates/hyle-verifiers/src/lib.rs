@@ -182,7 +182,7 @@ pub mod noir {
             .context("Failed to read proof file content")?;
 
         // TODO: support multi-output proofs.
-        let hyle_output = crate::noir_utils::parse_noir_output(&proof)?;
+        let hyle_output = crate::noir_utils::parse_noir_output(&proof, &image_id.0)?;
 
         tracing::info!("✅ Noir proof verified.");
 

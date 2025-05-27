@@ -10,6 +10,7 @@ mod fixtures;
 mod e2e_consensus {
 
     use client_sdk::helpers::risc0::Risc0Prover;
+    use client_sdk::rest_client::NodeApiClient;
     use client_sdk::transaction_builder::{ProvableBlobTx, TxExecutor, TxExecutorBuilder};
     use fixtures::test_helpers::send_transaction;
     use hydentity::client::tx_executor_handler::{register_identity, verify_identity};

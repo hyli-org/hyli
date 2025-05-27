@@ -24,7 +24,7 @@ impl ZkContract for Hydentity {
 
         match output {
             Err(e) => Err(e),
-            Ok(output) => Ok((output, exec_ctx, vec![])),
+            Ok(output) => Ok((output.into_bytes(), exec_ctx, vec![])),
         }
     }
 

@@ -34,6 +34,7 @@ use hyle_modules::{
 };
 use hyllar::Hyllar;
 use prometheus::Registry;
+use smt_token::account::AccountSMT;
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -121,14 +122,14 @@ pub fn welcome_message(conf: &conf::Conf) {
         r#"
 
                                     
-   ██╗  ██╗██╗   ██╗██╗     ██████╗     {mode} [{id}] v{version} 
-   ██║  ██║╚██╗ ██╔╝██║     ██╔═══╝         {validator_details}
-   ███████║ ╚████╔╝ ██║     ████╗       {check_p2p} p2p::{p2p_port} | {check_http} http::{http_port} | {check_tcp} tcp::{tcp_port} | ◆ da::{da_port}
-   ██╔══██║  ╚██╔╝  ██║     ██╔═╝     
-   ██║  ██║   ██║   ███████╗██████╗     {check_indexer} indexer {database_url}
-   ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═════╝     ∎ {data_directory}
+   ██╗  ██╗██╗   ██╗██╗     ██╗     {mode} [{id}] v{version} 
+   ██║  ██║╚██╗ ██╔╝██║     ██║         {validator_details}
+   ███████║ ╚████╔╝ ██║     ██║       {check_p2p} p2p::{p2p_port} | {check_http} http::{http_port} | {check_tcp} tcp::{tcp_port} | ◆ da::{da_port}
+   ██╔══██║  ╚██╔╝  ██║     ██║     
+   ██║  ██║   ██║   ███████╗██║     {check_indexer} indexer {database_url}
+   ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝     ∎ {data_directory}
  
-   Minimal, yet sufficient.
+   Minimal, yet sufficient. Hope You Like It.
                                  
     "#,
         version = version,
@@ -272,6 +273,13 @@ async fn common_main(
         handler
             .build_module::<ContractStateIndexer<Hydentity>>(ContractStateIndexerCtx {
                 contract_name: "hydentity".into(),
+                data_directory: config.data_directory.clone(),
+                api: build_api_ctx.clone(),
+            })
+            .await?;
+        handler
+            .build_module::<ContractStateIndexer<AccountSMT>>(ContractStateIndexerCtx {
+                contract_name: "oranj".into(),
                 data_directory: config.data_directory.clone(),
                 api: build_api_ctx.clone(),
             })

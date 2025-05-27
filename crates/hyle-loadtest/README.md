@@ -1,3 +1,3 @@
-# Hyle loadtest 
+# Loadtest
 
 Internal crate for loadtesting purpose.
