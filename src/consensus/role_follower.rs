@@ -45,14 +45,15 @@ impl Consensus {
 
         if matches!(self.bft_round_state.state_tag, StateTag::Joining) {
             // Shortcut - if this is the prepare we expected, exit joining mode.
-            // Three cases: the next slot, the next view, or our current slot/view.
-            let is_next_prepare = view == 0
-                && consensus_proposal.slot == self.bft_round_state.slot + 1
-                || view == self.bft_round_state.view + 1
-                    && consensus_proposal.slot == self.bft_round_state.slot
-                || consensus_proposal.slot == self.bft_round_state.slot
-                    && view == self.bft_round_state.view;
-            if is_next_prepare {
+            // When we're joining, a couple cases to consider:
+            // - we're catching up with DA - in this case we pretend to commit all blocks, so we only expect our current BFT slot / CP + 1 (this matches any view).
+            let prepare_follows_commit = consensus_proposal.slot == self.bft_round_state.slot
+                && !self.current_slot_prepare_is_present();
+            // - we restarted but are still up-to-date - it's plausible that we have BFT slot == CP slot, indicating we haven't committed that. Expect slot + 1 or higher views.
+            let is_for_current_slot = self.current_slot_prepare_is_present()
+                && (consensus_proposal.slot == self.bft_round_state.slot + 1
+                    || view > self.bft_round_state.view);
+            if prepare_follows_commit || is_for_current_slot {
                 info!(
                     "Received Prepare message for next slot while joining. Exiting joining mode."
                 );
@@ -728,12 +729,13 @@ impl Consensus {
                 }
             }
 
-            // Edge case: we have already committed a different CQC. We are kinda stuck.
+            // Edge case: we have already committed a different CQC (this check that bft slot == cp slot + 1 means we committed)
             if !self.current_slot_prepare_is_present() {
                 warn!(
-                "Received an unknown commit QC for slot {}. This is unsafe to verify as we have updated staking. Proceeding with current staking anyways.",
-                self.bft_round_state.slot
-            );
+                    "Received an unknown commit QC for slot {}. This is unsafe to verify as we have updated staking with changes in that slot.
+                    Proceeding with current staking anyways.",
+                    self.bft_round_state.slot
+                );
                 // To still sorta make this work, verify the CQC with our current staking and hope for the best.
                 self.verify_quorum_certificate(
                     (self.bft_round_state.parent_hash.clone(), ConfirmAckMarker),
