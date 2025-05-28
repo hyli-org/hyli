@@ -145,7 +145,7 @@ pub enum TransactionStateEvent {
     NewProof {
         blob_index: BlobIndex,
         proof_tx_hash: TxHash,
-        program_output: String,
+        program_output: Vec<u8>,
     },
     SettleEvent(String),
     Settled,

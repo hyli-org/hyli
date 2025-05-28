@@ -1,6 +1,6 @@
 use super::IndexerApiState;
 use axum::{extract::State, http::StatusCode, Json};
-use hyle_model::api::NetworkStats;
+use hyle_model::api::{NetworkStats, ProofStat};
 
 use hyle_modules::log_error;
 
@@ -8,6 +8,12 @@ use hyle_modules::log_error;
 pub struct Point<T = i64> {
     pub x: i64,
     pub y: Option<T>,
+}
+
+#[derive(sqlx::FromRow, Debug)]
+struct PeakStat {
+    pub minute_bucket: i64,
+    pub tx_count: i64,
 }
 
 #[utoipa::path(
@@ -145,6 +151,32 @@ pub async fn get_stats(
         .map(|point| (point.x, point.y.unwrap_or(0.)))
         .collect::<Vec<(i64, f64)>>();
 
+    let peak_txs = log_error!(
+        sqlx::query_as::<_, PeakStat>(
+            "
+            SELECT
+              extract(epoch FROM date_trunc('minute', b.timestamp))::bigint  AS minute_bucket,
+              count(*)::bigint                  AS tx_count
+            FROM blocks b
+            JOIN transactions t ON t.block_hash = b.hash
+            WHERE b.timestamp >= now() - interval '24 hours'
+            GROUP BY 1
+            ORDER BY 2 DESC
+            LIMIT 1;
+            "
+        )
+        .fetch_optional(&state.db)
+        .await,
+        "Failed to fetch peak TPM"
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .unwrap_or(PeakStat {
+        minute_bucket: 0,
+        tx_count: 0,
+    });
+
+    let peak_txs = (peak_txs.minute_bucket, peak_txs.tx_count);
+
     Ok(Json(NetworkStats {
         total_transactions,
         txs_last_day,
@@ -152,5 +184,43 @@ pub async fn get_stats(
         contracts_last_day,
         graph_tx_volume,
         graph_block_time,
+        peak_txs,
     }))
+}
+
+#[utoipa::path(
+    get,
+    tag = "Indexer",
+    path = "/stats/proofs",
+    responses(
+        (status = OK, body = Vec<ProofStat>)
+    )
+)]
+pub async fn get_proof_stats(
+    State(state): State<IndexerApiState>,
+) -> Result<Json<Vec<ProofStat>>, StatusCode> {
+    let transactions = log_error!(
+        sqlx::query_as::<_, ProofStat>(
+            r#"
+SELECT
+  c.verifier,
+  COUNT(DISTINCT p.tx_hash) AS proof_count
+FROM proofs p
+  JOIN blob_proof_outputs bpo
+    ON p.tx_hash = bpo.proof_tx_hash
+  JOIN contracts c
+    ON bpo.contract_name = c.contract_name
+GROUP BY
+  c.verifier
+ORDER BY
+  proof_count DESC;
+        "#,
+        )
+        .fetch_all(&state.db)
+        .await,
+        "Failed to fetch proof stats"
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(transactions))
 }
