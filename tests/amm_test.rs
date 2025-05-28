@@ -24,6 +24,7 @@ mod e2e_amm {
         client::tx_executor_handler::{register_identity, verify_identity},
         Hydentity,
     };
+    use hyle::genesis::Genesis;
     use hyle_contract_sdk::{Blob, Calldata, ContractName, HyleOutput};
     use hyle_contracts::{AMM_ELF, HYDENTITY_ELF, HYLLAR_ELF};
     use hyllar::{
@@ -167,23 +168,20 @@ mod e2e_amm {
         info!("➡️  Sending blob to transfer 25 hyllar from faucet to bob");
 
         let mut tx = ProvableBlobTx::new(FAUCET_SECP256K1.into());
-        verify_identity(
+
+        Genesis::add_secp256k1_verify_action(
             &mut tx,
-            "hydentity".into(),
-            &executor.hydentity,
-            "password".into(),
+            FAUCET_SECP256K1.into(),
+            "secret".to_string(),
         )?;
+
         transfer(&mut tx, "hyllar".into(), "bob@hydentity".into(), 25)?;
 
         ctx.send_provable_blob_tx(&tx).await?;
         let tx = executor.process(tx)?;
         let mut proofs = tx.iter_prove();
 
-        let hydentity_proof = proofs.next().unwrap().await?;
         let bob_transfer_proof = proofs.next().unwrap().await?;
-
-        info!("➡️  Sending proof for hydentity");
-        ctx.send_proof_single(hydentity_proof).await?;
 
         info!("➡️  Sending proof for hyllar");
         ctx.send_proof_single(bob_transfer_proof).await?;
@@ -216,23 +214,20 @@ mod e2e_amm {
         ///////////////// sending hyllar2 from faucet to bob /////////////////
         info!("➡️  Sending blob to transfer 50 hyllar2 from faucet to bob");
         let mut tx = ProvableBlobTx::new(FAUCET_SECP256K1.into());
-        verify_identity(
+
+        Genesis::add_secp256k1_verify_action(
             &mut tx,
-            "hydentity".into(),
-            &executor.hydentity,
-            "password".into(),
+            FAUCET_SECP256K1.into(),
+            "secret".to_string(),
         )?;
+
         transfer(&mut tx, "hyllar2".into(), "bob@hydentity".into(), 50)?;
 
         ctx.send_provable_blob_tx(&tx).await?;
         let tx = executor.process(tx)?;
         let mut proofs = tx.iter_prove();
 
-        let hydentity_proof = proofs.next().unwrap().await?;
         let bob_transfer_proof = proofs.next().unwrap().await?;
-
-        info!("➡️  Sending proof for hydentity");
-        ctx.send_proof_single(hydentity_proof).await?;
 
         info!("➡️  Sending proof for hyllar");
         ctx.send_proof_single(bob_transfer_proof).await?;

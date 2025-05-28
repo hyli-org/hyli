@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::{bail, Result};
 use sdk::{
+    verifiers::{Secp256k1Blob, NATIVE_VERIFIERS_CONTRACT_LIST},
     Blob, BlobIndex, BlobTransaction, Calldata, ContractAction, ContractName, Hashed, HyleOutput,
     Identity, ProofTransaction, RegisterContractEffect, TxContext,
 };
@@ -49,6 +50,11 @@ impl ProvableBlobTx {
         self.blobs
             .push(action.as_blob(contract_name, caller, callees));
         Ok(self.runners.last_mut().unwrap())
+    }
+
+    pub fn add_secp256k1_action(&mut self, action: Secp256k1Blob) -> Result<()> {
+        self.blobs.push(action.as_blob());
+        Ok(())
     }
 
     pub fn add_context(&mut self, tx_context: TxContext) {
@@ -229,7 +235,12 @@ impl<S: StateUpdater> TxExecutor<S> {
         let mut old_states = HashMap::new();
 
         // Keep track of all state involved in the transaction
-        for blob in tx.blobs.iter() {
+        for blob in tx
+            .blobs
+            .iter()
+            // Blob with native verifiers don't need proofs
+            .filter(|b| !NATIVE_VERIFIERS_CONTRACT_LIST.contains(&b.contract_name.0.as_str()))
+        {
             let state = self.states.get(&blob.contract_name)?;
             old_states.insert(blob.contract_name.clone(), state);
         }

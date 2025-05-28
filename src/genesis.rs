@@ -6,16 +6,12 @@ use client_sdk::{
     contract_states,
     helpers::register_hyle_contract,
     transaction_builder::{
-        ProofTxBuilder, ProvableBlobTx, TxExecutor, TxExecutorBuilder, TxExecutorHandler,
+        ContractRunner, ProofTxBuilder, ProvableBlobTx, TxExecutor, TxExecutorBuilder,
+        TxExecutorHandler,
     },
 };
-use hydentity::{
-    client::tx_executor_handler::{register_identity, verify_identity},
-    Hydentity,
-};
 use hyle_contract_sdk::{
-    secp256k1::CheckSecp256k1, Blob, Calldata, ContractName, Identity, ProgramId, StateCommitment,
-    ZkContract,
+    Blob, Calldata, ContractName, Identity, ProgramId, StateCommitment, ZkContract,
 };
 use hyle_crypto::SharedBlstCrypto;
 use hyle_model::verifiers::Secp256k1Blob;
@@ -23,11 +19,11 @@ use hyle_modules::{
     bus::{BusClientSender, SharedMessageBus},
     bus_client, handle_messages,
     modules::Module,
-    node_state::HYLI_TLD_SECP256K1,
 };
-use hyllar::{client::tx_executor_handler::transfer, Hyllar, HyllarAction, FAUCET_SECP256K1};
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
+use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_SECP256K1};
+use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use smt_token::account::AccountSMT;
 use staking::{
     client::tx_executor_handler::{delegate, deposit_for_fees, stake},
@@ -103,6 +99,32 @@ impl Genesis {
         Self::save_on_disk(&file, &true)?;
 
         Ok(())
+    }
+
+    /// Used for Genesis
+    pub fn add_secp256k1_verify_action(
+        transaction: &mut ProvableBlobTx,
+        identity: Identity,
+        secret: String,
+    ) -> Result<()> {
+        let hash = sha2::Sha256::digest(secret.as_bytes());
+
+        let secret_key =
+            secp256k1::SecretKey::from_slice(&hash).expect("32 bytes, within curve order");
+
+        let secp = secp256k1::Secp256k1::new();
+        let public_key = PublicKey::from_secret_key(&secp, &secret_key);
+
+        let data = sha2::Sha256::digest("data".as_bytes());
+        let message = secp256k1::Message::from_digest(data.into());
+        let signature = secret_key.sign_ecdsa(message);
+
+        transaction.add_secp256k1_action(Secp256k1Blob {
+            identity,
+            data: data.into(),
+            public_key: public_key.serialize(),
+            signature: signature.serialize_compact(),
+        })
     }
 
     pub async fn do_genesis(&mut self) -> Result<()> {
@@ -198,13 +220,11 @@ impl Genesis {
             .generate_faucet_txs(peer_pubkey, &mut tx_executor, genesis_stake)
             .await?;
 
-        let stake_txs =
-            Self::generate_stake_txs(peer_pubkey, &mut tx_executor, genesis_stake).await?;
+        let stake_txs = self
+            .generate_stake_txs(peer_pubkey, &mut tx_executor, genesis_stake)
+            .await?;
 
-        let builders = register_txs
-            .into_iter()
-            .chain(faucet_txs.into_iter())
-            .chain(stake_txs.into_iter());
+        let builders = faucet_txs.into_iter().chain(stake_txs.into_iter());
 
         for ProofTxBuilder {
             identity,
@@ -250,30 +270,12 @@ impl Genesis {
         Ok(genesis_txs)
     }
 
-    fn gen_keys(secret: &str) -> (SecretKey, PublicKey) {
-        let hash = Sha256::digest(secret.as_bytes());
-
-        let secret_key = SecretKey::from_slice(&hash).expect("32 bytes, within curve order");
-
-        let secp = Secp256k1::new();
-        let public_key = PublicKey::from_secret_key(&secp, &secret_key);
-
-        (secret_key, public_key)
-    }
-
     async fn generate_faucet_txs(
         &self,
         peer_pubkey: &PeerPublicKeyMap,
         tx_executor: &mut TxExecutor<States>,
         genesis_stakers: &HashMap<String, u64>,
     ) -> Result<Vec<ProofTxBuilder>> {
-        let (faucet_secret, faucet_pubkey) =
-            self.gen_keys(self.config.genesis.faucet_seq256k1_secret.clone().as_str());
-
-        let signature = faucet_secret.sign();
-
-        let public_key = faucet_secret_key.sk_to_pk();
-
         let mut txs = vec![];
         for (id, peer) in peer_pubkey.iter() {
             let genesis_faucet = *genesis_stakers
@@ -284,35 +286,19 @@ impl Genesis {
             info!("🌱  Fauceting {genesis_faucet} hyllar to {peer}");
 
             let identity = Identity::new(FAUCET_SECP256K1);
-            let blob_seqp = Secp256k1Blob {
-                identity,
-                data: Default::default(),
-                public_key: public_key.clone(),
-                signature: todo!(),
-            }
-            .as_blob();
 
-            let transaction = BlobTransaction::new(
-                identity.clone(),
-                vec![
-                    Seqp256k1Blob::new(identity).as_blob("seqp256k1".into()),
-                    // HyllarAction::Transfer {}.as_blob(),
-                ],
-            );
+            let mut transaction = ProvableBlobTx::new(identity.clone());
 
-            // Verify identity
-            verify_identity(
+            Self::add_secp256k1_verify_action(
                 &mut transaction,
-                ContractName::new("hydentity"),
-                &tx_executor.hydentity,
-                self.config.genesis.faucet_seq256k1_secret.clone(),
+                identity,
+                self.config.genesis.hyli_seq256k1_secret.clone(),
             )?;
 
-            // Transfer
             transfer(
                 &mut transaction,
                 ContractName::new("hyllar"),
-                format!("{peer}@hydentity"),
+                format!("{peer}@secp256k1").to_string(),
                 genesis_faucet + 1_000_000_000,
             )?;
 
@@ -323,6 +309,7 @@ impl Genesis {
     }
 
     async fn generate_stake_txs(
+        &self,
         peer_pubkey: &PeerPublicKeyMap,
         tx_executor: &mut TxExecutor<States>,
         genesis_stakers: &HashMap<String, u64>,
@@ -336,15 +323,13 @@ impl Genesis {
 
             info!("🌱  Staking {genesis_stake} hyllar from {peer}");
 
-            let identity = Identity(format!("{peer}@hydentity").to_string());
+            let identity = Identity(format!("{peer}@secp256k1").to_string());
             let mut transaction = ProvableBlobTx::new(identity.clone());
 
-            // Verify identity
-            verify_identity(
+            Self::add_secp256k1_verify_action(
                 &mut transaction,
-                ContractName::new("hydentity"),
-                &tx_executor.hydentity,
-                "password".to_string(),
+                identity,
+                self.config.genesis.hyli_seq256k1_secret.clone(),
             )?;
 
             // Stake
@@ -507,7 +492,7 @@ impl Genesis {
             "hydentity".into(),
             hyle_model::verifiers::RISC0_1.into(),
             hydentity_program_id.clone().into(),
-            ctx.hydentity.commit(),
+            hydentity_state.commit(),
             None,
             None,
         )
@@ -606,7 +591,7 @@ mod tests {
         let crypto = Arc::new(BlstCrypto::new(&config.id).unwrap());
         (
             Genesis {
-                config: Arc::new(config),
+                config: Arc::new(config.clone()),
                 bus,
                 peer_pubkey: BTreeMap::new(),
                 crypto,

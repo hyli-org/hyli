@@ -13,9 +13,8 @@ mod e2e_consensus {
     use client_sdk::rest_client::NodeApiClient;
     use client_sdk::transaction_builder::{ProvableBlobTx, TxExecutor, TxExecutorBuilder};
     use fixtures::test_helpers::send_transaction;
-    use hydentity::client::tx_executor_handler::{register_identity, verify_identity};
-    use hydentity::Hydentity;
-    use hyle::genesis::States;
+    use hydentity::client::tx_executor_handler::register_identity;
+    use hyle::genesis::{Genesis, States};
     use hyle_contract_sdk::Identity;
     use hyle_contract_sdk::ZkContract;
     use hyle_contracts::{HYDENTITY_ELF, HYLLAR_ELF, STAKING_ELF};
@@ -65,10 +64,6 @@ mod e2e_consensus {
             "fetch state failed"
         )
         .unwrap();
-        let hydentity: Hydentity = ctx
-            .indexer_client()
-            .fetch_current_state(&"hydentity".into())
-            .await?;
 
         let staking_state: StateCommitment = StateCommitment(
             ctx.indexer_client()
@@ -85,38 +80,24 @@ mod e2e_consensus {
             .into();
 
         assert_eq!(staking_state, staking.commit());
-        let states = States {
-            hyllar,
-            hydentity,
-            staking,
-        };
+        let states = States { hyllar, staking };
 
         let mut tx_ctx = TxExecutorBuilder::new(states)
             // Replace prover binaries for non-reproducible mode.
-            .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
             .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF))
             .with_prover("staking".into(), Risc0Prover::new(STAKING_ELF))
             .build();
 
-        let node_identity = Identity(format!("{}@hydentity", node_info.id));
-        {
-            let mut transaction = ProvableBlobTx::new(node_identity.clone());
-
-            register_identity(&mut transaction, "hydentity".into(), "password".to_owned())?;
-
-            let tx_hash = send_transaction(ctx.client(), transaction, &mut tx_ctx).await;
-            tracing::warn!("Register TX Hash: {:?}", tx_hash);
-        }
+        let node_identity = Identity(format!("{}@secp256k1", node_info.id));
         {
             let mut transaction = ProvableBlobTx::new(FAUCET_SECP256K1.into());
 
-            verify_identity(
+            Genesis::add_secp256k1_verify_action(
                 &mut transaction,
-                "hydentity".into(),
-                &tx_ctx.hydentity,
-                "password".to_string(),
+                FAUCET_SECP256K1.into(),
+                "secret".into(),
             )
-            .expect("verify_identity failed");
+            .expect("secret");
 
             transfer(
                 &mut transaction,
@@ -132,12 +113,8 @@ mod e2e_consensus {
         {
             let mut transaction = ProvableBlobTx::new(node_identity.clone());
 
-            verify_identity(
-                &mut transaction,
-                "hydentity".into(),
-                &tx_ctx.hydentity,
-                "password".to_string(),
-            )?;
+            Genesis::add_secp256k1_verify_action(&mut transaction, node_identity, "secret".into())
+                .expect("secret");
 
             stake(&mut transaction, ContractName::new("staking"), stake_amount)?;
 
@@ -179,25 +156,17 @@ mod e2e_consensus {
         amount: u128,
     ) -> Result<Vec<TxHash>> {
         let mut tx_hashes = vec![];
-        let identity = Identity(format!("{}@hydentity", id));
-        {
-            let mut transaction = ProvableBlobTx::new(identity.clone());
-
-            register_identity(&mut transaction, "hydentity".into(), "password".to_owned())?;
-
-            let tx_hash = send_transaction(ctx.client(), transaction, tx_ctx).await;
-            tracing::warn!("Register TX Hash: {:?}", tx_hash);
-        }
+        let identity = Identity(format!("{}@secp256k1", id));
 
         {
-            let mut transaction = ProvableBlobTx::new("faucet@hydentity".into());
+            let mut transaction = ProvableBlobTx::new(FAUCET_SECP256K1.into());
 
-            verify_identity(
+            Genesis::add_secp256k1_verify_action(
                 &mut transaction,
-                "hydentity".into(),
-                &tx_ctx.hydentity,
-                "password".to_string(),
-            )?;
+                FAUCET_SECP256K1.into(),
+                "secret".into(),
+            )
+            .expect("secret");
 
             transfer(
                 &mut transaction,
@@ -266,15 +235,9 @@ mod e2e_consensus {
             .fetch_current_state(&"hyllar".into())
             .await
             .unwrap();
-        let hydentity: Hydentity = ctx
-            .indexer_client()
-            .fetch_current_state(&"hydentity".into())
-            .await
-            .unwrap();
 
         let states = States {
             hyllar,
-            hydentity,
             staking: Staking::default(),
         };
 

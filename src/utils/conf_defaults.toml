@@ -58,9 +58,7 @@ solo = true
 # All genesis node requires the same config here
 # Keys are all nodes “id”, and values are the stake amount for each one of them.
 stakers = {}
-
-faucet_seqp256k1_secret = "secret_faucet"
-hyli_tld_seqp256k1_secret = "secret_hyli_tld"
+hyli_seq256k1_secret = "secret_hyli"
 
 [websocket]
 enabled = true

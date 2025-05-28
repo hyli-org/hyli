@@ -74,26 +74,6 @@ pub fn verify_identity(
     Ok(())
 }
 
-pub fn verify_seqp256k1(builder: &mut ProvableBlobTx, password: String) -> anyhow::Result<()> {
-    let nonce = state
-        .get_nonce(builder.identity.0.as_str())
-        .map_err(|e| anyhow::anyhow!(e))?;
-
-    let password = password.into_bytes().to_vec();
-
-    builder.add_action(
-        contract_name,
-        HydentityAction::VerifyIdentity {
-            account: builder.identity.0.clone(),
-            nonce,
-        },
-        Some(password),
-        None,
-        None,
-    )?;
-    Ok(())
-}
-
 pub fn register_identity(
     builder: &mut ProvableBlobTx,
     contract_name: ContractName,

@@ -19,7 +19,7 @@ pub mod indexer;
 pub mod erc20;
 
 pub const TOTAL_SUPPLY: u128 = 100_000_000_000;
-pub const FAUCET_SECP256K1: &str = "faucet@secp256pk1";
+pub const FAUCET_SECP256K1: &str = "faucet@secp256k1";
 
 impl ZkContract for Hyllar {
     fn execute(&mut self, calldata: &Calldata) -> RunResult {
