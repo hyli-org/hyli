@@ -218,7 +218,7 @@ async fn test_tx_settlement_duplicates() -> Result<()> {
 
     // Normal submit a blob tx for the first time
     client.send_tx_blob(tx.clone()).await.unwrap();
-    // Second time in the same block, should be dicarded
+    // Second time in the same block, should be discarded
     client.send_tx_blob(tx.clone()).await.unwrap();
     hyle_node.wait_for_n_blocks(1).await?;
 

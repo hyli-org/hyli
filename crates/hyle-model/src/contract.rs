@@ -220,7 +220,7 @@ Blob for contract `B` has to be a `StructuredBlobData` with caller = the blob in
 
 ## When to use cross-contract calls ?
 
-When a contract needs to do an operation on an other one. Like transfering funds from
+When a contract needs to do an operation on an other one. Like transferring funds from
 contract's wallet to the user doing the transaction.
 
 ### Example: Bob Swap 2 USDC to 2 USDT
@@ -277,7 +277,7 @@ An alternative way that is more evm-like with an token approve would look like:
 
 As Blob 4 now has a "caller", the identity used by the contract will be "amm" and not "Bob".
 Note that here we are using a TransferFrom in blob 4, contract "amm" got the approval from Bob
-to initate a transfer on its behalf with blob 1.
+to initiate a transfer on its behalf with blob 1.
 
 You can find an example of this implementation in our [amm contract](https://github.com/hyli-org/hyli/tree/main/crates/contracts/amm/src/lib.rs)
 */
