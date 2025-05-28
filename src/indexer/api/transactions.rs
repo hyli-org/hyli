@@ -170,7 +170,7 @@ impl<'r> FromRow<'r, PgRow> for TransactionDb {
                     .map_err(|e: TryFromIntError| sqlx::Error::Decode(e.into()))?,
             ),
         };
-        let timestamp: Option<NaiveDateTime> = row.try_get("timestamp")?;
+        let timestamp: Option<NaiveDateTime> = row.try_get("timestamp").unwrap_or_default();
         let lane_id: Option<LaneIdDb> = row.try_get("lane_id").unwrap_or_default();
         let identity: Option<String> = row.try_get("identity").unwrap_or_default();
 
