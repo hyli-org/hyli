@@ -106,6 +106,10 @@ impl NodeWebsocketConnector {
                 TransactionData::Proof(_) => TransactionTypeDb::ProofTransaction,
                 TransactionData::VerifiedProof(_) => TransactionTypeDb::ProofTransaction,
             };
+            let identity = match &tx.transaction_data {
+                TransactionData::Blob(tx) => Some(tx.identity.0.clone()),
+                _ => None,
+            };
             let transaction_status = sdk::api::TransactionStatusDb::Sequenced;
             let lane_id = block.lane_ids.get(&metadata.id.1).cloned();
             let api_tx = APITransaction {
@@ -118,6 +122,7 @@ impl NodeWebsocketConnector {
                 index: Some(idx as u32),
                 timestamp: Some(block.block_timestamp.clone()),
                 lane_id,
+                identity,
             };
             txs.push(WebsocketOutEvent::NewTx(api_tx));
         }
