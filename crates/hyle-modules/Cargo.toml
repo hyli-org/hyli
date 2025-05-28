@@ -34,7 +34,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = [
 paste = { version = "1.0.15" }
 hex = "0.4.3"
 
-tokio = { version = "1.44.2", features = ["full", "tracing"] }
+tokio = { version = "1.45.1", features = ["full", "tracing"] }
 tokio-util = { version = "0.7.14" }
 
 axum = { version = "0.8.4", features = ["ws"] }
@@ -43,7 +43,7 @@ utoipa = { version = "5.3.1" }
 utoipa-axum = { version = "0.2.0" }
 utoipa-swagger-ui = { version = "9.0.0", features = ["axum"] }
 
-tower-http = { version = "0.6.2", features = ["trace", "cors"] }
+tower-http = { version = "0.6.4", features = ["trace", "cors"] }
 prometheus = { version = "0.13.4" }
 opentelemetry = { version = "0.28" }
 

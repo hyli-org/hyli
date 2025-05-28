@@ -26,6 +26,7 @@ pub struct NetworkStats {
     pub contracts_last_day: i64,           // Number of contracts in the last day
     pub graph_tx_volume: Vec<(i64, i64)>,  // Graph data for transactions volume
     pub graph_block_time: Vec<(i64, f64)>, // Graph data for block time
+    pub peak_txs: (i64, i64),              // Peak transactions per minutes in the last 24 hours
 }
 
 #[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
