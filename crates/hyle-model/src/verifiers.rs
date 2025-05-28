@@ -13,6 +13,8 @@ pub enum NativeVerifiers {
     Secp256k1,
 }
 
+pub const NATIVE_VERIFIERS_CONTRACT_LIST: &[&str] = &["blst", "sha3_256", "secp256k1"];
+
 impl From<NativeVerifiers> for ProgramId {
     fn from(value: NativeVerifiers) -> Self {
         match value {
