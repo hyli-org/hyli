@@ -146,6 +146,7 @@ pub struct TransactionDb {
     pub transaction_status: TransactionStatusDb,   // Status of the transaction
     pub timestamp: Option<NaiveDateTime>,          // Timestamp of the transaction (block timestamp)
     pub lane_id: Option<LaneIdDb>,                 // Lane ID of the transaction
+    pub identity: Option<String>, // Identity of the transaction sender (null for proofs)
 }
 
 impl<'r> FromRow<'r, PgRow> for TransactionDb {
@@ -170,7 +171,8 @@ impl<'r> FromRow<'r, PgRow> for TransactionDb {
             ),
         };
         let timestamp: Option<NaiveDateTime> = row.try_get("timestamp")?;
-        let lane_id: Option<LaneIdDb> = row.try_get("lane_id")?;
+        let lane_id: Option<LaneIdDb> = row.try_get("lane_id").unwrap_or_default();
+        let identity: Option<String> = row.try_get("identity").unwrap_or_default();
 
         Ok(TransactionDb {
             tx_hash,
@@ -182,6 +184,7 @@ impl<'r> FromRow<'r, PgRow> for TransactionDb {
             transaction_status,
             timestamp,
             lane_id,
+            identity,
         })
     }
 }
@@ -201,6 +204,7 @@ impl From<TransactionDb> for APITransaction {
             transaction_status: val.transaction_status,
             timestamp,
             lane_id: val.lane_id.map(|l| l.0),
+            identity: val.identity,
         }
     }
 }
@@ -372,7 +376,8 @@ SELECT
     block_hash,
     index,
     b.timestamp,
-    lane_id
+    lane_id,
+    identity
 FROM transactions t
 LEFT JOIN blocks b ON t.block_hash = b.hash
 WHERE t.tx_hash = $1 AND transaction_type='blob_transaction'
@@ -493,7 +498,7 @@ pub async fn get_blob_transactions_by_contract(
             t.version,
             t.transaction_type,
             t.transaction_status,
-            b.identity,
+            t.identity,
             array_agg(ROW(b.contract_name, b.data, b.proof_outputs)) AS blobs
         FROM blobs b
         JOIN transactions t on t.tx_hash = b.tx_hash AND t.parent_dp_hash = b.parent_dp_hash
@@ -505,7 +510,7 @@ pub async fn get_blob_transactions_by_contract(
             t.version,
             t.transaction_type,
             t.transaction_status,
-            b.identity
+            t.identity
         "#,
     )
     .bind(contract_name.clone())
@@ -513,22 +518,14 @@ pub async fn get_blob_transactions_by_contract(
     .await, "Failed to fetch blob transactions by contract")
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let transactions: Result<Vec<TransactionWithBlobs>, anyhow::Error> = rows
+    let transactions: Result<Vec<TransactionWithBlobs>, _> = rows
         .into_iter()
         .map(|row| {
-            let tx_hash: TxHashDb = row.try_get("tx_hash")?;
-            let dp_hash: DataProposalHashDb = row.try_get("parent_dp_hash")?;
-            let block_hash: ConsensusProposalHash = row.try_get("block_hash")?;
-            let index: i32 = row.try_get("index")?;
-            let version: i32 = row.try_get("version")?;
-            let transaction_type: TransactionTypeDb = row.try_get("transaction_type")?;
-            let transaction_status: TransactionStatusDb = row.try_get("transaction_status")?;
-            let identity: String = row.try_get("identity")?;
+            let api_tx: TransactionDb = FromRow::from_row(&row)?;
+            let Some(block_hash) = api_tx.block_hash else {
+                return Err(sqlx::Error::RowNotFound);
+            };
             let blobs: Vec<(String, Vec<u8>, Vec<serde_json::Value>)> = row.try_get("blobs")?;
-
-            let index: u32 = index.try_into()?;
-            let version: u32 = version.try_into()?;
-
             let blobs = blobs
                 .into_iter()
                 .map(|(contract_name, data, proof_outputs)| BlobWithStatus {
@@ -537,15 +534,22 @@ pub async fn get_blob_transactions_by_contract(
                     proof_outputs,
                 })
                 .collect();
+            let Some(identity) = api_tx.identity else {
+                return Err(sqlx::Error::RowNotFound);
+            };
 
             Ok(TransactionWithBlobs {
-                tx_hash: tx_hash.0,
-                parent_dp_hash: dp_hash.0,
+                tx_hash: api_tx.tx_hash.0,
+                parent_dp_hash: api_tx.parent_dp_hash,
                 block_hash,
-                index,
-                version,
-                transaction_type,
-                transaction_status,
+                index: api_tx.index.unwrap_or(0),
+                version: api_tx.version,
+                transaction_type: api_tx.transaction_type,
+                transaction_status: api_tx.transaction_status,
+                timestamp: api_tx
+                    .timestamp
+                    .map(|t| TimestampMs(t.and_utc().timestamp_millis() as u128)),
+                lane_id: api_tx.lane_id.map(|l| l.0),
                 identity,
                 blobs,
             })

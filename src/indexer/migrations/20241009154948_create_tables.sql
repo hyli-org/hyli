@@ -23,6 +23,7 @@ CREATE TABLE transactions (
     block_height INT,
     lane_id TEXT,                           -- Lane ID
     index INT,                              -- Index of the transaction within the block
+    identity TEXT,                          -- Identity (NULL except for blob transactions)
     PRIMARY KEY (parent_dp_hash, tx_hash),
     CHECK (length(tx_hash) = 64)
 );

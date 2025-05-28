@@ -21,6 +21,7 @@ use handler::IndexerHandlerStore;
 use hyle_model::api::{
     BlobWithStatus, TransactionStatusDb, TransactionTypeDb, TransactionWithBlobs,
 };
+use hyle_model::utils::TimestampMs;
 use hyle_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
@@ -261,14 +262,17 @@ impl Indexer {
             .await;
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn send_blob_transaction_to_websocket_subscribers(
         &self,
         tx: &BlobTransaction,
-        tx_hash: &TxHashDb,
-        dp_hash: &DataProposalHashDb,
+        tx_hash: TxHashDb,
+        dp_hash: DataProposalHashDb,
         block_hash: &ConsensusProposalHash,
         index: u32,
         version: u32,
+        lane_id: Option<LaneId>,
+        timestamp: Option<TimestampMs>,
     ) {
         for (contrat_name, senders) in self.subscribers.iter() {
             if tx
@@ -284,6 +288,8 @@ impl Indexer {
                     version,
                     transaction_type: TransactionTypeDb::BlobTransaction,
                     transaction_status: TransactionStatusDb::Sequenced,
+                    lane_id: lane_id.clone(),
+                    timestamp: timestamp.clone(),
                     identity: tx.identity.0.clone(),
                     blobs: tx
                         .blobs
