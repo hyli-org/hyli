@@ -313,16 +313,7 @@ impl DataAvailability {
                 .await
                 .is_ok()
             {
-                res = match res {
-                    Some(r) => {
-                        if r < height {
-                            Some(height)
-                        } else {
-                            Some(r)
-                        }
-                    }
-                    None => Some(height),
-                }
+                res = res.map_or(Some(height), |r: BlockHeight| Some(r.max(height)))
             }
         }
 
