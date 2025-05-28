@@ -495,9 +495,6 @@ impl NodeState {
             blob_proof_data.hyle_output.tx_hash.0, blob_proof_data.hyle_output.index
         );
 
-        let program_output = std::str::from_utf8(&blob_proof_data.hyle_output.program_outputs)
-            .map(|s| s.to_string())
-            .unwrap_or(hex::encode(&blob_proof_data.hyle_output.program_outputs));
         block_under_construction
             .transactions_events
             .entry(blob_tx_hash.clone())
@@ -505,7 +502,7 @@ impl NodeState {
             .push(TransactionStateEvent::NewProof {
                 blob_index: blob_proof_data.hyle_output.index,
                 proof_tx_hash: proof_tx_hash.clone(),
-                program_output,
+                program_output: blob_proof_data.hyle_output.program_outputs.clone(),
             });
 
         blob.possible_proofs.push((
