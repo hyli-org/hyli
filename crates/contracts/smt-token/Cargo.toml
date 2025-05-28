@@ -41,7 +41,7 @@ client-sdk = { workspace = true, features = [
 [dev-dependencies]
 # Active client feature for tests
 hyle-smt-token = { path = ".", features = ["client"] }
-tokio = { version = "1.44.2", features = ["full", "tracing"] }
+tokio = { version = "1.45.1", features = ["full", "tracing"] }
 
 risc0-zkvm = { version = "2.0.2", default-features = false, features = [
   'std',
