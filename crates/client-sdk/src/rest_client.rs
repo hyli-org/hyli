@@ -212,7 +212,6 @@ impl NodeApiHttpClient {
     }
 
     /// Create a new client with a retry configuration (retrying `n` times, waiting `duration` before each retry)
-    #[allow(dead_code)]
     pub fn with_retry(&self, n: usize, duration: Duration) -> Self {
         let mut cloned = self.clone();
         cloned.retry = Some((n, duration));
@@ -220,7 +219,6 @@ impl NodeApiHttpClient {
     }
 
     /// Create a client with the retry configuration (n=3, duration=1000ms)
-    #[allow(dead_code)]
     pub fn retry_15times_1000ms(&self) -> Self {
         self.with_retry(8, Duration::from_millis(4000))
     }
@@ -349,7 +347,6 @@ impl DerefMut for NodeApiHttpClient {
     }
 }
 
-#[allow(dead_code)]
 pub mod test {
     use sdk::Hashed;
 
