@@ -770,8 +770,10 @@ pub mod tests {
             }
         }
         assert_eq!(received_blocks.len(), 11);
-        assert_eq!(received_blocks[0].height(), BlockHeight(0));
-        // assert_eq!(received_blocks[9].height(), BlockHeight(9));
+
+        for i in 0..11 {
+            assert!(received_blocks.iter().any(|b| b.height().0 == i));
+        }
 
         // Add a few blocks (via bus to avoid mutex)
         let mut ccp = CommittedConsensusProposal {
