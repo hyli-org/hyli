@@ -203,7 +203,7 @@ impl Hashed<TxHash> for VerifiedProofTransaction {
 }
 
 #[derive(Serialize, Deserialize, Default, BorshSerialize, BorshDeserialize)]
-// #[readonly::make]
+#[readonly::make]
 pub struct BlobTransaction {
     pub identity: Identity,
     pub blobs: Vec<Blob>,

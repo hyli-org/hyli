@@ -13,7 +13,6 @@ mod e2e_consensus {
     use client_sdk::rest_client::NodeApiClient;
     use client_sdk::transaction_builder::{ProvableBlobTx, TxExecutor, TxExecutorBuilder};
     use fixtures::test_helpers::send_transaction;
-    use hydentity::client::tx_executor_handler::register_identity;
     use hyle::genesis::{Genesis, States};
     use hyle_contract_sdk::Identity;
     use hyle_contract_sdk::ZkContract;

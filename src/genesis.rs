@@ -6,8 +6,7 @@ use client_sdk::{
     contract_states,
     helpers::register_hyle_contract,
     transaction_builder::{
-        ContractRunner, ProofTxBuilder, ProvableBlobTx, TxExecutor, TxExecutorBuilder,
-        TxExecutorHandler,
+        ProofTxBuilder, ProvableBlobTx, TxExecutor, TxExecutorBuilder, TxExecutorHandler,
     },
 };
 use hyle_contract_sdk::{
