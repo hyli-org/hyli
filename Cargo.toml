@@ -134,7 +134,7 @@ sqlx = { version = "0.8.4", features = [
   "migrate",
   "chrono",
 ] }
-tokio = { version = "1.44.2", features = ["full", "tracing"] }
+tokio = { version = "1.45.1", features = ["full", "tracing"] }
 tokio-util = { version = "0.7.14" }
 # tower-http = { version = "0.6.2", features = ["trace", "cors"] }
 fjall = { version = "2.10.0" }
