@@ -266,11 +266,11 @@ pub fn make_delete_tx(
 
 pub fn make_delete_tx_with_hyli(tld: ContractName, contract_name: ContractName) -> BlobTransaction {
     BlobTransaction::new(
-        HYLI_TLD_HYDENTITY,
+        HYLI_TLD_SECP256K1,
         vec![
             DeleteContractAction { contract_name }.as_blob(tld, None, None),
             HydentityAction::VerifyIdentity {
-                account: HYLI_TLD_HYDENTITY.to_string().clone(),
+                account: HYLI_TLD_SECP256K1.to_string().clone(),
                 nonce: 1,
             }
             .as_blob("hydentity".into()),

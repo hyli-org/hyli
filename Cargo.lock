@@ -4773,6 +4773,7 @@ dependencies = [
  "prometheus",
  "rand 0.8.5",
  "risc0-zkvm",
+ "secp256k1",
  "seq-macro",
  "serde",
  "serde_json",

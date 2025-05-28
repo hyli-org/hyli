@@ -14,7 +14,7 @@ use hydentity::{
 use hyle::genesis::States;
 use hyle_contracts::{HYDENTITY_ELF, HYLLAR_ELF, STAKING_ELF};
 use hyle_model::{api::APIRegisterContract, ContractName, Identity, ProgramId, StateCommitment};
-use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_HYDENTITY};
+use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_SECP256K1};
 use staking::{
     client::tx_executor_handler::{delegate, deposit_for_fees, stake},
     state::Staking,
@@ -63,7 +63,7 @@ async fn faucet_and_delegate(
         tracing::warn!("Register TX Hash: {:?}", tx_hash);
     }
     {
-        let mut transaction = ProvableBlobTx::new(FAUCET_HYDENTITY.into());
+        let mut transaction = ProvableBlobTx::new(FAUCET_SECP256K1.into());
 
         verify_identity(
             &mut transaction,

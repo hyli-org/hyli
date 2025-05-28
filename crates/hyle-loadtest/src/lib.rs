@@ -19,7 +19,7 @@ use hyle_contract_sdk::{
 use hyle_contracts::{HYDENTITY_ELF, HYLLAR_ELF};
 use hyllar::client::tx_executor_handler::transfer;
 use hyllar::erc20::ERC20;
-use hyllar::{Hyllar, FAUCET_HYDENTITY};
+use hyllar::{Hyllar, FAUCET_SECP256K1};
 use rand::Rng;
 use tokio::task::JoinSet;
 use tracing::info;
@@ -125,7 +125,7 @@ pub async fn setup_hyllar(users: u32) -> Result<Hyllar> {
     for n in 0..users {
         let ident = &format!("{n}@hyllar_test");
         hyllar
-            .transfer(FAUCET_HYDENTITY, ident, 0)
+            .transfer(FAUCET_SECP256K1, ident, 0)
             .map_err(|e| anyhow::anyhow!(e))?;
     }
     Ok(hyllar)

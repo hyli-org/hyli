@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::SideEffect;
 
-pub const HYLI_TLD_HYDENTITY: &str = "hyle@hydentity";
+pub const HYLI_TLD_SECP256K1: &str = "hyle@seqp256k1";
 
 pub fn handle_blob_for_hyle_tld(
     contracts: &HashMap<ContractName, Contract>,
@@ -74,7 +74,7 @@ fn handle_delete_blob(
     identity: &Identity,
 ) -> Result<()> {
     // We permission contract deletions to this single identity generated in the genesis
-    if identity != &Identity(HYLI_TLD_HYDENTITY.into()) {
+    if identity != &Identity(HYLI_TLD_SECP256K1.into()) {
         bail!(
             "{} is not allowed to delete contract {}",
             identity,

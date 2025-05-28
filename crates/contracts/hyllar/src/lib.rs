@@ -19,7 +19,7 @@ pub mod indexer;
 pub mod erc20;
 
 pub const TOTAL_SUPPLY: u128 = 100_000_000_000;
-pub const FAUCET_HYDENTITY: &str = "faucet@hydentity";
+pub const FAUCET_SECP256K1: &str = "faucet@secp256pk1";
 
 impl ZkContract for Hyllar {
     fn execute(&mut self, calldata: &Calldata) -> RunResult {
@@ -86,7 +86,7 @@ pub enum HyllarAction {
 
 impl Default for Hyllar {
     fn default() -> Self {
-        Self::custom(FAUCET_HYDENTITY.to_string())
+        Self::custom(FAUCET_SECP256K1.to_string())
     }
 }
 
@@ -205,7 +205,7 @@ mod tests {
 
         assert_eq!(token.total_supply, TOTAL_SUPPLY);
         assert_eq!(
-            token.balances.get(FAUCET_HYDENTITY).cloned().unwrap_or(0),
+            token.balances.get(FAUCET_SECP256K1).cloned().unwrap_or(0),
             TOTAL_SUPPLY
         );
         assert!(token.allowances.is_empty());
@@ -216,7 +216,7 @@ mod tests {
         let initial_supply = TOTAL_SUPPLY;
         let token = Hyllar::default();
 
-        assert_eq!(token.balance_of(FAUCET_HYDENTITY).unwrap(), initial_supply);
+        assert_eq!(token.balance_of(FAUCET_SECP256K1).unwrap(), initial_supply);
         assert_eq!(
             token.balance_of("nonexistent").unwrap_err(),
             "Account nonexistent not found".to_string()
@@ -227,15 +227,15 @@ mod tests {
     fn test_transfer() {
         let mut token = Hyllar::default();
 
-        assert!(token.transfer(FAUCET_HYDENTITY, "recipient", 500).is_ok());
+        assert!(token.transfer(FAUCET_SECP256K1, "recipient", 500).is_ok());
         assert_eq!(
-            token.balance_of(FAUCET_HYDENTITY).unwrap(),
+            token.balance_of(FAUCET_SECP256K1).unwrap(),
             TOTAL_SUPPLY - 500
         );
         assert_eq!(token.balance_of("recipient").unwrap(), 500);
 
         assert!(token
-            .transfer(FAUCET_HYDENTITY, "recipient", TOTAL_SUPPLY)
+            .transfer(FAUCET_SECP256K1, "recipient", TOTAL_SUPPLY)
             .is_err());
     }
 
@@ -252,21 +252,21 @@ mod tests {
     fn test_transfer_from() {
         let mut token = Hyllar::default();
 
-        assert!(token.approve(FAUCET_HYDENTITY, "spender", 300).is_ok());
+        assert!(token.approve(FAUCET_SECP256K1, "spender", 300).is_ok());
 
         assert!(token
-            .transfer_from(FAUCET_HYDENTITY, "spender", "recipient", 200)
+            .transfer_from(FAUCET_SECP256K1, "spender", "recipient", 200)
             .is_ok());
         assert_eq!(
-            token.balance_of(FAUCET_HYDENTITY).unwrap(),
+            token.balance_of(FAUCET_SECP256K1).unwrap(),
             TOTAL_SUPPLY - 200
         );
         assert_eq!(token.balance_of("recipient").unwrap(), 200);
-        assert_eq!(token.allowance(FAUCET_HYDENTITY, "spender").unwrap(), 100);
+        assert_eq!(token.allowance(FAUCET_SECP256K1, "spender").unwrap(), 100);
 
         assert_eq!(
             token
-                .transfer_from(FAUCET_HYDENTITY, "spender", "recipient", 200)
+                .transfer_from(FAUCET_SECP256K1, "spender", "recipient", 200)
                 .unwrap_err()
                 .to_string(),
             "Allowance exceeded for spender=spender owner=faucet@hydentity allowance=100"
@@ -279,7 +279,7 @@ mod tests {
 
         assert_eq!(
             token
-                .transfer_from(FAUCET_HYDENTITY, "spender", "recipient", 200)
+                .transfer_from(FAUCET_SECP256K1, "spender", "recipient", 200)
                 .unwrap_err()
                 .to_string(),
             "Allowance exceeded for spender=spender owner=faucet@hydentity allowance=0"
@@ -292,12 +292,12 @@ mod tests {
 
         // Approve an allowance for the spender
         assert!(token
-            .approve(FAUCET_HYDENTITY, "spender", TOTAL_SUPPLY + 1000)
+            .approve(FAUCET_SECP256K1, "spender", TOTAL_SUPPLY + 1000)
             .is_ok());
 
         // Attempt to transfer more than the sender's balance
         let result =
-            token.transfer_from(FAUCET_HYDENTITY, "spender", "recipient", TOTAL_SUPPLY + 1);
+            token.transfer_from(FAUCET_SECP256K1, "spender", "recipient", TOTAL_SUPPLY + 1);
 
         assert!(result.is_err());
         assert_eq!(

@@ -34,9 +34,9 @@ pub struct GenesisConf {
     /// Initial bonded stakers and their stakes
     pub stakers: HashMap<String, u64>,
     /// Faucet configuration
-    pub faucet_password: String,
+    pub faucet_seq256k1_secret: String,
     /// Hyli TLD admin configuration
-    pub hyli_tld_password: String,
+    pub hyli_tld_seqp256k1_secret: String,
 }
 
 /// Configuration for the P2P layer

@@ -14,16 +14,19 @@ use hydentity::{
     Hydentity,
 };
 use hyle_contract_sdk::{
-    Blob, Calldata, ContractName, Identity, ProgramId, StateCommitment, ZkContract,
+    secp256k1::CheckSecp256k1, Blob, Calldata, ContractName, Identity, ProgramId, StateCommitment,
+    ZkContract,
 };
 use hyle_crypto::SharedBlstCrypto;
+use hyle_model::verifiers::Secp256k1Blob;
 use hyle_modules::{
     bus::{BusClientSender, SharedMessageBus},
     bus_client, handle_messages,
     modules::Module,
-    node_state::HYLI_TLD_HYDENTITY,
+    node_state::HYLI_TLD_SECP256K1,
 };
-use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_HYDENTITY};
+use hyllar::{client::tx_executor_handler::transfer, Hyllar, HyllarAction, FAUCET_SECP256K1};
+use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use smt_token::account::AccountSMT;
 use staking::{
@@ -77,7 +80,6 @@ contract_states!(
     #[derive(Debug, Clone)]
     pub struct States {
         pub hyllar: Hyllar,
-        pub hydentity: Hydentity,
         pub staking: Staking,
     }
 );
@@ -192,10 +194,6 @@ impl Genesis {
     ) -> Result<Vec<Transaction>> {
         let (contract_program_ids, mut genesis_txs, mut tx_executor) = self.genesis_contracts_txs();
 
-        let register_txs = self
-            .generate_register_txs(peer_pubkey, &mut tx_executor)
-            .await?;
-
         let faucet_txs = self
             .generate_faucet_txs(peer_pubkey, &mut tx_executor, genesis_stake)
             .await?;
@@ -252,57 +250,15 @@ impl Genesis {
         Ok(genesis_txs)
     }
 
-    async fn generate_register_txs(
-        &self,
-        peer_pubkey: &PeerPublicKeyMap,
-        tx_executor: &mut TxExecutor<States>,
-    ) -> Result<Vec<ProofTxBuilder>> {
-        // TODO: use an identity provider that checks BLST signature on a pubkey instead of
-        // hydentity that checks password
-        // The validator will send the signature for the register transaction in the handshake
-        // in order to let all genesis validators to create the genesis register
-        let mut txs = vec![];
+    fn gen_keys(secret: &str) -> (SecretKey, PublicKey) {
+        let hash = Sha256::digest(secret.as_bytes());
 
-        let mut register_hydentity = |hydentity: String, password: String| -> Result<()> {
-            let identity = Identity(hydentity);
-            let mut transaction = ProvableBlobTx::new(identity.clone());
+        let secret_key = SecretKey::from_slice(&hash).expect("32 bytes, within curve order");
 
-            register_identity(
-                &mut transaction,
-                ContractName::new("hydentity"),
-                password.to_owned(),
-            )?;
+        let secp = Secp256k1::new();
+        let public_key = PublicKey::from_secret_key(&secp, &secret_key);
 
-            txs.push(tx_executor.process(transaction)?);
-
-            Ok(())
-        };
-
-        // register faucet identity
-        info!("🌱  Registering faucet identity {}", FAUCET_HYDENTITY);
-        register_hydentity(
-            FAUCET_HYDENTITY.into(),
-            self.config.genesis.faucet_password.clone(),
-        )?;
-
-        // register hyli tld admin identity
-        info!(
-            "🌱  Registering hyli tld admin identity {}",
-            HYLI_TLD_HYDENTITY
-        );
-        register_hydentity(
-            HYLI_TLD_HYDENTITY.into(),
-            self.config.genesis.hyli_tld_password.clone(),
-        )?;
-
-        // Register peers
-        for peer in peer_pubkey.values() {
-            let identity = format!("{peer}@hydentity");
-            info!("🌱  Registering peer identity {identity}");
-            register_hydentity(identity, "password".into())?;
-        }
-
-        Ok(txs)
+        (secret_key, public_key)
     }
 
     async fn generate_faucet_txs(
@@ -311,6 +267,13 @@ impl Genesis {
         tx_executor: &mut TxExecutor<States>,
         genesis_stakers: &HashMap<String, u64>,
     ) -> Result<Vec<ProofTxBuilder>> {
+        let (faucet_secret, faucet_pubkey) =
+            self.gen_keys(self.config.genesis.faucet_seq256k1_secret.clone().as_str());
+
+        let signature = faucet_secret.sign();
+
+        let public_key = faucet_secret_key.sk_to_pk();
+
         let mut txs = vec![];
         for (id, peer) in peer_pubkey.iter() {
             let genesis_faucet = *genesis_stakers
@@ -320,15 +283,29 @@ impl Genesis {
 
             info!("🌱  Fauceting {genesis_faucet} hyllar to {peer}");
 
-            let identity = Identity::new(FAUCET_HYDENTITY);
-            let mut transaction = ProvableBlobTx::new(identity.clone());
+            let identity = Identity::new(FAUCET_SECP256K1);
+            let blob_seqp = Secp256k1Blob {
+                identity,
+                data: Default::default(),
+                public_key: public_key.clone(),
+                signature: todo!(),
+            }
+            .as_blob();
+
+            let transaction = BlobTransaction::new(
+                identity.clone(),
+                vec![
+                    Seqp256k1Blob::new(identity).as_blob("seqp256k1".into()),
+                    // HyllarAction::Transfer {}.as_blob(),
+                ],
+            );
 
             // Verify identity
             verify_identity(
                 &mut transaction,
                 ContractName::new("hydentity"),
                 &tx_executor.hydentity,
-                self.config.genesis.faucet_password.clone(),
+                self.config.genesis.faucet_seq256k1_secret.clone(),
             )?;
 
             // Transfer
@@ -426,7 +403,6 @@ impl Genesis {
 
         let ctx = TxExecutorBuilder::new(States {
             hyllar: hyllar::Hyllar::default(),
-            hydentity: hydentity_state,
             staking: staking_state,
         })
         .build();

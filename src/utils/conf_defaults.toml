@@ -59,8 +59,8 @@ solo = true
 # Keys are all nodes “id”, and values are the stake amount for each one of them.
 stakers = {}
 
-faucet_password = "password"
-hyli_tld_password = "password"
+faucet_seqp256k1_secret = "secret_faucet"
+hyli_tld_seqp256k1_secret = "secret_hyli_tld"
 
 [websocket]
 enabled = true

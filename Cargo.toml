@@ -150,6 +150,7 @@ toml = "0.8.22"
 zip = "=3.0.0"
 seq-macro = "0.3.6"
 async-stream = "0.3.6"
+secp256k1 = "0.31.0"
 
 [package.metadata.cargo-machete]
 ignored = ["zip", "bytes", "tokio-util"]
@@ -214,10 +215,6 @@ lto = "off"
 inherits = "release"
 debug = true         # Keep debug info for profiling
 strip = "none"
-
-# Optimize the following crates for development builds so tests are faster
-[profile.dev.package.risc0-binfmt]
-opt-level = 3
 
 [profile.dev.package.sha2]
 opt-level = 3

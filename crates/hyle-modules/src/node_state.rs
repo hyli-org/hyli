@@ -21,7 +21,7 @@ pub mod module;
 mod ordered_tx_map;
 mod timeouts;
 
-pub use hyle_tld::HYLI_TLD_HYDENTITY;
+pub use hyle_tld::HYLI_TLD_SECP256K1;
 
 struct SettledTxOutput {
     // Original blob transaction, now settled.

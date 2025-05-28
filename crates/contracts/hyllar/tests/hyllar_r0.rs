@@ -1,6 +1,6 @@
 use core::str;
 
-use hyle_hyllar::{Hyllar, HyllarAction, FAUCET_HYDENTITY};
+use hyle_hyllar::{Hyllar, HyllarAction, FAUCET_SECP256K1};
 use sdk::{BlobIndex, Calldata, ContractAction, ContractName, HyleOutput, TxHash};
 
 fn execute(inputs: (Vec<u8>, Vec<Calldata>)) -> Vec<HyleOutput> {
@@ -36,7 +36,7 @@ fn execute_transfer_from() {
             tx_ctx: None,
             private_input: vec![],
             blobs: vec![HyllarAction::TransferFrom {
-                owner: FAUCET_HYDENTITY.into(),
+                owner: FAUCET_SECP256K1.into(),
                 recipient: "amm".into(),
                 amount: 100,
             }

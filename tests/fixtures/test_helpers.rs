@@ -77,7 +77,7 @@ impl Default for ConfMaker {
             stakers.insert("node-2".to_owned(), 100);
             stakers
         };
-        default.genesis.faucet_password = "password".into();
+        default.genesis.faucet_seq256k1_secret = "password".into();
 
         default.run_indexer = false; // disable indexer by default to avoid needed PG
 
