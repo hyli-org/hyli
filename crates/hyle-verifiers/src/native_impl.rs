@@ -4,10 +4,14 @@ use hyle_model::*;
 use secp256k1::{ecdsa::Signature, Message, PublicKey, Secp256k1};
 use sha3::Digest;
 
-pub(crate) fn verify_native_impl(
+pub(crate) fn verify_native_impl<F>(
     blob: &Blob,
     verifier: NativeVerifiers,
-) -> anyhow::Result<(Identity, bool)> {
+    check_secp_pubkey: F,
+) -> anyhow::Result<(Identity, bool)>
+where
+    F: Fn([u8; 33]) -> Option<bool>,
+{
     match verifier {
         NativeVerifiers::Blst => {
             let blob = borsh::from_slice::<BlstSignatureBlob>(&blob.data.0)?;
@@ -34,6 +38,12 @@ pub(crate) fn verify_native_impl(
         }
         NativeVerifiers::Secp256k1 => {
             let blob = borsh::from_slice::<Secp256k1Blob>(&blob.data.0)?;
+
+            // Check pubkey is correct
+            if let Some(res) = check_secp_pubkey(blob.public_key) {
+                return Ok((blob.identity, res));
+                
+            };
 
             // Convert the public key bytes to a secp256k1 PublicKey
             let public_key = PublicKey::from_slice(&blob.public_key)

@@ -1,6 +1,9 @@
+#![cfg(test)]
+
 use std::collections::HashSet;
 
-use hydentity::HydentityAction;
+use ::secp256k1::PublicKey;
+use sdk::verifiers::Secp256k1Blob;
 
 use super::*;
 
@@ -40,6 +43,7 @@ async fn test_register_contract_simple_hyle() {
             &"hyle".into(),
             &"c1".into(),
             &"c2.hyle".into(),
+            &"secp256k1".into(),
             &"c3".into()
         ])
     );
@@ -47,7 +51,7 @@ async fn test_register_contract_simple_hyle() {
     let block = state.craft_block_and_handle(3, vec![register_c1.clone().into()]);
 
     assert_eq!(block.failed_txs, vec![register_c1.hashed()]);
-    assert_eq!(state.contracts.len(), 4);
+    assert_eq!(state.contracts.len(), 5);
 }
 
 #[test_log::test(tokio::test)]
@@ -81,7 +85,7 @@ async fn test_register_contract_failure() {
 
     let block = state.force_handle_block(&signed_block);
 
-    assert_eq!(state.contracts.len(), 2);
+    assert_eq!(state.contracts.len(), 3);
     assert_eq!(block.successful_txs, vec![register_good.hashed()]);
     assert_eq!(
         block.failed_txs,
@@ -136,19 +140,22 @@ async fn test_register_contract_proof_mismatch() {
 
     // The transaction should fail because the proof's registration effect doesn't match the blob action
     tracing::warn!("{:?}", state.contracts);
-    assert_eq!(state.contracts.len(), 2); // sub.test.hyle shouldn't exist
+    assert_eq!(state.contracts.len(), 3); // sub.test.hyle shouldn't exist
     assert_eq!(block.successful_txs, vec![register_parent_tx_hash]); // No successful transactions
 }
 
 #[test_log::test(tokio::test)]
 async fn test_register_contract_composition() {
     let mut state = new_node_state().await;
+    state.hyli_pubkey =
+        create_secp256k1_blob(HYLI_TLD_SECP256K1.into(), "secret".into()).public_key;
+
     let register = make_register_tx("hyle@hyle".into(), "hyle".into(), "hydentity".into());
     let block = state.craft_block_and_handle(1, vec![register.clone().into()]);
 
     check_block_is_ok(&block);
 
-    assert_eq!(state.contracts.len(), 2);
+    assert_eq!(state.contracts.len(), 3);
 
     let compositing_register_willfail = BlobTransaction::new(
         "test@hydentity",
@@ -183,7 +190,7 @@ async fn test_register_contract_composition() {
     );
 
     let block = state.force_handle_block(&crafted_block);
-    assert_eq!(state.contracts.len(), 2);
+    assert_eq!(state.contracts.len(), 3);
 
     check_block_is_ok(&block);
 
@@ -197,7 +204,7 @@ async fn test_register_contract_composition() {
 
     check_block_is_ok(&block);
 
-    assert_eq!(state.contracts.len(), 2);
+    assert_eq!(state.contracts.len(), 3);
 
     // Send a third one that will fail early on settlement of the second because duplication
     // (and thus test the early-failure settlement path)
@@ -216,7 +223,7 @@ async fn test_register_contract_composition() {
 
     check_block_is_ok(&block);
 
-    assert_eq!(state.contracts.len(), 2);
+    assert_eq!(state.contracts.len(), 3);
 
     let mut block = state.craft_block_and_handle(105, vec![proof_tx.clone().into()]);
 
@@ -230,7 +237,7 @@ async fn test_register_contract_composition() {
         block.timed_out_txs,
         vec![compositing_register_willfail.hashed()]
     );
-    assert_eq!(state.contracts.len(), 3);
+    assert_eq!(state.contracts.len(), 4);
 }
 
 fn check_block_is_ok(block: &Block) {
@@ -252,6 +259,25 @@ fn check_block_is_ok(block: &Block) {
         assert!(dp_hashes.contains(tx_hash));
     }
 }
+pub fn create_secp256k1_blob(identity: Identity, secret: String) -> Secp256k1Blob {
+    let hash = sha2::Sha256::digest(secret.as_bytes());
+
+    let secret_key =
+        ::secp256k1::SecretKey::from_slice(&hash).expect("32 bytes, within curve order");
+
+    let secp = ::secp256k1::Secp256k1::new();
+    let public_key = PublicKey::from_secret_key(&secp, &secret_key);
+
+    let data = sha2::Sha256::digest("data".as_bytes());
+    let message = ::secp256k1::Message::from_digest(data.into());
+    let signature = secret_key.sign_ecdsa(message);
+    Secp256k1Blob {
+        identity,
+        data: data.into(),
+        public_key: public_key.serialize(),
+        signature: signature.serialize_compact(),
+    }
+}
 
 pub fn make_delete_tx(
     sender: Identity,
@@ -269,11 +295,7 @@ pub fn make_delete_tx_with_hyli(tld: ContractName, contract_name: ContractName) 
         HYLI_TLD_SECP256K1,
         vec![
             DeleteContractAction { contract_name }.as_blob(tld, None, None),
-            HydentityAction::VerifyIdentity {
-                account: HYLI_TLD_SECP256K1.to_string().clone(),
-                nonce: 1,
-            }
-            .as_blob("hydentity".into()),
+            create_secp256k1_blob(HYLI_TLD_SECP256K1.into(), "secret".into()).as_blob(),
         ],
     )
 }
@@ -292,20 +314,20 @@ async fn test_delete_hydentity_should_not_be_possible() {
 
     let block = state.craft_block_and_handle(1, vec![register_hydentity.into()]);
 
-    assert_eq!(state.contracts.len(), 2);
+    assert_eq!(state.contracts.len(), 3);
 
     let block = state.craft_block_and_handle(2, vec![delete_tx.into(), delete_hyli_proof.into()]);
 
     assert_eq!(block.failed_txs.len(), 1);
-    assert_eq!(state.contracts.len(), 2);
+    assert_eq!(state.contracts.len(), 3);
 }
 
 #[test_log::test(tokio::test)]
 async fn test_register_contract_and_delete_hyle() {
     let mut state = new_node_state().await;
+    state.hyli_pubkey =
+        create_secp256k1_blob(HYLI_TLD_SECP256K1.into(), "secret".into()).public_key;
 
-    let register_hydentity =
-        make_register_tx("hyle@hyle".into(), "hyle".into(), "hydentity".into());
     let register_c1 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c1".into());
     let register_c2 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
     // This technically doesn't matter as it's actually the proof that does the work
@@ -330,7 +352,6 @@ async fn test_register_contract_and_delete_hyle() {
     let block = state.craft_block_and_handle(
         1,
         vec![
-            register_hydentity.into(),
             register_c1.into(),
             register_c2.into(),
             register_sub_c2.into(),
@@ -343,7 +364,7 @@ async fn test_register_contract_and_delete_hyle() {
             .iter()
             .map(|(_, rce, _)| rce.contract_name.0.clone())
             .collect::<Vec<_>>(),
-        vec!["hydentity", "c1", "c2.hyle", "sub.c2.hyle"]
+        vec!["c1", "c2.hyle", "sub.c2.hyle"]
     );
     assert_eq!(state.contracts.len(), 5);
 
@@ -369,10 +390,6 @@ async fn test_register_contract_and_delete_hyle() {
         .push(OnchainEffect::DeleteContract("sub.c2.hyle".into()));
     let delete_sub_proof = new_proof_tx(&"c2.hyle".into(), &output, &delete_sub_tx.hashed());
 
-    let mut output =
-        make_hyle_output_with_state(delete_tx.clone(), BlobIndex(1), &[0, 1, 2, 3], &[1]);
-    let delete_hyli_proof = new_proof_tx(&"hydentity".into(), &output, &delete_tx.hashed());
-
     let block = state.craft_block_and_handle(
         2,
         vec![
@@ -381,7 +398,6 @@ async fn test_register_contract_and_delete_hyle() {
             delete_self_proof.into(),
             delete_sub_proof.into(),
             delete_tx.into(),
-            delete_hyli_proof.into(),
         ],
     );
 
@@ -399,9 +415,9 @@ async fn test_register_contract_and_delete_hyle() {
 #[test_log::test(tokio::test)]
 async fn test_hyle_sub_delete() {
     let mut state = new_node_state().await;
+    let hyli_pubkey = create_secp256k1_blob(HYLI_TLD_SECP256K1.into(), "secret".into());
+    state.hyli_pubkey = hyli_pubkey.public_key;
 
-    let register_hydentity =
-        make_register_tx("hyle@hyle".into(), "hyle".into(), "hydentity".into());
     let register_c2 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
     // This technically doesn't matter as it's actually the proof that does the work
     let register_sub_c2 = make_register_tx(
@@ -425,7 +441,6 @@ async fn test_hyle_sub_delete() {
     state.craft_block_and_handle(
         1,
         vec![
-            register_hydentity.into(),
             register_c2.into(),
             register_sub_c2.into(),
             sub_c2_proof.into(),
@@ -435,25 +450,9 @@ async fn test_hyle_sub_delete() {
 
     // Now delete the intermediate contract first, then delete the sub-contract via hyle
     let mut delete_tx = make_delete_tx_with_hyli("hyle".into(), "c2.hyle".into());
-    let mut output =
-        make_hyle_output_with_state(delete_tx.clone(), BlobIndex(1), &[0, 1, 2, 3], &[1]);
-    let delete_hyli_proof = new_proof_tx(&"hydentity".into(), &output, &delete_tx.hashed());
-
     let delete_sub_tx = make_delete_tx_with_hyli("hyle".into(), "sub.c2.hyle".into());
-    let mut output_sub =
-        make_hyle_output_with_state(delete_sub_tx.clone(), BlobIndex(1), &[1], &[2]);
-    let delete_sub_hyli_proof =
-        new_proof_tx(&"hydentity".into(), &output_sub, &delete_sub_tx.hashed());
 
-    let block = state.craft_block_and_handle(
-        2,
-        vec![
-            delete_tx.into(),
-            delete_hyli_proof.into(),
-            delete_sub_tx.into(),
-            delete_sub_hyli_proof.into(),
-        ],
-    );
+    let block = state.craft_block_and_handle(2, vec![delete_tx.into(), delete_sub_tx.into()]);
 
     assert_eq!(
         block
@@ -468,13 +467,8 @@ async fn test_hyle_sub_delete() {
 
 #[test_log::test(tokio::test)]
 async fn test_register_update_delete_combinations_hyle() {
-    let register_hydentity_tx =
-        make_register_tx("hyle@hyle".into(), "hyle".into(), "hydentity".into());
     let register_tx = make_register_tx("hyle@hyle".into(), "hyle".into(), "c.hyle".into());
     let mut delete_tx = make_delete_tx_with_hyli("hyle".into(), "c.hyle".into());
-    let mut output =
-        make_hyle_output_with_state(delete_tx.clone(), BlobIndex(1), &[0, 1, 2, 3], &[1]);
-    let delete_tx_proof = new_proof_tx(&"hydentity".into(), &output, &delete_tx.hashed());
 
     let delete_self_tx = make_delete_tx("hyle@c.hyle".into(), "c.hyle".into(), "c.hyle".into());
     let update_tx = make_register_tx("test@c.hyle".into(), "c.hyle".into(), "c.hyle".into());
@@ -498,6 +492,7 @@ async fn test_register_update_delete_combinations_hyle() {
         .push(OnchainEffect::DeleteContract("c.hyle".into()));
     let proof_delete = new_proof_tx(&"c.hyle".into(), &output, &delete_self_tx.hashed());
 
+    // Test combinations of register, update, delete, and proofs
     async fn test_combination(
         proofs: Option<&[&VerifiedProofTransaction]>,
         txs: &[&BlobTransaction],
@@ -505,6 +500,9 @@ async fn test_register_update_delete_combinations_hyle() {
         expected_txs: usize,
     ) {
         let mut state = new_node_state().await;
+        state.hyli_pubkey =
+            create_secp256k1_blob(HYLI_TLD_SECP256K1.into(), "secret".into()).public_key;
+
         let mut txs = txs
             .iter()
             .map(|tx| (*tx).clone().into())
@@ -514,35 +512,27 @@ async fn test_register_update_delete_combinations_hyle() {
         }
         let block = state.craft_block_and_handle(1, txs);
 
-        dbg!(&state.contracts);
-
         assert_eq!(state.contracts.len(), expected_ct);
         assert_eq!(block.successful_txs.len(), expected_txs);
         info!("done");
     }
 
     // Test all combinations
-    test_combination(None, &[&register_tx], 2, 1).await;
-    test_combination(None, &[&delete_tx], 1, 0).await;
+    test_combination(None, &[&register_tx], 3, 1).await;
+    test_combination(None, &[&delete_tx], 2, 0).await;
+    test_combination(None, &[&register_tx, &delete_tx], 2, 2).await;
+    test_combination(Some(&[&proof_update]), &[&register_tx, &update_tx], 3, 2).await;
     test_combination(
-        Some(&[&delete_tx_proof]),
-        &[&register_hydentity_tx, &register_tx, &delete_tx],
+        Some(&[&proof_update]),
+        &[&register_tx, &update_tx, &delete_tx],
         2,
         3,
-    )
-    .await;
-    test_combination(Some(&[&proof_update]), &[&register_tx, &update_tx], 2, 2).await;
-    test_combination(
-        Some(&[&proof_update, &delete_tx_proof]),
-        &[&register_hydentity_tx, &register_tx, &update_tx, &delete_tx],
-        2,
-        4,
     )
     .await;
     test_combination(
         Some(&[&proof_update, &proof_delete]),
         &[&register_tx, &update_tx, &delete_self_tx],
-        1,
+        2,
         3,
     )
     .await;

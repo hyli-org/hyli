@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::SideEffect;
 
-pub const HYLI_TLD_SECP256K1: &str = "hyle@seqp256k1";
+pub const HYLI_TLD_SECP256K1: &str = "hyle@secp256k1";
 
 pub fn handle_blob_for_hyle_tld(
     contracts: &HashMap<ContractName, Contract>,

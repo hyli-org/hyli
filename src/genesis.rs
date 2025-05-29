@@ -100,12 +100,7 @@ impl Genesis {
         Ok(())
     }
 
-    /// Used for Genesis
-    pub fn add_secp256k1_verify_action(
-        transaction: &mut ProvableBlobTx,
-        identity: Identity,
-        secret: String,
-    ) -> Result<()> {
+    pub fn create_secp256k1_blob(identity: Identity, secret: String) -> Secp256k1Blob {
         let hash = sha2::Sha256::digest(secret.as_bytes());
 
         let secret_key =
@@ -117,13 +112,21 @@ impl Genesis {
         let data = sha2::Sha256::digest("data".as_bytes());
         let message = secp256k1::Message::from_digest(data.into());
         let signature = secret_key.sign_ecdsa(message);
-
-        transaction.add_secp256k1_action(Secp256k1Blob {
+        Secp256k1Blob {
             identity,
             data: data.into(),
             public_key: public_key.serialize(),
             signature: signature.serialize_compact(),
-        })
+        }
+    }
+
+    /// Used for Genesis
+    pub fn add_secp256k1_verify_action(
+        transaction: &mut ProvableBlobTx,
+        identity: Identity,
+        secret: String,
+    ) -> Result<()> {
+        transaction.add_secp256k1_action(Self::create_secp256k1_blob(identity, secret))
     }
 
     pub async fn do_genesis(&mut self) -> Result<()> {
