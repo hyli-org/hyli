@@ -104,7 +104,7 @@ impl std::ops::DerefMut for NodeState {
 /// See also: NodeStateModule for the actual module implementation.
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
 pub struct NodeStateStore {
-    hyli_pubkey: [u8; 33],
+    pub hyli_pubkey: [u8; 33],
     timeouts: Timeouts,
     pub current_height: BlockHeight,
     // This field is public for testing purposes

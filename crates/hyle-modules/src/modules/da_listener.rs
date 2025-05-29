@@ -31,6 +31,7 @@ pub struct DAListener {
 }
 
 pub struct DAListenerConf {
+    pub hyli_pubkey: [u8; 33],
     pub data_directory: PathBuf,
     pub da_read_from: String,
     pub start_block: Option<BlockHeight>,
@@ -40,11 +41,13 @@ impl Module for DAListener {
     type Context = DAListenerConf;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let node_state_store = Self::load_from_disk_or_default::<NodeStateStore>(
+        let mut node_state_store = Self::load_from_disk_or_default::<NodeStateStore>(
             ctx.data_directory
                 .join("da_listener_node_state.bin")
                 .as_path(),
         );
+
+        node_state_store.hyli_pubkey = ctx.hyli_pubkey;
 
         let node_state = NodeState {
             store: node_state_store,
