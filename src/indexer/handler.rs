@@ -128,7 +128,6 @@ impl Indexer {
             }
         }
 
-
         Ok(())
     }
 

@@ -13,16 +13,14 @@ mod e2e_consensus {
     use client_sdk::rest_client::NodeApiClient;
     use client_sdk::transaction_builder::{ProvableBlobTx, TxExecutor, TxExecutorBuilder};
     use fixtures::test_helpers::send_transaction;
-    use hydentity::client::tx_executor_handler::{register_identity, verify_identity};
-    use hydentity::Hydentity;
-    use hyle::genesis::States;
+    use hyle::genesis::{Genesis, States};
     use hyle_contract_sdk::Identity;
     use hyle_contract_sdk::ZkContract;
-    use hyle_contracts::{HYDENTITY_ELF, HYLLAR_ELF, STAKING_ELF};
+    use hyle_contracts::{HYLLAR_ELF, STAKING_ELF};
     use hyle_model::{ContractName, StateCommitment, TxHash};
     use hyllar::client::tx_executor_handler::transfer;
     use hyllar::erc20::ERC20;
-    use hyllar::{Hyllar, FAUCET_ID};
+    use hyllar::{Hyllar, FAUCET_SECP256K1};
     use staking::client::tx_executor_handler::{delegate, stake};
     use staking::state::Staking;
     use tracing::{info, warn};
@@ -65,10 +63,6 @@ mod e2e_consensus {
             "fetch state failed"
         )
         .unwrap();
-        let hydentity: Hydentity = ctx
-            .indexer_client()
-            .fetch_current_state(&"hydentity".into())
-            .await?;
 
         let staking_state: StateCommitment = StateCommitment(
             ctx.indexer_client()
@@ -85,38 +79,24 @@ mod e2e_consensus {
             .into();
 
         assert_eq!(staking_state, staking.commit());
-        let states = States {
-            hyllar,
-            hydentity,
-            staking,
-        };
+        let states = States { hyllar, staking };
 
         let mut tx_ctx = TxExecutorBuilder::new(states)
             // Replace prover binaries for non-reproducible mode.
-            .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
             .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF))
             .with_prover("staking".into(), Risc0Prover::new(STAKING_ELF))
             .build();
 
-        let node_identity = Identity(format!("{}@hydentity", node_info.id));
+        let node_identity = Identity(format!("{}@secp256k1", node_info.id));
         {
-            let mut transaction = ProvableBlobTx::new(node_identity.clone());
+            let mut transaction = ProvableBlobTx::new(FAUCET_SECP256K1.into());
 
-            register_identity(&mut transaction, "hydentity".into(), "password".to_owned())?;
-
-            let tx_hash = send_transaction(ctx.client(), transaction, &mut tx_ctx).await;
-            tracing::warn!("Register TX Hash: {:?}", tx_hash);
-        }
-        {
-            let mut transaction = ProvableBlobTx::new(FAUCET_ID.into());
-
-            verify_identity(
+            Genesis::add_secp256k1_verify_action(
                 &mut transaction,
-                "hydentity".into(),
-                &tx_ctx.hydentity,
-                "password".to_string(),
+                FAUCET_SECP256K1.into(),
+                "secret".into(),
             )
-            .expect("verify_identity failed");
+            .expect("secret");
 
             transfer(
                 &mut transaction,
@@ -132,12 +112,8 @@ mod e2e_consensus {
         {
             let mut transaction = ProvableBlobTx::new(node_identity.clone());
 
-            verify_identity(
-                &mut transaction,
-                "hydentity".into(),
-                &tx_ctx.hydentity,
-                "password".to_string(),
-            )?;
+            Genesis::add_secp256k1_verify_action(&mut transaction, node_identity, "secret".into())
+                .expect("secret");
 
             stake(&mut transaction, ContractName::new("staking"), stake_amount)?;
 
@@ -179,25 +155,17 @@ mod e2e_consensus {
         amount: u128,
     ) -> Result<Vec<TxHash>> {
         let mut tx_hashes = vec![];
-        let identity = Identity(format!("{}@hydentity", id));
-        {
-            let mut transaction = ProvableBlobTx::new(identity.clone());
-
-            register_identity(&mut transaction, "hydentity".into(), "password".to_owned())?;
-
-            let tx_hash = send_transaction(ctx.client(), transaction, tx_ctx).await;
-            tracing::warn!("Register TX Hash: {:?}", tx_hash);
-        }
+        let identity = Identity(format!("{}@secp256k1", id));
 
         {
-            let mut transaction = ProvableBlobTx::new("faucet@hydentity".into());
+            let mut transaction = ProvableBlobTx::new(FAUCET_SECP256K1.into());
 
-            verify_identity(
+            Genesis::add_secp256k1_verify_action(
                 &mut transaction,
-                "hydentity".into(),
-                &tx_ctx.hydentity,
-                "password".to_string(),
-            )?;
+                FAUCET_SECP256K1.into(),
+                "secret".into(),
+            )
+            .expect("secret");
 
             transfer(
                 &mut transaction,
@@ -266,22 +234,16 @@ mod e2e_consensus {
             .fetch_current_state(&"hyllar".into())
             .await
             .unwrap();
-        let hydentity: Hydentity = ctx
-            .indexer_client()
-            .fetch_current_state(&"hydentity".into())
-            .await
-            .unwrap();
 
         let states = States {
             hyllar,
-            hydentity,
             staking: Staking::default(),
         };
 
         TxExecutorBuilder::new(states)
             // Replace prover binaries for non-reproducible mode.
-            .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
             .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF))
+            .with_prover("staking".into(), Risc0Prover::new(STAKING_ELF))
             .build()
     }
 
@@ -309,7 +271,7 @@ mod e2e_consensus {
                 .await;
             if let Ok(s) = s {
                 state = s;
-                if state.balance_of("alex1@hydentity").is_ok() {
+                if state.balance_of("alex1@secp256k1").is_ok() {
                     break;
                 }
             }
@@ -332,7 +294,7 @@ mod e2e_consensus {
                 .await;
             if let Ok(s) = s {
                 state = s;
-                if state.balance_of("alex2@hydentity").is_ok() {
+                if state.balance_of("alex2@secp256k1").is_ok() {
                     break;
                 }
             }
@@ -341,8 +303,8 @@ mod e2e_consensus {
 
         // Check everything works out.
         for i in 0..3 {
-            let balance = state.balance_of(&format!("alex{}@hydentity", i));
-            info!("Checking alex{}@hydentity balance: {:?}", i, balance);
+            let balance = state.balance_of(&format!("alex{}@secp256k1", i));
+            info!("Checking alex{}@secp256k1 balance: {:?}", i, balance);
             assert_eq!(balance.unwrap(), ((100 + i) as u128));
         }
 
@@ -376,7 +338,7 @@ mod e2e_consensus {
                 .await;
             if let Ok(s) = s {
                 state = s;
-                if state.balance_of("alex1@hydentity").is_ok() {
+                if state.balance_of("alex1@secp256k1").is_ok() {
                     break;
                 }
             }
@@ -407,7 +369,7 @@ mod e2e_consensus {
                 .await;
             if let Ok(s) = s {
                 state = s;
-                if state.balance_of("alex2@hydentity").is_ok() {
+                if state.balance_of("alex2@secp256k1").is_ok() {
                     break;
                 }
             }
@@ -416,8 +378,8 @@ mod e2e_consensus {
 
         // Check everything works out.
         for i in 0..3 {
-            let balance = state.balance_of(&format!("alex{}@hydentity", i));
-            info!("Checking alex{}@hydentity balance: {:?}", i, balance);
+            let balance = state.balance_of(&format!("alex{}@secp256k1", i));
+            info!("Checking alex{}@secp256k1 balance: {:?}", i, balance);
             assert_eq!(balance.unwrap(), ((100 + i) as u128));
         }
 

@@ -13,13 +13,11 @@ mod e2e_hyllar {
         rest_client::NodeApiClient,
         transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
     };
-    use hydentity::{
-        client::tx_executor_handler::{register_identity, verify_identity},
-        Hydentity,
-    };
+    use hydentity::{client::tx_executor_handler::register_identity, Hydentity};
+    use hyle::genesis::Genesis;
     use hyle_contract_sdk::{Blob, Calldata, ContractName, HyleOutput};
     use hyle_contracts::{HYDENTITY_ELF, HYLLAR_ELF};
-    use hyllar::{client::tx_executor_handler::transfer, erc20::ERC20, Hyllar, FAUCET_ID};
+    use hyllar::{client::tx_executor_handler::transfer, erc20::ERC20, Hyllar, FAUCET_SECP256K1};
 
     use super::*;
 
@@ -66,13 +64,12 @@ mod e2e_hyllar {
 
         info!("➡️  Sending blob to transfer 25 tokens from faucet to bob");
 
-        let mut tx = ProvableBlobTx::new(FAUCET_ID.into());
+        let mut tx = ProvableBlobTx::new(FAUCET_SECP256K1.into());
 
-        verify_identity(
+        Genesis::add_secp256k1_verify_action(
             &mut tx,
-            "hydentity".into(),
-            &executor.hydentity,
-            "password".to_string(),
+            FAUCET_SECP256K1.into(),
+            "secret".to_string(),
         )?;
 
         transfer(&mut tx, "hyllar".into(), "bob@hydentity".to_string(), 25)?;
@@ -82,11 +79,7 @@ mod e2e_hyllar {
         let tx = executor.process(tx)?;
         let mut proofs = tx.iter_prove();
 
-        let hydentity_proof = proofs.next().unwrap().await?;
         let hyllar_proof = proofs.next().unwrap().await?;
-
-        info!("➡️  Sending proof for hydentity");
-        ctx.send_proof_single(hydentity_proof).await?;
 
         info!("➡️  Sending proof for hyllar");
         ctx.send_proof_single(hyllar_proof).await?;

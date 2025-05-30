@@ -5,6 +5,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use contract_registration::validate_contract_registration_metadata;
 use contract_registration::{validate_contract_name_registration, validate_state_commitment_size};
 use hyle_tld::handle_blob_for_hyle_tld;
+use hyllar::FAUCET_SECP256K1;
 use metrics::NodeStateMetrics;
 use ordered_tx_map::OrderedTxMap;
 use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
@@ -20,6 +21,8 @@ pub mod metrics;
 pub mod module;
 mod ordered_tx_map;
 mod timeouts;
+
+pub use hyle_tld::HYLI_TLD_SECP256K1;
 
 struct SettledTxOutput {
     // Original blob transaction, now settled.
@@ -101,6 +104,7 @@ impl std::ops::DerefMut for NodeState {
 /// See also: NodeStateModule for the actual module implementation.
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
 pub struct NodeStateStore {
+    pub hyli_pubkey: [u8; 33],
     timeouts: Timeouts,
     pub current_height: BlockHeight,
     // This field is public for testing purposes
@@ -116,6 +120,7 @@ impl Default for NodeStateStore {
             current_height: BlockHeight(0),
             contracts: HashMap::new(),
             unsettled_transactions: OrderedTxMap::default(),
+            hyli_pubkey: [0u8; 33],
         };
         ret.contracts.insert(
             "hyle".into(),
@@ -125,6 +130,16 @@ impl Default for NodeStateStore {
                 state: StateCommitment(vec![0]),
                 verifier: Verifier("hyle".to_owned()),
                 timeout_window: TimeoutWindow::Timeout(BlockHeight(5)),
+            },
+        );
+        ret.contracts.insert(
+            "secp256k1".into(),
+            Contract {
+                name: "secp256k1".into(),
+                program_id: ProgramId(vec![]),
+                state: StateCommitment(vec![0]),
+                verifier: Verifier("secp256k1".to_owned()),
+                timeout_window: TimeoutWindow::NoTimeout,
             },
         );
         ret
@@ -384,6 +399,8 @@ impl NodeState {
             );
         }
 
+        let hyli_pubkey = self.hyli_pubkey;
+
         let blobs: BTreeMap<BlobIndex, UnsettledBlobMetadata> = tx
             .blobs
             .iter()
@@ -395,11 +412,25 @@ impl NodeState {
                     .get(&blob.contract_name)
                     .map(|b| TryInto::<NativeVerifiers>::try_into(&b.verifier))
                 {
+                    let cloned_identity = tx.identity.0.clone();
+
                     let hyle_output = hyle_verifiers::native::verify(
                         blob_tx_hash.clone(),
                         BlobIndex(index),
                         &tx.blobs,
                         verifier,
+                        // Secp256k1 blobs are used to authenticate admin services.
+                        // If a specific identity is used, we make sure it used the right key
+                        // by checking if the pubkey matches the one stored.
+                        move |pk| {
+                            if cloned_identity == HYLI_TLD_SECP256K1
+                                || cloned_identity == FAUCET_SECP256K1
+                            {
+                                return Some(pk == hyli_pubkey);
+                            }
+
+                            None
+                        },
                     );
                     tracing::trace!("Native verifier in blob tx - {:?}", hyle_output);
                     // Verifier contracts won't be updated
@@ -650,6 +681,7 @@ impl NodeState {
                 unsettled_tx.blobs.values(),
                 vec![],
                 events,
+                &unsettled_tx.identity,
             ) {
                 Some(res) => res,
                 None => {
@@ -678,6 +710,7 @@ impl NodeState {
         mut blob_iter: impl Iterator<Item = &'a UnsettledBlobMetadata> + Clone,
         mut blob_proof_output_indices: Vec<usize>,
         events: &mut Vec<TransactionStateEvent>,
+        identity: &Identity,
     ) -> Option<Result<SettlementResult, ()>> {
         // Recursion end-case: we succesfully settled all prior blobs, so success.
         let Some(current_blob) = blob_iter.next() else {
@@ -704,6 +737,7 @@ impl NodeState {
                 contracts,
                 &mut contract_changes,
                 &current_blob.blob,
+                identity,
             ) {
                 Ok(()) => {
                     tracing::trace!("Settlement - OK side effect");
@@ -713,6 +747,7 @@ impl NodeState {
                         blob_iter.clone(),
                         blob_proof_output_indices.clone(),
                         events,
+                        identity,
                     )
                 }
                 Err(err) => {
@@ -768,6 +803,7 @@ impl NodeState {
                 blob_iter.clone(),
                 blob_proof_output_indices.clone(),
                 events,
+                identity,
             ) {
                 // If this proof settles, early return, otherwise try the next one (with continue for explicitness)
                 Some(res) => return Some(res),

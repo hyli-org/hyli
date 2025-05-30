@@ -1,6 +1,6 @@
 use core::str;
 
-use hyle_hyllar::{Hyllar, HyllarAction, FAUCET_ID};
+use hyle_hyllar::{Hyllar, HyllarAction, FAUCET_SECP256K1};
 use sdk::{BlobIndex, Calldata, ContractAction, ContractName, HyleOutput, TxHash};
 
 fn execute(inputs: (Vec<u8>, Vec<Calldata>)) -> Vec<HyleOutput> {
@@ -36,7 +36,7 @@ fn execute_transfer_from() {
             tx_ctx: None,
             private_input: vec![],
             blobs: vec![HyllarAction::TransferFrom {
-                owner: FAUCET_ID.into(),
+                owner: FAUCET_SECP256K1.into(),
                 recipient: "amm".into(),
                 amount: 100,
             }
@@ -50,6 +50,6 @@ fn execute_transfer_from() {
     assert!(!output[0].success);
     assert_eq!(
         str::from_utf8(&output[0].program_outputs).unwrap(),
-        "Allowance exceeded for spender=caller owner=faucet@hydentity allowance=0"
+        "Allowance exceeded for spender=caller owner=faucet@secp256k1 allowance=0"
     );
 }

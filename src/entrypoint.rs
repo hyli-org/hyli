@@ -30,7 +30,7 @@ use hyle_modules::{
         websocket::WebSocketModule,
         BuildApiContextInner,
     },
-    node_state::module::NodeStateCtx,
+    node_state::{module::NodeStateCtx, HYLI_TLD_SECP256K1},
 };
 use hyllar::Hyllar;
 use prometheus::Registry;
@@ -299,6 +299,11 @@ async fn common_main(
         handler
             .build_module::<NodeStateModule>(NodeStateCtx {
                 node_id: config.id.clone(),
+                hyli_pubkey: Genesis::create_secp256k1_blob(
+                    HYLI_TLD_SECP256K1.into(),
+                    config.genesis.hyli_seq256k1_secret.clone(),
+                )
+                .public_key,
                 data_directory: config.data_directory.clone(),
                 api: build_api_ctx.clone(),
             })
@@ -327,6 +332,12 @@ async fn common_main(
         handler
             .build_module::<DAListener>(DAListenerConf {
                 data_directory: config.data_directory.clone(),
+                hyli_pubkey: Genesis::create_secp256k1_blob(
+                    HYLI_TLD_SECP256K1.into(),
+                    config.genesis.hyli_seq256k1_secret.clone(),
+                )
+                .public_key,
+
                 da_read_from: config.da_read_from.clone(),
                 start_block: None,
             })
