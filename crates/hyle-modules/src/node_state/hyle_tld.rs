@@ -83,11 +83,6 @@ fn handle_delete_blob(
     }
 
     // For now, Hyli is allowed to delete all contracts but itself
-    if delete.contract_name.0 == "hydentity" {
-        bail!("Cannot delete Hydentity contract");
-    }
-
-    // For now, Hyli is allowed to delete all contracts but itself
     if delete.contract_name.0 == "hyle" {
         bail!("Cannot delete Hyli contract");
     }
