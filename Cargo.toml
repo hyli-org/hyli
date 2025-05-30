@@ -217,5 +217,9 @@ inherits = "release"
 debug = true         # Keep debug info for profiling
 strip = "none"
 
+# Optimize the following crates for development builds so tests are faster
+[profile.dev.package.risc0-binfmt]
+opt-level = 3
+
 [profile.dev.package.sha2]
 opt-level = 3

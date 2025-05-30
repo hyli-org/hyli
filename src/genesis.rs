@@ -445,17 +445,6 @@ impl Genesis {
 
         register_hyle_contract(
             &mut register_tx,
-            "secp256k1".into(),
-            "secp256k1".into(),
-            NativeVerifiers::Secp256k1.into(),
-            StateCommitment::default(),
-            Some(TimeoutWindow::NoTimeout),
-            None,
-        )
-        .expect("register secp256k1");
-
-        register_hyle_contract(
-            &mut register_tx,
             "staking".into(),
             hyle_model::verifiers::RISC0_1.into(),
             staking_program_id.clone().into(),
