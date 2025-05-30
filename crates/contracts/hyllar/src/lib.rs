@@ -269,7 +269,7 @@ mod tests {
                 .transfer_from(FAUCET_SECP256K1, "spender", "recipient", 200)
                 .unwrap_err()
                 .to_string(),
-            "Allowance exceeded for spender=spender owner=faucet@hydentity allowance=100"
+            "Allowance exceeded for spender=spender owner=faucet@secp256k1 allowance=100"
         );
     }
 
@@ -282,7 +282,7 @@ mod tests {
                 .transfer_from(FAUCET_SECP256K1, "spender", "recipient", 200)
                 .unwrap_err()
                 .to_string(),
-            "Allowance exceeded for spender=spender owner=faucet@hydentity allowance=0"
+            "Allowance exceeded for spender=spender owner=faucet@secp256k1 allowance=0"
         );
     }
 
