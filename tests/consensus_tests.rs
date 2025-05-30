@@ -16,7 +16,7 @@ mod e2e_consensus {
     use hyle::genesis::{Genesis, States};
     use hyle_contract_sdk::Identity;
     use hyle_contract_sdk::ZkContract;
-    use hyle_contracts::{HYDENTITY_ELF, HYLLAR_ELF, STAKING_ELF};
+    use hyle_contracts::{HYLLAR_ELF, STAKING_ELF};
     use hyle_model::{ContractName, StateCommitment, TxHash};
     use hyllar::client::tx_executor_handler::transfer;
     use hyllar::erc20::ERC20;
@@ -242,8 +242,8 @@ mod e2e_consensus {
 
         TxExecutorBuilder::new(states)
             // Replace prover binaries for non-reproducible mode.
-            .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
             .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF))
+            .with_prover("staking".into(), Risc0Prover::new(STAKING_ELF))
             .build()
     }
 
@@ -271,7 +271,7 @@ mod e2e_consensus {
                 .await;
             if let Ok(s) = s {
                 state = s;
-                if state.balance_of("alex1@hydentity").is_ok() {
+                if state.balance_of("alex1@secp256k1").is_ok() {
                     break;
                 }
             }
@@ -294,7 +294,7 @@ mod e2e_consensus {
                 .await;
             if let Ok(s) = s {
                 state = s;
-                if state.balance_of("alex2@hydentity").is_ok() {
+                if state.balance_of("alex2@secp256k1").is_ok() {
                     break;
                 }
             }
@@ -303,8 +303,8 @@ mod e2e_consensus {
 
         // Check everything works out.
         for i in 0..3 {
-            let balance = state.balance_of(&format!("alex{}@hydentity", i));
-            info!("Checking alex{}@hydentity balance: {:?}", i, balance);
+            let balance = state.balance_of(&format!("alex{}@secp256k1", i));
+            info!("Checking alex{}@secp256k1 balance: {:?}", i, balance);
             assert_eq!(balance.unwrap(), ((100 + i) as u128));
         }
 
@@ -338,7 +338,7 @@ mod e2e_consensus {
                 .await;
             if let Ok(s) = s {
                 state = s;
-                if state.balance_of("alex1@hydentity").is_ok() {
+                if state.balance_of("alex1@secp256k1").is_ok() {
                     break;
                 }
             }
@@ -369,7 +369,7 @@ mod e2e_consensus {
                 .await;
             if let Ok(s) = s {
                 state = s;
-                if state.balance_of("alex2@hydentity").is_ok() {
+                if state.balance_of("alex2@secp256k1").is_ok() {
                     break;
                 }
             }
@@ -378,8 +378,8 @@ mod e2e_consensus {
 
         // Check everything works out.
         for i in 0..3 {
-            let balance = state.balance_of(&format!("alex{}@hydentity", i));
-            info!("Checking alex{}@hydentity balance: {:?}", i, balance);
+            let balance = state.balance_of(&format!("alex{}@secp256k1", i));
+            info!("Checking alex{}@secp256k1 balance: {:?}", i, balance);
             assert_eq!(balance.unwrap(), ((100 + i) as u128));
         }
 
