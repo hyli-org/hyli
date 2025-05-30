@@ -13,10 +13,8 @@ mod e2e_smt_token {
         rest_client::NodeApiClient,
         transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
     };
-    use hydentity::{
-        client::tx_executor_handler::{register_identity, verify_identity},
-        Hydentity,
-    };
+    use hydentity::{client::tx_executor_handler::register_identity, Hydentity};
+    use hyle::genesis::Genesis;
     use hyle_contract_sdk::{Blob, Calldata, ContractName, HyleOutput};
     use hyle_contracts::{HYDENTITY_ELF, SMT_TOKEN_ELF};
     use smt_token::{client::tx_executor_handler::SmtTokenProvableState, FAUCET_ID};
@@ -71,12 +69,7 @@ mod e2e_smt_token {
 
         let mut tx = ProvableBlobTx::new(FAUCET_ID.into());
 
-        verify_identity(
-            &mut tx,
-            "hydentity".into(),
-            &executor.hydentity,
-            "password".to_string(),
-        )?;
+        Genesis::add_secp256k1_verify_action(&mut tx, FAUCET_ID.into(), "secret".to_string())?;
 
         executor.oranj.transfer(
             &mut tx,
@@ -91,11 +84,7 @@ mod e2e_smt_token {
         let tx = executor.process(tx)?;
         let mut proofs = tx.iter_prove();
 
-        let hydentity_proof = proofs.next().unwrap().await?;
         let smt_token_proof = proofs.next().unwrap().await?;
-
-        info!("➡️  Sending proof for hydentity");
-        ctx.send_proof_single(hydentity_proof).await?;
 
         info!("➡️  Sending proof for smt_token");
         ctx.send_proof_single(smt_token_proof).await?;

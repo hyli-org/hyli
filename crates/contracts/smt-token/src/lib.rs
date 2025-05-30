@@ -20,7 +20,7 @@ pub mod client;
 pub mod indexer;
 
 pub const TOTAL_SUPPLY: u128 = 100_000_000_000;
-pub const FAUCET_ID: &str = "faucet@hydentity";
+pub const FAUCET_ID: &str = "faucet@secp256k1";
 
 /// Enum representing possible calls to Token contract functions.
 #[derive(Debug, Clone, PartialEq, BorshDeserialize, BorshSerialize)]
