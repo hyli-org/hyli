@@ -33,7 +33,6 @@ where
             let mut hasher = sha3::Sha3_256::new();
             hasher.update(blob.data);
             let res = hasher.finalize().to_vec();
-
             Ok((blob.identity, res == blob.sha))
         }
         NativeVerifiers::Secp256k1 => {
@@ -42,7 +41,6 @@ where
             // Check pubkey is correct
             if let Some(res) = check_secp_pubkey(blob.public_key) {
                 return Ok((blob.identity, res));
-                
             };
 
             // Convert the public key bytes to a secp256k1 PublicKey
