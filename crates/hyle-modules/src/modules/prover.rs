@@ -36,6 +36,7 @@ pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
 pub struct AutoProverStore<Contract> {
     unsettled_txs: Vec<(BlobTransaction, TxContext)>,
     state_history: Vec<(TxHash, Contract)>,
+    tx_chain: Vec<TxHash>,
     contract: Contract,
 }
 
@@ -91,6 +92,7 @@ where
                 contract: ctx.default_state.clone(),
                 unsettled_txs: vec![],
                 state_history: vec![],
+                tx_chain: vec![],
             },
         };
 
@@ -157,6 +159,12 @@ where
     }
 
     async fn handle_processed_block(&mut self, block: Block) -> Result<()> {
+        tracing::trace!(
+            cn =% self.ctx.contract_name,
+            block_height =% block.block_height,
+            "Handling processed block {}",
+            block.block_height
+        );
         let mut blobs = vec![];
         if block.block_height.0 % 1000 == 0 {
             info!(
@@ -175,6 +183,8 @@ where
                 {
                     continue;
                 }
+                self.store.tx_chain.push(tx.hashed());
+
                 let tx_ctx = TxContext {
                     block_height: block.block_height,
                     block_hash: block.hash.clone(),
@@ -244,6 +254,10 @@ where
         if let Some(pos) = pos {
             self.store.state_history = self.store.state_history.split_off(pos);
         }
+        let pos_chain = self.store.tx_chain.iter().position(|h| h == tx);
+        if let Some(pos_chain) = pos_chain {
+            self.store.tx_chain = self.store.tx_chain.split_off(pos_chain);
+        }
         self.settle_tx(tx);
         Ok(())
     }
@@ -252,6 +266,7 @@ where
         if let Some(pos) = self.settle_tx(tx) {
             self.handle_all_next_blobs(pos, tx)?;
             self.store.state_history.retain(|(h, _)| h != tx);
+            self.store.tx_chain.retain(|h| h != tx);
         }
         Ok(())
     }
@@ -290,26 +305,38 @@ where
             .iter()
             .map(|(h, _)| h)
             .collect::<Vec<_>>();
-        let prev_state = self
+        let prev_tx = self
             .store
-            .state_history
+            .tx_chain
             .iter()
             .enumerate()
-            .find(|(_, (h, _))| h == failed_tx)
+            .find(|(_, h)| *h == failed_tx)
             .and_then(|(i, _)| {
                 if i > 0 {
-                    self.store.state_history.get(i - 1)
+                    self.store.tx_chain.get(i - 1)
                 } else {
                     None
                 }
             });
+        tracing::debug!(
+            cn =% self.ctx.contract_name,
+            tx_hash =% failed_tx,
+            "Handling failed tx {}. Previous tx: {:?}, History: {:?}",
+            failed_tx,
+            prev_tx,
+            tx_history
+        );
+        let prev_state = prev_tx.and_then(|prev_tx_hash| {
+            self.store
+                .state_history
+                .iter()
+                .find(|(h, _)| h == prev_tx_hash)
+                .cloned()
+        });
+
         if let Some((prev_tx_hash, contract)) = prev_state {
             debug!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "Reverting to previous state from tx {prev_tx_hash}");
             self.store.contract = contract.clone();
-        } else if !self.store.state_history.is_empty() {
-            let last_tx = self.store.state_history.last().unwrap();
-            debug!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "Reverting to last state from tx {}", last_tx.0);
-            self.store.contract = last_tx.1.clone();
         } else {
             warn!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "Reverting to default state. History: {tx_history:?}");
             self.store.contract = self.ctx.default_state.clone();
@@ -661,9 +688,10 @@ mod tests {
                     .context("parsing test proof")
                     .unwrap();
                 for hyle_output in &hyle_outputs {
-                    debug!(
+                    tracing::info!(
                         "Initial state: {:?}, Next state: {:?}",
-                        hyle_output.initial_state, hyle_output.next_state
+                        hyle_output.initial_state,
+                        hyle_output.next_state
                     );
                 }
 
@@ -1221,6 +1249,55 @@ mod tests {
         let _ = node_state.craft_block_and_handle(stop_height + 2, proofs);
 
         assert_eq!(read_contract_state(&node_state).value, 10 + 9 + 10 + 25);
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_auto_prover_catchup_first_txs_timeout() -> Result<()> {
+        let (mut node_state, _, api_client) = setup().await?;
+
+        let block_1 =
+            node_state.craft_block_and_handle(1, vec![new_blob_tx(1) /* This one will timeout */]);
+        let block_2 =
+            node_state.craft_block_and_handle(2, vec![new_blob_tx(2) /* This one will timeout */]);
+        let block_3 =
+            node_state.craft_block_and_handle(3, vec![new_blob_tx(3) /* This one will timeout */]);
+
+        let mut blocks = vec![block_1, block_2, block_3];
+        let stop_height = 20;
+        for i in 4..=stop_height {
+            tracing::info!("✨ Block {i}");
+            let block = node_state.craft_block_and_handle(i, vec![]);
+            blocks.push(block);
+        }
+
+        tracing::info!("✨ New prover catching up with blocks");
+        api_client.set_block_height(BlockHeight(stop_height));
+        api_client.set_settled_height(BlockHeight(stop_height - 1));
+
+        let mut auto_prover_catchup = new_auto_prover(api_client.clone())
+            .await
+            .expect("Failed to create new auto prover");
+
+        for block in blocks {
+            auto_prover_catchup.handle_processed_block(block).await?;
+        }
+
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 0); // Txs from mutliple catching blocs are batched
+
+        tracing::info!("✨ Block 21");
+        let block_21 = node_state.craft_block_and_handle(21, vec![new_blob_tx(21)]);
+
+        auto_prover_catchup
+            .handle_processed_block(block_21.clone())
+            .await?;
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 1);
+        tracing::info!("✨ Block 22");
+        let _ = node_state.craft_block_and_handle(22, proofs);
+
+        assert_eq!(read_contract_state(&node_state).value, 21);
         Ok(())
     }
 }
