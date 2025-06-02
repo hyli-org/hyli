@@ -474,6 +474,35 @@ async fn test_hyle_delete_contract_success() {
 }
 
 #[test_log::test(tokio::test)]
+async fn test_hyle_delete_contract_failure_1hourlate() {
+    let mut state = new_node_state().await;
+    let hyli_pubkey = create_secp256k1_delete_contract_blob(
+        HYLI_TLD_ID.into(),
+        ContractName::new("c2.hyle"),
+        "secret".into(),
+    );
+    state.hyli_pubkey = hyli_pubkey.public_key;
+
+    let register_c2 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
+
+    state.craft_block_and_handle_at_ts(1, vec![register_c2.into()], TimestampMs(1000));
+    assert_eq!(state.contracts.len(), 3);
+
+    // Now delete the intermediate contract first, then delete the sub-contract via hyle
+    let mut delete_tx =
+        make_delete_tx_with_hyli_correct_data("hyle".into(), "secret", "c2.hyle".into());
+
+    let block = state.craft_block_and_handle_at_ts(
+        2,
+        vec![delete_tx.into()],
+        TimestampMs(1000 + 86_400_000 + 1),
+    );
+
+    assert_eq!(block.deleted_contracts.len(), 0);
+    assert_eq!(state.contracts.len(), 3);
+}
+
+#[test_log::test(tokio::test)]
 async fn test_hyle_delete_contract_failure_wrong_pubkey() {
     let mut state = new_node_state().await;
     let hyli_pubkey = create_secp256k1_delete_contract_blob(
