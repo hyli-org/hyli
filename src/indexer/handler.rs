@@ -90,8 +90,9 @@ pub(crate) struct IndexerHandlerStore {
             <sqlx::Postgres as sqlx::Database>::Arguments<'static>,
         >,
     >,
-    contracts: Vec<TxContractStore>,
+    contracts: HashMap<ContractName, TxContractStore>,
     contract_states: Vec<TxContractStateStore>,
+    deleted_contracts: HashSet<ContractName>,
     blob_proof_outputs: Vec<TxBlobProofOutputStore>,
 }
 
@@ -358,7 +359,8 @@ impl Indexer {
                 "INSERT INTO contracts (tx_hash, parent_dp_hash, verifier, program_id, state_commitment, contract_name) ",
             );
 
-            query_builder.push_values(self.handler_store.contracts.drain(..), |mut b, s| {
+            let c = std::mem::take(&mut self.handler_store.contracts);
+            query_builder.push_values(c.values(), |mut b, s| {
                 let TxContractStore {
                     tx_hash,
                     parent_data_proposal_hash,
@@ -375,6 +377,13 @@ impl Indexer {
                     .push_bind(state_commitment)
                     .push_bind(contract_name);
             });
+
+            query_builder.push(" ON CONFLICT (contract_name) DO UPDATE SET ");
+            query_builder.push("tx_hash = EXCLUDED.tx_hash, ");
+            query_builder.push("parent_dp_hash = EXCLUDED.parent_dp_hash, ");
+            query_builder.push("verifier = EXCLUDED.verifier, ");
+            query_builder.push("program_id = EXCLUDED.program_id, ");
+            query_builder.push("state_commitment = EXCLUDED.state_commitment ");
 
             query_builder
                 .build()
@@ -406,6 +415,15 @@ impl Indexer {
                 .execute(&mut *transaction)
                 .await
                 .context("Inserting contract states")?;
+        }
+
+        // Then delete contracts that were deleted
+        for contract_name in self.handler_store.deleted_contracts.drain() {
+            sqlx::query("DELETE FROM contracts WHERE contract_name = $1")
+                .bind(contract_name.0)
+                .execute(&mut *transaction)
+                .await
+                .context("Deleting contracts")?;
         }
 
         // Insert blob proof outputs into the database
@@ -900,31 +918,39 @@ impl Indexer {
         }
 
         // After TXes as it refers to those (for now)
-        for (tx_hash, contract, _) in block.registered_contracts {
+        for (tx_hash, contract, _) in block.registered_contracts.values() {
             let verifier = &contract.verifier.0;
             let program_id = &contract.program_id.0;
             let state_commitment = &contract.state_commitment.0;
             let contract_name = &contract.contract_name.0;
             let tx_parent_dp_hash: DataProposalHashDb = block
                 .dp_parent_hashes
-                .get(&tx_hash)
+                .get(tx_hash)
                 .context(format!(
                     "No parent data proposal hash present for registered contract tx {}",
                     tx_hash.0
                 ))?
                 .clone()
                 .into();
-            let tx_hash: &TxHashDb = &tx_hash.into();
+            let tx_hash: &TxHashDb = &tx_hash.clone().into();
+
+            // If this had previously been deleted, clear that.
+            self.handler_store
+                .deleted_contracts
+                .remove(&contract.contract_name);
 
             // Adding to Contract table
-            self.handler_store.contracts.push(TxContractStore {
-                tx_hash: tx_hash.clone(),
-                parent_data_proposal_hash: tx_parent_dp_hash.clone(),
-                verifier: verifier.clone(),
-                program_id: program_id.clone(),
-                state_commitment: state_commitment.clone(),
-                contract_name: contract_name.clone(),
-            });
+            self.handler_store.contracts.insert(
+                contract.contract_name.clone(),
+                TxContractStore {
+                    tx_hash: tx_hash.clone(),
+                    parent_data_proposal_hash: tx_parent_dp_hash.clone(),
+                    verifier: verifier.clone(),
+                    program_id: program_id.clone(),
+                    state_commitment: state_commitment.clone(),
+                    contract_name: contract_name.clone(),
+                },
+            );
 
             // Adding to ContractState table
             self.handler_store
@@ -934,6 +960,12 @@ impl Indexer {
                     block_hash: block.hash.clone(),
                     state_commitment: state_commitment.clone(),
                 });
+        }
+
+        for contract_name in block.deleted_contracts.keys() {
+            self.handler_store
+                .deleted_contracts
+                .insert(contract_name.clone());
         }
 
         // Handling updated contract state

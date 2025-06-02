@@ -169,8 +169,8 @@ impl NodeState {
                 })
                 .collect(),
             timed_out_txs: vec![], // Added below as it needs the block
-            registered_contracts: vec![],
-            deleted_contracts: vec![],
+            registered_contracts: BTreeMap::new(),
+            deleted_contracts: BTreeMap::new(),
             updated_states: BTreeMap::new(),
             transactions_events: BTreeMap::new(),
             dp_parent_hashes: BTreeMap::new(),
@@ -882,8 +882,11 @@ impl NodeState {
                     }
 
                     block_under_construction
+                        .registered_contracts
+                        .remove(&contract_name);
+                    block_under_construction
                         .deleted_contracts
-                        .push((bth.clone(), contract_name));
+                        .insert(contract_name, bth.clone());
                 }
                 SideEffect::Register(contract, metadata) => {
                     let has_contract = self.contracts.contains_key(&contract.name);
@@ -902,17 +905,23 @@ impl NodeState {
                     self.contracts
                         .insert(contract.name.clone(), contract.clone());
 
-                    block_under_construction.registered_contracts.push((
-                        bth.clone(),
-                        RegisterContractEffect {
-                            contract_name: contract.name.clone(),
-                            program_id: contract.program_id.clone(),
-                            state_commitment: contract.state.clone(),
-                            verifier: contract.verifier.clone(),
-                            timeout_window: Some(contract.timeout_window.clone()),
-                        },
-                        metadata,
-                    ));
+                    block_under_construction.registered_contracts.insert(
+                        contract.name.clone(),
+                        (
+                            bth.clone(),
+                            RegisterContractEffect {
+                                contract_name: contract.name.clone(),
+                                program_id: contract.program_id.clone(),
+                                state_commitment: contract.state.clone(),
+                                verifier: contract.verifier.clone(),
+                                timeout_window: Some(contract.timeout_window.clone()),
+                            },
+                            metadata,
+                        ),
+                    );
+                    block_under_construction
+                        .deleted_contracts
+                        .remove(&contract.name);
 
                     // TODO: would be nice to have a drain-like API here.
                     block_under_construction
@@ -1433,7 +1442,7 @@ pub mod test {
         }
     }
 
-    fn craft_signed_block(height: u64, txs: Vec<Transaction>) -> SignedBlock {
+    pub fn craft_signed_block(height: u64, txs: Vec<Transaction>) -> SignedBlock {
         SignedBlock {
             certificate: AggregateSignature::default(),
             consensus_proposal: ConsensusProposal {

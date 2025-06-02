@@ -207,7 +207,7 @@ where
     }
 
     async fn handle_processed_block(&mut self, block: Block) -> Result<()> {
-        for (_, contract, metadata) in &block.registered_contracts {
+        for (_, contract, metadata) in block.registered_contracts.values() {
             if self.contract_name == contract.contract_name {
                 self.handle_register_contract(contract, metadata).await?;
             }
