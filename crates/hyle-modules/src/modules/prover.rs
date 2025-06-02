@@ -1284,7 +1284,7 @@ mod tests {
         }
 
         let proofs = get_txs(&api_client).await;
-        assert_eq!(proofs.len(), 0); // Txs from mutliple catching blocs are batched
+        assert_eq!(proofs.len(), 0);
 
         tracing::info!("✨ Block 21");
         let block_21 = node_state.craft_block_and_handle(21, vec![new_blob_tx(21)]);
