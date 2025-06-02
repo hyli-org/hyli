@@ -269,8 +269,12 @@ impl super::Mempool {
             .map(|tx| tx.metadata(parent_data_proposal_hash.clone()))
             .collect();
 
+        // Brittle logic - some TXs might have been skipped over due to size limits.
+        // This means their WaitingDissemination status will not be updated (as their TxId effectively changes).
+        // Listeners might need to update any TX with this DPHash as parent and _not_ withing txs_metadatas.
         self.bus
             .send(MempoolStatusEvent::DataProposalCreated {
+                parent_data_proposal_hash,
                 data_proposal_hash: data_proposal.hashed(),
                 txs_metadatas,
             })
@@ -535,7 +539,7 @@ pub mod test {
 
         assert_chanmsg_matches!(
             ctx.mempool_status_event_receiver,
-            MempoolStatusEvent::DataProposalCreated { data_proposal_hash, txs_metadatas } => {
+            MempoolStatusEvent::DataProposalCreated { data_proposal_hash, txs_metadatas, .. } => {
                 assert_eq!(data_proposal_hash, dp.hashed());
                 assert_eq!(txs_metadatas.len(), dp.txs.len());
                 assert_eq!(txs_metadatas.len(), 3);
