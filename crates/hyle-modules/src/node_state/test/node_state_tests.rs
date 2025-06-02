@@ -194,14 +194,14 @@ async fn assert_two_transactions_with_same_contract_using_same_native_contract_s
     let block =
         state.craft_block_and_handle(1, vec![blob_tx_1.clone().into(), blob_tx_2.clone().into()]);
     assert_eq!(block.blob_proof_outputs.len(), 0);
-    assert_eq!(block.failed_txs.len(), 0);
+    assert_eq!(block.failed_txs.len(), 1);
     assert_eq!(block.successful_txs.len(), 0);
 
     if native_failure {
         // Submitting a proof for c1 should do nothing (no settlement)
         let block = state.craft_block_and_handle(2, vec![verified_proof_1.clone().into()]);
-        assert_eq!(block.blob_proof_outputs.len(), 1);
-        assert_eq!(block.failed_txs.len(), 1);
+        assert_eq!(block.blob_proof_outputs.len(), 0);
+        assert_eq!(block.failed_txs.len(), 0);
         assert_eq!(block.successful_txs.len(), 0);
 
         assert_eq!(state.contracts.get(&c1).unwrap().state.0, vec![0, 1, 2, 3]);

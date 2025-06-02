@@ -362,29 +362,6 @@ impl NodeState {
         timeout
     }
 
-    fn make_failed_hyleoutput(
-        identity: &Identity,
-        index: BlobIndex,
-        tx_hash: TxHash,
-        blobs: &[Blob],
-    ) -> HyleOutput {
-        HyleOutput {
-            tx_hash,
-            index,
-            success: false,
-            program_outputs: vec![],
-            version: 1,
-            initial_state: StateCommitment::default(),
-            next_state: StateCommitment::default(),
-            identity: identity.clone(),
-            blobs: blobs.iter().cloned().into(),
-            tx_blob_count: blobs.len(),
-            state_reads: vec![],
-            tx_ctx: None,
-            onchain_effects: vec![],
-        }
-    }
-
     fn handle_blob_tx(
         &mut self,
         parent_dp_hash: DataProposalHash,
@@ -424,6 +401,7 @@ impl NodeState {
         }
 
         let hyli_pubkey = self.hyli_pubkey;
+        let mut tx_failed = false;
 
         let blobs: BTreeMap<BlobIndex, UnsettledBlobMetadata> = tx
             .blobs
@@ -457,39 +435,17 @@ impl NodeState {
                     tracing::trace!("Native verifier in blob tx - {:?}", hyle_output);
                     // Verifier contracts won't be updated
                     // FIXME: When we need stateful native contracts
-                    if hyle_output.success {
-                        return None;
-                    } else {
-                        return Some((
-                            BlobIndex(index),
-                            UnsettledBlobMetadata {
-                                blob: blob.clone(),
-                                possible_proofs: vec![(verifier.into(), hyle_output)],
-                            },
-                        ));
-                    }
+                    if !hyle_output.success {
+                        tx_failed = true;
+                    } 
+
+                    return None;
                 } else if blob.contract_name.0 == "hyle" {
                     // Check we have a secp256k1 blob for the hyle TLD delete contract action
                     if let Ok(delete) =
                         borsh::from_slice::<StructuredBlobData<DeleteContractAction>>(&blob.data.0)
                     {
-                        let fake_native_failure = || {
-                            (
-                                BlobIndex(index),
-                                UnsettledBlobMetadata {
-                                    blob: blob.clone(),
-                                    possible_proofs: vec![(
-                                        NativeVerifiers::Secp256k1.into(),
-                                        Self::make_failed_hyleoutput(
-                                            &tx.identity,
-                                            BlobIndex(index),
-                                            tx_hash.clone(),
-                                            &tx.blobs,
-                                        ),
-                                    )],
-                                },
-                            )
-                        };
+                        
 
                         let Some(secp256k1blob) = tx
                             .blobs
@@ -504,8 +460,8 @@ impl NodeState {
                             .next()
                             else {
                                 tracing::warn!("Blob Transaction for hyle TLD delete action does not contain a secp256k1 blob, failing");
-                            // fail early with a fake hyle output + native verifier
-                            return Some(fake_native_failure());
+                                tx_failed = true;
+                                return None;
                         };
 
                         let data = format!(
@@ -527,8 +483,9 @@ impl NodeState {
                         )
                         .is_err()
                         {
+                                tx_failed = true;
                                 tracing::warn!("Blob Transaction for hyle TLD delete action does not contain a valid secp256k1 blob, failing");
-                            return Some(fake_native_failure());
+                            return None;
                         }
                     }
                 } else {
@@ -543,6 +500,13 @@ impl NodeState {
                 ))
             })
             .collect();
+
+        if tx_failed {
+            // If we failed to verify the blobs, we don't add the transaction.
+            bail!(
+                "Blob transaction failed verification, not adding to unsettled transactions"
+            );
+        }
 
         // If we're behind other pending transactions, we can't settle yet.
         match self.unsettled_transactions.add(UnsettledBlobTransaction {
