@@ -290,12 +290,16 @@ pub fn make_delete_tx(
     )
 }
 
-pub fn make_delete_tx_with_hyli(tld: ContractName, contract_name: ContractName) -> BlobTransaction {
+pub fn make_delete_tx_with_hyli(
+    tld: ContractName,
+    secret: &str,
+    contract_name: ContractName,
+) -> BlobTransaction {
     BlobTransaction::new(
         HYLI_TLD_SECP256K1,
         vec![
             DeleteContractAction { contract_name }.as_blob(tld, None, None),
-            create_secp256k1_blob(HYLI_TLD_SECP256K1.into(), "secret".into()).as_blob(),
+            create_secp256k1_blob(HYLI_TLD_SECP256K1.into(), secret.into()).as_blob(),
         ],
     )
 }
@@ -353,7 +357,7 @@ async fn test_register_contract_and_delete_hyle() {
         "c2.hyle".into(),
         "sub.c2.hyle".into(),
     );
-    let mut delete_tx = make_delete_tx_with_hyli("hyle".into(), "c2.hyle".into());
+    let mut delete_tx = make_delete_tx_with_hyli("hyle".into(), "secret", "c2.hyle".into());
 
     let mut output = make_hyle_output(self_delete_tx.clone(), BlobIndex(0));
     output
@@ -387,6 +391,26 @@ async fn test_register_contract_and_delete_hyle() {
             .collect::<Vec<_>>(),
         vec!["c1", "sub.c2.hyle", "c2.hyle"]
     );
+    assert_eq!(state.contracts.len(), 2);
+}
+
+#[test_log::test(tokio::test)]
+async fn test_hyle_delete_failure() {
+    let mut state = new_node_state().await;
+    let hyli_pubkey = create_secp256k1_blob(HYLI_TLD_SECP256K1.into(), "secret".into());
+    state.hyli_pubkey = hyli_pubkey.public_key;
+
+    let register_c2 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
+
+    state.craft_block_and_handle(1, vec![register_c2.into()]);
+    assert_eq!(state.contracts.len(), 3);
+
+    // Now delete the intermediate contract first, then delete the sub-contract via hyle
+    let mut delete_tx = make_delete_tx_with_hyli("hyle".into(), "secret_fail", "c2.hyle".into());
+
+    let block = state.craft_block_and_handle(2, vec![delete_tx.into()]);
+
+    assert_eq!(block.deleted_contracts.len(), 0);
     assert_eq!(state.contracts.len(), 2);
 }
 
@@ -427,8 +451,8 @@ async fn test_hyle_sub_delete() {
     assert_eq!(state.contracts.len(), 4);
 
     // Now delete the intermediate contract first, then delete the sub-contract via hyle
-    let mut delete_tx = make_delete_tx_with_hyli("hyle".into(), "c2.hyle".into());
-    let delete_sub_tx = make_delete_tx_with_hyli("hyle".into(), "sub.c2.hyle".into());
+    let mut delete_tx = make_delete_tx_with_hyli("hyle".into(), "secret", "c2.hyle".into());
+    let delete_sub_tx = make_delete_tx_with_hyli("hyle".into(), "secret", "sub.c2.hyle".into());
 
     let block = state.craft_block_and_handle(2, vec![delete_tx.into(), delete_sub_tx.into()]);
 
@@ -446,7 +470,7 @@ async fn test_hyle_sub_delete() {
 #[test_log::test(tokio::test)]
 async fn test_register_update_delete_combinations_hyle() {
     let register_tx = make_register_tx("hyle@hyle".into(), "hyle".into(), "c.hyle".into());
-    let mut delete_tx = make_delete_tx_with_hyli("hyle".into(), "c.hyle".into());
+    let mut delete_tx = make_delete_tx_with_hyli("hyle".into(), "secret", "c.hyle".into());
 
     let delete_self_tx = make_delete_tx("hyle@c.hyle".into(), "c.hyle".into(), "c.hyle".into());
     let update_tx = make_register_tx("test@c.hyle".into(), "c.hyle".into(), "c.hyle".into());

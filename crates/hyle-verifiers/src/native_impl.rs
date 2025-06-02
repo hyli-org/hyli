@@ -38,11 +38,6 @@ where
         NativeVerifiers::Secp256k1 => {
             let blob = borsh::from_slice::<Secp256k1Blob>(&blob.data.0)?;
 
-            // Check pubkey is correct
-            if let Some(res) = check_secp_pubkey(blob.public_key) {
-                return Ok((blob.identity, res));
-            };
-
             // Convert the public key bytes to a secp256k1 PublicKey
             let public_key = PublicKey::from_slice(&blob.public_key)
                 .map_err(|e| anyhow::anyhow!("Invalid public key: {}", e))?;
@@ -56,7 +51,12 @@ where
 
             // Verify the signature
             let secp = Secp256k1::new();
-            let success = secp.verify_ecdsa(message, &signature, &public_key).is_ok();
+            let mut success = secp.verify_ecdsa(message, &signature, &public_key).is_ok();
+
+            // Check pubkey is correct
+            if let Some(res) = check_secp_pubkey(blob.public_key) {
+                success &= res;
+            };
 
             Ok((blob.identity, success))
         }
