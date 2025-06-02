@@ -124,6 +124,14 @@ pub trait ZkContract {
     fn execute(&mut self, calldata: &Calldata) -> RunResult;
 
     fn commit(&self) -> StateCommitment;
+    /// Returns a commitment over a part of the contract's state.
+    ///
+    /// This function allows obtaining a commitment over a subset of the contract's state,
+    /// For instance, in an "optimistic" mode, this method can be used to expose a commitment
+    /// independently of the sequencing context (for example, block height, timestamp, etc.)
+    fn partial_commit(&self) -> StateCommitment {
+        self.commit()
+    }
 
     /// A function executed before the contract is executed.
     /// This might be used to do verifications on the state before validating calldatas.
