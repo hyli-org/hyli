@@ -226,7 +226,7 @@ pub mod test {
         }
     }
 
-    impl<C: ZkContract + BorshDeserialize + 'static> ClientSdkProver<Vec<Calldata>>
+    impl<C: ZkContract + Clone + BorshDeserialize + 'static> ClientSdkProver<Vec<Calldata>>
         for TxExecutorTestProver<C>
     {
         fn prove(

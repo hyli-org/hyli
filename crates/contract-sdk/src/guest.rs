@@ -136,7 +136,7 @@ impl GuestEnv for SP1Env {
 /// Panics if the contract initialization fails.
 pub fn execute<Z>(commitment_metadata: &[u8], calldata: &[Calldata]) -> Vec<HyleOutput>
 where
-    Z: ZkContract + BorshDeserialize + 'static,
+    Z: ZkContract + Clone + BorshDeserialize + 'static,
 {
     #[allow(clippy::expect_used, reason = "Required to generate valid proofs")]
     let mut contract: Z =
@@ -156,10 +156,15 @@ where
         return outputs;
     }
     for calldata in calldata.iter() {
+        let initial_contract = contract.clone();
         let mut res: RunResult = contract.execute(calldata);
 
-        let next_state_commitment = contract.commit();
+        let mut next_state_commitment = contract.commit();
 
+        if res.is_err() {
+            contract = initial_contract; // Reset contract state on error
+            next_state_commitment = initial_state_commitment.clone();
+        }
         outputs.push(as_hyle_output(
             initial_state_commitment,
             next_state_commitment.clone(),
