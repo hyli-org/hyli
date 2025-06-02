@@ -25,7 +25,7 @@ const GITMOJI_CATEGORIES = {
 
 function generateReleaseNotes() {
   const commits = execSync(
-    "git log --since \"MAY 1 2025\" --until \"MAY 31 2025\" --pretty=format:%s"
+    "git log --oneline $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:%s"
   )
     .toString()
     .split("\n");
