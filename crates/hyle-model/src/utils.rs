@@ -27,6 +27,12 @@ pub struct TimestampMs(pub u128);
 
 impl TimestampMs {
     pub const ZERO: TimestampMs = TimestampMs(0);
+
+    /// Truncates the timestamp to the nearest day in milliseconds.
+    pub fn current_day_ms(&self) -> u64 {
+        let millis_in_day = 86_400_000; // 86,400,000 ms in a day
+        self.0.div_euclid(millis_in_day) as u64
+    }
 }
 
 impl Add<Duration> for TimestampMs {

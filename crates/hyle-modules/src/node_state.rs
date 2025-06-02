@@ -8,7 +8,8 @@ use hyle_tld::handle_blob_for_hyle_tld;
 use hyllar::FAUCET_ID;
 use metrics::NodeStateMetrics;
 use ordered_tx_map::OrderedTxMap;
-use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
+use sdk::secp256k1::CheckSecp256k1;
+use sdk::verifiers::{NativeVerifiers, Secp256k1Blob, NATIVE_VERIFIERS_CONTRACT_LIST};
 use sdk::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use timeouts::Timeouts;
@@ -361,6 +362,29 @@ impl NodeState {
         timeout
     }
 
+    fn make_failed_hyleoutput(
+        identity: &Identity,
+        index: BlobIndex,
+        tx_hash: TxHash,
+        blobs: &[Blob],
+    ) -> HyleOutput {
+        HyleOutput {
+            tx_hash,
+            index,
+            success: false,
+            program_outputs: vec![],
+            version: 1,
+            initial_state: StateCommitment::default(),
+            next_state: StateCommitment::default(),
+            identity: identity.clone(),
+            blobs: blobs.iter().cloned().into(),
+            tx_blob_count: blobs.len(),
+            state_reads: vec![],
+            tx_ctx: None,
+            onchain_effects: vec![],
+        }
+    }
+
     fn handle_blob_tx(
         &mut self,
         parent_dp_hash: DataProposalHash,
@@ -445,7 +469,61 @@ impl NodeState {
                         ));
                     }
                 } else if blob.contract_name.0 == "hyle" {
-                    // 'hyle' is a special case -> See settlement logic.
+                    // Check we have a secp256k1 blob for the hyle TLD delete contract action
+                    if let Ok(delete) =
+                        borsh::from_slice::<StructuredBlobData<DeleteContractAction>>(&blob.data.0)
+                    {
+                        let fake_native_failure = || {
+                            (
+                                BlobIndex(index),
+                                UnsettledBlobMetadata {
+                                    blob: blob.clone(),
+                                    possible_proofs: vec![(
+                                        NativeVerifiers::Secp256k1.into(),
+                                        Self::make_failed_hyleoutput(
+                                            &tx.identity,
+                                            BlobIndex(index),
+                                            tx_hash.clone(),
+                                            &tx.blobs,
+                                        ),
+                                    )],
+                                },
+                            )
+                        };
+
+                        let Some(secp256k1blob) = tx
+                            .blobs
+                            .iter()
+                            .filter_map(|b| {
+                                if b.contract_name.0 == "secp256k1" {
+                                    borsh::from_slice::<Secp256k1Blob>(&blob.data.0).ok()
+                                } else {
+                                    None
+                                }
+                            })
+                            .next()
+                        else {
+                            // fail early with a fake hyle output + native verifier
+                            return Some(fake_native_failure());
+                        };
+
+                        let data = format!(
+                            "delete-{}-{}",
+                            delete.parameters.contract_name,
+                            tx_context.timestamp.current_day_ms()
+                        );
+
+                        // Checks blob has the correct identity and data (data formatted containing the contract name to delete, and the timestamp of the day 00:00:00)
+                        if CheckSecp256k1::validate_blob(
+                            &secp256k1blob,
+                            &tx.identity,
+                            data.as_bytes(),
+                        )
+                        .is_err()
+                        {
+                            return Some(fake_native_failure());
+                        }
+                    }
                 } else {
                     should_try_and_settle = false;
                 }
@@ -626,6 +704,21 @@ impl NodeState {
         unsettlable_txs
     }
 
+    fn fast_fail_tx(unsettled_tx: &UnsettledBlobTransaction) -> bool {
+        /*
+        Fail fast: try to find a stateless (native verifiers are considered stateless for now) contract
+        with a hyle output to success false (in all possible combinations)
+        */
+        unsettled_tx.blobs.values().any(|blob| {
+            (blob.blob.contract_name.0 == "hyle"
+                || NATIVE_VERIFIERS_CONTRACT_LIST.contains(&blob.blob.contract_name.0.as_str()))
+                && blob
+                    .possible_proofs
+                    .iter()
+                    .any(|possible_proof| !possible_proof.1.success)
+        })
+    }
+
     fn try_to_settle_blob_tx(
         &mut self,
         unsettled_tx_hash: &TxHash,
@@ -658,19 +751,8 @@ impl NodeState {
 
         let updated_contracts = BTreeMap::new();
 
-        let result = if
-        /*
-        Fail fast: try to find a stateless (native verifiers are considered stateless for now) contract
-        with a hyle output to success false (in all possible combinations)
-        */
-        unsettled_tx.blobs.values().any(|blob| {
-            NATIVE_VERIFIERS_CONTRACT_LIST.contains(&blob.blob.contract_name.0.as_str())
-                && blob
-                    .possible_proofs
-                    .iter()
-                    .any(|possible_proof| !possible_proof.1.success)
-        }) {
-            debug!("Settling fast as failed because native blob was failed");
+        let result = if Self::fast_fail_tx(unsettled_tx) {
+            debug!("Settling fast as failed because native blob was failed, or delete contract action was missing secp256k1 blob");
             Err(())
         } else {
             match Self::settle_blobs_recursively(
