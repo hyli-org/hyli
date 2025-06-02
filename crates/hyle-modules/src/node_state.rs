@@ -496,13 +496,14 @@ impl NodeState {
                             .iter()
                             .filter_map(|b| {
                                 if b.contract_name.0 == "secp256k1" {
-                                    borsh::from_slice::<Secp256k1Blob>(&blob.data.0).ok()
+                                    borsh::from_slice::<Secp256k1Blob>(&b.data.0).ok()
                                 } else {
                                     None
                                 }
                             })
                             .next()
-                        else {
+                            else {
+                                tracing::warn!("Blob Transaction for hyle TLD delete action does not contain a secp256k1 blob, failing");
                             // fail early with a fake hyle output + native verifier
                             return Some(fake_native_failure());
                         };
@@ -513,6 +514,11 @@ impl NodeState {
                             tx_context.timestamp.current_day_ms()
                         );
 
+                        tracing::debug!(
+                            "Checking secp256k1 blob for hyle TLD delete action with signed data: {}",
+                            data
+                        );
+
                         // Checks blob has the correct identity and data (data formatted containing the contract name to delete, and the timestamp of the day 00:00:00)
                         if CheckSecp256k1::validate_blob(
                             &secp256k1blob,
@@ -521,6 +527,7 @@ impl NodeState {
                         )
                         .is_err()
                         {
+                                tracing::warn!("Blob Transaction for hyle TLD delete action does not contain a valid secp256k1 blob, failing");
                             return Some(fake_native_failure());
                         }
                     }
@@ -1365,7 +1372,7 @@ pub mod test {
 
     use super::*;
     use hyle_net::clock::TimestampMsClock;
-    use sdk::verifiers::ShaBlob;
+    use sdk::{hyle_model_utils::TimestampMs, verifiers::ShaBlob};
     use sha3::Digest;
 
     pub(crate) async fn new_node_state() -> NodeState {
@@ -1574,6 +1581,17 @@ pub mod test {
 
         pub fn craft_block_and_handle(&mut self, height: u64, txs: Vec<Transaction>) -> Block {
             let block = craft_signed_block(height, txs);
+            self.force_handle_block(&block)
+        }
+
+        pub fn craft_block_and_handle_at_ts(
+            &mut self,
+            height: u64,
+            txs: Vec<Transaction>,
+            timestamp_ms: TimestampMs,
+        ) -> Block {
+            let mut block = craft_signed_block(height, txs);
+            block.consensus_proposal.timestamp = timestamp_ms;
             self.force_handle_block(&block)
         }
 

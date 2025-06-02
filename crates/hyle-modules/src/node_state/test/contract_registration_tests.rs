@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 use ::secp256k1::PublicKey;
 use sdk::verifiers::Secp256k1Blob;
+use sha2::Sha256;
 
 use super::*;
 
@@ -295,12 +296,22 @@ pub fn create_secp256k1_delete_contract_blob(
 
     let data = format!("delete-{}-{}", contract_name.0, now_day);
 
-    let data = sha2::Sha256::digest(data.as_bytes());
-    let message = ::secp256k1::Message::from_digest(data.into());
+    tracing::info!(
+        "Creating delete contract blob for {} with data: {}",
+        contract_name.0,
+        data
+    );
+
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    let message_hash: [u8; 32] = hasher.finalize().into();
+
+    let message = ::secp256k1::Message::from_digest(message_hash);
+
     let signature = secret_key.sign_ecdsa(message);
     Secp256k1Blob {
         identity,
-        data: data.into(),
+        data: message_hash,
         public_key: public_key.serialize(),
         signature: signature.serialize_compact(),
     }
@@ -326,6 +337,24 @@ pub fn make_delete_tx_with_hyli(
         vec![
             DeleteContractAction { contract_name }.as_blob(tld, None, None),
             create_secp256k1_blob(HYLI_TLD_ID.into(), secret.into()).as_blob(),
+        ],
+    )
+}
+
+pub fn make_delete_tx_with_hyli_correct_data(
+    tld: ContractName,
+    secret: &str,
+    contract_name: ContractName,
+) -> BlobTransaction {
+    BlobTransaction::new(
+        HYLI_TLD_ID,
+        vec![
+            DeleteContractAction {
+                contract_name: contract_name.clone(),
+            }
+            .as_blob(tld, None, None),
+            create_secp256k1_delete_contract_blob(HYLI_TLD_ID.into(), contract_name, secret.into())
+                .as_blob(),
         ],
     )
 }
@@ -420,7 +449,32 @@ async fn test_register_contract_and_delete_hyle() {
 }
 
 #[test_log::test(tokio::test)]
-async fn test_hyle_delete_failure() {
+async fn test_hyle_delete_contract_success() {
+    let mut state = new_node_state().await;
+    let hyli_pubkey = create_secp256k1_delete_contract_blob(
+        HYLI_TLD_ID.into(),
+        ContractName::new("c2.hyle"),
+        "secret".into(),
+    );
+    state.hyli_pubkey = hyli_pubkey.public_key;
+
+    let register_c2 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
+
+    state.craft_block_and_handle(1, vec![register_c2.into()]);
+    assert_eq!(state.contracts.len(), 3);
+
+    // Now delete the intermediate contract first, then delete the sub-contract via hyle
+    let mut delete_tx =
+        make_delete_tx_with_hyli_correct_data("hyle".into(), "secret", "c2.hyle".into());
+
+    let block = state.craft_block_and_handle(2, vec![delete_tx.into()]);
+
+    assert_eq!(block.deleted_contracts.len(), 1);
+    assert_eq!(state.contracts.len(), 2);
+}
+
+#[test_log::test(tokio::test)]
+async fn test_hyle_delete_contract_failure_wrong_pubkey() {
     let mut state = new_node_state().await;
     let hyli_pubkey = create_secp256k1_delete_contract_blob(
         HYLI_TLD_ID.into(),
@@ -444,7 +498,7 @@ async fn test_hyle_delete_failure() {
 }
 
 #[test_log::test(tokio::test)]
-async fn test_hyle_delete_failure_wrong_data() {
+async fn test_hyle_delete_contract_failure_wrong_data() {
     let mut state = new_node_state().await;
     let hyli_pubkey = create_secp256k1_blob(HYLI_TLD_ID.into(), "secret".into());
     state.hyli_pubkey = hyli_pubkey.public_key;
@@ -489,21 +543,28 @@ async fn test_hyle_sub_delete() {
         }));
     let sub_c2_proof = new_proof_tx(&"c2.hyle".into(), &output, &register_sub_c2.hashed());
 
-    state.craft_block_and_handle(
+    state.craft_block_and_handle_at_ts(
         1,
         vec![
             register_c2.into(),
             register_sub_c2.into(),
             sub_c2_proof.into(),
         ],
+        TimestampMsClock::now(),
     );
     assert_eq!(state.contracts.len(), 4);
 
     // Now delete the intermediate contract first, then delete the sub-contract via hyle
-    let mut delete_tx = make_delete_tx_with_hyli("hyle".into(), "secret", "c2.hyle".into());
-    let delete_sub_tx = make_delete_tx_with_hyli("hyle".into(), "secret", "sub.c2.hyle".into());
+    let mut delete_tx =
+        make_delete_tx_with_hyli_correct_data("hyle".into(), "secret", "c2.hyle".into());
+    let delete_sub_tx =
+        make_delete_tx_with_hyli_correct_data("hyle".into(), "secret", "sub.c2.hyle".into());
 
-    let block = state.craft_block_and_handle(2, vec![delete_tx.into(), delete_sub_tx.into()]);
+    let block = state.craft_block_and_handle_at_ts(
+        2,
+        vec![delete_tx.into(), delete_sub_tx.into()],
+        TimestampMsClock::now(),
+    );
 
     assert_eq!(
         block
