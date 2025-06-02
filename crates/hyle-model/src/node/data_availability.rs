@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
@@ -39,7 +41,7 @@ pub struct UnsettledBlobTransaction {
     pub hash: TxHash,
     pub tx_context: TxContext,
     pub blobs_hash: BlobsHashes,
-    pub blobs: Vec<UnsettledBlobMetadata>,
+    pub blobs: BTreeMap<BlobIndex, UnsettledBlobMetadata>,
 }
 
 #[derive(
@@ -143,7 +145,7 @@ pub enum TransactionStateEvent {
     NewProof {
         blob_index: BlobIndex,
         proof_tx_hash: TxHash,
-        program_output: String,
+        program_output: Vec<u8>,
     },
     SettleEvent(String),
     Settled,

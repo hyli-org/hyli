@@ -19,7 +19,7 @@ impl OrderedTxMap {
     /// Returns true if the tx is the next to settle for all the contracts it contains
     pub fn is_next_to_settle(&self, tx_hash: &TxHash) -> bool {
         if let Some(unsettled_blob_tx) = self.map.get(tx_hash) {
-            unsettled_blob_tx.blobs.iter().all(|blob_metadata| {
+            unsettled_blob_tx.blobs.values().all(|blob_metadata| {
                 if self.get_next_unsettled_tx(&blob_metadata.blob.contract_name) != Some(tx_hash) {
                     return false;
                 }
@@ -50,7 +50,7 @@ impl OrderedTxMap {
         let tx = self.map.get_mut(hash);
         match tx {
             Some(tx) => {
-                let is_next_unsettled_tx = tx.blobs.iter().all(|blob_metadata| {
+                let is_next_unsettled_tx = tx.blobs.values().all(|blob_metadata| {
                     if let Some(order) = self.tx_order.get(&blob_metadata.blob.contract_name) {
                         if let Some(first) = order.front() {
                             return first == &tx.hash;
@@ -72,7 +72,7 @@ impl OrderedTxMap {
     fn get_contracts_blocked_by_tx(&self, tx: &UnsettledBlobTransaction) -> HashSet<ContractName> {
         // Collect into a hashset for unicity
         let mut contract_names = HashSet::new();
-        for blob in &tx.blobs {
+        for blob in tx.blobs.values() {
             contract_names.insert(blob.blob.contract_name.clone());
             // This is a bit horrible, we should try to be leaner.
             if let Ok(data) =
@@ -144,6 +144,8 @@ impl OrderedTxMap {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::indexing_slicing)]
+    use std::collections::BTreeMap;
+
     use sdk::*;
 
     use super::*;
@@ -154,13 +156,16 @@ mod tests {
             hash: TxHash::new(hash),
             parent_dp_hash: DataProposalHash::default(),
             blobs_hash: BlobsHashes::default(),
-            blobs: vec![UnsettledBlobMetadata {
-                blob: Blob {
-                    contract_name: ContractName(contract.to_string()),
-                    data: BlobData::default(),
+            blobs: BTreeMap::from_iter(vec![(
+                BlobIndex(0),
+                UnsettledBlobMetadata {
+                    blob: Blob {
+                        contract_name: ContractName(contract.to_string()),
+                        data: BlobData::default(),
+                    },
+                    possible_proofs: vec![],
                 },
-                possible_proofs: vec![],
-            }],
+            )]),
             tx_context: TxContext::default(),
         }
     }
@@ -221,9 +226,11 @@ mod tests {
         let mut map = OrderedTxMap::default();
 
         let mut tx = new_tx("tx1", "c1");
-        tx.blobs.push(tx.blobs[0].clone());
-        tx.blobs.push(tx.blobs[0].clone());
-        tx.blobs[1].blob.contract_name = ContractName::new("c2");
+        tx.blobs
+            .insert(BlobIndex(1), tx.blobs[&BlobIndex(0)].clone());
+        tx.blobs
+            .insert(BlobIndex(2), tx.blobs[&BlobIndex(0)].clone());
+        tx.blobs.get_mut(&BlobIndex(1)).unwrap().blob.contract_name = ContractName::new("c2");
 
         let hash = tx.hash.clone();
 
@@ -291,17 +298,20 @@ mod tests {
         let contract2 = ContractName::new("c2");
 
         let mut tx = new_tx("tx1", "c1");
-        tx.blobs.push(UnsettledBlobMetadata {
-            blob: RegisterContractAction {
-                verifier: "test".into(),
-                contract_name: contract2.clone(),
-                program_id: ProgramId(vec![1, 2, 3]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                ..Default::default()
-            }
-            .as_blob(contract1.clone(), None, None),
-            possible_proofs: vec![],
-        });
+        tx.blobs.insert(
+            BlobIndex(1),
+            UnsettledBlobMetadata {
+                blob: RegisterContractAction {
+                    verifier: "test".into(),
+                    contract_name: contract2.clone(),
+                    program_id: ProgramId(vec![1, 2, 3]),
+                    state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                    ..Default::default()
+                }
+                .as_blob(contract1.clone(), None, None),
+                possible_proofs: vec![],
+            },
+        );
         map.add(tx.clone());
 
         // Verify initial state

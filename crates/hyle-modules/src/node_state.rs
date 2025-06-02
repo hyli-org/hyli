@@ -7,7 +7,7 @@ use contract_registration::{validate_contract_name_registration, validate_state_
 use hyle_tld::handle_blob_for_hyle_tld;
 use metrics::NodeStateMetrics;
 use ordered_tx_map::OrderedTxMap;
-use sdk::verifiers::NativeVerifiers;
+use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
 use sdk::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use timeouts::Timeouts;
@@ -296,7 +296,9 @@ impl NodeState {
                         let timeout_window = self
                             .unsettled_transactions
                             .get(unsettled_tx)
-                            .map(|tx| self.get_tx_timeout_window(tx.blobs.iter().map(|b| &b.blob)))
+                            .map(|tx| {
+                                self.get_tx_timeout_window(tx.blobs.values().map(|b| &b.blob))
+                            })
                             .unwrap();
                         if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
                             // Update timeouts
@@ -382,11 +384,11 @@ impl NodeState {
             );
         }
 
-        let blobs: Vec<UnsettledBlobMetadata> = tx
+        let blobs: BTreeMap<BlobIndex, UnsettledBlobMetadata> = tx
             .blobs
             .iter()
             .enumerate()
-            .map(|(index, blob)| {
+            .filter_map(|(index, blob)| {
                 tracing::trace!("Handling blob - {:?}", blob);
                 if let Some(Ok(verifier)) = self
                     .contracts
@@ -400,19 +402,31 @@ impl NodeState {
                         verifier,
                     );
                     tracing::trace!("Native verifier in blob tx - {:?}", hyle_output);
-                    return UnsettledBlobMetadata {
-                        blob: blob.clone(),
-                        possible_proofs: vec![(verifier.into(), hyle_output)],
-                    };
+                    // Verifier contracts won't be updated
+                    // FIXME: When we need stateful native contracts
+                    if hyle_output.success {
+                        return None;
+                    } else {
+                        return Some((
+                            BlobIndex(index),
+                            UnsettledBlobMetadata {
+                                blob: blob.clone(),
+                                possible_proofs: vec![(verifier.into(), hyle_output)],
+                            },
+                        ));
+                    }
                 } else if blob.contract_name.0 == "hyle" {
                     // 'hyle' is a special case -> See settlement logic.
                 } else {
                     should_try_and_settle = false;
                 }
-                UnsettledBlobMetadata {
-                    blob: blob.clone(),
-                    possible_proofs: vec![],
-                }
+                Some((
+                    BlobIndex(index),
+                    UnsettledBlobMetadata {
+                        blob: blob.clone(),
+                        possible_proofs: vec![],
+                    },
+                ))
             })
             .collect();
 
@@ -478,7 +492,7 @@ impl NodeState {
 
         let Some(blob) = unsettled_tx
             .blobs
-            .get_mut(blob_proof_data.hyle_output.index.0)
+            .get_mut(&blob_proof_data.hyle_output.index)
         else {
             bail!(
                 "blob at index {} not found in blob TX {}",
@@ -493,9 +507,6 @@ impl NodeState {
             blob_proof_data.hyle_output.tx_hash.0, blob_proof_data.hyle_output.index
         );
 
-        let program_output = std::str::from_utf8(&blob_proof_data.hyle_output.program_outputs)
-            .map(|s| s.to_string())
-            .unwrap_or(hex::encode(&blob_proof_data.hyle_output.program_outputs));
         block_under_construction
             .transactions_events
             .entry(blob_tx_hash.clone())
@@ -503,7 +514,7 @@ impl NodeState {
             .push(TransactionStateEvent::NewProof {
                 blob_index: blob_proof_data.hyle_output.index,
                 proof_tx_hash: proof_tx_hash.clone(),
-                program_output,
+                program_output: blob_proof_data.hyle_output.program_outputs.clone(),
             });
 
         blob.possible_proofs.push((
@@ -521,7 +532,7 @@ impl NodeState {
                 blob_index: blob_proof_data.hyle_output.index,
                 blob_proof_output_index: blob.possible_proofs.len() - 1,
                 #[allow(clippy::indexing_slicing, reason = "Guaranteed to exist by the above")]
-                contract_name: unsettled_tx.blobs[blob_proof_data.hyle_output.index.0]
+                contract_name: unsettled_tx.blobs[&blob_proof_data.hyle_output.index]
                     .blob
                     .contract_name
                     .clone(),
@@ -608,7 +619,7 @@ impl NodeState {
         *lane_id = unsettled_tx.tx_context.lane_id.clone();
 
         // Sanity check: if some of the blob contracts are not registered, we can't proceed
-        if !unsettled_tx.blobs.iter().all(|blob_metadata| {
+        if !unsettled_tx.blobs.values().all(|blob_metadata| {
             tracing::trace!("Checking contract: {:?}", blob_metadata.blob.contract_name);
             self.contracts
                 .contains_key(&blob_metadata.blob.contract_name)
@@ -618,17 +629,32 @@ impl NodeState {
 
         let updated_contracts = BTreeMap::new();
 
-        let result = match Self::settle_blobs_recursively(
-            &self.contracts,
-            updated_contracts,
-            unsettled_tx.blobs.iter(),
-            vec![],
-            events,
-            &self.metrics,
-        ) {
-            Some(res) => res,
-            None => {
-                bail!("Tx: {} is not ready to settle.", unsettled_tx.hash);
+        let result = if
+        /*
+        Fail fast: try to find a stateless (native verifiers are considered stateless for now) contract
+        with a hyle output to success false (in all possible combinations)
+        */
+        unsettled_tx.blobs.values().any(|blob| {
+            NATIVE_VERIFIERS_CONTRACT_LIST.contains(&blob.blob.contract_name.0.as_str())
+                && blob
+                    .possible_proofs
+                    .iter()
+                    .any(|possible_proof| !possible_proof.1.success)
+        }) {
+            debug!("Settling fast as failed because native blob was failed");
+            Err(())
+        } else {
+            match Self::settle_blobs_recursively(
+                &self.contracts,
+                updated_contracts,
+                unsettled_tx.blobs.values(),
+                vec![],
+                events,
+            ) {
+                Some(res) => res,
+                None => {
+                    bail!("Tx: {} is not ready to settle.", unsettled_tx.hash);
+                }
             }
         };
 
@@ -652,7 +678,6 @@ impl NodeState {
         mut blob_iter: impl Iterator<Item = &'a UnsettledBlobMetadata> + Clone,
         mut blob_proof_output_indices: Vec<usize>,
         events: &mut Vec<TransactionStateEvent>,
-        _metrics: &NodeStateMetrics,
     ) -> Option<Result<SettlementResult, ()>> {
         // Recursion end-case: we succesfully settled all prior blobs, so success.
         let Some(current_blob) = blob_iter.next() else {
@@ -688,7 +713,6 @@ impl NodeState {
                         blob_iter.clone(),
                         blob_proof_output_indices.clone(),
                         events,
-                        _metrics,
                     )
                 }
                 Err(err) => {
@@ -744,7 +768,6 @@ impl NodeState {
                 blob_iter.clone(),
                 blob_proof_output_indices.clone(),
                 events,
-                _metrics,
             ) {
                 // If this proof settles, early return, otherwise try the next one (with continue for explicitness)
                 Some(res) => return Some(res),
@@ -768,25 +791,24 @@ impl NodeState {
     ) -> Option<BTreeSet<TxHash>> {
         // Transaction was settled, update our state.
 
-        // If it's a failed settlement, mark it so and move on.
-        if tx_result.is_err() {
+        // Otherwise process the side-effects.
+        #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
+        let Ok(SettlementResult {
+            contract_changes: contracts_changes,
+            blob_proof_output_indices,
+        }) = tx_result
+        else {
+            // If it's a failed settlement, mark it so and move on.
             block_under_construction
                 .transactions_events
                 .entry(bth.clone())
                 .or_default()
                 .push(TransactionStateEvent::SettledAsFailed);
-            info!("⛈️ Settled tx {} has failed", &bth);
+            info!("⛈️ Settled tx {} as failed", &bth);
 
             block_under_construction.failed_txs.push(bth);
             return None;
-        }
-
-        // Otherwise process the side-effects.
-        #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
-        let SettlementResult {
-            contract_changes: contracts_changes,
-            blob_proof_output_indices,
-        } = tx_result.unwrap();
+        };
 
         block_under_construction
             .transactions_events
@@ -801,12 +823,11 @@ impl NodeState {
         let next_txs_to_try_and_settle = settled_tx
             .blobs
             .iter()
-            .enumerate()
-            .filter_map(|(i, blob_metadata)| {
+            .filter_map(|(blob_index, blob_metadata)| {
                 block_under_construction.verified_blobs.push((
                     bth.clone(),
-                    BlobIndex(i),
-                    blob_proof_output_indices.get(i).cloned(),
+                    *blob_index,
+                    blob_proof_output_indices.get(blob_index.0).cloned(),
                 ));
 
                 self.unsettled_transactions
@@ -816,7 +837,7 @@ impl NodeState {
             .collect::<BTreeSet<_>>();
 
         // Take note of staking
-        for blob_metadata in settled_tx.blobs.into_iter() {
+        for blob_metadata in settled_tx.blobs.into_values() {
             let blob = blob_metadata.blob;
             // Keep track of all stakers
             if blob.contract_name.0 == "staking" {
@@ -978,7 +999,7 @@ impl NodeState {
         // Get the specific blob we're verifying
         let blob = &unsettled_tx
             .blobs
-            .get(hyle_output.index.0)
+            .get(&hyle_output.index)
             .context("Blob index out of bounds")?
             .blob;
 
@@ -1163,7 +1184,7 @@ impl NodeState {
     fn clear_timeouts(&mut self, block_under_construction: &mut Block) {
         let mut txs_at_timeout = self.timeouts.drop(&block_under_construction.block_height);
         txs_at_timeout.retain(|tx| {
-            if let Some(mut tx) = self.unsettled_transactions.remove(tx) {
+            if let Some(tx) = self.unsettled_transactions.remove(tx) {
                 info!("⏰ Blob tx timed out: {}", &tx.hash);
                 self.metrics.add_triggered_timeouts();
                 let hash = tx.hash.clone();
@@ -1180,15 +1201,16 @@ impl NodeState {
                 block_under_construction.lane_ids.insert(hash, lane_id);
 
                 // Attempt to settle following transactions
-                let mut blob_tx_to_try_and_settle = BTreeSet::new();
-                tx.blobs.drain(..).for_each(|b| {
-                    if let Some(tx) = self
-                        .unsettled_transactions
-                        .get_next_unsettled_tx(&b.blob.contract_name)
-                    {
-                        blob_tx_to_try_and_settle.insert(tx.clone());
-                    }
-                });
+                let blob_tx_to_try_and_settle: BTreeSet<TxHash> = tx
+                    .blobs
+                    .into_values()
+                    .filter_map(|b| {
+                        self.unsettled_transactions
+                            .get_next_unsettled_tx(&b.blob.contract_name)
+                    })
+                    .cloned()
+                    .collect();
+
                 // Then try to settle transactions when we can.
                 let next_unsettled_txs =
                     self.settle_txs_until_done(block_under_construction, blob_tx_to_try_and_settle);
@@ -1201,7 +1223,7 @@ impl NodeState {
                         let tx = self.unsettled_transactions.get(&unsettled_tx).unwrap();
                         // Get the contract's timeout window
                         let timeout_window =
-                            self.get_tx_timeout_window(tx.blobs.iter().map(|b| &b.blob));
+                            self.get_tx_timeout_window(tx.blobs.values().map(|b| &b.blob));
                         if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
                             // Set the timeout for the transaction
                             self.timeouts
@@ -1228,6 +1250,8 @@ pub mod test {
 
     use super::*;
     use hyle_net::clock::TimestampMsClock;
+    use sdk::verifiers::ShaBlob;
+    use sha3::Digest;
 
     pub(crate) async fn new_node_state() -> NodeState {
         NodeState {
@@ -1240,6 +1264,35 @@ pub mod test {
         Blob {
             contract_name: ContractName::new(contract),
             data: BlobData(vec![0, 1, 2, 3]),
+        }
+    }
+
+    fn new_native_blob(contract: &str, identity: Identity) -> Blob {
+        let data = vec![0, 1, 2, 3];
+        let mut hasher = sha3::Sha3_256::new();
+        hasher.update(&data);
+        let sha = hasher.finalize().to_vec();
+
+        let data = ShaBlob {
+            identity,
+            data,
+            sha,
+        };
+
+        let data = borsh::to_vec(&data).unwrap();
+
+        Blob {
+            contract_name: ContractName::new(contract),
+            data: BlobData(data),
+        }
+    }
+
+    fn new_failing_native_blob(contract: &str, identity: Identity) -> Blob {
+        let data = vec![0, 1, 2, 3];
+
+        Blob {
+            contract_name: ContractName::new(contract),
+            data: BlobData(data),
         }
     }
 
@@ -1286,6 +1339,18 @@ pub mod test {
         }
     }
 
+    pub fn make_register_native_contract_effect(
+        contract_name: ContractName,
+    ) -> RegisterContractEffect {
+        RegisterContractEffect {
+            verifier: Verifier("sha3_256".to_string()),
+            program_id: ProgramId(vec![]),
+            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+            contract_name,
+            timeout_window: None,
+        }
+    }
+
     pub fn new_proof_tx(
         contract: &ContractName,
         hyle_output: &HyleOutput,
@@ -1319,6 +1384,24 @@ pub mod test {
             tx_blob_count: blob_tx.blobs.len(),
             initial_state: StateCommitment(vec![0, 1, 2, 3]),
             next_state: StateCommitment(vec![4, 5, 6]),
+            success: true,
+            tx_hash: blob_tx.hashed(),
+            tx_ctx: None,
+            state_reads: vec![],
+            onchain_effects: vec![],
+            program_outputs: vec![],
+        }
+    }
+
+    pub fn make_hyle_output_bis(blob_tx: BlobTransaction, blob_index: BlobIndex) -> HyleOutput {
+        HyleOutput {
+            version: 1,
+            identity: blob_tx.identity.clone(),
+            index: blob_index,
+            blobs: blob_tx.blobs.clone().into(),
+            tx_blob_count: blob_tx.blobs.len(),
+            initial_state: StateCommitment(vec![4, 5, 6]),
+            next_state: StateCommitment(vec![7, 8, 9]),
             success: true,
             tx_hash: blob_tx.hashed(),
             tx_ctx: None,

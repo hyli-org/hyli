@@ -17,6 +17,7 @@ use axum::{
     Router,
 };
 use futures::{SinkExt, StreamExt};
+use handler::IndexerHandlerStore;
 use hyle_model::api::{
     BlobWithStatus, TransactionStatusDb, TransactionTypeDb, TransactionWithBlobs,
 };
@@ -58,6 +59,7 @@ pub struct Indexer {
     state: IndexerApiState,
     new_sub_receiver: tokio::sync::mpsc::Receiver<(ContractName, WebSocket)>,
     subscribers: Subscribers,
+    handler_store: IndexerHandlerStore,
 }
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/indexer/migrations");
@@ -89,6 +91,7 @@ impl Module for Indexer {
             },
             new_sub_receiver,
             subscribers,
+            handler_store: IndexerHandlerStore::default(),
         };
 
         if let Ok(mut guard) = ctx.1.router.lock() {
@@ -351,6 +354,7 @@ mod test {
             },
             new_sub_receiver,
             subscribers: HashMap::new(),
+            handler_store: IndexerHandlerStore::default(),
         }
     }
 
@@ -448,7 +452,11 @@ mod test {
             .await;
         transactions_response.assert_status_ok();
         let json_response = transactions_response.json::<APITransaction>();
-        assert_eq!(json_response.transaction_status, tx_status);
+        assert_eq!(
+            json_response.transaction_status, tx_status,
+            "Transaction status mismatch for tx_hash: {}",
+            tx_hash
+        );
     }
 
     async fn assert_tx_not_found(server: &TestServer, tx_hash: TxHash) {
@@ -564,8 +572,11 @@ mod test {
 
         indexer
             .handle_processed_block(block)
-            .await
             .expect("Failed to handle block");
+        indexer
+            .dump_store_to_db()
+            .await
+            .expect("Failed to dump store to DB");
 
         //
         // Handling MempoolStatusEvent
@@ -712,8 +723,11 @@ mod test {
         let block_2_hash = block_2.hash.clone();
         indexer
             .handle_processed_block(block_2)
-            .await
             .expect("Failed to handle block");
+        indexer
+            .dump_store_to_db()
+            .await
+            .expect("Failed to dump store to DB");
 
         assert_tx_status(
             &server,
