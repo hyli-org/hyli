@@ -191,13 +191,16 @@ async fn assert_two_transactions_with_same_contract_using_same_native_contract_s
     let verified_proof_1 = new_proof_tx(&c1, &hyle_output_1, &blob_tx_id_1);
 
     // Submit failing tx with native blob failing
-    let block =
-        state.craft_block_and_handle(1, vec![blob_tx_1.clone().into(), blob_tx_2.clone().into()]);
-    assert_eq!(block.blob_proof_outputs.len(), 0);
-    assert_eq!(block.failed_txs.len(), 1);
-    assert_eq!(block.successful_txs.len(), 0);
-
+    let block = state.craft_block_and_handle_at_ts(
+        1,
+        vec![blob_tx_1.clone().into(), blob_tx_2.clone().into()],
+        TimestampMsClock::now(),
+    );
     if native_failure {
+        assert_eq!(block.blob_proof_outputs.len(), 0);
+        assert_eq!(block.failed_txs.len(), 1);
+        assert_eq!(block.successful_txs.len(), 0);
+
         // Submitting a proof for c1 should do nothing (no settlement)
         let block = state.craft_block_and_handle(2, vec![verified_proof_1.clone().into()]);
         assert_eq!(block.blob_proof_outputs.len(), 0);
@@ -220,6 +223,10 @@ async fn assert_two_transactions_with_same_contract_using_same_native_contract_s
         // Second tx should settle
         assert_eq!(state.contracts.get(&c1).unwrap().state.0, vec![4, 5, 6]);
     } else {
+        assert_eq!(block.blob_proof_outputs.len(), 0);
+        assert_eq!(block.failed_txs.len(), 0);
+        assert_eq!(block.successful_txs.len(), 0);
+
         let block = state.craft_block_and_handle(2, vec![verified_proof_1.clone().into()]);
         assert_eq!(block.blob_proof_outputs.len(), 1);
         assert_eq!(block.failed_txs.len(), 0);
