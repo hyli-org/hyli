@@ -550,7 +550,6 @@ mod tests {
     };
 
     use super::*;
-    use assertables::assert_err;
     use client_sdk::helpers::test::TxExecutorTestProver;
     use client_sdk::rest_client::test::NodeApiMockClient;
     use sdk::*;
