@@ -771,7 +771,6 @@ mod tests {
         let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
         auto_prover.handle_processed_block(block_3).await?;
 
-        // Proofs 3 won't be sent, to trigger a timeout
         let proofs_3 = get_txs(&api_client).await;
         assert_eq!(proofs_3.len(), 1);
 
