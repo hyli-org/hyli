@@ -522,7 +522,7 @@ async fn multiple_failing_proofs() {
         ],
     );
 
-    assert!(res.failed_txs.len() == 3);
+    assert_eq!(res.failed_txs.len(), 3);
 }
 
 #[test_log::test(tokio::test)]
