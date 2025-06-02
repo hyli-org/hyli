@@ -128,7 +128,6 @@ impl Indexer {
             }
         }
 
-
         Ok(())
     }
 
@@ -178,9 +177,8 @@ impl Indexer {
         // Insert transactions into the database
         if !self.handler_store.block_txs.is_empty() {
             let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO transactions (tx_hash, parent_dp_hash, version, transaction_type, transaction_status, block_hash, block_height, index, lane_id) ",
+                "INSERT INTO transactions (tx_hash, parent_dp_hash, version, transaction_type, transaction_status, block_hash, block_height, index, lane_id, identity) ",
             );
-
             query_builder.push_values(
                 self.handler_store.block_txs.drain(),
                 |mut b, (tx_id, (index, block, tx))| {
@@ -218,6 +216,11 @@ impl Indexer {
                     .clone()
                     .into();
 
+                    let identity = match tx.transaction_data {
+                        TransactionData::Blob(ref tx) => Some(tx.identity.0.clone()),
+                        _ => None,
+                    };
+
                     let parent_data_proposal_hash: &DataProposalHashDb = &tx_id.0.into();
                     let tx_hash: TxHashDb = tx_id.1.into();
 
@@ -229,11 +232,21 @@ impl Indexer {
                         .push_bind(block.hash.clone())
                         .push_bind(block_height)
                         .push_bind(index)
-                        .push_bind(lane_id);
+                        .push_bind(lane_id)
+                        .push_bind(identity);
                 },
             );
             query_builder.push(" ON CONFLICT(tx_hash, parent_dp_hash) DO UPDATE SET ");
-            query_builder.push("transaction_status=EXCLUDED.transaction_status, block_hash=EXCLUDED.block_hash, block_height=EXCLUDED.block_height, index=EXCLUDED.index");
+            query_builder.push("block_hash=EXCLUDED.block_hash, block_height=EXCLUDED.block_height, index=EXCLUDED.index, lane_id=EXCLUDED.lane_id, identity=EXCLUDED.identity,");
+            // This data comes from post-consensus so always erase earlier statuses, but not later ones.
+            query_builder.push(
+                "transaction_status = case
+                    when transactions.transaction_status IS NULL THEN EXCLUDED.transaction_status
+                    when transactions.transaction_status = 'waiting_dissemination' THEN EXCLUDED.transaction_status
+                    when transactions.transaction_status = 'data_proposal_created' THEN EXCLUDED.transaction_status
+                    else transactions.transaction_status
+                end",
+            );
 
             query_builder
                 .build()
@@ -619,7 +632,7 @@ impl Indexer {
 
         let mut i: i32 = 0;
         #[allow(clippy::explicit_counter_loop)]
-        for (tx_id, tx) in block.txs {
+        for (tx_id, tx) in &block.txs {
             info!(
                 "Processing transaction {} at block height {}",
                 tx_id, block_height
@@ -628,14 +641,18 @@ impl Indexer {
                 .block_txs
                 .insert(tx_id.clone(), (i, arc_block.clone(), tx.clone()));
 
-            let tx_hash: &TxHashDb = &tx_id.1.into();
-            let parent_data_proposal_hash: &DataProposalHashDb = &tx_id.0.into();
+            let tx_hash: TxHashDb = tx_id.1.clone().into();
+            let parent_data_proposal_hash: DataProposalHashDb = tx_id.0.clone().into();
 
             _ = log_warn!(
-                self.insert_tx_data(tx_hash, &tx, parent_data_proposal_hash.clone(),),
+                self.insert_tx_data(&tx_hash, tx, parent_data_proposal_hash.clone(),),
                 "Inserting tx data when tx in block"
             );
-
+            let ctx = block.build_tx_ctx(&tx_hash.0);
+            let (lane_id, timestamp) = match ctx {
+                Ok(ctx) => (Some(ctx.lane_id), Some(ctx.timestamp)),
+                Err(_) => (None, None),
+            };
             if let TransactionData::Blob(blob_tx) = &tx.transaction_data {
                 // Send the transaction to all websocket subscribers
                 self.send_blob_transaction_to_websocket_subscribers(
@@ -645,6 +662,8 @@ impl Indexer {
                     &block.hash,
                     i as u32,
                     tx.version,
+                    lane_id,
+                    timestamp,
                 );
             }
 
