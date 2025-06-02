@@ -147,8 +147,7 @@ async fn test_register_contract_proof_mismatch() {
 #[test_log::test(tokio::test)]
 async fn test_register_contract_composition() {
     let mut state = new_node_state().await;
-    state.hyli_pubkey =
-        create_secp256k1_blob(HYLI_TLD_SECP256K1.into(), "secret".into()).public_key;
+    state.hyli_pubkey = create_secp256k1_blob(HYLI_TLD_ID.into(), "secret".into()).public_key;
 
     let register = make_register_tx("hyle@hyle".into(), "hyle".into(), "hydentity".into());
     let block = state.craft_block_and_handle(1, vec![register.clone().into()]);
@@ -296,10 +295,10 @@ pub fn make_delete_tx_with_hyli(
     contract_name: ContractName,
 ) -> BlobTransaction {
     BlobTransaction::new(
-        HYLI_TLD_SECP256K1,
+        HYLI_TLD_ID,
         vec![
             DeleteContractAction { contract_name }.as_blob(tld, None, None),
-            create_secp256k1_blob(HYLI_TLD_SECP256K1.into(), secret.into()).as_blob(),
+            create_secp256k1_blob(HYLI_TLD_ID.into(), secret.into()).as_blob(),
         ],
     )
 }
@@ -307,8 +306,7 @@ pub fn make_delete_tx_with_hyli(
 #[test_log::test(tokio::test)]
 async fn test_register_contract_and_delete_hyle() {
     let mut state = new_node_state().await;
-    state.hyli_pubkey =
-        create_secp256k1_blob(HYLI_TLD_SECP256K1.into(), "secret".into()).public_key;
+    state.hyli_pubkey = create_secp256k1_blob(HYLI_TLD_ID.into(), "secret".into()).public_key;
 
     let register_c1 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c1".into());
     let register_c2 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
@@ -397,7 +395,7 @@ async fn test_register_contract_and_delete_hyle() {
 #[test_log::test(tokio::test)]
 async fn test_hyle_delete_failure() {
     let mut state = new_node_state().await;
-    let hyli_pubkey = create_secp256k1_blob(HYLI_TLD_SECP256K1.into(), "secret".into());
+    let hyli_pubkey = create_secp256k1_blob(HYLI_TLD_ID.into(), "secret".into());
     state.hyli_pubkey = hyli_pubkey.public_key;
 
     let register_c2 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
@@ -417,7 +415,7 @@ async fn test_hyle_delete_failure() {
 #[test_log::test(tokio::test)]
 async fn test_hyle_sub_delete() {
     let mut state = new_node_state().await;
-    let hyli_pubkey = create_secp256k1_blob(HYLI_TLD_SECP256K1.into(), "secret".into());
+    let hyli_pubkey = create_secp256k1_blob(HYLI_TLD_ID.into(), "secret".into());
     state.hyli_pubkey = hyli_pubkey.public_key;
 
     let register_c2 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
@@ -502,8 +500,7 @@ async fn test_register_update_delete_combinations_hyle() {
         expected_txs: usize,
     ) {
         let mut state = new_node_state().await;
-        state.hyli_pubkey =
-            create_secp256k1_blob(HYLI_TLD_SECP256K1.into(), "secret".into()).public_key;
+        state.hyli_pubkey = create_secp256k1_blob(HYLI_TLD_ID.into(), "secret".into()).public_key;
 
         let mut txs = txs
             .iter()

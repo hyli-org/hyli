@@ -17,7 +17,7 @@ mod e2e_hyllar {
     use hyle::genesis::Genesis;
     use hyle_contract_sdk::{Blob, Calldata, ContractName, HyleOutput};
     use hyle_contracts::{HYDENTITY_ELF, HYLLAR_ELF};
-    use hyllar::{client::tx_executor_handler::transfer, erc20::ERC20, Hyllar, FAUCET_SECP256K1};
+    use hyllar::{client::tx_executor_handler::transfer, erc20::ERC20, Hyllar, FAUCET_ID};
 
     use super::*;
 
@@ -64,13 +64,9 @@ mod e2e_hyllar {
 
         info!("➡️  Sending blob to transfer 25 tokens from faucet to bob");
 
-        let mut tx = ProvableBlobTx::new(FAUCET_SECP256K1.into());
+        let mut tx = ProvableBlobTx::new(FAUCET_ID.into());
 
-        Genesis::add_secp256k1_verify_action(
-            &mut tx,
-            FAUCET_SECP256K1.into(),
-            "secret".to_string(),
-        )?;
+        Genesis::add_secp256k1_verify_action(&mut tx, FAUCET_ID.into(), "secret".to_string())?;
 
         transfer(&mut tx, "hyllar".into(), "bob@hydentity".to_string(), 25)?;
 

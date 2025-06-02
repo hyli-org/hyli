@@ -10,7 +10,7 @@ use fixtures::{ctx::E2ECtx, test_helpers::send_transaction};
 use hyle::genesis::{Genesis, States};
 use hyle_contracts::{HYLLAR_ELF, STAKING_ELF};
 use hyle_model::{api::APIRegisterContract, ContractName, Identity, ProgramId, StateCommitment};
-use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_SECP256K1};
+use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
 use staking::{
     client::tx_executor_handler::{delegate, deposit_for_fees, stake},
     state::Staking,
@@ -42,11 +42,11 @@ async fn faucet_and_delegate(
 
     let node_identity = Identity(format!("{}@secp256k1", node_info.id));
     {
-        let mut transaction = ProvableBlobTx::new(FAUCET_SECP256K1.into());
+        let mut transaction = ProvableBlobTx::new(FAUCET_ID.into());
 
         Genesis::add_secp256k1_verify_action(
             &mut transaction,
-            FAUCET_SECP256K1.into(),
+            FAUCET_ID.into(),
             "secret".to_string(),
         )
         .expect("secp256k1 verification");

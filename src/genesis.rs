@@ -19,7 +19,7 @@ use hyle_modules::{
     bus_client, handle_messages,
     modules::Module,
 };
-use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_SECP256K1};
+use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
 use secp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -287,7 +287,7 @@ impl Genesis {
 
             info!("🌱  Fauceting {genesis_faucet} hyllar to {peer}");
 
-            let identity = Identity::new(FAUCET_SECP256K1);
+            let identity = Identity::new(FAUCET_ID);
 
             let mut transaction = ProvableBlobTx::new(identity.clone());
 

@@ -30,7 +30,7 @@ mod e2e_amm {
     use hyllar::{
         client::tx_executor_handler::{approve, transfer},
         erc20::ERC20,
-        Hyllar, FAUCET_SECP256K1,
+        Hyllar, FAUCET_ID,
     };
 
     use crate::fixtures::contracts::{AmmTestContract, HyllarTestContract};
@@ -131,12 +131,12 @@ mod e2e_amm {
 
         let hyllar_initial_total_amount: u128 = executor
             .hyllar
-            .balance_of(FAUCET_SECP256K1)
+            .balance_of(FAUCET_ID)
             .expect("faucet identity not found");
 
         let hyllar2_initial_total_amount: u128 = executor
             .hyllar2
-            .balance_of(FAUCET_SECP256K1)
+            .balance_of(FAUCET_ID)
             .expect("faucet identity not found");
 
         /////////////////////////////////////////////////////////////////////
@@ -167,13 +167,9 @@ mod e2e_amm {
         ///////////////// sending hyllar from faucet to bob /////////////////
         info!("➡️  Sending blob to transfer 25 hyllar from faucet to bob");
 
-        let mut tx = ProvableBlobTx::new(FAUCET_SECP256K1.into());
+        let mut tx = ProvableBlobTx::new(FAUCET_ID.into());
 
-        Genesis::add_secp256k1_verify_action(
-            &mut tx,
-            FAUCET_SECP256K1.into(),
-            "secret".to_string(),
-        )?;
+        Genesis::add_secp256k1_verify_action(&mut tx, FAUCET_ID.into(), "secret".to_string())?;
 
         transfer(&mut tx, "hyllar".into(), "bob@hydentity".into(), 25)?;
 
@@ -205,7 +201,7 @@ mod e2e_amm {
             "hyllar",
             &[
                 ("bob@hydentity", 25),
-                (FAUCET_SECP256K1, hyllar_initial_total_amount - 25),
+                (FAUCET_ID, hyllar_initial_total_amount - 25),
             ],
         )
         .await?;
@@ -213,13 +209,9 @@ mod e2e_amm {
 
         ///////////////// sending hyllar2 from faucet to bob /////////////////
         info!("➡️  Sending blob to transfer 50 hyllar2 from faucet to bob");
-        let mut tx = ProvableBlobTx::new(FAUCET_SECP256K1.into());
+        let mut tx = ProvableBlobTx::new(FAUCET_ID.into());
 
-        Genesis::add_secp256k1_verify_action(
-            &mut tx,
-            FAUCET_SECP256K1.into(),
-            "secret".to_string(),
-        )?;
+        Genesis::add_secp256k1_verify_action(&mut tx, FAUCET_ID.into(), "secret".to_string())?;
 
         transfer(&mut tx, "hyllar2".into(), "bob@hydentity".into(), 50)?;
 
@@ -240,7 +232,7 @@ mod e2e_amm {
             "hyllar2",
             &[
                 ("bob@hydentity", 50),
-                (FAUCET_SECP256K1, hyllar2_initial_total_amount - 50),
+                (FAUCET_ID, hyllar2_initial_total_amount - 50),
             ],
         )
         .await?;
@@ -362,7 +354,7 @@ mod e2e_amm {
             &[
                 ("bob@hydentity", 5),
                 (AMM_CONTRACT_NAME, 20),
-                (FAUCET_SECP256K1, hyllar_initial_total_amount - 25),
+                (FAUCET_ID, hyllar_initial_total_amount - 25),
             ],
         )
         .await?;
@@ -373,7 +365,7 @@ mod e2e_amm {
             &[
                 ("bob@hydentity", 0),
                 (AMM_CONTRACT_NAME, 50),
-                (FAUCET_SECP256K1, hyllar2_initial_total_amount - 50),
+                (FAUCET_ID, hyllar2_initial_total_amount - 50),
             ],
         )
         .await?;
@@ -444,7 +436,7 @@ mod e2e_amm {
             &[
                 ("bob@hydentity", 0),
                 (AMM_CONTRACT_NAME, 25),
-                (FAUCET_SECP256K1, hyllar_initial_total_amount - 25),
+                (FAUCET_ID, hyllar_initial_total_amount - 25),
             ],
         )
         .await?;
@@ -455,7 +447,7 @@ mod e2e_amm {
             &[
                 ("bob@hydentity", 10),
                 (AMM_CONTRACT_NAME, 40),
-                (FAUCET_SECP256K1, hyllar2_initial_total_amount - 50),
+                (FAUCET_ID, hyllar2_initial_total_amount - 50),
             ],
         )
         .await?;

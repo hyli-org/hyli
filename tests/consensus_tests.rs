@@ -20,7 +20,7 @@ mod e2e_consensus {
     use hyle_model::{ContractName, StateCommitment, TxHash};
     use hyllar::client::tx_executor_handler::transfer;
     use hyllar::erc20::ERC20;
-    use hyllar::{Hyllar, FAUCET_SECP256K1};
+    use hyllar::{Hyllar, FAUCET_ID};
     use staking::client::tx_executor_handler::{delegate, stake};
     use staking::state::Staking;
     use tracing::{info, warn};
@@ -89,11 +89,11 @@ mod e2e_consensus {
 
         let node_identity = Identity(format!("{}@secp256k1", node_info.id));
         {
-            let mut transaction = ProvableBlobTx::new(FAUCET_SECP256K1.into());
+            let mut transaction = ProvableBlobTx::new(FAUCET_ID.into());
 
             Genesis::add_secp256k1_verify_action(
                 &mut transaction,
-                FAUCET_SECP256K1.into(),
+                FAUCET_ID.into(),
                 "secret".into(),
             )
             .expect("secret");
@@ -158,11 +158,11 @@ mod e2e_consensus {
         let identity = Identity(format!("{}@secp256k1", id));
 
         {
-            let mut transaction = ProvableBlobTx::new(FAUCET_SECP256K1.into());
+            let mut transaction = ProvableBlobTx::new(FAUCET_ID.into());
 
             Genesis::add_secp256k1_verify_action(
                 &mut transaction,
-                FAUCET_SECP256K1.into(),
+                FAUCET_ID.into(),
                 "secret".into(),
             )
             .expect("secret");

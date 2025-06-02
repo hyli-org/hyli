@@ -12,7 +12,7 @@ use hyle_model::api::NodeInfo;
 use hyle_model::TxHash;
 use hyle_modules::modules::{BuildApiContextInner, ModulesHandler};
 use hyle_modules::node_state::module::NodeStateCtx;
-use hyle_modules::node_state::HYLI_TLD_SECP256K1;
+use hyle_modules::node_state::HYLI_TLD_ID;
 use tracing::info;
 
 use crate::bus::metrics::BusMetrics;
@@ -293,7 +293,7 @@ impl NodeIntegrationCtx {
             NodeStateCtx {
                 node_id: config.id.clone(),
                 hyli_pubkey: Genesis::create_secp256k1_blob(
-                    HYLI_TLD_SECP256K1.into(),
+                    HYLI_TLD_ID.into(),
                     config.genesis.hyli_seq256k1_secret.clone(),
                 )
                 .public_key,

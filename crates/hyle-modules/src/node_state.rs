@@ -5,7 +5,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use contract_registration::validate_contract_registration_metadata;
 use contract_registration::{validate_contract_name_registration, validate_state_commitment_size};
 use hyle_tld::handle_blob_for_hyle_tld;
-use hyllar::FAUCET_SECP256K1;
+use hyllar::FAUCET_ID;
 use metrics::NodeStateMetrics;
 use ordered_tx_map::OrderedTxMap;
 use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
@@ -22,7 +22,7 @@ pub mod module;
 mod ordered_tx_map;
 mod timeouts;
 
-pub use hyle_tld::HYLI_TLD_SECP256K1;
+pub use hyle_tld::HYLI_TLD_ID;
 
 struct SettledTxOutput {
     // Original blob transaction, now settled.
@@ -423,9 +423,7 @@ impl NodeState {
                         // If a specific identity is used, we make sure it used the right key
                         // by checking if the pubkey matches the one stored.
                         move |pk| {
-                            if cloned_identity == HYLI_TLD_SECP256K1
-                                || cloned_identity == FAUCET_SECP256K1
-                            {
+                            if cloned_identity == HYLI_TLD_ID || cloned_identity == FAUCET_ID {
                                 return Some(pk == hyli_pubkey);
                             }
 
