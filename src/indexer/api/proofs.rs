@@ -5,6 +5,9 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use hyle_model::{api::APIProofDetails, utils::TimestampMs};
+use sqlx::FromRow;
+use sqlx::Row;
 
 use crate::model::*;
 use hyle_modules::log_error;
@@ -108,40 +111,80 @@ pub async fn get_proofs_by_height(
 pub async fn get_proof_with_hash(
     Path(tx_hash): Path<String>,
     State(state): State<IndexerApiState>,
-) -> Result<Json<APITransaction>, StatusCode> {
-    let transaction = log_error!(
-        sqlx::query_as::<_, TransactionDb>(
+) -> Result<Json<APIProofDetails>, StatusCode> {
+    let transaction: Result<APIProofDetails, sqlx::Error> = log_error!(
+        sqlx::query(
             r#"
 SELECT 
-    tx_hash,
-    version,
-    transaction_type,
-    transaction_status,
-    parent_dp_hash,
-    block_hash,
-    index,
+    t.tx_hash,
+    t.parent_dp_hash,
+    t.block_hash,
+    t.index,
+    t.version,
+    t.transaction_type,
+    t.transaction_status,
     b.timestamp,
-    lane_id
-FROM transactions
+    t.lane_id,
+    array_remove(ARRAY_AGG(bpo.blob_tx_hash), NULL) AS blob_tx_hashes,
+    array_remove(ARRAY_AGG(bpo.blob_index), NULL) AS blob_tx_indexes,
+    array_remove(ARRAY_AGG(bpo.blob_proof_output_index), NULL) AS blob_proof_output_indexes,
+    array_remove(ARRAY_AGG(bpo.hyle_output), NULL) AS proof_outputs
+FROM transactions t
 LEFT JOIN blocks b 
-    ON transactions.block_hash = b.hash
+    ON t.block_hash = b.hash
+LEFT JOIN blob_proof_outputs bpo
+    ON bpo.proof_tx_hash = t.tx_hash
+    AND bpo.proof_parent_dp_hash = t.parent_dp_hash
 WHERE 
-    tx_hash = $1
-    AND transaction_type = 'proof_transaction'
-ORDER BY block_height DESC, index DESC
+    t.tx_hash = $1
+    AND t.transaction_type = 'proof_transaction'
+GROUP BY t.parent_dp_hash, t.tx_hash, b.height, b.timestamp
+ORDER BY b.height DESC, t.index DESC
 LIMIT 1;
 "#,
         )
         .bind(tx_hash)
         .fetch_optional(&state.db)
         .await
-        .map(|db| db.map(Into::<APITransaction>::into)),
+        .map(|row| {
+            let row = row.ok_or(sqlx::Error::RowNotFound)?;
+            let api_tx: TransactionDb = FromRow::from_row(&row)?;
+            let blob_tx_hashes: Vec<String> = row.try_get("blob_tx_hashes")?;
+            let blob_tx_indexes: Vec<i32> = row.try_get("blob_tx_indexes")?;
+            let blob_proof_output_indexes: Vec<i32> = row.try_get("blob_proof_output_indexes")?;
+            let proof_outputs: Vec<serde_json::Value> = row.try_get("proof_outputs")?;
+
+            let proof_outputs: Vec<(TxHash, u32, u32, serde_json::Value)> = blob_tx_hashes
+                .into_iter()
+                .zip(blob_tx_indexes)
+                .zip(blob_proof_output_indexes)
+                .zip(proof_outputs)
+                .map(|(((tx_hash, tx_idx), proof_idx), output)| {
+                    (tx_hash.into(), tx_idx as u32, proof_idx as u32, output)
+                })
+                .collect();
+
+            Ok(APIProofDetails {
+                tx_hash: api_tx.tx_hash.0,
+                parent_dp_hash: api_tx.parent_dp_hash,
+                block_hash: api_tx.block_hash,
+                index: api_tx.index,
+                version: api_tx.version,
+                transaction_type: api_tx.transaction_type,
+                transaction_status: api_tx.transaction_status,
+                timestamp: api_tx
+                    .timestamp
+                    .map(|t| TimestampMs(t.and_utc().timestamp_millis() as u128)),
+                lane_id: api_tx.lane_id.map(|l| l.0),
+                proof_outputs,
+            })
+        }),
         "Failed to fetch proof by hash"
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     match transaction {
-        Some(tx) => Ok(Json(tx)),
-        None => Err(StatusCode::NOT_FOUND),
+        Ok(tx) => Ok(Json(tx)),
+        Err(_) => Err(StatusCode::NOT_FOUND),
     }
 }
