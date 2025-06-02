@@ -548,15 +548,11 @@ where
                             e.to_string().contains("SessionCreateErr") && retries < MAX_RETRIES;
                         if should_retry {
                             warn!(
-                                "Session creation error, retrying ({}/{})",
+                                "Session creation error, retrying ({}/{}). {e:#}",
                                 retries, MAX_RETRIES
                             );
                             retries += 1;
                             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                            warn!(
-                                "Session creation error, retrying ({}/{})",
-                                retries, MAX_RETRIES
-                            );
                             continue;
                         }
                         error!("Error proving tx: {:?}", e);
