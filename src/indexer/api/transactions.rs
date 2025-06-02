@@ -417,21 +417,32 @@ pub async fn get_transaction_events(
     let rows = log_error!(
         sqlx::query(
             r#"
-SELECT 
-    t.block_hash,
-    b.height,
-    t.tx_hash,
-    t.events
-FROM transaction_state_events t
-LEFT JOIN blocks b 
-    ON t.block_hash = b.hash
-WHERE 
-    t.tx_hash = $1
-    AND t.block_height = b.height
+with filtered as (
+    SELECT 
+        t.block_hash,
+        b.height,
+        t.tx_hash,
+        t.parent_dp_hash,
+        t.events,
+        t.index
+    FROM transaction_state_events t
+    LEFT JOIN blocks b 
+        ON t.block_hash = b.hash
+    WHERE 
+        t.tx_hash = $1
+        AND t.block_height = b.height
+)
+SELECT
+    block_hash,
+    height,
+    tx_hash,
+    events
+FROM
+    (SELECT filtered.*, parent_dp_hash = FIRST_VALUE(parent_dp_hash) OVER (ORDER BY height DESC, index DESC) as first_res FROM filtered)
+WHERE first_res = TRUE
 ORDER BY 
-    b.height DESC,
-    t.index DESC
-LIMIT 1;
+    height DESC,
+    index DESC;
 "#,
         )
         .bind(tx_hash)
