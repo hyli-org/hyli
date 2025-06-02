@@ -580,16 +580,9 @@ impl NodeState {
                     result,
                 }) => {
                     // Settle the TX and add any new TXs to try and settle next.
-                    if let Some(mut txs) =
-                        self.on_settled_blob_tx(block_under_construction, bth, settled_tx, result)
-                    {
-                        debug!(
-                            "Adding {} new TXs to try and settle next: {:?}",
-                            txs.len(),
-                            txs
-                        );
-                        blob_tx_to_try_and_settle.append(&mut txs)
-                    }
+                    let mut txs =
+                        self.on_settled_blob_tx(block_under_construction, bth, settled_tx, result);
+                    blob_tx_to_try_and_settle.append(&mut txs)
                 }
                 Err(e) => {
                     unsettlable_txs.insert(bth.clone());
@@ -793,7 +786,7 @@ impl NodeState {
         bth: TxHash,
         settled_tx: UnsettledBlobTransaction,
         tx_result: Result<SettlementResult, ()>,
-    ) -> Option<BTreeSet<TxHash>> {
+    ) -> BTreeSet<TxHash> {
         // Transaction was settled, update our state.
 
         // Note all the TXs that we might want to try and settle next
@@ -822,7 +815,7 @@ impl NodeState {
             info!("⛈️ Settled tx {} as failed", &bth);
 
             block_under_construction.failed_txs.push(bth);
-            return Some(next_txs_to_try_and_settle);
+            return next_txs_to_try_and_settle;
         };
 
         // Otherwise process the side effects.
@@ -954,7 +947,7 @@ impl NodeState {
         // Keep track of settled txs
         block_under_construction.successful_txs.push(bth);
 
-        Some(next_txs_to_try_and_settle)
+        next_txs_to_try_and_settle
     }
 
     // Called when processing a verified proof TX - checks the proof is potentially valid for settlement.
