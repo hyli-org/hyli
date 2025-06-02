@@ -46,7 +46,6 @@ impl<'a> CheckSecp256k1<'a> {
     ) -> Result<(), &'static str> {
         // Verify that the identity matches the user
         if &blob.identity != identity {
-            tracing::error!("Secp256k1Blob identity does not match");
             return Err("Secp256k1Blob identity does not match");
         }
 
@@ -55,7 +54,6 @@ impl<'a> CheckSecp256k1<'a> {
         let message_hash: [u8; 32] = hasher.finalize().into();
 
         if blob.data != message_hash {
-            tracing::error!("Secp256k1Blob data does not match");
             return Err("Secp256k1Blob data does not match");
         }
 
