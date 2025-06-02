@@ -583,6 +583,11 @@ impl NodeState {
                     if let Some(mut txs) =
                         self.on_settled_blob_tx(block_under_construction, bth, settled_tx, result)
                     {
+                        debug!(
+                            "Adding {} new TXs to try and settle next: {:?}",
+                            txs.len(),
+                            txs
+                        );
                         blob_tx_to_try_and_settle.append(&mut txs)
                     }
                 }
@@ -791,7 +796,17 @@ impl NodeState {
     ) -> Option<BTreeSet<TxHash>> {
         // Transaction was settled, update our state.
 
-        // Otherwise process the side-effects.
+        // Note all the TXs that we might want to try and settle next
+        let next_txs_to_try_and_settle = settled_tx
+            .blobs
+            .iter()
+            .filter_map(|(_, blob_metadata)| {
+                self.unsettled_transactions
+                    .get_next_unsettled_tx(&blob_metadata.blob.contract_name)
+                    .cloned()
+            })
+            .collect::<BTreeSet<_>>();
+
         #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
         let Ok(SettlementResult {
             contract_changes: contracts_changes,
@@ -807,9 +822,10 @@ impl NodeState {
             info!("⛈️ Settled tx {} as failed", &bth);
 
             block_under_construction.failed_txs.push(bth);
-            return None;
+            return Some(next_txs_to_try_and_settle);
         };
 
+        // Otherwise process the side effects.
         block_under_construction
             .transactions_events
             .entry(bth.clone())
@@ -818,26 +834,16 @@ impl NodeState {
         self.metrics.add_settled_transactions(1);
         info!("✨ Settled tx {}", &bth);
 
-        // Keep track of which blob proof output we used to settle the TX for each blob.
-        // Also note all the TXs that we might want to try and settle next
-        let next_txs_to_try_and_settle = settled_tx
-            .blobs
-            .iter()
-            .filter_map(|(blob_index, blob_metadata)| {
-                block_under_construction.verified_blobs.push((
-                    bth.clone(),
-                    *blob_index,
-                    blob_proof_output_indices.get(blob_index.0).cloned(),
-                ));
+        // Go through each blob and:
+        // - keep track of which blob proof output we used to settle the TX for each blob.
+        // - take note of staking actions
+        for (blob_index, blob_metadata) in settled_tx.blobs {
+            block_under_construction.verified_blobs.push((
+                bth.clone(),
+                blob_index,
+                blob_proof_output_indices.get(blob_index.0).cloned(),
+            ));
 
-                self.unsettled_transactions
-                    .get_next_unsettled_tx(&blob_metadata.blob.contract_name)
-                    .cloned()
-            })
-            .collect::<BTreeSet<_>>();
-
-        // Take note of staking
-        for blob_metadata in settled_tx.blobs.into_values() {
             let blob = blob_metadata.blob;
             // Keep track of all stakers
             if blob.contract_name.0 == "staking" {
