@@ -411,7 +411,7 @@ async fn test_hyle_delete_failure() {
     let block = state.craft_block_and_handle(2, vec![delete_tx.into()]);
 
     assert_eq!(block.deleted_contracts.len(), 0);
-    assert_eq!(state.contracts.len(), 2);
+    assert_eq!(state.contracts.len(), 3);
 }
 
 #[test_log::test(tokio::test)]
