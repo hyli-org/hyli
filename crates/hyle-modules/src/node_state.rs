@@ -148,29 +148,6 @@ impl Default for NodeStateStore {
 }
 
 impl NodeState {
-    fn get_tx_timeout_window<'a, T: IntoIterator<Item = &'a Blob>>(
-        &self,
-        blobs: T,
-    ) -> TimeoutWindow {
-        let mut timeout = TimeoutWindow::NoTimeout;
-        for blob in blobs {
-            if let Some(contract_timeout) = self
-                .contracts
-                .get(&blob.contract_name)
-                .map(|c| c.timeout_window.clone())
-            {
-                timeout = match (timeout, contract_timeout) {
-                    (TimeoutWindow::NoTimeout, contract_timeout) => contract_timeout,
-                    (TimeoutWindow::Timeout(a), TimeoutWindow::Timeout(b)) => {
-                        TimeoutWindow::Timeout(a.min(b))
-                    }
-                    _ => TimeoutWindow::NoTimeout,
-                }
-            }
-        }
-        timeout
-    }
-
     pub fn handle_signed_block(&mut self, signed_block: &SignedBlock) -> Result<Block> {
         let next_block = self.current_height + 1 == signed_block.height();
         let initial_block = self.current_height.0 == 0 && signed_block.height().0 == 0;
@@ -362,103 +339,27 @@ impl NodeState {
         Ok(block_under_construction)
     }
 
-    /// Prepares the transaction for settlement by verifying statically the tx and its blobs.
-    /// If checks fail, the blobs won't be added to the unsettled transactions, and no settlement will be attempted.
-    fn prepare_tx_for_settlement(
+    fn get_tx_timeout_window<'a, T: IntoIterator<Item = &'a Blob>>(
         &self,
-        tx: &BlobTransaction,
-        hyli_pubkey: [u8; 33],
-        blob_tx_hash: TxHash,
-        tx_context: TxContext,
-        should_try_and_settle: &mut bool,
-    ) -> Result<BTreeMap<BlobIndex, UnsettledBlobMetadata>> {
-        let mut res: BTreeMap<BlobIndex, UnsettledBlobMetadata> = BTreeMap::new();
-        for (index, blob) in tx.blobs.iter().enumerate() {
-            tracing::trace!("Handling blob - {:?}", blob);
-            if let Some(Ok(verifier)) = self
+        blobs: T,
+    ) -> TimeoutWindow {
+        let mut timeout = TimeoutWindow::NoTimeout;
+        for blob in blobs {
+            if let Some(contract_timeout) = self
                 .contracts
                 .get(&blob.contract_name)
-                .map(|b| TryInto::<NativeVerifiers>::try_into(&b.verifier))
+                .map(|c| c.timeout_window.clone())
             {
-                let cloned_identity = tx.identity.0.clone();
-
-                let hyle_output = hyle_verifiers::native::verify(
-                    blob_tx_hash.clone(),
-                    BlobIndex(index),
-                    &tx.blobs,
-                    verifier,
-                    // Secp256k1 blobs are used to authenticate admin services.
-                    // If a specific identity is used, we make sure it used the right key
-                    // by checking if the pubkey matches the one stored.
-                    move |pk| {
-                        if cloned_identity == HYLI_TLD_ID || cloned_identity == FAUCET_ID {
-                            return Some(pk == hyli_pubkey);
-                        }
-
-                        None
-                    },
-                );
-                tracing::trace!("Native verifier in blob tx - {:?}", hyle_output);
-                // Verifier contracts won't be updated
-                // FIXME: When we need stateful native contracts
-                if !hyle_output.success {
-                    bail!(
-                        "Native verification failed for blob transaction with hash: {}",
-                        blob_tx_hash
-                    );
+                timeout = match (timeout, contract_timeout) {
+                    (TimeoutWindow::NoTimeout, contract_timeout) => contract_timeout,
+                    (TimeoutWindow::Timeout(a), TimeoutWindow::Timeout(b)) => {
+                        TimeoutWindow::Timeout(a.min(b))
+                    }
+                    _ => TimeoutWindow::NoTimeout,
                 }
-            } else if blob.contract_name.0 == "hyle" {
-                // 'hyle' is a special case -> See settlement logic.
-                // Here we just check some static properties (almost syntactic) on the blobs of the tx,
-                // for more complex checks, it should be done in the settlement.
-
-                // Check we have a secp256k1 blob for the hyle TLD delete contract action
-                if let Ok(delete) =
-                    borsh::from_slice::<StructuredBlobData<DeleteContractAction>>(&blob.data.0)
-                {
-                    let Some(secp256k1blob) = tx.blobs.iter().find_map(|b| {
-                        if b.contract_name.0 == "secp256k1" {
-                            borsh::from_slice::<Secp256k1Blob>(&b.data.0).ok()
-                        } else {
-                            None
-                        }
-                    }) else {
-                        bail!("Blob Transaction for hyle TLD delete action does not contain a secp256k1 blob, failing");
-                    };
-
-                    let data = format!(
-                        "delete-{}-{}",
-                        delete.parameters.contract_name,
-                        tx_context.timestamp.current_day_ms()
-                    );
-
-                    tracing::trace!(
-                        "Checking secp256k1 blob for hyle TLD delete action with signed data: {}",
-                        data
-                    );
-
-                    // Checks blob has the correct identity and data (data formatted containing the contract name to delete, and the timestamp of the day 00:00:00)
-                    CheckSecp256k1::validate_blob(
-                        &secp256k1blob,
-                        &tx.identity,
-                        data.as_bytes(),
-                    )
-                        .map_err(|str| anyhow::anyhow!(str.to_string()))
-                        .context("Blob Transaction for hyle TLD delete action does not contain a valid secp256k1 blob, failing")?;
-                }
-            } else {
-                *should_try_and_settle = false;
             }
-            res.insert(
-                BlobIndex(index),
-                UnsettledBlobMetadata {
-                    blob: blob.clone(),
-                    possible_proofs: vec![],
-                },
-            );
         }
-
-        Ok(res)
+        timeout
     }
 
     fn handle_blob_tx(
@@ -477,6 +378,8 @@ impl NodeState {
         }
 
         let (blob_tx_hash, blobs_hash) = (tx.hashed(), tx.blobs_hash());
+
+        let mut should_try_and_settle = true;
 
         // For now, reject blob Tx with blobs for unknown contracts.
         if tx
@@ -497,17 +400,117 @@ impl NodeState {
             );
         }
 
-        let mut should_try_and_settle = true;
+        let hyli_pubkey = self.hyli_pubkey;
+        let mut tx_failed = false;
 
-        let blobs = self
-            .prepare_tx_for_settlement(
-                tx,
-                self.hyli_pubkey,
-                blob_tx_hash.clone(),
-                tx_context.clone(),
-                &mut should_try_and_settle,
-            )
-            .context("Preparing settlement")?;
+        let blobs: BTreeMap<BlobIndex, UnsettledBlobMetadata> = tx
+            .blobs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, blob)| {
+                tracing::trace!("Handling blob - {:?}", blob);
+                if let Some(Ok(verifier)) = self
+                    .contracts
+                    .get(&blob.contract_name)
+                    .map(|b| TryInto::<NativeVerifiers>::try_into(&b.verifier))
+                {
+                    let cloned_identity = tx.identity.0.clone();
+
+                    let hyle_output = hyle_verifiers::native::verify(
+                        blob_tx_hash.clone(),
+                        BlobIndex(index),
+                        &tx.blobs,
+                        verifier,
+                        // Secp256k1 blobs are used to authenticate admin services.
+                        // If a specific identity is used, we make sure it used the right key
+                        // by checking if the pubkey matches the one stored.
+                        move |pk| {
+                            if cloned_identity == HYLI_TLD_ID || cloned_identity == FAUCET_ID {
+                                return Some(pk == hyli_pubkey);
+                            }
+
+                            None
+                        },
+                    );
+                    tracing::trace!("Native verifier in blob tx - {:?}", hyle_output);
+                    // Verifier contracts won't be updated
+                    // FIXME: When we need stateful native contracts
+                    if !hyle_output.success {
+                        tx_failed = true;
+                    } 
+
+                    return None;
+                } else if blob.contract_name.0 == "hyle" {
+                    // 'hyle' is a special case -> See settlement logic.
+                    // Here we just check some static properties (almost syntactic) on the blobs of the tx,
+                    // for more complex checks, it should be done in the settlement.
+
+                    // Check we have a secp256k1 blob for the hyle TLD delete contract action
+                    if let Ok(delete) =
+                        borsh::from_slice::<StructuredBlobData<DeleteContractAction>>(&blob.data.0)
+                    {
+                        
+
+                        let Some(secp256k1blob) = tx
+                            .blobs
+                            .iter()
+                            .filter_map(|b| {
+                                if b.contract_name.0 == "secp256k1" {
+                                    borsh::from_slice::<Secp256k1Blob>(&b.data.0).ok()
+                                } else {
+                                    None
+                                }
+                            })
+                            .next()
+                            else {
+                                tracing::warn!("Blob Transaction for hyle TLD delete action does not contain a secp256k1 blob, failing");
+                                tx_failed = true;
+                                return None;
+                        };
+
+                        let data = format!(
+                            "delete-{}-{}",
+                            delete.parameters.contract_name,
+                            tx_context.timestamp.current_day_ms()
+                        );
+
+                        tracing::trace!(
+                            "Checking secp256k1 blob for hyle TLD delete action with signed data: {}",
+                            data
+                        );
+
+                        // Checks blob has the correct identity and data (data formatted containing the contract name to delete, and the timestamp of the day 00:00:00)
+                        if CheckSecp256k1::validate_blob(
+                            &secp256k1blob,
+                            &tx.identity,
+                            data.as_bytes(),
+                        )
+                        .is_err()
+                        {
+                                tx_failed = true;
+                                tracing::warn!("Blob Transaction for hyle TLD delete action does not contain a valid secp256k1 blob, failing");
+                            return None;
+                        }
+                    }
+                } else {
+                    should_try_and_settle = false;
+                }
+                Some((
+                    BlobIndex(index),
+                    UnsettledBlobMetadata {
+                        blob: blob.clone(),
+                        possible_proofs: vec![],
+                    },
+                ))
+            })
+            .collect();
+
+        if tx_failed {
+            // If we failed to verify the blobs, we don't add the transaction.
+            bail!(
+                "Blob transaction failed verification, not adding to unsettled transactions"
+            );
+        }
 
         // If we're behind other pending transactions, we can't settle yet.
         match self.unsettled_transactions.add(UnsettledBlobTransaction {
