@@ -128,7 +128,7 @@ opentelemetry_sdk = "0.28.0"
 paste = { version = "1.0.15" }
 prometheus = { version = "0.13.4" }
 rand = { version = "0.8.5" }
-sqlx = { version = "0.8.4", features = [
+sqlx = { version = "0.8.6", features = [
   "runtime-tokio",
   "postgres",
   "migrate",
@@ -143,7 +143,7 @@ dhat = { version = "0.3.3", optional = true }
 alloc-metrics = { version = "0.1.1", optional = true }
 utoipa = { version = "5.3.1", features = ["axum_extras"] }
 utoipa-axum = { version = "0.2.0" }
-testcontainers-modules = { version = "0.12.0", features = ["postgres"] }
+testcontainers-modules = { version = "0.12.1", features = ["postgres"] }
 toml = "0.8.22"
 
 # We force zip version here as later version is not compatible with utoipa-swagger-ui
