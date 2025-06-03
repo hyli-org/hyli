@@ -671,25 +671,18 @@ mod test {
 
         let parent_data_proposal_hash = parent_data_proposal.hashed();
 
+        // We skip blob_transaction_wd
         let data_proposal = DataProposal::new(
             Some(parent_data_proposal_hash.clone()),
-            vec![
-                register_tx_1_wd.clone(),
-                register_tx_2_wd.clone(),
-                blob_transaction_wd.clone(),
-                blob_transaction_wd.clone(),
-                proof_tx_1_wd.clone(),
-            ],
+            vec![register_tx_1_wd.clone(), register_tx_2_wd.clone()],
         );
 
         let data_proposal_created_event = MempoolStatusEvent::DataProposalCreated {
+            parent_data_proposal_hash: parent_data_proposal_hash.clone(),
             data_proposal_hash: data_proposal.hashed(),
             txs_metadatas: vec![
                 register_tx_1_wd.metadata(parent_data_proposal_hash.clone()),
                 register_tx_2_wd.metadata(parent_data_proposal_hash.clone()),
-                blob_transaction_wd.metadata(parent_data_proposal_hash.clone()),
-                blob_transaction_wd.metadata(parent_data_proposal_hash.clone()),
-                proof_tx_1_wd.metadata(parent_data_proposal_hash.clone()),
             ],
         };
 
@@ -713,17 +706,47 @@ mod test {
         assert_tx_status(
             &server,
             blob_transaction_wd.hashed(),
-            TransactionStatusDb::DataProposalCreated,
+            TransactionStatusDb::WaitingDissemination,
         )
         .await;
         assert_tx_not_found(&server, proof_tx_1_wd.hashed()).await;
+
+        // We skip blob_transaction_wd
+        let data_proposal_2 = DataProposal::new(
+            Some(data_proposal.hashed()),
+            vec![
+                blob_transaction_wd.clone(),
+                blob_transaction_wd.clone(),
+                proof_tx_1_wd.clone(),
+            ],
+        );
+
+        indexer
+            .handle_mempool_status_event(MempoolStatusEvent::DataProposalCreated {
+                parent_data_proposal_hash: data_proposal.hashed(),
+                data_proposal_hash: data_proposal_2.hashed(),
+                txs_metadatas: vec![
+                    blob_transaction_wd.metadata(data_proposal.hashed()),
+                    blob_transaction_wd.metadata(data_proposal.hashed()),
+                    proof_tx_1_wd.metadata(data_proposal.hashed()),
+                ],
+            })
+            .await
+            .expect("MempoolStatusEvent");
+
+        assert_tx_status(
+            &server,
+            blob_transaction_wd.hashed(),
+            TransactionStatusDb::DataProposalCreated,
+        )
+        .await;
 
         let mut signed_block = SignedBlock::default();
         signed_block.consensus_proposal.timestamp = TimestampMs(12345);
         signed_block.consensus_proposal.slot = 2;
         signed_block.data_proposals.push((
             LaneId(ValidatorPublicKey("ttt".into())),
-            vec![data_proposal],
+            vec![data_proposal, data_proposal_2],
         ));
         let block_2 = node_state.force_handle_block(&signed_block);
         let block_2_hash = block_2.hash.clone();

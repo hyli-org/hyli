@@ -10,6 +10,7 @@ use hyle_modules::{log_error, log_warn};
 use hyle_net::clock::TimestampMsClock;
 use sqlx::Postgres;
 use sqlx::QueryBuilder;
+use sqlx::Row;
 use std::collections::{HashMap, HashSet};
 use std::ops::DerefMut;
 use std::sync::Arc;
@@ -499,7 +500,8 @@ impl Indexer {
             }
 
             MempoolStatusEvent::DataProposalCreated {
-                data_proposal_hash: _,
+                parent_data_proposal_hash,
+                data_proposal_hash,
                 txs_metadatas,
             } => {
                 let mut seen = HashSet::new();
@@ -546,6 +548,62 @@ impl Indexer {
                     .execute(transaction.deref_mut())
                     .await
                     .context("Upserting data at status data_proposal_created")?;
+
+                // Second step - any TX that was skipped for this DP needs to have its ID updated
+                // (this should be all TXs with the same parent as us still in waiting dissemination).
+                let mut query_builder =
+                    QueryBuilder::new("UPDATE transactions SET parent_dp_hash = ");
+                let parent_data_proposal_hash_db: DataProposalHashDb =
+                    parent_data_proposal_hash.clone().into();
+                let data_proposal_hash_db: DataProposalHashDb = data_proposal_hash.clone().into();
+                query_builder
+                    .push_bind(data_proposal_hash_db.clone())
+                    .push(" WHERE parent_dp_hash = ")
+                    .push_bind(parent_data_proposal_hash_db)
+                    .push(" AND transaction_status = 'waiting_dissemination' RETURNING tx_hash");
+                let txs = query_builder
+                    .build()
+                    .fetch_all(transaction.deref_mut())
+                    .await
+                    .context("Updating parent data proposal hash")?;
+                // Then we need to update blobs
+                let tx_hashes = txs
+                    .iter()
+                    .filter_map(|row| {
+                        if let Ok(tx_hash) = row.try_get::<TxHashDb, _>(0) {
+                            self.handler_store.tx_data.iter_mut().for_each(|tx_data| {
+                                if tx_data.tx_hash == tx_hash
+                                    && tx_data.parent_data_proposal_hash.0
+                                        == parent_data_proposal_hash
+                                {
+                                    tx_data.parent_data_proposal_hash =
+                                        data_proposal_hash_db.clone();
+                                }
+                            });
+                            return Some(tx_hash);
+                        }
+                        None
+                    })
+                    .collect::<Vec<_>>();
+                if !tx_hashes.is_empty() {
+                    let mut query_builder = QueryBuilder::new("UPDATE blobs SET parent_dp_hash = ");
+                    let parent_data_proposal_hash_db: DataProposalHashDb =
+                        parent_data_proposal_hash.into();
+                    let data_proposal_hash_db: DataProposalHashDb = data_proposal_hash.into();
+                    query_builder
+                        .push_bind(data_proposal_hash_db.clone())
+                        .push(" WHERE parent_dp_hash = ")
+                        .push_bind(parent_data_proposal_hash_db)
+                        .push(" AND tx_hash in ");
+                    query_builder.push_tuples(tx_hashes, |mut b, tx_hash| {
+                        b.push_bind(tx_hash);
+                    });
+                    query_builder
+                        .build()
+                        .execute(transaction.deref_mut())
+                        .await
+                        .context("Updating parent data proposal hash")?;
+                }
             }
         }
 
