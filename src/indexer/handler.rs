@@ -226,6 +226,11 @@ impl Indexer {
                     let parent_data_proposal_hash: &DataProposalHashDb = &tx_id.0.into();
                     let tx_hash: TxHashDb = tx_id.1.into();
 
+                    info!(
+                        "Inserting transaction {} with parent data proposal hash {}",
+                        tx_hash.0, parent_data_proposal_hash.0
+                    );
+
                     b.push_bind(tx_hash)
                         .push_bind(parent_data_proposal_hash.clone())
                         .push_bind(version)
@@ -498,6 +503,11 @@ impl Indexer {
                 let tx_type = TransactionTypeDb::from(&tx);
                 let tx_hash: &TxHashDb = &tx_hash.into();
 
+                info!(
+                    "Inserting waiting_dissemination TX {} with parent data proposal hash {}",
+                    tx_hash.0, parent_data_proposal_hash_db.0
+                );
+
                 // If the TX is already present, we can assume it's more up-to-date so do nothing.
                 sqlx::query(
                     "INSERT INTO transactions (tx_hash, parent_dp_hash, version, transaction_type, transaction_status)
@@ -545,6 +555,11 @@ impl Indexer {
 
                     let tx_hash: TxHashDb = value.id.1.into();
                     let parent_data_proposal_hash_db: DataProposalHashDb = value.id.0.into();
+
+                    info!(
+                        "Inserting data_proposal_created TX {} with parent data proposal hash {}",
+                        tx_hash.0, parent_data_proposal_hash_db.0
+                    );
 
                     b.push_bind(tx_hash)
                         .push_bind(parent_data_proposal_hash_db)
@@ -608,6 +623,12 @@ impl Indexer {
                     let parent_data_proposal_hash_db: DataProposalHashDb =
                         parent_data_proposal_hash.into();
                     let data_proposal_hash_db: DataProposalHashDb = data_proposal_hash.into();
+
+                    info!(
+                        "Updating skipped TXs with parent data proposal hash {} to new DP hash {}: {:?}",
+                        parent_data_proposal_hash_db.0, data_proposal_hash_db.0, tx_hashes
+                    );
+
                     query_builder
                         .push_bind(data_proposal_hash_db.clone())
                         .push(" WHERE parent_dp_hash = ")
