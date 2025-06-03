@@ -38,6 +38,8 @@ pub struct AutoProverStore<Contract> {
     state_history: Vec<(TxHash, Contract)>,
     tx_chain: Vec<TxHash>,
     contract: Contract,
+    buffered_blobs: Vec<(BlobIndex, BlobTransaction, TxContext)>,
+    buffered_blocks_count: u32,
 }
 
 module_bus_client! {
@@ -54,6 +56,10 @@ pub struct AutoProverCtx<Contract> {
     pub contract_name: ContractName,
     pub node: Arc<dyn NodeApiClient + Send + Sync>,
     pub default_state: Contract,
+    /// How many blocks should we buffer before generating proofs ?
+    pub buffer_blocks: u32,
+    /// Maximum buffer size before generating proofs, priority over buffer_blocks
+    pub buffer_max_txs: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -93,6 +99,8 @@ where
                 unsettled_txs: vec![],
                 state_history: vec![],
                 tx_chain: vec![],
+                buffered_blobs: vec![],
+                buffered_blocks_count: 0,
             },
         };
 
@@ -229,7 +237,17 @@ where
                 );
             }
         }
-        self.prove_supported_blob(blobs)?;
+
+        if self.store.buffered_blobs.len() > self.ctx.buffer_max_txs
+            || self.store.buffered_blocks_count >= self.ctx.buffer_blocks
+        {
+            let mut buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
+            buffered.extend(blobs);
+            self.prove_supported_blob(buffered)?;
+        } else {
+            self.store.buffered_blobs.append(&mut blobs);
+            self.store.buffered_blocks_count += 1;
+        }
 
         Ok(())
     }
