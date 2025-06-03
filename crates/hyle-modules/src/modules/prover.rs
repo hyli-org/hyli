@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
 use crate::bus::{BusClientSender, SharedMessageBus};
@@ -35,7 +36,7 @@ pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
 #[derive(Default, BorshSerialize, BorshDeserialize)]
 pub struct AutoProverStore<Contract> {
     unsettled_txs: Vec<(BlobTransaction, TxContext)>,
-    state_history: Vec<(TxHash, Contract)>,
+    state_history: BTreeMap<TxHash, Contract>,
     tx_chain: Vec<TxHash>,
     contract: Contract,
     buffered_blobs: Vec<(BlobIndex, BlobTransaction, TxContext)>,
@@ -97,7 +98,7 @@ where
             None => AutoProverStore::<Contract> {
                 contract: ctx.default_state.clone(),
                 unsettled_txs: vec![],
-                state_history: vec![],
+                state_history: BTreeMap::new(),
                 tx_chain: vec![],
                 buffered_blobs: vec![],
                 buffered_blocks_count: 0,
@@ -283,9 +284,21 @@ where
     }
 
     fn settle_tx_success(&mut self, tx: &TxHash) -> Result<()> {
-        let pos = self.store.state_history.iter().position(|(h, _)| h == tx);
-        if let Some(pos) = pos {
-            self.store.state_history = self.store.state_history.split_off(pos);
+        let prev_tx = self
+            .store
+            .tx_chain
+            .iter()
+            .enumerate()
+            .find(|(_, h)| *h == tx)
+            .and_then(|(i, _)| {
+                if i > 0 {
+                    self.store.tx_chain.get(i - 1)
+                } else {
+                    None
+                }
+            });
+        if let Some(prev_tx) = prev_tx {
+            self.store.state_history.remove(prev_tx);
         }
         let pos_chain = self.store.tx_chain.iter().position(|h| h == tx);
         if let Some(pos_chain) = pos_chain {
@@ -298,7 +311,7 @@ where
     fn settle_tx_failed(&mut self, tx: &TxHash) -> Result<()> {
         if let Some(pos) = self.settle_tx(tx) {
             self.handle_all_next_blobs(pos, tx)?;
-            self.store.state_history.retain(|(h, _)| h != tx);
+            self.store.state_history.remove(tx);
             self.store.tx_chain.retain(|h| h != tx);
         }
         Ok(())
@@ -332,12 +345,7 @@ where
     }
 
     fn handle_all_next_blobs(&mut self, idx: usize, failed_tx: &TxHash) -> Result<()> {
-        let tx_history = self
-            .store
-            .state_history
-            .iter()
-            .map(|(h, _)| h)
-            .collect::<Vec<_>>();
+        let tx_history = self.store.state_history.keys().collect::<Vec<_>>();
         let prev_tx = self
             .store
             .tx_chain
@@ -351,24 +359,24 @@ where
                     None
                 }
             });
+
+        let Some(prev_tx_hash) = prev_tx else {
+            tracing::debug!("Failed tx {} not found in tx_chain", failed_tx);
+            return Ok(());
+        };
+
         tracing::debug!(
             cn =% self.ctx.contract_name,
             tx_hash =% failed_tx,
             "Handling failed tx {}. Previous tx: {:?}, History: {:?}",
             failed_tx,
-            prev_tx,
+            prev_tx_hash,
             tx_history
         );
-        let prev_state = prev_tx.and_then(|prev_tx_hash| {
-            self.store
-                .state_history
-                .iter()
-                .find(|(h, _)| h == prev_tx_hash)
-                .cloned()
-        });
+        let prev_state = self.store.state_history.get(prev_tx_hash).cloned();
 
-        if let Some((prev_tx_hash, contract)) = prev_state {
-            debug!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "Reverting to previous state from tx {prev_tx_hash}");
+        if let Some(contract) = prev_state {
+            debug!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "Reverting to previous state from tx {:?}", prev_tx_hash);
             self.store.contract = contract.clone();
         } else {
             warn!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "Reverting to default state. History: {tx_history:?}");
@@ -383,7 +391,7 @@ where
                         "Re-execute blob for tx {} after a previous tx failure",
                         tx.hashed()
                     );
-                    self.store.state_history.retain(|(h, _)| h != &tx.hashed());
+                    self.store.state_history.remove(&tx.hashed());
                     blobs.push((index.into(), tx.clone(), ctx.clone()));
                 }
             }
@@ -516,14 +524,18 @@ where
                         ))?;
                     }
                     if !hyle_output.success {
-                        self.store.contract = initial_store_contract;
+                        if let Some(intermediary_state) = self.store.state_history.get(&tx_hash) {
+                            self.store.contract = intermediary_state.clone();
+                        } else {
+                            self.store.contract = initial_store_contract;
+                        }
+                    } else {
+                        self.store
+                            .state_history
+                            .insert(tx_hash.clone(), self.store.contract.clone());
                     }
                 }
             }
-
-            self.store
-                .state_history
-                .push((tx_hash.clone(), self.store.contract.clone()));
 
             if already_settled_tx {
                 debug!(
