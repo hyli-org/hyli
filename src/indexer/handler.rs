@@ -8,9 +8,9 @@ use hyle_model::api::{TransactionStatusDb, TransactionTypeDb};
 use hyle_model::utils::TimestampMs;
 use hyle_modules::{log_error, log_warn};
 use hyle_net::clock::TimestampMsClock;
+use sqlx::Postgres;
 use sqlx::QueryBuilder;
 use sqlx::Row;
-use sqlx::{Execute, Postgres};
 use std::collections::{HashMap, HashSet};
 use std::ops::DerefMut;
 use std::sync::Arc;
@@ -263,7 +263,6 @@ impl Indexer {
             );
 
             query_builder.push_values(self.handler_store.tx_data.drain(..), |mut b, s| {
-                tracing::warn!("Inserting blob data: {:?}", s);
                 let TxDataStore {
                     tx_hash,
                     parent_data_proposal_hash,
