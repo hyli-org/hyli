@@ -21,6 +21,7 @@ use handler::IndexerHandlerStore;
 use hyle_model::api::{
     BlobWithStatus, TransactionStatusDb, TransactionTypeDb, TransactionWithBlobs,
 };
+use hyle_model::utils::TimestampMs;
 use hyle_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
@@ -261,14 +262,17 @@ impl Indexer {
             .await;
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn send_blob_transaction_to_websocket_subscribers(
         &self,
         tx: &BlobTransaction,
-        tx_hash: &TxHashDb,
-        dp_hash: &DataProposalHashDb,
+        tx_hash: TxHashDb,
+        dp_hash: DataProposalHashDb,
         block_hash: &ConsensusProposalHash,
         index: u32,
         version: u32,
+        lane_id: Option<LaneId>,
+        timestamp: Option<TimestampMs>,
     ) {
         for (contrat_name, senders) in self.subscribers.iter() {
             if tx
@@ -284,6 +288,8 @@ impl Indexer {
                     version,
                     transaction_type: TransactionTypeDb::BlobTransaction,
                     transaction_status: TransactionStatusDb::Sequenced,
+                    lane_id: lane_id.clone(),
+                    timestamp: timestamp.clone(),
                     identity: tx.identity.0.clone(),
                     blobs: tx
                         .blobs
@@ -335,7 +341,7 @@ mod test {
     use sqlx::postgres::PgPoolOptions;
     use testcontainers_modules::{
         postgres::Postgres,
-        testcontainers::{runners::AsyncRunner, ImageExt},
+        testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
     };
 
     async fn setup_test_server(indexer: &Indexer) -> Result<TestServer> {
@@ -372,6 +378,13 @@ mod test {
                 ..Default::default()
             }
             .as_blob("hyle".into(), None, None)],
+        )
+    }
+
+    pub fn new_delete_tx(tld: ContractName, contract_name: ContractName) -> BlobTransaction {
+        BlobTransaction::new(
+            "hyle@hyle",
+            vec![DeleteContractAction { contract_name }.as_blob(tld, None, None)],
         )
     }
 
@@ -665,25 +678,18 @@ mod test {
 
         let parent_data_proposal_hash = parent_data_proposal.hashed();
 
+        // We skip blob_transaction_wd
         let data_proposal = DataProposal::new(
             Some(parent_data_proposal_hash.clone()),
-            vec![
-                register_tx_1_wd.clone(),
-                register_tx_2_wd.clone(),
-                blob_transaction_wd.clone(),
-                blob_transaction_wd.clone(),
-                proof_tx_1_wd.clone(),
-            ],
+            vec![register_tx_1_wd.clone(), register_tx_2_wd.clone()],
         );
 
         let data_proposal_created_event = MempoolStatusEvent::DataProposalCreated {
+            parent_data_proposal_hash: parent_data_proposal_hash.clone(),
             data_proposal_hash: data_proposal.hashed(),
             txs_metadatas: vec![
                 register_tx_1_wd.metadata(parent_data_proposal_hash.clone()),
                 register_tx_2_wd.metadata(parent_data_proposal_hash.clone()),
-                blob_transaction_wd.metadata(parent_data_proposal_hash.clone()),
-                blob_transaction_wd.metadata(parent_data_proposal_hash.clone()),
-                proof_tx_1_wd.metadata(parent_data_proposal_hash.clone()),
             ],
         };
 
@@ -707,17 +713,47 @@ mod test {
         assert_tx_status(
             &server,
             blob_transaction_wd.hashed(),
-            TransactionStatusDb::DataProposalCreated,
+            TransactionStatusDb::WaitingDissemination,
         )
         .await;
         assert_tx_not_found(&server, proof_tx_1_wd.hashed()).await;
+
+        // We skip blob_transaction_wd
+        let data_proposal_2 = DataProposal::new(
+            Some(data_proposal.hashed()),
+            vec![
+                blob_transaction_wd.clone(),
+                blob_transaction_wd.clone(),
+                proof_tx_1_wd.clone(),
+            ],
+        );
+
+        indexer
+            .handle_mempool_status_event(MempoolStatusEvent::DataProposalCreated {
+                parent_data_proposal_hash: data_proposal.hashed(),
+                data_proposal_hash: data_proposal_2.hashed(),
+                txs_metadatas: vec![
+                    blob_transaction_wd.metadata(data_proposal.hashed()),
+                    blob_transaction_wd.metadata(data_proposal.hashed()),
+                    proof_tx_1_wd.metadata(data_proposal.hashed()),
+                ],
+            })
+            .await
+            .expect("MempoolStatusEvent");
+
+        assert_tx_status(
+            &server,
+            blob_transaction_wd.hashed(),
+            TransactionStatusDb::DataProposalCreated,
+        )
+        .await;
 
         let mut signed_block = SignedBlock::default();
         signed_block.consensus_proposal.timestamp = TimestampMs(12345);
         signed_block.consensus_proposal.slot = 2;
         signed_block.data_proposals.push((
             LaneId(ValidatorPublicKey("ttt".into())),
-            vec![data_proposal],
+            vec![data_proposal, data_proposal_2],
         ));
         let block_2 = node_state.force_handle_block(&signed_block);
         let block_2_hash = block_2.hash.clone();
@@ -889,6 +925,128 @@ mod test {
             .await;
         non_existent_proof.assert_status_not_found();
 
+        Ok(())
+    }
+
+    async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Block, Block, Block)>
+    {
+        let container = Postgres::default()
+            .with_tag("17-alpine")
+            .start()
+            .await
+            .unwrap();
+        let db = PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&format!(
+                "postgresql://postgres:postgres@localhost:{}/postgres",
+                container.get_host_port_ipv4(5432).await.unwrap()
+            ))
+            .await
+            .unwrap();
+        MIGRATOR.run(&db).await.unwrap();
+        let indexer = new_indexer(db).await;
+
+        let mut node_state = NodeState {
+            store: NodeStateStore::default(),
+            metrics: NodeStateMetrics::global("test".to_string(), "test"),
+        };
+
+        // Create a couple fake blocks with contracts
+        let b1 = node_state.craft_block_and_handle(
+            3,
+            vec![
+                new_register_tx(ContractName::new("a"), StateCommitment(vec![])).into(),
+                new_register_tx(ContractName::new("b"), StateCommitment(vec![])).into(),
+                new_register_tx(ContractName::new("c"), StateCommitment(vec![])).into(),
+            ],
+        );
+        let b2 = node_state.craft_block_and_handle(
+            4,
+            vec![
+                new_delete_tx(ContractName::new("hyle"), ContractName::new("a")).into(),
+                new_delete_tx(ContractName::new("hyle"), ContractName::new("c")).into(),
+            ],
+        );
+
+        let b3 = node_state.craft_block_and_handle(
+            5,
+            vec![
+                new_register_tx(ContractName::new("a"), StateCommitment(vec![])).into(),
+                new_delete_tx(ContractName::new("hyle"), ContractName::new("b")).into(),
+                new_delete_tx(ContractName::new("hyle"), ContractName::new("a")).into(),
+                new_register_tx(ContractName::new("a"), StateCommitment(vec![])).into(),
+                new_register_tx(ContractName::new("d"), StateCommitment(vec![])).into(),
+                new_delete_tx(ContractName::new("hyle"), ContractName::new("d")).into(),
+            ],
+        );
+
+        Ok((container, indexer, b1, b2, b3))
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_contracts_dump_every_block() -> Result<()> {
+        let (_c, mut indexer, b1, b2, b3) = scenario_contracts().await?;
+
+        indexer.handle_processed_block(b1.clone()).unwrap();
+        indexer.dump_store_to_db().await.unwrap();
+        let rows = sqlx::query("SELECT * FROM contracts")
+            .fetch_all(&indexer.state.db)
+            .await
+            .context("fetch contracts")?;
+        assert_eq!(
+            rows.iter()
+                .map(|r| r.get::<String, _>("contract_name"))
+                .collect::<Vec<_>>(),
+            vec!["a", "b", "c"]
+        );
+
+        indexer.handle_processed_block(b2.clone()).unwrap();
+        indexer.dump_store_to_db().await.unwrap();
+        let rows = sqlx::query("SELECT * FROM contracts")
+            .fetch_all(&indexer.state.db)
+            .await
+            .context("fetch contracts")?;
+        assert_eq!(
+            rows.iter()
+                .map(|r| r.get::<String, _>("contract_name"))
+                .collect::<Vec<_>>(),
+            vec!["b"]
+        );
+
+        indexer.handle_processed_block(b3.clone()).unwrap();
+        indexer.dump_store_to_db().await.unwrap();
+
+        let rows = sqlx::query("SELECT * FROM contracts")
+            .fetch_all(&indexer.state.db)
+            .await
+            .context("fetch contracts")?;
+        assert_eq!(
+            rows.iter()
+                .map(|r| r.get::<String, _>("contract_name"))
+                .collect::<Vec<_>>(),
+            vec!["a"]
+        );
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_contracts_batched() -> Result<()> {
+        let (_c, mut indexer, b1, b2, b3) = scenario_contracts().await?;
+        indexer.handle_processed_block(b1).unwrap();
+        indexer.handle_processed_block(b2).unwrap();
+        indexer.handle_processed_block(b3).unwrap();
+        indexer.dump_store_to_db().await.unwrap();
+
+        let rows = sqlx::query("SELECT * FROM contracts")
+            .fetch_all(&indexer.state.db)
+            .await
+            .context("fetch contracts")?;
+        assert_eq!(
+            rows.iter()
+                .map(|r| r.get::<String, _>("contract_name"))
+                .collect::<Vec<_>>(),
+            vec!["a"]
+        );
         Ok(())
     }
 

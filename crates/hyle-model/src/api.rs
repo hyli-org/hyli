@@ -134,13 +134,14 @@ pub struct APITransaction {
     // Struct for the transactions table
     pub tx_hash: TxHash,                           // Transaction hash
     pub parent_dp_hash: DataProposalHash,          // Data proposal hash
+    pub block_hash: Option<ConsensusProposalHash>, // Corresponds to the block hash
+    pub index: Option<u32>,                        // Index of the transaction within the block
     pub version: u32,                              // Transaction version
     pub transaction_type: TransactionTypeDb,       // Type of transaction
     pub transaction_status: TransactionStatusDb,   // Status of the transaction
-    pub block_hash: Option<ConsensusProposalHash>, // Corresponds to the block hash
-    pub index: Option<u32>,                        // Index of the transaction within the block
     pub timestamp: Option<TimestampMs>,            // Timestamp of the transaction (block timestamp)
     pub lane_id: Option<LaneId>,                   // Lane ID where the transaction got disseminated
+    pub identity: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq, Eq)]
@@ -152,6 +153,7 @@ pub struct APITransactionEvents {
 
 #[derive(Serialize, Deserialize, ToSchema, Debug, Clone, PartialEq)]
 pub struct TransactionWithBlobs {
+    // Should match APITransaction
     pub tx_hash: TxHash,
     pub parent_dp_hash: DataProposalHash,
     pub block_hash: ConsensusProposalHash,
@@ -159,8 +161,26 @@ pub struct TransactionWithBlobs {
     pub version: u32,
     pub transaction_type: TransactionTypeDb,
     pub transaction_status: TransactionStatusDb,
+    pub timestamp: Option<TimestampMs>,
+    pub lane_id: Option<LaneId>,
     pub identity: String,
+    // Additional field for blobs
     pub blobs: Vec<BlobWithStatus>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq, Eq)]
+pub struct APIProofDetails {
+    // Should match APITransaction (but without identity)
+    pub tx_hash: TxHash,                           // Transaction hash
+    pub parent_dp_hash: DataProposalHash,          // Data proposal hash
+    pub block_hash: Option<ConsensusProposalHash>, // Corresponds to the block hash
+    pub index: Option<u32>,                        // Index of the transaction within the block
+    pub version: u32,                              // Transaction version
+    pub transaction_type: TransactionTypeDb,       // Type of transaction
+    pub transaction_status: TransactionStatusDb,   // Status of the transaction
+    pub timestamp: Option<TimestampMs>,            // Timestamp of the transaction (block timestamp)
+    pub lane_id: Option<LaneId>,                   // Lane ID where the transaction got disseminated
+    pub proof_outputs: Vec<(TxHash, u32, u32, serde_json::Value)>,
 }
 
 #[serde_as]

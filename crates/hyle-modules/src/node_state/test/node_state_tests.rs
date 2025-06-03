@@ -486,6 +486,46 @@ async fn two_proof_for_one_blob_tx() {
 }
 
 #[test_log::test(tokio::test)]
+async fn multiple_failing_proofs() {
+    let mut state = new_node_state().await;
+    let c1 = ContractName::new("c1");
+    let identity = Identity::new("test@c1");
+    let register_c1 = make_register_contract_effect(c1.clone());
+    state.handle_register_contract_effect(&register_c1);
+
+    let blob_tx = BlobTransaction::new("test1@c1", vec![new_blob(&c1.0)]);
+    let blob_tx_hash = blob_tx.hashed();
+    let blob_tx_2 = BlobTransaction::new("test2@c1", vec![new_blob(&c1.0)]);
+    let blob_tx_2_hash = blob_tx_2.hashed();
+    let blob_tx_3 = BlobTransaction::new("test3@c1", vec![new_blob(&c1.0)]);
+    let blob_tx_3_hash = blob_tx_3.hashed();
+
+    let mut hyle_output_1 = make_hyle_output(blob_tx.clone(), BlobIndex(0));
+    hyle_output_1.success = false;
+    let verified_proof_1 = new_proof_tx(&c1, &hyle_output_1, &blob_tx_hash);
+    let mut hyle_output_2 = make_hyle_output(blob_tx_2.clone(), BlobIndex(0));
+    hyle_output_2.success = false;
+    let verified_proof_2 = new_proof_tx(&c1, &hyle_output_2, &blob_tx_2_hash);
+    let mut hyle_output_3 = make_hyle_output(blob_tx_3.clone(), BlobIndex(0));
+    hyle_output_3.success = false;
+    let verified_proof_3 = new_proof_tx(&c1, &hyle_output_3, &blob_tx_3_hash);
+
+    let res = state.craft_block_and_handle(
+        10,
+        vec![
+            blob_tx.clone().into(),
+            blob_tx_2.clone().into(),
+            verified_proof_2.into(),
+            blob_tx_3.clone().into(),
+            verified_proof_3.into(),
+            verified_proof_1.into(),
+        ],
+    );
+
+    assert_eq!(res.failed_txs.len(), 3);
+}
+
+#[test_log::test(tokio::test)]
 async fn wrong_blob_index_for_contract() {
     let mut state = new_node_state().await;
     let c1 = ContractName::new("c1");

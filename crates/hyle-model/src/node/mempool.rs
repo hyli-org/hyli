@@ -12,6 +12,7 @@ pub enum MempoolStatusEvent {
         tx: Transaction,
     },
     DataProposalCreated {
+        parent_data_proposal_hash: DataProposalHash,
         data_proposal_hash: DataProposalHash,
         txs_metadatas: Vec<TransactionMetadata>,
     },

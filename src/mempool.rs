@@ -367,7 +367,7 @@ impl Mempool {
                         tracing::error!("Error processing block in mempool: {:?}", e);
                     }
                 }
-                for (_, contract, _) in block.registered_contracts {
+                for (_, contract, _) in block.registered_contracts.into_values() {
                     self.handle_contract_registration(contract);
                 }
             }

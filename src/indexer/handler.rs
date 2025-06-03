@@ -10,6 +10,7 @@ use hyle_modules::{log_error, log_warn};
 use hyle_net::clock::TimestampMsClock;
 use sqlx::Postgres;
 use sqlx::QueryBuilder;
+use sqlx::Row;
 use std::collections::{HashMap, HashSet};
 use std::ops::DerefMut;
 use std::sync::Arc;
@@ -89,8 +90,9 @@ pub(crate) struct IndexerHandlerStore {
             <sqlx::Postgres as sqlx::Database>::Arguments<'static>,
         >,
     >,
-    contracts: Vec<TxContractStore>,
+    contracts: HashMap<ContractName, TxContractStore>,
     contract_states: Vec<TxContractStateStore>,
+    deleted_contracts: HashSet<ContractName>,
     blob_proof_outputs: Vec<TxBlobProofOutputStore>,
 }
 
@@ -127,7 +129,6 @@ impl Indexer {
                 self.dump_store_to_db().await?;
             }
         }
-
 
         Ok(())
     }
@@ -178,9 +179,8 @@ impl Indexer {
         // Insert transactions into the database
         if !self.handler_store.block_txs.is_empty() {
             let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO transactions (tx_hash, parent_dp_hash, version, transaction_type, transaction_status, block_hash, block_height, index, lane_id) ",
+                "INSERT INTO transactions (tx_hash, parent_dp_hash, version, transaction_type, transaction_status, block_hash, block_height, index, lane_id, identity) ",
             );
-
             query_builder.push_values(
                 self.handler_store.block_txs.drain(),
                 |mut b, (tx_id, (index, block, tx))| {
@@ -218,6 +218,11 @@ impl Indexer {
                     .clone()
                     .into();
 
+                    let identity = match tx.transaction_data {
+                        TransactionData::Blob(ref tx) => Some(tx.identity.0.clone()),
+                        _ => None,
+                    };
+
                     let parent_data_proposal_hash: &DataProposalHashDb = &tx_id.0.into();
                     let tx_hash: TxHashDb = tx_id.1.into();
 
@@ -229,11 +234,21 @@ impl Indexer {
                         .push_bind(block.hash.clone())
                         .push_bind(block_height)
                         .push_bind(index)
-                        .push_bind(lane_id);
+                        .push_bind(lane_id)
+                        .push_bind(identity);
                 },
             );
             query_builder.push(" ON CONFLICT(tx_hash, parent_dp_hash) DO UPDATE SET ");
-            query_builder.push("transaction_status=EXCLUDED.transaction_status, block_hash=EXCLUDED.block_hash, block_height=EXCLUDED.block_height, index=EXCLUDED.index");
+            query_builder.push("block_hash=EXCLUDED.block_hash, block_height=EXCLUDED.block_height, index=EXCLUDED.index, lane_id=EXCLUDED.lane_id, identity=EXCLUDED.identity,");
+            // This data comes from post-consensus so always erase earlier statuses, but not later ones.
+            query_builder.push(
+                "transaction_status = case
+                    when transactions.transaction_status IS NULL THEN EXCLUDED.transaction_status
+                    when transactions.transaction_status = 'waiting_dissemination' THEN EXCLUDED.transaction_status
+                    when transactions.transaction_status = 'data_proposal_created' THEN EXCLUDED.transaction_status
+                    else transactions.transaction_status
+                end",
+            );
 
             query_builder
                 .build()
@@ -344,7 +359,8 @@ impl Indexer {
                 "INSERT INTO contracts (tx_hash, parent_dp_hash, verifier, program_id, state_commitment, contract_name) ",
             );
 
-            query_builder.push_values(self.handler_store.contracts.drain(..), |mut b, s| {
+            let c = std::mem::take(&mut self.handler_store.contracts);
+            query_builder.push_values(c.values(), |mut b, s| {
                 let TxContractStore {
                     tx_hash,
                     parent_data_proposal_hash,
@@ -361,6 +377,13 @@ impl Indexer {
                     .push_bind(state_commitment)
                     .push_bind(contract_name);
             });
+
+            query_builder.push(" ON CONFLICT (contract_name) DO UPDATE SET ");
+            query_builder.push("tx_hash = EXCLUDED.tx_hash, ");
+            query_builder.push("parent_dp_hash = EXCLUDED.parent_dp_hash, ");
+            query_builder.push("verifier = EXCLUDED.verifier, ");
+            query_builder.push("program_id = EXCLUDED.program_id, ");
+            query_builder.push("state_commitment = EXCLUDED.state_commitment ");
 
             query_builder
                 .build()
@@ -392,6 +415,15 @@ impl Indexer {
                 .execute(&mut *transaction)
                 .await
                 .context("Inserting contract states")?;
+        }
+
+        // Then delete contracts that were deleted (slightly inefficient but we don't expect many deletions)
+        for contract_name in self.handler_store.deleted_contracts.drain() {
+            sqlx::query("DELETE FROM contracts WHERE contract_name = $1")
+                .bind(contract_name.0)
+                .execute(&mut *transaction)
+                .await
+                .context("Deleting contracts")?;
         }
 
         // Insert blob proof outputs into the database
@@ -486,7 +518,8 @@ impl Indexer {
             }
 
             MempoolStatusEvent::DataProposalCreated {
-                data_proposal_hash: _,
+                parent_data_proposal_hash,
+                data_proposal_hash,
                 txs_metadatas,
             } => {
                 let mut seen = HashSet::new();
@@ -533,6 +566,62 @@ impl Indexer {
                     .execute(transaction.deref_mut())
                     .await
                     .context("Upserting data at status data_proposal_created")?;
+
+                // Second step - any TX that was skipped for this DP needs to have its ID updated
+                // (this should be all TXs with the same parent as us still in waiting dissemination).
+                let mut query_builder =
+                    QueryBuilder::new("UPDATE transactions SET parent_dp_hash = ");
+                let parent_data_proposal_hash_db: DataProposalHashDb =
+                    parent_data_proposal_hash.clone().into();
+                let data_proposal_hash_db: DataProposalHashDb = data_proposal_hash.clone().into();
+                query_builder
+                    .push_bind(data_proposal_hash_db.clone())
+                    .push(" WHERE parent_dp_hash = ")
+                    .push_bind(parent_data_proposal_hash_db)
+                    .push(" AND transaction_status = 'waiting_dissemination' RETURNING tx_hash");
+                let txs = query_builder
+                    .build()
+                    .fetch_all(transaction.deref_mut())
+                    .await
+                    .context("Updating parent data proposal hash")?;
+                // Then we need to update blobs
+                let tx_hashes = txs
+                    .iter()
+                    .filter_map(|row| {
+                        if let Ok(tx_hash) = row.try_get::<TxHashDb, _>(0) {
+                            self.handler_store.tx_data.iter_mut().for_each(|tx_data| {
+                                if tx_data.tx_hash == tx_hash
+                                    && tx_data.parent_data_proposal_hash.0
+                                        == parent_data_proposal_hash
+                                {
+                                    tx_data.parent_data_proposal_hash =
+                                        data_proposal_hash_db.clone();
+                                }
+                            });
+                            return Some(tx_hash);
+                        }
+                        None
+                    })
+                    .collect::<Vec<_>>();
+                if !tx_hashes.is_empty() {
+                    let mut query_builder = QueryBuilder::new("UPDATE blobs SET parent_dp_hash = ");
+                    let parent_data_proposal_hash_db: DataProposalHashDb =
+                        parent_data_proposal_hash.into();
+                    let data_proposal_hash_db: DataProposalHashDb = data_proposal_hash.into();
+                    query_builder
+                        .push_bind(data_proposal_hash_db.clone())
+                        .push(" WHERE parent_dp_hash = ")
+                        .push_bind(parent_data_proposal_hash_db)
+                        .push(" AND tx_hash in ");
+                    query_builder.push_tuples(tx_hashes, |mut b, tx_hash| {
+                        b.push_bind(tx_hash);
+                    });
+                    query_builder
+                        .build()
+                        .execute(transaction.deref_mut())
+                        .await
+                        .context("Updating parent data proposal hash")?;
+                }
             }
         }
 
@@ -619,7 +708,7 @@ impl Indexer {
 
         let mut i: i32 = 0;
         #[allow(clippy::explicit_counter_loop)]
-        for (tx_id, tx) in block.txs {
+        for (tx_id, tx) in &block.txs {
             info!(
                 "Processing transaction {} at block height {}",
                 tx_id, block_height
@@ -628,14 +717,18 @@ impl Indexer {
                 .block_txs
                 .insert(tx_id.clone(), (i, arc_block.clone(), tx.clone()));
 
-            let tx_hash: &TxHashDb = &tx_id.1.into();
-            let parent_data_proposal_hash: &DataProposalHashDb = &tx_id.0.into();
+            let tx_hash: TxHashDb = tx_id.1.clone().into();
+            let parent_data_proposal_hash: DataProposalHashDb = tx_id.0.clone().into();
 
             _ = log_warn!(
-                self.insert_tx_data(tx_hash, &tx, parent_data_proposal_hash.clone(),),
+                self.insert_tx_data(&tx_hash, tx, parent_data_proposal_hash.clone(),),
                 "Inserting tx data when tx in block"
             );
-
+            let ctx = block.build_tx_ctx(&tx_hash.0);
+            let (lane_id, timestamp) = match ctx {
+                Ok(ctx) => (Some(ctx.lane_id), Some(ctx.timestamp)),
+                Err(_) => (None, None),
+            };
             if let TransactionData::Blob(blob_tx) = &tx.transaction_data {
                 // Send the transaction to all websocket subscribers
                 self.send_blob_transaction_to_websocket_subscribers(
@@ -645,6 +738,8 @@ impl Indexer {
                     &block.hash,
                     i as u32,
                     tx.version,
+                    lane_id,
+                    timestamp,
                 );
             }
 
@@ -823,31 +918,39 @@ impl Indexer {
         }
 
         // After TXes as it refers to those (for now)
-        for (tx_hash, contract, _) in block.registered_contracts {
+        for (tx_hash, contract, _) in block.registered_contracts.values() {
             let verifier = &contract.verifier.0;
             let program_id = &contract.program_id.0;
             let state_commitment = &contract.state_commitment.0;
             let contract_name = &contract.contract_name.0;
             let tx_parent_dp_hash: DataProposalHashDb = block
                 .dp_parent_hashes
-                .get(&tx_hash)
+                .get(tx_hash)
                 .context(format!(
                     "No parent data proposal hash present for registered contract tx {}",
                     tx_hash.0
                 ))?
                 .clone()
                 .into();
-            let tx_hash: &TxHashDb = &tx_hash.into();
+            let tx_hash: &TxHashDb = &tx_hash.clone().into();
+
+            // If this had previously been deleted, clear that.
+            self.handler_store
+                .deleted_contracts
+                .remove(&contract.contract_name);
 
             // Adding to Contract table
-            self.handler_store.contracts.push(TxContractStore {
-                tx_hash: tx_hash.clone(),
-                parent_data_proposal_hash: tx_parent_dp_hash.clone(),
-                verifier: verifier.clone(),
-                program_id: program_id.clone(),
-                state_commitment: state_commitment.clone(),
-                contract_name: contract_name.clone(),
-            });
+            self.handler_store.contracts.insert(
+                contract.contract_name.clone(),
+                TxContractStore {
+                    tx_hash: tx_hash.clone(),
+                    parent_data_proposal_hash: tx_parent_dp_hash.clone(),
+                    verifier: verifier.clone(),
+                    program_id: program_id.clone(),
+                    state_commitment: state_commitment.clone(),
+                    contract_name: contract_name.clone(),
+                },
+            );
 
             // Adding to ContractState table
             self.handler_store
@@ -857,6 +960,12 @@ impl Indexer {
                     block_hash: block.hash.clone(),
                     state_commitment: state_commitment.clone(),
                 });
+        }
+
+        for contract_name in block.deleted_contracts.keys() {
+            self.handler_store
+                .deleted_contracts
+                .insert(contract_name.clone());
         }
 
         // Handling updated contract state

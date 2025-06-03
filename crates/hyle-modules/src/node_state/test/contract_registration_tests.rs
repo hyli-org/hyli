@@ -299,8 +299,8 @@ async fn test_register_contract_and_delete_hyle() {
     assert_eq!(
         block
             .registered_contracts
-            .iter()
-            .map(|(_, rce, _)| rce.contract_name.0.clone())
+            .keys()
+            .map(|cn| cn.0.clone())
             .collect::<Vec<_>>(),
         vec!["c1", "c2.hyle", "sub.c2.hyle"]
     );
@@ -342,10 +342,10 @@ async fn test_register_contract_and_delete_hyle() {
     assert_eq!(
         block
             .deleted_contracts
-            .iter()
-            .map(|(_, dce)| dce.0.clone())
+            .keys()
+            .map(|dce| dce.0.clone())
             .collect::<Vec<_>>(),
-        vec!["c1", "sub.c2.hyle", "c2.hyle"]
+        vec!["c1", "c2.hyle", "sub.c2.hyle"]
     );
     assert_eq!(state.contracts.len(), 1);
 }
@@ -393,8 +393,8 @@ async fn test_hyle_sub_delete() {
     assert_eq!(
         block
             .deleted_contracts
-            .iter()
-            .map(|(_, dce)| dce.0.clone())
+            .keys()
+            .map(|dce| dce.0.clone())
             .collect::<Vec<_>>(),
         vec!["c2.hyle", "sub.c2.hyle"]
     );
