@@ -432,7 +432,7 @@ impl NodeState {
                         tx_context.timestamp.current_day_ms()
                     );
 
-                    tracing::debug!(
+                    tracing::trace!(
                         "Checking secp256k1 blob for hyle TLD delete action with signed data: {}",
                         data
                     );
