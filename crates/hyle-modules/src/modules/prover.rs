@@ -360,23 +360,20 @@ where
                 }
             });
 
-        let Some(prev_tx_hash) = prev_tx else {
-            tracing::debug!("Failed tx {} not found in tx_chain", failed_tx);
-            return Ok(());
-        };
-
         tracing::debug!(
             cn =% self.ctx.contract_name,
             tx_hash =% failed_tx,
             "Handling failed tx {}. Previous tx: {:?}, History: {:?}",
             failed_tx,
-            prev_tx_hash,
+            prev_tx,
             tx_history
         );
-        let prev_state = self.store.state_history.get(prev_tx_hash).cloned();
+
+        let prev_state =
+            prev_tx.and_then(|prev_tx_hash| self.store.state_history.get(prev_tx_hash).cloned());
 
         if let Some(contract) = prev_state {
-            debug!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "Reverting to previous state from tx {:?}", prev_tx_hash);
+            debug!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "Reverting to previous state from tx {:?}", prev_tx);
             self.store.contract = contract.clone();
         } else {
             warn!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "Reverting to default state. History: {tx_history:?}");
