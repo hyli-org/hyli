@@ -59,8 +59,6 @@ pub struct AutoProverCtx<Contract> {
     pub default_state: Contract,
     /// How many blocks should we buffer before generating proofs ?
     pub buffer_blocks: u32,
-    /// Maximum buffer size before generating proofs, priority over buffer_blocks
-    pub buffer_max_txs: usize,
     pub max_txs_per_proof: usize,
 }
 
@@ -240,12 +238,24 @@ where
             }
         }
 
-        if self.store.buffered_blobs.len() + blobs.len() > self.ctx.buffer_max_txs
-            || self.store.buffered_blocks_count >= self.ctx.buffer_blocks
-        {
+        if self.store.buffered_blobs.len() + blobs.len() >= self.ctx.max_txs_per_proof {
             debug!(
                 cn =% self.ctx.contract_name,
                 "Buffer is full, processing {} blobs",
+                self.store.buffered_blobs.len() + blobs.len()
+            );
+            let remaining_blobs =
+                blobs.split_off(self.ctx.max_txs_per_proof - self.store.buffered_blobs.len());
+
+            let mut buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
+            self.store.buffered_blocks_count = 0;
+            buffered.extend(blobs);
+            self.prove_supported_blob(buffered)?;
+            self.store.buffered_blobs = remaining_blobs;
+        } else if self.store.buffered_blocks_count >= self.ctx.buffer_blocks {
+            debug!(
+                cn =% self.ctx.contract_name,
+                "Buffered blocks achieved, processing {} blobs",
                 self.store.buffered_blobs.len() + blobs.len()
             );
             let mut buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
@@ -260,7 +270,7 @@ where
                 cn =% self.ctx.contract_name,
                 "Buffered {} / {} blobs, {} / {} blocks.",
                 self.store.buffered_blobs.len(),
-                self.ctx.buffer_max_txs,
+                self.ctx.max_txs_per_proof,
                 self.store.buffered_blocks_count,
                 self.ctx.buffer_blocks
             );
@@ -720,13 +730,12 @@ mod tests {
     async fn new_simple_auto_prover(
         api_client: Arc<NodeApiMockClient>,
     ) -> Result<AutoProver<TestContract>> {
-        new_buffering_auto_prover(api_client, 0, 0, 100).await
+        new_buffering_auto_prover(api_client, 0, 100).await
     }
 
     async fn new_buffering_auto_prover(
         api_client: Arc<NodeApiMockClient>,
         buffer_blocks: u32,
-        buffer_max_txs: usize,
         max_txs_per_proof: usize,
     ) -> Result<AutoProver<TestContract>> {
         let temp_dir = tempdir()?;
@@ -738,7 +747,6 @@ mod tests {
             node: api_client,
             default_state: TestContract::default(),
             buffer_blocks,
-            buffer_max_txs,
             max_txs_per_proof,
         });
 
@@ -1425,7 +1433,7 @@ mod tests {
 
         let blocks = vec![block_1, block_2, block_3, block_4];
 
-        let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 2, 100, 100).await?;
+        let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 2, 100).await?;
 
         for block in blocks.clone() {
             auto_prover.handle_processed_block(block).await?;
@@ -1461,7 +1469,7 @@ mod tests {
 
         let blocks = vec![block_1, block_2, block_3, block_4];
 
-        let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 100, 2, 100).await?;
+        let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 100, 3).await?;
 
         for block in blocks.clone() {
             auto_prover.handle_processed_block(block).await?;
@@ -1500,7 +1508,7 @@ mod tests {
 
         let blocks = vec![block_1, block_2, block_3, block_4];
 
-        let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 100, 3, 2).await?;
+        let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 100, 2).await?;
 
         for block in blocks.clone() {
             auto_prover.handle_processed_block(block).await?;
