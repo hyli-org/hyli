@@ -58,7 +58,7 @@ solo = true
 # All genesis node requires the same config here
 # Keys are all nodes “id”, and values are the stake amount for each one of them.
 stakers = {}
-hyli_seq256k1_secret = "secret_hyli"
+hyli_seq256k1_secret = "hyli_secret"
 
 [websocket]
 enabled = true
