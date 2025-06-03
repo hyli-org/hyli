@@ -417,7 +417,7 @@ impl Indexer {
                 .context("Inserting contract states")?;
         }
 
-        // Then delete contracts that were deleted
+        // Then delete contracts that were deleted (slightly inefficient but we don't expect many deletions)
         for contract_name in self.handler_store.deleted_contracts.drain() {
             sqlx::query("DELETE FROM contracts WHERE contract_name = $1")
                 .bind(contract_name.0)

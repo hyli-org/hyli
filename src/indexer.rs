@@ -975,6 +975,8 @@ mod test {
                 new_delete_tx(ContractName::new("hyle"), ContractName::new("b")).into(),
                 new_delete_tx(ContractName::new("hyle"), ContractName::new("a")).into(),
                 new_register_tx(ContractName::new("a"), StateCommitment(vec![])).into(),
+                new_register_tx(ContractName::new("d"), StateCommitment(vec![])).into(),
+                new_delete_tx(ContractName::new("hyle"), ContractName::new("d")).into(),
             ],
         );
 
