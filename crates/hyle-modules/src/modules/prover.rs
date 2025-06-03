@@ -892,6 +892,51 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
+    async fn test_auto_prover_tx_middle_failed() -> Result<()> {
+        let (mut node_state, mut auto_prover, api_client) = setup().await?;
+
+        tracing::info!("✨ Block 1");
+        let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
+
+        auto_prover.handle_processed_block(block_1).await?;
+
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 1);
+
+        tracing::info!("✨ Block 2");
+        node_state.craft_block_and_handle(2, proofs);
+
+        assert_eq!(read_contract_state(&node_state).value, 1);
+
+        tracing::info!("✨ Block 3");
+        let block_3 = node_state.craft_block_and_handle(
+            3,
+            vec![
+                new_failing_blob_tx(3),
+                new_blob_tx(3),
+                new_failing_blob_tx(3),
+                new_failing_blob_tx(3),
+                new_failing_blob_tx(3),
+                new_failing_blob_tx(3),
+                new_blob_tx(3),
+                new_failing_blob_tx(3),
+                new_failing_blob_tx(3),
+            ],
+        );
+        auto_prover.handle_processed_block(block_3).await?;
+
+        let proofs_3 = get_txs(&api_client).await;
+        assert_eq!(proofs_3.len(), 1);
+
+        tracing::info!("✨ Block 4");
+        node_state.craft_block_and_handle(4, proofs_3);
+
+        assert_eq!(read_contract_state(&node_state).value, 1 + 3 + 3);
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
     async fn test_auto_prover_lot_tx_failed() -> Result<()> {
         let (mut node_state, mut auto_prover, api_client) = setup().await?;
 
