@@ -239,13 +239,16 @@ where
         }
 
         if self.store.buffered_blobs.len() + blobs.len() >= self.ctx.max_txs_per_proof {
+            let remaining_count =
+                (self.store.buffered_blobs.len() + blobs.len()) % self.ctx.max_txs_per_proof;
             debug!(
                 cn =% self.ctx.contract_name,
-                "Buffer is full, processing {} blobs",
-                self.store.buffered_blobs.len() + blobs.len()
+                "Buffer is full, processing {} blobs. Max: {}, remaining blobs: {}",
+                self.store.buffered_blobs.len() + blobs.len(),
+                self.ctx.max_txs_per_proof,
+                remaining_count
             );
-            let remaining_blobs =
-                blobs.split_off(self.ctx.max_txs_per_proof - self.store.buffered_blobs.len());
+            let remaining_blobs = blobs.split_off(blobs.len() - remaining_count);
 
             let mut buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
             self.store.buffered_blocks_count = 0;
@@ -1513,6 +1516,35 @@ mod tests {
         for block in blocks.clone() {
             auto_prover.handle_processed_block(block).await?;
         }
+
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 2);
+        tracing::info!("✨ Block 5");
+        let block_5 = node_state.craft_block_and_handle(5, proofs);
+        auto_prover.handle_processed_block(block_5).await?;
+
+        assert_eq!(read_contract_state(&node_state).value, 1 + 2 + 3 + 4);
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_auto_prover_buffer_one_block_max_txs_per_proof() -> Result<()> {
+        let (mut node_state, _, api_client) = setup().await?;
+
+        let block = node_state.craft_block_and_handle(
+            1,
+            vec![
+                new_blob_tx(1),
+                new_blob_tx(2),
+                new_blob_tx(3),
+                new_blob_tx(4),
+            ],
+        );
+
+        let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 100, 2).await?;
+
+        auto_prover.handle_processed_block(block).await?;
 
         let proofs = get_txs(&api_client).await;
         assert_eq!(proofs.len(), 2);
