@@ -20,7 +20,7 @@ strum_macros = { version = "0.27.1", optional = true }
 derive_more = { version = "2.0.1", features = ["display"] }
 base64 = { version = "0.22.1", optional = true }
 anyhow = { version = "1.0.98", optional = true }
-sqlx = { version = "0.8.4", features = ["postgres"], optional = true }
+sqlx = { version = "0.8.6", features = ["postgres"], optional = true }
 serde_with = { version = "3.12.0", features = ["hex"], optional = true }
 serde_json = { version = "1", optional = true }
 utoipa = { version = "5.3.1", optional = true }
