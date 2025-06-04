@@ -59,8 +59,7 @@ pub struct AutoProverCtx<Contract> {
     pub default_state: Contract,
     /// How many blocks should we buffer before generating proofs ?
     pub buffer_blocks: u32,
-    /// Maximum buffer size before generating proofs, priority over buffer_blocks
-    pub buffer_max_txs: usize,
+    pub max_txs_per_proof: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -239,12 +238,27 @@ where
             }
         }
 
-        if self.store.buffered_blobs.len() + blobs.len() > self.ctx.buffer_max_txs
-            || self.store.buffered_blocks_count >= self.ctx.buffer_blocks
-        {
+        if self.store.buffered_blobs.len() + blobs.len() >= self.ctx.max_txs_per_proof {
+            let remaining_count =
+                (self.store.buffered_blobs.len() + blobs.len()) % self.ctx.max_txs_per_proof;
             debug!(
                 cn =% self.ctx.contract_name,
-                "Buffer is full, processing {} blobs",
+                "Buffer is full, processing {} blobs. Max: {}, remaining blobs: {}",
+                self.store.buffered_blobs.len() + blobs.len(),
+                self.ctx.max_txs_per_proof,
+                remaining_count
+            );
+            let remaining_blobs = blobs.split_off(blobs.len() - remaining_count);
+
+            let mut buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
+            self.store.buffered_blocks_count = 0;
+            buffered.extend(blobs);
+            self.prove_supported_blob(buffered)?;
+            self.store.buffered_blobs = remaining_blobs;
+        } else if self.store.buffered_blocks_count >= self.ctx.buffer_blocks {
+            debug!(
+                cn =% self.ctx.contract_name,
+                "Buffered blocks achieved, processing {} blobs",
                 self.store.buffered_blobs.len() + blobs.len()
             );
             let mut buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
@@ -259,7 +273,7 @@ where
                 cn =% self.ctx.contract_name,
                 "Buffered {} / {} blobs, {} / {} blocks.",
                 self.store.buffered_blobs.len(),
-                self.ctx.buffer_max_txs,
+                self.ctx.max_txs_per_proof,
                 self.store.buffered_blocks_count,
                 self.ctx.buffer_blocks
             );
@@ -398,8 +412,24 @@ where
 
     fn prove_supported_blob(
         &mut self,
-        blobs: Vec<(BlobIndex, BlobTransaction, TxContext)>,
+        mut blobs: Vec<(BlobIndex, BlobTransaction, TxContext)>,
     ) -> Result<()> {
+        let remaining_blobs = if blobs.len() > self.ctx.max_txs_per_proof {
+            let remaining_blobs = blobs.split_off(self.ctx.max_txs_per_proof);
+            info!(
+                cn =% self.ctx.contract_name,
+                "Too many blobs to prove in one go: {} / {}. Splitting into multiple proofs. ({} remaining)",
+                blobs.len() + remaining_blobs.len(),
+                self.ctx.max_txs_per_proof,
+                remaining_blobs.len()
+            );
+            remaining_blobs
+        } else {
+            vec![]
+        };
+
+        let blobs = blobs; // remove mut
+
         if blobs.is_empty() {
             return Ok(());
         }
@@ -603,6 +633,7 @@ where
                 };
             }
         });
+        self.prove_supported_blob(remaining_blobs)?;
         Ok(())
     }
 }
@@ -702,13 +733,13 @@ mod tests {
     async fn new_simple_auto_prover(
         api_client: Arc<NodeApiMockClient>,
     ) -> Result<AutoProver<TestContract>> {
-        new_buffering_auto_prover(api_client, 0, 0).await
+        new_buffering_auto_prover(api_client, 0, 100).await
     }
 
     async fn new_buffering_auto_prover(
         api_client: Arc<NodeApiMockClient>,
         buffer_blocks: u32,
-        buffer_max_txs: usize,
+        max_txs_per_proof: usize,
     ) -> Result<AutoProver<TestContract>> {
         let temp_dir = tempdir()?;
         let data_dir = temp_dir.path().to_path_buf();
@@ -719,7 +750,7 @@ mod tests {
             node: api_client,
             default_state: TestContract::default(),
             buffer_blocks,
-            buffer_max_txs,
+            max_txs_per_proof,
         });
 
         let bus = SharedMessageBus::new(BusMetrics::global("default".to_string()));
@@ -1441,7 +1472,7 @@ mod tests {
 
         let blocks = vec![block_1, block_2, block_3, block_4];
 
-        let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 100, 2).await?;
+        let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 100, 3).await?;
 
         for block in blocks.clone() {
             auto_prover.handle_processed_block(block).await?;
@@ -1465,6 +1496,63 @@ mod tests {
             read_contract_state(&node_state).value,
             1 + 2 + 3 + 4 + 6 + 6
         );
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_auto_prover_buffer_max_txs_per_proof() -> Result<()> {
+        let (mut node_state, _, api_client) = setup().await?;
+
+        let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
+        let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
+        let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
+        let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]);
+
+        let blocks = vec![block_1, block_2, block_3, block_4];
+
+        let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 100, 2).await?;
+
+        for block in blocks.clone() {
+            auto_prover.handle_processed_block(block).await?;
+        }
+
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 2);
+        tracing::info!("✨ Block 5");
+        let block_5 = node_state.craft_block_and_handle(5, proofs);
+        auto_prover.handle_processed_block(block_5).await?;
+
+        assert_eq!(read_contract_state(&node_state).value, 1 + 2 + 3 + 4);
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_auto_prover_buffer_one_block_max_txs_per_proof() -> Result<()> {
+        let (mut node_state, _, api_client) = setup().await?;
+
+        let block = node_state.craft_block_and_handle(
+            1,
+            vec![
+                new_blob_tx(1),
+                new_blob_tx(2),
+                new_blob_tx(3),
+                new_blob_tx(4),
+            ],
+        );
+
+        let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 100, 2).await?;
+
+        auto_prover.handle_processed_block(block).await?;
+
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 2);
+        tracing::info!("✨ Block 5");
+        let block_5 = node_state.craft_block_and_handle(5, proofs);
+        auto_prover.handle_processed_block(block_5).await?;
+
+        assert_eq!(read_contract_state(&node_state).value, 1 + 2 + 3 + 4);
 
         Ok(())
     }
