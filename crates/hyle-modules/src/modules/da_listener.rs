@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::Result;
-use sdk::{BlockHeight, Hashed, MempoolStatusEvent, SignedBlock};
+use sdk::{BlockHeight, Hashed, MempoolStatusEvent, NodeStateBlock, SignedBlock};
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -16,6 +16,7 @@ use crate::{log_error, module_handle_messages};
 module_bus_client! {
 #[derive(Debug)]
 struct DAListenerBusClient {
+    sender(NodeStateBlock),
     sender(NodeStateEvent),
     sender(MempoolStatusEvent),
 }
@@ -105,7 +106,7 @@ impl DAListener {
             );
             let processed_block = self.node_state.handle_signed_block(&block)?;
             self.bus
-                .send(NodeStateEvent::NewBlock(Box::new(processed_block)))?;
+                .send(NodeStateBlock(std::sync::Arc::new(processed_block)))?;
             return Ok(());
         }
 
@@ -136,7 +137,7 @@ impl DAListener {
                 let processed_block = self.node_state.handle_signed_block(&block)?;
                 debug!("📦 Handled block outputs: {:?}", processed_block);
                 self.bus
-                    .send(NodeStateEvent::NewBlock(Box::new(processed_block)))?;
+                    .send(NodeStateBlock(std::sync::Arc::new(processed_block)))?;
 
                 // Process any buffered blocks that are now in sequence
                 self.process_buffered_blocks().await?;
@@ -172,7 +173,7 @@ impl DAListener {
                 let processed_block = self.node_state.handle_signed_block(&block)?;
                 debug!("📦 Handled buffered block outputs: {:?}", processed_block);
                 self.bus
-                    .send(NodeStateEvent::NewBlock(Box::new(processed_block)))?;
+                    .send(NodeStateBlock(std::sync::Arc::new(processed_block)))?;
             } else {
                 error!(
                     "📦 Buffered block is not in sequence: {} {}",

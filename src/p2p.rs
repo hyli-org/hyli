@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::{bail, Context, Error, Result};
 use hyle_crypto::{BlstCrypto, SharedBlstCrypto};
-use hyle_model::{BlockHeight, NodeStateEvent, ValidatorPublicKey};
+use hyle_model::{BlockHeight, NodeStateBlock, ValidatorPublicKey};
 use hyle_modules::{
     bus::SharedMessageBus,
     log_warn, module_handle_messages,
@@ -39,7 +39,7 @@ struct P2PBusClient {
     sender(MsgWithHeader<ConsensusNetMessage>),
     sender(PeerEvent),
     receiver(P2PCommand),
-    receiver(NodeStateEvent),
+    receiver(NodeStateBlock),
     receiver(OutboundMessage),
 }
 }
@@ -109,9 +109,9 @@ impl P2P {
 
         module_handle_messages! {
             on_bus self.bus,
-            listen<NodeStateEvent> NodeStateEvent::NewBlock(b) => {
-                if b.block_height.0 > p2p_server.current_height {
-                    p2p_server.current_height = b.block_height.0;
+            listen<NodeStateBlock> b => {
+                if b.0.block_height.0 > p2p_server.current_height {
+                    p2p_server.current_height = b.0.block_height.0;
                 }
             }
             listen<P2PCommand> cmd => {

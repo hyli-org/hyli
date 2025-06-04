@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sdk::{
     api::{APIBlock, APITransaction, TransactionTypeDb},
-    NodeStateEvent, TransactionData,
+    NodeStateBlock, NodeStateEvent, TransactionData,
 };
 use serde::Serialize;
 
@@ -13,6 +13,7 @@ use crate::{module_bus_client, module_handle_messages, modules::Module};
 
 #[derive(Debug, Clone, Serialize)]
 pub enum WebsocketOutEvent {
+    NodeStateBlock(NodeStateBlock),
     NodeStateEvent(NodeStateEvent),
     NewBlock(APIBlock),
     NewTx(APITransaction),
@@ -22,6 +23,7 @@ module_bus_client! {
 #[derive(Debug)]
 pub struct NodeWebsocketConnectorBusClient {
     sender(WsTopicMessage<WebsocketOutEvent>),
+    receiver(NodeStateBlock),
     receiver(NodeStateEvent),
 }
 }
@@ -48,7 +50,7 @@ impl Module for NodeWebsocketConnector {
     async fn run(&mut self) -> Result<()> {
         module_handle_messages! {
             on_bus self.bus,
-            listen<NodeStateEvent> msg => {
+            listen<NodeStateBlock> msg => {
                 self.handle_node_state_event(msg)?;
             },
         };
@@ -57,7 +59,7 @@ impl Module for NodeWebsocketConnector {
 }
 
 impl NodeWebsocketConnector {
-    fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
+    fn handle_node_state_event(&mut self, event: NodeStateBlock) -> Result<()> {
         self.handle("node_state", &event, Self::handle_node_state);
         self.handle("new_block", &event, Self::handle_new_block);
         self.handle("new_tx", &event, Self::handle_new_tx);
@@ -67,8 +69,8 @@ impl NodeWebsocketConnector {
     fn handle(
         &mut self,
         topic: &str,
-        event: &NodeStateEvent,
-        handler: fn(NodeStateEvent) -> Vec<WebsocketOutEvent>,
+        event: &NodeStateBlock,
+        handler: fn(NodeStateBlock) -> Vec<WebsocketOutEvent>,
     ) {
         if self.events.contains(&topic.to_string()) {
             for e in handler(event.clone()) {
@@ -77,22 +79,16 @@ impl NodeWebsocketConnector {
         }
     }
 
-    fn handle_node_state(event: NodeStateEvent) -> Vec<WebsocketOutEvent> {
-        vec![WebsocketOutEvent::NodeStateEvent(event)]
+    fn handle_node_state(event: NodeStateBlock) -> Vec<WebsocketOutEvent> {
+        vec![WebsocketOutEvent::NodeStateBlock(event)]
     }
 
-    fn handle_new_block(event: NodeStateEvent) -> Vec<WebsocketOutEvent> {
-        let block = match event {
-            NodeStateEvent::NewBlock(block) => block,
-            NodeStateEvent::DataProposalsFromBlock { .. } => {
-                // Only emit NewBlock events for actual blocks
-                return vec![];
-            }
-        };
+    fn handle_new_block(event: NodeStateBlock) -> Vec<WebsocketOutEvent> {
+        let block = &event.0;
 
         let api_block = APIBlock {
             hash: block.hash.clone(),
-            parent_hash: block.parent_hash,
+            parent_hash: block.parent_hash.clone(),
             height: block.block_height.0,
             timestamp: block.block_timestamp.0 as i64,
             total_txs: block.txs.len() as u64,
@@ -101,14 +97,8 @@ impl NodeWebsocketConnector {
         vec![WebsocketOutEvent::NewBlock(api_block)]
     }
 
-    fn handle_new_tx(event: NodeStateEvent) -> Vec<WebsocketOutEvent> {
-        let block = match event {
-            NodeStateEvent::NewBlock(block) => block,
-            NodeStateEvent::DataProposalsFromBlock { .. } => {
-                // Only emit transaction events for actual blocks
-                return vec![];
-            }
-        };
+    fn handle_new_tx(event: NodeStateBlock) -> Vec<WebsocketOutEvent> {
+        let block = &event.0;
         let mut txs = Vec::new();
 
         for (idx, (id, tx)) in block.txs.iter().enumerate() {

@@ -128,9 +128,26 @@ impl std::fmt::Debug for IndexerHandlerStore {
 }
 
 impl Indexer {
+    pub async fn handle_processed_block(&mut self, block: Arc<Block>) -> Result<(), Error> {
+        self.handle_processed_block_internal(block)?;
+        
+        if self.handler_store.blocks.len() >= 1000 {
+            // If we have more than 1000 blocks, we dump the store to the database
+            self.dump_store_to_db().await?;
+        }
+        if let Some(block) = self.handler_store.blocks.last() {
+            // if last block is newer than 5sec dump store to db
+            let now = TimestampMsClock::now();
+            if block.block_timestamp > TimestampMs(now.0 - 5000) {
+                self.dump_store_to_db().await?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<(), Error> {
         match event {
-            NodeStateEvent::NewBlock(block) => self.handle_processed_block(*block)?,
             NodeStateEvent::DataProposalsFromBlock {
                 block_hash,
                 block_height,
@@ -145,18 +162,6 @@ impl Indexer {
                 )?;
             }
         };
-
-        if self.handler_store.blocks.len() >= 1000 {
-            // If we have more than 1000 blocks, we dump the store to the database
-            self.dump_store_to_db().await?;
-        }
-        if let Some(block) = self.handler_store.blocks.last() {
-            // if last block is newer than 5sec dump store to db
-            let now = TimestampMsClock::now();
-            if block.block_timestamp > TimestampMs(now.0 - 5000) {
-                self.dump_store_to_db().await?;
-            }
-        }
 
         Ok(())
     }
@@ -768,7 +773,7 @@ impl Indexer {
         Ok(())
     }
 
-    pub(crate) fn handle_processed_block(&mut self, block: Block) -> Result<(), Error> {
+    fn handle_processed_block_internal(&mut self, block: Arc<Block>) -> Result<(), Error> {
         if block.block_height.0 % 1000 == 0 {
             // Log every 1000th block
             info!("Indexing block at height {:?}", block.block_height);
@@ -776,9 +781,7 @@ impl Indexer {
             trace!("Indexing block at height {:?}", block.block_height);
         }
 
-        let arc_block = Arc::new(block.clone());
-
-        self.handler_store.blocks.push(arc_block.clone());
+        self.handler_store.blocks.push(block.clone());
 
         let block_height = i64::try_from(block.block_height.0)
             .map_err(|_| anyhow::anyhow!("Block height is too large to fit into an i64"))?;
@@ -792,7 +795,7 @@ impl Indexer {
             );
             self.handler_store
                 .block_txs
-                .insert(tx_id.clone(), (i, arc_block.clone(), tx.clone()));
+                .insert(tx_id.clone(), (i, block.clone(), tx.clone()));
 
             let tx_hash: TxHashDb = tx_id.1.clone().into();
             let parent_data_proposal_hash: DataProposalHashDb = tx_id.0.clone().into();
@@ -823,8 +826,8 @@ impl Indexer {
             i += 1;
         }
 
-        for (i, (tx_hash, events)) in (0..).zip(block.transactions_events.into_iter()) {
-            let tx_hash_db: &TxHashDb = &tx_hash.clone().into();
+        for (i, (tx_hash, events)) in (0..).zip(block.transactions_events.iter()) {
+            let tx_hash_db: TxHashDb = tx_hash.clone().into();
             let parent_data_proposal_hash: DataProposalHashDb = block
                 .dp_parent_hashes
                 .get(&tx_hash)
@@ -848,12 +851,12 @@ impl Indexer {
         }
 
         // Handling new stakers
-        for _staker in block.staking_actions {
+        for _staker in &block.staking_actions {
             // TODO: add new table with stakers at a given height
         }
 
         // Handling settled blob transactions
-        for settled_blob_tx_hash in block.successful_txs {
+        for settled_blob_tx_hash in &block.successful_txs {
             let dp_hash_db: DataProposalHashDb = block
                 .dp_parent_hashes
                 .get(&settled_blob_tx_hash)
@@ -863,7 +866,7 @@ impl Indexer {
                 ))?
                 .clone()
                 .into();
-            let tx_hash: TxHashDb = settled_blob_tx_hash.into();
+            let tx_hash: TxHashDb = settled_blob_tx_hash.clone().into();
             self.handler_store.sql_updates.push(
                 sqlx::query("UPDATE transactions SET transaction_status = $1 WHERE tx_hash = $2 AND parent_dp_hash = $3")
                     .bind(TransactionStatusDb::Success)
@@ -872,7 +875,7 @@ impl Indexer {
             );
         }
 
-        for failed_blob_tx_hash in block.failed_txs {
+        for failed_blob_tx_hash in &block.failed_txs {
             let dp_hash_db: DataProposalHashDb = block
                 .dp_parent_hashes
                 .get(&failed_blob_tx_hash)
@@ -882,7 +885,7 @@ impl Indexer {
                 ))?
                 .clone()
                 .into();
-            let tx_hash: TxHashDb = failed_blob_tx_hash.into();
+            let tx_hash: TxHashDb = failed_blob_tx_hash.clone().into();
             self.handler_store.sql_updates.push(
                 sqlx::query("UPDATE transactions SET transaction_status = $1 WHERE tx_hash = $2 AND parent_dp_hash = $3")
                     .bind(TransactionStatusDb::Failure)
@@ -892,7 +895,7 @@ impl Indexer {
         }
 
         // Handling timed out blob transactions
-        for timed_out_tx_hash in block.timed_out_txs {
+        for timed_out_tx_hash in &block.timed_out_txs {
             let dp_hash_db: DataProposalHashDb = block
                 .dp_parent_hashes
                 .get(&timed_out_tx_hash)
@@ -902,7 +905,7 @@ impl Indexer {
                 ))?
                 .clone()
                 .into();
-            let tx_hash: TxHashDb = timed_out_tx_hash.into();
+            let tx_hash: TxHashDb = timed_out_tx_hash.clone().into();
             self.handler_store.sql_updates.push(
                 sqlx::query("UPDATE transactions SET transaction_status = $1 WHERE tx_hash = $2 AND parent_dp_hash = $3")
                     .bind(TransactionStatusDb::TimedOut)
@@ -911,7 +914,7 @@ impl Indexer {
             );
         }
 
-        for handled_blob_proof_output in block.blob_proof_outputs {
+        for handled_blob_proof_output in &block.blob_proof_outputs {
             let proof_dp_hash: DataProposalHashDb = block
                 .dp_parent_hashes
                 .get(&handled_blob_proof_output.proof_tx_hash)
@@ -930,8 +933,8 @@ impl Indexer {
                 ))?
                 .clone()
                 .into();
-            let proof_tx_hash: &TxHashDb = &handled_blob_proof_output.proof_tx_hash.into();
-            let blob_tx_hash: &TxHashDb = &handled_blob_proof_output.blob_tx_hash.into();
+            let proof_tx_hash: TxHashDb = handled_blob_proof_output.proof_tx_hash.clone().into();
+            let blob_tx_hash: TxHashDb = handled_blob_proof_output.blob_tx_hash.clone().into();
             let blob_index = i32::try_from(handled_blob_proof_output.blob_index.0)
                 .map_err(|_| anyhow::anyhow!("Blob index is too large to fit into an i32"))?;
             let blob_proof_output_index =
@@ -957,7 +960,7 @@ impl Indexer {
         }
 
         // Handling verified blob (! must come after blob proof output, as it updates that)
-        for (blob_tx_hash, blob_index, blob_proof_output_index) in block.verified_blobs {
+        for (blob_tx_hash, blob_index, blob_proof_output_index) in &block.verified_blobs {
             let blob_tx_parent_dp_hash: DataProposalHashDb = block
                 .dp_parent_hashes
                 .get(&blob_tx_hash)
@@ -967,7 +970,7 @@ impl Indexer {
                 ))?
                 .clone()
                 .into();
-            let blob_tx_hash: TxHashDb = blob_tx_hash.into();
+            let blob_tx_hash: TxHashDb = blob_tx_hash.clone().into();
             let blob_index = i32::try_from(blob_index.0)
                 .map_err(|_| anyhow::anyhow!("Blob index is too large to fit into an i32"))?;
 
@@ -980,7 +983,7 @@ impl Indexer {
 
             if let Some(blob_proof_output_index) = blob_proof_output_index {
                 let blob_proof_output_index =
-                    i32::try_from(blob_proof_output_index).map_err(|_| {
+                    i32::try_from(*blob_proof_output_index).map_err(|_| {
                         anyhow::anyhow!("Blob proof output index is too large to fit into an i32")
                     })?;
 
@@ -1046,9 +1049,9 @@ impl Indexer {
         }
 
         // Handling updated contract state
-        for (contract_name, state_commitment) in block.updated_states {
-            let contract_name = contract_name.0;
-            let state_commitment = state_commitment.0;
+        for (contract_name, state_commitment) in &block.updated_states {
+            let contract_name = &contract_name.0;
+            let state_commitment = &state_commitment.0;
             self.handler_store.sql_updates.push(
                 sqlx::query(
                     "UPDATE contract_state SET state_commitment = $1 WHERE contract_name = $2 AND block_hash = $3",
@@ -1062,8 +1065,8 @@ impl Indexer {
                 sqlx::query::<Postgres>(
                     "UPDATE contracts SET state_commitment = $1 WHERE contract_name = $2",
                 )
-                .bind(state_commitment)
-                .bind(contract_name),
+                .bind(state_commitment.clone())
+                .bind(contract_name.clone()),
             );
         }
 

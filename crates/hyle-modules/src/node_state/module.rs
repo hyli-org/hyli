@@ -22,7 +22,7 @@ pub struct NodeStateModule {
     data_directory: PathBuf,
 }
 
-pub use sdk::NodeStateEvent;
+pub use sdk::{NodeStateBlock, NodeStateEvent};
 
 #[derive(Clone)]
 pub struct QueryBlockHeight {}
@@ -36,6 +36,7 @@ pub struct QueryUnsettledTx(pub TxHash);
 module_bus_client! {
 #[derive(Debug)]
 pub struct NodeStateBusClient {
+    sender(NodeStateBlock),
     sender(NodeStateEvent),
     receiver(DataEvent),
     receiver(Query<ContractName, Contract>),
@@ -143,7 +144,7 @@ impl Module for NodeStateModule {
                         
                         _ = log_error!(self
                             .bus
-                            .send(NodeStateEvent::NewBlock(Box::new(node_state_block))), "Sending DataEvent while processing SignedBlock");
+                            .send(NodeStateBlock(std::sync::Arc::new(node_state_block))), "Sending NodeStateBlock while processing SignedBlock");
                     }
                 }
             }

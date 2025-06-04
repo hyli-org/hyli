@@ -11,7 +11,7 @@ use std::{any::TypeId, ops::Deref, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::debug;
 
-use crate::node_state::module::NodeStateEvent;
+use sdk::NodeStateBlock;
 
 use super::SharedBuildApiCtx;
 
@@ -25,7 +25,7 @@ module_bus_client! {
 #[derive(Debug)]
 struct CSIBusClient<E: Clone + Send + Sync + 'static> {
     sender(CSIBusEvent<E>),
-    receiver(NodeStateEvent),
+    receiver(NodeStateBlock),
 }
 }
 
@@ -122,7 +122,7 @@ where
     pub async fn start(&mut self) -> Result<(), Error> {
         module_handle_messages! {
             on_bus self.bus,
-            listen<NodeStateEvent> event => {
+            listen<NodeStateBlock> event => {
                 _ = log_error!(self.handle_node_state_event(event)
                     .await,
                     "Handling node state event")
@@ -140,15 +140,8 @@ where
 
     /// Note: Each copy of the contract state indexer does the same handle_block on each data event
     /// coming from node state.
-    async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<(), Error> {
-        let block = match event {
-            NodeStateEvent::NewBlock(block) => block,
-            NodeStateEvent::DataProposalsFromBlock { .. } => {
-                // Contract state indexer only cares about blocks, not data proposals
-                return Ok(());
-            }
-        };
-        self.handle_processed_block(*block).await?;
+    async fn handle_node_state_event(&mut self, event: NodeStateBlock) -> Result<(), Error> {
+        self.handle_processed_block((*event.0).clone()).await?;
 
         Ok(())
     }

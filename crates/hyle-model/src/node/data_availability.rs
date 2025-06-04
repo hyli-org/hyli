@@ -155,8 +155,10 @@ pub enum TransactionStateEvent {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
+pub struct NodeStateBlock(pub std::sync::Arc<Block>);
+
+#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
 pub enum NodeStateEvent {
-    NewBlock(Box<Block>),
     DataProposalsFromBlock {
         block_hash: ConsensusProposalHash,
         block_height: BlockHeight,

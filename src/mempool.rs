@@ -5,7 +5,7 @@ use crate::{
     consensus::{CommittedConsensusProposal, ConsensusEvent},
     genesis::GenesisEvent,
     model::*,
-    node_state::module::NodeStateEvent,
+    model::NodeStateBlock,
     p2p::network::{
         HeaderSignableData, HeaderSigner, IntoHeaderSignableData, MsgWithHeader, OutboundMessage,
     },
@@ -90,7 +90,7 @@ struct MempoolBusClient {
     receiver(TcpServerMessage),
     receiver(ConsensusEvent),
     receiver(GenesisEvent),
-    receiver(NodeStateEvent),
+    receiver(NodeStateBlock),
     receiver(Query<QueryNewCut, Cut>),
 }
 }
@@ -359,22 +359,16 @@ impl Mempool {
             listen<ConsensusEvent> cmd => {
                 let _ = log_error!(self.handle_consensus_event(cmd).await, "Handling ConsensusEvent in Mempool");
             }
-            listen<NodeStateEvent> cmd => {
-                let block = match cmd {
-                    NodeStateEvent::NewBlock(block) => block,
-                    NodeStateEvent::DataProposalsFromBlock { .. } => {
-                        // Mempool doesn't need to handle data proposal events
-                        continue;
-                    }
-                };
+            listen<NodeStateBlock> cmd => {
+                let block = &cmd.0;
                 // In this p2p mode we don't receive consensus events so we must update manually.
                 if self.conf.p2p.mode == P2pMode::LaneManager {
                     if let Err(e) = self.staking.process_block(block.as_ref()) {
                         tracing::error!("Error processing block in mempool: {:?}", e);
                     }
                 }
-                for (_, contract, _) in block.registered_contracts.into_values() {
-                    self.handle_contract_registration(contract);
+                for (_, contract, _) in block.registered_contracts.values() {
+                    self.handle_contract_registration(contract.clone());
                 }
             }
             command_response<QueryNewCut, Cut> staking => {

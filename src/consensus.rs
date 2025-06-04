@@ -2,7 +2,7 @@
 
 use crate::bus::BusClientSender;
 use crate::model::*;
-use crate::node_state::module::NodeStateEvent;
+use crate::model::NodeStateBlock;
 use crate::p2p::network::HeaderSigner;
 use crate::{
     bus::command_response::Query,
@@ -84,7 +84,7 @@ sender(P2PCommand),
 sender(Query<QueryNewCut, Cut>),
 receiver(ConsensusCommand),
 receiver(GenesisEvent),
-receiver(NodeStateEvent),
+receiver(NodeStateBlock),
 receiver(MsgWithHeader<ConsensusNetMessage>),
 receiver(Query<QueryConsensusInfo, ConsensusInfo>),
 receiver(Query<QueryConsensusStakingState, Staking>),
@@ -605,42 +605,33 @@ impl Consensus {
         Ok(())
     }
 
-    async fn handle_node_state_event(&mut self, msg: NodeStateEvent) -> Result<()> {
-        match msg {
-            NodeStateEvent::NewBlock(block) => {
-                let block_total_tx = block.total_txs();
-                self.store
-                    .bft_round_state
-                    .staking
-                    .process_block(block.as_ref())
-                    .map_err(|e| anyhow!(e))?;
+    async fn handle_node_state_event(&mut self, msg: NodeStateBlock) -> Result<()> {
+        let block = msg.0;
+        let block_total_tx = block.total_txs();
+        self.store
+            .bft_round_state
+            .staking
+            .process_block(block.as_ref())
+            .map_err(|e| anyhow!(e))?;
 
-                if let StateTag::Joining = self.bft_round_state.state_tag {
-                    if self.store.bft_round_state.joining.staking_updated_to < block.block_height.0
-                    {
-                        info!(
-                            "🚪 Processed block {} with {} txs",
-                            block.block_height.0, block_total_tx
-                        );
-                        self.store.bft_round_state.joining.staking_updated_to =
-                            block.block_height.0;
-                        self.store.bft_round_state.slot = block.block_height.0 + 1;
-                        self.store.bft_round_state.view = 0;
-                        self.store.bft_round_state.parent_hash = block.hash.clone();
-                        // Some of our internal logic relies on BFT slot + 1 == cp slot to mean we have committed, so do that.
-                        self.store.bft_round_state.current_proposal = ConsensusProposal {
-                            slot: block.block_height.0,
-                            ..Default::default()
-                        }
-                    }
+        if let StateTag::Joining = self.bft_round_state.state_tag {
+            if self.store.bft_round_state.joining.staking_updated_to < block.block_height.0 {
+                info!(
+                    "🚪 Processed block {} with {} txs",
+                    block.block_height.0, block_total_tx
+                );
+                self.store.bft_round_state.joining.staking_updated_to = block.block_height.0;
+                self.store.bft_round_state.slot = block.block_height.0 + 1;
+                self.store.bft_round_state.view = 0;
+                self.store.bft_round_state.parent_hash = block.hash.clone();
+                // Some of our internal logic relies on BFT slot + 1 == cp slot to mean we have committed, so do that.
+                self.store.bft_round_state.current_proposal = ConsensusProposal {
+                    slot: block.block_height.0,
+                    ..Default::default()
                 }
-                Ok(())
-            }
-            NodeStateEvent::DataProposalsFromBlock { .. } => {
-                // Consensus doesn't need to handle data proposal events
-                Ok(())
             }
         }
+        Ok(())
     }
 
     async fn handle_command(&mut self, msg: ConsensusCommand) -> Result<()> {
@@ -694,14 +685,8 @@ impl Consensus {
                         // Wait until we have processed the genesis block to update our Staking.
                         module_handle_messages! {
                             on_bus self.bus,
-                            listen<NodeStateEvent> event => {
-                                let block = match &event {
-                                    NodeStateEvent::NewBlock(block) => block,
-                                    NodeStateEvent::DataProposalsFromBlock { .. } => {
-                                        // Skip data proposal events during genesis
-                                        continue;
-                                    }
-                                };
+                            listen<NodeStateBlock> event => {
+                                let block = &event.0;
                                 if block.block_height.0 != 0 {
                                     bail!("Non-genesis block received during consensus genesis");
                                 }
@@ -781,7 +766,7 @@ impl Consensus {
 
         module_handle_messages! {
             on_bus self.bus,
-            listen<NodeStateEvent> event => {
+            listen<NodeStateBlock> event => {
                 let _ = log_error!(self.handle_node_state_event(event).await, "Error while handling data event");
             }
             listen<ConsensusCommand> cmd => {

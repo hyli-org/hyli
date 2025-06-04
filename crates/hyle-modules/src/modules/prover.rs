@@ -8,7 +8,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::rest_client::NodeApiClient;
 use client_sdk::{helpers::ClientSdkProver, transaction_builder::TxExecutorHandler};
 use sdk::{
-    BlobIndex, BlobTransaction, Block, BlockHeight, Calldata, ContractName, Hashed, NodeStateEvent,
+    BlobIndex, BlobTransaction, Block, BlockHeight, Calldata, ContractName, Hashed, NodeStateBlock,
     ProofTransaction, TransactionData, TxContext, TxHash, HYLE_TESTNET_CHAIN_ID,
 };
 use tracing::{debug, error, info, trace, warn};
@@ -47,7 +47,7 @@ module_bus_client! {
 #[derive(Debug)]
 pub struct AutoProverBusClient<Contract: Send + Sync + Clone + 'static> {
     sender(AutoProverEvent<Contract>),
-    receiver(NodeStateEvent),
+    receiver(NodeStateBlock),
 }
 }
 
@@ -135,7 +135,7 @@ where
     async fn run(&mut self) -> Result<()> {
         module_handle_messages! {
             on_bus self.bus,
-            listen<NodeStateEvent> event => {
+            listen<NodeStateBlock> event => {
                 _ = log_error!(self.handle_node_state_event(event).await, "handle note state event")
             }
         };
@@ -159,15 +159,8 @@ impl<Contract> AutoProver<Contract>
 where
     Contract: TxExecutorHandler + Debug + Clone + Send + Sync + 'static,
 {
-    async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
-        let block = match event {
-            NodeStateEvent::NewBlock(block) => block,
-            NodeStateEvent::DataProposalsFromBlock { .. } => {
-                // Prover only cares about blocks, not data proposals
-                return Ok(());
-            }
-        };
-        self.handle_processed_block(*block).await?;
+    async fn handle_node_state_event(&mut self, event: NodeStateBlock) -> Result<()> {
+        self.handle_processed_block((*event.0).clone()).await?;
 
         Ok(())
     }
