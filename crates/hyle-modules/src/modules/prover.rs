@@ -613,6 +613,15 @@ where
                                 info!("✅ Proved {len} txs, proof TX hash: {tx_hash}");
                             }
                             Err(e) => {
+                                if retries < MAX_RETRIES {
+                                    warn!(
+                                        "Failed to send proof, retrying ({}/{}). {e:#}",
+                                        retries, MAX_RETRIES
+                                    );
+                                    retries += 1;
+                                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                                    continue;
+                                }
                                 error!("Failed to send proof: {e:#}");
                                 break;
                             }
