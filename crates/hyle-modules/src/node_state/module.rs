@@ -106,8 +106,41 @@ impl Module for NodeStateModule {
             listen<DataEvent> block => {
                 match block {
                     DataEvent::OrderedSignedBlock(block) => {
+                        // Extract data proposal metadata before processing
+                        let mut data_proposals_metadata = Vec::new();
+                        
+                        for (lane_id, data_proposals) in &block.data_proposals {
+                            for dp in data_proposals {
+                                let dp_hash = dp.hashed();
+                                let tx_hashes: Vec<TxHash> = dp.txs.iter().map(|tx| tx.hashed()).collect();
+                                
+                                data_proposals_metadata.push(DataProposalMetadata {
+                                    hash: dp_hash,
+                                    parent_hash: dp.parent_data_proposal_hash.clone(),
+                                    lane_id: lane_id.clone(),
+                                    tx_count: dp.txs.len(),
+                                    estimated_size: dp.estimate_size(),
+                                    tx_hashes,
+                                });
+                            }
+                        }
+                        
                         // TODO: If we are in a broken state, this will likely kill the node every time.
                         let node_state_block = self.inner.handle_signed_block(&block)?;
+                        
+                        // Send data proposal metadata event if we have any
+                        if !data_proposals_metadata.is_empty() {
+                            _ = log_error!(
+                                self.bus.send(NodeStateEvent::DataProposalsFromBlock {
+                                    block_hash: node_state_block.hash.clone(),
+                                    block_height: node_state_block.block_height,
+                                    block_timestamp: node_state_block.block_timestamp.clone(),
+                                    data_proposals: data_proposals_metadata,
+                                }),
+                                "Sending DataProposalsFromBlock event"
+                            );
+                        }
+                        
                         _ = log_error!(self
                             .bus
                             .send(NodeStateEvent::NewBlock(Box::new(node_state_block))), "Sending DataEvent while processing SignedBlock");

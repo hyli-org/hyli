@@ -156,4 +156,20 @@ pub enum TransactionStateEvent {
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
 pub enum NodeStateEvent {
     NewBlock(Box<Block>),
+    DataProposalsFromBlock {
+        block_hash: ConsensusProposalHash,
+        block_height: BlockHeight,
+        block_timestamp: TimestampMs,
+        data_proposals: Vec<DataProposalMetadata>,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
+pub struct DataProposalMetadata {
+    pub hash: DataProposalHash,
+    pub parent_hash: Option<DataProposalHash>,
+    pub lane_id: LaneId,
+    pub tx_count: usize,
+    pub estimated_size: usize,
+    pub tx_hashes: Vec<TxHash>,
 }

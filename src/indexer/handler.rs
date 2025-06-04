@@ -5,6 +5,7 @@ use anyhow::{bail, Context, Error, Result};
 use chrono::{DateTime, Utc};
 use hyle_contract_sdk::TxHash;
 use hyle_model::api::{TransactionStatusDb, TransactionTypeDb};
+use hyle_model::node::data_availability::DataProposalMetadata;
 use hyle_model::utils::TimestampMs;
 use hyle_modules::{log_error, log_warn};
 use hyle_net::clock::TimestampMsClock;
@@ -76,6 +77,18 @@ pub struct TxBlobProofOutputStore {
     pub settled: bool,
 }
 
+#[derive(Debug)]
+pub struct DataProposalStore {
+    pub hash: DataProposalHashDb,
+    pub parent_hash: Option<DataProposalHashDb>,
+    pub lane_id: String,
+    pub tx_count: i32,
+    pub estimated_size: i64,
+    pub block_hash: ConsensusProposalHash,
+    pub block_height: i64,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Default)]
 pub(crate) struct IndexerHandlerStore {
     blocks: Vec<Arc<Block>>,
@@ -94,6 +107,7 @@ pub(crate) struct IndexerHandlerStore {
     contract_states: Vec<TxContractStateStore>,
     deleted_contracts: HashSet<ContractName>,
     blob_proof_outputs: Vec<TxBlobProofOutputStore>,
+    data_proposals: Vec<DataProposalStore>,
 }
 
 impl std::fmt::Debug for IndexerHandlerStore {
@@ -108,6 +122,7 @@ impl std::fmt::Debug for IndexerHandlerStore {
             .field("contracts", &self.contracts.len())
             .field("contract_states", &self.contract_states.len())
             .field("blob_proof_outputs", &self.blob_proof_outputs.len())
+            .field("data_proposals", &self.data_proposals.len())
             .finish()
     }
 }
@@ -116,6 +131,19 @@ impl Indexer {
     pub async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<(), Error> {
         match event {
             NodeStateEvent::NewBlock(block) => self.handle_processed_block(*block)?,
+            NodeStateEvent::DataProposalsFromBlock {
+                block_hash,
+                block_height,
+                block_timestamp,
+                data_proposals,
+            } => {
+                self.handle_data_proposals_from_block(
+                    block_hash,
+                    block_height,
+                    block_timestamp,
+                    data_proposals,
+                )?;
+            }
         };
 
         if self.handler_store.blocks.len() >= 1000 {
@@ -470,6 +498,34 @@ impl Indexer {
                 .execute(&mut *transaction)
                 .await
                 .context("Inserting blob proof outputs")?;
+        }
+
+        // Insert data proposals
+        if !self.handler_store.data_proposals.is_empty() {
+            let mut query_builder = QueryBuilder::new(
+                "INSERT INTO data_proposals (hash, parent_hash, lane_id, tx_count, estimated_size, block_hash, block_height, created_at)"
+            );
+            
+            query_builder.push_values(&self.handler_store.data_proposals, |mut b, dp| {
+                b.push_bind(&dp.hash)
+                 .push_bind(&dp.parent_hash)
+                 .push_bind(&dp.lane_id)
+                 .push_bind(dp.tx_count)
+                 .push_bind(dp.estimated_size)
+                 .push_bind(&dp.block_hash)
+                 .push_bind(dp.block_height)
+                 .push_bind(dp.created_at);
+            });
+            
+            query_builder.push(" ON CONFLICT (hash) DO NOTHING");
+            
+            query_builder
+                .build()
+                .execute(&mut *transaction)
+                .await
+                .context("Inserting data proposals")?;
+                
+            self.handler_store.data_proposals.clear();
         }
 
         if !self.handler_store.sql_updates.is_empty() {
@@ -1011,6 +1067,35 @@ impl Indexer {
             );
         }
 
+        Ok(())
+    }
+
+    fn handle_data_proposals_from_block(
+        &mut self,
+        block_hash: ConsensusProposalHash,
+        block_height: BlockHeight,
+        block_timestamp: TimestampMs,
+        data_proposals: Vec<DataProposalMetadata>,
+    ) -> Result<(), Error> {
+        let block_height_i64 = i64::try_from(block_height.0)
+            .map_err(|_| anyhow::anyhow!("Block height too large for i64"))?;
+        
+        for dp_metadata in data_proposals {
+            let dp_store = DataProposalStore {
+                hash: dp_metadata.hash.into(),
+                parent_hash: dp_metadata.parent_hash.map(|h| h.into()),
+                lane_id: dp_metadata.lane_id.0,
+                tx_count: dp_metadata.tx_count as i32,
+                estimated_size: dp_metadata.estimated_size as i64,
+                block_hash: block_hash.clone(),
+                block_height: block_height_i64,
+                created_at: DateTime::from_timestamp_millis(block_timestamp.0 as i64)
+                    .unwrap_or_else(|| DateTime::from_timestamp_millis(0).unwrap()),
+            };
+            
+            self.handler_store.data_proposals.push(dp_store);
+        }
+        
         Ok(())
     }
 }
