@@ -67,12 +67,12 @@ impl TxExecutorHandler for SmtTokenProvableState {
                 recipient,
                 amount,
             } => {
+                let mut sender_account = self
+                    .get_account(&sender)?
+                    .ok_or(anyhow!("Sender account {} not found", sender))?;
                 if sender == recipient {
                     Ok(format!("Transferred {} to {}", amount, recipient))
                 } else {
-                    let mut sender_account = self
-                        .get_account(&sender)?
-                        .ok_or(anyhow!("Sender account {} not found", sender))?;
                     let mut recipient_account = self
                         .get_account(&recipient)?
                         .unwrap_or(Account::new(recipient, 0));
@@ -101,12 +101,12 @@ impl TxExecutorHandler for SmtTokenProvableState {
                 recipient,
                 amount,
             } => {
+                let mut owner_account = self
+                    .get_account(&owner)?
+                    .ok_or(anyhow!("Owner account {} not found", owner))?;
                 if owner == recipient {
                     Ok(format!("Transferred {} to {}", amount, recipient))
                 } else {
-                    let mut owner_account = self
-                        .get_account(&owner)?
-                        .ok_or(anyhow!("Owner account {} not found", owner))?;
                     let mut recipient_account = self
                         .get_account(&recipient)?
                         .unwrap_or(Account::new(recipient, 0));
