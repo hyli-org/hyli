@@ -141,7 +141,13 @@ where
     /// Note: Each copy of the contract state indexer does the same handle_block on each data event
     /// coming from node state.
     async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<(), Error> {
-        let NodeStateEvent::NewBlock(block) = event;
+        let block = match event {
+            NodeStateEvent::NewBlock(block) => block,
+            NodeStateEvent::DataProposalsFromBlock { .. } => {
+                // Contract state indexer only cares about blocks, not data proposals
+                return Ok(());
+            }
+        };
         self.handle_processed_block(*block).await?;
 
         Ok(())

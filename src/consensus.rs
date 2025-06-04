@@ -636,6 +636,10 @@ impl Consensus {
                 }
                 Ok(())
             }
+            NodeStateEvent::DataProposalsFromBlock { .. } => {
+                // Consensus doesn't need to handle data proposal events
+                Ok(())
+            }
         }
     }
 
@@ -691,7 +695,13 @@ impl Consensus {
                         module_handle_messages! {
                             on_bus self.bus,
                             listen<NodeStateEvent> event => {
-                                let NodeStateEvent::NewBlock(block) = &event;
+                                let block = match &event {
+                                    NodeStateEvent::NewBlock(block) => block,
+                                    NodeStateEvent::DataProposalsFromBlock { .. } => {
+                                        // Skip data proposal events during genesis
+                                        continue;
+                                    }
+                                };
                                 if block.block_height.0 != 0 {
                                     bail!("Non-genesis block received during consensus genesis");
                                 }

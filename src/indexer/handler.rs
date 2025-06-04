@@ -5,7 +5,7 @@ use anyhow::{bail, Context, Error, Result};
 use chrono::{DateTime, Utc};
 use hyle_contract_sdk::TxHash;
 use hyle_model::api::{TransactionStatusDb, TransactionTypeDb};
-use hyle_model::node::data_availability::DataProposalMetadata;
+use hyle_model::DataProposalMetadata;
 use hyle_model::utils::TimestampMs;
 use hyle_modules::{log_error, log_warn};
 use hyle_net::clock::TimestampMsClock;
@@ -1084,7 +1084,7 @@ impl Indexer {
             let dp_store = DataProposalStore {
                 hash: dp_metadata.hash.into(),
                 parent_hash: dp_metadata.parent_hash.map(|h| h.into()),
-                lane_id: dp_metadata.lane_id.0,
+                lane_id: dp_metadata.lane_id.0.to_string(),
                 tx_count: dp_metadata.tx_count as i32,
                 estimated_size: dp_metadata.estimated_size as i64,
                 block_hash: block_hash.clone(),

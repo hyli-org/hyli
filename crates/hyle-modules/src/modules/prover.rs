@@ -160,7 +160,13 @@ where
     Contract: TxExecutorHandler + Debug + Clone + Send + Sync + 'static,
 {
     async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
-        let NodeStateEvent::NewBlock(block) = event;
+        let block = match event {
+            NodeStateEvent::NewBlock(block) => block,
+            NodeStateEvent::DataProposalsFromBlock { .. } => {
+                // Prover only cares about blocks, not data proposals
+                return Ok(());
+            }
+        };
         self.handle_processed_block(*block).await?;
 
         Ok(())

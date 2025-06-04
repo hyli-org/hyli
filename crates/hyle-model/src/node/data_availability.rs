@@ -6,6 +6,7 @@ use sha3::{Digest, Sha3_256};
 use utoipa::ToSchema;
 
 use crate::*;
+use crate::utils::TimestampMs;
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, Eq, PartialEq)]
 pub enum DataEvent {

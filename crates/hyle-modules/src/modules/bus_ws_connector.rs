@@ -82,7 +82,13 @@ impl NodeWebsocketConnector {
     }
 
     fn handle_new_block(event: NodeStateEvent) -> Vec<WebsocketOutEvent> {
-        let NodeStateEvent::NewBlock(block) = event;
+        let block = match event {
+            NodeStateEvent::NewBlock(block) => block,
+            NodeStateEvent::DataProposalsFromBlock { .. } => {
+                // Only emit NewBlock events for actual blocks
+                return vec![];
+            }
+        };
 
         let api_block = APIBlock {
             hash: block.hash.clone(),
@@ -96,7 +102,13 @@ impl NodeWebsocketConnector {
     }
 
     fn handle_new_tx(event: NodeStateEvent) -> Vec<WebsocketOutEvent> {
-        let NodeStateEvent::NewBlock(block) = event;
+        let block = match event {
+            NodeStateEvent::NewBlock(block) => block,
+            NodeStateEvent::DataProposalsFromBlock { .. } => {
+                // Only emit transaction events for actual blocks
+                return vec![];
+            }
+        };
         let mut txs = Vec::new();
 
         for (idx, (id, tx)) in block.txs.iter().enumerate() {
