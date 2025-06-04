@@ -160,10 +160,9 @@ where
         for tx in txs {
             let dp_hash = block.resolve_parent_dp_hash(tx)?.clone();
             let tx_id = TxId(dp_hash.clone(), tx.clone());
-            let tx_context = block.build_tx_ctx(tx)?;
 
             let mut store = self.store.write().await;
-            let tx = match if remove_from_unsettled {
+            let (tx, tx_context) = match if remove_from_unsettled {
                 store.unsettled_blobs.remove(&tx_id)
             } else {
                 store.unsettled_blobs.get(&tx_id).cloned()
@@ -219,7 +218,9 @@ where
 
         for (tx_id, tx) in &block.txs {
             if let TransactionData::Blob(tx) = &tx.transaction_data {
-                self.handle_blob(tx_id.clone(), tx.clone()).await?;
+                let tx_context = block.build_tx_ctx(&tx.hashed())?;
+                self.handle_blob(tx_id.clone(), tx.clone(), tx_context)
+                    .await?;
             }
         }
 
@@ -258,7 +259,12 @@ where
         Ok(())
     }
 
-    async fn handle_blob(&mut self, tx_id: TxId, tx: BlobTransaction) -> Result<()> {
+    async fn handle_blob(
+        &mut self,
+        tx_id: TxId,
+        tx: BlobTransaction,
+        tx_context: TxContext,
+    ) -> Result<()> {
         let mut found_supported_blob = false;
 
         for b in &tx.blobs {
@@ -270,7 +276,11 @@ where
 
         if found_supported_blob {
             debug!(cn = %self.contract_name, "⚒️  Found supported blob in transaction: {}", tx_id);
-            self.store.write().await.unsettled_blobs.insert(tx_id, tx);
+            self.store
+                .write()
+                .await
+                .unsettled_blobs
+                .insert(tx_id, (tx, tx_context));
         }
 
         Ok(())
@@ -402,11 +412,16 @@ mod tests {
         };
         let tx = BlobTransaction::new("test", vec![blob]);
         let tx_hash = tx.hashed();
+        let tx_context = TxContext::default();
 
         let mut indexer = build_indexer(contract_name.clone()).await;
         register_contract(&mut indexer).await;
         indexer
-            .handle_blob(TxId(DataProposalHash::default(), tx_hash.clone()), tx)
+            .handle_blob(
+                TxId(DataProposalHash::default(), tx_hash.clone()),
+                tx,
+                tx_context,
+            )
             .await
             .unwrap();
 
@@ -426,12 +441,15 @@ mod tests {
         };
         let tx = BlobTransaction::new("test", vec![blob]);
         let tx_id = TxId(DataProposalHash::default(), tx.hashed());
+        let tx_context = TxContext::default();
 
         let mut indexer = build_indexer(contract_name.clone()).await;
         register_contract(&mut indexer).await;
         {
             let mut store = indexer.store.write().await;
-            store.unsettled_blobs.insert(tx_id.clone(), tx);
+            store
+                .unsettled_blobs
+                .insert(tx_id.clone(), (tx, tx_context));
         }
 
         indexer

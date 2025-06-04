@@ -22,7 +22,7 @@ use crate::transaction_builder::TxExecutorHandler;
 pub struct ContractStateStore<State> {
     pub state: Option<State>,
     pub contract_name: ContractName,
-    pub unsettled_blobs: BTreeMap<TxId, BlobTransaction>,
+    pub unsettled_blobs: BTreeMap<TxId, (BlobTransaction, TxContext)>,
 }
 
 pub type ContractHandlerStore<T> = Arc<RwLock<ContractStateStore<T>>>;
