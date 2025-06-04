@@ -608,11 +608,14 @@ where
                             contract_name: contract_name.clone(),
                             proof,
                         };
-                        let _ = log_error!(
-                            node_client.send_tx_proof(tx).await,
-                            "failed to send proof to node"
-                        );
-                        info!("✅ Proved {len} txs");
+                        match node_client.send_tx_proof(tx).await {
+                            Ok(tx_hash) => {
+                                info!("✅ Proved {len} txs, proof TX hash: {tx_hash}");
+                            }
+                            Err(e) => {
+                                error!("Failed to send proof: {e:#}");
+                            }
+                        }
                         break;
                     }
                     Err(e) => {
