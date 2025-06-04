@@ -11,7 +11,7 @@ use sdk::{
     BlobIndex, BlobTransaction, Block, BlockHeight, Calldata, ContractName, Hashed, NodeStateEvent,
     ProofTransaction, TransactionData, TxContext, TxHash, HYLE_TESTNET_CHAIN_ID,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 /// `AutoProver` is a module that handles the proving of transactions
 /// It listens to the node state events and processes all blobs in the block's transactions
@@ -256,20 +256,23 @@ where
             self.prove_supported_blob(buffered)?;
             self.store.buffered_blobs = remaining_blobs;
         } else if self.store.buffered_blocks_count >= self.ctx.buffer_blocks {
-            debug!(
-                cn =% self.ctx.contract_name,
-                "Buffered blocks achieved, processing {} blobs",
-                self.store.buffered_blobs.len() + blobs.len()
-            );
             let mut buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
             self.store.buffered_blocks_count = 0;
             buffered.extend(blobs);
+            if !buffered.is_empty() {
+                debug!(
+                    cn =% self.ctx.contract_name,
+                    "Buffered blocks achieved, processing {} blobs",
+                    buffered.len()
+                );
+            }
+
             self.prove_supported_blob(buffered)?;
         } else {
             self.store.buffered_blobs.append(&mut blobs);
             self.store.buffered_blocks_count += 1;
 
-            debug!(
+            trace!(
                 cn =% self.ctx.contract_name,
                 "Buffered {} / {} blobs, {} / {} blocks.",
                 self.store.buffered_blobs.len(),
