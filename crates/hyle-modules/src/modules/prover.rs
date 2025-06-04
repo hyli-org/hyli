@@ -614,7 +614,6 @@ where
                             }
                             Err(e) => {
                                 error!("Failed to send proof: {e:#}");
-                                break;
                             }
                         }
                         break;
