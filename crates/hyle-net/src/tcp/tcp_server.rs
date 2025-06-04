@@ -4,6 +4,7 @@ use std::{
     marker::PhantomData,
     net::{Ipv4Addr, SocketAddr},
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::Context;
@@ -18,6 +19,7 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use crate::{
     clock::TimestampMsClock,
+    metrics::TcpServerMetrics,
     net::{TcpListener, TcpStream},
     tcp::{to_tcp_message, TcpMessage},
 };
@@ -37,6 +39,7 @@ where
     ping_sender: Sender<String>,
     ping_receiver: Receiver<String>,
     sockets: HashMap<String, SocketStream>,
+    metrics: TcpServerMetrics,
     _marker: PhantomData<(Req, Res)>,
 }
 
@@ -69,6 +72,7 @@ where
             pool_receiver,
             ping_sender,
             ping_receiver,
+            metrics: TcpServerMetrics::global(pool_name.to_string()),
             _marker: PhantomData,
         })
     }
@@ -245,6 +249,7 @@ where
         let ping_sender = self.ping_sender.clone();
         let pool_sender = self.pool_sender.clone();
         let cloned_socket_addr = socket_addr.clone();
+        let metrics = self.metrics.clone();
 
         // This task is responsible for reception of ping and message.
         // If an error occurs and is not an InvalidData error, we assume the task is to be aborted.
@@ -262,16 +267,20 @@ where
                                 bytes.len(),
                                 hex::encode(bytes.iter().take(10).cloned().collect::<Vec<_>>())
                             );
+                            metrics.message_received();
                             let _ = pool_sender
                                 .send(Box::new(match borsh::from_slice(&bytes) {
                                     Ok(data) => TcpEvent::Message {
                                         dest: cloned_socket_addr.clone(),
                                         data,
                                     },
-                                    Err(io) => TcpEvent::Error {
-                                        dest: cloned_socket_addr.clone(),
-                                        error: io.to_string(),
-                                    },
+                                    Err(io) => {
+                                        metrics.message_error();
+                                        TcpEvent::Error {
+                                            dest: cloned_socket_addr.clone(),
+                                            error: io.to_string(),
+                                        }
+                                    }
                                 }))
                                 .await;
                         }
@@ -287,8 +296,8 @@ where
                                 cloned_socket_addr,
                                 err.kind()
                             );
-                            // Send an event indicating the connection is closed due to an error
-                            _ = pool_sender
+                            metrics.message_error();
+                            let _ = pool_sender
                                 .send(Box::new(TcpEvent::Error {
                                     dest: cloned_socket_addr.clone(),
                                     error: err.to_string(),
@@ -300,8 +309,8 @@ where
                     None => {
                         // If we reach here, the stream has been closed.
                         warn!("Socket {} closed", cloned_socket_addr);
-                        // Send an event indicating the connection is closed
-                        _ = pool_sender
+                        metrics.message_closed();
+                        let _ = pool_sender
                             .send(Box::new(TcpEvent::Closed {
                                 dest: cloned_socket_addr.clone(),
                             }))
@@ -313,6 +322,7 @@ where
         });
 
         let (sender_snd, mut sender_recv) = tokio::sync::mpsc::channel::<TcpMessage>(1000);
+        let metrics = self.metrics.clone();
 
         let abort_sender_task = tokio::spawn({
             let cloned_socket_addr = socket_addr.clone();
@@ -323,18 +333,36 @@ where
                             "Failed to serialize message to send to peer {}",
                             cloned_socket_addr
                         );
+                        metrics.message_send_error();
                         break;
                     };
-                    if let Err(e) = sender.send(msg_bytes).await {
-                        error!("Sending message to peer {}: {}", cloned_socket_addr, e);
-                        break;
+                    let start = std::time::Instant::now();
+                    match tokio::time::timeout(Duration::from_secs(10), sender.send(msg_bytes))
+                        .await
+                    {
+                        Err(e) => {
+                            error!(
+                                "Timeout sending message to peer {}: {}",
+                                cloned_socket_addr, e
+                            );
+                            metrics.message_send_error();
+                            break;
+                        }
+                        Ok(Err(e)) => {
+                            error!("Sending message to peer {}: {}", cloned_socket_addr, e);
+                            metrics.message_send_error();
+                            break;
+                        }
+                        Ok(Ok(_)) => {}
                     }
+                    metrics.message_send_time(start.elapsed().as_secs_f64());
                 }
             }
         });
 
         tracing::debug!("Socket {} connected", socket_addr);
         // Store socket in the list.
+        self.metrics.peers_snapshot(self.sockets.len() as u64 + 1);
         self.sockets.insert(
             socket_addr.to_string(),
             SocketStream {
@@ -356,6 +384,7 @@ where
             peer_stream.abort_sender_task.abort();
             peer_stream.abort_receiver_task.abort();
             tracing::debug!("Client {} dropped & disconnected", peer_ip);
+            self.metrics.peers_snapshot(self.sockets.len() as u64);
         }
     }
 }
