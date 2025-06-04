@@ -160,7 +160,6 @@ where
         for tx in txs {
             let dp_hash = block.resolve_parent_dp_hash(tx)?.clone();
             let tx_id = TxId(dp_hash.clone(), tx.clone());
-            // let tx_context = block.build_tx_ctx(tx)?;
 
             let mut store = self.store.write().await;
             let (tx, tx_context) = match if remove_from_unsettled {
