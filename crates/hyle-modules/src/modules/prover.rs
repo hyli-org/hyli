@@ -457,7 +457,13 @@ where
                         "Catching up, buffering blobs",
                     );
 
-                    self.catching_blobs.push((blob_index, tx, tx_ctx));
+                    if !self
+                        .catching_blobs
+                        .iter()
+                        .any(|(_, t, _)| t.hashed() == tx.hashed())
+                    {
+                        self.catching_blobs.push((blob_index, tx, tx_ctx));
+                    }
                     continue;
                 }
             }
@@ -803,6 +809,17 @@ mod tests {
                 .into()
             })
             .collect()
+    }
+
+    fn count_hyle_outputs(proof: &Transaction) -> usize {
+        if let TransactionData::VerifiedProof(VerifiedProofTransaction { proven_blobs, .. }) =
+            &proof.transaction_data
+        {
+            proven_blobs.len()
+        } else {
+            tracing::info!("No Hyle outputs in this transaction");
+            0
+        }
     }
 
     fn new_blob_tx(val: u32) -> Transaction {
@@ -1173,6 +1190,7 @@ mod tests {
 
         let proofs = get_txs(&api_client).await;
         assert_eq!(proofs.len(), 1); // Txs from mutliple catching blocs are batched
+        assert_eq!(count_hyle_outputs(&proofs[0]), 4);
         let _ = node_state.craft_block_and_handle(20, proofs);
 
         assert_eq!(read_contract_state(&node_state).value, 10 + 6 + 6 + 7 + 8);
@@ -1238,6 +1256,8 @@ mod tests {
         }
 
         let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 1);
+        assert_eq!(count_hyle_outputs(&proofs[0]), 3);
         let _ = node_state.craft_block_and_handle(stop_height, proofs);
 
         assert_eq!(read_contract_state(&node_state).value, 10 + 6 + 7 + 8);
@@ -1301,6 +1321,8 @@ mod tests {
         }
 
         let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 1); // Txs from mutliple catching blocs are batched
+        assert_eq!(count_hyle_outputs(&proofs[0]), 2);
         let _ = node_state.craft_block_and_handle(stop_height, proofs);
 
         assert_eq!(read_contract_state(&node_state).value, 10 + 9 + 10);
@@ -1376,6 +1398,7 @@ mod tests {
         }
 
         let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 1);
         let _ = node_state.craft_block_and_handle(stop_height + 2, proofs);
 
         assert_eq!(read_contract_state(&node_state).value, 10 + 9 + 10 + 25);
@@ -1424,6 +1447,7 @@ mod tests {
             .await?;
         let proofs = get_txs(&api_client).await;
         assert_eq!(proofs.len(), 1);
+        assert_eq!(count_hyle_outputs(&proofs[0]), 1);
         tracing::info!("✨ Block 22");
         let _ = node_state.craft_block_and_handle(22, proofs);
 
