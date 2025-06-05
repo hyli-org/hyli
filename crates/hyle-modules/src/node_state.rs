@@ -1486,6 +1486,14 @@ pub mod test {
                 },
             );
         }
+
+        pub fn get_earliest_unsettled_height(
+            &self,
+            contract_name: &ContractName,
+        ) -> Option<BlockHeight> {
+            self.unsettled_transactions
+                .get_earliest_unsettled_height(contract_name)
+        }
     }
 
     fn bogus_tx_context() -> TxContext {
