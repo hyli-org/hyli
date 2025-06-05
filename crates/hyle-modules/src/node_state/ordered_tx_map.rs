@@ -69,6 +69,11 @@ impl OrderedTxMap {
         self.map.len()
     }
 
+    #[cfg(test)]
+    pub fn get_tx_order(&self, contract: &ContractName) -> Option<&VecDeque<TxHash>> {
+        self.tx_order.get(contract)
+    }
+
     fn get_contracts_blocked_by_tx(&self, tx: &UnsettledBlobTransaction) -> HashSet<ContractName> {
         // Collect into a hashset for unicity
         let mut contract_names = HashSet::new();
@@ -120,24 +125,18 @@ impl OrderedTxMap {
     }
 
     pub fn remove(&mut self, hash: &TxHash) -> Option<UnsettledBlobTransaction> {
-        if let Some(tx) = self.map.get(hash) {
+        self.map.remove(hash).inspect(|tx| {
+            // Remove the tx from the tx_order
             let contract_names = self.get_contracts_blocked_by_tx(tx);
             for contract_name in contract_names {
-                if let Some(c) = self.tx_order.get_mut(&contract_name) {
-                    if let Some(t) = c.front() {
-                        if t.eq(hash) {
-                            c.pop_front();
-                        } else {
-                            // Panic - this indicates a logic error in the code
-                            panic!("Trying to remove a tx that is not the first in the queue");
-                        }
+                if let Some(vec) = self.tx_order.get_mut(&contract_name) {
+                    vec.retain(|h| h != &tx.hash);
+                    if vec.is_empty() {
+                        self.tx_order.remove(&contract_name);
                     }
                 }
             }
-            self.map.remove(hash)
-        } else {
-            None
-        }
+        })
     }
 }
 
@@ -287,8 +286,8 @@ mod tests {
 
         map.remove(&tx2);
         assert_eq!(map.map.len(), 1);
-        assert_eq!(map.tx_order.len(), 2);
-        assert_eq!(map.tx_order[&c1].len(), 0);
+        assert_eq!(map.tx_order.len(), 1);
+        assert_eq!(map.tx_order.get(&c1), None);
     }
 
     #[test]
@@ -321,7 +320,7 @@ mod tests {
         map.remove(&tx.hash);
 
         assert_eq!(map.map.len(), 0);
-        assert_eq!(map.tx_order.get(&contract1).unwrap().len(), 0);
-        assert_eq!(map.tx_order.get(&contract2).unwrap().len(), 0);
+        assert_eq!(map.tx_order.get(&contract1), None);
+        assert_eq!(map.tx_order.get(&contract2), None);
     }
 }
