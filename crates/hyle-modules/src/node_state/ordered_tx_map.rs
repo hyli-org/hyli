@@ -287,7 +287,7 @@ mod tests {
         map.remove(&tx2);
         assert_eq!(map.map.len(), 1);
         assert_eq!(map.tx_order.len(), 1);
-        assert_eq!(map.tx_order[&c1].len(), 0);
+        assert_eq!(map.tx_order.get(&c1), None);
     }
 
     #[test]
