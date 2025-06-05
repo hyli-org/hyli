@@ -41,6 +41,7 @@ pub struct AutoProverStore<Contract> {
     contract: Contract,
     buffered_blobs: Vec<(BlobIndex, BlobTransaction, TxContext)>,
     buffered_blocks_count: u32,
+    batch_id: u64,
 }
 
 module_bus_client! {
@@ -101,6 +102,7 @@ where
                 tx_chain: vec![],
                 buffered_blobs: vec![],
                 buffered_blocks_count: 0,
+                batch_id: 0,
             },
         };
 
@@ -182,6 +184,7 @@ where
                 block.block_height
             );
         }
+        debug!("Bloc: {:#?}", block);
         for (_, tx) in block.txs {
             if let TransactionData::Blob(tx) = tx.transaction_data {
                 if tx
@@ -301,6 +304,12 @@ where
     }
 
     fn settle_tx_success(&mut self, tx: &TxHash) -> Result<()> {
+        debug!(
+            cn =% self.ctx.contract_name,
+            tx_hash =% tx,
+            "Settling tx {} as successful",
+            tx
+        );
         let prev_tx = self
             .store
             .tx_chain
@@ -331,6 +340,14 @@ where
                 self.handle_all_next_blobs(pos, tx)?;
                 self.store.state_history.remove(tx);
                 self.store.tx_chain.retain(|h| h != tx);
+            } else {
+                debug!(
+                    cn =% self.ctx.contract_name,
+                    tx_hash =% tx,
+                    "Handling failed tx {}. Unsettled idx: {pos}. Unsettled txs: {:?}",
+                    tx,
+                    self.store.unsettled_txs.iter().map(|(t, _)| t.hashed()).collect::<Vec<_>>()
+                );
             }
         }
         Ok(())
@@ -357,8 +374,21 @@ where
             .iter()
             .position(|(t, _)| t.hashed() == *hash);
         if let Some(pos) = tx {
+            debug!(
+                cn =% self.ctx.contract_name,
+                tx_hash =% hash,
+                "Settling tx {} at position {pos}",
+                hash
+            );
             self.store.unsettled_txs.remove(pos);
             return Some(pos);
+        } else {
+            debug!(
+                cn =% self.ctx.contract_name,
+                tx_hash =% hash,
+                "Tx {} not found in unsettled txs",
+                hash
+            );
         }
         None
     }
@@ -388,22 +418,29 @@ where
             tx_history
         );
 
-        let prev_state =
-            prev_tx.and_then(|prev_tx_hash| self.store.state_history.get(prev_tx_hash).cloned());
+        if let Some(prev_tx) = prev_tx {
+            let prev_state = self
+                .store
+                .state_history
+                .get(prev_tx)
+                .cloned()
+                .or_else(|| self.store.contract.clone().into());
 
-        if let Some(contract) = prev_state {
-            debug!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "Reverting to previous state from tx {:?}", prev_tx);
-            self.store.contract = contract.clone();
-        } else if self.store.state_history.is_empty() {
-            warn!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "Reverting to default state. History: {tx_history:?}");
-            self.store.contract = self.ctx.default_state.clone();
+            if let Some(contract) = prev_state {
+                debug!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "Reverting to previous state from tx {:?}", prev_tx);
+                self.store.contract = contract.clone();
+            } else {
+                return Err(anyhow!(
+                    "Failed to revert to previous state for tx {}. History: {:?}",
+                    failed_tx,
+                    tx_history
+                ));
+            }
         } else {
-            return Err(anyhow!(
-                "Failed to revert to previous state for tx {}. History: {:?}",
-                failed_tx,
-                tx_history
-            ));
+            warn!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "No prev tx, reverting to default state. History: {tx_history:?}");
+            self.store.contract = self.ctx.default_state.clone();
         }
+
         let mut blobs = vec![];
         for (tx, ctx) in self.store.unsettled_txs.clone().iter().skip(idx) {
             for (index, blob) in tx.blobs.iter().enumerate() {
@@ -444,9 +481,11 @@ where
         if blobs.is_empty() {
             return Ok(());
         }
+        let batch_id = self.store.batch_id;
+        self.store.batch_id += 1;
         debug!(
             cn =% self.ctx.contract_name,
-            "Handling {} txs",
+            "Handling {} txs. Batch ID: {batch_id}",
             blobs.len()
         );
         let mut calldatas = vec![];
@@ -612,7 +651,7 @@ where
             loop {
                 debug!(
                     cn =% contract_name,
-                    "Proving {} txs",
+                    "Proving {} txs. Batch id: {batch_id}, Retries: {retries}",
                     calldatas.len(),
                 );
                 match prover
@@ -626,7 +665,7 @@ where
                         };
                         match node_client.send_tx_proof(tx).await {
                             Ok(tx_hash) => {
-                                info!("✅ Proved {len} txs, proof TX hash: {tx_hash}");
+                                info!("✅ Proved {len} txs, Batch id: {batch_id}, Proof TX hash: {tx_hash}");
                             }
                             Err(e) => {
                                 error!("Failed to send proof: {e:#}");
@@ -639,14 +678,14 @@ where
                             e.to_string().contains("SessionCreateErr") && retries < MAX_RETRIES;
                         if should_retry {
                             warn!(
-                                "Session creation error, retrying ({}/{}). {e:#}",
+                                "Batch id: {batch_id}, Session creation error, retrying ({}/{}). {e:#}",
                                 retries, MAX_RETRIES
                             );
                             retries += 1;
                             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                             continue;
                         }
-                        error!("Error proving tx: {:?}", e);
+                        error!("Error proving tx: {:?}. Batch id: {batch_id}", e);
                         break;
                     }
                 };
@@ -879,7 +918,8 @@ mod tests {
         assert_eq!(proofs.len(), 1);
 
         tracing::info!("✨ Block 2");
-        node_state.craft_block_and_handle(2, proofs);
+        let block_2 = node_state.craft_block_and_handle(2, proofs);
+        auto_prover.handle_processed_block(block_2).await?;
 
         assert_eq!(read_contract_state(&node_state).value, 1);
 
