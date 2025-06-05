@@ -304,12 +304,6 @@ where
     }
 
     fn settle_tx_success(&mut self, tx: &TxHash) -> Result<()> {
-        debug!(
-            cn =% self.ctx.contract_name,
-            tx_hash =% tx,
-            "Settling tx {} as successful",
-            tx
-        );
         let prev_tx = self
             .store
             .tx_chain
@@ -341,10 +335,10 @@ where
                 self.store.state_history.remove(tx);
                 self.store.tx_chain.retain(|h| h != tx);
             } else {
-                debug!(
+                warn!(
                     cn =% self.ctx.contract_name,
                     tx_hash =% tx,
-                    "Handling failed tx {}. Unsettled idx: {pos}. Unsettled txs: {:?}",
+                    "Settled future tx! Handling failed tx {}. Unsettled idx: {pos}. Unsettled txs: {:?}",
                     tx,
                     self.store.unsettled_txs.iter().map(|(t, _)| t.hashed()).collect::<Vec<_>>()
                 );
@@ -374,16 +368,10 @@ where
             .iter()
             .position(|(t, _)| t.hashed() == *hash);
         if let Some(pos) = tx {
-            debug!(
-                cn =% self.ctx.contract_name,
-                tx_hash =% hash,
-                "Settling tx {} at position {pos}",
-                hash
-            );
             self.store.unsettled_txs.remove(pos);
             return Some(pos);
         } else {
-            debug!(
+            error!(
                 cn =% self.ctx.contract_name,
                 tx_hash =% hash,
                 "Tx {} not found in unsettled txs",
