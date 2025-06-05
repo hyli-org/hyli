@@ -612,9 +612,8 @@ where
             loop {
                 debug!(
                     cn =% contract_name,
-                    "Proving {} txs with commitment metadata: {:?}",
+                    "Proving {} txs",
                     calldatas.len(),
-                    commitment_metadata
                 );
                 match prover
                     .prove(commitment_metadata.clone(), calldatas.clone())
