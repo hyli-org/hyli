@@ -184,7 +184,6 @@ where
                 block.block_height
             );
         }
-        debug!("Bloc: {:#?}", block);
         for (_, tx) in block.txs {
             if let TransactionData::Blob(tx) = tx.transaction_data {
                 if tx
