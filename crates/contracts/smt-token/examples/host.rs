@@ -64,7 +64,7 @@ async fn main() {
         private_input: vec![],
     };
 
-    let prover = Risc0Prover::new(SMT_TOKEN_ELF);
+    let prover = Risc0Prover::new(SMT_TOKEN_ELF, "smt-token".to_string());
 
     let proof = prover.prove(commitment_metadata, vec![calldata]).await;
 
