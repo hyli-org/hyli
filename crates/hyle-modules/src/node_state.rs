@@ -313,6 +313,9 @@ impl NodeState {
         }
 
         self.metrics.record_contracts(self.contracts.len() as u64);
+
+        let schedule_timeouts_nb = self.timeouts.count_all() as u64;
+        self.metrics.record_scheduled_timeouts(schedule_timeouts_nb);
         self.metrics
             .record_unsettled_transactions(self.unsettled_transactions.len() as u64);
         self.metrics.add_processed_block();
