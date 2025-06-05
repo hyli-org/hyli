@@ -46,9 +46,18 @@ async fn faucet_and_delegate(
 
     let mut tx_ctx = TxExecutorBuilder::new(states)
         // Replace prover binaries for non-reproducible mode.
-        .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
-        .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF))
-        .with_prover("staking".into(), Risc0Prover::new(STAKING_ELF))
+        .with_prover(
+            "hydentity".into(),
+            Risc0Prover::new(HYDENTITY_ELF, "hydentity".into()),
+        )
+        .with_prover(
+            "hyllar".into(),
+            Risc0Prover::new(HYLLAR_ELF, "hyllar".into()),
+        )
+        .with_prover(
+            "staking".into(),
+            Risc0Prover::new(STAKING_ELF, "staking".into()),
+        )
         .build();
 
     let node_info = client.get_node_info().await?;

@@ -46,8 +46,14 @@ mod e2e_smt_token {
 
         let mut executor = TxExecutorBuilder::new(States { hydentity, oranj })
             // Replace prover binaries for non-reproducible mode.
-            .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
-            .with_prover("oranj".into(), Risc0Prover::new(SMT_TOKEN_ELF))
+            .with_prover(
+                "hydentity".into(),
+                Risc0Prover::new(HYDENTITY_ELF, "hydentity".into()),
+            )
+            .with_prover(
+                "oranj".into(),
+                Risc0Prover::new(SMT_TOKEN_ELF, "oranj".into()),
+            )
             .build();
 
         info!("➡️  Sending blob to register bob identity");

@@ -61,8 +61,11 @@ async fn test_uuid_registration() {
         uuid: UuidTld::default(),
         hydentity,
     })
-    .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
-    .with_prover("uuid".into(), Risc0Prover::new(UUID_TLD_ELF))
+    .with_prover(
+        "hydentity".into(),
+        Risc0Prover::new(HYDENTITY_ELF, "hydentity".into()),
+    )
+    .with_prover("uuid".into(), Risc0Prover::new(UUID_TLD_ELF, "uuid".into()))
     .build();
 
     // First register identity

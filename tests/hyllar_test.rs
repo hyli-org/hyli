@@ -43,8 +43,14 @@ mod e2e_hyllar {
             .await?;
         let mut executor = TxExecutorBuilder::new(States { hydentity, hyllar })
             // Replace prover binaries for non-reproducible mode.
-            .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
-            .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF))
+            .with_prover(
+                "hydentity".into(),
+                Risc0Prover::new(HYDENTITY_ELF, "hydentity".into()),
+            )
+            .with_prover(
+                "hyllar".into(),
+                Risc0Prover::new(HYLLAR_ELF, "hyllar".into()),
+            )
             .build();
 
         info!("➡️  Sending blob to register bob identity");
