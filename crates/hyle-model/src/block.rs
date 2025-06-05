@@ -55,6 +55,14 @@ impl Block {
             .clone())
     }
 
+    pub fn resolve_tx_id(&self, tx_hash: &TxHash) -> Result<TxId> {
+        self.txs
+            .iter()
+            .find(|(_, tx)| tx.hashed() == *tx_hash)
+            .map(|(tx_id, _)| tx_id.clone())
+            .context(format!("No tx id found for tx {}", tx_hash))
+    }
+
     pub fn build_tx_ctx(&self, tx_hash: &TxHash) -> Result<TxContext> {
         let lane_id = self.resolve_lane_id(tx_hash)?;
 
