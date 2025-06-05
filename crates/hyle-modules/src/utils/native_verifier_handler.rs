@@ -1,11 +1,16 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::transaction_builder::TxExecutorHandler;
 use hyle_verifiers::native::verify;
+use hyllar::FAUCET_ID;
 use sdk::verifiers::NativeVerifiers;
+
+use crate::node_state::HYLI_TLD_ID;
 
 /// Convenience utility for verifying blobs for native verifiers.
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
-pub struct NativeVerifierHandler;
+pub struct NativeVerifierHandler {
+    pubkey: [u8; 33],
+}
 
 impl TxExecutorHandler for NativeVerifierHandler {
     fn handle(&mut self, calldata: &sdk::Calldata) -> anyhow::Result<sdk::HyleOutput> {
@@ -20,6 +25,8 @@ impl TxExecutorHandler for NativeVerifierHandler {
             .iter()
             .map(|b| b.1.clone())
             .collect::<Vec<_>>();
+        let cloned_identity = calldata.identity.0.clone();
+        let hyli_pubkey = self.pubkey;
         Ok(verify(
             calldata.tx_hash.clone(),
             calldata.index,
@@ -29,6 +36,13 @@ impl TxExecutorHandler for NativeVerifierHandler {
                 "sha3_256" => NativeVerifiers::Sha3_256,
                 "secp256k1" => NativeVerifiers::Secp256k1,
                 _ => anyhow::bail!("Unknown native verifier: {}", blob.contract_name),
+            },
+            move |pk| {
+                if cloned_identity == HYLI_TLD_ID || cloned_identity == FAUCET_ID {
+                    return Some(pk == hyli_pubkey);
+                }
+
+                None
             },
         ))
     }
@@ -41,6 +55,6 @@ impl TxExecutorHandler for NativeVerifierHandler {
         _: &sdk::RegisterContractEffect,
         _: &Option<Vec<u8>>,
     ) -> anyhow::Result<Self> {
-        Ok(Self)
+        Ok(Self { pubkey: [0; 33] })
     }
 }

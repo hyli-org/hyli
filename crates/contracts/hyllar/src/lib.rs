@@ -19,7 +19,7 @@ pub mod indexer;
 pub mod erc20;
 
 pub const TOTAL_SUPPLY: u128 = 100_000_000_000;
-pub const FAUCET_ID: &str = "faucet@hydentity";
+pub const FAUCET_ID: &str = "faucet@secp256k1";
 
 impl ZkContract for Hyllar {
     fn execute(&mut self, calldata: &Calldata) -> RunResult {
@@ -263,7 +263,7 @@ mod tests {
                 .transfer_from(FAUCET_ID, "spender", "recipient", 200)
                 .unwrap_err()
                 .to_string(),
-            "Allowance exceeded for spender=spender owner=faucet@hydentity allowance=100"
+            "Allowance exceeded for spender=spender owner=faucet@secp256k1 allowance=100"
         );
     }
 
@@ -276,7 +276,7 @@ mod tests {
                 .transfer_from(FAUCET_ID, "spender", "recipient", 200)
                 .unwrap_err()
                 .to_string(),
-            "Allowance exceeded for spender=spender owner=faucet@hydentity allowance=0"
+            "Allowance exceeded for spender=spender owner=faucet@secp256k1 allowance=0"
         );
     }
 

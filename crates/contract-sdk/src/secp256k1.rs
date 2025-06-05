@@ -1,5 +1,5 @@
 use alloc::string::String;
-use hyle_model::{verifiers::Secp256k1Blob, BlobIndex, Calldata, ContractName};
+use hyle_model::{verifiers::Secp256k1Blob, BlobIndex, Calldata, ContractName, Identity};
 use sha2::{Digest, Sha256};
 
 /// This struct allows to check the existence of a secp256k1 blob in the calldata.
@@ -39,6 +39,27 @@ impl<'a> CheckSecp256k1<'a> {
         self
     }
 
+    pub fn validate_blob(
+        blob: &Secp256k1Blob,
+        identity: &Identity,
+        expected_data: &'_ [u8],
+    ) -> Result<(), &'static str> {
+        // Verify that the identity matches the user
+        if &blob.identity != identity {
+            return Err("Secp256k1Blob identity does not match");
+        }
+
+        let mut hasher = Sha256::new();
+        hasher.update(expected_data);
+        let message_hash: [u8; 32] = hasher.finalize().into();
+
+        if blob.data != message_hash {
+            return Err("Secp256k1Blob data does not match");
+        }
+
+        Ok(())
+    }
+
     pub fn expect(self) -> Result<Secp256k1Blob, &'static str> {
         // Verify Secp256k1Blob
         let secp_blob = match self.blob_index {
@@ -65,18 +86,7 @@ impl<'a> CheckSecp256k1<'a> {
         let secp_data: Secp256k1Blob =
             borsh::from_slice(&secp_blob.data.0).map_err(|_| "Failed to decode Secp256k1Blob")?;
 
-        // Verify that the identity matches the user
-        if secp_data.identity != self.calldata.identity {
-            return Err("Secp256k1Blob identity does not match");
-        }
-
-        let mut hasher = Sha256::new();
-        hasher.update(self.expected_data);
-        let message_hash: [u8; 32] = hasher.finalize().into();
-
-        if secp_data.data != message_hash {
-            return Err("Secp256k1Blob data does not match");
-        }
+        Self::validate_blob(&secp_data, &self.calldata.identity, self.expected_data)?;
 
         Ok(secp_data)
     }

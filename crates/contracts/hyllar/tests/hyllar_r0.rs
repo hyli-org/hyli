@@ -50,6 +50,6 @@ fn execute_transfer_from() {
     assert!(!output[0].success);
     assert_eq!(
         str::from_utf8(&output[0].program_outputs).unwrap(),
-        "Allowance exceeded for spender=caller owner=faucet@hydentity allowance=0"
+        "Allowance exceeded for spender=caller owner=faucet@secp256k1 allowance=0"
     );
 }

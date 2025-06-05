@@ -47,6 +47,7 @@ pub struct NodeStateBusClient {
 
 pub struct NodeStateCtx {
     pub node_id: String,
+    pub hyli_pubkey: [u8; 33],
     pub data_directory: PathBuf,
     pub api: SharedBuildApiCtx,
 }
@@ -63,9 +64,11 @@ impl Module for NodeStateModule {
         }
         let metrics = NodeStateMetrics::global(ctx.node_id.clone(), "node_state");
 
-        let store = Self::load_from_disk_or_default::<NodeStateStore>(
+        let mut store = Self::load_from_disk_or_default::<NodeStateStore>(
             ctx.data_directory.join("node_state.bin").as_path(),
         );
+
+        store.hyli_pubkey = ctx.hyli_pubkey;
 
         for name in store.contracts.keys() {
             info!("📝 Loaded contract state for {}", name);
