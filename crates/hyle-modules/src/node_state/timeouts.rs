@@ -5,7 +5,7 @@ use sdk::{BlockHeight, TxHash};
 
 #[derive(Default, Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct Timeouts {
-    by_block: HashMap<BlockHeight, Vec<TxHash>>,
+    pub by_block: HashMap<BlockHeight, Vec<TxHash>>,
 }
 
 impl Timeouts {
