@@ -193,6 +193,15 @@ where
                 {
                     continue;
                 }
+                if self.store.tx_chain.contains(&tx.hashed()) {
+                    debug!(
+                        cn =% self.ctx.contract_name,
+                        tx_hash =% tx.hashed(),
+                        "Transaction {} already processed, skipping",
+                        tx.hashed()
+                    );
+                    continue;
+                }
                 self.store.tx_chain.push(tx.hashed());
 
                 let tx_ctx = TxContext {
@@ -370,13 +379,6 @@ where
         if let Some(pos) = tx {
             self.store.unsettled_txs.remove(pos);
             return Some(pos);
-        } else {
-            error!(
-                cn =% self.ctx.contract_name,
-                tx_hash =% hash,
-                "Tx {} not found in unsettled txs",
-                hash
-            );
         }
         None
     }
