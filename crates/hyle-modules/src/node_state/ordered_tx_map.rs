@@ -286,7 +286,7 @@ mod tests {
 
         map.remove(&tx2);
         assert_eq!(map.map.len(), 1);
-        assert_eq!(map.tx_order.len(), 2);
+        assert_eq!(map.tx_order.len(), 1);
         assert_eq!(map.tx_order[&c1].len(), 0);
     }
 
@@ -320,7 +320,7 @@ mod tests {
         map.remove(&tx.hash);
 
         assert_eq!(map.map.len(), 0);
-        assert_eq!(map.tx_order.get(&contract1).unwrap().len(), 0);
-        assert_eq!(map.tx_order.get(&contract2).unwrap().len(), 0);
+        assert_eq!(map.tx_order.get(&contract1), None);
+        assert_eq!(map.tx_order.get(&contract2), None);
     }
 }
