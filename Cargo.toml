@@ -16,8 +16,9 @@ members = [
   "crates/hyle-model",
   "crates/hyle-crypto",
   "crates/hyle-verifiers",
-  "crates/noir-tools",
   "crates/hyle-modules",
+  "crates/hyli-tools",
+  "crates/noir-tools",
 ]
 default-members = [
   "crates/contracts",
@@ -27,6 +28,7 @@ default-members = [
   "crates/hyle-crypto",
   "crates/hyle-net",
   "crates/hyle-modules",
+  "crates/hyli-tools",
   ".",
 ]
 resolver = "2"
