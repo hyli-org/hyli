@@ -327,11 +327,9 @@ where
 
     fn settle_tx_failed(&mut self, tx: &TxHash) -> Result<()> {
         if let Some(pos) = self.settle_tx(tx) {
-            if pos == 0 {
-                self.handle_all_next_blobs(pos, tx)?;
-                self.store.state_history.remove(tx);
-                self.store.tx_chain.retain(|h| h != tx);
-            }
+            self.handle_all_next_blobs(pos, tx)?;
+            self.store.state_history.remove(tx);
+            self.store.tx_chain.retain(|h| h != tx);
         }
         Ok(())
     }
@@ -371,18 +369,23 @@ where
             .iter()
             .enumerate()
             .find(|(_, h)| *h == failed_tx)
-            .and_then(|(i, _)| {
-                if i > 0 {
-                    self.store.tx_chain.get(i - 1)
-                } else {
-                    None
+            .and_then(|(mut i, _)| {
+                while i > 0 {
+                    let prev_tx = self.store.tx_chain.get(i - 1);
+                    if let Some(prev_tx) = prev_tx {
+                        if self.store.state_history.contains_key(prev_tx) {
+                            return Some(prev_tx);
+                        }
+                    }
+                    i -= 1;
                 }
+                None
             });
 
         tracing::debug!(
             cn =% self.ctx.contract_name,
             tx_hash =% failed_tx,
-            "Handling failed tx {}. Previous tx: {:?}, History: {:?}",
+            "Handling failed tx {}. Previous tx: {:?}, Unsettled idx: {idx}, History: {:?}",
             failed_tx,
             prev_tx,
             tx_history
