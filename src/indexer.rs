@@ -128,7 +128,7 @@ impl Indexer {
                     "Indexer handling node state event");
             }
 
-            listen<MempoolStatusEvent> event => {
+            listen<MempoolStatusEvent> _event => {
                 // _ = log_error!(self.handle_mempool_status_event(event)
                 //     .await,
                 //     "Indexer handling mempool status event");
