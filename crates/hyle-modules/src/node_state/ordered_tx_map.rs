@@ -125,7 +125,6 @@ impl OrderedTxMap {
     }
 
     pub fn remove(&mut self, hash: &TxHash) -> Option<UnsettledBlobTransaction> {
-        dbg!(&self.tx_order);
         self.map.remove(hash).inspect(|tx| {
             // Remove the tx from the tx_order
             let contract_names = self.get_contracts_blocked_by_tx(tx);
