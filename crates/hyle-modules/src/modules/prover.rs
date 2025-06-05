@@ -229,7 +229,6 @@ where
                     "Catching up finished at block {}",
                     block.block_height
                 );
-                debug!("Contract: {:#?}", self.store.contract);
 
                 self.catching_up = None;
                 self.catching_blobs.extend(blobs);
