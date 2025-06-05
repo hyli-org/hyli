@@ -5,7 +5,7 @@ use sdk::{BlockHeight, TxHash};
 
 #[derive(Default, Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct Timeouts {
-    pub by_block: HashMap<BlockHeight, Vec<TxHash>>,
+    by_block: HashMap<BlockHeight, Vec<TxHash>>,
 }
 
 impl Timeouts {
@@ -20,6 +20,10 @@ impl Timeouts {
             .entry(block_height + timeout_window)
             .or_default()
             .push(tx);
+    }
+
+    pub fn count_all(&self) -> usize {
+        self.by_block.values().map(|v| v.len()).sum()
     }
 }
 
