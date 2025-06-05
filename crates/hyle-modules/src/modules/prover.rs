@@ -327,9 +327,11 @@ where
 
     fn settle_tx_failed(&mut self, tx: &TxHash) -> Result<()> {
         if let Some(pos) = self.settle_tx(tx) {
-            self.handle_all_next_blobs(pos, tx)?;
-            self.store.state_history.remove(tx);
-            self.store.tx_chain.retain(|h| h != tx);
+            if pos == 0 {
+                self.handle_all_next_blobs(pos, tx)?;
+                self.store.state_history.remove(tx);
+                self.store.tx_chain.retain(|h| h != tx);
+            }
         }
         Ok(())
     }
