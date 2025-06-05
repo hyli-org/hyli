@@ -129,9 +129,9 @@ impl Indexer {
             }
 
             listen<MempoolStatusEvent> event => {
-                _ = log_error!(self.handle_mempool_status_event(event)
-                    .await,
-                    "Indexer handling mempool status event");
+                // _ = log_error!(self.handle_mempool_status_event(event)
+                //     .await,
+                //     "Indexer handling mempool status event");
             }
 
             Some((contract_name, socket)) = self.new_sub_receiver.recv() => {
