@@ -1762,6 +1762,8 @@ mod tests {
         let block = node_state.craft_block_and_handle(12, proofs);
         auto_prover.handle_processed_block(block).await?;
 
+        assert_eq!(read_contract_state(&node_state).value, 80);
+
         assert_eq!(
             node_state.get_earliest_unsettled_height(&ContractName::new("test")),
             None
