@@ -220,7 +220,7 @@ Blob for contract `B` has to be a `StructuredBlobData` with caller = the blob in
 
 ## When to use cross-contract calls ?
 
-When a contract needs to do an operation on an other one. Like transfering funds from
+When a contract needs to do an operation on an other one. Like transferring funds from
 contract's wallet to the user doing the transaction.
 
 ### Example: Bob Swap 2 USDC to 2 USDT
