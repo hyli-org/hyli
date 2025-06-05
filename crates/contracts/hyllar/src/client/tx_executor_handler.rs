@@ -46,7 +46,10 @@ impl Hyllar {
         contract_name: ContractName,
         builder: &mut TxExecutorBuilder<S>,
     ) {
-        builder.init_with(contract_name, Risc0Prover::new(HYLLAR_ELF));
+        builder.init_with(
+            contract_name.clone(),
+            Risc0Prover::new(HYLLAR_ELF, contract_name.0.clone()),
+        );
     }
 }
 

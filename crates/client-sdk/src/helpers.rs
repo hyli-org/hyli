@@ -52,10 +52,14 @@ pub mod risc0 {
 
     pub struct Risc0Prover<'a> {
         binary: &'a [u8],
+        contract_name: String,
     }
     impl<'a> Risc0Prover<'a> {
-        pub fn new(binary: &'a [u8]) -> Self {
-            Self { binary }
+        pub fn new(binary: &'a [u8], contract_name: String) -> Self {
+            Self {
+                binary,
+                contract_name,
+            }
         }
         pub async fn prove<T: BorshSerialize>(
             &self,
@@ -67,12 +71,14 @@ pub mod risc0 {
                 "bonsai" => {
                     let input_data =
                         bonsai_runner::as_input_data(&(commitment_metadata, calldatas))?;
-                    bonsai_runner::run_bonsai(self.binary, input_data.clone()).await?
+                    bonsai_runner::run_bonsai(self.binary, input_data.clone(), &self.contract_name)
+                        .await?
                 }
                 "boundless" => {
                     let input_data =
                         bonsai_runner::as_input_data(&(commitment_metadata, calldatas))?;
-                    bonsai_runner::run_boundless(self.binary, input_data).await?
+                    bonsai_runner::run_boundless(self.binary, input_data, &self.contract_name)
+                        .await?
                 }
                 _ => {
                     let input_data = borsh::to_vec(&(commitment_metadata, calldatas))?;

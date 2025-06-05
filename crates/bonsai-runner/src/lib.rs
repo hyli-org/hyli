@@ -13,8 +13,93 @@ use boundless_market::{
     input::InputBuilder,
     storage::{BuiltinStorageProvider, StorageProvider},
 };
+use opentelemetry::{
+    metrics::{Counter, Histogram},
+    InstrumentationScope, KeyValue,
+};
 use risc0_zkvm::{compute_image_id, default_executor, sha::Digestible, Receipt};
 use tracing::info;
+
+#[derive(Debug, Clone)]
+pub struct ProofMetrics {
+    proofs_requested: Counter<u64>,
+    proofs_successful: Counter<u64>,
+    proofs_failed: Counter<u64>,
+    proof_generation_time: Histogram<f64>,
+    proof_verification_time: Histogram<f64>,
+    proof_size_bytes: Histogram<u64>,
+    client_type: &'static str,
+    client_name: String,
+}
+
+impl ProofMetrics {
+    pub fn global(
+        node_name: String,
+        client_type: &'static str,
+        client_name: String,
+    ) -> ProofMetrics {
+        let scope = InstrumentationScope::builder(node_name).build();
+        let my_meter = opentelemetry::global::meter_with_scope(scope);
+
+        ProofMetrics {
+            proofs_requested: my_meter
+                .u64_counter("proof_client_proofs_requested")
+                .build(),
+            proofs_successful: my_meter
+                .u64_counter("proof_client_proofs_successful")
+                .build(),
+            proofs_failed: my_meter.u64_counter("proof_client_proofs_failed").build(),
+            proof_generation_time: my_meter
+                .f64_histogram("proof_client_generation_time_seconds")
+                .build(),
+            proof_verification_time: my_meter
+                .f64_histogram("proof_client_verification_time_seconds")
+                .build(),
+            proof_size_bytes: my_meter
+                .u64_histogram("proof_client_proof_size_bytes")
+                .build(),
+            client_type,
+            client_name,
+        }
+    }
+
+    fn get_labels(&self, contract_name: &str) -> Vec<KeyValue> {
+        vec![
+            KeyValue::new("client_type", self.client_type),
+            KeyValue::new("client_name", self.client_name.clone()),
+            KeyValue::new("contract_name", contract_name.to_string()),
+        ]
+    }
+
+    pub fn record_proof_requested(&self, contract_name: &str) {
+        self.proofs_requested
+            .add(1, &self.get_labels(contract_name));
+    }
+
+    pub fn record_proof_success(&self, contract_name: &str) {
+        self.proofs_successful
+            .add(1, &self.get_labels(contract_name));
+    }
+
+    pub fn record_proof_failure(&self, contract_name: &str) {
+        self.proofs_failed.add(1, &self.get_labels(contract_name));
+    }
+
+    pub fn record_generation_time(&self, duration: f64, contract_name: &str) {
+        self.proof_generation_time
+            .record(duration, &self.get_labels(contract_name));
+    }
+
+    pub fn record_verification_time(&self, duration: f64, contract_name: &str) {
+        self.proof_verification_time
+            .record(duration, &self.get_labels(contract_name));
+    }
+
+    pub fn record_proof_size(&self, size: u64, contract_name: &str) {
+        self.proof_size_bytes
+            .record(size, &self.get_labels(contract_name));
+    }
+}
 
 #[allow(dead_code)]
 pub fn as_input_data<T: BorshSerialize>(data: &T) -> Result<Vec<u8>> {
@@ -25,7 +110,18 @@ pub fn as_input_data<T: BorshSerialize>(data: &T) -> Result<Vec<u8>> {
     Ok(input_data)
 }
 
-pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
+pub async fn run_boundless(
+    elf: &[u8],
+    input_data: Vec<u8>,
+    contract_name: &str,
+) -> Result<Receipt> {
+    let metrics = ProofMetrics::global(
+        "bonsai-runner".to_string(),
+        "boundless",
+        "default".to_string(),
+    );
+    metrics.record_proof_requested(contract_name);
+
     let offchain = std::env::var("BOUNDLESS_OFFCHAIN").unwrap_or_default() == "true";
     let boundless_market_address = std::env::var("BOUNDLESS_MARKET_ADDRESS").unwrap_or_default();
     let order_stream_url = std::env::var("BOUNDLESS_ORDER_STREAM_URL").ok();
@@ -153,6 +249,9 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
         .build()
         .unwrap();
 
+    // Start timing the proof generation
+    let start = std::time::Instant::now();
+
     // Send the request and wait for it to be completed.
     let (request_id, expires_at) = if offchain {
         boundless_client.submit_request_offchain(&request).await?
@@ -170,11 +269,19 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
 
     let receipt: Receipt = bincode::deserialize(&seal)?;
 
+    let duration = start.elapsed().as_secs_f64();
+    metrics.record_generation_time(duration, contract_name);
+    metrics.record_proof_size(receipt.inner.seal_size() as u64, contract_name);
+    metrics.record_proof_success(contract_name);
+
     Ok(receipt)
 }
 
-#[allow(dead_code)]
-pub async fn run_bonsai(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
+pub async fn run_bonsai(elf: &[u8], input_data: Vec<u8>, contract_name: &str) -> Result<Receipt> {
+    let metrics =
+        ProofMetrics::global("bonsai-runner".to_string(), "bonsai", "default".to_string());
+    metrics.record_proof_requested(contract_name);
+
     let client = Client::from_env(risc0_zkvm::VERSION)?;
 
     // Compute the image_id, then upload the ELF with the image_id as its key.
@@ -190,11 +297,16 @@ pub async fn run_bonsai(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
     // Wether to run in execute only mode
     let execute_only = false;
 
+    // Start timing the proof generation
+    let start = std::time::Instant::now();
+
     // Start a session running the prover
     let session = client
         .create_session(image_id, input_id, assumptions, execute_only)
         .await?;
-    loop {
+
+    // Poll for the session to complete and get the receipt
+    let receipt: Receipt = loop {
         let res = session.status(&client).await?;
         if res.status == "RUNNING" {
             info!(
@@ -212,8 +324,7 @@ pub async fn run_bonsai(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
                 .expect("API error, missing receipt on completed session");
 
             let receipt_buf = client.download(&receipt_url).await?;
-            let receipt: Receipt = bincode::deserialize(&receipt_buf)?;
-            return Ok(receipt);
+            break bincode::deserialize(&receipt_buf)?;
         } else {
             bail!(
                 "Workflow exited: {} - | err: {}",
@@ -221,5 +332,12 @@ pub async fn run_bonsai(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
                 res.error_msg.unwrap_or_default()
             );
         }
-    }
+    };
+
+    let duration = start.elapsed().as_secs_f64();
+    metrics.record_generation_time(duration, contract_name);
+    metrics.record_proof_size(receipt.seal_size() as u64, contract_name);
+    metrics.record_proof_success(contract_name);
+
+    Ok(receipt)
 }

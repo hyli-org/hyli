@@ -21,7 +21,10 @@ impl UuidTld {
         contract_name: ContractName,
         builder: &mut TxExecutorBuilder<S>,
     ) {
-        builder.init_with(contract_name, Risc0Prover::new(metadata::UUID_TLD_ELF));
+        builder.init_with(
+            contract_name.clone(),
+            Risc0Prover::new(metadata::UUID_TLD_ELF, contract_name.0.clone()),
+        );
     }
 }
 

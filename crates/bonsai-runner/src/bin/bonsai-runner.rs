@@ -9,6 +9,7 @@ struct ProveRequest {
     api_key: String,
     elf: Vec<u8>,
     input_data: Vec<u8>,
+    contract_name: String,
 }
 
 #[derive(Serialize)]
@@ -45,7 +46,7 @@ async fn prove_handler(
     }
 
     // Appeler la fonction `run_bonsai`
-    let receipt = hyle_bonsai_runner::run_bonsai(&payload.elf, payload.input_data)
+    let receipt = hyle_bonsai_runner::run_bonsai(&payload.elf, payload.input_data, &payload.contract_name)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

@@ -4766,7 +4766,7 @@ dependencies = [
  "hyle-uuid-tld",
  "hyle-verifiers",
  "indexmap 2.9.0",
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "opentelemetry-prometheus",
  "opentelemetry_sdk",
  "paste",
@@ -4821,6 +4821,7 @@ dependencies = [
  "bytemuck",
  "hex",
  "hyle-net",
+ "opentelemetry 0.30.0",
  "risc0-zkvm",
  "serde",
  "serde_json",
@@ -4987,7 +4988,7 @@ dependencies = [
  "hyle-contract-sdk",
  "hyle-net",
  "hyle-verifiers",
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "paste",
  "prometheus",
  "quote",
@@ -5023,7 +5024,7 @@ dependencies = [
  "hyle-crypto",
  "hyper 1.6.0",
  "hyper-util",
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "paste",
  "rand 0.8.5",
  "seq-macro",
@@ -6593,13 +6594,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "opentelemetry"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aaf416e4cb72756655126f7dd7bb0af49c674f4c1b9903e80c009e0c37e552e6"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "js-sys",
+ "pin-project-lite",
+ "thiserror 2.0.12",
+ "tracing",
+]
+
+[[package]]
 name = "opentelemetry-prometheus"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "765a76ba13ec77043903322f85dc5434d7d01a37e75536d0f871ed7b9b5bbf0d"
 dependencies = [
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "opentelemetry_sdk",
  "prometheus",
  "protobuf",
@@ -6617,7 +6632,7 @@ dependencies = [
  "futures-executor",
  "futures-util",
  "glob",
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "percent-encoding",
  "rand 0.8.5",
  "serde_json",
