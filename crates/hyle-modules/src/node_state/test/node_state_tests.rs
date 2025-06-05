@@ -980,6 +980,7 @@ async fn test_auto_settle_next_txs_after_settle() {
         vec![tx_a_hash, tx_b_hash, tx_d_hash, tx_c_hash]
     );
 }
+
 #[test_log::test(tokio::test)]
 async fn test_tx_timeout_simple() {
     let mut state = new_node_state().await;
@@ -1015,10 +1016,7 @@ async fn test_tx_no_timeout_once_settled() {
     // Add a new transaction and settle it.
     let blob_tx = BlobTransaction::new(Identity::new("test@c1"), vec![new_blob(&c1.0)]);
 
-    let crafted_block = craft_signed_block(
-        104,
-        vec![register_c1.clone().into(), blob_tx.clone().into()],
-    );
+    let crafted_block = craft_signed_block(104, vec![register_c1.into(), blob_tx.clone().into()]);
 
     let blob_tx_hash = blob_tx.hashed();
 
@@ -1319,5 +1317,131 @@ async fn test_duplicate_tx_timeout() {
     assert_eq!(
         timeouts::tests::get(&state.timeouts, &blob_tx_hash),
         Some(BlockHeight(103) + BlockHeight(100))
+    );
+}
+
+/// Test qui vérifie le comportement de l'OrderedTxMap lorsqu'une transaction échoue après qu'une autre transaction
+/// a déjà été traitée. Le test met en place le scénario suivant :
+///
+/// 1. Trois contrats : A, B et C
+/// 2. Trois transactions dans l'ordre suivant :
+///    - blob_tx_0 : transaction sur le contrat C uniquement
+///    - blob_tx_1 : transaction sur les contrats A et B
+///    - blob_tx_2 : transaction sur les contrats C et B
+///
+/// L'ordre des transactions dans le bloc est important car il détermine l'ordre dans lequel elles sont
+/// ajoutées à l'OrderedTxMap. Pour chaque contrat, les transactions sont ordonnées dans l'OrderedTxMap
+/// selon leur ordre d'apparition dans le bloc.
+///
+/// Le test vérifie ensuite le traitement des preuves dans l'ordre suivant :
+/// 1. verified_proof_2_c : preuve pour blob_tx_2 sur le contrat C (échoue)
+/// 2. verified_proof_2_b : preuve pour blob_tx_2 sur le contrat B (échoue)
+/// 3. verified_proof_0 : preuve pour blob_tx_0 sur le contrat C (succès)
+///
+/// Points importants :
+/// - La preuve verified_proof_2_c se base sur l'état du contrat C après blob_tx_0 (initial_state = [4,5,6])
+/// - Les deux preuves de blob_tx_2 échouent (success = false)
+/// - L'ordre des blobs dans blob_tx_2 est important : C est en premier (BlobIndex(0)), B en second (BlobIndex(1))
+///
+/// Le test vérifie que :
+/// 1. La première transaction (blob_tx_0) est traitée avec succès
+/// 2. La deuxième transaction (blob_tx_2) échoue
+/// 3. Le système retire correctement blob_tx_2 des deux maps (map et tx_order) sans paniquer
+/// 4. Les états des contrats sont correctement mis à jour
+#[test_log::test(tokio::test)]
+async fn test_panic_on_ordered_tx_map_remove_after_failed_tx() {
+    let mut state = new_node_state().await;
+
+    // Register contracts A, B, and C
+    let contract_a = ContractName::new("contract_a");
+    let contract_b = ContractName::new("contract_b");
+    let contract_c = ContractName::new("contract_c");
+
+    state.handle_register_contract_effect(&make_register_contract_effect(contract_a.clone()));
+    state.handle_register_contract_effect(&make_register_contract_effect(contract_b.clone()));
+    state.handle_register_contract_effect(&make_register_contract_effect(contract_c.clone()));
+
+    // Create a transaction that only concerns contract C
+    let identity_0 = Identity::new("test@contract_c");
+    let blob_tx_0 = BlobTransaction::new(identity_0.clone(), vec![new_blob("contract_c")]);
+    let blob_tx_id_0 = blob_tx_0.hashed();
+
+    // Create first transaction with blobs for contracts A and B
+    let identity_1 = Identity::new("test@contract_a");
+    let blob_tx_1 = BlobTransaction::new(
+        identity_1.clone(),
+        vec![new_blob("contract_a"), new_blob("contract_b")],
+    );
+    let blob_tx_id_1 = blob_tx_1.hashed();
+
+    // Create second transaction with blobs for contracts B and C
+    let identity_2 = Identity::new("test@contract_b");
+    let blob_tx_2 = BlobTransaction::new(
+        identity_2.clone(),
+        vec![new_blob("contract_c"), new_blob("contract_b")],
+    );
+    let blob_tx_id_2 = blob_tx_2.hashed();
+
+    // Create a block with all transactions
+    let ctx = bogus_tx_context();
+    let block = state.craft_block_and_handle(
+        1,
+        vec![
+            blob_tx_0.clone().into(),
+            blob_tx_1.clone().into(),
+            blob_tx_2.clone().into(),
+        ],
+    );
+
+    // Create proof for the first transaction (contract C only)
+    let hyle_output_0 = make_hyle_output(blob_tx_0.clone(), BlobIndex(0));
+    let verified_proof_0 = new_proof_tx(&contract_c, &hyle_output_0, &blob_tx_id_0);
+
+    // Create proofs for second transaction (both blobs)
+    let mut hyle_output_2_b = make_hyle_output(blob_tx_2.clone(), BlobIndex(1));
+    let mut hyle_output_2_c = make_hyle_output(blob_tx_2.clone(), BlobIndex(0));
+    // Make both proofs fail
+    hyle_output_2_b.success = false;
+    hyle_output_2_c.success = false;
+    // Update the state commitment for the C proof to reflect the state after blob_tx_0
+    hyle_output_2_c.initial_state = StateCommitment(vec![4, 5, 6]); // State after blob_tx_0
+    let verified_proof_2_b = new_proof_tx(&contract_b, &hyle_output_2_b, &blob_tx_id_2);
+    let verified_proof_2_c = new_proof_tx(&contract_c, &hyle_output_2_c, &blob_tx_id_2);
+
+    // Process all proofs in the same block
+    let block = state.craft_block_and_handle(
+        2,
+        vec![
+            verified_proof_2_c.into(),
+            verified_proof_2_b.into(),
+            verified_proof_0.into(),
+        ],
+    );
+
+    // Verify first tx succeeded and second failed
+    assert_eq!(block.successful_txs.len(), 1);
+    assert_eq!(block.failed_txs.len(), 1);
+
+    // Verify that blob_tx_2 has been properly removed from both maps
+    assert!(state.unsettled_transactions.get(&blob_tx_id_2).is_none());
+
+    // Verify that blob_tx_2 is not in the tx_order for either contract B or C
+    assert!(!state
+        .unsettled_transactions
+        .get_tx_order(&contract_b)
+        .unwrap()
+        .contains(&blob_tx_id_2));
+    assert!(state
+        .unsettled_transactions
+        .get_tx_order(&contract_c)
+        .is_none());
+
+    // Verify that blob_tx_0 has been removed becaused it was settled as first
+    assert!(state.unsettled_transactions.get(&blob_tx_id_0).is_none());
+    assert_eq!(
+        state
+            .unsettled_transactions
+            .get_next_unsettled_tx(&contract_c),
+        None
     );
 }

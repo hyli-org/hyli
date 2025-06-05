@@ -69,6 +69,11 @@ impl OrderedTxMap {
         self.map.len()
     }
 
+    #[cfg(test)]
+    pub fn get_tx_order(&self, contract: &ContractName) -> Option<&VecDeque<TxHash>> {
+        self.tx_order.get(contract)
+    }
+
     fn get_contracts_blocked_by_tx(&self, tx: &UnsettledBlobTransaction) -> HashSet<ContractName> {
         // Collect into a hashset for unicity
         let mut contract_names = HashSet::new();
@@ -120,24 +125,17 @@ impl OrderedTxMap {
     }
 
     pub fn remove(&mut self, hash: &TxHash) -> Option<UnsettledBlobTransaction> {
-        if let Some(tx) = self.map.get(hash) {
-            let contract_names = self.get_contracts_blocked_by_tx(tx);
-            for contract_name in contract_names {
-                if let Some(c) = self.tx_order.get_mut(&contract_name) {
-                    if let Some(t) = c.front() {
-                        if t.eq(hash) {
-                            c.pop_front();
-                        } else {
-                            // Panic - this indicates a logic error in the code
-                            panic!("Trying to remove a tx that is not the first in the queue");
-                        }
+        self.map.remove(hash).inspect(|tx| {
+            // Remove the tx from the tx_order
+            for blob in tx.blobs.values() {
+                if let Some(vec) = self.tx_order.get_mut(&blob.blob.contract_name) {
+                    vec.retain(|h| h != &tx.hash);
+                    if vec.is_empty() {
+                        self.tx_order.remove(&blob.blob.contract_name);
                     }
                 }
             }
-            self.map.remove(hash)
-        } else {
-            None
-        }
+        })
     }
 }
 
