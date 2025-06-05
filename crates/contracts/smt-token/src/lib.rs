@@ -121,14 +121,10 @@ impl SmtTokenContract {
         let SmtTokenStep {
             mut accounts,
             proof,
-        } = self.steps.pop().unwrap();
+        } = self.steps.pop().expect("Incorrect proof setup");
         {
-            let sender_account = accounts
-                .get(&sender)
-                .ok_or_else(|| "Sender account not found".to_string())?;
-            let recipient_account = accounts
-                .get(&recipient)
-                .ok_or_else(|| "Recipient account not found".to_string())?;
+            let sender_account = accounts.get(&sender).ok_or("Sender not found")?;
+            let recipient_account = accounts.get(&recipient).ok_or("Recipient not found")?;
 
             let sender_key = sender_account.get_key();
             let recipient_key = recipient_account.get_key();
@@ -158,12 +154,31 @@ impl SmtTokenContract {
             }
         }
 
-        // update sender and recipient balances
-        accounts.get_mut(&sender).unwrap().balance -= amount;
-        accounts.get_mut(&recipient).unwrap().balance += amount;
+        self.transfer_noverif(&mut accounts, &proof, sender, recipient, amount)
+    }
 
-        let sender_account = accounts.get(&sender).unwrap();
-        let recipient_account = accounts.get(&recipient).unwrap();
+    pub fn transfer_noverif(
+        &mut self,
+        accounts: &mut BTreeMap<Identity, Account>,
+        proof: &BorshableMerkleProof,
+        sender: Identity,
+        recipient: Identity,
+        amount: u128,
+    ) -> Result<String, String> {
+        // update sender and recipient balances
+        let sender_account = accounts.get_mut(&sender).expect("checked above");
+        sender_account.balance = sender_account
+            .balance
+            .checked_sub(amount)
+            .ok_or("Insufficient balance")?;
+        let recipient_account = accounts.get_mut(&recipient).expect("checked above");
+        recipient_account.balance = recipient_account
+            .balance
+            .checked_add(amount)
+            .ok_or("Overflow in recipient balance")?;
+
+        let sender_account = accounts.get(&sender).expect("checked above");
+        let recipient_account = accounts.get(&recipient).expect("checked above");
         let leaves = if sender == recipient {
             vec![(sender_account.get_key(), sender_account.to_h256())]
         } else {
@@ -193,36 +208,35 @@ impl SmtTokenContract {
         recipient: Identity,
         amount: u128,
     ) -> Result<String, String> {
-        let SmtTokenStep { accounts, proof } = self.steps.pop().unwrap();
-        let owner_account = accounts
-            .get(&owner)
-            .ok_or_else(|| "Owner account not found".to_string())?;
-        let recipient_account = accounts
-            .get(&recipient)
-            .ok_or_else(|| "Recipient account not found".to_string())?;
+        let SmtTokenStep {
+            mut accounts,
+            proof,
+        } = self.steps.pop().expect("Incorrect proof setup");
 
-        if owner_account.address != owner {
-            return Err("Owner address mismatch".to_string());
-        }
+        let recipient_account = accounts.get(&recipient).ok_or("Recipient not found")?;
         if recipient_account.address != recipient {
             return Err("Recipient address mismatch".to_string());
         }
-        if owner_account.allowances.get(&spender).unwrap_or(&0) < &amount {
+
+        let owner_account = accounts.get_mut(&owner).ok_or("Owner not found")?;
+        if owner_account.address != owner {
+            return Err("Owner address mismatch".to_string());
+        }
+
+        let allowance = owner_account.allowances.get(&spender).cloned().unwrap_or(0);
+        if allowance < amount {
             return Err(format!(
                 "Allowance exceeded for spender={} owner={} allowance={}",
-                spender,
-                owner_account.address,
-                owner_account.allowances.get(&spender).unwrap_or(&0)
+                spender, owner_account.address, allowance
             ));
         }
 
-        // re-add it to be pop-ed by transfer()
-        // note: we pop it at the beginning of transfer_from to remove it
-        // even in case of early return and still be able to verify next calldata
-        self.steps.push(SmtTokenStep { proof, accounts });
+        owner_account.update_allowances(
+            spender.clone(),
+            allowance.checked_sub(amount).ok_or("Allowance underflow")?,
+        );
 
-        self.transfer(owner, recipient, amount)
-        // TODO: update allowance
+        self.transfer_noverif(&mut accounts, &proof, owner, recipient, amount)
     }
 
     pub fn approve(
@@ -234,11 +248,9 @@ impl SmtTokenContract {
         let SmtTokenStep {
             mut accounts,
             proof,
-        } = self.steps.pop().unwrap();
+        } = self.steps.pop().expect("Incorrect proof setup");
         {
-            let owner_account = accounts
-                .get(&owner)
-                .ok_or_else(|| "Owner account not found".to_string())?;
+            let owner_account = accounts.get(&owner).ok_or("Owner account not found")?;
 
             let owner_key = owner_account.get_key();
 
@@ -260,10 +272,10 @@ impl SmtTokenContract {
 
         accounts
             .get_mut(&owner)
-            .unwrap()
+            .ok_or("Owner account not found")?
             .update_allowances(spender.clone(), amount);
 
-        let owner_account = accounts.get(&owner).unwrap();
+        let owner_account = accounts.get(&owner).ok_or("Owner account not found")?;
         let owner_key = owner_account.get_key();
 
         let new_root = proof
@@ -575,6 +587,7 @@ mod tests {
         // Update balances and allowance
         owner_account.balance -= 200;
         recipient_account.balance += 200;
+        owner_account.update_allowances(spender.clone(), 300);
 
         let expected_root = smt
             .0
