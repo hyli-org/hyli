@@ -6,6 +6,7 @@ use sha3::{Digest, Sha3_256};
 use utoipa::ToSchema;
 
 use crate::*;
+use crate::utils::TimestampMs;
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, Eq, PartialEq)]
 pub enum DataEvent {
@@ -154,6 +155,24 @@ pub enum TransactionStateEvent {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
+pub struct NodeStateBlock(pub std::sync::Arc<Block>);
+
+#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
 pub enum NodeStateEvent {
-    NewBlock(Box<Block>),
+    DataProposalsFromBlock {
+        block_hash: ConsensusProposalHash,
+        block_height: BlockHeight,
+        block_timestamp: TimestampMs,
+        data_proposals: Vec<DataProposalMetadata>,
+    },
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
+pub struct DataProposalMetadata {
+    pub hash: DataProposalHash,
+    pub parent_hash: Option<DataProposalHash>,
+    pub lane_id: LaneId,
+    pub tx_count: usize,
+    pub estimated_size: usize,
+    pub tx_hashes: Vec<TxHash>,
 }

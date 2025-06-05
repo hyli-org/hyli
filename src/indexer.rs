@@ -40,6 +40,7 @@ use utoipa_axum::routes;
 module_bus_client! {
 #[derive(Debug)]
 struct IndexerBusClient {
+    receiver(NodeStateBlock),
     receiver(NodeStateEvent),
     receiver(MempoolStatusEvent),
 }
@@ -119,9 +120,20 @@ impl Module for Indexer {
 }
 
 impl Indexer {
+    async fn handle_node_state_block(&mut self, block: NodeStateBlock) -> Result<()> {
+        // Extract the Arc<Block> from NodeStateBlock and handle it
+        self.handle_processed_block(block.0).await
+    }
+
     pub async fn start(&mut self) -> Result<()> {
         module_handle_messages! {
             on_bus self.bus,
+            listen<NodeStateBlock> block => {
+                _ = log_error!(self.handle_node_state_block(block)
+                    .await,
+                    "Indexer handling node state block");
+            }
+
             listen<NodeStateEvent> event => {
                 _ = log_error!(self.handle_node_state_event(event)
                     .await,
