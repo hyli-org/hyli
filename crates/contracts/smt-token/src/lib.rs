@@ -154,20 +154,31 @@ impl SmtTokenContract {
             }
         }
 
+        self.transfer_noverif(&mut accounts, &proof, sender, recipient, amount)
+    }
+
+    pub fn transfer_noverif(
+        &mut self,
+        accounts: &mut BTreeMap<Identity, Account>,
+        proof: &BorshableMerkleProof,
+        sender: Identity,
+        recipient: Identity,
+        amount: u128,
+    ) -> Result<String, String> {
         // update sender and recipient balances
-        let sender_account = accounts.get_mut(&sender).ok_or("Sender not found")?;
+        let sender_account = accounts.get_mut(&sender).expect("checked above");
         sender_account.balance = sender_account
             .balance
             .checked_sub(amount)
             .ok_or("Insufficient balance")?;
-        let recipient_account = accounts.get_mut(&recipient).ok_or("Recipient not found")?;
+        let recipient_account = accounts.get_mut(&recipient).expect("checked above");
         recipient_account.balance = recipient_account
             .balance
             .checked_add(amount)
             .ok_or("Overflow in recipient balance")?;
 
-        let sender_account = accounts.get(&sender).ok_or("Sender not found")?;
-        let recipient_account = accounts.get(&recipient).ok_or("Recipient not found")?;
+        let sender_account = accounts.get(&sender).expect("checked above");
+        let recipient_account = accounts.get(&recipient).expect("checked above");
         let leaves = if sender == recipient {
             vec![(sender_account.get_key(), sender_account.to_h256())]
         } else {
@@ -225,12 +236,7 @@ impl SmtTokenContract {
             allowance.checked_sub(amount).ok_or("Allowance underflow")?,
         );
 
-        // re-add it to be pop-ed by transfer()
-        // note: we pop it at the beginning of transfer_from to remove it
-        // even in case of early return and still be able to verify next calldata
-        self.steps.push(SmtTokenStep { proof, accounts });
-
-        self.transfer(owner, recipient, amount)
+        self.transfer_noverif(&mut accounts, &proof, owner, recipient, amount)
     }
 
     pub fn approve(
@@ -581,6 +587,7 @@ mod tests {
         // Update balances and allowance
         owner_account.balance -= 200;
         recipient_account.balance += 200;
+        owner_account.update_allowances(spender.clone(), 300);
 
         let expected_root = smt
             .0
