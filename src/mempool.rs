@@ -25,7 +25,7 @@ use hyle_modules::{
     bus::SharedMessageBus, log_error, log_warn, module_bus_client, module_handle_messages,
     modules::Module, utils::static_type_map::Pick,
 };
-use hyle_net::ordered_join_set::OrderedJoinSet;
+use hyle_net::{logged_task::logged_task, ordered_join_set::OrderedJoinSet};
 use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
@@ -440,7 +440,7 @@ impl Mempool {
             sync_request_receiver,
         );
 
-        tokio::spawn(async move { mempool_sync.start().await });
+        logged_task(async move { mempool_sync.start().await });
 
         sync_request_sender
     }

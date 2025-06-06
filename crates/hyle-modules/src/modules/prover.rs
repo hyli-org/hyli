@@ -7,6 +7,7 @@ use anyhow::{anyhow, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::rest_client::NodeApiClient;
 use client_sdk::{helpers::ClientSdkProver, transaction_builder::TxExecutorHandler};
+use hyle_net::logged_task::logged_task;
 use sdk::{
     BlobIndex, BlobTransaction, Block, BlockHeight, Calldata, ContractName, Hashed, NodeStateEvent,
     ProofTransaction, TransactionData, TxContext, TxHash, HYLE_TESTNET_CHAIN_ID,
@@ -684,7 +685,7 @@ where
         let node_client = self.ctx.node.clone();
         let prover = self.ctx.prover.clone();
         let contract_name = self.ctx.contract_name.clone();
-        tokio::task::spawn(async move {
+        logged_task(async move {
             let mut retries = 0;
             const MAX_RETRIES: u32 = 30;
 

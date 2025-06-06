@@ -19,6 +19,7 @@ use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use crate::{
     clock::TimestampMsClock,
+    logged_task::logged_task,
     metrics::TcpServerMetrics,
     net::{TcpListener, TcpStream},
     tcp::{to_tcp_message, TcpMessage},
@@ -254,7 +255,7 @@ where
         // This task is responsible for reception of ping and message.
         // If an error occurs and is not an InvalidData error, we assume the task is to be aborted.
         // If the stream is closed, we also assume the task is to be aborted.
-        let abort_receiver_task = tokio::spawn(async move {
+        let abort_receiver_task = logged_task(async move {
             loop {
                 match receiver.next().await {
                     Some(Ok(bytes)) => {
@@ -324,7 +325,7 @@ where
         let (sender_snd, mut sender_recv) = tokio::sync::mpsc::channel::<TcpMessage>(1000);
         let metrics = self.metrics.clone();
 
-        let abort_sender_task = tokio::spawn({
+        let abort_sender_task = logged_task({
             let cloned_socket_addr = socket_addr.clone();
             async move {
                 while let Some(msg) = sender_recv.recv().await {
