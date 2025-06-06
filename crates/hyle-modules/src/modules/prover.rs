@@ -230,6 +230,7 @@ where
         // 🚨 We have to handle successful transactions after the failed ones,
         // as we drop hitory of previous successful transactions when a transaction succeeds,
         // we won't find the parent state of the failed transaction, thus reverting to default state.
+        // Covered by test test_auto_prover_tx_failed_after_success_in_same_block
         for tx in block.successful_txs {
             self.settle_tx_success(&tx)?;
         }
@@ -813,14 +814,16 @@ mod tests {
         }
     }
 
-    async fn setup() -> Result<(NodeState, AutoProver<TestContract>, Arc<NodeApiMockClient>)> {
+    async fn setup_with_timeout(
+        timeout: u64,
+    ) -> Result<(NodeState, AutoProver<TestContract>, Arc<NodeApiMockClient>)> {
         let mut node_state = new_node_state().await;
         let register = RegisterContractEffect {
             verifier: "test".into(),
             program_id: ProgramId(vec![]),
             state_commitment: TestContract::default().commit(),
             contract_name: "test".into(),
-            timeout_window: Some(TimeoutWindow::Timeout(BlockHeight(5))),
+            timeout_window: Some(TimeoutWindow::Timeout(BlockHeight(timeout))),
         };
         node_state.handle_register_contract_effect(&register);
 
@@ -829,6 +832,10 @@ mod tests {
         let auto_prover = new_simple_auto_prover(api_client.clone()).await?;
 
         Ok((node_state, auto_prover, api_client))
+    }
+
+    async fn setup() -> Result<(NodeState, AutoProver<TestContract>, Arc<NodeApiMockClient>)> {
+        setup_with_timeout(5).await
     }
 
     async fn new_simple_auto_prover(
@@ -1076,6 +1083,38 @@ mod tests {
         node_state.craft_block_and_handle(4, proofs_3);
 
         assert_eq!(read_contract_state(&node_state).value, 1 + 3 + 3);
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_auto_prover_tx_failed_after_success_in_same_block() -> Result<()> {
+        let (mut node_state, mut auto_prover, api_client) = setup_with_timeout(10).await?;
+
+        tracing::info!("✨ Block 1");
+        let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
+        let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
+        let block_3 = node_state.craft_block_and_handle(3, vec![new_failing_blob_tx(3)]);
+        let block_4 = node_state.craft_block_and_handle(4, vec![new_failing_blob_tx(4)]);
+        let block_5 = node_state.craft_block_and_handle(5, vec![new_blob_tx(5)]);
+
+        let blocks = vec![block_1, block_2, block_3, block_4, block_5];
+        for block in blocks {
+            auto_prover.handle_processed_block(block).await?;
+        }
+        // All proofs needs to arrive in the same block to raise the error
+        let proofs = get_txs(&api_client).await;
+        let block_6 = node_state.craft_block_and_handle(6, proofs);
+        auto_prover.handle_processed_block(block_6).await?;
+        assert_eq!(read_contract_state(&node_state).value, 1 + 2 + 5);
+        tracing::info!("✨ Block 7");
+        let block_7 = node_state.craft_block_and_handle(7, vec![new_blob_tx(7)]);
+        auto_prover.handle_processed_block(block_7).await?;
+        let proofs_7 = get_txs(&api_client).await;
+        tracing::info!("✨ Block 8");
+        let block_8 = node_state.craft_block_and_handle(8, proofs_7);
+        auto_prover.handle_processed_block(block_8).await?;
+        assert_eq!(read_contract_state(&node_state).value, 1 + 2 + 5 + 7);
 
         Ok(())
     }
