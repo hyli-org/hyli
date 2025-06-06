@@ -815,7 +815,7 @@ impl NodeState {
                 .entry(bth.clone())
                 .or_default()
                 .push(TransactionStateEvent::SettledAsFailed);
-            info!("⛈️ Settled tx {} as failed", &bth);
+            info!(tx_height =% block_under_construction.block_height, "⛈️ Settled tx {} as failed", &bth);
 
             block_under_construction.failed_txs.push(bth);
             return next_txs_to_try_and_settle;
@@ -828,7 +828,7 @@ impl NodeState {
             .or_default()
             .push(TransactionStateEvent::Settled);
         self.metrics.add_settled_transactions(1);
-        info!("✨ Settled tx {}", &bth);
+        info!(tx_height =% block_under_construction.block_height, "✨ Settled tx {}", &bth);
 
         // Go through each blob and:
         // - keep track of which blob proof output we used to settle the TX for each blob.
