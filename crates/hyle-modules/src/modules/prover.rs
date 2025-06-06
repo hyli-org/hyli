@@ -227,6 +227,9 @@ where
             self.settle_tx_failed(&tx)?;
         }
 
+        // 🚨 We have to handle successful transactions after the failed ones,
+        // as we drop hitory of previous successful transactions when a transaction succeeds,
+        // we won't find the parent state of the failed transaction, thus reverting to default state.
         for tx in block.successful_txs {
             self.settle_tx_success(&tx)?;
         }
