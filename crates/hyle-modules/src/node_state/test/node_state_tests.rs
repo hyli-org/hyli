@@ -1211,7 +1211,7 @@ async fn test_tx_reset_timeout_on_tx_settlement() {
     // Assert that tx4 timeout is set with remaining timeout window
     assert_eq!(
         timeouts::tests::get(&state.timeouts, &tx4_hash),
-        Some(104 + TIMEOUT_WINDOW)
+        Some(250 + TIMEOUT_WINDOW)
     );
 }
 
