@@ -27,6 +27,7 @@ use hyle_modules::{
     log_error, module_handle_messages,
     modules::{module_bus_client, Module, SharedBuildApiCtx},
 };
+use hyle_net::logged_task::logged_task;
 use sqlx::Row;
 use sqlx::{postgres::PgPoolOptions, PgPool, Pool, Postgres};
 use std::collections::HashMap;
@@ -142,7 +143,7 @@ impl Indexer {
                     .or_default()
                     .push(tx);
 
-                tokio::spawn(async move {
+                logged_task(async move {
                         let (mut ws_tx, mut ws_rx) = socket.split();
 
                         loop {
