@@ -281,6 +281,18 @@ where
 
             self.prove_supported_blob(buffered)?;
         } else {
+            if !blobs.is_empty() {
+                debug!(
+                    cn =% self.ctx.contract_name,
+                    "🔍️ Buffering {} new blobs to {} already buffered, buffered blocks count: {}. Blobs: {:?}",
+                    blobs.len(),
+                    self.store.buffered_blobs.len(),
+                    self.store.buffered_blocks_count,
+                    blobs.iter()
+                        .map(|(_, tx, _)|  tx.hashed())
+                        .collect::<Vec<_>>()
+                );
+            }
             self.store.buffered_blobs.append(&mut blobs);
             self.store.buffered_blocks_count += 1;
 
@@ -410,13 +422,18 @@ where
                     found = true;
                     t.hashed() != *failed_tx
                 });
+                let mut found_in_catching = false;
+                self.catching_blobs.retain(|(_, t, _)| {
+                    found_in_catching = true;
+                    t.hashed() != *failed_tx
+                });
                 // If we don't have the state_history of the parent, we expect it's because we're buffering.
                 // If we weren't in the buffer, then something unexpected happened and we likely have a bug.
-                if !found {
+                if !found && !found_in_catching {
                     tracing::error!(
                         cn =% self.ctx.contract_name,
                         tx_hash =% failed_tx,
-                        "Failed to find buffered tx {} in the store after it failed",
+                        "Failed to find buffered or catching tx {} in the store after it failed",
                         failed_tx
                     );
                 } else {
