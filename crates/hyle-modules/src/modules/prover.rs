@@ -284,13 +284,10 @@ where
             if !blobs.is_empty() {
                 debug!(
                     cn =% self.ctx.contract_name,
-                    "🔍️ Buffering {} new blobs to {} already buffered, buffered blocks count: {}. Blobs: {:?}",
+                    "🔍️ Buffering {} new blobs to {} already buffered, buffered blocks count: {}",
                     blobs.len(),
                     self.store.buffered_blobs.len(),
                     self.store.buffered_blocks_count,
-                    blobs.iter()
-                        .map(|(_, tx, _)|  tx.hashed())
-                        .collect::<Vec<_>>()
                 );
             }
             self.store.buffered_blobs.append(&mut blobs);
