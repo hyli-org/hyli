@@ -219,16 +219,19 @@ where
             }
         }
 
-        for tx in block.successful_txs {
-            self.settle_tx_success(&tx)?;
-        }
-
         for tx in block.timed_out_txs {
             self.settle_tx_failed(&tx)?;
         }
 
         for tx in block.failed_txs {
             self.settle_tx_failed(&tx)?;
+        }
+
+        // 🚨 We have to handle successful transactions after the failed ones,
+        // as we drop hitory of previous successful transactions when a transaction succeeds,
+        // we won't find the parent state of the failed transaction, thus reverting to default state.
+        for tx in block.successful_txs {
+            self.settle_tx_success(&tx)?;
         }
 
         if let Some(catching_up) = self.catching_up {
@@ -281,6 +284,15 @@ where
 
             self.prove_supported_blob(buffered)?;
         } else {
+            if !blobs.is_empty() {
+                debug!(
+                    cn =% self.ctx.contract_name,
+                    "🔍️ Buffering {} new blobs to {} already buffered, buffered blocks count: {}",
+                    blobs.len(),
+                    self.store.buffered_blobs.len(),
+                    self.store.buffered_blocks_count,
+                );
+            }
             self.store.buffered_blobs.append(&mut blobs);
             self.store.buffered_blocks_count += 1;
 
@@ -308,6 +320,12 @@ where
                 blobs.push((index.into(), tx.clone(), tx_ctx.clone()));
             }
         }
+        debug!(
+            cn =% self.ctx.contract_name,
+            tx_hash =% tx.hashed(),
+            "Adding unsettled tx {}",
+            tx.hashed()
+        );
         self.store.unsettled_txs.push((tx, tx_ctx));
         blobs
     }
@@ -331,6 +349,14 @@ where
         }
         let pos_chain = self.store.tx_chain.iter().position(|h| h == tx);
         if let Some(pos_chain) = pos_chain {
+            debug!(
+                cn =% self.ctx.contract_name,
+                tx_hash =% tx,
+                "Settling tx {}. Previous tx: {:?}, Position in chain: {}",
+                tx,
+                prev_tx,
+                pos_chain
+            );
             self.store.tx_chain = self.store.tx_chain.split_off(pos_chain);
         }
         self.settle_tx(tx);
@@ -405,32 +431,52 @@ where
                 debug!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "Reverting to previous state from tx {:?}", prev_tx);
                 self.store.contract = contract.clone();
             } else {
-                let mut found = false;
-                self.store.buffered_blobs.retain(|(_, t, _)| {
-                    found = true;
-                    t.hashed() != *failed_tx
-                });
-                // If we don't have the state_history of the parent, we expect it's because we're buffering.
-                // If we weren't in the buffer, then something unexpected happened and we likely have a bug.
-                if !found {
-                    tracing::error!(
-                        cn =% self.ctx.contract_name,
-                        tx_hash =% failed_tx,
-                        "Failed to find buffered tx {} in the store after it failed",
-                        failed_tx
-                    );
-                } else {
+                let pos = self
+                    .store
+                    .buffered_blobs
+                    .iter()
+                    .position(|(_, t, _)| t.hashed() == *failed_tx);
+
+                if let Some(pos) = pos {
+                    self.store.buffered_blobs.remove(pos);
                     tracing::info!(
                         cn =% self.ctx.contract_name,
                         tx_hash =% failed_tx,
                         "🗑️ Removing buffered TX {} from the store as it failed",
                         failed_tx
                     );
+                } else {
+                    // If we don't have the state_history of the parent, we expect it's because we're buffering.
+                    // If we weren't in the buffer, then something unexpected happened and we likely have a bug.
+                    tracing::error!(
+                        cn =% self.ctx.contract_name,
+                        tx_hash =% failed_tx,
+                        "Failed to find buffered tx {} in the store after it failed",
+                        failed_tx
+                    );
+                    tracing::error!(
+                        "This is likely a bug in the prover, please report it to the Hyle team."
+                    );
+                    tracing::error!(
+                        "Buffered blobs: {:?}",
+                        self.store
+                            .buffered_blobs
+                            .iter()
+                            .map(|(_, t, _)| t.hashed())
+                            .collect::<Vec<_>>()
+                    );
+                    tracing::error!("Catching blobs: {:?}", self.catching_blobs);
+                    tracing::error!("Unsettled txs: {:?}", self.store.unsettled_txs);
+                    tracing::error!("State history: {:?}", self.store.state_history);
+                    tracing::error!("Tx chain: {:?}", self.store.tx_chain);
+                    tracing::error!("Previous tx: {:?}", prev_tx);
+                    tracing::error!("History: {:?}", tx_history);
                 }
                 return Ok(());
             }
         } else {
             warn!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "No prev tx, reverting to default state. History: {tx_history:?}");
+            tracing::debug!("Tx chain: {:?}", self.store.tx_chain);
             self.store.contract = self.ctx.default_state.clone();
         }
 
