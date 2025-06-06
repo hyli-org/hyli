@@ -624,7 +624,7 @@ mod tests {
         );
     }
 
-    // When modules are strated in the following order A, B, C, they should be closed in the reverse order C, B, A
+    // When modules are started in the following order A, B, C, they should be closed in the reverse order C, B, A
     #[tokio::test]
     async fn test_start_stop_modules_in_order() {
         let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
@@ -724,12 +724,12 @@ mod tests {
 
         _ = handler.start_modules().await;
 
-        // Starting shutdown loop should shut all modules because one failed immediatly
+        // Starting shutdown loop should shut all modules because one failed immediately
 
         _ = handler.shutdown_loop().await;
 
         // u64 module fails first, emits two events, one because it is the first task to end,
-        // and the other because it finished to shutdown corretly
+        // and the other because it finished to shutdown correctly
         assert_eq!(
             shutdown_completed_receiver.recv().await.unwrap().module,
             std::any::type_name::<TestModule<u64>>().to_string()
@@ -776,7 +776,7 @@ mod tests {
 
         _ = handler.start_modules().await;
 
-        // Starting shutdown loop should shut all modules because one failed immediatly
+        // Starting shutdown loop should shut all modules because one failed immediately
 
         _ = handler.shutdown_loop().await;
 

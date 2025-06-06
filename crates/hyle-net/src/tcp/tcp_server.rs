@@ -110,7 +110,7 @@ where
             .context("Getting local_addr from TcpListener in TcpServer")
     }
 
-    /// Adresses of currently connected clients (no health check)
+    /// Addresses of currently connected clients (no health check)
     pub fn connected_clients(&self) -> Vec<String> {
         self.sockets.keys().cloned().collect::<Vec<String>>()
     }
@@ -158,7 +158,7 @@ where
         socket_addrs: Vec<String>,
         msg: Vec<u8>,
     ) -> HashMap<String, anyhow::Error> {
-        // Getting targetted addrs that are not in the connected sockets list
+        // Getting targeted addrs that are not in the connected sockets list
         let unknown_socket_addrs = {
             let mut res = socket_addrs.clone();
             res.retain(|addr| !self.sockets.contains_key(addr));

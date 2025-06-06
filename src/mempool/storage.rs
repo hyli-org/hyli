@@ -141,7 +141,7 @@ pub trait Storage {
         Ok(None)
     }
 
-    /// Signs the data proposal before creating a new LaneEntry and puting it in the lane
+    /// Signs the data proposal before creating a new LaneEntry and putting it in the lane
     fn store_data_proposal(
         &mut self,
         crypto: &BlstCrypto,
