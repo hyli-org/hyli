@@ -286,25 +286,18 @@ impl NodeState {
             // For each transaction that could not be settled, if it is the next one to be settled, set its timeout
             for unsettled_tx in next_unsettled_txs.iter() {
                 if self.unsettled_transactions.is_next_to_settle(unsettled_tx) {
-                    if let Some(block_height) = self
+                    // Get the contract's timeout window
+                    #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
+                    let timeout_window = self
                         .unsettled_transactions
                         .get(unsettled_tx)
-                        .map(|ut| ut.tx_context.block_height)
-                    {
-                        // Get the contract's timeout window
-                        #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
-                        let timeout_window = self
-                            .unsettled_transactions
-                            .get(unsettled_tx)
-                            .map(|tx| {
-                                self.get_tx_timeout_window(tx.blobs.values().map(|b| &b.blob))
-                            })
-                            .unwrap();
-                        if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
-                            // Update timeouts
-                            self.timeouts
-                                .set(unsettled_tx.clone(), block_height, timeout_window);
-                        }
+                        .map(|tx| self.get_tx_timeout_window(tx.blobs.values().map(|b| &b.blob)))
+                        .unwrap();
+                    if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
+                        // Update timeouts
+                        let current_height = self.current_height;
+                        self.timeouts
+                            .set(unsettled_tx.clone(), current_height, timeout_window);
                     }
                 }
             }
