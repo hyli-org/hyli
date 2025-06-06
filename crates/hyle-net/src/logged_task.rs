@@ -1,22 +1,31 @@
-use std::future::Future;
+use std::{any::Any, future::Future};
 
+use futures::FutureExt;
 use tokio::task::{self, JoinHandle};
-use tracing::error;
 
-/// Takes a task that is awaited in another task and logs a panic if it occurs.
-pub fn logged_task<F>(task: F) -> JoinHandle<F::Output>
+use std::{panic::AssertUnwindSafe, process};
+
+fn log_panic_info(err: Box<dyn Any + Send>) {
+    if let Some(s) = err.downcast_ref::<&'static str>() {
+        tracing::error!("Task panicked with message: {}", s);
+    } else if let Some(s) = err.downcast_ref::<String>() {
+        tracing::error!("Task panicked with message: {}", s);
+    } else {
+        tracing::error!("Task panicked with non-string payload.");
+    }
+}
+
+pub fn logged_task<F, T>(fut: F) -> JoinHandle<T>
 where
-    F: Future + Send + 'static,
-    F::Output: Send + 'static,
+    F: Future<Output = T> + Send + 'static,
+    T: Send + 'static,
 {
-    task::spawn(async move {
-        let result = task::spawn(task).await;
-
-        match result {
-            Ok(res) => res,
+    task::spawn(async {
+        match AssertUnwindSafe(fut).catch_unwind().await {
+            Ok(result) => result,
             Err(e) => {
-                error!("Task failed to complete: {:?}", e);
-                panic!("Task failed to complete: {:?}", e);
+                log_panic_info(e);
+                process::abort();
             }
         }
     })
