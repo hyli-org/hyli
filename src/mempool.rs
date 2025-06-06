@@ -25,7 +25,7 @@ use hyle_modules::{
     bus::SharedMessageBus, log_error, log_warn, module_bus_client, module_handle_messages,
     modules::Module, utils::static_type_map::Pick,
 };
-use hyle_net::ordered_join_set::OrderedJoinSet;
+use hyle_net::{logged_task::logged_task, ordered_join_set::OrderedJoinSet};
 use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;

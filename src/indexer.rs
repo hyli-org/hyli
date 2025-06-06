@@ -4,7 +4,6 @@ mod api;
 mod handler;
 
 use crate::node_state::module::NodeStateEvent;
-use crate::utils::logged_task_panic::logged_task;
 use crate::{model::*, utils::conf::SharedConf};
 use anyhow::{Context, Result};
 use api::*;
@@ -28,6 +27,7 @@ use hyle_modules::{
     log_error, module_handle_messages,
     modules::{module_bus_client, Module, SharedBuildApiCtx},
 };
+use hyle_net::logged_task::logged_task;
 use sqlx::Row;
 use sqlx::{postgres::PgPoolOptions, PgPool, Pool, Postgres};
 use std::collections::HashMap;
