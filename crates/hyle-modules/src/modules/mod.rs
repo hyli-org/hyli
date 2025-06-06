@@ -173,7 +173,7 @@ macro_rules! module_handle_messages {
                     }
                 }
             }
-            tracing::info!("Event loop listening to {} has stopped", stringify!($bus));
+            tracing::info!("Event loop listening to {} has stopped", module_path!());
             should_shutdown
         }
 
@@ -190,7 +190,7 @@ macro_rules! module_handle_messages {
                     break;
                 }
             }
-            tracing::info!("Event loop listening to {} has stopped", stringify!($bus));
+            tracing::info!("Event loop listening in {} has stopped", module_path!());
             should_shutdown
         }
     };
@@ -230,7 +230,7 @@ pub struct ModulesHandler {
     bus: SharedMessageBus,
     modules: Vec<ModuleStarter>,
     started_modules: Vec<&'static str>,
-    running_modules: Vec<JoinHandle<()>>,
+    running_modules: Vec<JoinHandle<Result<(), Error>>>,
     shut_modules: Vec<String>,
 }
 
@@ -263,21 +263,7 @@ impl ModulesHandler {
 
             debug!("Starting module {}", module.name);
 
-            let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
-            let task = tokio::spawn(async move {
-                match module.starter.await {
-                    Ok(_) => tracing::debug!("Module {} exited with no error.", module.name),
-                    Err(e) => {
-                        tracing::error!("Module {} exited with error: {:?}", module.name, e);
-                    }
-                }
-                _ = log_error!(
-                    shutdown_client.send(signal::ShutdownCompleted {
-                        module: module.name.to_string(),
-                    }),
-                    "Sending ShutdownCompleted message"
-                );
-            });
+            let task = tokio::spawn(module.starter);
 
             if Self::long_running_module(module.name) {
                 self.running_modules.push(task);
@@ -296,27 +282,48 @@ impl ModulesHandler {
         let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
 
         // Sends a trigger event when one task ends (should not, but in case of panic, no event is sent)
-        let join_set: Vec<JoinHandle<()>> = self.running_modules.drain(..).collect();
+        let mut join_set: Vec<JoinHandle<Result<(), Error>>> =
+            std::mem::take(&mut self.running_modules);
         let started_modules_cloned = self.started_modules.clone();
         tokio::spawn(async move {
-            trace!("Module failure listener - Join set size {}", join_set.len());
             trace!(
-                "Module failure listener - Started modules {:?}",
+                "Module shutdown listener - Join set size {}",
+                join_set.len()
+            );
+            trace!(
+                "Module shutdown listener - Started modules {:?}",
                 started_modules_cloned.clone()
             );
-            if join_set.is_empty() {
-                return;
-            }
-            let (_res, idx, _remaining) = select_all(join_set).await;
-            if let Some(module_name) = started_modules_cloned.get(idx) {
-                debug!("First module to shutdown {}", module_name);
+            loop {
+                if join_set.is_empty() {
+                    return;
+                }
+                let (res, idx, remaining) = select_all(join_set).await;
+                join_set = remaining;
+                if let Some(module_name) = started_modules_cloned.get(idx) {
+                    match res {
+                        Ok(Ok(())) => {
+                            tracing::warn!("Module {} exited with no error.", module_name)
+                        }
+                        Ok(Err(e)) => {
+                            tracing::error!("Module {} exited with error: {:?}", module_name, e)
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Module {} exited, error joining: {:?}",
+                                module_name,
+                                e
+                            );
+                        }
+                    }
 
-                _ = log_error!(
-                    shutdown_client.send(signal::ShutdownCompleted {
-                        module: module_name.to_string(),
-                    }),
-                    "Sending ShutdownCompleted message"
-                );
+                    _ = log_error!(
+                        shutdown_client.send(signal::ShutdownCompleted {
+                            module: module_name.to_string(),
+                        }),
+                        "Sending ShutdownCompleted message"
+                    );
+                }
             }
         });
 

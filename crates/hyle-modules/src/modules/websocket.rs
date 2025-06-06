@@ -23,6 +23,7 @@ use futures::{
 use hyle_net::net::{HyleNetIntoMakeServiceWithconnectInfo, HyleNetSocketAddr};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::{sync::Mutex, task::JoinSet};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 // ---- Bus ------
@@ -158,6 +159,8 @@ where
         info!("WebSocket server listening on port {}", self.config.port);
         debug!("WebSocket server listening on {}", self.config.port);
 
+        let axum_cancel_token = CancellationToken::new();
+        let token = axum_cancel_token.clone();
         let server = tokio::spawn(async move {
             if let Err(e) = axum::serve(
                 listener,
@@ -165,6 +168,9 @@ where
                     app.into_make_service_with_connect_info::<HyleNetSocketAddr>(),
                 ),
             )
+            .with_graceful_shutdown(async move {
+                token.cancelled().await;
+            })
             .await
             {
                 error!("Server error: {}", e);
@@ -207,6 +213,11 @@ where
                         error!("Error receiving message: {}", e);
                     }
                 }
+            }
+            _ = axum_cancel_token.cancelled() => {
+                // Shutdown signal received, break the loop
+                tracing::warn!("WebSocket server shutdown initiated by axum");
+                break;
             }
             _ = tokio::time::sleep(self.config.peer_check_interval) => {
                 // Check for new peers
