@@ -9,15 +9,16 @@ use std::{
 };
 
 use crate::{
-    bus::{BusClientSender, SharedMessageBus},
+    bus::{BusClientReceiver, BusClientSender, SharedMessageBus},
     bus_client, handle_messages, log_error,
 };
 use anyhow::{bail, Error, Result};
 use axum::Router;
-use futures::future::select_all;
 use rand::{distributions::Alphanumeric, Rng};
 use tokio::task::JoinHandle;
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
+
+const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub mod bus_ws_connector;
 pub mod contract_state_indexer;
@@ -222,6 +223,7 @@ bus_client! {
     pub struct ShutdownClient {
         sender(signal::ShutdownModule),
         sender(signal::ShutdownCompleted),
+        receiver(signal::ShutdownModule),
         receiver(signal::ShutdownCompleted),
     }
 }
@@ -230,7 +232,7 @@ pub struct ModulesHandler {
     bus: SharedMessageBus,
     modules: Vec<ModuleStarter>,
     started_modules: Vec<&'static str>,
-    running_modules: Vec<JoinHandle<Result<(), Error>>>,
+    running_modules: Vec<JoinHandle<()>>,
     shut_modules: Vec<String>,
 }
 
@@ -263,7 +265,50 @@ impl ModulesHandler {
 
             debug!("Starting module {}", module.name);
 
-            let task = tokio::spawn(module.starter);
+            let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
+            let mut shutdown_client2 = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
+            let task = tokio::spawn(async move {
+                let module_task = tokio::spawn(module.starter);
+                let timeout_task = tokio::spawn(async move {
+                    loop {
+                        if let Ok(signal::ShutdownModule { module: modname }) =
+                            shutdown_client2.recv().await
+                        {
+                            if modname == module.name {
+                                tokio::time::sleep(MODULE_SHUTDOWN_TIMEOUT).await;
+                                break;
+                            }
+                        }
+                    }
+                });
+
+                let res = tokio::select! {
+                    res = module_task => {
+                        res
+                    },
+                    _ = timeout_task => {
+                        Ok(Err(anyhow::anyhow!("Shutdown timeout reached")))
+                    }
+                };
+                match res {
+                    Ok(Ok(())) => {
+                        tracing::warn!("Module {} exited with no error.", module.name)
+                    }
+                    Ok(Err(e)) => {
+                        tracing::error!("Module {} exited with error: {:?}", module.name, e)
+                    }
+                    Err(e) => {
+                        tracing::error!("Module {} exited, error joining: {:?}", module.name, e);
+                    }
+                }
+
+                _ = log_error!(
+                    shutdown_client.send(signal::ShutdownCompleted {
+                        module: module.name.to_string(),
+                    }),
+                    "Sending ShutdownCompleted message"
+                );
+            });
 
             if Self::long_running_module(module.name) {
                 self.running_modules.push(task);
@@ -278,54 +323,6 @@ impl ModulesHandler {
         if self.started_modules.is_empty() {
             return Ok(());
         }
-
-        let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
-
-        // Sends a trigger event when one task ends (should not, but in case of panic, no event is sent)
-        let mut join_set: Vec<JoinHandle<Result<(), Error>>> =
-            std::mem::take(&mut self.running_modules);
-        let started_modules_cloned = self.started_modules.clone();
-        tokio::spawn(async move {
-            trace!(
-                "Module shutdown listener - Join set size {}",
-                join_set.len()
-            );
-            trace!(
-                "Module shutdown listener - Started modules {:?}",
-                started_modules_cloned.clone()
-            );
-            loop {
-                if join_set.is_empty() {
-                    return;
-                }
-                let (res, idx, remaining) = select_all(join_set).await;
-                join_set = remaining;
-                if let Some(module_name) = started_modules_cloned.get(idx) {
-                    match res {
-                        Ok(Ok(())) => {
-                            tracing::warn!("Module {} exited with no error.", module_name)
-                        }
-                        Ok(Err(e)) => {
-                            tracing::error!("Module {} exited with error: {:?}", module_name, e)
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "Module {} exited, error joining: {:?}",
-                                module_name,
-                                e
-                            );
-                        }
-                    }
-
-                    _ = log_error!(
-                        shutdown_client.send(signal::ShutdownCompleted {
-                            module: module_name.to_string(),
-                        }),
-                        "Sending ShutdownCompleted message"
-                    );
-                }
-            }
-        });
 
         let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
 
@@ -344,7 +341,8 @@ impl ModulesHandler {
                 }
             }
 
-            _ = tokio::time::sleep(Duration::from_secs(3)) => {
+            // Add one second as buffer to let the module cancel itself, hopefully.
+            _ = tokio::time::sleep(MODULE_SHUTDOWN_TIMEOUT + Duration::from_secs(1)) => {
                 if !self.shut_modules.is_empty() {
                     _ = self.shutdown_next_module().await;
                 }
