@@ -4,6 +4,7 @@ mod api;
 mod handler;
 
 use crate::node_state::module::NodeStateEvent;
+use crate::utils::logged_task_panic::logged_task;
 use crate::{model::*, utils::conf::SharedConf};
 use anyhow::{Context, Result};
 use api::*;
@@ -142,7 +143,7 @@ impl Indexer {
                     .or_default()
                     .push(tx);
 
-                tokio::spawn(async move {
+                logged_task(async move {
                         let (mut ws_tx, mut ws_rx) = socket.split();
 
                         loop {

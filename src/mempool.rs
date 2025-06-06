@@ -440,7 +440,7 @@ impl Mempool {
             sync_request_receiver,
         );
 
-        tokio::spawn(async move { mempool_sync.start().await });
+        logged_task(async move { mempool_sync.start().await });
 
         sync_request_sender
     }
