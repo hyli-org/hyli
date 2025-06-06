@@ -380,6 +380,12 @@ impl BlockDbg {
                                             ui_state.redraw = true;
                                         }
                                     }
+                                    // Dump state of node state to a file
+                                    if let Some(node_state) = &ui_state.node_state {
+                                        let mut file = std::fs::File::create("node_state.log")?;
+                                        file.write_all(format!("{:#?}", node_state).as_bytes())?;
+                                        tracing::info!("Node state dumped to {:?}", "node_state.log");
+                                    }
                                     ui_state.processing = false;
                                     ui_state.redraw = true;
                                 }
@@ -509,7 +515,7 @@ impl BlockDbg {
                         serde_json::to_string_pretty(&pb.failed_txs)
                             .unwrap_or("BAD JSON".to_string()),
                         serde_json::to_string_pretty(&pb.timed_out_txs)
-                            .unwrap_or("BAD JSON".to_string()),
+                            .unwrap_or("BAD JSON".to_string())
                     )
                 } else {
                     "Block not yet processed (press space to process)".to_string()
