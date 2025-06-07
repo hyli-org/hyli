@@ -16,7 +16,6 @@ use boundless_market::{
 use risc0_zkvm::{compute_image_id, default_executor, sha::Digestible, Receipt};
 use tracing::info;
 
-#[allow(dead_code)]
 pub fn as_input_data<T: BorshSerialize>(data: &T) -> Result<Vec<u8>> {
     let data = borsh::to_vec(&data)?;
     let size = risc0_zkvm::serde::to_vec(&data.len())?;
@@ -173,7 +172,6 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
     Ok(receipt)
 }
 
-#[allow(dead_code)]
 pub async fn run_bonsai(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
     let client = Client::from_env(risc0_zkvm::VERSION)?;
 
