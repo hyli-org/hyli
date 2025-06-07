@@ -25,7 +25,7 @@ anyhow = "1.0.98"
 sha2 = "=0.10.8" # precompile patched at workspace root
 borsh = { version = "1.5.6", features = ["derive"] }
 
-risc0-zkvm = { version = "2.0.2", default-features = false, optional = true, features = [
+risc0-zkvm = { version = "2.1", default-features = false, optional = true, features = [
   'std',
 ] }
 client-sdk = { workspace = true, default-features = false, features = [
@@ -33,7 +33,7 @@ client-sdk = { workspace = true, default-features = false, features = [
 ], optional = true }
 
 [dev-dependencies]
-risc0-zkvm = { version = "2.0.2", default-features = false, features = [
+risc0-zkvm = { version = "2.1", default-features = false, features = [
   'std',
   'prove',
 ] }

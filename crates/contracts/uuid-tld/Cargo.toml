@@ -18,7 +18,7 @@ test = false
 sdk = { workspace = true }
 borsh = "1.5.6"
 
-risc0-zkvm = { version = "2.0.2", default-features = false, optional = true, features = [
+risc0-zkvm = { version = "2.1", default-features = false, optional = true, features = [
   'std',
 ] }
 client-sdk = { workspace = true, default-features = false, features = [
@@ -29,7 +29,7 @@ rand = { version = "0.9", default-features = false }
 rand_seeder = { version = "0.4.0", default-features = false }
 
 [dev-dependencies]
-risc0-zkvm = { version = "2.0.2", default-features = false, features = [
+risc0-zkvm = { version = "2.1", default-features = false, features = [
   'std',
   'prove',
 ] }
