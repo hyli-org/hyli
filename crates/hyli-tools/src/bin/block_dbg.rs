@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, command};
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
@@ -35,7 +35,11 @@ use tracing_subscriber::{EnvFilter, layer::SubscriberExt};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
-pub struct Args {}
+pub struct Args {
+    /// Folder to load/dump blocks
+    #[arg(long, default_value = "dump")]
+    pub folder: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TxStatus {
@@ -55,7 +59,8 @@ enum FocusPanel {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _args = Args::parse();
+    let args = Args::parse();
+    let dump_folder = PathBuf::from(&args.folder);
 
     // Set up tracing to print to a buffer
     // Create a buffer to hold logs
@@ -98,18 +103,37 @@ async fn main() -> Result<()> {
 
     tracing::info!("Setting up modules");
 
+    // Check if there are any blocks in the folder
+    let has_blocks = std::fs::read_dir(&dump_folder)
+        .map(|entries| {
+            entries.filter_map(|e| e.ok()).any(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .map(|e| e == "bin")
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false);
+
     // Initialize modules
     let mut handler = ModulesHandler::new(&bus).await;
 
-    handler
-        .build_module::<hyli_tools::signed_da_listener::DAListener>(DAListenerConf {
-            data_directory: PathBuf::default(),
-            da_read_from: "localhost:4141".to_string(),
-            start_block: Some(BlockHeight(0)),
-        })
-        .await?;
+    if !has_blocks {
+        handler
+            .build_module::<hyli_tools::signed_da_listener::DAListener>(DAListenerConf {
+                data_directory: dump_folder.clone(),
+                da_read_from: "localhost:4141".to_string(),
+                start_block: Some(BlockHeight(0)),
+            })
+            .await?;
+    } else {
+        tracing::info!("Blocks found in folder, skipping DAListener startup");
+    }
 
-    handler.build_module::<BlockDbg>(log_buffer).await?;
+    handler
+        .build_module::<BlockDbg>((log_buffer, dump_folder.clone()))
+        .await?;
 
     tracing::info!("Starting modules");
 
@@ -155,7 +179,7 @@ struct DumpUiState {
 }
 
 impl Module for BlockDbg {
-    type Context = Arc<Mutex<Vec<u8>>>;
+    type Context = (Arc<Mutex<Vec<u8>>>, PathBuf);
     fn build(
         bus: SharedMessageBus,
         ctx: Self::Context,
@@ -168,10 +192,11 @@ impl Module for BlockDbg {
 }
 
 impl BlockDbg {
-    async fn new(bus: SharedMessageBus, log_buffer: Arc<Mutex<Vec<u8>>>) -> Result<Self> {
+    async fn new(bus: SharedMessageBus, ctx: (Arc<Mutex<Vec<u8>>>, PathBuf)) -> Result<Self> {
+        let (log_buffer, outfolder) = ctx;
         Ok(Self {
             bus: DumpBusClient::new_from_bus(bus).await,
-            outfolder: PathBuf::from("dump"),
+            outfolder,
             log_buffer,
         })
     }
@@ -233,20 +258,17 @@ impl BlockDbg {
             listen<DataAvailabilityEvent> event => {
                 match event {
                     DataAvailabilityEvent::SignedBlock(block) => {
-                        tracing::info!("Received block: {:?}", block);
+                        tracing::info!("Received block: {:?}, saving it to {:?}", block, self.outfolder);
                         let txs = block.count_txs();
-                        ui_state.blocks.push((block, txs));
-                        /*
+                        ui_state.blocks.push((block.clone(), txs));
                         // Dump to
-                        let block_path = self.outfolder.join(format!("block_{}.bin", block.block_height.0));
+                        let block_path = self.outfolder.join(format!("block_{}.bin", block.height().0));
                         std::fs::create_dir_all(&self.outfolder)
                             .context("Failed to create output directory")?;
                         let mut file = std::fs::File::create(&block_path)
                             .context("Failed to create block file")?;
-                        borsh::to_writer(&mut file, &block)
+                        borsh::to_writer(&mut file, &(block, txs))
                             .context("Failed to serialize block")?;
-                        tracing::info!("Block {} dumped to {:?}", block.block_height.0, block_path);
-                        */
                     }
                     _ => {
                         /* ignore */
@@ -534,7 +556,7 @@ impl BlockDbg {
                         .borders(Borders::ALL),
                 )
                 .wrap(Wrap { trim: false })
-                .scroll((ui_state.block_json_scroll as u16, 0));
+                .scroll((ui_state.block_json_scroll, 0));
             f.render_widget(json_paragraph, right_chunks[1]);
 
             // Logs (bottom-right panel)
