@@ -600,6 +600,16 @@ impl NodeState {
     ) -> Result<SettledTxOutput, Error> {
         trace!("Trying to settle blob tx: {:?}", unsettled_tx_hash);
 
+        if !self
+            .unsettled_transactions
+            .is_next_to_settle(unsettled_tx_hash)
+        {
+            bail!(
+                "Transaction {} is not next to settle, skipping.",
+                unsettled_tx_hash
+            );
+        }
+
         let unsettled_tx =
             self.unsettled_transactions
                 .get(unsettled_tx_hash)
