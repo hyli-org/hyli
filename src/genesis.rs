@@ -425,6 +425,8 @@ impl Genesis {
         map.insert("secp256k1".into(), NativeVerifiers::Secp256k1.into());
         map.insert("hyllar".into(), ProgramId(hyllar_program_id.clone()));
         map.insert("oranj".into(), ProgramId(smt_token_program_id.clone()));
+        map.insert("oxygen".into(), ProgramId(smt_token_program_id.clone()));
+        map.insert("vitamin".into(), ProgramId(smt_token_program_id.clone()));
         map.insert("hydentity".into(), ProgramId(hydentity_program_id.clone()));
         map.insert("staking".into(), ProgramId(staking_program_id.clone()));
         map.insert(
@@ -512,6 +514,26 @@ impl Genesis {
             None,
         )
         .expect("register oranj");
+        register_hyle_contract(
+            &mut register_tx,
+            "oxygen".into(),
+            hyle_model::verifiers::RISC0_1.into(),
+            smt_token_program_id.clone().into(),
+            StateCommitment(Into::<[u8; 32]>::into(root).to_vec()),
+            None,
+            None,
+        )
+        .expect("register oxygen");
+        register_hyle_contract(
+            &mut register_tx,
+            "vitamin".into(),
+            hyle_model::verifiers::RISC0_1.into(),
+            smt_token_program_id.clone().into(),
+            StateCommitment(Into::<[u8; 32]>::into(root).to_vec()),
+            None,
+            None,
+        )
+        .expect("register vitamin");
 
         register_hyle_contract(
             &mut register_tx,
