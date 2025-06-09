@@ -16,6 +16,8 @@ pub struct Consensus {
     pub timestamp_checks: TimestampCheck,
     /// Whether the network runs as a single node or with a multi-node consensus.
     pub solo: bool,
+    /// The timestamp of the genesis block, in milliseconds since the Unix epoch.
+    pub genesis_timestamp: u128,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, IntoStaticStr)]
