@@ -35,3 +35,6 @@ google-cloud-storage = "0.24.0"
 [features]
 default = ["ui"]
 ui = ["dep:ratatui", "dep:crossterm"]
+
+[package.metadata.cargo-machete]
+ignored = ["client-sdk", "opentelemetry"]
