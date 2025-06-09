@@ -600,16 +600,6 @@ impl NodeState {
     ) -> Result<SettledTxOutput, Error> {
         trace!("Trying to settle blob tx: {:?}", unsettled_tx_hash);
 
-        if !self
-            .unsettled_transactions
-            .is_next_to_settle(unsettled_tx_hash)
-        {
-            bail!(
-                "Transaction {} is not next to settle, skipping.",
-                unsettled_tx_hash
-            );
-        }
-
         let unsettled_tx =
             self.unsettled_transactions
                 .get(unsettled_tx_hash)
@@ -660,6 +650,19 @@ impl NodeState {
                     bail!("Tx: {} is not ready to settle.", unsettled_tx.hash);
                 }
             }
+        };
+
+        // If some blobs are still sequenced behind others, we can only settle this TX as failed.
+        // (failed TX won't change the state, so we can settle it right away).
+        if result.is_ok()
+            && !self
+                .unsettled_transactions
+                .is_next_to_settle(unsettled_tx_hash)
+        {
+            bail!(
+                "Transaction {} is not next to settle, skipping.",
+                unsettled_tx_hash
+            );
         };
 
         // We are OK to settle now.
