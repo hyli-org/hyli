@@ -676,7 +676,7 @@ impl Genesis {
             consensus_proposal: ConsensusProposal {
                 slot: 0,
                 // TODO: genesis block should have a consistent, up-to-date timestamp
-                timestamp: TimestampMs(self.config.consensus.genesis_timestamp),
+                timestamp: TimestampMs((self.config.consensus.genesis_timestamp * 1000) as u128),
                 // TODO: We aren't actually storing the data proposal above, so we cannot store it here,
                 // or we might mistakenly request data from that cut, but mempool hasn't seen it.
                 // This should be fixed by storing the data proposal in mempool or handling this whole thing differently.
