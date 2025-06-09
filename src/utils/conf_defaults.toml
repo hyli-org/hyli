@@ -49,6 +49,8 @@ slot_duration = 1000
 timestamp_checks = "Monotonic"
 # Whether to run the single-node or full consensus
 solo = true
+# Timestamp of the genesis block in seconds since epoch.
+genesis_timestamp = 1735689600 # Default to 2025-01-01T00:00:00Z
 
 [genesis]
 # Stakers and their inigial stake.
