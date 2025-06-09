@@ -33,8 +33,8 @@ pub enum TimestampCheck {
 pub struct GenesisConf {
     /// Initial bonded stakers and their stakes
     pub stakers: HashMap<String, u64>,
-    /// Faucer configuration
-    pub faucet_password: String,
+    /// Used for testing - if true, token balance will remain in the faucet.
+    pub keep_tokens_in_faucet: bool,
 }
 
 /// Configuration for the P2P layer

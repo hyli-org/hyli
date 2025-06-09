@@ -58,8 +58,7 @@ solo = true
 # All genesis node requires the same config here
 # Keys are all nodes “id”, and values are the stake amount for each one of them.
 stakers = {}
-
-faucet_password = "password"
+keep_tokens_in_faucet = false
 
 [websocket]
 enabled = true

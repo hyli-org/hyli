@@ -19,7 +19,7 @@ pub mod client;
 #[cfg(feature = "client")]
 pub mod indexer;
 
-pub const TOTAL_SUPPLY: u128 = 100_000_000_000;
+pub const TOTAL_SUPPLY: u128 = 100_000_000_000_000;
 pub const FAUCET_ID: &str = "faucet@hydentity";
 
 /// Enum representing possible calls to Token contract functions.
