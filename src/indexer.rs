@@ -42,6 +42,7 @@ module_bus_client! {
 #[derive(Debug)]
 struct IndexerBusClient {
     receiver(NodeStateEvent),
+    receiver(NodeStateIndexerEvent),
     receiver(MempoolStatusEvent),
 }
 }
@@ -127,6 +128,12 @@ impl Indexer {
                 _ = log_error!(self.handle_node_state_event(event)
                     .await,
                     "Indexer handling node state event");
+            }
+
+            listen<NodeStateIndexerEvent> event => {
+                _ = log_error!(self.handle_node_state_indexer_event(event)
+                    .await,
+                    "Indexer handling node state indexer event");
             }
 
             listen<MempoolStatusEvent> _event => {

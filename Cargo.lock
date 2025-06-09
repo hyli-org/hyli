@@ -4827,6 +4827,7 @@ dependencies = [
  "axum 0.8.4",
  "borsh",
  "futures",
+ "hex",
  "hyle-client-sdk",
  "hyle-contract-sdk",
  "hyle-net",
