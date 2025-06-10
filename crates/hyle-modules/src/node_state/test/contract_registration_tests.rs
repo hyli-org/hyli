@@ -8,7 +8,7 @@ use hydentity::{
     Hydentity, HydentityAction,
 };
 
-use crate::node_state::hyle_tld::HYLI_WALLET;
+pub const HYLI_WALLET: &str = "wallet";
 
 use super::*;
 

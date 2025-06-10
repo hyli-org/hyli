@@ -3,8 +3,6 @@ use sdk::{ContractName, ProgramId, StateCommitment, Verifier};
 
 use hyle_verifiers::validate_program_id;
 
-use super::hyle_tld::HYLI_WALLET;
-
 /// Check that the new contract name is:
 /// - a valid subdomain of the owner contract name.
 /// - the exact same domain (for updating the contract).

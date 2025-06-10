@@ -938,24 +938,6 @@ mod test {
         Ok(())
     }
 
-    pub fn make_hyle_output(blob_tx: BlobTransaction, blob_index: BlobIndex) -> HyleOutput {
-        HyleOutput {
-            version: 1,
-            identity: blob_tx.identity.clone(),
-            index: blob_index,
-            blobs: blob_tx.blobs.clone().into(),
-            tx_blob_count: blob_tx.blobs.len(),
-            initial_state: StateCommitment(vec![0, 1, 2, 3]),
-            next_state: StateCommitment(vec![4, 5, 6]),
-            success: true,
-            tx_hash: blob_tx.hashed(),
-            tx_ctx: None,
-            state_reads: vec![],
-            onchain_effects: vec![],
-            program_outputs: vec![],
-        }
-    }
-
     pub fn make_register_hyli_wallet_identity_tx() -> BlobTransaction {
         let mut tx = ProvableBlobTx::new("hyli@wallet".into());
         register_identity(&mut tx, "wallet".into(), "password".into()).unwrap();

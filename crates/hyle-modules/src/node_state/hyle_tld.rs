@@ -5,7 +5,6 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::SideEffect;
 
-pub const HYLI_WALLET: &str = "wallet";
 pub const HYLI_TLD_ID: &str = "hyli@wallet";
 
 pub fn handle_blob_for_hyle_tld(
