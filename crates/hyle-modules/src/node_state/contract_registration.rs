@@ -13,13 +13,16 @@ pub fn validate_contract_name_registration(
     new_contract_name: &ContractName,
 ) -> Result<()> {
     // Special case: 'hyle' TLD is allowed to register new TLD contracts (and can't be updated).
-    if owner.0 == "hyle" || owner.0 == HYLI_WALLET {
+    if owner.0 == "hyle" {
         if new_contract_name.0 == "hyle"
             || !new_contract_name.0.is_empty() && !new_contract_name.0.contains(".")
         {
             return Ok(());
         }
     } else if owner == new_contract_name && !owner.0.is_empty() {
+        return Ok(());
+    } else if new_contract_name.0 == HYLI_WALLET {
+        // Special case: 'hyli@wallet' is allowed to remove TLD contracts.
         return Ok(());
     }
 
