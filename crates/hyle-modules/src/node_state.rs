@@ -549,13 +549,6 @@ impl NodeState {
                 hyle_output: blob_proof_data.hyle_output.clone(),
             });
 
-        error!(
-            "Blob proof output for {} settled with index {}",
-            unsettled_tx_hash, blob_proof_data.hyle_output.index
-        );
-
-        info!("should_settle_tx: {}", should_settle_tx);
-
         Ok(match should_settle_tx {
             true => Some(unsettled_tx_hash),
             false => None,
