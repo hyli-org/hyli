@@ -1483,6 +1483,23 @@ pub mod test {
         }
     }
 
+    pub fn craft_signed_block_with_parent_dp_hash(
+        height: u64,
+        txs: Vec<Transaction>,
+        parent_dp_hash: DataProposalHash,
+    ) -> SignedBlock {
+        SignedBlock {
+            certificate: AggregateSignature::default(),
+            consensus_proposal: ConsensusProposal {
+                slot: height,
+                ..ConsensusProposal::default()
+            },
+            data_proposals: vec![(
+                LaneId::default(),
+                vec![DataProposal::new(Some(parent_dp_hash), txs)],
+            )],
+        }
+    }
     impl NodeState {
         // Convenience method to handle a signed block in tests.
         pub fn force_handle_block(&mut self, block: &SignedBlock) -> Block {
@@ -1497,6 +1514,16 @@ pub mod test {
 
         pub fn craft_block_and_handle(&mut self, height: u64, txs: Vec<Transaction>) -> Block {
             let block = craft_signed_block(height, txs);
+            self.force_handle_block(&block)
+        }
+
+        pub fn craft_block_and_handle_with_parent_dp_hash(
+            &mut self,
+            height: u64,
+            txs: Vec<Transaction>,
+            parent_dp_hash: DataProposalHash,
+        ) -> Block {
+            let block = craft_signed_block_with_parent_dp_hash(height, txs, parent_dp_hash);
             self.force_handle_block(&block)
         }
 

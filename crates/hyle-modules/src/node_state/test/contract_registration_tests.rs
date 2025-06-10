@@ -286,7 +286,7 @@ pub fn make_delete_tx_with_hyli(tld: ContractName, contract_name: ContractName) 
                 nonce: 0,
                 account: HYLI_TLD_ID.to_string(),
             }
-            .as_blob("wallet".into()),
+            .as_blob(HYLI_WALLET.into()),
             DeleteContractAction { contract_name }.as_blob(tld, None, None),
         ],
     )
@@ -491,8 +491,6 @@ async fn test_hyle_delete_contract_success() {
     );
 
     assert_eq!(state.contracts.len(), 3);
-
-    // let mut delete_tx = ProvableBlobTx::new(HYLI_TLD_ID.into());
 
     let delete_tx = make_delete_tx_with_hyli("hyle".into(), "contract".into());
 
