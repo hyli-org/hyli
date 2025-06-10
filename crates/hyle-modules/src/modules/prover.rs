@@ -1936,4 +1936,78 @@ mod tests {
 
         Ok(())
     }
+
+    #[test_log::test(tokio::test)]
+
+    async fn test_auto_prover_early_fail_while_buffered() -> Result<()> {
+        let (mut node_state, _, api_client) = setup().await?;
+        let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 3, 20).await?;
+
+        // Block 1: Failing TX
+        tracing::info!("✨ Block 1");
+        let failing_tx = new_failing_blob_tx(1);
+        let block_1 = node_state.craft_block_and_handle(1, vec![failing_tx.clone()]);
+        auto_prover.handle_processed_block(block_1).await?;
+
+        // Process a few blocks to un-buffer the failing TX
+        for i in 2..5 {
+            tracing::info!("✨ Block {i}");
+            let block = node_state.craft_block_and_handle(i, vec![]);
+            auto_prover.handle_processed_block(block).await?;
+        }
+
+        // Wait for the failing TX to be proven
+        let proofs = get_txs(&api_client).await;
+
+        // Block 2: Successful TX (should be buffered)
+        tracing::info!("✨ Block 5");
+        let success_tx = new_blob_tx(5);
+        let block_5 = node_state.craft_block_and_handle(5, vec![success_tx.clone()]);
+        auto_prover.handle_processed_block(block_5).await?;
+
+        // Block 3: Simulate settlement of the failed TX from block 1
+        tracing::info!("✨ Block 6 (settle fail)");
+        let block_6 = node_state.craft_block_and_handle(6, proofs);
+        auto_prover.handle_processed_block(block_6).await?;
+
+        // Process a few blocks to un-buffer the failing TX
+        for i in 7..9 {
+            tracing::info!("✨ Block {i}");
+            let block = node_state.craft_block_and_handle(i, vec![]);
+            auto_prover.handle_processed_block(block).await?;
+        }
+
+        // Now the buffered TX should be executed and a proof generated
+        let proofs = get_txs(&api_client).await;
+
+        tracing::info!("✨ Block 9");
+        let block = node_state.craft_block_and_handle(9, proofs);
+        auto_prover.handle_processed_block(block).await?;
+
+        let success_tx = new_blob_tx(6);
+        let hash = success_tx.hashed();
+
+        tracing::info!("✨ Block 10");
+        let block = node_state.craft_block_and_handle(10, vec![success_tx]);
+        auto_prover.handle_processed_block(block).await?;
+
+        // Process a few blocks to generate proof
+        for i in 11..14 {
+            tracing::info!("✨ Block {i}");
+            let block = node_state.craft_block_and_handle(i, vec![]);
+            auto_prover.handle_processed_block(block).await?;
+        }
+
+        let proofs = get_txs(&api_client).await;
+
+        // Should settle the final TX
+        tracing::info!("✨ Block 14");
+        let block = node_state.craft_block_and_handle(14, proofs);
+        assert_eq!(block.successful_txs, vec![hash]);
+        assert!(node_state
+            .get_earliest_unsettled_height(&ContractName::new("test"))
+            .is_none(),);
+
+        Ok(())
+    }
 }
