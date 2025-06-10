@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
     handler
         .build_module::<hyli_tools::signed_da_listener::DAListener>(DAListenerConf {
             data_directory: config.data_directory.clone(),
-            da_read_from: "localhost:4141".to_string(),
+            da_read_from: config.da_read_from.clone(),
             start_block: Some(BlockHeight(0)),
         })
         .await?;
