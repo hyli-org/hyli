@@ -387,14 +387,14 @@ impl Genesis {
                 &mut transaction,
                 ContractName::new("staking"),
                 peer.clone(),
-                1_000_000_000, // 1 GB at 1 token/byte
+                100_000_000_000, // 100 GB at 1 token/byte
             )?;
 
             transfer(
                 &mut transaction,
                 ContractName::new("hyllar"),
                 "staking".to_string(),
-                1_000_000_000,
+                100_000_000_000,
             )?;
 
             // Delegate
