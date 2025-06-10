@@ -1186,7 +1186,10 @@ impl NodeState {
                 }
                 OnchainEffect::DeleteContract(cn) => {
                     // TODO - check the contract exists ?
-                    validate_contract_name_registration(&contract.name, cn)?;
+                    // Special case for the HYLI TLD ID
+                    if proof_metadata.1.identity.0 != HYLI_TLD_ID {
+                        validate_contract_name_registration(&contract.name, cn)?;
+                    }
                     contract_changes.insert(cn.clone(), SideEffect::Delete(cn.clone()));
                 }
             }

@@ -21,9 +21,6 @@ pub fn validate_contract_name_registration(
         }
     } else if owner == new_contract_name && !owner.0.is_empty() {
         return Ok(());
-    } else if new_contract_name.0 == HYLI_WALLET {
-        // Special case: 'hyli@wallet' is allowed to remove TLD contracts.
-        return Ok(());
     }
 
     let Some((name, tld)) = new_contract_name.0.split_once(".") else {
