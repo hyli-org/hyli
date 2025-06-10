@@ -3,6 +3,8 @@ use sdk::{ContractName, ProgramId, StateCommitment, Verifier};
 
 use hyle_verifiers::validate_program_id;
 
+use super::hyle_tld::HYLI_WALLET;
+
 /// Check that the new contract name is:
 /// - a valid subdomain of the owner contract name.
 /// - the exact same domain (for updating the contract).
@@ -11,7 +13,7 @@ pub fn validate_contract_name_registration(
     new_contract_name: &ContractName,
 ) -> Result<()> {
     // Special case: 'hyle' TLD is allowed to register new TLD contracts (and can't be updated).
-    if owner.0 == "hyle" {
+    if owner.0 == "hyle" || owner.0 == HYLI_WALLET {
         if new_contract_name.0 == "hyle"
             || !new_contract_name.0.is_empty() && !new_contract_name.0.contains(".")
         {

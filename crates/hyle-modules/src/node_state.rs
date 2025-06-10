@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Error, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use contract_registration::validate_contract_registration_metadata;
 use contract_registration::{validate_contract_name_registration, validate_state_commitment_size};
-use hyle_tld::handle_blob_for_hyle_tld;
+use hyle_tld::{handle_blob_for_hyle_tld, HYLI_TLD_ID};
 use metrics::NodeStateMetrics;
 use ordered_tx_map::OrderedTxMap;
 use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
@@ -361,6 +361,20 @@ impl NodeState {
 
         let mut should_try_and_settle = true;
 
+        // Reject blob Tx with blobs for the 'hyle' contract if the identity is not the TLD itself.
+        // No need to wait settlement, as this is a static check.
+        if tx.blobs.iter().any(|blob| {
+            let delete_contract_action = blob.contract_name.0 == "hyle"
+                && StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone()).is_ok();
+
+            delete_contract_action && tx.identity.0 != HYLI_TLD_ID
+        }) {
+            bail!(
+                        "Blob Transaction contains a delete contract action for 'hyle' TLD, but the identity is not the TLD itself: {}",
+                        tx.identity.0
+                );
+        }
+
         // For now, reject blob Tx with blobs for unknown contracts.
         if tx
             .blobs
@@ -534,6 +548,13 @@ impl NodeState {
                     .clone(),
                 hyle_output: blob_proof_data.hyle_output.clone(),
             });
+
+        error!(
+            "Blob proof output for {} settled with index {}",
+            unsettled_tx_hash, blob_proof_data.hyle_output.index
+        );
+
+        info!("should_settle_tx: {}", should_settle_tx);
 
         Ok(match should_settle_tx {
             true => Some(unsettled_tx_hash),
