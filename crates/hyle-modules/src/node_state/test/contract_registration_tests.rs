@@ -296,6 +296,13 @@ pub fn make_delete_tx_with_hyli(tld: ContractName, contract_name: ContractName) 
 async fn test_register_contract_and_delete_hyle() {
     let mut state = new_node_state().await;
 
+    let register_wallet = make_register_tx("hyle@hyle".into(), "hyle".into(), "wallet".into());
+    let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
+
+    let mut output = make_hyle_output(register_hyli_at_wallet.clone(), BlobIndex(0));
+    let register_hyli_at_wallet_proof =
+        new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
+
     let register_c1 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c1".into());
     let register_c2 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
     // This technically doesn't matter as it's actually the proof that does the work
@@ -320,6 +327,9 @@ async fn test_register_contract_and_delete_hyle() {
     let block = state.craft_block_and_handle(
         1,
         vec![
+            register_wallet.into(),
+            register_hyli_at_wallet.into(),
+            register_hyli_at_wallet_proof.into(),
             register_c1.into(),
             register_c2.into(),
             register_sub_c2.into(),
@@ -332,9 +342,9 @@ async fn test_register_contract_and_delete_hyle() {
             .keys()
             .map(|cn| cn.0.clone())
             .collect::<Vec<_>>(),
-        vec!["c1", "c2.hyle", "sub.c2.hyle"]
+        vec!["c1", "c2.hyle", "sub.c2.hyle", "wallet"]
     );
-    assert_eq!(state.contracts.len(), 4);
+    assert_eq!(state.contracts.len(), 5);
 
     // Now delete them.
     let self_delete_tx = make_delete_tx("c1@c1".into(), "c1".into(), "c1".into());
@@ -343,7 +353,12 @@ async fn test_register_contract_and_delete_hyle() {
         "c2.hyle".into(),
         "sub.c2.hyle".into(),
     );
-    let delete_tx = make_delete_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
+    let delete_tx = make_delete_tx_with_hyli("hyle".into(), "c2.hyle".into());
+    let mut output = make_hyle_output_bis(delete_tx.clone(), BlobIndex(0));
+    output
+        .onchain_effects
+        .push(OnchainEffect::DeleteContract("c2.hyle".into()));
+    let delete_tx_proof = new_proof_tx(&"c2.hyle".into(), &output, &delete_tx.hashed());
 
     let mut output = make_hyle_output(self_delete_tx.clone(), BlobIndex(0));
     output
@@ -366,6 +381,7 @@ async fn test_register_contract_and_delete_hyle() {
             delete_self_proof.into(),
             delete_sub_proof.into(),
             delete_tx.into(),
+            delete_tx_proof.into(),
         ],
     );
 
@@ -377,7 +393,7 @@ async fn test_register_contract_and_delete_hyle() {
             .collect::<Vec<_>>(),
         vec!["c1", "c2.hyle", "sub.c2.hyle"]
     );
-    assert_eq!(state.contracts.len(), 1);
+    assert_eq!(state.contracts.len(), 2);
 }
 #[test_log::test(tokio::test)]
 async fn test_hyle_delete_contract_with_wrong_proof() {
