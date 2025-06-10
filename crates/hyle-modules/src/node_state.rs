@@ -1445,6 +1445,23 @@ pub mod test {
         }
     }
 
+    pub fn make_hyle_output_ter(blob_tx: BlobTransaction, blob_index: BlobIndex) -> HyleOutput {
+        HyleOutput {
+            version: 1,
+            identity: blob_tx.identity.clone(),
+            index: blob_index,
+            blobs: blob_tx.blobs.clone().into(),
+            tx_blob_count: blob_tx.blobs.len(),
+            initial_state: StateCommitment(vec![7, 8, 9]),
+            next_state: StateCommitment(vec![10, 11, 12]),
+            success: true,
+            tx_hash: blob_tx.hashed(),
+            tx_ctx: None,
+            state_reads: vec![],
+            onchain_effects: vec![],
+            program_outputs: vec![],
+        }
+    }
     pub fn make_hyle_output_with_state(
         blob_tx: BlobTransaction,
         blob_index: BlobIndex,

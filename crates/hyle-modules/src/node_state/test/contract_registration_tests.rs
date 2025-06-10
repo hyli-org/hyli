@@ -511,6 +511,13 @@ async fn test_hyle_delete_contract_success() {
 async fn test_hyle_sub_delete() {
     let mut state = new_node_state().await;
 
+    let register_wallet = make_register_tx("hyle@hyle".into(), "hyle".into(), "wallet".into());
+    let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
+
+    let mut output = make_hyle_output(register_hyli_at_wallet.clone(), BlobIndex(0));
+    let register_hyli_at_wallet_proof =
+        new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
+
     let register_c2 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
     // This technically doesn't matter as it's actually the proof that does the work
     let register_sub_c2 = make_register_tx(
@@ -534,18 +541,41 @@ async fn test_hyle_sub_delete() {
     state.craft_block_and_handle(
         1,
         vec![
+            register_wallet.into(),
+            register_hyli_at_wallet.into(),
+            register_hyli_at_wallet_proof.into(),
             register_c2.into(),
             register_sub_c2.into(),
             sub_c2_proof.into(),
         ],
     );
-    assert_eq!(state.contracts.len(), 3);
+    assert_eq!(state.contracts.len(), 4);
 
     // Now delete the intermediate contract first, then delete the sub-contract via hyle
-    let delete_tx = make_delete_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
-    let delete_sub_tx = make_delete_tx("hyle@hyle".into(), "hyle".into(), "sub.c2.hyle".into());
+    let delete_tx = make_delete_tx_with_hyli("hyle".into(), "c2.hyle".into());
 
-    let block = state.craft_block_and_handle(2, vec![delete_tx.into(), delete_sub_tx.into()]);
+    let mut output = make_hyle_output_bis(delete_tx.clone(), BlobIndex(0));
+    output
+        .onchain_effects
+        .push(OnchainEffect::DeleteContract("c2.hyle".into()));
+    let verify_hyli_proof = new_proof_tx(&"wallet".into(), &output, &delete_tx.hashed());
+
+    let delete_sub_tx = make_delete_tx_with_hyli("hyle".into(), "sub.c2.hyle".into());
+    let mut output = make_hyle_output_ter(delete_sub_tx.clone(), BlobIndex(0));
+    output
+        .onchain_effects
+        .push(OnchainEffect::DeleteContract("sub.c2.hyle".into()));
+    let verify_hyli_proof2 = new_proof_tx(&"wallet".into(), &output, &delete_sub_tx.hashed());
+
+    let block = state.craft_block_and_handle(
+        2,
+        vec![
+            delete_tx.into(),
+            verify_hyli_proof.into(),
+            delete_sub_tx.into(),
+            verify_hyli_proof2.into(),
+        ],
+    );
 
     assert_eq!(
         block
@@ -555,7 +585,7 @@ async fn test_hyle_sub_delete() {
             .collect::<Vec<_>>(),
         vec!["c2.hyle", "sub.c2.hyle"]
     );
-    assert_eq!(state.contracts.len(), 1);
+    assert_eq!(state.contracts.len(), 2);
 }
 
 #[test_log::test(tokio::test)]
