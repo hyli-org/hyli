@@ -19,7 +19,7 @@ COPY --from=builder /usr/src/hyle/target/release/hyle ./
 COPY --from=builder /usr/src/hyle/target/release/indexer ./
 COPY --from=builder /usr/src/hyle/target/release/hyle-loadtest ./
 COPY --from=builder /usr/src/hyle/target/release/gcs_uploader ./
-COPY --from=builder /usr/src/hyle/target/release/auto_provers ./
+COPY --from=builder /usr/src/hyle/target/release/smt_auto_prover ./
 
 VOLUME /hyle/data
 
