@@ -1,5 +1,5 @@
 use opentelemetry::{
-    metrics::{Counter, Gauge},
+    metrics::{Counter, Gauge, Histogram},
     InstrumentationScope, KeyValue,
 };
 
@@ -141,5 +141,61 @@ impl P2PMetrics {
                 KeyValue::new("canal", canal.to_string()),
             ],
         )
+    }
+}
+
+#[derive(Clone)]
+pub struct TcpServerMetrics {
+    peers: Gauge<u64>,
+    message_received: Counter<u64>,
+    message_error: Counter<u64>,
+    message_closed: Counter<u64>,
+    message_send_error: Counter<u64>,
+    message_send_time: Histogram<f64>,
+    server_name_label: Vec<KeyValue>,
+}
+
+impl TcpServerMetrics {
+    pub fn global(pool_name: String) -> TcpServerMetrics {
+        let scope = InstrumentationScope::builder(pool_name.clone()).build();
+        let my_meter = opentelemetry::global::meter_with_scope(scope);
+        TcpServerMetrics {
+            peers: my_meter.u64_gauge("tcp_server_peers").build(),
+            message_received: my_meter.u64_counter("tcp_server_message_received").build(),
+            message_error: my_meter.u64_counter("tcp_server_message_error").build(),
+            message_closed: my_meter.u64_counter("tcp_server_message_closed").build(),
+            message_send_error: my_meter
+                .u64_counter("tcp_server_message_send_error")
+                .build(),
+            message_send_time: my_meter
+                .f64_histogram("tcp_server_message_send_time_seconds")
+                .build(),
+            server_name_label: vec![KeyValue::new("server_name", pool_name)],
+        }
+    }
+
+    pub fn peers_snapshot(&self, nb: u64) {
+        self.peers.record(nb, &self.server_name_label);
+    }
+
+    pub fn message_received(&self) {
+        self.message_received.add(1, &self.server_name_label);
+    }
+
+    pub fn message_error(&self) {
+        self.message_error.add(1, &self.server_name_label);
+    }
+
+    pub fn message_closed(&self) {
+        self.message_closed.add(1, &self.server_name_label);
+    }
+
+    pub fn message_send_error(&self) {
+        self.message_send_error.add(1, &self.server_name_label);
+    }
+
+    pub fn message_send_time(&self, duration: f64) {
+        self.message_send_time
+            .record(duration, &self.server_name_label);
     }
 }

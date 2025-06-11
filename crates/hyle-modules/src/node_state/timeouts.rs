@@ -21,6 +21,10 @@ impl Timeouts {
             .or_default()
             .push(tx);
     }
+
+    pub fn count_all(&self) -> usize {
+        self.by_block.values().map(|v| v.len()).sum()
+    }
 }
 
 #[cfg(any(test, feature = "test"))]

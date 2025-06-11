@@ -70,55 +70,95 @@ impl TxExecutorHandler for SmtTokenProvableState {
                 let mut sender_account = self
                     .get_account(&sender)?
                     .ok_or(anyhow!("Sender account {} not found", sender))?;
-                let mut recipient_account = self
-                    .get_account(&recipient)?
-                    .unwrap_or(Account::new(recipient, 0));
+                if sender == recipient {
+                    Ok(format!("Transferred {} to {}", amount, recipient))
+                } else {
+                    let mut recipient_account = self
+                        .get_account(&recipient)?
+                        .unwrap_or(Account::new(recipient, 0));
 
-                let sender_key = sender_account.get_key();
-                let recipient_key = recipient_account.get_key();
+                    let sender_key = sender_account.get_key();
+                    let recipient_key = recipient_account.get_key();
 
-                sender_account.balance -= amount;
-                recipient_account.balance += amount;
+                    sender_account.balance = sender_account
+                        .balance
+                        .checked_sub(amount)
+                        .context("Insufficient balance")?;
+                    recipient_account.balance = recipient_account
+                        .balance
+                        .checked_add(amount)
+                        .context("Overflow in recipient balance")?;
 
-                if let Err(e) = self.0.update(sender_key, sender_account) {
-                    bail!("Failed to update sender account: {e}");
+                    if let Err(e) = self.0.update(sender_key, sender_account) {
+                        bail!("Failed to update sender account: {e}");
+                    }
+                    if let Err(e) = self.0.update(recipient_key, recipient_account.clone()) {
+                        bail!("Failed to update recipient account: {e}");
+                    }
+                    Ok(format!(
+                        "Transferred {} to {}",
+                        amount, recipient_account.address
+                    ))
                 }
-                if let Err(e) = self.0.update(recipient_key, recipient_account.clone()) {
-                    bail!("Failed to update recipient account: {e}");
-                }
-                Ok(format!(
-                    "Transferred {} to {}",
-                    amount, recipient_account.address
-                ))
             }
             SmtTokenAction::TransferFrom {
                 owner,
-                spender: _,
+                spender,
                 recipient,
                 amount,
             } => {
                 let mut owner_account = self
                     .get_account(&owner)?
                     .ok_or(anyhow!("Owner account {} not found", owner))?;
-                let mut recipient_account = self
-                    .get_account(&recipient)?
-                    .unwrap_or(Account::new(recipient, 0));
+                if owner == recipient {
+                    Ok(format!("Transferred {} to {}", amount, recipient))
+                } else {
+                    let mut recipient_account = self
+                        .get_account(&recipient)?
+                        .unwrap_or(Account::new(recipient, 0));
 
-                let owner_key = owner_account.get_key();
-                let recipient_key = recipient_account.get_key();
+                    let owner_key = owner_account.get_key();
+                    let recipient_key = recipient_account.get_key();
 
-                owner_account.balance -= amount;
-                recipient_account.balance += amount;
-                if let Err(e) = self.0.update(owner_key, owner_account) {
-                    bail!("Failed to update owner account: {e}");
+                    // Check allowance
+                    let allowance = owner_account.allowances.get(&spender).cloned().unwrap_or(0);
+                    if allowance < amount {
+                        bail!(
+                            "Allowance exceeded for spender={} owner={} allowance={}",
+                            spender,
+                            owner_account.address,
+                            allowance
+                        );
+                    }
+
+                    owner_account.update_allowances(
+                        spender.clone(),
+                        allowance
+                            .checked_sub(amount)
+                            .context("Allowance underflow")?,
+                    );
+
+                    owner_account.balance = owner_account
+                        .balance
+                        .checked_sub(amount)
+                        .context("Insufficient balance")?;
+                    recipient_account.balance = recipient_account
+                        .balance
+                        .checked_add(amount)
+                        .context("Overflow in recipient balance")?;
+
+                    if let Err(e) = self.0.update(owner_key, owner_account) {
+                        bail!("Failed to update owner account: {e}");
+                    }
+                    if let Err(e) = self.0.update(recipient_key, recipient_account.clone()) {
+                        bail!("Failed to update recipient account: {e}");
+                    }
+
+                    Ok(format!(
+                        "Transferred {} to {}",
+                        amount, recipient_account.address
+                    ))
                 }
-                if let Err(e) = self.0.update(recipient_key, recipient_account.clone()) {
-                    bail!("Failed to update recipient account: {e}");
-                }
-                Ok(format!(
-                    "Transferred {} to {}",
-                    amount, recipient_account.address
-                ))
             }
             SmtTokenAction::Approve {
                 owner,

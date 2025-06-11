@@ -8,6 +8,7 @@ pub struct NodeStateMetrics {
     module_name: &'static str,
     processed_blocks: Counter<u64>,
     unsettled_transactions: Gauge<u64>,
+    scheduled_timeouts: Gauge<u64>,
     contracts: Gauge<u64>,
     settled_transactions: Counter<u64>,
     current_height: Gauge<u64>,
@@ -28,6 +29,9 @@ impl NodeStateMetrics {
                 .build(),
             unsettled_transactions: my_meter
                 .u64_gauge(format!("{node_state}_unsettled_transactions"))
+                .build(),
+            scheduled_timeouts: my_meter
+                .u64_gauge(format!("{node_state}_scheduled_timeouts"))
                 .build(),
             contracts: my_meter
                 .u64_gauge(format!("{node_state}_contracts"))
@@ -58,6 +62,10 @@ impl NodeStateMetrics {
     }
     pub fn record_unsettled_transactions(&self, value: u64) {
         self.unsettled_transactions
+            .record(value, &[KeyValue::new("module_name", self.module_name)])
+    }
+    pub fn record_scheduled_timeouts(&self, value: u64) {
+        self.scheduled_timeouts
             .record(value, &[KeyValue::new("module_name", self.module_name)])
     }
     pub fn record_contracts(&self, value: u64) {
