@@ -279,16 +279,6 @@ where
                 {
                     continue;
                 }
-                // TODO: REMOVE
-                if self.store.tx_chain.contains(&tx.hashed()) {
-                    debug!(
-                        cn =% self.ctx.contract_name,
-                        tx_hash =% tx.hashed(),
-                        "🔇 Transaction {} already processed, skipping",
-                        tx.hashed()
-                    );
-                    continue;
-                }
                 let tx_ctx = TxContext {
                     block_height: block.block_height,
                     block_hash: block.hash.clone(),
