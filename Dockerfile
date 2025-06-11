@@ -8,7 +8,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY .cargo/config.toml .cargo/config.toml
 COPY src ./src
 COPY crates ./crates
-RUN cargo build --bin hyle --bin indexer --bin hyle-loadtest --bin gcs_uploader --bin auto_provers --release -F sp1 -F risc0
+RUN cargo build --bin hyle --bin indexer --bin hyle-loadtest --bin gcs_uploader --bin smt_auto_prover --release -F sp1 -F risc0
 
 # RUNNER
 FROM $BASE_IMAGE 
