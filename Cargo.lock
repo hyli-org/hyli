@@ -4995,6 +4995,7 @@ dependencies = [
  "futures",
  "hyle-client-sdk",
  "hyle-contract-sdk",
+ "hyle-hydentity",
  "hyle-net",
  "hyle-verifiers",
  "opentelemetry",

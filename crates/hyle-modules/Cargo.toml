@@ -57,6 +57,7 @@ test-log = { version = "0.2.17", features = [
   "color",
   "trace",
 ], default-features = false }
+hydentity = { workspace = true, features = ["client"] }
 
 [features]
 risc0 = ["client-sdk/risc0"]
