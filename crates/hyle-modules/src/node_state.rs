@@ -266,7 +266,7 @@ impl NodeState {
                                     let err = format!(
                                         "Failed to handle blob #{} in verified proof transaction {}: {err:#}",
                                         blob_proof_data.hyle_output.index, &tx_id);
-                                    info!("{err}");
+                                    debug!("{err}");
                                     block_under_construction
                                         .transactions_events
                                         .entry(tx_id.1.clone())

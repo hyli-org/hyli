@@ -1,16 +1,16 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
 use crate::bus::{BusClientSender, SharedMessageBus};
 use crate::{log_error, module_bus_client, module_handle_messages, modules::Module};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::rest_client::NodeApiClient;
 use client_sdk::{helpers::ClientSdkProver, transaction_builder::TxExecutorHandler};
 use hyle_net::logged_task::logged_task;
 use sdk::{
     BlobIndex, BlobTransaction, Block, BlockHeight, Calldata, ContractName, Hashed, NodeStateEvent,
-    ProofTransaction, TransactionData, TxContext, TxHash, HYLE_TESTNET_CHAIN_ID,
+    ProofTransaction, TransactionData, TxContext, TxHash, TxId, HYLE_TESTNET_CHAIN_ID,
 };
 use tracing::{debug, error, info, trace, warn};
 
@@ -34,6 +34,7 @@ pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
     settled_height: BlockHeight,
     // If Some, represents the block height we need to start generating proofs
     catching_up: Option<BlockHeight>,
+    catching_txs: Vec<(BlobTransaction, TxContext)>,
     catching_blobs: Vec<(BlobIndex, BlobTransaction, TxContext)>,
 }
 
@@ -137,6 +138,7 @@ where
             metrics,
             catching_up,
             catching_blobs: vec![],
+            catching_txs: vec![],
             settled_height,
         })
     }
@@ -173,7 +175,143 @@ where
 {
     async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
         let NodeStateEvent::NewBlock(block) = event;
-        self.handle_processed_block(*block).await?;
+        if block.block_height.0 <= self.settled_height.0 {
+            let block_height = block.block_height;
+            self.handle_settled_block(*block)
+                .await
+                .context("Failed to handle settled block")?;
+            if block_height.0 == self.settled_height.0 {
+                // Build blobs to execute from catching_txs
+                let mut blobs: Vec<(BlobIndex, BlobTransaction, TxContext)> = vec![];
+                for (tx, tx_ctx) in self.catching_txs.iter() {
+                    for (index, blob) in tx.blobs.iter().enumerate() {
+                        if blob.contract_name == self.ctx.contract_name {
+                            blobs.push((index.into(), tx.clone(), tx_ctx.clone()));
+                        }
+                    }
+                }
+
+                info!(
+                    cn =% self.ctx.contract_name,
+                    "✅ Catching up finished, {} blobs to process",
+                    blobs.len()
+                );
+                let mut contract = self.ctx.default_state.clone();
+                let Some(last_tx_hash) = blobs.last().map(|(_, tx, _)| tx.hashed()) else {
+                    return Ok(());
+                };
+                for (blob_index, tx, tx_ctx) in blobs {
+                    let calldata = Calldata {
+                        identity: tx.identity.clone(),
+                        tx_hash: tx.hashed(),
+                        private_input: vec![],
+                        blobs: tx.blobs.clone().into(),
+                        index: blob_index,
+                        tx_ctx: Some(tx_ctx.clone()),
+                        tx_blob_count: tx.blobs.len(),
+                    };
+
+                    match contract.handle(&calldata) {
+                        Err(e) => {
+                            error!(
+                                cn =% self.ctx.contract_name,
+                                tx_hash =% tx.hashed(),
+                                tx_height =% tx_ctx.block_height,
+                                "Error while executing settled tx: {e:#}"
+                            );
+                            error!(
+                                cn =% self.ctx.contract_name,
+                                tx_hash =% tx.hashed(),
+                                tx_height =% tx_ctx.block_height,
+                                "This is likely a bug in the prover, please report it to the Hyle team."
+                            );
+                        }
+                        Ok(hyle_output) => {
+                            info!(
+                                cn =% self.ctx.contract_name,
+                                tx_hash =% tx.hashed(),
+                                tx_height =% tx_ctx.block_height,
+                                "Executed contract: {}. Success: {}",
+                                String::from_utf8_lossy(&hyle_output.program_outputs),
+                                hyle_output.success
+                            );
+                            if !hyle_output.success {
+                                error!(
+                                    cn =% self.ctx.contract_name,
+                                    tx_hash =% tx.hashed(),
+                                    tx_height =% tx_ctx.block_height,
+                                    "Executed tx as failed but it was settled as success!",
+                                );
+                                error!(
+                                    cn =% self.ctx.contract_name,
+                                    tx_hash =% tx.hashed(),
+                                    tx_height =% tx_ctx.block_height,
+                                    "This is likely a bug in the prover, please report it to the Hyle team."
+                                );
+                            }
+                        }
+                    }
+                }
+                info!(
+                    cn =% self.ctx.contract_name,
+                    "All catching blobs processed, catching up finished at block {} with tx {}",
+                    block_height,
+                    last_tx_hash
+                );
+                self.store.tx_chain = vec![last_tx_hash.clone()];
+                self.store.state_history.insert(last_tx_hash, contract);
+                // TODO check that contract's commit corresponds to onchain version
+            }
+        } else {
+            self.handle_processed_block(*block).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn handle_settled_block(&mut self, block: Block) -> Result<()> {
+        for (_, tx) in block.txs {
+            if let TransactionData::Blob(tx) = tx.transaction_data {
+                if tx
+                    .blobs
+                    .iter()
+                    .all(|b| b.contract_name != self.ctx.contract_name)
+                {
+                    continue;
+                }
+                // TODO: REMOVE
+                if self.store.tx_chain.contains(&tx.hashed()) {
+                    debug!(
+                        cn =% self.ctx.contract_name,
+                        tx_hash =% tx.hashed(),
+                        "🔇 Transaction {} already processed, skipping",
+                        tx.hashed()
+                    );
+                    continue;
+                }
+                let tx_ctx = TxContext {
+                    block_height: block.block_height,
+                    block_hash: block.hash.clone(),
+                    timestamp: block.block_timestamp.clone(),
+                    lane_id: block
+                        .lane_ids
+                        .get(&tx.hashed())
+                        .ok_or_else(|| anyhow!("Missing lane id in block for {}", tx.hashed()))?
+                        .clone(),
+                    chain_id: HYLE_TESTNET_CHAIN_ID,
+                };
+                self.catching_txs.push((tx.clone(), tx_ctx));
+            }
+        }
+
+        for tx in block.timed_out_txs {
+            self.catching_txs.retain(|(t, _)| t.hashed() != tx);
+        }
+
+        for tx in block.failed_txs {
+            // TODO use txId
+            self.catching_txs.retain(|(t, _)| t.hashed() != tx);
+        }
 
         Ok(())
     }
