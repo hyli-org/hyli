@@ -468,11 +468,19 @@ where
                 );
                 return Some(contract);
             } else {
-                warn!(
+                error!(
                     cn =% self.ctx.contract_name,
                     tx_hash =% tx,
                     "No state history for previous tx {:?}, returning None",
                     prev_tx
+                );
+                error!("This is likely a bug in the prover, please report it to the Hyle team.");
+                error!(cn =% self.ctx.contract_name, tx_hash =% tx, "State history: {:?}", self.store.state_history.keys());
+                error!(
+                    cn =% self.ctx.contract_name,
+                    tx_hash =% tx,
+                    "Unsettled txs: {:?}",
+                    self.store.unsettled_txs.iter().map(|(t, _)| t.hashed()).collect::<Vec<_>>()
                 );
             }
         } else {
