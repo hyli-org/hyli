@@ -426,9 +426,6 @@ async fn test_hyle_delete_contract_with_wrong_proof() {
 
     let mut output = make_hyle_output_bis(delete_tx.clone(), BlobIndex(0));
     output.success = false; // Simulate a wrong proof
-    output
-        .onchain_effects
-        .push(OnchainEffect::DeleteContract("contract".into()));
     let verify_hyli_proof = new_proof_tx(&HYLI_WALLET.into(), &output, &delete_tx.hashed());
 
     let block =
@@ -472,9 +469,6 @@ async fn test_hyle_delete_contract_with_wrong_identity() {
     );
 
     let mut output = make_hyle_output_bis(delete_tx.clone(), BlobIndex(0));
-    output
-        .onchain_effects
-        .push(OnchainEffect::DeleteContract("contract".into()));
     let verify_hyli_proof = new_proof_tx(&HYLI_WALLET.into(), &output, &delete_tx.hashed());
 
     let block =
@@ -511,9 +505,6 @@ async fn test_hyle_delete_contract_success() {
     let delete_tx = make_delete_tx_with_hyli("hyle".into(), "contract".into());
 
     let mut output = make_hyle_output_bis(delete_tx.clone(), BlobIndex(0));
-    output
-        .onchain_effects
-        .push(OnchainEffect::DeleteContract("contract".into()));
     let verify_hyli_proof = new_proof_tx(&"wallet".into(), &output, &delete_tx.hashed());
 
     let block =
