@@ -367,11 +367,6 @@ where
                 prev_tx
             );
             self.store.state_history.remove(prev_tx);
-            debug!(
-                cn =% self.ctx.contract_name,
-                "State history after removing prev tx: {:?}",
-                self.store.state_history.keys()
-            );
         }
         let pos_chain = self.store.tx_chain.iter().position(|h| h == tx);
         if let Some(pos_chain) = pos_chain {
@@ -503,7 +498,7 @@ where
                     debug!(
                         cn =% self.ctx.contract_name,
                         tx_hash =% tx.hashed(),
-                        "🔥 Re-execute tx, removing state history for tx {}",
+                        "🔥 Re-execute tx after failure, removing state history for tx {}",
                        tx.hashed()
                     );
 
@@ -660,11 +655,6 @@ where
                         ))?;
                     }
                     if !hyle_output.success {
-                        // if let Some(intermediary_state) = self.store.state_history.get(&tx_hash) {
-                        //     self.store.contract = intermediary_state.clone();
-                        // } else {
-                        //     self.store.contract = initial_store_contract;
-                        // }
                         debug!(
                             cn =% self.ctx.contract_name,
                             tx_hash =% tx.hashed(),
