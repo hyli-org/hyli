@@ -559,16 +559,10 @@ async fn test_hyle_sub_delete() {
     let delete_tx = make_delete_tx_with_hyli("hyle".into(), "c2.hyle".into());
 
     let mut output = make_hyle_output_bis(delete_tx.clone(), BlobIndex(0));
-    output
-        .onchain_effects
-        .push(OnchainEffect::DeleteContract("c2.hyle".into()));
     let verify_hyli_proof = new_proof_tx(&"wallet".into(), &output, &delete_tx.hashed());
 
     let delete_sub_tx = make_delete_tx_with_hyli("hyle".into(), "sub.c2.hyle".into());
     let mut output = make_hyle_output_ter(delete_sub_tx.clone(), BlobIndex(0));
-    output
-        .onchain_effects
-        .push(OnchainEffect::DeleteContract("sub.c2.hyle".into()));
     let verify_hyli_proof2 = new_proof_tx(&"wallet".into(), &output, &delete_sub_tx.hashed());
 
     let block = state.craft_block_and_handle(
