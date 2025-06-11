@@ -339,13 +339,6 @@ where
             if let Some(pos) = self.catching_txs.iter().position(|(t, _)| t.hashed() == tx) {
                 let (tx, tx_ctx) = self.catching_txs.remove(pos);
                 self.catching_success_txs.push((tx, tx_ctx));
-            } else {
-                error!(
-                    cn =% self.ctx.contract_name,
-                    tx_hash =% tx,
-                    "Transaction {} not found in catching_txs",
-                    tx
-                );
             }
         }
 
