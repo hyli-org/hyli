@@ -1458,7 +1458,13 @@ pub mod test {
                 slot: height,
                 ..ConsensusProposal::default()
             },
-            data_proposals: vec![(LaneId::default(), vec![DataProposal::new(None, txs)])],
+            data_proposals: vec![(
+                LaneId::default(),
+                vec![DataProposal::new(
+                    Some(DataProposalHash(format!("{}", height))),
+                    txs,
+                )],
+            )],
         }
     }
 
