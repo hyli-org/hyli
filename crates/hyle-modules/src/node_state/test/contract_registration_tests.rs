@@ -355,9 +355,6 @@ async fn test_register_contract_and_delete_hyle() {
     );
     let delete_tx = make_delete_tx_with_hyli("hyle".into(), "c2.hyle".into());
     let mut output = make_hyle_output_bis(delete_tx.clone(), BlobIndex(0));
-    output
-        .onchain_effects
-        .push(OnchainEffect::DeleteContract("c2.hyle".into()));
     let delete_tx_proof = new_proof_tx(&"c2.hyle".into(), &output, &delete_tx.hashed());
 
     let mut output = make_hyle_output(self_delete_tx.clone(), BlobIndex(0));
