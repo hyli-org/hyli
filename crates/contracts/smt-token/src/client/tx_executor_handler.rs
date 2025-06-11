@@ -194,17 +194,23 @@ impl TxExecutorHandler for SmtTokenProvableState {
     /// This function provides the metadata needed to reconstruct the SMT Token contract's state.
     /// This state is made up of the rootHash of the MerkleTrie, and the merkle proof used to prove the accounts used in the action.
     fn build_commitment_metadata(&self, blob: &sdk::Blob) -> Result<Vec<u8>> {
+        let root = *self.0.root();
+
         let parsed_blob: StructuredBlob<SmtTokenAction> =
             match StructuredBlob::try_from(blob.clone()) {
                 Ok(v) => v,
                 Err(_) => {
-                    bail!("Failed to parse blob: {:?}", blob);
+                    // Return a valid metadata, the contract can handle this.
+                    return borsh::to_vec(&SmtTokenContract {
+                        commitment: StateCommitment(Into::<[u8; 32]>::into(root).to_vec()),
+                        steps: vec![],
+                    })
+                    .context("Failed to serialize SMT Token contract");
                 }
             };
 
         let action = parsed_blob.data.parameters;
 
-        let root = *self.0.root();
         let (proof, accounts) = match action {
             SmtTokenAction::Transfer {
                 sender,
@@ -212,10 +218,12 @@ impl TxExecutorHandler for SmtTokenProvableState {
                 amount: _,
             } => {
                 let sender_account = self
-                    .get_account(&sender)?
-                    .ok_or(anyhow!("Sender account {} not found", sender))?;
+                    .get_account(&sender)
+                    .unwrap_or_default()
+                    .unwrap_or(Account::new(sender.clone(), 0));
                 let recipient_account = self
-                    .get_account(&recipient)?
+                    .get_account(&recipient)
+                    .unwrap_or_default()
                     .unwrap_or(Account::new(recipient.clone(), 0));
 
                 // Create keys for the accounts
@@ -242,14 +250,16 @@ impl TxExecutorHandler for SmtTokenProvableState {
                 owner,
                 spender: _,
                 recipient,
-                amount,
+                amount: _,
             } => {
                 let owner_account = self
-                    .get_account(&owner)?
-                    .ok_or(anyhow!("Owner account {} not found", owner))?;
+                    .get_account(&owner)
+                    .unwrap_or_default()
+                    .unwrap_or(Account::new(owner.clone(), 0));
                 let recipient_account = self
-                    .get_account(&recipient)?
-                    .unwrap_or(Account::new(recipient.clone(), amount));
+                    .get_account(&recipient)
+                    .unwrap_or_default()
+                    .unwrap_or(Account::new(recipient.clone(), 0));
 
                 // Create keys for the accounts
                 let key1 = owner_account.get_key();
@@ -277,8 +287,9 @@ impl TxExecutorHandler for SmtTokenProvableState {
                 amount: _,
             } => {
                 let owner_account = self
-                    .get_account(&owner)?
-                    .ok_or(anyhow!("Owner account {} not found", owner))?;
+                    .get_account(&owner)
+                    .unwrap_or_default()
+                    .unwrap_or(Account::new(owner.clone(), 0));
                 let key = owner_account.get_key();
                 (
                     BorshableMerkleProof(
@@ -428,5 +439,145 @@ impl SmtTokenProvableState {
             None,
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sdk::{
+        Blob, BlobData, BlobIndex, ContractAction, Identity, IndexedBlobs, TxHash, ZkContract,
+    };
+
+    #[test]
+    fn test_proof_of_failure_inexistent_sender() {
+        let smt_token = SmtTokenProvableState::default();
+
+        // Test: the sender doesn't actually have any balance - we can generate a proof-of-failure.
+        let transfer = SmtTokenAction::Transfer {
+            sender: Identity::from("sender"),
+            recipient: Identity::from("recipient"),
+            amount: 100,
+        };
+
+        let commitment = smt_token
+            .build_commitment_metadata(&transfer.as_blob(ContractName::new("oranj"), None, None))
+            .unwrap();
+
+        let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
+
+        let ho = zk.execute(&Calldata {
+            tx_hash: TxHash::default(),
+            identity: Identity::from("sender"),
+            blobs: IndexedBlobs::from(vec![transfer.as_blob(
+                ContractName::new("oranj"),
+                None,
+                None,
+            )]),
+            tx_blob_count: 1,
+            index: BlobIndex(0),
+            tx_ctx: None,
+            private_input: vec![],
+        });
+        assert_eq!(ho.unwrap_err(), "Insufficient balance".to_string());
+    }
+
+    #[test]
+    fn test_proof_of_failure_not_even_an_smt_blob() {
+        let smt_token = SmtTokenProvableState::default();
+
+        let blob = Blob {
+            contract_name: ContractName::new("oranj"),
+            data: BlobData(vec![1, 2, 3, 4, 5]),
+        };
+
+        let commitment = smt_token.build_commitment_metadata(&blob).unwrap();
+
+        let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
+
+        let ho = zk.execute(&Calldata {
+            tx_hash: TxHash::default(),
+            identity: Identity::from("sender"),
+            blobs: IndexedBlobs::from(vec![blob]),
+            tx_blob_count: 1,
+            index: BlobIndex(0),
+            tx_ctx: None,
+            private_input: vec![],
+        });
+        assert_eq!(ho.unwrap_err(), "Failed to parse input blob".to_string());
+    }
+
+    #[test]
+    fn test_transfer_to_nonexistent_recipient() {
+        let smt_token = SmtTokenProvableState::default();
+
+        // Create sender account with balance
+        let sender = Identity::from("sender");
+        let recipient = Identity::from("recipient");
+        let amount = 50u128;
+        let mut state = smt_token.clone();
+        let sender_account = Account::new(sender.clone(), amount);
+        let sender_key = sender_account.get_key();
+        state.0.update(sender_key, sender_account).unwrap();
+
+        let transfer = SmtTokenAction::Transfer {
+            sender: sender.clone(),
+            recipient: recipient.clone(),
+            amount,
+        };
+        let commitment = state
+            .build_commitment_metadata(&transfer.as_blob(ContractName::new("oranj"), None, None))
+            .unwrap();
+        let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
+        let ho = zk.execute(&Calldata {
+            tx_hash: TxHash::default(),
+            identity: sender.clone(),
+            blobs: IndexedBlobs::from(vec![transfer.as_blob(
+                ContractName::new("oranj"),
+                None,
+                None,
+            )]),
+            tx_blob_count: 1,
+            index: BlobIndex(0),
+            tx_ctx: None,
+            private_input: vec![],
+        });
+        assert!(ho.is_ok());
+        let output = String::from_utf8(ho.unwrap().0).unwrap();
+        assert!(output.contains(&format!("Transferred {} to {}", amount, recipient)));
+    }
+
+    #[test]
+    fn test_proof_of_failure_approve_with_nonexistent_owner() {
+        let smt_token = SmtTokenProvableState::default();
+        let owner = Identity::from("owner");
+        let spender = Identity::from("spender");
+        let amount = 100u128;
+        let approve = SmtTokenAction::Approve {
+            owner: owner.clone(),
+            spender: spender.clone(),
+            amount,
+        };
+        let commitment = smt_token
+            .build_commitment_metadata(&approve.as_blob(ContractName::new("oranj"), None, None))
+            .unwrap();
+        let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
+        let ho = zk.execute(&Calldata {
+            tx_hash: TxHash::default(),
+            identity: owner.clone(),
+            blobs: IndexedBlobs::from(vec![approve.as_blob(
+                ContractName::new("oranj"),
+                None,
+                None,
+            )]),
+            tx_blob_count: 1,
+            index: BlobIndex(0),
+            tx_ctx: None,
+            private_input: vec![],
+        });
+        assert_eq!(
+            ho.unwrap_err(),
+            format!("Owner account {} not found", owner)
+        );
     }
 }
