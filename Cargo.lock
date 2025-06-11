@@ -5155,6 +5155,7 @@ dependencies = [
  "hyle-client-sdk",
  "hyle-contract-sdk",
  "hyle-modules",
+ "hyle-smt-token",
  "opentelemetry",
  "ratatui",
  "serde",
