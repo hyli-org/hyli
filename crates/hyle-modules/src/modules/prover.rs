@@ -1222,6 +1222,37 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
+    async fn test_auto_prover_instant_failed() -> Result<()> {
+        let (mut node_state, mut auto_prover, api_client) = setup().await?;
+
+        let tx = BlobTransaction::new(
+            "yolo@test".to_string(),
+            vec![
+                Blob {
+                    contract_name: "doesnotexist".into(),
+                    data: BlobData(borsh::to_vec(&3).unwrap()),
+                },
+                Blob {
+                    contract_name: "test".into(),
+                    data: BlobData(borsh::to_vec(&3).unwrap()),
+                },
+            ],
+        );
+
+        tracing::info!("✨ Block 1");
+        let block_1 = node_state.craft_block_and_handle(1, vec![tx.into(), new_blob_tx(1)]);
+        auto_prover.handle_processed_block(block_1).await?;
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 1);
+        tracing::info!("✨ Block 2");
+        let block_2 = node_state.craft_block_and_handle(2, proofs);
+        auto_prover.handle_processed_block(block_2).await?;
+        assert_eq!(read_contract_state(&node_state).value, 1);
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
     async fn test_auto_prover_tx_commitment_metadata_failed() -> Result<()> {
         let (mut node_state, mut auto_prover, api_client) = setup().await?;
 
