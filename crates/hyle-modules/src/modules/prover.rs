@@ -57,7 +57,6 @@ pub struct AutoProverBusClient<Contract: Send + Sync + Clone + 'static> {
 }
 
 pub struct AutoProverCtx<Contract> {
-    pub name: String, // Name of the module, used for metrics
     pub data_directory: PathBuf,
     pub prover_name: String,
     pub prover: Arc<dyn ClientSdkProver<Vec<Calldata>> + Send + Sync>,
@@ -117,11 +116,8 @@ where
             .get_settled_height(ctx.contract_name.clone())
             .await?;
 
-        let metrics = AutoProverMetrics::global(
-            ctx.name.clone(),
-            ctx.contract_name.to_string(),
-            ctx.prover_name.clone(),
-        );
+        let metrics =
+            AutoProverMetrics::global(ctx.contract_name.to_string(), ctx.prover_name.clone());
 
         info!(
             cn =% ctx.contract_name,
@@ -875,7 +871,6 @@ mod tests {
         let temp_dir = tempdir()?;
         let data_dir = temp_dir.path().to_path_buf();
         let ctx = Arc::new(AutoProverCtx {
-            name: "buffering_auto_prover".into(),
             data_directory: data_dir,
             prover_name: "test_prover".into(),
             prover: Arc::new(TxExecutorTestProver::<TestContract>::new()),

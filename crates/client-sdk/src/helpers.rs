@@ -41,6 +41,7 @@ pub trait ClientSdkProver<T: BorshSerialize + Send> {
         commitment_metadata: Vec<u8>,
         calldatas: T,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<ProofData>> + Send + '_>>;
+    fn info(&self)
 }
 
 #[cfg(feature = "risc0")]
