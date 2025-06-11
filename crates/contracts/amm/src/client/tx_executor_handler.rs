@@ -6,7 +6,7 @@ use client_sdk::{
 use hyllar::HyllarAction;
 use sdk::{
     utils::as_hyle_output, Blob, BlobIndex, Calldata, ContractName, RegisterContractEffect,
-    ZkContract,
+    StateCommitment, ZkContract,
 };
 
 use crate::{Amm, AmmAction};
@@ -39,6 +39,10 @@ impl TxExecutorHandler for Amm {
         _metadata: &Option<Vec<u8>>,
     ) -> Result<Self> {
         Ok(Self::default())
+    }
+
+    fn get_state_commitment(&self) -> StateCommitment {
+        self.commit()
     }
 }
 
