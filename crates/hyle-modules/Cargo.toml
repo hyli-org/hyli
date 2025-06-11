@@ -20,7 +20,7 @@ borsh = "1.5.6"
 serde = "1.0"
 serde_json = { version = "1" }
 tracing = "0.1"
-assertables = { version = "9.5.2" }
+assertables = { version = "9.6.0" }
 anymap = { version = "0.12.1" }
 syn = { version = "2.0.101" }
 quote = { version = "1.0.39" }
