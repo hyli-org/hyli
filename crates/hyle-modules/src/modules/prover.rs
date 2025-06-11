@@ -14,6 +14,8 @@ use sdk::{
 };
 use tracing::{debug, error, info, trace, warn};
 
+use super::prover_metrics::AutoProverMetrics;
+
 /// `AutoProver` is a module that handles the proving of transactions
 /// It listens to the node state events and processes all blobs in the block's transactions
 /// for a given contract.
@@ -27,6 +29,7 @@ pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
     bus: AutoProverBusClient<Contract>,
     ctx: Arc<AutoProverCtx<Contract>>,
     store: AutoProverStore<Contract>,
+    metrics: AutoProverMetrics,
     // The last block where the contract is settled
     settled_height: BlockHeight,
     // If Some, represents the block height we need to start generating proofs
@@ -112,6 +115,10 @@ where
             .get_settled_height(ctx.contract_name.clone())
             .await?;
 
+        let infos = ctx.prover.info();
+
+        let metrics = AutoProverMetrics::global(ctx.contract_name.to_string(), infos);
+
         info!(
             cn =% ctx.contract_name,
             "Settled height received is {}",
@@ -129,6 +136,7 @@ where
             bus,
             store,
             ctx,
+            metrics,
             catching_up,
             catching_blobs: vec![],
             settled_height,
@@ -139,7 +147,10 @@ where
         module_handle_messages! {
             on_bus self.bus,
             listen<NodeStateEvent> event => {
-                _ = log_error!(self.handle_node_state_event(event).await, "handle note state event")
+                _ = log_error!(self.handle_node_state_event(event).await, "handle note state event");
+                self.metrics.snapshot_buffered_blobs(self.store.buffered_blobs.len() as u64);
+                self.metrics
+                    .snapshot_unsettled_blobs(self.store.unsettled_txs.len() as u64);
             }
         };
 
@@ -685,6 +696,8 @@ where
         let node_client = self.ctx.node.clone();
         let prover = self.ctx.prover.clone();
         let contract_name = self.ctx.contract_name.clone();
+
+        let metrics = self.metrics.clone();
         logged_task(async move {
             let mut retries = 0;
             const MAX_RETRIES: u32 = 30;
@@ -695,11 +708,17 @@ where
                     "Proving {} txs. Batch id: {batch_id}, Retries: {retries}",
                     calldatas.len(),
                 );
+                let start = std::time::Instant::now();
+                metrics.record_proof_requested();
                 match prover
                     .prove(commitment_metadata.clone(), calldatas.clone())
                     .await
                 {
                     Ok(proof) => {
+                        let elapsed = start.elapsed();
+                        metrics.record_generation_time(elapsed.as_secs_f64());
+                        metrics.record_proof_size(proof.0.len() as u64);
+                        metrics.record_proof_success();
                         let tx = ProofTransaction {
                             contract_name: contract_name.clone(),
                             proof,
@@ -715,6 +734,8 @@ where
                         break;
                     }
                     Err(e) => {
+                        metrics.record_proof_failure();
+
                         let should_retry =
                             e.to_string().contains("SessionCreateErr") && retries < MAX_RETRIES;
                         if should_retry {
@@ -723,6 +744,7 @@ where
                                 retries, MAX_RETRIES
                             );
                             retries += 1;
+                            metrics.record_proof_retry();
                             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                             continue;
                         }
