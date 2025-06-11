@@ -28,11 +28,11 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let config = Conf::new(args.config_file).context("reading config file")?;
 
-    setup_tracing(&config.log_format, "auto provers".to_string())?;
+    setup_tracing(&config.log_format, "smt auto prover".to_string())?;
 
-    tracing::info!("Starting auto provers");
+    tracing::info!("Starting smt auto prover");
 
-    let bus = SharedMessageBus::new(BusMetrics::global("auto_provers".to_string()));
+    let bus = SharedMessageBus::new(BusMetrics::global("smt_auto_prover".to_string()));
 
     tracing::info!("Setting up modules");
 
@@ -48,35 +48,7 @@ async fn main() -> Result<()> {
             prover: Arc::new(Risc0Prover::new(
                 smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF,
             )),
-            contract_name: "oranj".into(),
-            node: node_client.clone(),
-            default_state: Default::default(),
-            buffer_blocks: config.buffer_blocks,
-            max_txs_per_proof: config.max_txs_per_proof,
-        }))
-        .await?;
-
-    handler
-        .build_module::<AutoProver<SmtTokenProvableState>>(Arc::new(AutoProverCtx {
-            data_directory: config.data_directory.clone(),
-            prover: Arc::new(Risc0Prover::new(
-                smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF,
-            )),
-            contract_name: "vitamin".into(),
-            node: node_client.clone(),
-            default_state: Default::default(),
-            buffer_blocks: config.buffer_blocks,
-            max_txs_per_proof: config.max_txs_per_proof,
-        }))
-        .await?;
-
-    handler
-        .build_module::<AutoProver<SmtTokenProvableState>>(Arc::new(AutoProverCtx {
-            data_directory: config.data_directory.clone(),
-            prover: Arc::new(Risc0Prover::new(
-                smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF,
-            )),
-            contract_name: "oxygen".into(),
+            contract_name: config.contract_name.clone().into(),
             node: node_client.clone(),
             default_state: Default::default(),
             buffer_blocks: config.buffer_blocks,
@@ -117,12 +89,15 @@ struct Conf {
 
     pub buffer_blocks: u32,
     pub max_txs_per_proof: usize,
+
+    /// Contract name to prove
+    pub contract_name: String,
 }
 
 impl Conf {
     pub fn new(config_files: Vec<String>) -> Result<Self, anyhow::Error> {
         let mut s = config::Config::builder().add_source(config::File::from_str(
-            include_str!("../auto_provers_conf_defaults.toml"),
+            include_str!("../smt_auto_prover_conf_defaults.toml"),
             config::FileFormat::Toml,
         ));
         // Priority order: config file, then environment variables, then CLI

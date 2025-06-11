@@ -9,8 +9,8 @@ path = "src/bin/block_dbg.rs"
 required-features = ["ui"]
 
 [[bin]]
-name = "auto_provers"
-path = "src/bin/auto_provers.rs"
+name = "smt_auto_prover"
+path = "src/bin/smt_auto_prover.rs"
 
 [dependencies]
 hyle-contract-sdk = { workspace = true }
