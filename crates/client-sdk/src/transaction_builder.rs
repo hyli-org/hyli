@@ -9,7 +9,7 @@ use std::{
 use anyhow::{bail, Result};
 use sdk::{
     Blob, BlobIndex, BlobTransaction, Calldata, ContractAction, ContractName, Hashed, HyleOutput,
-    Identity, ProofTransaction, RegisterContractEffect, TxContext,
+    Identity, ProofTransaction, RegisterContractEffect, StateCommitment, TxContext,
 };
 
 use crate::helpers::ClientSdkProver;
@@ -380,6 +380,8 @@ pub trait TxExecutorHandler {
     ) -> anyhow::Result<Self>
     where
         Self: Sized;
+
+    fn get_commit(&self) -> StateCommitment;
 }
 
 /// Macro to easily define the full state of a TxExecutor

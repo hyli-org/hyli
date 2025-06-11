@@ -321,6 +321,11 @@ impl TxExecutorHandler for SmtTokenProvableState {
 
         borsh::to_vec(&initial_commitment).map_err(|e| e.to_string())
     }
+
+    fn get_commit(&self) -> StateCommitment {
+        let root = *self.0.root();
+        StateCommitment(Into::<[u8; 32]>::into(root).to_vec())
+    }
 }
 
 impl SmtTokenProvableState {

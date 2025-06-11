@@ -347,6 +347,9 @@ mod tests {
         ) -> Result<Self> {
             Ok(Self::default())
         }
+        fn get_commit(&self) -> StateCommitment {
+            self.commit()
+        }
     }
 
     impl ContractHandler for MockState {

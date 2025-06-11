@@ -4,7 +4,8 @@ use client_sdk::{
     transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutorBuilder, TxExecutorHandler},
 };
 use sdk::{
-    utils::as_hyle_output, Blob, Calldata, ContractName, RegisterContractEffect, ZkContract,
+    utils::as_hyle_output, Blob, Calldata, ContractName, RegisterContractEffect, StateCommitment,
+    ZkContract,
 };
 
 use crate::{Hyllar, HyllarAction};
@@ -37,6 +38,10 @@ impl TxExecutorHandler for Hyllar {
         _metadata: &Option<Vec<u8>>,
     ) -> Result<Self> {
         Ok(Self::default())
+    }
+
+    fn get_commit(&self) -> StateCommitment {
+        self.commit()
     }
 }
 

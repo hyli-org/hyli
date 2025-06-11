@@ -35,6 +35,7 @@ pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
     // If Some, represents the block height we need to start generating proofs
     catching_up: Option<BlockHeight>,
     catching_txs: Vec<(BlobTransaction, TxContext)>,
+    catching_success_txs: Vec<(BlobTransaction, TxContext)>,
     catching_blobs: Vec<(BlobIndex, BlobTransaction, TxContext)>,
 }
 
@@ -138,6 +139,7 @@ where
             metrics,
             catching_up,
             catching_blobs: vec![],
+            catching_success_txs: vec![],
             catching_txs: vec![],
             settled_height,
         })
@@ -183,7 +185,7 @@ where
             if block_height.0 == self.settled_height.0 {
                 // Build blobs to execute from catching_txs
                 let mut blobs: Vec<(BlobIndex, BlobTransaction, TxContext)> = vec![];
-                for (tx, tx_ctx) in self.catching_txs.iter() {
+                for (tx, tx_ctx) in self.catching_success_txs.iter() {
                     for (index, blob) in tx.blobs.iter().enumerate() {
                         if blob.contract_name == self.ctx.contract_name {
                             blobs.push((index.into(), tx.clone(), tx_ctx.clone()));
@@ -258,9 +260,34 @@ where
                     block_height,
                     last_tx_hash
                 );
+
+                let final_state = contract.get_commit();
+                info!(
+                    cn =% self.ctx.contract_name,
+                    "Final state after catching up: {:?}",
+                    final_state
+                );
+                let onchain = self
+                    .ctx
+                    .node
+                    .get_contract(self.ctx.contract_name.clone())
+                    .await?;
+
+                if onchain.state != final_state {
+                    error!(
+                        cn =% self.ctx.contract_name,
+                        "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
+                        onchain, final_state
+                    );
+                    error!(
+                        cn =% self.ctx.contract_name,
+                        "This is likely a bug in the prover, please report it to the Hyle team."
+                    );
+                    std::process::exit(1);
+                }
+
                 self.store.tx_chain = vec![last_tx_hash.clone()];
                 self.store.state_history.insert(last_tx_hash, contract);
-                // TODO check that contract's commit corresponds to onchain version
             }
         } else {
             self.handle_processed_block(*block).await?;
@@ -294,13 +321,29 @@ where
             }
         }
 
+        // Only used to reduce size of catching_txs
         for tx in block.timed_out_txs {
             self.catching_txs.retain(|(t, _)| t.hashed() != tx);
         }
 
+        // Only used to reduce size of catching_txs
         for tx in block.failed_txs {
             // TODO use txId
             self.catching_txs.retain(|(t, _)| t.hashed() != tx);
+        }
+
+        for tx in block.successful_txs {
+            if let Some(pos) = self.catching_txs.iter().position(|(t, _)| t.hashed() == tx) {
+                let (tx, tx_ctx) = self.catching_txs.remove(pos);
+                self.catching_success_txs.push((tx, tx_ctx));
+            } else {
+                error!(
+                    cn =% self.ctx.contract_name,
+                    tx_hash =% tx,
+                    "Transaction {} not found in catching_txs",
+                    tx
+                );
+            }
         }
 
         Ok(())
@@ -967,9 +1010,9 @@ mod tests {
         }
 
         fn handle(&mut self, calldata: &Calldata) -> Result<sdk::HyleOutput> {
-            let initial_state = self.commit();
+            let initial_state = ZkContract::commit(self);
             let mut res = self.execute(calldata);
-            let next_state = self.commit();
+            let next_state = ZkContract::commit(self);
             Ok(sdk::utils::as_hyle_output(
                 initial_state,
                 next_state,
@@ -983,6 +1026,9 @@ mod tests {
             _metadata: &Option<Vec<u8>>,
         ) -> Result<Self> {
             Ok(Self::default())
+        }
+        fn get_commit(&self) -> StateCommitment {
+            self.commit()
         }
     }
 
