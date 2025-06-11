@@ -229,7 +229,7 @@ impl NodeState {
                         }
                         Err(e) => {
                             let err = format!("Failed to handle blob transaction: {:?}", e);
-                            error!("{err}");
+                            error!(tx_hash = %tx_id.1, "{err}");
                             block_under_construction
                                 .transactions_events
                                 .entry(tx_id.1.clone())

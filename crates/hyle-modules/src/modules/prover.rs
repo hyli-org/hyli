@@ -42,7 +42,6 @@ pub struct AutoProverStore<Contract> {
     unsettled_txs: Vec<(BlobTransaction, TxContext)>,
     state_history: BTreeMap<TxHash, Contract>,
     tx_chain: Vec<TxHash>,
-    contract: Contract,
     buffered_blobs: Vec<(BlobIndex, BlobTransaction, TxContext)>,
     buffered_blocks_count: u32,
     batch_id: u64,
@@ -100,7 +99,6 @@ where
         let store = match Self::load_from_disk::<AutoProverStore<Contract>>(file.as_path()) {
             Some(store) => store,
             None => AutoProverStore::<Contract> {
-                contract: ctx.default_state.clone(),
                 unsettled_txs: vec![],
                 state_history: BTreeMap::new(),
                 tx_chain: vec![],
@@ -188,6 +186,7 @@ where
             block.block_height
         );
         let mut blobs = vec![];
+        let mut insta_failed_txs = vec![];
         if block.block_height.0 % 1000 == 0 {
             info!(
                 cn =% self.ctx.contract_name,
@@ -196,6 +195,7 @@ where
                 block.block_height
             );
         }
+
         for (_, tx) in block.txs {
             if let TransactionData::Blob(tx) = tx.transaction_data {
                 if tx
@@ -209,9 +209,19 @@ where
                     debug!(
                         cn =% self.ctx.contract_name,
                         tx_hash =% tx.hashed(),
-                        "Transaction {} already processed, skipping",
+                        "🔇 Transaction {} already processed, skipping",
                         tx.hashed()
                     );
+                    continue;
+                }
+                if block.failed_txs.contains(&tx.hashed()) {
+                    debug!(
+                        cn =% self.ctx.contract_name,
+                        tx_hash =% tx.hashed(),
+                        "🔇 Transaction {} insta-failed in block, skipping",
+                        tx.hashed()
+                    );
+                    insta_failed_txs.push(tx.hashed());
                     continue;
                 }
                 self.store.tx_chain.push(tx.hashed());
@@ -236,6 +246,9 @@ where
         }
 
         for tx in block.failed_txs {
+            if insta_failed_txs.contains(&tx) {
+                continue;
+            }
             self.settle_tx_failed(&tx)?;
         }
 
@@ -358,6 +371,12 @@ where
                 }
             });
         if let Some(prev_tx) = prev_tx {
+            debug!(
+                cn =% self.ctx.contract_name,
+                tx_hash =% tx,
+                "🔥 Removing state history for tx {}",
+                prev_tx
+            );
             self.store.state_history.remove(prev_tx);
         }
         let pos_chain = self.store.tx_chain.iter().position(|h| h == tx);
@@ -378,9 +397,27 @@ where
 
     fn settle_tx_failed(&mut self, tx: &TxHash) -> Result<()> {
         if let Some(pos) = self.settle_tx(tx) {
-            self.handle_all_next_blobs_after_failed(pos, tx)?;
-            self.store.state_history.remove(tx);
+            debug!(
+                cn =% self.ctx.contract_name,
+                tx_hash =% tx,
+                "🔥 Failed tx, removing state history for tx {}",
+               tx
+            );
+            let found = self.store.state_history.remove(tx);
             self.store.tx_chain.retain(|h| h != tx);
+            self.store
+                .buffered_blobs
+                .retain(|(_, t, _)| t.hashed() != *tx);
+            if found.is_some() {
+                self.handle_all_next_blobs_after_failed(pos)?;
+            } else {
+                debug!(
+                    cn =% self.ctx.contract_name,
+                    tx_hash =% tx,
+                    "🔀 No state history found for tx {}, nothing to revert",
+                    tx
+                );
+            }
         }
         Ok(())
     }
@@ -412,14 +449,13 @@ where
         None
     }
 
-    fn handle_all_next_blobs_after_failed(&mut self, idx: usize, failed_tx: &TxHash) -> Result<()> {
-        let tx_history = self.store.state_history.keys().collect::<Vec<_>>();
+    fn get_state_of_prev_tx(&self, tx: &TxHash) -> Option<Contract> {
         let prev_tx = self
             .store
             .tx_chain
             .iter()
             .enumerate()
-            .find(|(_, h)| *h == failed_tx)
+            .find(|(_, h)| *h == tx)
             .and_then(|(i, _)| {
                 if i > 0 {
                     self.store.tx_chain.get(i - 1)
@@ -427,72 +463,40 @@ where
                     None
                 }
             });
-
-        tracing::debug!(
-            cn =% self.ctx.contract_name,
-            tx_hash =% failed_tx,
-            "Handling failed tx {}. Previous tx: {:?}, Unsettled idx: {idx}, History: {:?}",
-            failed_tx,
-            prev_tx,
-            tx_history
-        );
-
         if let Some(prev_tx) = prev_tx {
             let prev_state = self.store.state_history.get(prev_tx).cloned();
-
             if let Some(contract) = prev_state {
-                debug!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "Reverting to previous state from tx {:?}", prev_tx);
-                self.store.contract = contract.clone();
+                debug!(
+                    cn =% self.ctx.contract_name,
+                    tx_hash =% tx,
+                    "Found previous state from tx {:?}",
+                    prev_tx
+                );
+                return Some(contract);
             } else {
-                let pos = self
-                    .store
-                    .buffered_blobs
-                    .iter()
-                    .position(|(_, t, _)| t.hashed() == *failed_tx);
-
-                if let Some(pos) = pos {
-                    self.store.buffered_blobs.remove(pos);
-                    tracing::info!(
-                        cn =% self.ctx.contract_name,
-                        tx_hash =% failed_tx,
-                        "🗑️ Removing buffered TX {} from the store as it failed",
-                        failed_tx
-                    );
-                } else {
-                    // If we don't have the state_history of the parent, we expect it's because we're buffering.
-                    // If we weren't in the buffer, then something unexpected happened and we likely have a bug.
-                    tracing::error!(
-                        cn =% self.ctx.contract_name,
-                        tx_hash =% failed_tx,
-                        "Failed to find buffered tx {} in the store after it failed",
-                        failed_tx
-                    );
-                    tracing::error!(
-                        "This is likely a bug in the prover, please report it to the Hyle team."
-                    );
-                    tracing::error!(
-                        "Buffered blobs: {:?}",
-                        self.store
-                            .buffered_blobs
-                            .iter()
-                            .map(|(_, t, _)| t.hashed())
-                            .collect::<Vec<_>>()
-                    );
-                    tracing::error!("Catching blobs: {:?}", self.catching_blobs);
-                    tracing::error!("Unsettled txs: {:?}", self.store.unsettled_txs);
-                    tracing::error!("State history: {:?}", self.store.state_history.keys());
-                    tracing::error!("Tx chain: {:?}", self.store.tx_chain);
-                    tracing::error!("Previous tx: {:?}", prev_tx);
-                    tracing::error!("History: {:?}", tx_history);
-                }
-                return Ok(());
+                error!(
+                    cn =% self.ctx.contract_name,
+                    tx_hash =% tx,
+                    "No state history for previous tx {:?}, returning None",
+                    prev_tx
+                );
+                error!("This is likely a bug in the prover, please report it to the Hyle team.");
+                error!(cn =% self.ctx.contract_name, tx_hash =% tx, "State history: {:?}", self.store.state_history.keys());
+                error!(
+                    cn =% self.ctx.contract_name,
+                    tx_hash =% tx,
+                    "Unsettled txs: {:?}",
+                    self.store.unsettled_txs.iter().map(|(t, _)| t.hashed()).collect::<Vec<_>>()
+                );
             }
         } else {
-            warn!(cn =% self.ctx.contract_name, tx_hash =% failed_tx, "No prev tx, reverting to default state. History: {tx_history:?}");
-            tracing::debug!("Tx chain: {:?}", self.store.tx_chain);
-            self.store.contract = self.ctx.default_state.clone();
+            warn!(cn =% self.ctx.contract_name, tx_hash =% tx, "No previous tx, returning default state");
+            return Some(self.ctx.default_state.clone());
         }
+        None
+    }
 
+    fn handle_all_next_blobs_after_failed(&mut self, idx: usize) -> Result<()> {
         let mut blobs = vec![];
         for (tx, ctx) in self.store.unsettled_txs.clone().iter().skip(idx) {
             for (index, blob) in tx.blobs.iter().enumerate() {
@@ -502,6 +506,13 @@ where
                         "Re-execute blob for tx {} after a previous tx failure",
                         tx.hashed()
                     );
+                    debug!(
+                        cn =% self.ctx.contract_name,
+                        tx_hash =% tx.hashed(),
+                        "🔥 Re-execute tx after failure, removing state history for tx {}",
+                       tx.hashed()
+                    );
+
                     self.store.state_history.remove(&tx.hashed());
                     blobs.push((index.into(), tx.clone(), ctx.clone()));
                 }
@@ -573,11 +584,13 @@ where
             let blobs = tx.blobs.clone();
             let tx_hash = tx.hashed();
 
-            let initial_store_contract = self.store.contract.clone();
+            let mut contract = self
+                .get_state_of_prev_tx(&tx_hash)
+                .ok_or_else(|| anyhow!("Failed to get state of previous tx {}", tx_hash))?;
 
-            let state = self
-                .store
-                .contract
+            let initial_contract = contract.clone();
+
+            let state = contract
                 .build_commitment_metadata(blob)
                 .map_err(|e| anyhow!(e))
                 .context("Failed to build commitment metadata");
@@ -604,8 +617,7 @@ where
                 initial_commitment_metadata = Some(commitment_metadata.clone());
             } else {
                 initial_commitment_metadata = Some(
-                    self.store
-                        .contract
+                    contract
                         .merge_commitment_metadata(
                             initial_commitment_metadata.unwrap(),
                             commitment_metadata.clone(),
@@ -625,12 +637,7 @@ where
                 tx_blob_count: blobs.len(),
             };
 
-            match self
-                .store
-                .contract
-                .handle(&calldata)
-                .map_err(|e| anyhow!(e))
-            {
+            match contract.handle(&calldata).map_err(|e| anyhow!(e)) {
                 Err(e) => {
                     info!(
                         cn =% self.ctx.contract_name,
@@ -642,32 +649,44 @@ where
                         self.bus
                             .send(AutoProverEvent::FailedTx(tx_hash.clone(), e.to_string()))?;
                     }
-                    self.store.contract = initial_store_contract;
                 }
                 Ok(hyle_output) => {
                     info!(
                         cn =% self.ctx.contract_name,
                         tx_hash =% tx.hashed(),
                         tx_height =% tx_ctx.block_height,
-                        "🔧 Executed contract: {}",
-                        String::from_utf8_lossy(&hyle_output.program_outputs)
+                        "🔧 Executed contract: {}. Success: {}",
+                        String::from_utf8_lossy(&hyle_output.program_outputs),
+                        hyle_output.success
                     );
                     if !already_settled_tx {
                         self.bus.send(AutoProverEvent::SuccessTx(
                             tx_hash.clone(),
-                            self.store.contract.clone(),
+                            contract.clone(),
                         ))?;
                     }
                     if !hyle_output.success {
-                        if let Some(intermediary_state) = self.store.state_history.get(&tx_hash) {
-                            self.store.contract = intermediary_state.clone();
-                        } else {
-                            self.store.contract = initial_store_contract;
-                        }
-                    } else {
+                        debug!(
+                            cn =% self.ctx.contract_name,
+                            tx_hash =% tx.hashed(),
+                            tx_height =% tx_ctx.block_height,
+                            "Tx {} failed, storing initial state",
+                            tx.hashed()
+                        );
                         self.store
                             .state_history
-                            .insert(tx_hash.clone(), self.store.contract.clone());
+                            .insert(tx_hash.clone(), initial_contract);
+                    } else {
+                        debug!(
+                            cn =% self.ctx.contract_name,
+                            tx_hash =% tx.hashed(),
+                            tx_height =% tx_ctx.block_height,
+                            "Adding state history for tx {}",
+                            tx.hashed()
+                        );
+                        self.store
+                            .state_history
+                            .insert(tx_hash.clone(), contract.clone());
                     }
                 }
             }
@@ -686,10 +705,12 @@ where
         }
 
         if calldatas.is_empty() {
+            self.prove_supported_blob(remaining_blobs)?;
             return Ok(());
         }
 
         let Some(commitment_metadata) = initial_commitment_metadata else {
+            self.prove_supported_blob(remaining_blobs)?;
             return Ok(());
         };
 
@@ -944,27 +965,37 @@ mod tests {
     fn new_blob_tx(val: u32) -> Transaction {
         // random id to have a different tx hash
         let id: usize = rand::random();
-        BlobTransaction::new(
+        let tx = BlobTransaction::new(
             format!("{id}@test"),
             vec![Blob {
                 contract_name: "test".into(),
                 data: BlobData(borsh::to_vec(&val).unwrap()),
             }],
-        )
-        .into()
+        );
+        tracing::info!(
+            "📦️ Created new blob tx: {} with value: {}",
+            tx.hashed(),
+            val
+        );
+        tx.into()
     }
 
     fn new_failing_blob_tx(val: u32) -> Transaction {
         // random id to have a different tx hash
         let id: usize = rand::random();
-        BlobTransaction::new(
+        let tx = BlobTransaction::new(
             format!("failing_{id}@test"),
             vec![Blob {
                 contract_name: "test".into(),
                 data: BlobData(borsh::to_vec(&val).unwrap()),
             }],
-        )
-        .into()
+        );
+        tracing::info!(
+            "📦️ Created new failing blob tx: {} with value: {}",
+            tx.hashed(),
+            val
+        );
+        tx.into()
     }
 
     fn read_contract_state(node_state: &NodeState) -> TestContract {
@@ -976,6 +1007,37 @@ mod tests {
             .clone();
 
         borsh::from_slice::<TestContract>(&state.0).expect("Failed to decode contract state")
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_auto_prover_simple() -> Result<()> {
+        let (mut node_state, mut auto_prover, api_client) = setup().await?;
+
+        tracing::info!("✨ Block 1");
+        let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
+
+        auto_prover.handle_processed_block(block_1).await?;
+
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 1);
+
+        tracing::info!("✨ Block 2");
+        let block_2 = node_state.craft_block_and_handle(2, proofs);
+        auto_prover.handle_processed_block(block_2).await?;
+
+        assert_eq!(read_contract_state(&node_state).value, 1);
+
+        tracing::info!("✨ Block 3");
+        let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3), new_blob_tx(3)]);
+        auto_prover.handle_processed_block(block_3).await?;
+        let proofs_3 = get_txs(&api_client).await;
+        assert_eq!(proofs_3.len(), 1);
+        tracing::info!("✨ Block 4");
+        let block_4 = node_state.craft_block_and_handle(4, proofs_3);
+        auto_prover.handle_processed_block(block_4).await?;
+        assert_eq!(read_contract_state(&node_state).value, 1 + 3 + 3);
+
+        Ok(())
     }
 
     #[test_log::test(tokio::test)]
@@ -1177,6 +1239,37 @@ mod tests {
         node_state.craft_block_and_handle(4, proofs_3);
 
         assert_eq!(read_contract_state(&node_state).value, 3);
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_auto_prover_instant_failed() -> Result<()> {
+        let (mut node_state, mut auto_prover, api_client) = setup().await?;
+
+        let tx = BlobTransaction::new(
+            "yolo@test".to_string(),
+            vec![
+                Blob {
+                    contract_name: "doesnotexist".into(),
+                    data: BlobData(borsh::to_vec(&3).unwrap()),
+                },
+                Blob {
+                    contract_name: "test".into(),
+                    data: BlobData(borsh::to_vec(&3).unwrap()),
+                },
+            ],
+        );
+
+        tracing::info!("✨ Block 1");
+        let block_1 = node_state.craft_block_and_handle(1, vec![tx.into(), new_blob_tx(1)]);
+        auto_prover.handle_processed_block(block_1).await?;
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 1);
+        tracing::info!("✨ Block 2");
+        let block_2 = node_state.craft_block_and_handle(2, proofs);
+        auto_prover.handle_processed_block(block_2).await?;
+        assert_eq!(read_contract_state(&node_state).value, 1);
 
         Ok(())
     }
@@ -1826,6 +1919,7 @@ mod tests {
                 failing_tx_data.blobs[0].clone(),
             ],
         );
+        tracing::info!("📦️ Creating failing TX: {:?}", failing_tx_data.hashed());
         txs[3] = failing_tx_data.clone().into();
 
         let mut ho =
@@ -1878,6 +1972,80 @@ mod tests {
             node_state.get_earliest_unsettled_height(&ContractName::new("test")),
             None
         );
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+
+    async fn test_auto_prover_early_fail_while_buffered() -> Result<()> {
+        let (mut node_state, _, api_client) = setup().await?;
+        let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 3, 20).await?;
+
+        // Block 1: Failing TX
+        tracing::info!("✨ Block 1");
+        let failing_tx = new_failing_blob_tx(1);
+        let block_1 = node_state.craft_block_and_handle(1, vec![failing_tx.clone()]);
+        auto_prover.handle_processed_block(block_1).await?;
+
+        // Process a few blocks to un-buffer the failing TX
+        for i in 2..5 {
+            tracing::info!("✨ Block {i}");
+            let block = node_state.craft_block_and_handle(i, vec![]);
+            auto_prover.handle_processed_block(block).await?;
+        }
+
+        // Wait for the failing TX to be proven
+        let proofs = get_txs(&api_client).await;
+
+        // Block 2: Successful TX (should be buffered)
+        tracing::info!("✨ Block 5");
+        let success_tx = new_blob_tx(5);
+        let block_5 = node_state.craft_block_and_handle(5, vec![success_tx.clone()]);
+        auto_prover.handle_processed_block(block_5).await?;
+
+        // Block 3: Simulate settlement of the failed TX from block 1
+        tracing::info!("✨ Block 6 (settle fail)");
+        let block_6 = node_state.craft_block_and_handle(6, proofs);
+        auto_prover.handle_processed_block(block_6).await?;
+
+        // Process a few blocks to un-buffer the failing TX
+        for i in 7..9 {
+            tracing::info!("✨ Block {i}");
+            let block = node_state.craft_block_and_handle(i, vec![]);
+            auto_prover.handle_processed_block(block).await?;
+        }
+
+        // Now the buffered TX should be executed and a proof generated
+        let proofs = get_txs(&api_client).await;
+
+        tracing::info!("✨ Block 9");
+        let block = node_state.craft_block_and_handle(9, proofs);
+        auto_prover.handle_processed_block(block).await?;
+
+        let success_tx = new_blob_tx(6);
+        let hash = success_tx.hashed();
+
+        tracing::info!("✨ Block 10");
+        let block = node_state.craft_block_and_handle(10, vec![success_tx]);
+        auto_prover.handle_processed_block(block).await?;
+
+        // Process a few blocks to generate proof
+        for i in 11..14 {
+            tracing::info!("✨ Block {i}");
+            let block = node_state.craft_block_and_handle(i, vec![]);
+            auto_prover.handle_processed_block(block).await?;
+        }
+
+        let proofs = get_txs(&api_client).await;
+
+        // Should settle the final TX
+        tracing::info!("✨ Block 14");
+        let block = node_state.craft_block_and_handle(14, proofs);
+        assert_eq!(block.successful_txs, vec![hash]);
+        assert!(node_state
+            .get_earliest_unsettled_height(&ContractName::new("test"))
+            .is_none(),);
 
         Ok(())
     }
