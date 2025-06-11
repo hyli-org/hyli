@@ -5,8 +5,6 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::SideEffect;
 
-pub const HYLI_TLD_ID: &str = "hyli@wallet";
-
 pub fn handle_blob_for_hyle_tld(
     contracts: &HashMap<ContractName, Contract>,
     contract_changes: &mut BTreeMap<ContractName, SideEffect>,
