@@ -1,16 +1,16 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
 use crate::bus::{BusClientSender, SharedMessageBus};
 use crate::{log_error, module_bus_client, module_handle_messages, modules::Module};
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::rest_client::NodeApiClient;
 use client_sdk::{helpers::ClientSdkProver, transaction_builder::TxExecutorHandler};
 use hyle_net::logged_task::logged_task;
 use sdk::{
     BlobIndex, BlobTransaction, Block, BlockHeight, Calldata, ContractName, Hashed, NodeStateEvent,
-    ProofTransaction, TransactionData, TxContext, TxHash, TxId, HYLE_TESTNET_CHAIN_ID,
+    ProofTransaction, TransactionData, TxContext, TxHash, HYLE_TESTNET_CHAIN_ID,
 };
 use tracing::{debug, error, info, trace, warn};
 
