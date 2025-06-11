@@ -1,0 +1,20 @@
+# The log format to use - "json", "node" or "full" (default: "full")
+log_format = "full"
+
+# Directory name to store node state (default: "data")
+data_directory = "data_smt_auto_prover"
+
+# URL to connect to
+da_read_from = "127.0.0.1:4141"
+
+# URL to connect to the node
+node_url = "http://localhost:4321"
+
+# Buffer blocks
+buffer_blocks = 0
+
+# Max transactions per proof
+max_txs_per_proof = 30
+
+# Contract name to prove
+contract_name = "oranj"

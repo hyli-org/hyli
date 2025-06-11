@@ -29,7 +29,7 @@ serde = { version = "1.0", default-features = false, features = [
   "alloc",
 ] }
 
-risc0-zkvm = { version = "2.0.2", default-features = false, optional = true, features = [
+risc0-zkvm = { version = "2.1", default-features = false, optional = true, features = [
   'std',
 ] }
 client-sdk = { workspace = true, features = [
@@ -43,7 +43,7 @@ client-sdk = { workspace = true, features = [
 hyle-smt-token = { path = ".", features = ["client"] }
 tokio = { version = "1.45.1", features = ["full", "tracing"] }
 
-risc0-zkvm = { version = "2.0.2", default-features = false, features = [
+risc0-zkvm = { version = "2.1", default-features = false, features = [
   'std',
   'prove',
 ] }

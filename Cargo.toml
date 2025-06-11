@@ -16,8 +16,9 @@ members = [
   "crates/hyle-model",
   "crates/hyle-crypto",
   "crates/hyle-verifiers",
-  "crates/noir-tools",
   "crates/hyle-modules",
+  "crates/hyli-tools",
+  "crates/noir-tools",
 ]
 default-members = [
   "crates/contracts",
@@ -27,6 +28,7 @@ default-members = [
   "crates/hyle-crypto",
   "crates/hyle-net",
   "crates/hyle-modules",
+  "crates/hyli-tools",
   ".",
 ]
 resolver = "2"
@@ -136,7 +138,6 @@ sqlx = { version = "0.8.6", features = [
 ] }
 tokio = { version = "1.45.1", features = ["full", "tracing"] }
 tokio-util = { version = "0.7.14" }
-# tower-http = { version = "0.6.2", features = ["trace", "cors"] }
 fjall = { version = "2.10.0" }
 
 dhat = { version = "0.3.3", optional = true }
@@ -181,7 +182,7 @@ tokio-stream = "0.1.17"
 tempfile = "3.20.0"
 assert-json-diff = "2.0.2"
 risc0-recursion = { workspace = true }
-risc0-zkvm = { version = "2.0.2", default-features = false, features = [
+risc0-zkvm = { version = "2.1", default-features = false, features = [
   "client",
 ] }
 signal-child = "1.0.6"

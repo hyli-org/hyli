@@ -24,7 +24,7 @@ serde = { version = "1.0", default-features = false, features = [
 anyhow = "1.0.98"
 borsh = { version = "1.5.6", features = ["derive"] }
 
-risc0-zkvm = { version = "2.0.2", default-features = false, optional = true, features = [
+risc0-zkvm = { version = "2.1", default-features = false, optional = true, features = [
   'std',
 ] }
 client-sdk = { workspace = true, features = ["risc0"], optional = true }

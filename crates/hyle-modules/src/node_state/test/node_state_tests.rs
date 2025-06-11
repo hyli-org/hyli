@@ -1211,7 +1211,7 @@ async fn test_tx_reset_timeout_on_tx_settlement() {
     // Assert that tx4 timeout is set with remaining timeout window
     assert_eq!(
         timeouts::tests::get(&state.timeouts, &tx4_hash),
-        Some(104 + TIMEOUT_WINDOW)
+        Some(250 + TIMEOUT_WINDOW)
     );
 }
 
@@ -1444,4 +1444,71 @@ async fn test_panic_on_ordered_tx_map_remove_after_failed_tx() {
             .get_next_unsettled_tx(&contract_c),
         None
     );
+}
+
+#[test_log::test(tokio::test)]
+async fn test_tx_3_not_settled_when_tx_2_fails_even_with_proof() {
+    let mut state = new_node_state().await;
+
+    let contract_a = ContractName::new("A");
+    let contract_b = ContractName::new("B");
+    state.handle_register_contract_effect(&make_register_contract_effect(contract_a.clone()));
+    state.handle_register_contract_effect(&make_register_contract_effect(contract_b.clone()));
+
+    // TX 1: A+B
+    let tx1 = BlobTransaction::new(Identity::new("test@A"), vec![new_blob("A"), new_blob("B")]);
+    let tx1_hash = tx1.hashed();
+
+    // TX 2: B
+    let tx2 = BlobTransaction::new(Identity::new("test5@B"), vec![new_blob("B")]);
+    let tx2_hash = tx2.hashed();
+
+    // TX 3: A+B
+    let tx3 = BlobTransaction::new(Identity::new("test1@A"), vec![new_blob("A"), new_blob("B")]);
+    let tx3_hash = tx3.hashed();
+
+    // TX 3 should be before TX 2 so we'll end up trying 3 before 2 and the test does something.
+    assert!(tx3_hash < tx2_hash);
+
+    tracing::info!("tx1: {} / tx2: {} / tx3: {}", tx1_hash, tx2_hash, tx3_hash);
+
+    // Submit all TXs
+    state.craft_block_and_handle(
+        1,
+        vec![tx1.clone().into(), tx2.clone().into(), tx3.clone().into()],
+    );
+
+    // Prepare proofs for TX 2 and TX 3 (B blob, both based on same state)
+    let mut ho2 = make_hyle_output_with_state(tx2.clone(), BlobIndex(0), &[4, 5, 6], &[7, 8, 9]);
+    ho2.success = false; // TX 2 will fail
+    let proof2 = new_proof_tx(&contract_b, &ho2, &tx2_hash);
+
+    // Same state, as we expext tx2 to fail
+    let mut ho3_b = make_hyle_output_with_state(tx3.clone(), BlobIndex(1), &[4, 5, 6], &[7, 8, 9]);
+    let proof3_b = new_proof_tx(&contract_b, &ho3_b, &tx3_hash);
+
+    let mut ho3_a = make_hyle_output_with_state(tx3.clone(), BlobIndex(0), &[4, 5, 6], &[7, 8, 9]);
+    let proof3_a = new_proof_tx(&contract_a, &ho3_a, &tx3_hash);
+
+    // Submit proofs for TX 2 and TX 3 (B blob)
+    state.craft_block_and_handle(
+        2,
+        vec![
+            proof2.clone().into(),
+            proof3_a.clone().into(),
+            proof3_b.clone().into(),
+        ],
+    );
+
+    // Now settle TX 1 (A blob)
+    let ho1_a = make_hyle_output(tx1.clone(), BlobIndex(0));
+    let proof1_a = new_proof_tx(&contract_a, &ho1_a, &tx1_hash);
+    let ho1_b = make_hyle_output(tx1.clone(), BlobIndex(1));
+    let proof1_b = new_proof_tx(&contract_b, &ho1_b, &tx1_hash);
+    let block = state.craft_block_and_handle(3, vec![proof1_a.into(), proof1_b.into()]);
+
+    // Expect TX 1 and 3 to be settled, and 2 settled as failed
+    assert!(block.successful_txs.contains(&tx1_hash));
+    assert!(block.failed_txs.contains(&tx2_hash));
+    assert!(block.successful_txs.contains(&tx3_hash));
 }
