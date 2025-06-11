@@ -1,10 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use anyhow::{anyhow, bail, Context, Result};
-use client_sdk::{
-    helpers::risc0::Risc0Prover,
-    transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutorBuilder, TxExecutorHandler},
-};
+use client_sdk::transaction_builder::{ProvableBlobTx, TxExecutorHandler};
 use sdk::{
     merkle_utils::BorshableMerkleProof,
     utils::{as_hyle_output, parse_calldata},
@@ -16,7 +13,6 @@ pub mod metadata {
     pub const SMT_TOKEN_ELF: &[u8] = include_bytes!("../../smt-token.img");
     pub const PROGRAM_ID: [u8; 32] = sdk::str_to_u8(include_str!("../../smt-token.txt"));
 }
-use metadata::*;
 use sparse_merkle_tree::{traits::StoreReadOps, SparseMerkleTree};
 
 use crate::{
@@ -329,12 +325,18 @@ impl TxExecutorHandler for SmtTokenProvableState {
 }
 
 impl SmtTokenProvableState {
-    pub fn setup_builder<S: StateUpdater>(
+    #[cfg(feature = "risc0")]
+    pub fn setup_builder<S: client_sdk::transaction_builder::StateUpdater>(
         &self,
         contract_name: ContractName,
-        builder: &mut TxExecutorBuilder<S>,
+        builder: &mut client_sdk::transaction_builder::TxExecutorBuilder<S>,
     ) {
-        builder.init_with(contract_name, Risc0Prover::new(SMT_TOKEN_ELF));
+        use metadata::*;
+
+        builder.init_with(
+            contract_name,
+            client_sdk::helpers::risc0::Risc0Prover::new(SMT_TOKEN_ELF),
+        );
     }
 
     pub fn transfer(
