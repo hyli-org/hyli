@@ -1,3 +1,4 @@
+use client_sdk::helpers::ProverInfo;
 use opentelemetry::{
     metrics::{Counter, Gauge, Histogram},
     KeyValue,
@@ -15,11 +16,11 @@ pub struct AutoProverMetrics {
     buffered_blobs: Gauge<u64>,
     unsettled_blobs: Gauge<u64>,
     contract_name: String,
-    prover_name: String,
+    prover_info: ProverInfo,
 }
 
 impl AutoProverMetrics {
-    pub fn global(contract_name: String, prover_name: String) -> AutoProverMetrics {
+    pub fn global(contract_name: String, infos: ProverInfo) -> AutoProverMetrics {
         let my_meter = opentelemetry::global::meter("auto_prover");
 
         AutoProverMetrics {
@@ -45,13 +46,15 @@ impl AutoProverMetrics {
             buffered_blobs: my_meter.u64_gauge("proof_client_buffered_blobs").build(),
             unsettled_blobs: my_meter.u64_gauge("proof_client_unsettled_blobs").build(),
             contract_name,
-            prover_name,
+            prover_info: infos,
         }
     }
 
     fn get_labels(&self) -> Vec<KeyValue> {
         vec![
-            KeyValue::new("prover", self.prover_name.clone()),
+            KeyValue::new("prover", self.prover_info.name.clone()),
+            KeyValue::new("zkvm", self.prover_info.zkvm.clone()),
+            KeyValue::new("version", self.prover_info.version.clone()),
             KeyValue::new("contract_name", self.contract_name.to_string()),
         ]
     }

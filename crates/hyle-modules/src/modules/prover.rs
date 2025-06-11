@@ -58,7 +58,6 @@ pub struct AutoProverBusClient<Contract: Send + Sync + Clone + 'static> {
 
 pub struct AutoProverCtx<Contract> {
     pub data_directory: PathBuf,
-    pub prover_name: String,
     pub prover: Arc<dyn ClientSdkProver<Vec<Calldata>> + Send + Sync>,
     pub contract_name: ContractName,
     pub node: Arc<dyn NodeApiClient + Send + Sync>,
@@ -116,8 +115,9 @@ where
             .get_settled_height(ctx.contract_name.clone())
             .await?;
 
-        let metrics =
-            AutoProverMetrics::global(ctx.contract_name.to_string(), ctx.prover_name.clone());
+        let infos = ctx.prover.info();
+
+        let metrics = AutoProverMetrics::global(ctx.contract_name.to_string(), infos);
 
         info!(
             cn =% ctx.contract_name,
@@ -876,7 +876,6 @@ mod tests {
         let data_dir = temp_dir.path().to_path_buf();
         let ctx = Arc::new(AutoProverCtx {
             data_directory: data_dir,
-            prover_name: "test_prover".into(),
             prover: Arc::new(TxExecutorTestProver::<TestContract>::new()),
             contract_name: ContractName("test".into()),
             node: api_client,

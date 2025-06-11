@@ -35,6 +35,7 @@ pub fn register_hyle_contract(
     Ok(())
 }
 
+#[derive(Debug, Clone)]
 pub struct ProverInfo {
     pub name: String,
     pub zkvm: String,
