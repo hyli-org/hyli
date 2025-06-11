@@ -3,7 +3,7 @@ use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
 use crate::bus::{BusClientSender, SharedMessageBus};
 use crate::{log_error, module_bus_client, module_handle_messages, modules::Module};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::rest_client::NodeApiClient;
 use client_sdk::{helpers::ClientSdkProver, transaction_builder::TxExecutorHandler};
@@ -283,7 +283,10 @@ where
                         cn =% self.ctx.contract_name,
                         "This is likely a bug in the prover, please report it to the Hyle team."
                     );
-                    std::process::exit(1);
+                    bail!(
+                        "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
+                        onchain, final_state
+                    );
                 }
 
                 self.store.tx_chain = vec![last_tx_hash.clone()];
