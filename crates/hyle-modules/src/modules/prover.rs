@@ -261,7 +261,7 @@ where
                     last_tx_hash
                 );
 
-                let final_state = contract.get_commit();
+                let final_state = contract.get_state_commitment();
                 info!(
                     cn =% self.ctx.contract_name,
                     "Final state after catching up: {:?}",
@@ -1027,7 +1027,7 @@ mod tests {
         ) -> Result<Self> {
             Ok(Self::default())
         }
-        fn get_commit(&self) -> StateCommitment {
+        fn get_state_commitment(&self) -> StateCommitment {
             self.commit()
         }
     }

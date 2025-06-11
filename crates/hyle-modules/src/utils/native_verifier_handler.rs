@@ -43,7 +43,7 @@ impl TxExecutorHandler for NativeVerifierHandler {
     ) -> anyhow::Result<Self> {
         Ok(Self)
     }
-    fn get_commit(&self) -> StateCommitment {
+    fn get_state_commitment(&self) -> StateCommitment {
         StateCommitment::default()
     }
 }

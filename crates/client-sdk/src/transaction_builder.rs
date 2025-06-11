@@ -381,7 +381,7 @@ pub trait TxExecutorHandler {
     where
         Self: Sized;
 
-    fn get_commit(&self) -> StateCommitment;
+    fn get_state_commitment(&self) -> StateCommitment;
 }
 
 /// Macro to easily define the full state of a TxExecutor

@@ -347,7 +347,7 @@ mod tests {
         ) -> Result<Self> {
             Ok(Self::default())
         }
-        fn get_commit(&self) -> StateCommitment {
+        fn get_state_commitment(&self) -> StateCommitment {
             self.commit()
         }
     }
