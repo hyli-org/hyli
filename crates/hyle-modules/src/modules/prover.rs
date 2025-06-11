@@ -481,7 +481,7 @@ where
                     );
                     tracing::error!("Catching blobs: {:?}", self.catching_blobs);
                     tracing::error!("Unsettled txs: {:?}", self.store.unsettled_txs);
-                    tracing::error!("State history: {:?}", self.store.state_history);
+                    tracing::error!("State history: {:?}", self.store.state_history.keys());
                     tracing::error!("Tx chain: {:?}", self.store.tx_chain);
                     tracing::error!("Previous tx: {:?}", prev_tx);
                     tracing::error!("History: {:?}", tx_history);

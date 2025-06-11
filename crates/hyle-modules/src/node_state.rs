@@ -652,6 +652,19 @@ impl NodeState {
             }
         };
 
+        // If some blobs are still sequenced behind others, we can only settle this TX as failed.
+        // (failed TX won't change the state, so we can settle it right away).
+        if result.is_ok()
+            && !self
+                .unsettled_transactions
+                .is_next_to_settle(unsettled_tx_hash)
+        {
+            bail!(
+                "Transaction {} is not next to settle, skipping.",
+                unsettled_tx_hash
+            );
+        };
+
         // We are OK to settle now.
 
         #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
