@@ -217,7 +217,7 @@ pub mod sp1 {
             ProverInfo {
                 name: std::env::var("SP1_PROVER").unwrap_or_default(),
                 zkvm: "sp1".to_string(),
-                version: sp1_sdk::VERSION.to_string(),
+                version: sp1_sdk::SP1_CIRCUIT_VERSION.to_string(),
             }
         }
     }
