@@ -589,7 +589,7 @@ async fn test_hyle_sub_delete() {
 #[test_log::test(tokio::test)]
 async fn test_register_update_delete_combinations_hyle() {
     let register_tx = make_register_tx("hyle@hyle".into(), "hyle".into(), "c.hyle".into());
-    let delete_tx = make_delete_tx("hyle@hyle".into(), "hyle".into(), "c.hyle".into());
+    let delete_tx = make_delete_tx_with_hyli("hyle".into(), "c.hyle".into());
     let delete_self_tx = make_delete_tx("hyle@c.hyle".into(), "c.hyle".into(), "c.hyle".into());
     let update_tx = make_register_tx("test@c.hyle".into(), "c.hyle".into(), "c.hyle".into());
 
@@ -612,6 +612,9 @@ async fn test_register_update_delete_combinations_hyle() {
         .push(OnchainEffect::DeleteContract("c.hyle".into()));
     let proof_delete = new_proof_tx(&"c.hyle".into(), &output, &delete_self_tx.hashed());
 
+    let mut output = make_hyle_output_bis(delete_tx.clone(), BlobIndex(0));
+    let delete_tx_proof = new_proof_tx(&"wallet".into(), &output, &delete_tx.hashed());
+
     async fn test_combination(
         proofs: Option<&[&VerifiedProofTransaction]>,
         txs: &[&BlobTransaction],
@@ -619,6 +622,22 @@ async fn test_register_update_delete_combinations_hyle() {
         expected_txs: usize,
     ) {
         let mut state = new_node_state().await;
+
+        let register_wallet = make_register_tx("hyle@hyle".into(), "hyle".into(), "wallet".into());
+        let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
+
+        let mut output = make_hyle_output(register_hyli_at_wallet.clone(), BlobIndex(0));
+        let register_hyli_at_wallet_proof =
+            new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
+
+        state.craft_block_and_handle(
+            1,
+            vec![
+                register_wallet.clone().into(),
+                register_hyli_at_wallet.clone().into(),
+                register_hyli_at_wallet_proof.clone().into(),
+            ],
+        );
         let mut txs = txs
             .iter()
             .map(|tx| (*tx).clone().into())
@@ -626,7 +645,7 @@ async fn test_register_update_delete_combinations_hyle() {
         if let Some(proofs) = proofs {
             txs.extend(proofs.iter().map(|p| (*p).clone().into()));
         }
-        let block = state.craft_block_and_handle(1, txs);
+        let block = state.craft_block_and_handle(2, txs);
 
         assert_eq!(state.contracts.len(), expected_ct);
         assert_eq!(block.successful_txs.len(), expected_txs);
@@ -634,21 +653,21 @@ async fn test_register_update_delete_combinations_hyle() {
     }
 
     // Test all combinations
-    test_combination(None, &[&register_tx], 2, 1).await;
-    test_combination(None, &[&delete_tx], 1, 0).await;
-    test_combination(None, &[&register_tx, &delete_tx], 1, 2).await;
-    test_combination(Some(&[&proof_update]), &[&register_tx, &update_tx], 2, 2).await;
+    test_combination(None, &[&register_tx], 3, 1).await;
+    test_combination(None, &[&delete_tx], 2, 0).await;
+    test_combination(Some(&[&delete_tx_proof]), &[&register_tx, &delete_tx], 2, 2).await;
+    test_combination(Some(&[&proof_update]), &[&register_tx, &update_tx], 3, 2).await;
     test_combination(
-        Some(&[&proof_update]),
+        Some(&[&proof_update, &delete_tx_proof]),
         &[&register_tx, &update_tx, &delete_tx],
-        1,
+        2,
         3,
     )
     .await;
     test_combination(
         Some(&[&proof_update, &proof_delete]),
         &[&register_tx, &update_tx, &delete_self_tx],
-        1,
+        2,
         3,
     )
     .await;
