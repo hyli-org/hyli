@@ -147,7 +147,10 @@ where
         module_handle_messages! {
             on_bus self.bus,
             listen<NodeStateEvent> event => {
-                _ = log_error!(self.handle_node_state_event(event).await, "handle note state event")
+                _ = log_error!(self.handle_node_state_event(event).await, "handle note state event");
+                self.metrics.snapshot_buffered_blobs(self.store.buffered_blobs.len() as u64);
+                self.metrics
+                    .snapshot_unsettled_blobs(self.store.unsettled_txs.len() as u64);
             }
         };
 
@@ -741,6 +744,7 @@ where
                                 retries, MAX_RETRIES
                             );
                             retries += 1;
+                            metrics.record_proof_retry();
                             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                             continue;
                         }

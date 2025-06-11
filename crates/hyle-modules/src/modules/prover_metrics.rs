@@ -9,8 +9,9 @@ pub struct AutoProverMetrics {
     proofs_successful: Counter<u64>,
     proofs_failed: Counter<u64>,
     proof_generation_time: Histogram<f64>,
-    proof_size_bytes: Histogram<u64>,
-    proof_num_retries: Histogram<u64>,
+    proof_size_bytes_histogram: Histogram<u64>,
+    proof_size_bytes_counter: Counter<u64>,
+    proof_num_retries: Counter<u64>,
     buffered_blobs: Gauge<u64>,
     unsettled_blobs: Gauge<u64>,
     contract_name: String,
@@ -32,11 +33,14 @@ impl AutoProverMetrics {
             proof_generation_time: my_meter
                 .f64_histogram("proof_client_generation_time_seconds")
                 .build(),
-            proof_size_bytes: my_meter
-                .u64_histogram("proof_client_proof_size_bytes")
+            proof_size_bytes_histogram: my_meter
+                .u64_histogram("proof_client_proof_size_bytes_histogram")
                 .build(),
             proof_num_retries: my_meter
-                .u64_histogram("proof_client_proof_num_retries")
+                .u64_counter("proof_client_proof_num_retries")
+                .build(),
+            proof_size_bytes_counter: my_meter
+                .u64_counter("proof_client_proof_size_bytes_counter")
                 .build(),
             buffered_blobs: my_meter.u64_gauge("proof_client_buffered_blobs").build(),
             unsettled_blobs: my_meter.u64_gauge("proof_client_unsettled_blobs").build(),
@@ -70,12 +74,14 @@ impl AutoProverMetrics {
     }
 
     pub fn record_proof_size(&self, size: u64) {
-        self.proof_size_bytes.record(size, &self.get_labels());
+        self.proof_size_bytes_histogram
+            .record(size, &self.get_labels());
+
+        self.proof_size_bytes_counter.add(size, &self.get_labels());
     }
 
-    pub fn record_proof_retry(&self, num_retries: u64) {
-        self.proof_num_retries
-            .record(num_retries, &self.get_labels());
+    pub fn record_proof_retry(&self) {
+        self.proof_num_retries.add(1, &self.get_labels());
     }
 
     pub fn snapshot_buffered_blobs(&self, count: u64) {

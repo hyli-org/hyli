@@ -35,13 +35,19 @@ pub fn register_hyle_contract(
     Ok(())
 }
 
+pub struct ProverInfo {
+    pub name: String,
+    pub zkvm: String,
+    pub version: String,
+}
+
 pub trait ClientSdkProver<T: BorshSerialize + Send> {
     fn prove(
         &self,
         commitment_metadata: Vec<u8>,
         calldatas: T,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<ProofData>> + Send + '_>>;
-    fn info(&self)
+    fn info(&self) -> ProverInfo;
 }
 
 #[cfg(feature = "risc0")]
@@ -101,6 +107,14 @@ pub mod risc0 {
             calldatas: T,
         ) -> Pin<Box<dyn std::future::Future<Output = Result<ProofData>> + Send + '_>> {
             Box::pin(self.prove(commitment_metadata, calldatas))
+        }
+
+        fn info(&self) -> ProverInfo {
+            ProverInfo {
+                name: std::env::var("RISC0_PROVER").unwrap_or_default(),
+                zkvm: "risc0_zkvm".to_string(),
+                version: risc0_zkvm::VERSION.to_string(),
+            }
         }
     }
 }
@@ -199,6 +213,13 @@ pub mod sp1 {
         ) -> Pin<Box<dyn std::future::Future<Output = Result<ProofData>> + Send + '_>> {
             Box::pin(self.prove(commitment_metadata, calldatas))
         }
+        fn info(&self) -> ProverInfo {
+            ProverInfo {
+                name: std::env::var("SP1_PROVER").unwrap_or_default(),
+                zkvm: "sp1".to_string(),
+                version: sp1_sdk::VERSION.to_string(),
+            }
+        }
     }
 }
 
@@ -239,6 +260,14 @@ pub mod test {
             let hos = sdk::guest::execute::<C>(&commitment_metadata, &calldatas);
             Box::pin(async move { Ok(ProofData(borsh::to_vec(&hos).unwrap())) })
         }
+
+        fn info(&self) -> ProverInfo {
+            ProverInfo {
+                name: "TxExecutorTestProver".to_string(),
+                zkvm: "tx_executor".to_string(),
+                version: "1.0.0".to_string(),
+            }
+        }
     }
 
     pub struct MockProver {}
@@ -256,6 +285,13 @@ pub mod test {
                 ))
             })
         }
+        fn info(&self) -> ProverInfo {
+            ProverInfo {
+                name: "MockProver".to_string(),
+                zkvm: "mock".to_string(),
+                version: "1.0.0".to_string(),
+            }
+        }
     }
 
     impl ClientSdkProver<Vec<Calldata>> for MockProver {
@@ -272,6 +308,13 @@ pub mod test {
                 }
                 Ok(ProofData(borsh::to_vec(&proofs)?))
             })
+        }
+        fn info(&self) -> ProverInfo {
+            ProverInfo {
+                name: "MockProver".to_string(),
+                zkvm: "mock".to_string(),
+                version: "1.0.0".to_string(),
+            }
         }
     }
 
