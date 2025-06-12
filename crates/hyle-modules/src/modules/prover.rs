@@ -826,6 +826,7 @@ where
                                 "Executed contract with error :{}",
                                 String::from_utf8_lossy(&hyle_output.program_outputs),
                             ));
+                            // don't break here, we want this calldata to be stored
                         }
                     }
                 }
