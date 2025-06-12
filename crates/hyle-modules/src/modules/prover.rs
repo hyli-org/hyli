@@ -490,7 +490,7 @@ where
                 self.ctx.max_txs_per_proof,
                 remaining_count
             );
-            let remaining_blobs = if remaining_count < blobs.len() {
+            let remaining_blobs = if remaining_count <= blobs.len() {
                 blobs.split_off(blobs.len() - remaining_count)
             } else {
                 let mut rem = self
