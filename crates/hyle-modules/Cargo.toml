@@ -20,7 +20,7 @@ borsh = "1.5.6"
 serde = "1.0"
 serde_json = { version = "1" }
 tracing = "0.1"
-assertables = { version = "9.5.2" }
+assertables = { version = "9.6.0" }
 anymap = { version = "0.12.1" }
 syn = { version = "2.0.101" }
 quote = { version = "1.0.39" }
@@ -40,7 +40,7 @@ axum = { version = "0.8.4", features = ["ws"] }
 
 utoipa = { version = "5.3.1" }
 utoipa-axum = { version = "0.2.0" }
-utoipa-swagger-ui = { version = "9.0.0", features = ["axum"] }
+utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
 
 tower-http = { version = "0.6.5", features = ["trace", "cors", "catch-panic"] }
 prometheus = { version = "0.13.4" }
@@ -50,6 +50,7 @@ test-log = { version = "0.2.17", features = [
   "color",
   "trace",
 ], default-features = false, optional = true }
+indexmap = "2.9.0"
 
 [dev-dependencies]
 tempfile = "3.20.0"
@@ -57,7 +58,6 @@ test-log = { version = "0.2.17", features = [
   "color",
   "trace",
 ], default-features = false }
-hydentity = { workspace = true, features = ["client"] }
 
 [features]
 risc0 = ["client-sdk/risc0"]

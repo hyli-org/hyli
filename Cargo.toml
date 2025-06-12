@@ -117,7 +117,7 @@ sha3 = "0.10.8"
 strum_macros = "0.27.1"
 tracing = "0.1"
 
-assertables = { version = "9.5.2" }
+assertables = { version = "9.6.0" }
 axum = { version = "0.8.4", features = ["macros"] }
 bytes = { version = "1.10.0" }
 clap = { version = "4.5.38", features = ["derive"] }
@@ -161,7 +161,7 @@ sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.8
 [dev-dependencies]
 amm = { workspace = true, features = ["client"] }
 uuid-tld = { workspace = true, features = ["client"] }
-smt-token = { workspace = true, features = ["client"] }
+smt-token = { workspace = true, features = ["client", "risc0"] }
 client-sdk = { workspace = true, default-features = false, features = [
   "rest",
   "risc0",

@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Error, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use contract_registration::validate_contract_registration_metadata;
 use contract_registration::{validate_contract_name_registration, validate_state_commitment_size};
-use hyle_tld::{handle_blob_for_hyle_tld, HYLI_TLD_ID};
+use hyle_tld::handle_blob_for_hyle_tld;
 use metrics::NodeStateMetrics;
 use ordered_tx_map::OrderedTxMap;
 use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
@@ -266,7 +266,7 @@ impl NodeState {
                                     let err = format!(
                                         "Failed to handle blob #{} in verified proof transaction {}: {err:#}",
                                         blob_proof_data.hyle_output.index, &tx_id);
-                                    info!("{err}");
+                                    debug!("{err}");
                                     block_under_construction
                                         .transactions_events
                                         .entry(tx_id.1.clone())
@@ -360,20 +360,6 @@ impl NodeState {
         let (blob_tx_hash, blobs_hash) = (tx.hashed(), tx.blobs_hash());
 
         let mut should_try_and_settle = true;
-
-        // Reject blob Tx with blobs for the 'hyle' contract if the identity is not the TLD itself.
-        // No need to wait settlement, as this is a static check.
-        if tx.blobs.iter().any(|blob| {
-            let delete_contract_action = blob.contract_name.0 == "hyle"
-                && StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone()).is_ok();
-
-            delete_contract_action && tx.identity.0 != HYLI_TLD_ID
-        }) {
-            bail!(
-                        "Blob Transaction contains a delete contract action for 'hyle' TLD, but the identity is not the TLD itself: {}",
-                        tx.identity.0
-                );
-        }
 
         // For now, reject blob Tx with blobs for unknown contracts.
         if tx
@@ -1442,23 +1428,6 @@ pub mod test {
         }
     }
 
-    pub fn make_hyle_output_ter(blob_tx: BlobTransaction, blob_index: BlobIndex) -> HyleOutput {
-        HyleOutput {
-            version: 1,
-            identity: blob_tx.identity.clone(),
-            index: blob_index,
-            blobs: blob_tx.blobs.clone().into(),
-            tx_blob_count: blob_tx.blobs.len(),
-            initial_state: StateCommitment(vec![7, 8, 9]),
-            next_state: StateCommitment(vec![10, 11, 12]),
-            success: true,
-            tx_hash: blob_tx.hashed(),
-            tx_ctx: None,
-            state_reads: vec![],
-            onchain_effects: vec![],
-            program_outputs: vec![],
-        }
-    }
     pub fn make_hyle_output_with_state(
         blob_tx: BlobTransaction,
         blob_index: BlobIndex,
@@ -1489,27 +1458,16 @@ pub mod test {
                 slot: height,
                 ..ConsensusProposal::default()
             },
-            data_proposals: vec![(LaneId::default(), vec![DataProposal::new(None, txs)])],
-        }
-    }
-
-    pub fn craft_signed_block_with_parent_dp_hash(
-        height: u64,
-        txs: Vec<Transaction>,
-        parent_dp_hash: DataProposalHash,
-    ) -> SignedBlock {
-        SignedBlock {
-            certificate: AggregateSignature::default(),
-            consensus_proposal: ConsensusProposal {
-                slot: height,
-                ..ConsensusProposal::default()
-            },
             data_proposals: vec![(
                 LaneId::default(),
-                vec![DataProposal::new(Some(parent_dp_hash), txs)],
+                vec![DataProposal::new(
+                    Some(DataProposalHash(format!("{}", height))),
+                    txs,
+                )],
             )],
         }
     }
+
     impl NodeState {
         // Convenience method to handle a signed block in tests.
         pub fn force_handle_block(&mut self, block: &SignedBlock) -> Block {
@@ -1524,16 +1482,6 @@ pub mod test {
 
         pub fn craft_block_and_handle(&mut self, height: u64, txs: Vec<Transaction>) -> Block {
             let block = craft_signed_block(height, txs);
-            self.force_handle_block(&block)
-        }
-
-        pub fn craft_block_and_handle_with_parent_dp_hash(
-            &mut self,
-            height: u64,
-            txs: Vec<Transaction>,
-            parent_dp_hash: DataProposalHash,
-        ) -> Block {
-            let block = craft_signed_block_with_parent_dp_hash(height, txs, parent_dp_hash);
             self.force_handle_block(&block)
         }
 
