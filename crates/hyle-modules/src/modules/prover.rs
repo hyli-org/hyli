@@ -749,6 +749,7 @@ where
                 .get_state_of_prev_tx(&tx_hash)
                 .ok_or_else(|| anyhow!("Failed to get state of previous tx {}", tx_hash))?;
             let initial_contract = contract.clone();
+            let mut error: Option<String> = None;
 
             for blob_index in blob_indexes {
                 let blob = tx.blobs.get(blob_index.0).ok_or_else(|| {
@@ -769,8 +770,7 @@ where
                         tx_height =% tx_ctx.block_height,
                         "{e:#}"
                     );
-                    self.bus
-                        .send(AutoProverEvent::FailedTx(tx_hash.clone(), e.to_string()))?;
+                    error = Some(e.to_string());
                     continue;
                 }
                 let state = state.unwrap();
@@ -807,10 +807,9 @@ where
                             cn =% self.ctx.contract_name,
                             tx_hash =% tx.hashed(),
                             tx_height =% tx_ctx.block_height,
-                            "Error while executing contract: {e}"
+                            "🔧 Error executing contract: {e}"
                         );
-                        self.bus
-                            .send(AutoProverEvent::FailedTx(tx_hash.clone(), e.to_string()))?;
+                        error = Some(e.to_string());
                     }
                     Ok(hyle_output) => {
                         info!(
@@ -821,37 +820,41 @@ where
                             String::from_utf8_lossy(&hyle_output.program_outputs),
                             hyle_output.success
                         );
-                        self.bus.send(AutoProverEvent::SuccessTx(
-                            tx_hash.clone(),
-                            contract.clone(),
-                        ))?;
                         if !hyle_output.success {
-                            debug!(
-                                cn =% self.ctx.contract_name,
-                                tx_hash =% tx.hashed(),
-                                tx_height =% tx_ctx.block_height,
-                                "Tx {} failed, storing initial state",
-                                tx.hashed()
-                            );
-                            self.store
-                                .state_history
-                                .insert(tx_hash.clone(), initial_contract.clone());
-                        } else {
-                            debug!(
-                                cn =% self.ctx.contract_name,
-                                tx_hash =% tx.hashed(),
-                                tx_height =% tx_ctx.block_height,
-                                "Adding state history for tx {}",
-                                tx.hashed()
-                            );
-                            self.store
-                                .state_history
-                                .insert(tx_hash.clone(), contract.clone());
+                            error = Some(format!(
+                                "Executed contract with error :{}",
+                                String::from_utf8_lossy(&hyle_output.program_outputs),
+                            ));
                         }
                     }
                 }
 
                 calldatas.push(calldata);
+            }
+            if let Some(e) = error {
+                debug!(
+                    cn =% self.ctx.contract_name,
+                    tx_hash =% tx.hashed(),
+                    tx_height =% tx_ctx.block_height,
+                    "Tx {} failed, storing initial state. Error was: {e}",
+                    tx.hashed()
+                );
+                self.bus
+                    .send(AutoProverEvent::FailedTx(tx_hash.clone(), e))?;
+                self.store.state_history.insert(tx_hash, initial_contract);
+            } else {
+                debug!(
+                    cn =% self.ctx.contract_name,
+                    tx_hash =% tx.hashed(),
+                    tx_height =% tx_ctx.block_height,
+                    "Adding state history for tx {}",
+                    tx.hashed()
+                );
+                self.bus.send(AutoProverEvent::SuccessTx(
+                    tx_hash.clone(),
+                    contract.clone(),
+                ))?;
+                self.store.state_history.insert(tx_hash, contract);
             }
         }
 
