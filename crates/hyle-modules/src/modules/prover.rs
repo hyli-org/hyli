@@ -490,7 +490,16 @@ where
                 self.ctx.max_txs_per_proof,
                 remaining_count
             );
-            let remaining_blobs = blobs.split_off(blobs.len() - remaining_count);
+            let remaining_blobs = if remaining_count <= blobs.len() {
+                blobs.split_off(blobs.len() - remaining_count)
+            } else {
+                let mut rem = self
+                    .store
+                    .buffered_blobs
+                    .split_off(self.store.buffered_blobs.len() - blobs.len() - remaining_count);
+                rem.append(&mut blobs); // leaves `blobs` empty
+                rem
+            };
 
             let mut buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
             self.store.buffered_blocks_count = 0;
@@ -1479,7 +1488,7 @@ mod tests {
         let proofs_3 = get_txs(&api_client).await;
         assert_eq!(proofs_3.len(), 1);
         tracing::info!("✨ Block 4");
-        let block_4 = node_state.craft_block_and_handle(4, proofs_3);
+        let _ = node_state.craft_block_and_handle(4, proofs_3);
         assert_eq!(read_contract_state(&node_state).value, 2 + 3 + 4 + 5);
 
         Ok(())
