@@ -611,7 +611,7 @@ impl Consensus {
 
         self.advance_round(Ticket::CommitQC(commit_quorum_certificate))?;
 
-        // We sucessfully joined the consensus
+        // We successfully joined the consensus
         info!("🏁 Synchronized to slot {}", self.bft_round_state.slot);
         Ok(())
     }

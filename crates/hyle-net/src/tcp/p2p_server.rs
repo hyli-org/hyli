@@ -47,7 +47,7 @@ pub enum P2PTcpEvent<Data: BorshDeserialize + BorshSerialize> {
 
 #[derive(Clone, Debug)]
 pub struct PeerSocket {
-    // Timestamp of the lastest handshake
+    // Timestamp of the latest handshake
     timestamp: TimestampMs,
     // This is the socket_addr used in the tcp_server for the current peer
     pub socket_addr: String,

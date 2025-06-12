@@ -55,7 +55,7 @@ impl super::Mempool {
         let new_voting_power = self.staking.compute_voting_power(validators.as_slice());
         let f = self.staking.compute_f();
         // Only send the message if voting power exceeds f, 2 * f or is exactly 3 * f + 1
-        // This garentees that the message is sent only once per threshold
+        // This guarantees that the message is sent only once per threshold
         if old_voting_power < f && new_voting_power >= f
             || old_voting_power < 2 * f && new_voting_power >= 2 * f
             || new_voting_power > 3 * f
