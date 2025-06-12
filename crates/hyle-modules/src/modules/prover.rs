@@ -803,7 +803,7 @@ where
 
                 match contract.handle(&calldata).map_err(|e| anyhow!(e)) {
                     Err(e) => {
-                        error!(
+                        warn!(
                             cn =% self.ctx.contract_name,
                             tx_hash =% tx.hashed(),
                             tx_height =% tx_ctx.block_height,
