@@ -490,7 +490,16 @@ where
                 self.ctx.max_txs_per_proof,
                 remaining_count
             );
-            let remaining_blobs = blobs.split_off(blobs.len() - remaining_count);
+            let remaining_blobs = if remaining_count < blobs.len() {
+                let mut rem = self
+                    .store
+                    .buffered_blobs
+                    .split_off(self.store.buffered_blobs.len() - blobs.len() - remaining_count);
+                rem.append(&mut blobs); // leaves `blobs` empty
+                rem
+            } else {
+                blobs.split_off(blobs.len() - remaining_count)
+            };
 
             let mut buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
             self.store.buffered_blocks_count = 0;
