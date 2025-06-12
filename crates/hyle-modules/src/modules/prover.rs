@@ -1488,7 +1488,7 @@ mod tests {
         let proofs_3 = get_txs(&api_client).await;
         assert_eq!(proofs_3.len(), 1);
         tracing::info!("✨ Block 4");
-        let block_4 = node_state.craft_block_and_handle(4, proofs_3);
+        let _ = node_state.craft_block_and_handle(4, proofs_3);
         assert_eq!(read_contract_state(&node_state).value, 2 + 3 + 4 + 5);
 
         Ok(())
