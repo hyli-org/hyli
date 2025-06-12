@@ -125,19 +125,34 @@ impl GcsBlockUploader {
             let data = borsh::to_vec(&block)?;
             let req = UploadObjectRequest {
                 bucket: self.config.gcs_bucket.clone(),
+                generation: Some(0), // 0 means - don't overwrite existing objects
                 ..Default::default()
             };
             let media = Media::new(object_name.clone());
             let upload_type =
                 google_cloud_storage::http::objects::upload::UploadType::Simple(media);
-            self.gcs_client
+            // Log, but ignore errors - could be that we already dumped this, or some other thing - we'll do our best to store everything.
+            match self
+                .gcs_client
                 .upload_object(&req, data, &upload_type)
-                .await?;
-            tracing::info!(
-                "Uploaded block {} to GCS bucket {}",
-                block_height,
-                self.config.gcs_bucket
-            );
+                .await
+            {
+                Ok(_) => {
+                    tracing::info!(
+                        "Successfully uploaded block {} to GCS bucket {}",
+                        block_height,
+                        self.config.gcs_bucket
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to upload block {} to GCS bucket {}: {}",
+                        block_height,
+                        self.config.gcs_bucket,
+                        e
+                    );
+                }
+            }
         }
         Ok(())
     }
