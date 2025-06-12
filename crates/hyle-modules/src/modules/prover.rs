@@ -803,11 +803,11 @@ where
 
                 match contract.handle(&calldata).map_err(|e| anyhow!(e)) {
                     Err(e) => {
-                        info!(
+                        error!(
                             cn =% self.ctx.contract_name,
                             tx_hash =% tx.hashed(),
                             tx_height =% tx_ctx.block_height,
-                            "🔧 Error executing contract: {e}"
+                            "⚠️ Error executing contract, no proof generated: {e}"
                         );
                         error = Some(e.to_string());
                         break;
