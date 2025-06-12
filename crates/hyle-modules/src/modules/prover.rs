@@ -771,7 +771,7 @@ where
                         "{e:#}"
                     );
                     error = Some(e.to_string());
-                    continue;
+                    break;
                 }
                 let state = state.unwrap();
 
@@ -810,6 +810,7 @@ where
                             "🔧 Error executing contract: {e}"
                         );
                         error = Some(e.to_string());
+                        break;
                     }
                     Ok(hyle_output) => {
                         info!(
@@ -830,6 +831,9 @@ where
                 }
 
                 calldatas.push(calldata);
+                if error.is_some() {
+                    break;
+                }
             }
             if let Some(e) = error {
                 debug!(
