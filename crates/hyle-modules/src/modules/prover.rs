@@ -491,14 +491,14 @@ where
                 remaining_count
             );
             let remaining_blobs = if remaining_count < blobs.len() {
+                blobs.split_off(blobs.len() - remaining_count)
+            } else {
                 let mut rem = self
                     .store
                     .buffered_blobs
                     .split_off(self.store.buffered_blobs.len() - blobs.len() - remaining_count);
                 rem.append(&mut blobs); // leaves `blobs` empty
                 rem
-            } else {
-                blobs.split_off(blobs.len() - remaining_count)
             };
 
             let mut buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
