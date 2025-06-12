@@ -196,19 +196,48 @@ impl DAListener {
     }
 
     pub async fn start(&mut self) -> Result<()> {
-        let mut client = self.start_client(self.start_block).await?;
-
-        module_handle_messages! {
-            on_bus self.bus,
-            frame = client.recv() => {
-                if let Some(streamed_signed_block) = frame {
-                    let _ = log_error!(self.processing_next_frame(streamed_signed_block).await, "Consuming da stream");
-                    client.ping().await?;
-                } else {
-                    client = self.start_client(self.node_state.current_height + 1).await?;
+        if let Some(folder) = self.config.da_read_from.strip_prefix("folder:") {
+            info!("Reading blocks from folder {folder}");
+            let mut blocks = vec![];
+            let mut entries = std::fs::read_dir(folder)
+                .unwrap_or_else(|_| std::fs::read_dir(".").unwrap())
+                .filter_map(|e| e.ok())
+                .collect::<Vec<_>>();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
+                let path = entry.path();
+                if path.extension().map(|e| e == "bin").unwrap_or(false) {
+                    if let Ok(bytes) = std::fs::read(&path) {
+                        if let Ok((block, tx_count)) =
+                            borsh::from_slice::<(SignedBlock, usize)>(&bytes)
+                        {
+                            blocks.push((block, tx_count));
+                        }
+                    }
                 }
             }
-        };
+            // Sort blocks by block_height (numeric order)
+            blocks.sort_by_key(|b| b.0.consensus_proposal.slot);
+
+            info!("Got {} blocks from folder. Processing...", blocks.len());
+            for (block, _) in blocks {
+                self.process_block(block).await?;
+            }
+        } else {
+            let mut client = self.start_client(self.start_block).await?;
+
+            module_handle_messages! {
+                on_bus self.bus,
+                frame = client.recv() => {
+                    if let Some(streamed_signed_block) = frame {
+                        let _ = log_error!(self.processing_next_frame(streamed_signed_block).await, "Consuming da stream");
+                        client.ping().await?;
+                    } else {
+                        client = self.start_client(self.node_state.current_height + 1).await?;
+                    }
+                }
+            };
+        }
         let _ = log_error!(
             Self::save_on_disk::<NodeStateStore>(
                 self.config
