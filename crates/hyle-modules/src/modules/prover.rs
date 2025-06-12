@@ -1446,8 +1446,6 @@ mod tests {
         Ok(())
     }
 
-    /// Not failing in case of bug, only logs can tel if is fine
-    /// TODO: replace with real test
     #[test_log::test(tokio::test)]
     async fn test_auto_prover_two_blobs_in_tx() -> Result<()> {
         let (mut node_state, mut auto_prover, api_client) = setup().await?;
@@ -1475,6 +1473,14 @@ mod tests {
         let block_2 = node_state.craft_block_and_handle(2, proofs);
         auto_prover.handle_processed_block(block_2).await?;
         assert_eq!(read_contract_state(&node_state).value, 2 + 3 + 4);
+
+        let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(5)]);
+        auto_prover.handle_processed_block(block_3).await?;
+        let proofs_3 = get_txs(&api_client).await;
+        assert_eq!(proofs_3.len(), 1);
+        tracing::info!("✨ Block 4");
+        let block_4 = node_state.craft_block_and_handle(4, proofs_3);
+        assert_eq!(read_contract_state(&node_state).value, 2 + 3 + 4 + 5);
 
         Ok(())
     }
