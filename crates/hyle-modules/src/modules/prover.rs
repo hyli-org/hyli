@@ -403,7 +403,7 @@ where
     }
 
     async fn handle_processed_block(&mut self, block: Block) -> Result<()> {
-        tracing::debug!(
+        tracing::trace!(
             cn =% self.ctx.contract_name,
             block_height =% block.block_height,
             "Handling processed block {}",
@@ -464,15 +464,31 @@ where
             }
         }
 
+        let mut replay_from = None;
         for tx in block.timed_out_txs {
-            self.settle_tx_failed(&tx)?;
+            self.settle_tx_failed(&mut replay_from, &tx)?;
         }
 
         for tx in block.failed_txs {
             if insta_failed_txs.contains(&tx) {
                 continue;
             }
-            self.settle_tx_failed(&tx)?;
+            self.settle_tx_failed(&mut replay_from, &tx)?;
+        }
+        if let Some(replay_from) = replay_from {
+            // TODO: we have to replay them immediately, to re-populate state_history
+            let post_failure_blobs = self
+                .store
+                .unsettled_txs
+                .iter()
+                .skip(replay_from)
+                .map(|(tx, tx_ctx)| self.get_provable_blobs(tx.clone(), tx_ctx.clone()))
+                .collect::<Vec<_>>();
+            let mut join_handles = Vec::new();
+            self.prove_supported_blob(post_failure_blobs, &mut join_handles)?;
+            for handle in join_handles {
+                handle.await.unwrap();
+            }
         }
 
         // 🚨 We have to handle successful transactions after the failed ones,
@@ -620,7 +636,7 @@ where
         Ok(())
     }
 
-    fn settle_tx_failed(&mut self, tx: &TxHash) -> Result<()> {
+    fn settle_tx_failed(&mut self, replay_from: &mut Option<usize>, tx: &TxHash) -> Result<()> {
         if let Some(pos) = self.remove_from_unsettled_txs(tx) {
             info!(
                 cn =% self.ctx.contract_name,
@@ -631,6 +647,7 @@ where
             let found = self.store.state_history.remove(tx);
             self.store.tx_chain.retain(|h| h != tx);
             if found.is_some() {
+                *replay_from = Some(std::cmp::min(replay_from.unwrap_or(pos), pos));
                 self.handle_all_next_blobs_after_failed(pos)?;
             } else {
                 debug!(
@@ -702,13 +719,13 @@ where
                     prev_tx, tx
                 );
                 error!("This is likely a bug in the prover, please report it to the Hyle team.");
-                //error!(cn =% self.ctx.contract_name, tx_hash =% tx, "State history: {:?}", self.store.state_history.keys());
-                //error!(
-                //    cn =% self.ctx.contract_name,
-                //    tx_hash =% tx,
-                //    "Unsettled txs: {:?}",
-                //    self.store.unsettled_txs.iter().map(|(t, _)| t.hashed()).collect::<Vec<_>>()
-                //);
+                error!(cn =% self.ctx.contract_name, tx_hash =% tx, "State history: {:?}", self.store.state_history.keys());
+                error!(
+                    cn =% self.ctx.contract_name,
+                    tx_hash =% tx,
+                    "Unsettled txs: {:?}",
+                    self.store.unsettled_txs.iter().map(|(t, _)| t.hashed()).collect::<Vec<_>>()
+                );
             }
         } else {
             warn!(cn =% self.ctx.contract_name, tx_hash =% tx, "No previous tx, returning default state");
@@ -718,26 +735,15 @@ where
     }
 
     fn handle_all_next_blobs_after_failed(&mut self, idx: usize) -> Result<()> {
-        let mut blobs = vec![];
-        for (tx, ctx) in self.store.unsettled_txs.clone().iter().skip(idx) {
-            let mut indexes = vec![];
-            for (index, blob) in tx.blobs.iter().enumerate() {
-                if blob.contract_name == self.ctx.contract_name {
-                    debug!(
-                        cn =% self.ctx.contract_name,
-                        tx_hash =% tx.hashed(),
-                        "🔥 Re-execute tx after failure, removing state history for tx {}",
-                       tx.hashed()
-                    );
-
-                    //self.store.state_history.remove(&tx.hashed());
-                    indexes.push(index.into());
-                }
-            }
-            blobs.push((indexes, tx.clone(), ctx.clone()));
+        for (tx, _ctx) in self.store.unsettled_txs.clone().iter().skip(idx) {
+            debug!(
+                cn =% self.ctx.contract_name,
+                tx_hash =% tx.hashed(),
+                "🔥 Re-execute tx after failure, removing state history for tx {}",
+                tx.hashed()
+            );
+            self.store.state_history.remove(&tx.hashed());
         }
-        // Replace our buffered blobs with the new ones
-        self.store.buffered_blobs = blobs;
         Ok(())
     }
 
