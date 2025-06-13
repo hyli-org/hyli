@@ -28,6 +28,7 @@ use hyle_modules::{
     modules::{module_bus_client, Module, SharedBuildApiCtx},
 };
 use hyle_net::logged_task::logged_task;
+use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::{postgres::PgPoolOptions, PgPool, Pool, Postgres};
 use std::collections::HashMap;
@@ -62,6 +63,12 @@ pub struct Indexer {
     new_sub_receiver: tokio::sync::mpsc::Receiver<(ContractName, WebSocket)>,
     subscribers: Subscribers,
     handler_store: IndexerHandlerStore,
+    conf: IndexerConf,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct IndexerConf {
+    query_buffer_size: usize,
 }
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/indexer/migrations");
@@ -94,6 +101,7 @@ impl Module for Indexer {
             new_sub_receiver,
             subscribers,
             handler_store: IndexerHandlerStore::default(),
+            conf: ctx.0.indexer.clone(),
         };
 
         if let Ok(mut guard) = ctx.1.router.lock() {
