@@ -37,7 +37,7 @@ hex = "0.4.3"
 
 # needs to match workspace
 opentelemetry = { version = "0.28" }
-opentelemetry_sdk = { version = "0.28" }
+opentelemetry_sdk = { version = "0.30" }
 opentelemetry-prometheus = { version = "0.28" }
 prometheus = { version = "0.13.4" }
 
