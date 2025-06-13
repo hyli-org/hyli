@@ -710,8 +710,6 @@ mod tests {
     }
 
     // in case a module fails, it will emit a shutdowncompleted event that will trigger the shutdown loop and shut all other modules
-    // the module panic listener will also emit an event because the task ended (and it does not know why)
-    // That is why in case of a graceful failure, the shutdown loop receives 2 events for the failed module
     // All other modules are shut in the right order
     #[tokio::test]
     async fn test_shutdown_all_modules_if_one_fails() {
@@ -739,10 +737,7 @@ mod tests {
             shutdown_completed_receiver.recv().await.unwrap().module,
             std::any::type_name::<TestModule<u64>>().to_string()
         );
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<u64>>().to_string()
-        );
+
         // Shutdown last module first
         assert_eq!(
             shutdown_completed_receiver.recv().await.unwrap().module,
