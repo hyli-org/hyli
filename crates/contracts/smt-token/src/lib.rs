@@ -270,10 +270,12 @@ impl SmtTokenContract {
             }
         }
 
-        accounts
-            .get_mut(&owner)
-            .ok_or("Owner account not found")?
-            .update_allowances(spender.clone(), amount);
+        let account = accounts.get_mut(&owner).unwrap();
+        // 0-balance is treated as non-existent account
+        if account.balance == 0 {
+            return Err(format!("Owner account {} not found", owner));
+        }
+        account.update_allowances(spender.clone(), amount);
 
         let owner_account = accounts.get(&owner).ok_or("Owner account not found")?;
         let owner_key = owner_account.get_key();
