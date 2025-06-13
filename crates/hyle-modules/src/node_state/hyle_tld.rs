@@ -1,7 +1,7 @@
 use crate::node_state::{
-    NukeTxAction, contract_registration::validate_contract_registration_metadata,
+    contract_registration::validate_contract_registration_metadata, NukeTxAction,
 };
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use sdk::secp256k1::CheckSecp256k1;
 use sdk::*;
 use std::collections::{BTreeMap, HashMap};
