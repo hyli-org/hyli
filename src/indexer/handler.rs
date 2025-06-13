@@ -399,6 +399,11 @@ impl Indexer {
                     contract_name,
                 } = s;
 
+                info!(
+                    "Inserting contract {} with tx hash {} and parent data proposal hash {}",
+                    contract_name, tx_hash.0, parent_data_proposal_hash.0
+                );
+
                 b.push_bind(tx_hash)
                     .push_bind(parent_data_proposal_hash)
                     .push_bind(verifier)
