@@ -644,30 +644,6 @@ where
         Ok(())
     }
 
-    fn handle_all_next_blobs_after_failed(&mut self, idx: usize) -> Result<()> {
-        let mut blobs = vec![];
-        for (tx, ctx) in self.store.unsettled_txs.clone().iter().skip(idx) {
-            let mut indexes = vec![];
-            for (index, blob) in tx.blobs.iter().enumerate() {
-                if blob.contract_name == self.ctx.contract_name {
-                    debug!(
-                        cn =% self.ctx.contract_name,
-                        tx_hash =% tx.hashed(),
-                        "🔥 Re-execute tx after failure, removing state history for tx {}",
-                       tx.hashed()
-                    );
-
-                    //self.store.state_history.remove(&tx.hashed());
-                    indexes.push(index.into());
-                }
-            }
-            blobs.push((indexes, tx.clone(), ctx.clone()));
-        }
-        // Replace our buffered blobs with the new ones
-        self.store.buffered_blobs = blobs;
-        Ok(())
-    }
-
     fn remove_from_unsettled_txs(&mut self, hash: &TxHash) -> Option<usize> {
         let tx = self
             .store
@@ -739,6 +715,30 @@ where
             return Some(self.ctx.default_state.clone());
         }
         None
+    }
+
+    fn handle_all_next_blobs_after_failed(&mut self, idx: usize) -> Result<()> {
+        let mut blobs = vec![];
+        for (tx, ctx) in self.store.unsettled_txs.clone().iter().skip(idx) {
+            let mut indexes = vec![];
+            for (index, blob) in tx.blobs.iter().enumerate() {
+                if blob.contract_name == self.ctx.contract_name {
+                    debug!(
+                        cn =% self.ctx.contract_name,
+                        tx_hash =% tx.hashed(),
+                        "🔥 Re-execute tx after failure, removing state history for tx {}",
+                       tx.hashed()
+                    );
+
+                    //self.store.state_history.remove(&tx.hashed());
+                    indexes.push(index.into());
+                }
+            }
+            blobs.push((indexes, tx.clone(), ctx.clone()));
+        }
+        // Replace our buffered blobs with the new ones
+        self.store.buffered_blobs = blobs;
+        Ok(())
     }
 
     fn prove_supported_blob(
