@@ -41,8 +41,10 @@ pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
 
 #[derive(Default, BorshSerialize, BorshDeserialize)]
 pub struct AutoProverStore<Contract> {
-    waiting_txs: Vec<(BlobTransaction, TxContext)>,
+    // These are other unsettled transactions that are waiting to be proved
     unsettled_txs: Vec<(BlobTransaction, TxContext)>,
+    // These are the transactions that are currently being proved
+    proving_txs: Vec<(BlobTransaction, TxContext)>,
     state_history: BTreeMap<TxHash, Contract>,
     tx_chain: Vec<TxHash>,
     buffered_blobs: Vec<(Vec<BlobIndex>, BlobTransaction, TxContext)>,
@@ -103,8 +105,8 @@ where
         let store = match Self::load_from_disk::<AutoProverStore<Contract>>(file.as_path()) {
             Some(store) => store,
             None => AutoProverStore::<Contract> {
-                waiting_txs: vec![],
                 unsettled_txs: vec![],
+                proving_txs: vec![],
                 state_history: BTreeMap::new(),
                 tx_chain: vec![],
                 buffered_blobs: vec![],
@@ -147,7 +149,7 @@ where
                 let res = log_error!(self.handle_node_state_event(event).await, "handle note state event");
                 self.metrics.snapshot_buffered_blobs(self.store.buffered_blobs.len() as u64);
                 self.metrics
-                    .snapshot_unsettled_blobs(self.store.unsettled_txs.len() as u64);
+                    .snapshot_unsettled_blobs(self.store.proving_txs.len() as u64);
                 if res.is_err() {
                     break;
                 }
@@ -311,7 +313,7 @@ where
                     .extend(self.catching_txs.keys().map(|id| &id.1).cloned());
 
                 self.store
-                    .waiting_txs
+                    .unsettled_txs
                     .extend(std::mem::take(&mut self.catching_txs).into_values());
             }
         } else {
@@ -479,7 +481,7 @@ where
             // TODO: we have to replay them immediately, to re-populate state_history
             let post_failure_blobs = self
                 .store
-                .unsettled_txs
+                .proving_txs
                 .iter()
                 .skip(replay_from)
                 .map(|(tx, tx_ctx)| self.get_provable_blobs(tx.clone(), tx_ctx.clone()))
@@ -487,7 +489,7 @@ where
             let mut join_handles = Vec::new();
             self.prove_supported_blob(post_failure_blobs, &mut join_handles)?;
             for handle in join_handles {
-                handle.await.unwrap();
+                _ = log_error!(handle.await, "In proving task after failure");
             }
         }
 
@@ -499,8 +501,8 @@ where
             self.settle_tx_success(&tx)?;
         }
 
-        if self.store.unsettled_txs.is_empty()
-            && self.store.waiting_txs.len() >= self.ctx.tx_working_window_size
+        if self.store.proving_txs.is_empty()
+            && self.store.unsettled_txs.len() >= self.ctx.tx_working_window_size
         {
             // If we have no unsettled TXs, but we have enough TXs, we can populate them
             self.populate_unsettled_if_empty();
@@ -517,7 +519,7 @@ where
             let mut join_handles = Vec::new();
             self.prove_supported_blob(buffered, &mut join_handles)?;
             for handle in join_handles {
-                handle.await.unwrap();
+                _ = log_error!(handle.await, "In proving task");
             }
         } else if self.store.buffered_blocks_count >= self.ctx.buffer_blocks {
             // Check if we should prove some things.
@@ -534,7 +536,7 @@ where
                 let mut join_handles = Vec::new();
                 self.prove_supported_blob(buffered, &mut join_handles)?;
                 for handle in join_handles {
-                    handle.await.unwrap();
+                    _ = log_error!(handle.await, "In proving task");
                 }
             }
         } else {
@@ -545,11 +547,11 @@ where
     }
 
     fn populate_unsettled_if_empty(&mut self) {
-        tracing::debug!("{}", self.store.unsettled_txs.is_empty());
-        if self.store.unsettled_txs.is_empty() {
+        tracing::debug!("{}", self.store.proving_txs.is_empty());
+        if self.store.proving_txs.is_empty() {
             // Check if we should move some TXs from waiting to unsettled
             let pop_waiting = std::cmp::min(
-                self.store.waiting_txs.len(),
+                self.store.unsettled_txs.len(),
                 self.ctx.tx_working_window_size,
             );
             if pop_waiting > 0 {
@@ -560,13 +562,13 @@ where
                 );
 
                 self.store
-                    .unsettled_txs
-                    .extend(self.store.waiting_txs.drain(..pop_waiting));
+                    .proving_txs
+                    .extend(self.store.unsettled_txs.drain(..pop_waiting));
 
                 // Reset blob buffer
                 self.store.buffered_blobs = self
                     .store
-                    .unsettled_txs
+                    .proving_txs
                     .iter()
                     .map(|(tx, tx_ctx)| self.get_provable_blobs(tx.clone(), tx_ctx.clone()))
                     .collect::<Vec<_>>();
@@ -581,7 +583,7 @@ where
             "Adding waiting tx {}",
             tx.hashed()
         );
-        self.store.waiting_txs.push((tx.clone(), tx_ctx.clone()));
+        self.store.unsettled_txs.push((tx.clone(), tx_ctx.clone()));
     }
 
     fn get_provable_blobs(
@@ -665,11 +667,11 @@ where
     fn remove_from_unsettled_txs(&mut self, hash: &TxHash) -> Option<usize> {
         let tx = self
             .store
-            .unsettled_txs
+            .proving_txs
             .iter()
             .position(|(t, _)| t.hashed() == *hash);
         if let Some(pos) = tx {
-            self.store.unsettled_txs.remove(pos);
+            self.store.proving_txs.remove(pos);
             self.store
                 .buffered_blobs
                 .retain(|(_, t, _)| t.hashed() != *hash);
@@ -677,11 +679,11 @@ where
         } else {
             let tx = self
                 .store
-                .waiting_txs
+                .unsettled_txs
                 .iter()
                 .position(|(t, _)| t.hashed() == *hash);
             if let Some(pos) = tx {
-                self.store.waiting_txs.remove(pos);
+                self.store.unsettled_txs.remove(pos);
                 return Some(pos);
             }
         }
@@ -716,8 +718,8 @@ where
                 error!(
                     cn =% self.ctx.contract_name,
                     tx_hash =% tx,
-                    "No state history for previous tx {:?} from {:?}, returning None",
-                    prev_tx, tx
+                    "No state history for previous tx {:?}, returning None",
+                    prev_tx
                 );
                 error!("This is likely a bug in the prover, please report it to the Hyle team.");
                 error!(cn =% self.ctx.contract_name, tx_hash =% tx, "State history: {:?}", self.store.state_history.keys());
@@ -725,7 +727,7 @@ where
                     cn =% self.ctx.contract_name,
                     tx_hash =% tx,
                     "Unsettled txs: {:?}",
-                    self.store.unsettled_txs.iter().map(|(t, _)| t.hashed()).collect::<Vec<_>>()
+                    self.store.proving_txs.iter().map(|(t, _)| t.hashed()).collect::<Vec<_>>()
                 );
             }
         } else {
@@ -736,7 +738,7 @@ where
     }
 
     fn handle_all_next_blobs_after_failed(&mut self, idx: usize) -> Result<()> {
-        for (tx, _ctx) in self.store.unsettled_txs.clone().iter().skip(idx) {
+        for (tx, _ctx) in self.store.proving_txs.clone().iter().skip(idx) {
             debug!(
                 cn =% self.ctx.contract_name,
                 tx_hash =% tx.hashed(),
