@@ -13,7 +13,7 @@ use sdk::{
     BlobIndex, BlobTransaction, Block, BlockHeight, Calldata, ContractName, Hashed, NodeStateEvent,
     ProofTransaction, TransactionData, TxContext, TxHash, TxId, HYLE_TESTNET_CHAIN_ID,
 };
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
 use super::prover_metrics::AutoProverMetrics;
 
@@ -40,6 +40,7 @@ pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
 
 #[derive(Default, BorshSerialize, BorshDeserialize)]
 pub struct AutoProverStore<Contract> {
+    waiting_txs: Vec<(BlobTransaction, TxContext)>,
     unsettled_txs: Vec<(BlobTransaction, TxContext)>,
     state_history: BTreeMap<TxHash, Contract>,
     tx_chain: Vec<TxHash>,
@@ -100,6 +101,7 @@ where
         let store = match Self::load_from_disk::<AutoProverStore<Contract>>(file.as_path()) {
             Some(store) => store,
             None => AutoProverStore::<Contract> {
+                waiting_txs: vec![],
                 unsettled_txs: vec![],
                 state_history: BTreeMap::new(),
                 tx_chain: vec![],
@@ -226,7 +228,7 @@ where
                             );
                         }
                         Ok(hyle_output) => {
-                            info!(
+                            debug!(
                                 cn =% self.ctx.contract_name,
                                 tx_hash =% tx.hashed(),
                                 tx_height =% tx_ctx.block_height,
@@ -283,9 +285,9 @@ where
                             "This is likely a bug in the prover, please report it to the Hyle team."
                         );
                         anyhow::bail!(
-                        "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
-                        onchain, final_state
-                    );
+                          "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
+                          onchain, final_state
+                        );
                     }
                 }
 
@@ -298,11 +300,12 @@ where
                     "Buffering remaining {} unsettled TXs after catching up",
                     self.catching_txs.len()
                 );
-                for (tx, tx_ctx) in std::mem::take(&mut self.catching_txs).into_values() {
-                    self.store.tx_chain.push(tx.hashed());
-                    let blobs = self.handle_blob(tx, tx_ctx);
-                    self.store.buffered_blobs.push(blobs);
-                }
+                // Store all TXs in our waiting buffer.
+                self.store.waiting_txs.extend_from_slice(
+                    &std::mem::take(&mut self.catching_txs)
+                        .into_values()
+                        .collect::<Vec<_>>(),
+                );
             }
         } else {
             self.handle_processed_block(*block).await?;
@@ -385,12 +388,6 @@ where
             );
 
             if let Some((tx, tx_ctx)) = self.catching_txs.shift_remove(&tx_id) {
-                warn!(
-                    cn =% self.ctx.contract_name,
-                    tx_hash =% tx.hashed(),
-                    "Settling catching tx {} as success",
-                    tx.hashed()
-                );
                 self.catching_success_txs.push((tx, tx_ctx));
             }
         }
@@ -399,13 +396,12 @@ where
     }
 
     async fn handle_processed_block(&mut self, block: Block) -> Result<()> {
-        tracing::trace!(
+        tracing::debug!(
             cn =% self.ctx.contract_name,
             block_height =% block.block_height,
             "Handling processed block {}",
             block.block_height
         );
-        let mut blobs = vec![];
         let mut insta_failed_txs = vec![];
         if block.block_height.0 % 1000 == 0 {
             info!(
@@ -457,7 +453,7 @@ where
                         .clone(),
                     chain_id: HYLE_TESTNET_CHAIN_ID,
                 };
-                blobs.push(self.handle_blob(tx, tx_ctx));
+                self.add_tx_to_waiting(tx, tx_ctx);
             }
         }
 
@@ -480,73 +476,62 @@ where
             self.settle_tx_success(&tx)?;
         }
 
-        if self.store.buffered_blobs.len() + blobs.len() >= self.ctx.max_txs_per_proof {
-            let remaining_count =
-                (self.store.buffered_blobs.len() + blobs.len()) % self.ctx.max_txs_per_proof;
+        // Check if we should prove some things.
+        if self.store.buffered_blobs.is_empty() {
+            // Check if we should move some TXs from waiting to unsettled
+            let pop_waiting =
+                std::cmp::min(self.store.waiting_txs.len(), self.ctx.max_txs_per_proof);
+            self.store
+                .unsettled_txs
+                .extend(self.store.waiting_txs.drain(..pop_waiting));
+
+            // Reset blob buffer
+            self.store.buffered_blobs = self
+                .store
+                .unsettled_txs
+                .iter()
+                .map(|(tx, tx_ctx)| self.get_provable_blobs(tx.clone(), tx_ctx.clone()))
+                .collect::<Vec<_>>();
+            self.store.buffered_blocks_count = 0;
+        }
+
+        if self.store.buffered_blobs.len() >= self.ctx.max_txs_per_proof {
             debug!(
                 cn =% self.ctx.contract_name,
-                "Buffer is full, processing {} blobs. Max: {}, remaining blobs: {}",
-                self.store.buffered_blobs.len() + blobs.len(),
-                self.ctx.max_txs_per_proof,
-                remaining_count
+                "Buffer is full, processing {} blobs.",
+                self.store.buffered_blobs.len()
             );
-            let remaining_blobs = if remaining_count <= blobs.len() {
-                blobs.split_off(blobs.len() - remaining_count)
-            } else {
-                let mut rem = self
-                    .store
-                    .buffered_blobs
-                    .split_off(self.store.buffered_blobs.len() - blobs.len() - remaining_count);
-                rem.append(&mut blobs); // leaves `blobs` empty
-                rem
-            };
-
-            let mut buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
+            let buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
             self.store.buffered_blocks_count = 0;
-            buffered.extend(blobs);
             self.prove_supported_blob(buffered)?;
-            self.store.buffered_blobs = remaining_blobs;
-        } else if self.store.buffered_blocks_count >= self.ctx.buffer_blocks {
-            let mut buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
-            self.store.buffered_blocks_count = 0;
-            buffered.extend(blobs);
-            if !buffered.is_empty() {
-                debug!(
-                    cn =% self.ctx.contract_name,
-                    "Buffered blocks achieved, processing {} blobs",
-                    buffered.len()
-                );
-            }
-
-            self.prove_supported_blob(buffered)?;
-        } else {
-            if !blobs.is_empty() {
-                debug!(
-                    cn =% self.ctx.contract_name,
-                    "🔍️ Buffering {} new blobs to {} already buffered, buffered blocks count: {}",
-                    blobs.len(),
-                    self.store.buffered_blobs.len(),
-                    self.store.buffered_blocks_count,
-                );
-            }
-            self.store.buffered_blobs.append(&mut blobs);
-            self.store.buffered_blocks_count += 1;
-
-            trace!(
+        } else if !self.store.buffered_blobs.is_empty()
+            && self.store.buffered_blocks_count >= self.ctx.buffer_blocks
+        {
+            debug!(
                 cn =% self.ctx.contract_name,
-                "Buffered {} / {} blobs, {} / {} blocks.",
-                self.store.buffered_blobs.len(),
-                self.ctx.max_txs_per_proof,
-                self.store.buffered_blocks_count,
-                self.ctx.buffer_blocks
+                "Buffered blocks achieved, processing {} blobs",
+                self.store.buffered_blobs.len()
             );
+            let buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
+            self.store.buffered_blocks_count = 0;
+            self.prove_supported_blob(buffered)?;
         }
 
         Ok(())
     }
 
-    fn handle_blob(
-        &mut self,
+    fn add_tx_to_waiting(&mut self, tx: BlobTransaction, tx_ctx: TxContext) {
+        debug!(
+            cn =% self.ctx.contract_name,
+            tx_hash =% tx.hashed(),
+            "Adding waiting tx {}",
+            tx.hashed()
+        );
+        self.store.waiting_txs.push((tx.clone(), tx_ctx.clone()));
+    }
+
+    fn get_provable_blobs(
+        &self,
         tx: BlobTransaction,
         tx_ctx: TxContext,
     ) -> (Vec<BlobIndex>, BlobTransaction, TxContext) {
@@ -556,13 +541,6 @@ where
                 indexes.push(index.into());
             }
         }
-        debug!(
-            cn =% self.ctx.contract_name,
-            tx_hash =% tx.hashed(),
-            "Adding unsettled tx {}",
-            tx.hashed()
-        );
-        self.store.unsettled_txs.push((tx.clone(), tx_ctx.clone()));
         (indexes, tx, tx_ctx)
     }
 
@@ -601,13 +579,13 @@ where
             );
             self.store.tx_chain = self.store.tx_chain.split_off(pos_chain);
         }
-        self.settle_tx(tx);
+        self.remove_from_unsettled_txs(tx);
         Ok(())
     }
 
     fn settle_tx_failed(&mut self, tx: &TxHash) -> Result<()> {
-        if let Some(pos) = self.settle_tx(tx) {
-            debug!(
+        if let Some(pos) = self.remove_from_unsettled_txs(tx) {
+            info!(
                 cn =% self.ctx.contract_name,
                 tx_hash =% tx,
                 "🔥 Failed tx, removing state history for tx {}",
@@ -632,7 +610,7 @@ where
         Ok(())
     }
 
-    fn settle_tx(&mut self, hash: &TxHash) -> Option<usize> {
+    fn remove_from_unsettled_txs(&mut self, hash: &TxHash) -> Option<usize> {
         let tx = self
             .store
             .unsettled_txs
@@ -641,6 +619,16 @@ where
         if let Some(pos) = tx {
             self.store.unsettled_txs.remove(pos);
             return Some(pos);
+        } else {
+            let tx = self
+                .store
+                .waiting_txs
+                .iter()
+                .position(|(t, _)| t.hashed() == *hash);
+            if let Some(pos) = tx {
+                self.store.waiting_txs.remove(pos);
+                return Some(pos);
+            }
         }
         None
     }
@@ -673,17 +661,17 @@ where
                 error!(
                     cn =% self.ctx.contract_name,
                     tx_hash =% tx,
-                    "No state history for previous tx {:?}, returning None",
-                    prev_tx
+                    "No state history for previous tx {:?} from {:?}, returning None",
+                    prev_tx, tx
                 );
                 error!("This is likely a bug in the prover, please report it to the Hyle team.");
-                error!(cn =% self.ctx.contract_name, tx_hash =% tx, "State history: {:?}", self.store.state_history.keys());
-                error!(
-                    cn =% self.ctx.contract_name,
-                    tx_hash =% tx,
-                    "Unsettled txs: {:?}",
-                    self.store.unsettled_txs.iter().map(|(t, _)| t.hashed()).collect::<Vec<_>>()
-                );
+                //error!(cn =% self.ctx.contract_name, tx_hash =% tx, "State history: {:?}", self.store.state_history.keys());
+                //error!(
+                //    cn =% self.ctx.contract_name,
+                //    tx_hash =% tx,
+                //    "Unsettled txs: {:?}",
+                //    self.store.unsettled_txs.iter().map(|(t, _)| t.hashed()).collect::<Vec<_>>()
+                //);
             }
         } else {
             warn!(cn =% self.ctx.contract_name, tx_hash =% tx, "No previous tx, returning default state");
@@ -744,7 +732,7 @@ where
         }
         let batch_id = self.store.batch_id;
         self.store.batch_id += 1;
-        debug!(
+        info!(
             cn =% self.ctx.contract_name,
             "Handling {} txs. Batch ID: {batch_id}",
             blobs.len()
@@ -892,7 +880,7 @@ where
             const MAX_RETRIES: u32 = 30;
 
             loop {
-                debug!(
+                info!(
                     cn =% contract_name,
                     "Proving {} txs. Batch id: {batch_id}, Retries: {retries}",
                     calldatas.len(),
