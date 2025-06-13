@@ -66,6 +66,7 @@ pub struct AutoProverCtx<Contract> {
     /// How many blocks should we buffer before generating proofs ?
     pub buffer_blocks: u32,
     pub max_txs_per_proof: usize,
+    pub tx_working_window_size: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -142,10 +143,13 @@ where
         module_handle_messages! {
             on_bus self.bus,
             listen<NodeStateEvent> event => {
-                _ = log_error!(self.handle_node_state_event(event).await, "handle note state event");
+                let res = log_error!(self.handle_node_state_event(event).await, "handle note state event");
                 self.metrics.snapshot_buffered_blobs(self.store.buffered_blobs.len() as u64);
                 self.metrics
                     .snapshot_unsettled_blobs(self.store.unsettled_txs.len() as u64);
+                if res.is_err() {
+                    break;
+                }
             }
         };
 
@@ -297,15 +301,13 @@ where
                 // Now any remaining TX is to be buffered and handled on the next block
                 info!(
                     cn =% self.ctx.contract_name,
-                    "Buffering remaining {} unsettled TXs after catching up",
+                    "Storing remaining {} unsettled TXs after catching up",
                     self.catching_txs.len()
                 );
                 // Store all TXs in our waiting buffer.
-                self.store.waiting_txs.extend_from_slice(
-                    &std::mem::take(&mut self.catching_txs)
-                        .into_values()
-                        .collect::<Vec<_>>(),
-                );
+                self.store
+                    .waiting_txs
+                    .extend(std::mem::take(&mut self.catching_txs).into_values());
             }
         } else {
             self.handle_processed_block(*block).await?;
@@ -421,7 +423,7 @@ where
                 {
                     continue;
                 }
-                if self.store.tx_chain.contains(&tx.hashed()) {
+                /*if self.store.tx_chain.contains(&tx.hashed()) {
                     debug!(
                         cn =% self.ctx.contract_name,
                         tx_hash =% tx.hashed(),
@@ -429,7 +431,7 @@ where
                         tx.hashed()
                     );
                     continue;
-                }
+                }*/
                 if block.failed_txs.contains(&tx.hashed()) {
                     debug!(
                         cn =% self.ctx.contract_name,
@@ -440,7 +442,7 @@ where
                     insta_failed_txs.push(tx.hashed());
                     continue;
                 }
-                self.store.tx_chain.push(tx.hashed());
+                //self.store.tx_chain.push(tx.hashed());
 
                 let tx_ctx = TxContext {
                     block_height: block.block_height,
@@ -477,25 +479,39 @@ where
         }
 
         // Check if we should prove some things.
-        if self.store.buffered_blobs.is_empty() {
+        if self.store.unsettled_txs.is_empty() {
             // Check if we should move some TXs from waiting to unsettled
-            let pop_waiting =
-                std::cmp::min(self.store.waiting_txs.len(), self.ctx.max_txs_per_proof);
-            self.store
-                .unsettled_txs
-                .extend(self.store.waiting_txs.drain(..pop_waiting));
+            let pop_waiting = std::cmp::min(
+                self.store.waiting_txs.len(),
+                self.ctx.tx_working_window_size,
+            );
+            if pop_waiting > 0 {
+                debug!(
+                    cn =% self.ctx.contract_name,
+                    "Moving {} waiting txs to unsettled",
+                    pop_waiting
+                );
 
-            // Reset blob buffer
-            self.store.buffered_blobs = self
-                .store
-                .unsettled_txs
-                .iter()
-                .map(|(tx, tx_ctx)| self.get_provable_blobs(tx.clone(), tx_ctx.clone()))
-                .collect::<Vec<_>>();
-            self.store.buffered_blocks_count = 0;
+                self.store
+                    .unsettled_txs
+                    .extend(self.store.waiting_txs.drain(..pop_waiting));
+
+                self.store
+                    .tx_chain
+                    .extend(self.store.unsettled_txs.iter().map(|(tx, _)| tx.hashed()));
+
+                // Reset blob buffer
+                self.store.buffered_blobs = self
+                    .store
+                    .unsettled_txs
+                    .iter()
+                    .map(|(tx, tx_ctx)| self.get_provable_blobs(tx.clone(), tx_ctx.clone()))
+                    .collect::<Vec<_>>();
+                self.store.buffered_blocks_count = 0;
+            }
         }
 
-        if self.store.buffered_blobs.len() >= self.ctx.max_txs_per_proof {
+        if self.store.buffered_blobs.len() >= self.ctx.tx_working_window_size {
             debug!(
                 cn =% self.ctx.contract_name,
                 "Buffer is full, processing {} blobs.",
@@ -515,6 +531,8 @@ where
             let buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
             self.store.buffered_blocks_count = 0;
             self.prove_supported_blob(buffered)?;
+        } else {
+            self.store.buffered_blocks_count += 1;
         }
 
         Ok(())
@@ -1062,6 +1080,7 @@ mod tests {
             default_state: TestContract::default(),
             buffer_blocks,
             max_txs_per_proof,
+            tx_working_window_size: max_txs_per_proof,
         });
 
         let bus = SharedMessageBus::new(BusMetrics::global("default".to_string()));
