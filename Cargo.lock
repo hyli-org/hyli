@@ -4761,15 +4761,15 @@ dependencies = [
  "futures",
  "hex",
  "hyle-amm",
- "hyle-client-sdk",
- "hyle-contract-sdk",
+ "hyle-client-sdk 0.13.0-rc.4",
+ "hyle-contract-sdk 0.13.0-rc.4",
  "hyle-contracts",
- "hyle-crypto",
+ "hyle-crypto 0.13.0-rc.4",
  "hyle-hydentity",
  "hyle-hyllar",
- "hyle-model",
+ "hyle-model 0.13.0-rc.4",
  "hyle-modules",
- "hyle-net",
+ "hyle-net 0.13.0-rc.4",
  "hyle-risc0-recursion",
  "hyle-smt-token",
  "hyle-staking",
@@ -4811,8 +4811,8 @@ version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "borsh",
- "hyle-client-sdk",
- "hyle-contract-sdk",
+ "hyle-client-sdk 0.13.0-rc.4",
+ "hyle-contract-sdk 0.13.0-rc.4",
  "hyle-hyllar",
  "risc0-zkvm",
  "serde",
@@ -4830,7 +4830,7 @@ dependencies = [
  "boundless-market",
  "bytemuck",
  "hex",
- "hyle-net",
+ "hyle-net 0.13.0-rc.4",
  "risc0-zkvm",
  "serde",
  "serde_json",
@@ -4848,8 +4848,8 @@ dependencies = [
  "bincode",
  "borsh",
  "hyle-bonsai-runner",
- "hyle-contract-sdk",
- "hyle-net",
+ "hyle-contract-sdk 0.13.0-rc.4",
+ "hyle-net 0.13.0-rc.4",
  "risc0-zkvm",
  "serde",
  "serde_json",
@@ -4863,11 +4863,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyle-client-sdk"
+version = "0.13.0-rc.4"
+source = "git+https://github.com/Hyle-org/hyle.git?branch=main#8f44232b972c706c78c83df03c454cf9b31ea702"
+dependencies = [
+ "anyhow",
+ "axum 0.8.4",
+ "borsh",
+ "hyle-contract-sdk 0.13.0-rc.4 (git+https://github.com/Hyle-org/hyle.git?branch=main)",
+ "hyle-net 0.13.0-rc.4 (git+https://github.com/Hyle-org/hyle.git?branch=main)",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "utoipa",
+ "utoipa-axum",
+]
+
+[[package]]
 name = "hyle-contract-sdk"
 version = "0.13.0-rc.4"
 dependencies = [
  "borsh",
- "hyle-model",
+ "hyle-model 0.13.0-rc.4",
  "risc0-zkvm",
  "serde",
  "sha2",
@@ -4877,11 +4895,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyle-contract-sdk"
+version = "0.13.0-rc.4"
+source = "git+https://github.com/Hyle-org/hyle.git?branch=main#8f44232b972c706c78c83df03c454cf9b31ea702"
+dependencies = [
+ "borsh",
+ "hyle-model 0.13.0-rc.4 (git+https://github.com/Hyle-org/hyle.git?branch=main)",
+ "serde",
+ "sha2",
+ "sparse-merkle-tree",
+ "tracing",
+]
+
+[[package]]
 name = "hyle-contracts"
 version = "0.13.0-rc.4"
 dependencies = [
  "hyle-amm",
- "hyle-contract-sdk",
+ "hyle-contract-sdk 0.13.0-rc.4",
  "hyle-hydentity",
  "hyle-hyllar",
  "hyle-risc0-recursion",
@@ -4899,10 +4930,23 @@ dependencies = [
  "blst",
  "borsh",
  "hex",
- "hyle-model",
+ "hyle-model 0.13.0-rc.4",
  "keyring",
  "rand 0.9.1",
  "whoami",
+]
+
+[[package]]
+name = "hyle-crypto"
+version = "0.13.0-rc.4"
+source = "git+https://github.com/Hyle-org/hyle.git?branch=main#8f44232b972c706c78c83df03c454cf9b31ea702"
+dependencies = [
+ "anyhow",
+ "blst",
+ "borsh",
+ "hex",
+ "hyle-model 0.13.0-rc.4 (git+https://github.com/Hyle-org/hyle.git?branch=main)",
+ "rand 0.9.1",
 ]
 
 [[package]]
@@ -4913,8 +4957,8 @@ dependencies = [
  "borsh",
  "clap",
  "hex",
- "hyle-client-sdk",
- "hyle-contract-sdk",
+ "hyle-client-sdk 0.13.0-rc.4",
+ "hyle-contract-sdk 0.13.0-rc.4",
  "hyle-hydentity",
  "mockall",
  "risc0-zkvm",
@@ -4931,8 +4975,8 @@ version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "borsh",
- "hyle-client-sdk",
- "hyle-contract-sdk",
+ "hyle-client-sdk 0.13.0-rc.4",
+ "hyle-contract-sdk 0.13.0-rc.4",
  "hyle-hyllar",
  "mockall",
  "risc0-zkvm",
@@ -4949,8 +4993,8 @@ dependencies = [
  "anyhow",
  "borsh",
  "clap",
- "hyle-client-sdk",
- "hyle-contract-sdk",
+ "hyle-client-sdk 0.13.0-rc.4",
+ "hyle-contract-sdk 0.13.0-rc.4",
  "hyle-contracts",
  "hyle-hydentity",
  "hyle-hyllar",
@@ -4984,6 +5028,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyle-model"
+version = "0.13.0-rc.4"
+source = "git+https://github.com/Hyle-org/hyle.git?branch=main#8f44232b972c706c78c83df03c454cf9b31ea702"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "blst",
+ "borsh",
+ "derive_more 2.0.1",
+ "hex",
+ "readonly",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "sha2",
+ "sha3",
+ "strum 0.27.1",
+ "strum_macros 0.27.1",
+ "utoipa",
+]
+
+[[package]]
 name = "hyle-modules"
 version = "0.13.0-rc.4"
 dependencies = [
@@ -4994,11 +5061,11 @@ dependencies = [
  "borsh",
  "futures",
  "hex",
- "hyle-client-sdk",
- "hyle-contract-sdk",
+ "hyle-client-sdk 0.13.0-rc.4",
+ "hyle-contract-sdk 0.13.0-rc.4",
  "hyle-hydentity",
- "hyle-model",
- "hyle-net",
+ "hyle-model 0.13.0-rc.4",
+ "hyle-net 0.13.0-rc.4",
  "hyle-verifiers",
  "indexmap 2.9.0",
  "opentelemetry",
@@ -5035,8 +5102,8 @@ dependencies = [
  "futures",
  "hex",
  "http-body-util",
- "hyle-contract-sdk",
- "hyle-crypto",
+ "hyle-contract-sdk 0.13.0-rc.4",
+ "hyle-crypto 0.13.0-rc.4",
  "hyper 1.6.0",
  "hyper-util",
  "opentelemetry",
@@ -5051,6 +5118,32 @@ dependencies = [
  "tower-service",
  "tracing",
  "turmoil",
+]
+
+[[package]]
+name = "hyle-net"
+version = "0.13.0-rc.4"
+source = "git+https://github.com/Hyle-org/hyle.git?branch=main#8f44232b972c706c78c83df03c454cf9b31ea702"
+dependencies = [
+ "anyhow",
+ "axum 0.8.4",
+ "borsh",
+ "bytes",
+ "futures",
+ "hex",
+ "http-body-util",
+ "hyle-contract-sdk 0.13.0-rc.4 (git+https://github.com/Hyle-org/hyle.git?branch=main)",
+ "hyle-crypto 0.13.0-rc.4 (git+https://github.com/Hyle-org/hyle.git?branch=main)",
+ "hyper 1.6.0",
+ "hyper-util",
+ "opentelemetry",
+ "paste",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -5069,8 +5162,8 @@ dependencies = [
  "anyhow",
  "borsh",
  "hex",
- "hyle-client-sdk",
- "hyle-contract-sdk",
+ "hyle-client-sdk 0.13.0-rc.4",
+ "hyle-contract-sdk 0.13.0-rc.4",
  "hyle-contracts",
  "hyle-hydentity",
  "hyle-risc0-recursion",
@@ -5087,8 +5180,8 @@ version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "borsh",
- "hyle-client-sdk",
- "hyle-contract-sdk",
+ "hyle-client-sdk 0.13.0-rc.4",
+ "hyle-contract-sdk 0.13.0-rc.4",
  "hyle-smt-token",
  "mockall",
  "risc0-zkvm",
@@ -5105,8 +5198,8 @@ version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "borsh",
- "hyle-client-sdk",
- "hyle-contract-sdk",
+ "hyle-client-sdk 0.13.0-rc.4",
+ "hyle-contract-sdk 0.13.0-rc.4",
  "hyle-hyllar",
  "risc0-zkvm",
  "serde",
@@ -5118,8 +5211,8 @@ name = "hyle-uuid-tld"
 version = "0.13.0-rc.4"
 dependencies = [
  "borsh",
- "hyle-client-sdk",
- "hyle-contract-sdk",
+ "hyle-client-sdk 0.13.0-rc.4",
+ "hyle-contract-sdk 0.13.0-rc.4",
  "rand 0.9.1",
  "rand_seeder",
  "risc0-zkvm",
@@ -5134,8 +5227,8 @@ dependencies = [
  "bincode",
  "borsh",
  "hex",
- "hyle-crypto",
- "hyle-model",
+ "hyle-crypto 0.13.0-rc.4",
+ "hyle-model 0.13.0-rc.4",
  "once_cell",
  "rand 0.9.1",
  "risc0-zkvm",
@@ -5158,10 +5251,11 @@ dependencies = [
  "crossterm 0.29.0",
  "google-cloud-storage",
  "hex",
- "hyle-client-sdk",
- "hyle-contract-sdk",
- "hyle-model",
+ "hyle-client-sdk 0.13.0-rc.4",
+ "hyle-contract-sdk 0.13.0-rc.4",
+ "hyle-model 0.13.0-rc.4",
  "hyle-modules",
+ "hyle-net 0.13.0-rc.4",
  "hyle-smt-token",
  "opentelemetry",
  "opentelemetry-prometheus",
@@ -5175,6 +5269,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.19",
+ "wallet",
 ]
 
 [[package]]
@@ -11328,6 +11423,22 @@ checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
 dependencies = [
  "same-file",
  "winapi-util",
+]
+
+[[package]]
+name = "wallet"
+version = "0.0.0"
+source = "git+https://github.com/hyli-org/wallet#8855e70266f370753f84288399ae70be1907345a"
+dependencies = [
+ "anyhow",
+ "borsh",
+ "hex",
+ "hyle-client-sdk 0.13.0-rc.4 (git+https://github.com/Hyle-org/hyle.git?branch=main)",
+ "hyle-contract-sdk 0.13.0-rc.4 (git+https://github.com/Hyle-org/hyle.git?branch=main)",
+ "serde",
+ "serde_with",
+ "sha2",
+ "sparse-merkle-tree",
 ]
 
 [[package]]

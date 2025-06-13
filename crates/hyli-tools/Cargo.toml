@@ -17,12 +17,20 @@ required-features = ["risc0"]
 name = "nuke_tx"
 path = "src/bin/nuke_tx.rs"
 
+[[bin]]
+name = "force_wallet_registration"
+path = "src/bin/force_wallet_registration.rs"
+
 [dependencies]
 hyle-contract-sdk = { workspace = true }
 client-sdk = { workspace = true, features = ["rest"] }
 hyle-modules = { workspace = true }
 hyle-model = { workspace = true }
+hyle-net = { workspace = true }
 smt-token = { workspace = true, features = ["client"] }
+wallet = { git = "https://github.com/hyli-org/wallet", package = "wallet", features = [
+    "client",
+] }
 
 anyhow = "1.0.98"
 clap = { version = "4.5.39", features = ["derive"] }
