@@ -118,8 +118,8 @@ impl Indexer {
             NodeStateEvent::NewBlock(block) => self.handle_processed_block(*block)?,
         };
 
-        if self.handler_store.blocks.len() >= 1000 {
-            // If we have more than 1000 blocks, we dump the store to the database
+        if self.handler_store.blocks.len() >= self.conf.query_buffer_size {
+            // If we have more than configured blocks, we dump the store to the database
             self.dump_store_to_db().await?;
         }
         if let Some(block) = self.handler_store.blocks.last() {
