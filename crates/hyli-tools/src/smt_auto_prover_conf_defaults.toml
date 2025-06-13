@@ -15,6 +15,7 @@ buffer_blocks = 0
 
 # Max transactions per proof
 max_txs_per_proof = 30
+tx_working_window_size = 180
 
 # Contract name to prove
 contract_name = "oranj"
