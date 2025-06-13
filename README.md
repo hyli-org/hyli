@@ -51,9 +51,9 @@ cargo run -- --pg
 ```
 
 It will start a postgres server for you, and will close it (with all its data) whenever you stop the node.
-This is usefull during development.
+This is useful during development.
 
-If you want data persistance, you can run the PostgreSQL server:
+If you want data persistence, you can run the PostgreSQL server:
 
 ```bash
 # Start PostgreSQL with default configuration:
