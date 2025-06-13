@@ -1598,8 +1598,8 @@ async fn test_nuke_transaction_forces_target_to_fail() {
     };
     let nuke_action = NukeTxAction {
         txs: BTreeMap::from([
-            (tx2_hash.clone(), hyle_output_tx2),
-            (tx3_hash.clone(), hyle_output_tx3),
+            (tx2_hash.clone(), vec![hyle_output_tx2]),
+            (tx3_hash.clone(), vec![hyle_output_tx3]),
         ]),
     };
     let nuke_blob = nuke_action.as_blob("hyle".into(), None, None);

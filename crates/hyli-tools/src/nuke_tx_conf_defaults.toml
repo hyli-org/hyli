@@ -9,5 +9,3 @@ da_read_from = "http://localhost:4141"
 
 node_url = "http://127.0.0.1:4321"
 secret_key = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
-
-as_failed = true

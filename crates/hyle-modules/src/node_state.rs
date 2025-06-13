@@ -73,7 +73,7 @@ enum BlobTxHandled {
 )]
 /// Used as a blob action to force a tx to timeout.
 pub struct NukeTxAction {
-    pub txs: BTreeMap<TxHash, HyleOutput>,
+    pub txs: BTreeMap<TxHash, Vec<HyleOutput>>,
 }
 
 impl ContractAction for NukeTxAction {
@@ -874,7 +874,7 @@ impl NodeState {
         self.metrics.add_settled_transactions(1);
         info!(tx_height =% block_under_construction.block_height, "✨ Settled tx {}", &bth);
 
-        let mut txs_to_nuke = BTreeMap::<TxHash, HyleOutput>::new();
+        let mut txs_to_nuke = BTreeMap::<TxHash, Vec<HyleOutput>>::new();
 
         // Go through each blob and:
         // - keep track of which blob proof output we used to settle the TX for each blob.
@@ -1012,51 +1012,64 @@ impl NodeState {
             tracing::debug!("Txs to nuke: {:?}", txs_to_nuke);
 
             // For the first blob of each tx to nuke, we need to create a fake verified proof that has a hyle_output success at false
-            let mut updates = BTreeMap::new();
+            let mut updates: BTreeMap<TxHash, Vec<(ProgramId, HyleOutput)>> = BTreeMap::new();
 
-            for (tx_hash, hyle_output) in txs_to_nuke.iter() {
+            for (tx_hash, hyle_outputs) in txs_to_nuke.iter() {
                 if let Some(unsettled_blob_tx) = self.unsettled_transactions.get(tx_hash) {
-                    if let Some(blob_metadata) = unsettled_blob_tx.blobs.get(&hyle_output.index) {
-                        let contract_name = &blob_metadata.blob.contract_name;
-                        if let Some(contract) = self.contracts.get(contract_name) {
-                            let mut hyle_output = hyle_output.clone();
-                            // If the hyle_output received is failed, we select the current state of the contract as the initial and next state
-                            if !hyle_output.success {
-                                hyle_output.initial_state = contract.state.clone();
-                                hyle_output.next_state = contract.state.clone();
+                    for hyle_output in hyle_outputs {
+                        if let Some(blob_metadata) = unsettled_blob_tx.blobs.get(&hyle_output.index)
+                        {
+                            let contract_name = &blob_metadata.blob.contract_name;
+                            if let Some(contract) = self.contracts.get(contract_name) {
+                                let mut hyle_output = hyle_output.clone();
+                                // If the hyle_output received is failed, we select the current state of the contract as the initial and next state
+                                if !hyle_output.success {
+                                    hyle_output.initial_state = contract.state.clone();
+                                    hyle_output.next_state = contract.state.clone();
+                                }
+                                updates
+                                    .entry(tx_hash.clone())
+                                    .or_default()
+                                    .push((contract.program_id.clone(), hyle_output.clone()));
+                            } else {
+                                tracing::error!("Contract {} not found", contract_name);
                             }
-                            updates.insert(
-                                tx_hash.clone(),
-                                (contract.program_id.clone(), hyle_output.clone()),
-                            );
                         } else {
-                            tracing::error!("Contract {} not found", contract_name);
+                            tracing::error!(
+                                "Blob at index {} not found for tx to nuke {}",
+                                hyle_output.index,
+                                tx_hash
+                            );
                         }
-                    } else {
-                        tracing::error!(
-                            "Blob at index {} not found for tx to nuke {}",
-                            hyle_output.index,
-                            tx_hash
-                        );
                     }
                 } else {
                     tracing::error!("Tx to nuke {} not found", tx_hash);
                 }
             }
 
-            let mut txs_to_settled_as_failed = BTreeSet::new();
+            let mut forced_txs = BTreeSet::new();
 
-            for (tx_hash, (program_id, hyle_output)) in updates {
+            for (tx_hash, hyle_outputs) in updates {
                 if let Some(unsettled_blob_tx) = self.unsettled_transactions.get_mut(&tx_hash) {
-                    if let Some(blob_metadata) = unsettled_blob_tx.blobs.get_mut(&hyle_output.index)
-                    {
-                        if !hyle_output.success {
+                    for (program_id, hyle_output) in hyle_outputs {
+                        if let Some(blob_metadata) =
+                            unsettled_blob_tx.blobs.get_mut(&hyle_output.index)
+                        {
                             // This is a hack to force the settlement as failed of the TXs to nuke.
-                            txs_to_settled_as_failed.insert(tx_hash);
+                            forced_txs.insert(tx_hash.clone());
+                            blob_metadata
+                                .possible_proofs
+                                .push((program_id, hyle_output.clone()));
+                            block_under_construction
+                                .transactions_events
+                                .entry(tx_hash.clone())
+                                .or_default()
+                                .push(TransactionStateEvent::NewProof {
+                                    blob_index: hyle_output.index,
+                                    proof_tx_hash: bth.clone(),
+                                    program_output: hyle_output.program_outputs.clone(),
+                                });
                         }
-                        blob_metadata
-                            .possible_proofs
-                            .push((program_id, hyle_output));
                     }
                 }
             }
@@ -1064,7 +1077,7 @@ impl NodeState {
             // Add the TXs to nuke to the list of TXs to try and settle next, in order to force them to fail
             // WARNING: this is a hack to force the settlement of the TXs to nuke.
             // WARNING: In the correct path, we are supposed to settle as failed only transaction that are next to settle
-            next_txs_to_try_and_settle.extend(txs_to_settled_as_failed);
+            next_txs_to_try_and_settle.extend(forced_txs);
         }
 
         // Keep track of settled txs
