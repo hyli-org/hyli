@@ -372,6 +372,9 @@ mod test {
             new_sub_receiver,
             subscribers: HashMap::new(),
             handler_store: IndexerHandlerStore::default(),
+            conf: IndexerConf {
+                query_buffer_size: 100,
+            },
         }
     }
 
