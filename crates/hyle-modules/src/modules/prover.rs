@@ -307,6 +307,10 @@ where
                 );
                 // Store all TXs in our waiting buffer.
                 self.store
+                    .tx_chain
+                    .extend(self.catching_txs.keys().map(|id| &id.1).cloned());
+
+                self.store
                     .waiting_txs
                     .extend(std::mem::take(&mut self.catching_txs).into_values());
             }
@@ -424,7 +428,7 @@ where
                 {
                     continue;
                 }
-                /*if self.store.tx_chain.contains(&tx.hashed()) {
+                if self.store.tx_chain.contains(&tx.hashed()) {
                     debug!(
                         cn =% self.ctx.contract_name,
                         tx_hash =% tx.hashed(),
@@ -432,7 +436,7 @@ where
                         tx.hashed()
                     );
                     continue;
-                }*/
+                }
                 if block.failed_txs.contains(&tx.hashed()) {
                     debug!(
                         cn =% self.ctx.contract_name,
@@ -443,7 +447,7 @@ where
                     insta_failed_txs.push(tx.hashed());
                     continue;
                 }
-                //self.store.tx_chain.push(tx.hashed());
+                self.store.tx_chain.push(tx.hashed());
 
                 let tx_ctx = TxContext {
                     block_height: block.block_height,
@@ -541,10 +545,6 @@ where
                 self.store
                     .unsettled_txs
                     .extend(self.store.waiting_txs.drain(..pop_waiting));
-
-                self.store
-                    .tx_chain
-                    .extend(self.store.unsettled_txs.iter().map(|(tx, _)| tx.hashed()));
 
                 // Reset blob buffer
                 self.store.buffered_blobs = self
