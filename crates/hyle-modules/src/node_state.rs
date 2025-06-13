@@ -229,7 +229,7 @@ impl NodeState {
                         }
                         Err(e) => {
                             let err = format!("Failed to handle blob transaction: {:?}", e);
-                            error!("{err}");
+                            error!(tx_hash = %tx_id.1, "{err}");
                             block_under_construction
                                 .transactions_events
                                 .entry(tx_id.1.clone())
@@ -266,7 +266,7 @@ impl NodeState {
                                     let err = format!(
                                         "Failed to handle blob #{} in verified proof transaction {}: {err:#}",
                                         blob_proof_data.hyle_output.index, &tx_id);
-                                    info!("{err}");
+                                    debug!("{err}");
                                     block_under_construction
                                         .transactions_events
                                         .entry(tx_id.1.clone())
@@ -286,25 +286,18 @@ impl NodeState {
             // For each transaction that could not be settled, if it is the next one to be settled, set its timeout
             for unsettled_tx in next_unsettled_txs.iter() {
                 if self.unsettled_transactions.is_next_to_settle(unsettled_tx) {
-                    if let Some(block_height) = self
+                    // Get the contract's timeout window
+                    #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
+                    let timeout_window = self
                         .unsettled_transactions
                         .get(unsettled_tx)
-                        .map(|ut| ut.tx_context.block_height)
-                    {
-                        // Get the contract's timeout window
-                        #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
-                        let timeout_window = self
-                            .unsettled_transactions
-                            .get(unsettled_tx)
-                            .map(|tx| {
-                                self.get_tx_timeout_window(tx.blobs.values().map(|b| &b.blob))
-                            })
-                            .unwrap();
-                        if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
-                            // Update timeouts
-                            self.timeouts
-                                .set(unsettled_tx.clone(), block_height, timeout_window);
-                        }
+                        .map(|tx| self.get_tx_timeout_window(tx.blobs.values().map(|b| &b.blob)))
+                        .unwrap();
+                    if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
+                        // Update timeouts
+                        let current_height = self.current_height;
+                        self.timeouts
+                            .set(unsettled_tx.clone(), current_height, timeout_window);
                     }
                 }
             }
@@ -659,6 +652,19 @@ impl NodeState {
             }
         };
 
+        // If some blobs are still sequenced behind others, we can only settle this TX as failed.
+        // (failed TX won't change the state, so we can settle it right away).
+        if result.is_ok()
+            && !self
+                .unsettled_transactions
+                .is_next_to_settle(unsettled_tx_hash)
+        {
+            bail!(
+                "Transaction {} is not next to settle, skipping.",
+                unsettled_tx_hash
+            );
+        };
+
         // We are OK to settle now.
 
         #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
@@ -815,7 +821,7 @@ impl NodeState {
                 .entry(bth.clone())
                 .or_default()
                 .push(TransactionStateEvent::SettledAsFailed);
-            info!("⛈️ Settled tx {} as failed", &bth);
+            info!(tx_height =% block_under_construction.block_height, "⛈️ Settled tx {} as failed", &bth);
 
             block_under_construction.failed_txs.push(bth);
             return next_txs_to_try_and_settle;
@@ -828,7 +834,7 @@ impl NodeState {
             .or_default()
             .push(TransactionStateEvent::Settled);
         self.metrics.add_settled_transactions(1);
-        info!("✨ Settled tx {}", &bth);
+        info!(tx_height =% block_under_construction.block_height, "✨ Settled tx {}", &bth);
 
         // Go through each blob and:
         // - keep track of which blob proof output we used to settle the TX for each blob.
@@ -1452,7 +1458,13 @@ pub mod test {
                 slot: height,
                 ..ConsensusProposal::default()
             },
-            data_proposals: vec![(LaneId::default(), vec![DataProposal::new(None, txs)])],
+            data_proposals: vec![(
+                LaneId::default(),
+                vec![DataProposal::new(
+                    Some(DataProposalHash(format!("{}", height))),
+                    txs,
+                )],
+            )],
         }
     }
 

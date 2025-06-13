@@ -284,6 +284,20 @@ async fn common_main(
                 api: build_api_ctx.clone(),
             })
             .await?;
+        handler
+            .build_module::<ContractStateIndexer<AccountSMT>>(ContractStateIndexerCtx {
+                contract_name: "oxygen".into(),
+                data_directory: config.data_directory.clone(),
+                api: build_api_ctx.clone(),
+            })
+            .await?;
+        handler
+            .build_module::<ContractStateIndexer<AccountSMT>>(ContractStateIndexerCtx {
+                contract_name: "vitamin".into(),
+                data_directory: config.data_directory.clone(),
+                api: build_api_ctx.clone(),
+            })
+            .await?;
     }
 
     if config.p2p.mode != conf::P2pMode::None {

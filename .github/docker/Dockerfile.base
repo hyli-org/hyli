@@ -1,7 +1,7 @@
 FROM rust:slim-bookworm AS builder
 RUN apt-get update && apt-get -y install curl
 RUN curl -L https://risczero.com/install | bash
-RUN /root/.risc0/bin/rzup install r0vm 2.0.2
+RUN /root/.risc0/bin/rzup install r0vm 2.1.0
 
 FROM ubuntu:noble
 COPY --from=builder /usr/local/cargo/bin/r0vm /usr/local/bin/r0vm

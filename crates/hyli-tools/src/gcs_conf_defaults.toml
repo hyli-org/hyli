@@ -1,0 +1,15 @@
+# The log format to use - "json", "node" or "full" (default: "full")
+log_format = "full"
+
+# Directory name to store node state (default: "data")
+data_directory = "data"
+
+# URL to connect to
+da_read_from = "http://localhost:4141"
+
+# GCS uploader options
+# Name of the GCS bucket
+gcs_bucket = "testnet_blocks"
+
+# Prefix for objects in the GCS bucket
+gcs_prefix = "local"

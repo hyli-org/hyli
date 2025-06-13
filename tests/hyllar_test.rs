@@ -62,8 +62,6 @@ mod e2e_hyllar {
         info!("➡️  Waiting for height 2");
         ctx.wait_height(2).await?;
 
-        info!("Hydentity: {:?}", executor.hydentity);
-
         info!("➡️  Sending blob to transfer 25 tokens from faucet to bob");
 
         let mut tx = ProvableBlobTx::new(FAUCET_ID.into());

@@ -22,7 +22,7 @@ path = "examples/host.rs"
 sdk = { workspace = true }
 serde = { version = "1.0.219", features = ["derive"] }
 
-risc0-zkvm = { version = "2.0.2", default-features = false, optional = true, features = [
+risc0-zkvm = { version = "2.1", default-features = false, optional = true, features = [
   'std',
 ] }
 
@@ -39,7 +39,7 @@ hex = "0.4.3"
 hydentity = { workspace = true, features = ["client"] }
 hyle-contracts = { path = ".." }
 tokio = { version = "1.45.1" }
-risc0-zkvm = { version = "2.0.2", default-features = false, features = [
+risc0-zkvm = { version = "2.1", default-features = false, features = [
   'std',
   'prove',
 ] }

@@ -51,7 +51,7 @@ jobs:
 
       - name: Install r0vm
         run: |
-          wget https://github.com/risc0/risc0/releases/download/v2.0.0/cargo-risczero-x86_64-unknown-linux-gnu.tgz
+          wget https://github.com/risc0/risc0/releases/download/v2.1.0/cargo-risczero-x86_64-unknown-linux-gnu.tgz
           tar xzvf cargo-risczero-x86_64-unknown-linux-gnu.tgz
           echo "$PWD" >> $GITHUB_PATH
       - run: cargo build --verbose
@@ -85,7 +85,7 @@ jobs:
       - run: sudo apt install libdbus-1-dev pkg-config
       - name: Install r0vm
         run: |
-          wget https://github.com/risc0/risc0/releases/download/v2.0.0/cargo-risczero-x86_64-unknown-linux-gnu.tgz
+          wget https://github.com/risc0/risc0/releases/download/v2.1.0/cargo-risczero-x86_64-unknown-linux-gnu.tgz
           tar xzvf cargo-risczero-x86_64-unknown-linux-gnu.tgz
           echo "$PWD" >> $GITHUB_PATH
       - name: Generate code coverage

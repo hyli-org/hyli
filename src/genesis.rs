@@ -24,7 +24,7 @@ use hyle_modules::{
 };
 use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
 use serde::{Deserialize, Serialize};
-use smt_token::account::AccountSMT;
+use smt_token::{account::AccountSMT, SmtTokenAction};
 use staking::{
     client::tx_executor_handler::{delegate, deposit_for_fees, stake},
     state::Staking,
@@ -202,10 +202,17 @@ impl Genesis {
         let stake_txs =
             Self::generate_stake_txs(peer_pubkey, &mut tx_executor, genesis_stake).await?;
 
+        let token_txs = if self.config.genesis.keep_tokens_in_faucet {
+            vec![]
+        } else {
+            Self::generate_token_txs(&mut tx_executor)?
+        };
+
         let builders = register_txs
             .into_iter()
             .chain(faucet_txs.into_iter())
-            .chain(stake_txs.into_iter());
+            .chain(stake_txs.into_iter())
+            .chain(token_txs.into_iter());
 
         for ProofTxBuilder {
             identity,
@@ -269,7 +276,7 @@ impl Genesis {
         register_identity(
             &mut transaction,
             ContractName::new("hydentity"),
-            self.config.genesis.faucet_password.clone(),
+            "password".to_owned(),
         )?;
         txs.push(tx_executor.process(transaction)?);
 
@@ -305,7 +312,10 @@ impl Genesis {
                 .expect("Genesis stakers should be in the peer map")
                 as u128;
 
-            info!("🌱  Fauceting {genesis_faucet} hyllar to {peer}");
+            info!(
+                "🌱  Fauceting {} hyllar to {peer}",
+                genesis_faucet + 100_000_000_000
+            );
 
             let identity = Identity::new(FAUCET_ID);
             let mut transaction = ProvableBlobTx::new(identity.clone());
@@ -315,7 +325,7 @@ impl Genesis {
                 &mut transaction,
                 ContractName::new("hydentity"),
                 &tx_executor.hydentity,
-                self.config.genesis.faucet_password.clone(),
+                "password".to_string(),
             )?;
 
             // Transfer
@@ -323,7 +333,7 @@ impl Genesis {
                 &mut transaction,
                 ContractName::new("hyllar"),
                 format!("{peer}@hydentity"),
-                genesis_faucet + 1_000_000_000,
+                genesis_faucet + 100_000_000_000,
             )?;
 
             txs.push(tx_executor.process(transaction)?);
@@ -377,14 +387,14 @@ impl Genesis {
                 &mut transaction,
                 ContractName::new("staking"),
                 peer.clone(),
-                1_000_000_000, // 1 GB at 1 token/byte
+                100_000_000_000, // 100 GB at 1 token/byte
             )?;
 
             transfer(
                 &mut transaction,
                 ContractName::new("hyllar"),
                 "staking".to_string(),
-                1_000_000_000,
+                100_000_000_000,
             )?;
 
             // Delegate
@@ -393,6 +403,105 @@ impl Genesis {
             txs.push(tx_executor.process(transaction)?);
         }
 
+        Ok(txs)
+    }
+
+    // Needs to run last
+    fn generate_token_txs(tx_executor: &mut TxExecutor<States>) -> Result<Vec<ProofTxBuilder>> {
+        let mut txs: Vec<ProofTxBuilder> = vec![];
+        let identity = Identity::new(FAUCET_ID);
+
+        // Send tokens to the Hyli wallet for later distribution, and so hydentity can't be used.
+        let mut transaction = ProvableBlobTx::new(identity.clone());
+        // Verify identity
+        verify_identity(
+            &mut transaction,
+            ContractName::new("hydentity"),
+            &tx_executor.hydentity,
+            "password".to_string(),
+        )?;
+
+        // Transfer all tokens
+        let remaining_hyllar = hyllar::erc20::ERC20::balance_of(&tx_executor.hyllar, &identity.0)
+            .expect("Faucet should have hyllar balance");
+
+        info!("🌱  Transferring remaining {remaining_hyllar} hyllar to hyli@wallet");
+        transfer(
+            &mut transaction,
+            ContractName::new("hyllar"),
+            "hyli@wallet".to_string(),
+            remaining_hyllar,
+        )?;
+
+        txs.push(tx_executor.process(transaction)?);
+
+        let mut smt = AccountSMT::default();
+        let initial_root = *smt.0.root();
+        let transfer_blob = SmtTokenAction::Transfer {
+            sender: identity.clone(),
+            recipient: Identity::new("hyli@wallet"),
+            // Full supply
+            amount: 100_000_000_000_000,
+        };
+
+        smt.handle(&Calldata {
+            tx_hash: TxHash::default(),
+            identity: identity.clone(),
+            // Contract name doesn't matter here
+            blobs: IndexedBlobs::from(vec![transfer_blob.as_blob(
+                ContractName::new("smt"),
+                None,
+                None,
+            )]),
+            tx_blob_count: 1,
+            index: BlobIndex(0),
+            tx_ctx: None,
+            private_input: vec![],
+        })?;
+        let next_root = *smt.0.root();
+        let initial_state = StateCommitment(Into::<[u8; 32]>::into(initial_root).to_vec());
+        let next_state = StateCommitment(Into::<[u8; 32]>::into(next_root).to_vec());
+
+        #[allow(clippy::indexing_slicing, reason = "must exist")]
+        for token in ["oranj", "oxygen", "vitamin"] {
+            info!("🌱 Transferring all {token} tokens to 'hyli@wallet'");
+            let mut transaction = ProvableBlobTx::new(identity.clone());
+            // Verify identity
+            verify_identity(
+                &mut transaction,
+                ContractName::new("hydentity"),
+                &tx_executor.hydentity,
+                "password".to_string(),
+            )?;
+
+            let mut ptx = tx_executor.process(transaction)?;
+            ptx.blobs
+                .push(transfer_blob.as_blob(ContractName::new(token), None, None));
+
+            ptx.outputs[0].1.tx_hash = ptx.to_blob_tx().hashed();
+            ptx.outputs[0].1.blobs = IndexedBlobs::from(ptx.blobs.clone());
+
+            let tx_hash = ptx.to_blob_tx().hashed();
+            ptx.outputs.push((
+                token.into(),
+                HyleOutput {
+                    version: 1,
+                    initial_state: initial_state.clone(),
+                    next_state: next_state.clone(),
+                    identity: identity.clone(),
+                    index: BlobIndex(1),
+                    blobs: IndexedBlobs::from(ptx.blobs.clone()),
+                    tx_blob_count: 2,
+                    tx_hash,
+                    success: true,
+                    state_reads: vec![],
+                    tx_ctx: None,
+                    onchain_effects: vec![],
+                    program_outputs: vec![],
+                },
+            ));
+            txs.push(ptx);
+        }
         Ok(txs)
     }
 
@@ -425,6 +534,8 @@ impl Genesis {
         map.insert("secp256k1".into(), NativeVerifiers::Secp256k1.into());
         map.insert("hyllar".into(), ProgramId(hyllar_program_id.clone()));
         map.insert("oranj".into(), ProgramId(smt_token_program_id.clone()));
+        map.insert("oxygen".into(), ProgramId(smt_token_program_id.clone()));
+        map.insert("vitamin".into(), ProgramId(smt_token_program_id.clone()));
         map.insert("hydentity".into(), ProgramId(hydentity_program_id.clone()));
         map.insert("staking".into(), ProgramId(staking_program_id.clone()));
         map.insert(
@@ -502,16 +613,19 @@ impl Genesis {
 
         let smt = AccountSMT::default();
         let root = *smt.0.root();
-        register_hyle_contract(
-            &mut register_tx,
-            "oranj".into(),
-            hyle_model::verifiers::RISC0_1.into(),
-            smt_token_program_id.clone().into(),
-            StateCommitment(Into::<[u8; 32]>::into(root).to_vec()),
-            None,
-            None,
-        )
-        .expect("register oranj");
+        for token in ["oranj", "oxygen", "vitamin"] {
+            info!("🌱 Registering SMT token {token}");
+            register_hyle_contract(
+                &mut register_tx,
+                token.into(),
+                hyle_model::verifiers::RISC0_1.into(),
+                smt_token_program_id.clone().into(),
+                StateCommitment(Into::<[u8; 32]>::into(root).to_vec()),
+                None,
+                None,
+            )
+            .expect("register SMT token");
+        }
 
         register_hyle_contract(
             &mut register_tx,
@@ -562,7 +676,7 @@ impl Genesis {
             consensus_proposal: ConsensusProposal {
                 slot: 0,
                 // TODO: genesis block should have a consistent, up-to-date timestamp
-                timestamp: TimestampMs(1735689600000), // 1st of Jan 25 for now
+                timestamp: TimestampMs((self.config.consensus.genesis_timestamp * 1000) as u128),
                 // TODO: We aren't actually storing the data proposal above, so we cannot store it here,
                 // or we might mistakenly request data from that cut, but mempool hasn't seen it.
                 // This should be fixed by storing the data proposal in mempool or handling this whole thing differently.
