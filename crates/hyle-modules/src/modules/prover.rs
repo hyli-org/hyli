@@ -651,7 +651,7 @@ where
             self.store.tx_chain.retain(|h| h != tx);
             if found.is_some() {
                 *replay_from = Some(std::cmp::min(replay_from.unwrap_or(pos), pos));
-                self.handle_all_next_blobs_after_failed(pos)?;
+                self.clear_state_history_after_failed(pos)?;
             } else {
                 debug!(
                     cn =% self.ctx.contract_name,
@@ -737,7 +737,7 @@ where
         None
     }
 
-    fn handle_all_next_blobs_after_failed(&mut self, idx: usize) -> Result<()> {
+    fn clear_state_history_after_failed(&mut self, idx: usize) -> Result<()> {
         for (tx, _ctx) in self.store.proving_txs.clone().iter().skip(idx) {
             debug!(
                 cn =% self.ctx.contract_name,
