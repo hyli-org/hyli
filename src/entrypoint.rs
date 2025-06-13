@@ -76,6 +76,7 @@ impl RunPg {
             pg.get_host_port_ipv4(5432).await?
         );
         config.run_indexer = true;
+        config.run_explorer = true;
 
         Ok(Self {
             pg,
@@ -151,7 +152,7 @@ pub fn welcome_message(conf: &conf::Conf) {
         da_port = conf.da_public_address,
         check_indexer = check_or_cross(conf.run_indexer),
         check_explorer = check_or_cross(conf.run_explorer),
-        database_url = if conf.run_indexer {
+        database_url = if conf.run_indexer || conf.run_explorer {
             format!("↯ {}", mask_postgres_uri(conf.database_url.as_str()))
         } else {
             "".to_string()
