@@ -1,4 +1,14 @@
+#![cfg(test)]
+
 use std::collections::HashSet;
+
+use client_sdk::transaction_builder::ProvableBlobTx;
+use hydentity::{
+    client::tx_executor_handler::{register_identity, verify_identity},
+    Hydentity, HydentityAction,
+};
+
+pub const HYLI_WALLET: &str = "wallet";
 
 use super::*;
 
@@ -18,6 +28,12 @@ pub fn make_register_tx(
         }
         .as_blob(tld, None, None)],
     )
+}
+
+pub fn make_register_hyli_wallet_identity_tx() -> BlobTransaction {
+    let mut tx = ProvableBlobTx::new(HYLI_TLD_ID.into());
+    register_identity(&mut tx, HYLI_WALLET.into(), "password".into());
+    BlobTransaction::new(HYLI_TLD_ID.to_string(), tx.blobs)
 }
 
 #[test_log::test(tokio::test)]
@@ -262,9 +278,30 @@ pub fn make_delete_tx(
     )
 }
 
+pub fn make_delete_tx_with_hyli(tld: ContractName, contract_name: ContractName) -> BlobTransaction {
+    BlobTransaction::new(
+        HYLI_TLD_ID.to_string(),
+        vec![
+            HydentityAction::VerifyIdentity {
+                nonce: 0,
+                account: HYLI_TLD_ID.to_string(),
+            }
+            .as_blob(HYLI_WALLET.into()),
+            DeleteContractAction { contract_name }.as_blob(tld, None, None),
+        ],
+    )
+}
+
 #[test_log::test(tokio::test)]
 async fn test_register_contract_and_delete_hyle() {
     let mut state = new_node_state().await;
+
+    let register_wallet = make_register_tx("hyle@hyle".into(), "hyle".into(), "wallet".into());
+    let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
+
+    let mut output = make_hyle_output(register_hyli_at_wallet.clone(), BlobIndex(0));
+    let register_hyli_at_wallet_proof =
+        new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
 
     let register_c1 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c1".into());
     let register_c2 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
@@ -290,6 +327,9 @@ async fn test_register_contract_and_delete_hyle() {
     let block = state.craft_block_and_handle(
         1,
         vec![
+            register_wallet.into(),
+            register_hyli_at_wallet.into(),
+            register_hyli_at_wallet_proof.into(),
             register_c1.into(),
             register_c2.into(),
             register_sub_c2.into(),
@@ -302,9 +342,9 @@ async fn test_register_contract_and_delete_hyle() {
             .keys()
             .map(|cn| cn.0.clone())
             .collect::<Vec<_>>(),
-        vec!["c1", "c2.hyle", "sub.c2.hyle"]
+        vec!["c1", "c2.hyle", "sub.c2.hyle", "wallet"]
     );
-    assert_eq!(state.contracts.len(), 4);
+    assert_eq!(state.contracts.len(), 5);
 
     // Now delete them.
     let self_delete_tx = make_delete_tx("c1@c1".into(), "c1".into(), "c1".into());
@@ -313,7 +353,9 @@ async fn test_register_contract_and_delete_hyle() {
         "c2.hyle".into(),
         "sub.c2.hyle".into(),
     );
-    let delete_tx = make_delete_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
+    let delete_tx = make_delete_tx_with_hyli("hyle".into(), "c2.hyle".into());
+    let mut output = make_hyle_output_bis(delete_tx.clone(), BlobIndex(0));
+    let delete_tx_proof = new_proof_tx(&"c2.hyle".into(), &output, &delete_tx.hashed());
 
     let mut output = make_hyle_output(self_delete_tx.clone(), BlobIndex(0));
     output
@@ -336,6 +378,7 @@ async fn test_register_contract_and_delete_hyle() {
             delete_self_proof.into(),
             delete_sub_proof.into(),
             delete_tx.into(),
+            delete_tx_proof.into(),
         ],
     );
 
@@ -347,12 +390,137 @@ async fn test_register_contract_and_delete_hyle() {
             .collect::<Vec<_>>(),
         vec!["c1", "c2.hyle", "sub.c2.hyle"]
     );
-    assert_eq!(state.contracts.len(), 1);
+    assert_eq!(state.contracts.len(), 2);
+}
+#[test_log::test(tokio::test)]
+async fn test_hyle_delete_contract_with_wrong_proof() {
+    let mut state = new_node_state().await;
+    let register_wallet = make_register_tx("hyle@hyle".into(), "hyle".into(), HYLI_WALLET.into());
+    let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
+
+    let mut output = make_hyle_output(register_hyli_at_wallet.clone(), BlobIndex(0));
+    let register_hyli_at_wallet_proof = new_proof_tx(
+        &HYLI_WALLET.into(),
+        &output,
+        &register_hyli_at_wallet.hashed(),
+    );
+
+    let register_contract = make_register_tx("hyle@hyle".into(), "hyle".into(), "contract".into());
+
+    state.craft_block_and_handle(
+        1,
+        vec![
+            register_wallet.into(),
+            register_hyli_at_wallet.into(),
+            register_hyli_at_wallet_proof.into(),
+            register_contract.into(),
+        ],
+    );
+
+    assert_eq!(state.contracts.len(), 3);
+
+    let delete_tx = make_delete_tx(HYLI_TLD_ID.into(), "hyle".into(), "contract".into());
+
+    let mut output = make_hyle_output_bis(delete_tx.clone(), BlobIndex(0));
+    output.success = false; // Simulate a wrong proof
+    let verify_hyli_proof = new_proof_tx(&HYLI_WALLET.into(), &output, &delete_tx.hashed());
+
+    let block =
+        state.craft_block_and_handle(2, vec![delete_tx.into(), verify_hyli_proof.clone().into()]);
+
+    assert_eq!(block.deleted_contracts.len(), 0);
+    assert_eq!(state.contracts.len(), 3);
+}
+
+#[test_log::test(tokio::test)]
+async fn test_hyle_delete_contract_with_wrong_identity() {
+    let mut state = new_node_state().await;
+    let register_wallet = make_register_tx("hyle@hyle".into(), "hyle".into(), HYLI_WALLET.into());
+    let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
+
+    let mut output = make_hyle_output(register_hyli_at_wallet.clone(), BlobIndex(0));
+    let register_hyli_at_wallet_proof = new_proof_tx(
+        &HYLI_WALLET.into(),
+        &output,
+        &register_hyli_at_wallet.hashed(),
+    );
+
+    let register_contract = make_register_tx("hyle@hyle".into(), "hyle".into(), "contract".into());
+
+    state.craft_block_and_handle(
+        1,
+        vec![
+            register_wallet.into(),
+            register_hyli_at_wallet.into(),
+            register_hyli_at_wallet_proof.into(),
+            register_contract.into(),
+        ],
+    );
+
+    assert_eq!(state.contracts.len(), 3);
+
+    let delete_tx = make_delete_tx(
+        Identity::new("random@wallou"),
+        "hyle".into(),
+        "contract".into(),
+    );
+
+    let mut output = make_hyle_output_bis(delete_tx.clone(), BlobIndex(0));
+    let verify_hyli_proof = new_proof_tx(&HYLI_WALLET.into(), &output, &delete_tx.hashed());
+
+    let block =
+        state.craft_block_and_handle(2, vec![delete_tx.into(), verify_hyli_proof.clone().into()]);
+
+    assert_eq!(block.deleted_contracts.len(), 0);
+    assert_eq!(state.contracts.len(), 3);
+}
+
+#[test_log::test(tokio::test)]
+async fn test_hyle_delete_contract_success() {
+    let mut state = new_node_state().await;
+    let register_wallet = make_register_tx("hyle@hyle".into(), "hyle".into(), "wallet".into());
+    let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
+
+    let mut output = make_hyle_output(register_hyli_at_wallet.clone(), BlobIndex(0));
+    let register_hyli_at_wallet_proof =
+        new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
+
+    let register_contract = make_register_tx("hyle@hyle".into(), "hyle".into(), "contract".into());
+
+    state.craft_block_and_handle(
+        1,
+        vec![
+            register_wallet.into(),
+            register_hyli_at_wallet.into(),
+            register_hyli_at_wallet_proof.into(),
+            register_contract.into(),
+        ],
+    );
+
+    assert_eq!(state.contracts.len(), 3);
+
+    let delete_tx = make_delete_tx_with_hyli("hyle".into(), "contract".into());
+
+    let mut output = make_hyle_output_bis(delete_tx.clone(), BlobIndex(0));
+    let verify_hyli_proof = new_proof_tx(&"wallet".into(), &output, &delete_tx.hashed());
+
+    let block =
+        state.craft_block_and_handle(2, vec![delete_tx.into(), verify_hyli_proof.clone().into()]);
+
+    assert_eq!(block.deleted_contracts.len(), 1);
+    assert_eq!(state.contracts.len(), 2);
 }
 
 #[test_log::test(tokio::test)]
 async fn test_hyle_sub_delete() {
     let mut state = new_node_state().await;
+
+    let register_wallet = make_register_tx("hyle@hyle".into(), "hyle".into(), "wallet".into());
+    let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
+
+    let mut output = make_hyle_output(register_hyli_at_wallet.clone(), BlobIndex(0));
+    let register_hyli_at_wallet_proof =
+        new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
 
     let register_c2 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
     // This technically doesn't matter as it's actually the proof that does the work
@@ -377,18 +545,35 @@ async fn test_hyle_sub_delete() {
     state.craft_block_and_handle(
         1,
         vec![
+            register_wallet.into(),
+            register_hyli_at_wallet.into(),
+            register_hyli_at_wallet_proof.into(),
             register_c2.into(),
             register_sub_c2.into(),
             sub_c2_proof.into(),
         ],
     );
-    assert_eq!(state.contracts.len(), 3);
+    assert_eq!(state.contracts.len(), 4);
 
     // Now delete the intermediate contract first, then delete the sub-contract via hyle
-    let delete_tx = make_delete_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
-    let delete_sub_tx = make_delete_tx("hyle@hyle".into(), "hyle".into(), "sub.c2.hyle".into());
+    let delete_tx = make_delete_tx_with_hyli("hyle".into(), "c2.hyle".into());
 
-    let block = state.craft_block_and_handle(2, vec![delete_tx.into(), delete_sub_tx.into()]);
+    let mut output = make_hyle_output_bis(delete_tx.clone(), BlobIndex(0));
+    let verify_hyli_proof = new_proof_tx(&"wallet".into(), &output, &delete_tx.hashed());
+
+    let delete_sub_tx = make_delete_tx_with_hyli("hyle".into(), "sub.c2.hyle".into());
+    let mut output = make_hyle_output_ter(delete_sub_tx.clone(), BlobIndex(0));
+    let verify_hyli_proof2 = new_proof_tx(&"wallet".into(), &output, &delete_sub_tx.hashed());
+
+    let block = state.craft_block_and_handle(
+        2,
+        vec![
+            delete_tx.into(),
+            verify_hyli_proof.into(),
+            delete_sub_tx.into(),
+            verify_hyli_proof2.into(),
+        ],
+    );
 
     assert_eq!(
         block
@@ -398,13 +583,13 @@ async fn test_hyle_sub_delete() {
             .collect::<Vec<_>>(),
         vec!["c2.hyle", "sub.c2.hyle"]
     );
-    assert_eq!(state.contracts.len(), 1);
+    assert_eq!(state.contracts.len(), 2);
 }
 
 #[test_log::test(tokio::test)]
 async fn test_register_update_delete_combinations_hyle() {
     let register_tx = make_register_tx("hyle@hyle".into(), "hyle".into(), "c.hyle".into());
-    let delete_tx = make_delete_tx("hyle@hyle".into(), "hyle".into(), "c.hyle".into());
+    let delete_tx = make_delete_tx_with_hyli("hyle".into(), "c.hyle".into());
     let delete_self_tx = make_delete_tx("hyle@c.hyle".into(), "c.hyle".into(), "c.hyle".into());
     let update_tx = make_register_tx("test@c.hyle".into(), "c.hyle".into(), "c.hyle".into());
 
@@ -427,6 +612,9 @@ async fn test_register_update_delete_combinations_hyle() {
         .push(OnchainEffect::DeleteContract("c.hyle".into()));
     let proof_delete = new_proof_tx(&"c.hyle".into(), &output, &delete_self_tx.hashed());
 
+    let mut output = make_hyle_output_bis(delete_tx.clone(), BlobIndex(0));
+    let delete_tx_proof = new_proof_tx(&"wallet".into(), &output, &delete_tx.hashed());
+
     async fn test_combination(
         proofs: Option<&[&VerifiedProofTransaction]>,
         txs: &[&BlobTransaction],
@@ -434,6 +622,22 @@ async fn test_register_update_delete_combinations_hyle() {
         expected_txs: usize,
     ) {
         let mut state = new_node_state().await;
+
+        let register_wallet = make_register_tx("hyle@hyle".into(), "hyle".into(), "wallet".into());
+        let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
+
+        let mut output = make_hyle_output(register_hyli_at_wallet.clone(), BlobIndex(0));
+        let register_hyli_at_wallet_proof =
+            new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
+
+        state.craft_block_and_handle(
+            1,
+            vec![
+                register_wallet.clone().into(),
+                register_hyli_at_wallet.clone().into(),
+                register_hyli_at_wallet_proof.clone().into(),
+            ],
+        );
         let mut txs = txs
             .iter()
             .map(|tx| (*tx).clone().into())
@@ -441,7 +645,7 @@ async fn test_register_update_delete_combinations_hyle() {
         if let Some(proofs) = proofs {
             txs.extend(proofs.iter().map(|p| (*p).clone().into()));
         }
-        let block = state.craft_block_and_handle(1, txs);
+        let block = state.craft_block_and_handle(2, txs);
 
         assert_eq!(state.contracts.len(), expected_ct);
         assert_eq!(block.successful_txs.len(), expected_txs);
@@ -449,21 +653,21 @@ async fn test_register_update_delete_combinations_hyle() {
     }
 
     // Test all combinations
-    test_combination(None, &[&register_tx], 2, 1).await;
-    test_combination(None, &[&delete_tx], 1, 0).await;
-    test_combination(None, &[&register_tx, &delete_tx], 1, 2).await;
-    test_combination(Some(&[&proof_update]), &[&register_tx, &update_tx], 2, 2).await;
+    test_combination(None, &[&register_tx], 3, 1).await;
+    test_combination(None, &[&delete_tx], 2, 0).await;
+    test_combination(Some(&[&delete_tx_proof]), &[&register_tx, &delete_tx], 2, 2).await;
+    test_combination(Some(&[&proof_update]), &[&register_tx, &update_tx], 3, 2).await;
     test_combination(
-        Some(&[&proof_update]),
+        Some(&[&proof_update, &delete_tx_proof]),
         &[&register_tx, &update_tx, &delete_tx],
-        1,
+        2,
         3,
     )
     .await;
     test_combination(
         Some(&[&proof_update, &proof_delete]),
         &[&register_tx, &update_tx, &delete_self_tx],
-        1,
+        2,
         3,
     )
     .await;
