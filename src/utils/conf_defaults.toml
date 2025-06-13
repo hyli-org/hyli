@@ -69,3 +69,6 @@ ws_path = "/ws"
 health_path = "/ws_health"
 peer_check_interval = 100
 events = ["node_state", "new_block", "new_tx"]
+
+[indexer]
+query_buffer_size = 100

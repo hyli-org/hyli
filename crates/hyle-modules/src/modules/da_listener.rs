@@ -223,6 +223,9 @@ impl DAListener {
             for (block, _) in blocks {
                 self.process_block(block).await?;
             }
+            module_handle_messages! {
+                on_bus self.bus,
+            };
         } else {
             let mut client = self.start_client(self.start_block).await?;
 
