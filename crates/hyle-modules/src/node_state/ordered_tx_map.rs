@@ -7,13 +7,16 @@ use std::collections::{HashMap, VecDeque};
 #[derive(Default, Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct OrderedTxMap {
     map: HashMap<TxHash, UnsettledBlobTransaction>,
-    tx_order: HashMap<ContractName, VecDeque<TxHash>>,
+    pub tx_order: HashMap<ContractName, VecDeque<TxHash>>,
 }
 
 impl OrderedTxMap {
-    #[allow(dead_code)]
     pub fn get(&self, hash: &TxHash) -> Option<&UnsettledBlobTransaction> {
         self.map.get(hash)
+    }
+
+    pub fn get_mut(&mut self, hash: &TxHash) -> Option<&mut UnsettledBlobTransaction> {
+        self.map.get_mut(hash)
     }
 
     /// Returns true if the tx is the next to settle for all the contracts it contains
