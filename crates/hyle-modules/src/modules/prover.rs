@@ -547,7 +547,6 @@ where
     }
 
     fn populate_unsettled_if_empty(&mut self) {
-        tracing::debug!("{}", self.store.proving_txs.is_empty());
         if self.store.proving_txs.is_empty() {
             // Check if we should move some TXs from waiting to unsettled
             let pop_waiting = std::cmp::min(
