@@ -29,6 +29,7 @@ pub fn verify(
     }
 }
 
+#[allow(unused_variables)]
 pub fn validate_program_id(verifier: &Verifier, program_id: &ProgramId) -> Result<(), Error> {
     match verifier.0.as_str() {
         #[cfg(feature = "risc0")]
