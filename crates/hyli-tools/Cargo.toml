@@ -17,6 +17,10 @@ required-features = ["risc0"]
 name = "nuke_tx"
 path = "src/bin/nuke_tx.rs"
 
+[[bin]]
+name = "health_check"
+path = "src/bin/health_check.rs"
+
 [dependencies]
 hyle-contract-sdk = { workspace = true }
 client-sdk = { workspace = true, features = ["rest"] }
@@ -34,6 +38,8 @@ tracing-subscriber = "0.3.19"
 secp256k1 = { version = "0.31.0", features = ["global-context"] }
 sha2 = "0.10.8"
 hex = "0.4.3"
+borsh = "1.5.7"
+serde_json = "1.0.140"
 
 # needs to match workspace
 opentelemetry = { version = "0.28" }
@@ -44,9 +50,12 @@ prometheus = { version = "0.13.4" }
 # Feature UI
 ratatui = { version = "0.29.0", features = ["crossterm"], optional = true }
 crossterm = { version = "0.29.0", optional = true }
-borsh = "1.5.7"
-serde_json = "1.0.140"
+
+# GCS
 google-cloud-storage = "0.24.0"
+
+# Health check
+ureq = { version = "3.0.11", default-features = false, features = ["json"] }
 
 [features]
 risc0 = ["client-sdk/risc0"]
