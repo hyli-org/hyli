@@ -7,7 +7,7 @@ use std::collections::{HashMap, VecDeque};
 #[derive(Default, Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct OrderedTxMap {
     map: HashMap<TxHash, UnsettledBlobTransaction>,
-    pub tx_order: HashMap<ContractName, VecDeque<TxHash>>,
+    tx_order: HashMap<ContractName, VecDeque<TxHash>>,
 }
 
 impl OrderedTxMap {
@@ -72,7 +72,6 @@ impl OrderedTxMap {
         self.map.len()
     }
 
-    #[cfg(test)]
     pub fn get_tx_order(&self, contract: &ContractName) -> Option<&VecDeque<TxHash>> {
         self.tx_order.get(contract)
     }

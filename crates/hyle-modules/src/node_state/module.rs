@@ -31,6 +31,9 @@ pub struct QueryBlockHeight {}
 pub struct QuerySettledHeight(pub ContractName);
 
 #[derive(Clone)]
+pub struct QueryUnsettledTxCount(pub Option<ContractName>);
+
+#[derive(Clone)]
 pub struct QueryUnsettledTx(pub TxHash);
 
 module_bus_client! {
@@ -40,6 +43,7 @@ pub struct NodeStateBusClient {
     receiver(DataEvent),
     receiver(Query<ContractName, Contract>),
     receiver(Query<QuerySettledHeight, BlockHeight>),
+    receiver(Query<QueryUnsettledTxCount, u64>),
     receiver(Query<QueryBlockHeight , BlockHeight>),
     receiver(Query<QueryUnsettledTx, UnsettledBlobTransaction>),
 }
@@ -96,7 +100,15 @@ impl Module for NodeStateModule {
                 }
                 let height = self.inner.unsettled_transactions.get_earliest_unsettled_height(&cmd.0).unwrap_or(self.inner.current_height);
                 Ok(BlockHeight(height.0 - 1))
-        }
+            }
+            command_response<QueryUnsettledTxCount, u64> cmd => {
+                let count = if let Some(contract_name) = &cmd.0 {
+                    self.inner.unsettled_transactions.get_tx_order(contract_name).map(|txs| txs.len() as u64).unwrap_or(0)
+                } else {
+                    self.inner.unsettled_transactions.len() as u64
+                };
+                Ok(count)
+            }
             command_response<QueryUnsettledTx, UnsettledBlobTransaction> tx_hash => {
                 match self.inner.unsettled_transactions.get(&tx_hash.0) {
                     Some(tx) => Ok(tx.clone()),
