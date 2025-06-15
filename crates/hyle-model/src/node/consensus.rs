@@ -16,6 +16,7 @@ pub struct ConsensusInfo {
     pub slot: Slot,
     pub view: View,
     pub round_leader: ValidatorPublicKey,
+    pub last_timestamp: TimestampMs,
     pub validators: Vec<ValidatorPublicKey>,
 }
 

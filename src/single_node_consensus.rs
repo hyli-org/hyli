@@ -139,11 +139,12 @@ impl SingleNodeConsensus {
         module_handle_messages! {
             on_bus self.bus,
             command_response<QueryConsensusInfo, ConsensusInfo> _ => {
-                let slot = 0;
+                let slot = self.store.last_slot;
                 let view = 0;
                 let round_leader = self.crypto.validator_pubkey().clone();
+                let last_timestamp = TimestampMsClock::now();
                 let validators = vec![];
-                Ok(ConsensusInfo { slot, view, round_leader, validators })
+                Ok(ConsensusInfo { slot, view, round_leader, last_timestamp, validators })
             },
             _ = interval.tick() => {
                 self.handle_new_slot_tick().await?;

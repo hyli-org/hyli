@@ -784,8 +784,9 @@ impl Consensus {
                 let slot = self.bft_round_state.slot;
                 let view = self.bft_round_state.view;
                 let round_leader = self.round_leader()?;
+                let last_timestamp = self.bft_round_state.parent_timestamp.clone();
                 let validators = self.bft_round_state.staking.bonded().clone();
-                Ok(ConsensusInfo { slot, view, round_leader, validators })
+                Ok(ConsensusInfo { slot, view, round_leader, last_timestamp, validators })
             }
             command_response<QueryConsensusStakingState, Staking> _ => {
                 Ok(self.bft_round_state.staking.clone())

@@ -351,7 +351,7 @@ impl DerefMut for NodeApiHttpClient {
 
 #[allow(dead_code)]
 pub mod test {
-    use sdk::Hashed;
+    use sdk::{hyle_model_utils::TimestampMs, Hashed};
 
     use super::*;
     use std::sync::{Arc, Mutex};
@@ -378,6 +378,7 @@ pub mod test {
                     slot: 0,
                     view: 0,
                     round_leader: ValidatorPublicKey::default(),
+                    last_timestamp: TimestampMs::default(),
                     validators: vec![],
                 })),
                 node_info: Arc::new(Mutex::new(NodeInfo {
