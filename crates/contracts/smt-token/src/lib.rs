@@ -81,10 +81,6 @@ impl TransactionalZkContract for SmtTokenContract {
     fn revert(&mut self, initial_state: Self::State) {
         self.commitment = initial_state;
     }
-
-    fn on_success(&mut self) -> sdk::StateCommitment {
-        self.commit()
-    }
 }
 
 impl ZkContract for SmtTokenContract {
