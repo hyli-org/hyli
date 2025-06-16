@@ -15,6 +15,8 @@ pub mod indexer;
 
 pub mod identity_provider;
 
+impl sdk::FullStateRevert for Hydentity {}
+
 impl ZkContract for Hydentity {
     fn execute(&mut self, calldata: &Calldata) -> RunResult {
         let (action, exec_ctx) = parse_raw_calldata(calldata)?;

@@ -1008,6 +1008,8 @@ mod tests {
         value: u32,
     }
 
+    impl sdk::FullStateRevert for TestContract {}
+
     impl ZkContract for TestContract {
         fn execute(&mut self, calldata: &Calldata) -> sdk::RunResult {
             let (action, execution_ctx) = sdk::utils::parse_raw_calldata::<u32>(calldata)?;
