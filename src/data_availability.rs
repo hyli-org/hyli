@@ -194,9 +194,17 @@ impl DataAvailability {
     ) -> Result<()> {
         match evt {
             MempoolBlockEvent::BuiltSignedBlock(signed_block) => {
+                debug!(
+                    "📦  Received built block (height {}) from Mempool",
+                    signed_block.height()
+                );
                 self.handle_signed_block(signed_block, tcp_server).await;
             }
             MempoolBlockEvent::StartedBuildingBlocks(height) => {
+                debug!(
+                    "Received started building block (at height {}) from Mempool",
+                    height
+                );
                 self.catchup_height = Some(height - 1);
                 if let Some(handle) = self.catchup_task.as_ref() {
                     if self
