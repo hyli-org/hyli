@@ -594,8 +594,7 @@ impl Mempool {
             }
             MempoolNetMessage::SyncReply(metadata, data_proposal) => {
                 self.on_sync_reply(validator, metadata, data_proposal)
-                    .await
-                    .context("Processing a received SyncReply")?;
+                    .await?;
             }
         }
         Ok(())
