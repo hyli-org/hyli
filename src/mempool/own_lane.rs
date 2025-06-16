@@ -326,6 +326,12 @@ impl super::Mempool {
         match tx.transaction_data {
             TransactionData::Blob(ref blob_tx) => {
                 debug!("Got new blob tx {}", tx.hashed());
+                if blob_tx.blobs.len() > 20 {
+                    bail!(
+                        "Blob transaction has too many blobs: {}",
+                        blob_tx.blobs.len()
+                    );
+                }
                 // TODO: we should check if the registration handler contract exists.
                 // TODO: would be good to not need to clone here.
                 self.handle_hyle_contract_registration(blob_tx);
