@@ -303,8 +303,7 @@ impl Consensus {
             .requests
             .insert((received_timeout.clone(), received_tk.clone()))
         {
-            info!("Timeout has already been processed");
-            return Ok(());
+            debug!("Timeout has already been processed");
         }
 
         let f = self.bft_round_state.staking.compute_f();
