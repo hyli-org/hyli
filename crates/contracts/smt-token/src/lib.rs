@@ -82,7 +82,7 @@ impl TransactionalZkContract for SmtTokenContract {
         self.commitment = initial_state;
     }
 
-    fn on_success(&self) -> sdk::StateCommitment {
+    fn on_success(&mut self) -> sdk::StateCommitment {
         self.commit()
     }
 }

@@ -141,7 +141,7 @@ where
 
     fn revert(&mut self, initial_state: Self::State);
 
-    fn on_success(&self) -> StateCommitment {
+    fn on_success(&mut self) -> StateCommitment {
         self.commit()
     }
 }
