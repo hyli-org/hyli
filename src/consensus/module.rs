@@ -13,7 +13,9 @@ impl Module for Consensus {
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let file = ctx.config.data_directory.clone().join("consensus.bin");
-        let store: ConsensusStore = Self::load_from_disk_or_default(file.as_path());
+        let mut store: ConsensusStore = Self::load_from_disk_or_default(file.as_path());
+        // TEMP HACK
+        store.bft_round_state.timeout.requests.clear();
         let metrics = ConsensusMetrics::global(ctx.config.id.clone());
 
         let api = api::api(&bus, &ctx).await;
