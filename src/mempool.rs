@@ -566,13 +566,11 @@ impl Mempool {
                 self.on_poda_update(&lane_id, &data_proposal_hash, signatures)?
             }
             MempoolNetMessage::SyncRequest(from_data_proposal_hash, to_data_proposal_hash) => {
-                info!(
+                debug!(
                     "{} SyncRequest received from validator {validator} for last_data_proposal_hash {:?}",
                     &self.own_lane_id(),
                     to_data_proposal_hash
                 );
-
-                // Redirect to chan
 
                 let Some(to) = to_data_proposal_hash.or(self
                     .lanes
@@ -584,6 +582,7 @@ impl Mempool {
                     return Ok(());
                 };
 
+                // Transmit sync request to the Mempool submodule, to build a reply
                 sync_request_sender
                     .send(SyncRequest {
                         from: from_data_proposal_hash,
@@ -607,7 +606,7 @@ impl Mempool {
         metadata: LaneEntryMetadata,
         data_proposal: DataProposal,
     ) -> Result<()> {
-        trace!("SyncReply from validator {sender_validator}");
+        debug!("SyncReply from validator {sender_validator}");
 
         // TODO: Introduce lane ids in sync reply
         self.metrics.sync_reply_receive(
@@ -637,7 +636,7 @@ impl Mempool {
         }
 
         // Add missing lanes to the validator's lane
-        debug!(
+        trace!(
             "Filling hole with 1 entry (parent dp hash: {:?}) for {lane_id}",
             metadata.parent_data_proposal_hash
         );
@@ -687,7 +686,7 @@ impl Mempool {
         )
         .is_err()
         {
-            info!(
+            debug!(
                 "Buffering poda of {} signatures for DP: {}",
                 podas.len(),
                 data_proposal_hash

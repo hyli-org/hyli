@@ -1,11 +1,11 @@
 use crate::{bus::BusClientSender, consensus::CommittedConsensusProposal, model::*};
 use futures::StreamExt;
-use hyle_modules::log_error;
+use hyle_modules::{log_error, log_warn};
 
 use super::storage::Storage;
 use anyhow::{Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, trace, warn};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct BlockUnderConstruction {
@@ -18,11 +18,12 @@ impl super::Mempool {
         let length = self.blocks_under_contruction.len();
         for _ in 0..length {
             if let Some(block_under_contruction) = self.blocks_under_contruction.pop_front() {
-                if self
-                    .build_signed_block_and_emit(&block_under_contruction)
-                    .await
-                    .context("Processing queued committedConsensusProposal")
-                    .is_err()
+                if log_warn!(
+                    self.build_signed_block_and_emit(&block_under_contruction)
+                        .await,
+                    "Processing queued committedConsensusProposal"
+                )
+                .is_err()
                 {
                     // if failure, we push the ccp at the end
                     self.blocks_under_contruction
@@ -40,7 +41,11 @@ impl super::Mempool {
         &self,
         buc: &BlockUnderConstruction,
     ) -> Result<Vec<(LaneId, Vec<DataProposal>)>> {
-        debug!("Handling Block Under Construction {:?}", buc.clone());
+        trace!("Handling Block Under Construction {:?}", buc.clone());
+        debug!(
+            "Handling Block Under Construction {} from parent hash {}",
+            buc.ccp.consensus_proposal.slot, buc.ccp.consensus_proposal.parent_hash
+        );
 
         let mut result = vec![];
         // Try to return the asked data proposals between the last_processed_cut and the one being handled
@@ -83,6 +88,12 @@ impl super::Mempool {
 
         self.metrics.constructed_block.add(1, &[]);
 
+        info!(
+            "🚧 Built signed block for slot {} with {} data proposals",
+            buc.ccp.consensus_proposal.slot,
+            block_data.len()
+        );
+
         self.bus
             .send(MempoolBlockEvent::BuiltSignedBlock(SignedBlock {
                 data_proposals: block_data,
@@ -122,9 +133,10 @@ impl super::Mempool {
 
             // Matching the next slot
             if last_buc.consensus_proposal.slot == ccp.consensus_proposal.slot - 1 {
-                debug!(
+                tracing::trace!(
                     "Creating interval from slot {} to {}",
-                    last_buc.consensus_proposal.slot, ccp.consensus_proposal.slot
+                    last_buc.consensus_proposal.slot,
+                    ccp.consensus_proposal.slot
                 );
 
                 self.set_ccp_build_start_height(ccp.consensus_proposal.slot);
