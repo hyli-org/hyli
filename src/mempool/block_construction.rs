@@ -52,14 +52,8 @@ impl super::Mempool {
 
         let mut result = vec![];
 
-        info!(
-            "Building signed block for slot {} with {} data proposals",
-            buc.ccp.consensus_proposal.slot,
-            buc.ccp.consensus_proposal.cut.len()
-        );
-
         for (lane_id, to_hash, _, _) in buc.ccp.consensus_proposal.cut.iter() {
-            info!("Processing lane {} with to_hash {}", lane_id, to_hash);
+            trace!("Processing lane {} with to_hash {}", lane_id, to_hash);
             let from_hash = buc
                 .from
                 .as_ref()
@@ -68,7 +62,7 @@ impl super::Mempool {
 
             // iterate over the lane entries between from_hash and to_hash of the lane
             let (dps, missing_hash) = {
-                info!("Fetching data proposals for lane {}", lane_id);
+                trace!("Fetching data proposals for lane {}", lane_id);
                 let mut missing_hash = None;
                 let mut dps = vec![];
 
@@ -79,7 +73,7 @@ impl super::Mempool {
                 ));
 
                 while let Some(entry) = entries.next().await {
-                    info!("Processing lane entry {:?}", entry);
+                    trace!("Processing lane entry {:?}", entry);
                     let entry_or_missing = entry.context(format!(
                         "Lane entries from {:?} to {:?} not available locally",
                         buc.from, buc.ccp.consensus_proposal.cut
@@ -88,7 +82,7 @@ impl super::Mempool {
                     match entry_or_missing {
                         EntryOrMissingHash::Entry(_, dp) => dps.insert(0, dp),
                         EntryOrMissingHash::MissingHash(hash) => {
-                            info!(
+                            debug!(
                                 "Data proposal {} not available locally for lane {}",
                                 hash, lane_id
                             );
