@@ -252,16 +252,11 @@ pub mod test {
     use staking::state::Staking;
     use utils::TimestampMs;
 
-    use crate::consensus::ConsensusEvent;
-    use crate::mempool::storage::LaneEntryMetadata;
     use crate::mempool::MempoolNetMessage;
-    use crate::p2p::network::OutboundMessage;
     use crate::tests::autobahn_testing::assert_chanmsg_matches;
-    use hyle_crypto::BlstCrypto;
 
     use super::super::test::*;
     use super::*;
-    use crate::model;
 
     #[test_log::test(tokio::test)]
     async fn signed_block_basic() -> Result<()> {
@@ -510,7 +505,7 @@ pub mod test {
     #[test_log::test(tokio::test)]
     async fn test_sync_missing_dp() -> Result<()> {
         let mut ctx = MempoolTestCtx::new("mempool").await;
-        let mut ctx_owner = MempoolTestCtx::new("mempool_owner").await;
+        let ctx_owner = MempoolTestCtx::new("mempool_owner").await;
         let lane_id = ctx_owner.mempool.own_lane_id().clone();
         let crypto = ctx_owner.mempool.crypto.clone();
 
