@@ -5,8 +5,8 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
 use sdk::utils::parse_calldata;
 use sdk::{
-    Blob, BlobData, BlobIndex, Calldata, ContractAction, ContractName, Identity, SemiStateRevert,
-    StateCommitment, StructuredBlobData,
+    Blob, BlobData, BlobIndex, Calldata, ContractAction, ContractName, Identity, StateCommitment,
+    StructuredBlobData, TransactionalZkContract,
 };
 use sdk::{RunResult, ZkContract};
 use sparse_merkle_tree::traits::Value;
@@ -71,7 +71,7 @@ impl SmtTokenContract {
     }
 }
 
-impl SemiStateRevert for SmtTokenContract {
+impl TransactionalZkContract for SmtTokenContract {
     type State = sdk::StateCommitment;
 
     fn initial_state(&self) -> Self::State {
@@ -80,6 +80,10 @@ impl SemiStateRevert for SmtTokenContract {
 
     fn revert(&mut self, initial_state: Self::State) {
         self.commitment = initial_state;
+    }
+
+    fn on_success(&self) -> sdk::StateCommitment {
+        self.commit()
     }
 }
 

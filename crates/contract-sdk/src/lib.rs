@@ -132,19 +132,26 @@ pub trait ZkContract {
     }
 }
 
-pub trait SemiStateRevert {
+pub trait TransactionalZkContract
+where
+    Self: ZkContract,
+{
     type State;
     fn initial_state(&self) -> Self::State;
 
     fn revert(&mut self, initial_state: Self::State);
+
+    fn on_success(&self) -> StateCommitment {
+        self.commit()
+    }
 }
 
 pub trait FullStateRevert {}
 
-impl<T> SemiStateRevert for T
+impl<T> TransactionalZkContract for T
 where
     T: FullStateRevert,
-    Self: Sized + Clone,
+    Self: Sized + Clone + ZkContract,
 {
     type State = Self;
 
