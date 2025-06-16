@@ -105,7 +105,8 @@ impl DAListener {
             );
             let processed_block = self.node_state.handle_signed_block(&block)?;
             self.bus
-                .send(NodeStateEvent::NewBlock(Box::new(processed_block)))?;
+                .send_waiting_if_full(NodeStateEvent::NewBlock(Box::new(processed_block)))
+                .await?;
             return Ok(());
         }
 
@@ -136,7 +137,8 @@ impl DAListener {
                 let processed_block = self.node_state.handle_signed_block(&block)?;
                 debug!("📦 Handled block outputs: {:?}", processed_block);
                 self.bus
-                    .send(NodeStateEvent::NewBlock(Box::new(processed_block)))?;
+                    .send_waiting_if_full(NodeStateEvent::NewBlock(Box::new(processed_block)))
+                    .await?;
 
                 // Process any buffered blocks that are now in sequence
                 self.process_buffered_blocks().await?;
@@ -172,7 +174,8 @@ impl DAListener {
                 let processed_block = self.node_state.handle_signed_block(&block)?;
                 debug!("📦 Handled buffered block outputs: {:?}", processed_block);
                 self.bus
-                    .send(NodeStateEvent::NewBlock(Box::new(processed_block)))?;
+                    .send_waiting_if_full(NodeStateEvent::NewBlock(Box::new(processed_block)))
+                    .await?;
             } else {
                 error!(
                     "📦 Buffered block is not in sequence: {} {}",
@@ -261,7 +264,7 @@ impl DAListener {
                 self.process_block(block).await?;
             }
             DataAvailabilityEvent::MempoolStatusEvent(mempool_status_event) => {
-                self.bus.send(mempool_status_event)?;
+                self.bus.send_waiting_if_full(mempool_status_event).await?;
             }
         }
 

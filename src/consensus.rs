@@ -653,8 +653,7 @@ impl Consensus {
     fn broadcast_net_message(&mut self, net_message: ConsensusNetMessage) -> Result<()> {
         let signed_msg = self.sign_net_message(net_message)?;
         let enum_variant_name: &'static str = (&signed_msg.msg).into();
-        _ = self
-            .bus
+        self.bus
             .send(OutboundMessage::broadcast(signed_msg))
             .context(format!(
                 "Failed to broadcast {} msg on the bus",
@@ -671,8 +670,7 @@ impl Consensus {
     ) -> Result<()> {
         let signed_msg = self.sign_net_message(net_message)?;
         let enum_variant_name: &'static str = (&signed_msg.msg).into();
-        _ = self
-            .bus
+        self.bus
             .send(OutboundMessage::send(to, signed_msg))
             .context(format!(
                 "Failed to send {} msg on the bus",

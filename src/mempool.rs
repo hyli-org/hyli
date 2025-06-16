@@ -779,8 +779,7 @@ impl Mempool {
     ) -> Result<()> {
         let enum_variant_name: &'static str = (&net_message).into();
         let error_msg = format!("Sending MempoolNetMessage::{enum_variant_name} msg on the bus");
-        _ = self
-            .bus
+        self.bus
             .send(OutboundMessage::send(
                 to,
                 self.crypto.sign_msg_with_header(net_message)?,
