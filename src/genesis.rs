@@ -89,7 +89,7 @@ impl Genesis {
         if already_handled_genesis {
             debug!("🌿 Genesis block already handled, skipping");
             // TODO: do we need a different message?
-            _ = self.bus.send(GenesisEvent::NoGenesis {})?;
+            self.bus.send(GenesisEvent::NoGenesis {})?;
             return Ok(());
         }
 

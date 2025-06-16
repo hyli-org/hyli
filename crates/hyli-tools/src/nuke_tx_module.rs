@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyle_model::{
-    BlobTransaction, ContractAction, Identity, NodeStateEvent, TxHash, verifiers::Secp256k1Blob,
+    BlobTransaction, ContractAction, HyleOutput, Identity, NodeStateEvent, TxHash,
+    verifiers::Secp256k1Blob,
 };
 use hyle_modules::{
     bus::SharedMessageBus, module_bus_client, modules::Module, node_state::NukeTxAction,
@@ -9,7 +10,7 @@ use hyle_modules::{
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use std::{collections::BTreeSet, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf};
 
 module_bus_client! {
     #[derive(Debug)]
@@ -19,15 +20,14 @@ module_bus_client! {
 }
 pub struct NukeTxModuleCtx {
     pub config: Conf,
-    pub tx_hashes: BTreeSet<TxHash>,
+    pub txs: BTreeMap<TxHash, Vec<HyleOutput>>,
 }
 
 pub struct NukeTxModule {
     _bus: NukeTxBusClient,
-    remaining_txs: BTreeSet<TxHash>,
+    remaining_txs: BTreeMap<TxHash, Vec<HyleOutput>>,
     node_client: NodeApiHttpClient,
     secret_key: SecretKey,
-    as_failed: bool,
 }
 
 impl Module for NukeTxModule {
@@ -41,10 +41,9 @@ impl Module for NukeTxModule {
 
         Ok(NukeTxModule {
             _bus: bus,
-            as_failed: ctx.config.as_failed,
             node_client: NodeApiHttpClient::new(ctx.config.node_url)?,
             secret_key,
-            remaining_txs: ctx.tx_hashes.clone(),
+            remaining_txs: ctx.txs.clone(),
         })
     }
 
@@ -56,8 +55,7 @@ impl Module for NukeTxModule {
 
 impl NukeTxModule {
     async fn start(&mut self) -> Result<()> {
-        let txs_to_nuke = self.remaining_txs.clone();
-        self.create_and_send_nuke_tx(&txs_to_nuke).await?;
+        self.create_and_send_nuke_tx().await?;
         Ok(())
     }
 
@@ -72,39 +70,22 @@ impl NukeTxModule {
         (data_hash, signature.serialize_compact())
     }
 
-    async fn create_and_send_nuke_tx(&self, tx_hashes: &BTreeSet<TxHash>) -> Result<()> {
+    async fn create_and_send_nuke_tx(&mut self) -> Result<()> {
         let secp = Secp256k1::new();
         let public_key = PublicKey::from_secret_key(&secp, &self.secret_key);
 
+        // Create secp256k1 blob that signs the transaction hash data
+        let expected_data =
+            borsh::to_vec(&self.remaining_txs).context("Failed to serialize tx_hashes")?;
+        let (data_hash, signature) = self.sign_data(&expected_data);
+
         // Create the NukeTxAction
-        let nuke_action = if self.as_failed {
-            let hyle_output = hyle_model::HyleOutput {
-                success: false,
-                ..Default::default()
-            };
-            NukeTxAction {
-                txs: tx_hashes
-                    .iter()
-                    .map(|tx_hash| (tx_hash.clone(), hyle_output.clone()))
-                    .collect(),
-            }
-        } else {
-            // TODO Compute correct hyle output
-            NukeTxAction {
-                txs: tx_hashes
-                    .iter()
-                    .map(|tx_hash| (tx_hash.clone(), hyle_model::HyleOutput::default()))
-                    .collect(),
-            }
+        let nuke_action = NukeTxAction {
+            txs: std::mem::take(&mut self.remaining_txs),
         };
 
         // Create the nuke blob
         let nuke_blob = nuke_action.as_blob("hyle".into(), None, None);
-
-        // Create secp256k1 blob that signs the transaction hash data
-        let expected_data =
-            borsh::to_vec(&nuke_action.txs).context("Failed to serialize tx_hashes")?;
-        let (data_hash, signature) = self.sign_data(&expected_data);
 
         let secp_blob_data = Secp256k1Blob {
             identity: Identity::new("hyle@hyle"),
@@ -143,7 +124,6 @@ pub struct Conf {
 
     pub node_url: String,
     pub secret_key: String,
-    pub as_failed: bool,
 }
 
 impl Conf {

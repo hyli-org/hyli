@@ -192,7 +192,7 @@ impl SingleNodeConsensus {
             .crypto
             .sign_aggregate((consensus_proposal.hashed(), ConfirmAckMarker), &[])?;
 
-        _ = self.bus.send(ConsensusEvent::CommitConsensusProposal(
+        self.bus.send(ConsensusEvent::CommitConsensusProposal(
             CommittedConsensusProposal {
                 staking: Staking::default(),
                 consensus_proposal,
