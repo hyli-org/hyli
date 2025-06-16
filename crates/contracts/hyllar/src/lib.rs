@@ -21,6 +21,8 @@ pub mod erc20;
 pub const TOTAL_SUPPLY: u128 = 100_000_000_000_000;
 pub const FAUCET_ID: &str = "faucet@hydentity";
 
+impl sdk::FullStateRevert for Hyllar {}
+
 impl ZkContract for Hyllar {
     fn execute(&mut self, calldata: &Calldata) -> RunResult {
         let (action, execution_ctx) = parse_calldata::<HyllarAction>(calldata)?;

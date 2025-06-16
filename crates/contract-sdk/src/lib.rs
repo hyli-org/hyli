@@ -132,6 +132,31 @@ pub trait ZkContract {
     }
 }
 
+pub trait SemiStateRevert {
+    type State;
+    fn initial_state(&self) -> Self::State;
+
+    fn revert(&mut self, initial_state: Self::State);
+}
+
+pub trait FullStateRevert {}
+
+impl<T> SemiStateRevert for T
+where
+    T: FullStateRevert,
+    Self: Sized + Clone,
+{
+    type State = Self;
+
+    fn initial_state(&self) -> Self::State {
+        self.clone()
+    }
+
+    fn revert(&mut self, initial_state: Self::State) {
+        *self = initial_state;
+    }
+}
+
 pub const fn to_u8_array(val: &[u32; 8]) -> [u8; 32] {
     [
         (val[0] & 0xFF) as u8,

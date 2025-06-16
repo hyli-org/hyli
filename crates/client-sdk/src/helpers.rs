@@ -226,7 +226,7 @@ pub mod sp1 {
 
 pub mod test {
     use borsh::BorshDeserialize;
-    use sdk::ZkContract;
+    use sdk::{SemiStateRevert, ZkContract};
 
     use super::*;
 
@@ -249,8 +249,8 @@ pub mod test {
         }
     }
 
-    impl<C: ZkContract + Clone + BorshDeserialize + 'static> ClientSdkProver<Vec<Calldata>>
-        for TxExecutorTestProver<C>
+    impl<C: ZkContract + SemiStateRevert + BorshDeserialize + 'static>
+        ClientSdkProver<Vec<Calldata>> for TxExecutorTestProver<C>
     {
         fn prove(
             &self,

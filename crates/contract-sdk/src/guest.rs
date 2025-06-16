@@ -61,7 +61,7 @@ use borsh::BorshDeserialize;
 use hyle_model::Calldata;
 
 use crate::{utils::as_hyle_output, HyleOutput};
-use crate::{RunResult, ZkContract};
+use crate::{RunResult, SemiStateRevert, ZkContract};
 
 pub trait GuestEnv {
     fn log(&self, message: &str);
@@ -136,7 +136,7 @@ impl GuestEnv for SP1Env {
 /// Panics if the contract initialization fails.
 pub fn execute<Z>(commitment_metadata: &[u8], calldata: &[Calldata]) -> Vec<HyleOutput>
 where
-    Z: ZkContract + Clone + BorshDeserialize + 'static,
+    Z: ZkContract + SemiStateRevert + BorshDeserialize + 'static,
 {
     #[allow(clippy::expect_used, reason = "Required to generate valid proofs")]
     let mut contract: Z =
@@ -156,13 +156,13 @@ where
         return outputs;
     }
     for calldata in calldata.iter() {
-        let initial_contract = contract.clone();
+        let initial_contract = contract.initial_state();
         let mut res: RunResult = contract.execute(calldata);
 
         let mut next_state_commitment = contract.commit();
 
         if res.is_err() {
-            contract = initial_contract; // Reset contract state on error
+            contract.revert(initial_contract);
             next_state_commitment = initial_state_commitment.clone();
         }
         outputs.push(as_hyle_output(
