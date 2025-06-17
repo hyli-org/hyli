@@ -26,6 +26,10 @@ pub fn handle_blob_for_hyle_tld(
         StructuredBlobData::<DeleteContractAction>::try_from(current_blob.data.clone())
     {
         handle_delete_blob(contracts, contract_changes, &reg.parameters)?;
+    } else if let Ok(reg) =
+        StructuredBlobData::<UpdateContractProgramIdAction>::try_from(current_blob.data.clone())
+    {
+        handle_update_program_id_blob(contracts, contract_changes, &reg.parameters)?;
     } else if StructuredBlobData::<NukeTxAction>::try_from(current_blob.data.clone()).is_ok() {
         // Do nothing
     } else {
@@ -95,6 +99,30 @@ fn handle_delete_blob(
     }
 }
 
+fn handle_update_program_id_blob(
+    contracts: &HashMap<ContractName, Contract>,
+    contract_changes: &mut BTreeMap<ContractName, SideEffect>,
+    update: &UpdateContractProgramIdAction,
+) -> Result<()> {
+    // For now, Hyli is allowed to delete all contracts but itself
+    if update.contract_name.0 == "hyle" {
+        bail!("Cannot udpate Hyli contract");
+    }
+
+    // Check it's registered
+    if contracts.contains_key(&update.contract_name)
+        || contract_changes.contains_key(&update.contract_name)
+    {
+        contract_changes.insert(
+            update.contract_name.clone(),
+            SideEffect::UpdateProgramId(update.contract_name.clone(), update.program_id.clone()),
+        );
+        Ok(())
+    } else {
+        bail!("Contract {} is already registered", update.contract_name.0);
+    }
+}
+
 /// Validates hyle contract blobs by ensuring actions are authorized and properly signed
 ///
 /// This function ensures that:
@@ -108,7 +136,10 @@ pub fn validate_hyle_contract_blobs(tx: &BlobTransaction) -> Result<(), String> 
     for (index, blob) in tx.blobs.iter().enumerate() {
         if blob.contract_name.0 == "hyle" {
             // Check identity authorization for privileged actions
-            if StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone()).is_ok() {
+            if StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
+                .is_ok()
+                || StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone()).is_ok()
+            {
                 if tx.identity.0 != HYLI_TLD_ID {
                     return Err(format!(
                         "Unauthorized action for 'hyle' TLD from identity: {}",

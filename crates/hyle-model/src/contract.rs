@@ -829,6 +829,32 @@ impl ContractAction for RegisterContractAction {
 #[derive(
     Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
 )]
+pub struct UpdateContractProgramIdAction {
+    pub contract_name: ContractName,
+    pub program_id: ProgramId,
+}
+
+impl ContractAction for UpdateContractProgramIdAction {
+    fn as_blob(
+        &self,
+        contract_name: ContractName,
+        caller: Option<BlobIndex>,
+        callees: Option<Vec<BlobIndex>>,
+    ) -> Blob {
+        Blob {
+            contract_name,
+            data: BlobData::from(StructuredBlobData {
+                caller,
+                callees,
+                parameters: self.clone(),
+            }),
+        }
+    }
+}
+
+#[derive(
+    Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
+)]
 /// Used as a blob action to delete a contract.
 pub struct DeleteContractAction {
     pub contract_name: ContractName,

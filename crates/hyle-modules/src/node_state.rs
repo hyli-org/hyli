@@ -35,6 +35,7 @@ enum SideEffect {
     Register(Contract, Option<Vec<u8>>),
     // Pass a full Contract because it's simpler in the settlement logic
     UpdateState(Contract),
+    UpdateProgramId(ContractName, ProgramId),
     Delete(ContractName),
 }
 
@@ -200,6 +201,7 @@ impl NodeState {
             registered_contracts: BTreeMap::new(),
             deleted_contracts: BTreeMap::new(),
             updated_states: BTreeMap::new(),
+            updated_program_ids: BTreeMap::new(),
             transactions_events: BTreeMap::new(),
             dp_parent_hashes: BTreeMap::new(),
             lane_ids: BTreeMap::new(),
@@ -1014,6 +1016,16 @@ impl NodeState {
                         .updated_states
                         .insert(contract.name, contract.state);
                 }
+                SideEffect::UpdateProgramId(contract_name, program_id) => {
+                    debug!(
+                        "✍️ Update {} contract program id: {:?}",
+                        &contract_name, program_id
+                    );
+                    self.contracts.get_mut(&contract_name).unwrap().program_id = program_id.clone();
+                    block_under_construction
+                        .updated_program_ids
+                        .insert(contract_name, program_id);
+                }
             }
         }
 
@@ -1191,6 +1203,10 @@ impl NodeState {
                     hyle_output.index
                 )
             }
+        } else if let Ok(_data) =
+            StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
+        {
+            // FIXME: add checks?
         }
 
         Ok(())
