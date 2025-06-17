@@ -408,13 +408,13 @@ pub mod test {
         let dp1_hash = dp1.hashed();
         ctx.mempool
             .lanes
-            .store_data_proposal(&crypto1, &lane_id1, dp1)?;
+            .store_data_proposal(&crypto1, &lane_id1, dp1.clone())?;
 
         let dp2 = DataProposal::new(Some(dp1_hash.clone()), vec![]);
         let dp2_hash = dp2.hashed();
         ctx.mempool
             .lanes
-            .store_data_proposal(&crypto1, &lane_id1, dp2)?;
+            .store_data_proposal(&crypto1, &lane_id1, dp2.clone())?;
 
         // Create a chain of 2 DataProposals in lane 2
         let dp3 = DataProposal::new(None, vec![]);
@@ -465,6 +465,11 @@ pub mod test {
         let result = ctx.mempool.build_signed_block_and_emit(&buc).await;
         assert!(result.is_err());
 
+        assert!(
+            ctx.mempool_event_receiver.try_recv().is_err(),
+            "Should not have started building blocks yet"
+        );
+
         // Verify that a sync request was sent for lane 2's DataProposals
         match ctx
             .assert_send(
@@ -484,14 +489,30 @@ pub mod test {
         // Send the DataProposals from lane 2 to mempool 1
         ctx.mempool
             .lanes
-            .store_data_proposal(&crypto2, &lane_id2, dp3)?;
+            .store_data_proposal(&crypto2, &lane_id2, dp3.clone())?;
         ctx.mempool
             .lanes
-            .store_data_proposal(&crypto2, &lane_id2, dp4)?;
+            .store_data_proposal(&crypto2, &lane_id2, dp4.clone())?;
 
         // Try to build a signed block again
         let result = ctx.mempool.build_signed_block_and_emit(&buc).await;
         assert!(result.is_ok());
+
+        // We've received consecutive blocks so start building
+        assert_chanmsg_matches!(
+            ctx.mempool_event_receiver,
+            MempoolBlockEvent::BuiltSignedBlock(signed_block) => {
+                assert_eq!(signed_block.data_proposals.len(), 2);
+                assert_eq!(
+                    signed_block.data_proposals[0],
+                    (LaneId(crypto1.validator_pubkey().clone()), vec![dp1, dp2])
+                );
+                assert_eq!(
+                    signed_block.data_proposals[1],
+                    (LaneId(crypto2.validator_pubkey().clone()), vec![dp3, dp4])
+                );
+            }
+        );
 
         Ok(())
     }
