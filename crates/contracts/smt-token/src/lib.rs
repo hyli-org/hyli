@@ -6,7 +6,7 @@ use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
 use sdk::utils::parse_calldata;
 use sdk::{
     Blob, BlobData, BlobIndex, Calldata, ContractAction, ContractName, Identity, StateCommitment,
-    StructuredBlobData,
+    StructuredBlobData, TransactionalZkContract,
 };
 use sdk::{RunResult, ZkContract};
 use sparse_merkle_tree::traits::Value;
@@ -68,6 +68,18 @@ impl SmtTokenContract {
             commitment,
             steps: vec![SmtTokenStep { proof, accounts }],
         }
+    }
+}
+
+impl TransactionalZkContract for SmtTokenContract {
+    type State = sdk::StateCommitment;
+
+    fn initial_state(&self) -> Self::State {
+        self.commitment.clone()
+    }
+
+    fn revert(&mut self, initial_state: Self::State) {
+        self.commitment = initial_state;
     }
 }
 

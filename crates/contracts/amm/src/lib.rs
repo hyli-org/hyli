@@ -52,6 +52,8 @@ pub struct Amm {
     pairs: BTreeMap<UnorderedTokenPair, TokenPairAmount>,
 }
 
+impl sdk::FullStateRevert for Amm {}
+
 impl ZkContract for Amm {
     fn execute(&mut self, calldata: &Calldata) -> RunResult {
         let (action, mut execution_ctx) = parse_calldata::<AmmAction>(calldata)?;

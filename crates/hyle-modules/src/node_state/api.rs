@@ -18,7 +18,7 @@ use crate::{
         metrics::BusMetrics,
         SharedMessageBus,
     },
-    node_state::module::{QueryBlockHeight, QueryUnsettledTx},
+    node_state::module::{QueryBlockHeight, QueryUnsettledTx, QueryUnsettledTxCount},
 };
 
 use super::module::{NodeStateCtx, QuerySettledHeight};
@@ -27,6 +27,7 @@ bus_client! {
 struct RestBusClient {
     sender(Query<ContractName, Contract>),
     sender(Query<QuerySettledHeight, BlockHeight>),
+    sender(Query<QueryUnsettledTxCount, u64>),
     sender(Query<QueryBlockHeight, BlockHeight>),
     sender(Query<QueryUnsettledTx, UnsettledBlobTransaction>),
 }
@@ -48,6 +49,8 @@ pub async fn api(bus: SharedMessageBus, ctx: &NodeStateCtx) -> Router<()> {
         .routes(routes!(get_block_height))
         .routes(routes!(get_contract))
         .routes(routes!(get_contract_settled_height))
+        .routes(routes!(get_contract_unsettled_txs_count))
+        .routes(routes!(get_unsettled_txs_count))
         // TODO: figure out if we want to rely on the indexer instead
         .routes(routes!(get_unsettled_tx))
         .split_for_parts();
@@ -136,6 +139,56 @@ pub async fn get_contract_settled_height(
 
 #[utoipa::path(
     get,
+    path = "/contract/{name}/unsettled_txs_count",
+    params(
+        ("name" = String, Path, description = "Contract name"),
+    ),
+    tag = "Node State",
+    responses(
+        (status = OK, body = u64, description = "Returns the number of unsettled transactions for a specific contract")
+    )
+)]
+pub async fn get_contract_unsettled_txs_count(
+    Path(name): Path<ContractName>,
+    State(mut state): State<RouterState>,
+) -> Result<impl IntoResponse, AppError> {
+    match state.bus.request(QueryUnsettledTxCount(Some(name))).await {
+        Ok(count) => Ok(Json(count)),
+        err => {
+            error!("{:?}", err);
+            Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                anyhow!("Error while getting unsettled tx count"),
+            ))
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/unsettled_txs_count",
+    tag = "Node State",
+    responses(
+        (status = OK, body = u64, description = "Returns the number of unsettled transactions")
+    )
+)]
+pub async fn get_unsettled_txs_count(
+    State(mut state): State<RouterState>,
+) -> Result<impl IntoResponse, AppError> {
+    match state.bus.request(QueryUnsettledTxCount(None)).await {
+        Ok(count) => Ok(Json(count)),
+        err => {
+            error!("{:?}", err);
+            Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                anyhow!("Error while getting unsettled tx count"),
+            ))
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
     path = "/unsettled_tx/{blob_tx_hash}",
     params(
         ("blob_tx_hash" = String, Path, description = "Blob tx hash"),
@@ -204,6 +257,10 @@ impl Clone for RouterState {
                     tokio::sync::broadcast::Sender<
                         Query<QuerySettledHeight, BlockHeight>,
                     >,
+                >::get(&self.bus)
+                .clone(),
+                Pick::<
+                    tokio::sync::broadcast::Sender<Query<QueryUnsettledTxCount, u64>>,
                 >::get(&self.bus)
                 .clone(),
                 Pick::<tokio::sync::broadcast::Sender<Query<QueryBlockHeight, BlockHeight>>>::get(

@@ -203,17 +203,12 @@ pub async fn get_proof_stats(
         sqlx::query_as::<_, ProofStat>(
             r#"
 SELECT
-  c.verifier,
-  COUNT(DISTINCT p.tx_hash) AS proof_count
-FROM proofs p
-  JOIN blob_proof_outputs bpo
-    ON p.tx_hash = bpo.proof_tx_hash
-  JOIN contracts c
-    ON bpo.contract_name = c.contract_name
-GROUP BY
-  c.verifier
-ORDER BY
-  proof_count DESC;
+    c.verifier,
+    COUNT(DISTINCT bpo.proof_tx_hash) AS proof_count
+FROM blob_proof_outputs bpo
+JOIN contracts c ON bpo.contract_name = c.contract_name
+GROUP BY c.verifier
+ORDER BY proof_count DESC;
         "#,
         )
         .fetch_all(&state.db)
