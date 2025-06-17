@@ -524,6 +524,10 @@ where
                         block_height =% block.block_height,
                         "This is likely a bug in the prover, please report it to the Hyle team."
                     );
+                    bail!(
+                        "Contract state in store does not match the one onchain. Onchain: {:?}, Store: {:?}",
+                        contract, prover_state
+                    );
                 }
             } else {
                 debug!(
