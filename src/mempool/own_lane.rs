@@ -227,7 +227,7 @@ impl super::Mempool {
 
         let mut cumulative_size = 0;
         let mut current_idx = 0;
-        while cumulative_size < 40_000 && current_idx < self.waiting_dissemination_txs.len() {
+        while cumulative_size < 40_000_000 && current_idx < self.waiting_dissemination_txs.len() {
             if let Some((_tx_hash, tx)) = self.waiting_dissemination_txs.get_index(current_idx) {
                 cumulative_size += tx.estimate_size();
                 current_idx += 1;
