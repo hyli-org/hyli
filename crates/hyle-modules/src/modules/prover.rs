@@ -3,7 +3,7 @@ use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
 use crate::bus::{BusClientSender, SharedMessageBus};
 use crate::{log_error, module_bus_client, module_handle_messages, modules::Module};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::rest_client::NodeApiClient;
 use client_sdk::{helpers::ClientSdkProver, transaction_builder::TxExecutorHandler};
@@ -503,6 +503,35 @@ where
         // Covered by test test_auto_prover_tx_failed_after_success_in_same_block
         for tx in block.successful_txs {
             self.settle_tx_success(&tx)?;
+        }
+
+        if let Some(contract) = block.updated_states.get(&self.ctx.contract_name) {
+            if let Some(prover_state) = self
+                .store
+                .tx_chain
+                .first()
+                .and_then(|first| self.store.state_history.get(first))
+            {
+                if prover_state.get_state_commitment() != *contract {
+                    error!(
+                        cn =% self.ctx.contract_name,
+                        block_height =% block.block_height,
+                        "Contract state in store does not match the one onchain. Onchain: {:?}, Store: {:?}",
+                        contract, prover_state
+                    );
+                    error!(
+                        cn =% self.ctx.contract_name,
+                        block_height =% block.block_height,
+                        "This is likely a bug in the prover, please report it to the Hyle team."
+                    );
+                }
+            } else {
+                debug!(
+                    cn =% self.ctx.contract_name,
+                    block_height =% block.block_height,
+                    "No previous state found in store"
+                );
+            }
         }
 
         if self.store.proving_txs.is_empty()
