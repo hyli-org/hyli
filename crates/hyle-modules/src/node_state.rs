@@ -4,11 +4,12 @@ use anyhow::{bail, Context, Error, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use contract_registration::validate_contract_registration_metadata;
 use contract_registration::{validate_contract_name_registration, validate_state_commitment_size};
-use hyle_tld::handle_blob_for_hyle_tld;
+use hyle_tld::{handle_blob_for_hyle_tld, validate_hyle_contract_blobs};
 use metrics::NodeStateMetrics;
 use ordered_tx_map::OrderedTxMap;
 use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
 use sdk::*;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use timeouts::Timeouts;
 use tracing::{debug, error, info, trace};
@@ -65,6 +66,32 @@ enum BlobTxHandled {
     Duplicate,
     /// No special handling.
     Ok,
+}
+
+#[derive(
+    Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
+)]
+/// Used as a blob action to force a tx to timeout.
+pub struct NukeTxAction {
+    pub txs: BTreeMap<TxHash, Vec<HyleOutput>>,
+}
+
+impl ContractAction for NukeTxAction {
+    fn as_blob(
+        &self,
+        contract_name: ContractName,
+        caller: Option<BlobIndex>,
+        callees: Option<Vec<BlobIndex>>,
+    ) -> Blob {
+        Blob {
+            contract_name,
+            data: BlobData::from(StructuredBlobData {
+                caller,
+                callees,
+                parameters: self.clone(),
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -229,7 +256,7 @@ impl NodeState {
                         }
                         Err(e) => {
                             let err = format!("Failed to handle blob transaction: {:?}", e);
-                            error!("{err}");
+                            error!(tx_hash = %tx_id.1, "{err}");
                             block_under_construction
                                 .transactions_events
                                 .entry(tx_id.1.clone())
@@ -266,7 +293,7 @@ impl NodeState {
                                     let err = format!(
                                         "Failed to handle blob #{} in verified proof transaction {}: {err:#}",
                                         blob_proof_data.hyle_output.index, &tx_id);
-                                    info!("{err}");
+                                    debug!("{err}");
                                     block_under_construction
                                         .transactions_events
                                         .entry(tx_id.1.clone())
@@ -286,25 +313,18 @@ impl NodeState {
             // For each transaction that could not be settled, if it is the next one to be settled, set its timeout
             for unsettled_tx in next_unsettled_txs.iter() {
                 if self.unsettled_transactions.is_next_to_settle(unsettled_tx) {
-                    if let Some(block_height) = self
+                    // Get the contract's timeout window
+                    #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
+                    let timeout_window = self
                         .unsettled_transactions
                         .get(unsettled_tx)
-                        .map(|ut| ut.tx_context.block_height)
-                    {
-                        // Get the contract's timeout window
-                        #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
-                        let timeout_window = self
-                            .unsettled_transactions
-                            .get(unsettled_tx)
-                            .map(|tx| {
-                                self.get_tx_timeout_window(tx.blobs.values().map(|b| &b.blob))
-                            })
-                            .unwrap();
-                        if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
-                            // Update timeouts
-                            self.timeouts
-                                .set(unsettled_tx.clone(), block_height, timeout_window);
-                        }
+                        .map(|tx| self.get_tx_timeout_window(tx.blobs.values().map(|b| &b.blob)))
+                        .unwrap();
+                    if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
+                        // Update timeouts
+                        let current_height = self.current_height;
+                        self.timeouts
+                            .set(unsettled_tx.clone(), current_height, timeout_window);
                     }
                 }
             }
@@ -367,6 +387,17 @@ impl NodeState {
         let (blob_tx_hash, blobs_hash) = (tx.hashed(), tx.blobs_hash());
 
         let mut should_try_and_settle = true;
+
+        // Reject blob Tx with blobs for the 'hyle' contract if:
+        // - the identity is not the TLD itself for a DeleteContractAction
+        // - the NukeTxAction is not signed with the HyliPubKey itself
+        // No need to wait settlement, as this is a static check.
+        if let Err(validation_error) = validate_hyle_contract_blobs(tx) {
+            bail!(
+                "Blob Transaction contains invalid blobs for 'hyle' contract: {}",
+                validation_error
+            );
+        }
 
         // For now, reject blob Tx with blobs for unknown contracts.
         if tx
@@ -659,6 +690,19 @@ impl NodeState {
             }
         };
 
+        // If some blobs are still sequenced behind others, we can only settle this TX as failed.
+        // (failed TX won't change the state, so we can settle it right away).
+        if result.is_ok()
+            && !self
+                .unsettled_transactions
+                .is_next_to_settle(unsettled_tx_hash)
+        {
+            bail!(
+                "Transaction {} is not next to settle, skipping.",
+                unsettled_tx_hash
+            );
+        };
+
         // We are OK to settle now.
 
         #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
@@ -793,7 +837,7 @@ impl NodeState {
         // Transaction was settled, update our state.
 
         // Note all the TXs that we might want to try and settle next
-        let next_txs_to_try_and_settle = settled_tx
+        let mut next_txs_to_try_and_settle = settled_tx
             .blobs
             .iter()
             .filter_map(|(_, blob_metadata)| {
@@ -815,7 +859,7 @@ impl NodeState {
                 .entry(bth.clone())
                 .or_default()
                 .push(TransactionStateEvent::SettledAsFailed);
-            info!("⛈️ Settled tx {} as failed", &bth);
+            info!(tx_height =% block_under_construction.block_height, "⛈️ Settled tx {} as failed", &bth);
 
             block_under_construction.failed_txs.push(bth);
             return next_txs_to_try_and_settle;
@@ -828,7 +872,9 @@ impl NodeState {
             .or_default()
             .push(TransactionStateEvent::Settled);
         self.metrics.add_settled_transactions(1);
-        info!("✨ Settled tx {}", &bth);
+        info!(tx_height =% block_under_construction.block_height, "✨ Settled tx {}", &bth);
+
+        let mut txs_to_nuke = BTreeMap::<TxHash, Vec<HyleOutput>>::new();
 
         // Go through each blob and:
         // - keep track of which blob proof output we used to settle the TX for each blob.
@@ -841,6 +887,12 @@ impl NodeState {
             ));
 
             let blob = blob_metadata.blob;
+
+            // Keep track of all txs to nuke
+            if let Ok(data) = StructuredBlobData::<NukeTxAction>::try_from(blob.data.clone()) {
+                txs_to_nuke.extend(data.parameters.txs.clone());
+            }
+
             // Keep track of all stakers
             if blob.contract_name.0 == "staking" {
                 if let Ok(structured_blob) = StructuredBlob::try_from(blob) {
@@ -954,6 +1006,78 @@ impl NodeState {
                         .insert(contract.name, contract.state);
                 }
             }
+        }
+
+        if !txs_to_nuke.is_empty() {
+            tracing::debug!("Txs to nuke: {:?}", txs_to_nuke);
+
+            // For the first blob of each tx to nuke, we need to create a fake verified proof that has a hyle_output success at false
+            let mut updates: BTreeMap<TxHash, Vec<(ProgramId, HyleOutput)>> = BTreeMap::new();
+
+            for (tx_hash, hyle_outputs) in txs_to_nuke.iter() {
+                if let Some(unsettled_blob_tx) = self.unsettled_transactions.get(tx_hash) {
+                    for hyle_output in hyle_outputs {
+                        if let Some(blob_metadata) = unsettled_blob_tx.blobs.get(&hyle_output.index)
+                        {
+                            let contract_name = &blob_metadata.blob.contract_name;
+                            if let Some(contract) = self.contracts.get(contract_name) {
+                                let mut hyle_output = hyle_output.clone();
+                                // If the hyle_output received is failed, we select the current state of the contract as the initial and next state
+                                if !hyle_output.success {
+                                    hyle_output.initial_state = contract.state.clone();
+                                    hyle_output.next_state = contract.state.clone();
+                                }
+                                updates
+                                    .entry(tx_hash.clone())
+                                    .or_default()
+                                    .push((contract.program_id.clone(), hyle_output.clone()));
+                            } else {
+                                tracing::error!("Contract {} not found", contract_name);
+                            }
+                        } else {
+                            tracing::error!(
+                                "Blob at index {} not found for tx to nuke {}",
+                                hyle_output.index,
+                                tx_hash
+                            );
+                        }
+                    }
+                } else {
+                    tracing::error!("Tx to nuke {} not found", tx_hash);
+                }
+            }
+
+            let mut forced_txs = BTreeSet::new();
+
+            for (tx_hash, hyle_outputs) in updates {
+                if let Some(unsettled_blob_tx) = self.unsettled_transactions.get_mut(&tx_hash) {
+                    for (program_id, hyle_output) in hyle_outputs {
+                        if let Some(blob_metadata) =
+                            unsettled_blob_tx.blobs.get_mut(&hyle_output.index)
+                        {
+                            // This is a hack to force the settlement as failed of the TXs to nuke.
+                            forced_txs.insert(tx_hash.clone());
+                            blob_metadata
+                                .possible_proofs
+                                .push((program_id, hyle_output.clone()));
+                            block_under_construction
+                                .transactions_events
+                                .entry(tx_hash.clone())
+                                .or_default()
+                                .push(TransactionStateEvent::NewProof {
+                                    blob_index: hyle_output.index,
+                                    proof_tx_hash: bth.clone(),
+                                    program_output: hyle_output.program_outputs.clone(),
+                                });
+                        }
+                    }
+                }
+            }
+
+            // Add the TXs to nuke to the list of TXs to try and settle next, in order to force them to fail
+            // WARNING: this is a hack to force the settlement of the TXs to nuke.
+            // WARNING: In the correct path, we are supposed to settle as failed only transaction that are next to settle
+            next_txs_to_try_and_settle.extend(forced_txs);
         }
 
         // Keep track of settled txs
@@ -1422,6 +1546,23 @@ pub mod test {
         }
     }
 
+    pub fn make_hyle_output_ter(blob_tx: BlobTransaction, blob_index: BlobIndex) -> HyleOutput {
+        HyleOutput {
+            version: 1,
+            identity: blob_tx.identity.clone(),
+            index: blob_index,
+            blobs: blob_tx.blobs.clone().into(),
+            tx_blob_count: blob_tx.blobs.len(),
+            initial_state: StateCommitment(vec![7, 8, 9]),
+            next_state: StateCommitment(vec![10, 11, 12]),
+            success: true,
+            tx_hash: blob_tx.hashed(),
+            tx_ctx: None,
+            state_reads: vec![],
+            onchain_effects: vec![],
+            program_outputs: vec![],
+        }
+    }
     pub fn make_hyle_output_with_state(
         blob_tx: BlobTransaction,
         blob_index: BlobIndex,
@@ -1452,10 +1593,33 @@ pub mod test {
                 slot: height,
                 ..ConsensusProposal::default()
             },
-            data_proposals: vec![(LaneId::default(), vec![DataProposal::new(None, txs)])],
+            data_proposals: vec![(
+                LaneId::default(),
+                vec![DataProposal::new(
+                    Some(DataProposalHash(format!("{}", height))),
+                    txs,
+                )],
+            )],
         }
     }
 
+    pub fn craft_signed_block_with_parent_dp_hash(
+        height: u64,
+        txs: Vec<Transaction>,
+        parent_dp_hash: DataProposalHash,
+    ) -> SignedBlock {
+        SignedBlock {
+            certificate: AggregateSignature::default(),
+            consensus_proposal: ConsensusProposal {
+                slot: height,
+                ..ConsensusProposal::default()
+            },
+            data_proposals: vec![(
+                LaneId::default(),
+                vec![DataProposal::new(Some(parent_dp_hash), txs)],
+            )],
+        }
+    }
     impl NodeState {
         // Convenience method to handle a signed block in tests.
         pub fn force_handle_block(&mut self, block: &SignedBlock) -> Block {
@@ -1473,6 +1637,16 @@ pub mod test {
             self.force_handle_block(&block)
         }
 
+        pub fn craft_block_and_handle_with_parent_dp_hash(
+            &mut self,
+            height: u64,
+            txs: Vec<Transaction>,
+            parent_dp_hash: DataProposalHash,
+        ) -> Block {
+            let block = craft_signed_block_with_parent_dp_hash(height, txs, parent_dp_hash);
+            self.force_handle_block(&block)
+        }
+
         pub fn handle_register_contract_effect(&mut self, tx: &RegisterContractEffect) {
             info!("📝 Registering contract {}", tx.contract_name);
             self.contracts.insert(
@@ -1485,6 +1659,14 @@ pub mod test {
                     timeout_window: tx.timeout_window.clone().unwrap_or_default(),
                 },
             );
+        }
+
+        pub fn get_earliest_unsettled_height(
+            &self,
+            contract_name: &ContractName,
+        ) -> Option<BlockHeight> {
+            self.unsettled_transactions
+                .get_earliest_unsettled_height(contract_name)
         }
     }
 

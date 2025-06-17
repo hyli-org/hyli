@@ -132,6 +132,38 @@ pub trait ZkContract {
     }
 }
 
+pub trait TransactionalZkContract
+where
+    Self: ZkContract,
+{
+    type State;
+    fn initial_state(&self) -> Self::State;
+
+    fn revert(&mut self, initial_state: Self::State);
+
+    fn on_success(&mut self) -> StateCommitment {
+        self.commit()
+    }
+}
+
+pub trait FullStateRevert {}
+
+impl<T> TransactionalZkContract for T
+where
+    T: FullStateRevert,
+    Self: Sized + Clone + ZkContract,
+{
+    type State = Self;
+
+    fn initial_state(&self) -> Self::State {
+        self.clone()
+    }
+
+    fn revert(&mut self, initial_state: Self::State) {
+        *self = initial_state;
+    }
+}
+
 pub const fn to_u8_array(val: &[u32; 8]) -> [u8; 32] {
     [
         (val[0] & 0xFF) as u8,

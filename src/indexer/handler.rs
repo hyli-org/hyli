@@ -118,8 +118,8 @@ impl Indexer {
             NodeStateEvent::NewBlock(block) => self.handle_processed_block(*block)?,
         };
 
-        if self.handler_store.blocks.len() >= 1000 {
-            // If we have more than 1000 blocks, we dump the store to the database
+        if self.handler_store.blocks.len() >= self.conf.query_buffer_size {
+            // If we have more than configured blocks, we dump the store to the database
             self.dump_store_to_db().await?;
         }
         if let Some(block) = self.handler_store.blocks.last() {
@@ -268,7 +268,7 @@ impl Indexer {
                 "INSERT INTO blobs (tx_hash, parent_dp_hash, blob_index, identity, contract_name, data, verified) ",
             );
 
-            query_builder.push_values(self.handler_store.tx_data.drain(..), |mut b, s| {
+            query_builder.push_values(self.handler_store.tx_data.iter(), |mut b, s| {
                 let TxDataStore {
                     tx_hash,
                     parent_data_proposal_hash,
@@ -295,6 +295,30 @@ impl Indexer {
                 .execute(&mut *transaction)
                 .await
                 .context("Inserting blobs")?;
+
+            let mut query_builder = QueryBuilder::<Postgres>::new(
+                "INSERT INTO txs_contracts (tx_hash, parent_dp_hash, contract_name) ",
+            );
+
+            query_builder.push_values(self.handler_store.tx_data.drain(..), |mut b, s| {
+                let TxDataStore {
+                    tx_hash,
+                    parent_data_proposal_hash,
+                    contract_name,
+                    ..
+                } = s;
+
+                b.push_bind(tx_hash)
+                    .push_bind(parent_data_proposal_hash)
+                    .push_bind(contract_name);
+            });
+
+            query_builder.push(" ON CONFLICT DO NOTHING");
+            query_builder
+                .build()
+                .execute(&mut *transaction)
+                .await
+                .context("Inserting txs_contracts")?;
         }
 
         // Insert proofs into the database

@@ -73,29 +73,28 @@ pub async fn list_contracts(
             r#"
         SELECT
           c.*,
-          COUNT(DISTINCT (t.tx_hash, t.parent_dp_hash))                             AS total_tx,
-          COUNT(DISTINCT (t.tx_hash, t.parent_dp_hash)) 
+          COUNT(t.*)                             			          AS total_tx,
+          COUNT(t.*)
             FILTER (WHERE t.transaction_status = 'sequenced')   AS unsettled_tx,
           (
-            SELECT bl.height
-                FROM transactions t2
-                JOIN blobs b2
-                  ON t2.parent_dp_hash = b2.parent_dp_hash
-                 AND t2.tx_hash       = b2.tx_hash
-                JOIN blocks bl
-                  ON t2.block_hash = bl.hash
-                WHERE b2.contract_name     = c.contract_name
-                  AND t2.transaction_status = 'sequenced'
-                ORDER BY bl.height ASC
-                LIMIT 1
+            SELECT min(bl.height)
+            FROM blocks bl
+            JOIN transactions t2 ON t2.block_hash = bl.hash
+            WHERE t2.transaction_status = 'sequenced'
+              AND EXISTS (
+                SELECT 1 FROM blobs b2
+                WHERE b2.parent_dp_hash = t2.parent_dp_hash
+                  AND b2.tx_hash = t2.tx_hash
+                  AND b2.contract_name = c.contract_name
+              )
           ) AS earliest_unsettled
         FROM contracts AS c
-        LEFT JOIN blobs AS b
-          ON b.contract_name = c.contract_name
+        LEFT JOIN txs_contracts as tx_c
+          on tx_c.contract_name = c.contract_name
         LEFT JOIN transactions AS t
-          ON t.parent_dp_hash = b.parent_dp_hash
-         AND t.tx_hash       = b.tx_hash
-        GROUP BY c.contract_name
+          ON t.parent_dp_hash = tx_c.parent_dp_hash
+         AND t.tx_hash       = tx_c.tx_hash
+        GROUP BY c.contract_name;
 "#
         )
         .fetch_all(&state.db)
@@ -128,30 +127,29 @@ pub async fn get_contract(
             r#"
         SELECT
           c.*,
-          COUNT(DISTINCT (t.tx_hash, t.parent_dp_hash))                             AS total_tx,
-          COUNT(DISTINCT (t.tx_hash, t.parent_dp_hash)) 
+          COUNT(t.*)                             			          AS total_tx,
+          COUNT(t.*)
             FILTER (WHERE t.transaction_status = 'sequenced')   AS unsettled_tx,
           (
-            SELECT bl.height
-                FROM transactions t2
-                JOIN blobs b2
-                  ON t2.parent_dp_hash = b2.parent_dp_hash
-                 AND t2.tx_hash       = b2.tx_hash
-                JOIN blocks bl
-                  ON t2.block_hash = bl.hash
-                WHERE b2.contract_name     = c.contract_name
-                  AND t2.transaction_status = 'sequenced'
-                ORDER BY bl.height ASC
-                LIMIT 1
+            SELECT min(bl.height)
+            FROM blocks bl
+            JOIN transactions t2 ON t2.block_hash = bl.hash
+            WHERE t2.transaction_status = 'sequenced'
+              AND EXISTS (
+                SELECT 1 FROM blobs b2
+                WHERE b2.parent_dp_hash = t2.parent_dp_hash
+                  AND b2.tx_hash = t2.tx_hash
+                  AND b2.contract_name = c.contract_name
+              )
           ) AS earliest_unsettled
         FROM contracts AS c
-        LEFT JOIN blobs AS b
-          ON b.contract_name = c.contract_name
+        left join txs_contracts as tx_c
+          on tx_c.contract_name = c.contract_name
         LEFT JOIN transactions AS t
-          ON t.parent_dp_hash = b.parent_dp_hash
-         AND t.tx_hash       = b.tx_hash
-        WHERE c.contract_name = $1 
-        GROUP BY c.contract_name
+          ON t.parent_dp_hash = tx_c.parent_dp_hash
+         AND t.tx_hash       = tx_c.tx_hash
+        WHERE c.contract_name = $1
+        GROUP BY c.contract_name;
         "#
         )
         .bind(contract_name)

@@ -8,7 +8,7 @@ pub use axum::Router;
 use axum::{
     body::Body,
     extract::{DefaultBodyLimit, State},
-    http::Request,
+    http::{header, Request, Response, StatusCode},
     middleware::Next,
     response::IntoResponse,
     routing::get,
@@ -18,6 +18,7 @@ use prometheus::{Encoder, Registry, TextEncoder};
 use sdk::{api::NodeInfo, *};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
+use tower_http::catch_panic::CatchPanicLayer;
 use tracing::info;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -101,6 +102,7 @@ impl Module for RestApi {
                 }),
         );
         let app = app
+            .layer(CatchPanicLayer::custom(handle_panic))
             .layer(DefaultBodyLimit::max(ctx.max_body_size)) // 10 MB
             .layer(tower_http::cors::CorsLayer::permissive())
             .layer(axum::middleware::from_fn(request_logger));
@@ -216,4 +218,30 @@ impl Clone for RouterState {
             registry: self.registry.clone(),
         }
     }
+}
+
+fn handle_panic(err: Box<dyn std::any::Any + Send + 'static>) -> Response<String> {
+    let details = if let Some(s) = err.downcast_ref::<String>() {
+        s.clone()
+    } else if let Some(s) = err.downcast_ref::<&str>() {
+        s.to_string()
+    } else {
+        "Unknown panic message".to_string()
+    };
+
+    tracing::error!("Panic occurred in Axum route: {}", details);
+
+    let body = serde_json::json!({
+        "error": {
+            "kind": "panic",
+            "details": details,
+        }
+    });
+    let body = serde_json::to_string(&body).unwrap();
+
+    Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(body)
+        .unwrap()
 }

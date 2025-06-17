@@ -6,7 +6,7 @@ use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
 use sdk::utils::parse_calldata;
 use sdk::{
     Blob, BlobData, BlobIndex, Calldata, ContractAction, ContractName, Identity, StateCommitment,
-    StructuredBlobData,
+    StructuredBlobData, TransactionalZkContract,
 };
 use sdk::{RunResult, ZkContract};
 use sparse_merkle_tree::traits::Value;
@@ -19,7 +19,7 @@ pub mod client;
 #[cfg(feature = "client")]
 pub mod indexer;
 
-pub const TOTAL_SUPPLY: u128 = 100_000_000_000;
+pub const TOTAL_SUPPLY: u128 = 100_000_000_000_000;
 pub const FAUCET_ID: &str = "faucet@hydentity";
 
 /// Enum representing possible calls to Token contract functions.
@@ -68,6 +68,18 @@ impl SmtTokenContract {
             commitment,
             steps: vec![SmtTokenStep { proof, accounts }],
         }
+    }
+}
+
+impl TransactionalZkContract for SmtTokenContract {
+    type State = sdk::StateCommitment;
+
+    fn initial_state(&self) -> Self::State {
+        self.commitment.clone()
+    }
+
+    fn revert(&mut self, initial_state: Self::State) {
+        self.commitment = initial_state;
     }
 }
 
@@ -270,10 +282,12 @@ impl SmtTokenContract {
             }
         }
 
-        accounts
-            .get_mut(&owner)
-            .ok_or("Owner account not found")?
-            .update_allowances(spender.clone(), amount);
+        let account = accounts.get_mut(&owner).unwrap();
+        // 0-balance is treated as non-existent account
+        if account.balance == 0 {
+            return Err(format!("Owner account {} not found", owner));
+        }
+        account.update_allowances(spender.clone(), amount);
 
         let owner_account = accounts.get(&owner).ok_or("Owner account not found")?;
         let owner_key = owner_account.get_key();

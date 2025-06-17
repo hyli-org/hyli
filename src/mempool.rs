@@ -25,7 +25,7 @@ use hyle_modules::{
     bus::SharedMessageBus, log_error, log_warn, module_bus_client, module_handle_messages,
     modules::Module, utils::static_type_map::Pick,
 };
-use hyle_net::ordered_join_set::OrderedJoinSet;
+use hyle_net::{logged_task::logged_task, ordered_join_set::OrderedJoinSet};
 use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
@@ -440,7 +440,7 @@ impl Mempool {
             sync_request_receiver,
         );
 
-        tokio::spawn(async move { mempool_sync.start().await });
+        logged_task(async move { mempool_sync.start().await });
 
         sync_request_sender
     }
@@ -566,13 +566,11 @@ impl Mempool {
                 self.on_poda_update(&lane_id, &data_proposal_hash, signatures)?
             }
             MempoolNetMessage::SyncRequest(from_data_proposal_hash, to_data_proposal_hash) => {
-                info!(
+                debug!(
                     "{} SyncRequest received from validator {validator} for last_data_proposal_hash {:?}",
                     &self.own_lane_id(),
                     to_data_proposal_hash
                 );
-
-                // Redirect to chan
 
                 let Some(to) = to_data_proposal_hash.or(self
                     .lanes
@@ -584,6 +582,7 @@ impl Mempool {
                     return Ok(());
                 };
 
+                // Transmit sync request to the Mempool submodule, to build a reply
                 sync_request_sender
                     .send(SyncRequest {
                         from: from_data_proposal_hash,
@@ -607,7 +606,7 @@ impl Mempool {
         metadata: LaneEntryMetadata,
         data_proposal: DataProposal,
     ) -> Result<()> {
-        trace!("SyncReply from validator {sender_validator}");
+        debug!("SyncReply from validator {sender_validator}");
 
         // TODO: Introduce lane ids in sync reply
         self.metrics.sync_reply_receive(
@@ -637,7 +636,7 @@ impl Mempool {
         }
 
         // Add missing lanes to the validator's lane
-        debug!(
+        trace!(
             "Filling hole with 1 entry (parent dp hash: {:?}) for {lane_id}",
             metadata.parent_data_proposal_hash
         );
@@ -687,7 +686,7 @@ impl Mempool {
         )
         .is_err()
         {
-            info!(
+            debug!(
                 "Buffering poda of {} signatures for DP: {}",
                 podas.len(),
                 data_proposal_hash
@@ -780,8 +779,7 @@ impl Mempool {
     ) -> Result<()> {
         let enum_variant_name: &'static str = (&net_message).into();
         let error_msg = format!("Sending MempoolNetMessage::{enum_variant_name} msg on the bus");
-        _ = self
-            .bus
+        self.bus
             .send(OutboundMessage::send(
                 to,
                 self.crypto.sign_msg_with_header(net_message)?,
