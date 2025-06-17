@@ -18,6 +18,17 @@ use tracing::{debug, info, trace};
 
 use super::Indexer;
 
+fn calculate_optimal_batch_size(params_per_item: usize) -> usize {
+    let max_params: usize = 65000; // Security margin
+    if params_per_item == 0 {
+        return 1;
+    }
+
+    let optimal_size = max_params / params_per_item;
+    // Assert there is at least 1 elem per batch
+    std::cmp::max(1, optimal_size)
+}
+
 #[derive(Debug)]
 pub struct TxDataStore {
     pub tx_hash: TxHashDb,
@@ -176,14 +187,27 @@ impl Indexer {
                 .context("Inserting blocks")?;
         }
 
-        // Insert transactions into the database
+        // Insert transactions into the database with batching
         if !self.handler_store.block_txs.is_empty() {
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO transactions (tx_hash, parent_dp_hash, version, transaction_type, transaction_status, block_hash, block_height, index, lane_id, identity) ",
+            const TRANSACTIONS_PARAMS: usize = 10; // tx_hash, parent_dp_hash, version, transaction_type, transaction_status, block_hash, block_height, index, lane_id, identity
+            let transactions_batch_size = calculate_optimal_batch_size(TRANSACTIONS_PARAMS);
+            let block_txs = std::mem::take(&mut self.handler_store.block_txs);
+            let block_txs_vec: Vec<_> = block_txs.into_iter().collect();
+            let chunks: Vec<_> = block_txs_vec.chunks(transactions_batch_size).collect();
+
+            info!(
+                "Inserting {} transactions in {} batches of up to {} items each (calculated from {} params per item)",
+                block_txs_vec.len(),
+                chunks.len(),
+                transactions_batch_size,
+                TRANSACTIONS_PARAMS
             );
-            query_builder.push_values(
-                self.handler_store.block_txs.drain(),
-                |mut b, (tx_id, (index, block, tx))| {
+
+            for (batch_idx, chunk) in chunks.iter().enumerate() {
+                let mut query_builder = QueryBuilder::<Postgres>::new(
+                    "INSERT INTO transactions (tx_hash, parent_dp_hash, version, transaction_type, transaction_status, block_hash, block_height, index, lane_id, identity) ",
+                );
+                query_builder.push_values(chunk.iter(), |mut b, (tx_id, (index, block, tx))| {
                     let version = log_error!(
                         i32::try_from(tx.version).map_err(|_| anyhow::anyhow!(
                             "Tx version is too large to fit into an i32"
@@ -200,7 +224,7 @@ impl Indexer {
                     )
                     .unwrap_or_default();
 
-                    let tx_type = TransactionTypeDb::from(&tx);
+                    let tx_type = TransactionTypeDb::from(tx);
                     let tx_status = match tx.transaction_data {
                         TransactionData::Blob(_) => TransactionStatusDb::Sequenced,
                         TransactionData::Proof(_) => TransactionStatusDb::Success,
@@ -223,16 +247,11 @@ impl Indexer {
                         _ => None,
                     };
 
-                    let parent_data_proposal_hash: &DataProposalHashDb = &tx_id.0.into();
-                    let tx_hash: TxHashDb = tx_id.1.into();
-
-                    info!(
-                        "Inserting transaction {} with parent data proposal hash {}",
-                        tx_hash.0, parent_data_proposal_hash.0
-                    );
+                    let parent_data_proposal_hash: DataProposalHashDb = tx_id.0.clone().into();
+                    let tx_hash: TxHashDb = tx_id.1.clone().into();
 
                     b.push_bind(tx_hash)
-                        .push_bind(parent_data_proposal_hash.clone())
+                        .push_bind(parent_data_proposal_hash)
                         .push_bind(version)
                         .push_bind(tx_type)
                         .push_bind(tx_status)
@@ -241,121 +260,195 @@ impl Indexer {
                         .push_bind(index)
                         .push_bind(lane_id)
                         .push_bind(identity);
-                },
-            );
-            query_builder.push(" ON CONFLICT(tx_hash, parent_dp_hash) DO UPDATE SET ");
-            query_builder.push("block_hash=EXCLUDED.block_hash, block_height=EXCLUDED.block_height, index=EXCLUDED.index, lane_id=EXCLUDED.lane_id, identity=EXCLUDED.identity,");
-            // This data comes from post-consensus so always erase earlier statuses, but not later ones.
-            query_builder.push(
-                "transaction_status = case
-                    when transactions.transaction_status IS NULL THEN EXCLUDED.transaction_status
-                    when transactions.transaction_status = 'waiting_dissemination' THEN EXCLUDED.transaction_status
-                    when transactions.transaction_status = 'data_proposal_created' THEN EXCLUDED.transaction_status
-                    else transactions.transaction_status
-                end",
-            );
+                });
+                query_builder.push(" ON CONFLICT(tx_hash, parent_dp_hash) DO UPDATE SET ");
+                query_builder.push("block_hash=EXCLUDED.block_hash, block_height=EXCLUDED.block_height, index=EXCLUDED.index, lane_id=EXCLUDED.lane_id, identity=EXCLUDED.identity,");
+                // This data comes from post-consensus so always erase earlier statuses, but not later ones.
+                query_builder.push(
+                    "transaction_status = case
+                        when transactions.transaction_status IS NULL THEN EXCLUDED.transaction_status
+                        when transactions.transaction_status = 'waiting_dissemination' THEN EXCLUDED.transaction_status
+                        when transactions.transaction_status = 'data_proposal_created' THEN EXCLUDED.transaction_status
+                        else transactions.transaction_status
+                    end",
+                );
 
-            query_builder
-                .build()
-                .execute(&mut *transaction)
-                .await
-                .context("Inserting transactions")?;
+                query_builder
+                    .build()
+                    .execute(&mut *transaction)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Inserting transactions batch {} of {}",
+                            batch_idx + 1,
+                            chunks.len()
+                        )
+                    })?;
+            }
         }
 
-        // Insert blobs into the database
+        // Insert blobs into the database with batching
         if !self.handler_store.tx_data.is_empty() {
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO blobs (tx_hash, parent_dp_hash, blob_index, identity, contract_name, data, verified) ",
+            const TX_DATA_PARAMS: usize = 7; // tx_hash, parent_dp_hash, blob_index, identity, contract_name, data, verified
+            let blob_batch_size = calculate_optimal_batch_size(TX_DATA_PARAMS);
+
+            let tx_data = std::mem::take(&mut self.handler_store.tx_data);
+            let chunks: Vec<_> = tx_data.chunks(blob_batch_size).collect();
+
+            info!(
+                "Inserting {} blobs in {} batches of up to {} items each (calculated from {} params per item)",
+                tx_data.len(),
+                chunks.len(),
+                blob_batch_size,
+                TX_DATA_PARAMS
             );
 
-            query_builder.push_values(self.handler_store.tx_data.iter(), |mut b, s| {
-                let TxDataStore {
-                    tx_hash,
-                    parent_data_proposal_hash,
-                    blob_index,
-                    identity,
-                    contract_name,
-                    blob_data,
-                    verified,
-                } = s;
+            for (batch_idx, chunk) in chunks.iter().enumerate() {
+                let mut query_builder = QueryBuilder::<Postgres>::new(
+                    "INSERT INTO blobs (tx_hash, parent_dp_hash, blob_index, identity, contract_name, data, verified) ",
+                );
 
-                b.push_bind(tx_hash)
-                    .push_bind(parent_data_proposal_hash)
-                    .push_bind(blob_index)
-                    .push_bind(identity)
-                    .push_bind(contract_name)
-                    .push_bind(blob_data)
-                    .push_bind(verified);
-            });
+                query_builder.push_values(chunk.iter(), |mut b, s| {
+                    let TxDataStore {
+                        tx_hash,
+                        parent_data_proposal_hash,
+                        blob_index,
+                        identity,
+                        contract_name,
+                        blob_data,
+                        verified,
+                    } = s;
 
-            query_builder.push(" ON CONFLICT DO NOTHING");
+                    b.push_bind(tx_hash)
+                        .push_bind(parent_data_proposal_hash)
+                        .push_bind(blob_index)
+                        .push_bind(identity)
+                        .push_bind(contract_name)
+                        .push_bind(blob_data)
+                        .push_bind(verified);
+                });
 
-            query_builder
-                .build()
-                .execute(&mut *transaction)
-                .await
-                .context("Inserting blobs")?;
+                query_builder.push(" ON CONFLICT DO NOTHING");
 
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO txs_contracts (tx_hash, parent_dp_hash, contract_name) ",
-            );
+                query_builder
+                    .build()
+                    .execute(&mut *transaction)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Inserting blobs batch {} of {}",
+                            batch_idx + 1,
+                            chunks.len()
+                        )
+                    })?;
+            }
 
-            query_builder.push_values(self.handler_store.tx_data.drain(..), |mut b, s| {
-                let TxDataStore {
-                    tx_hash,
-                    parent_data_proposal_hash,
-                    contract_name,
-                    ..
-                } = s;
+            // Insert txs_contracts with batching
+            const TX_CONTRACTS_PARAMS: usize = 3; // tx_hash, parent_dp_hash, contract_name
+            let tx_contracts_batch_size = calculate_optimal_batch_size(TX_CONTRACTS_PARAMS);
+            let tx_contracts_chunks: Vec<_> = tx_data.chunks(tx_contracts_batch_size).collect();
 
-                b.push_bind(tx_hash)
-                    .push_bind(parent_data_proposal_hash)
-                    .push_bind(contract_name);
-            });
+            for (batch_idx, chunk) in tx_contracts_chunks.iter().enumerate() {
+                let mut query_builder = QueryBuilder::<Postgres>::new(
+                    "INSERT INTO txs_contracts (tx_hash, parent_dp_hash, contract_name) ",
+                );
 
-            query_builder.push(" ON CONFLICT DO NOTHING");
-            query_builder
-                .build()
-                .execute(&mut *transaction)
-                .await
-                .context("Inserting txs_contracts")?;
+                query_builder.push_values(chunk.iter(), |mut b, s| {
+                    let TxDataStore {
+                        tx_hash,
+                        parent_data_proposal_hash,
+                        contract_name,
+                        ..
+                    } = s;
+
+                    b.push_bind(tx_hash)
+                        .push_bind(parent_data_proposal_hash)
+                        .push_bind(contract_name);
+                });
+
+                query_builder.push(" ON CONFLICT DO NOTHING");
+                query_builder
+                    .build()
+                    .execute(&mut *transaction)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Inserting txs_contracts batch {} of {}",
+                            batch_idx + 1,
+                            tx_contracts_chunks.len()
+                        )
+                    })?;
+            }
         }
 
-        // Insert proofs into the database
+        // Insert proofs into the database with batching
         if !self.handler_store.tx_data_proofs.is_empty() {
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO proofs (parent_dp_hash, tx_hash, proof) ",
+            const PROOFS_PARAMS: usize = 3; // parent_dp_hash, tx_hash, proof
+            let proofs_batch_size = calculate_optimal_batch_size(PROOFS_PARAMS);
+            let tx_data_proofs = std::mem::take(&mut self.handler_store.tx_data_proofs);
+            let chunks: Vec<_> = tx_data_proofs.chunks(proofs_batch_size).collect();
+
+            info!(
+                "Inserting {} proofs in {} batches of up to {} items each (calculated from {} params per item)",
+                tx_data_proofs.len(),
+                chunks.len(),
+                proofs_batch_size,
+                PROOFS_PARAMS
             );
 
-            query_builder.push_values(self.handler_store.tx_data_proofs.drain(..), |mut b, s| {
-                let TxProofStore {
-                    tx_hash,
-                    parent_data_proposal_hash,
-                    proof,
-                } = s;
+            for (batch_idx, chunk) in chunks.iter().enumerate() {
+                let mut query_builder = QueryBuilder::<Postgres>::new(
+                    "INSERT INTO proofs (parent_dp_hash, tx_hash, proof) ",
+                );
 
-                b.push_bind(parent_data_proposal_hash)
-                    .push_bind(tx_hash)
-                    .push_bind(proof);
-            });
+                query_builder.push_values(chunk.iter(), |mut b, s| {
+                    let TxProofStore {
+                        tx_hash,
+                        parent_data_proposal_hash,
+                        proof,
+                    } = s;
 
-            query_builder.push(" ON CONFLICT(parent_dp_hash, tx_hash) DO NOTHING");
+                    b.push_bind(parent_data_proposal_hash)
+                        .push_bind(tx_hash)
+                        .push_bind(proof);
+                });
 
-            query_builder
-                .build()
-                .execute(&mut *transaction)
-                .await
-                .context("Inserting proofs")?;
+                query_builder.push(" ON CONFLICT(parent_dp_hash, tx_hash) DO NOTHING");
+
+                query_builder
+                    .build()
+                    .execute(&mut *transaction)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Inserting proofs batch {} of {}",
+                            batch_idx + 1,
+                            chunks.len()
+                        )
+                    })?;
+            }
         }
 
-        // Insert transaction events into the database
+        // Insert transaction events into the database with batching
         if !self.handler_store.transactions_events.is_empty() {
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO transaction_state_events (block_hash, block_height, index, tx_hash, parent_dp_hash, events) ",
+            const TX_EVENTS_PARAMS: usize = 6; // block_hash, block_height, index, tx_hash, parent_dp_hash, events
+            let tx_events_batch_size = calculate_optimal_batch_size(TX_EVENTS_PARAMS);
+            let transactions_events = std::mem::take(&mut self.handler_store.transactions_events);
+            let chunks: Vec<_> = transactions_events.chunks(tx_events_batch_size).collect();
+
+            info!(
+                "Inserting {} transaction events in {} batches of up to {} items each (calculated from {} params per item)",
+                transactions_events.len(),
+                chunks.len(),
+                tx_events_batch_size,
+                TX_EVENTS_PARAMS
             );
-            query_builder.push_values(
-                self.handler_store.transactions_events.drain(..),
-                |mut b, s| {
+
+            for (batch_idx, chunk) in chunks.iter().enumerate() {
+                let mut query_builder = QueryBuilder::<Postgres>::new(
+                    "INSERT INTO transaction_state_events (block_hash, block_height, index, tx_hash, parent_dp_hash, events) ",
+                );
+                query_builder.push_values(chunk.iter(), |mut b, s| {
                     let TxEventStore {
                         block_hash,
                         block_height,
@@ -372,78 +465,126 @@ impl Indexer {
                         .push_bind(parent_data_proposal_hash)
                         .push_bind(events)
                         .push_unseparated("::jsonb");
-                },
-            );
+                });
 
-            query_builder
-                .build()
-                .execute(&mut *transaction)
-                .await
-                .context("Inserting transactions events")?;
+                query_builder
+                    .build()
+                    .execute(&mut *transaction)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Inserting transaction events batch {} of {}",
+                            batch_idx + 1,
+                            chunks.len()
+                        )
+                    })?;
+            }
         }
 
-        // Insert contracts into the database
+        // Insert contracts into the database with batching
         if !self.handler_store.contracts.is_empty() {
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO contracts (tx_hash, parent_dp_hash, verifier, program_id, state_commitment, contract_name) ",
+            const CONTRACTS_PARAMS: usize = 6; // tx_hash, parent_dp_hash, verifier, program_id, state_commitment, contract_name
+            let contracts_batch_size = calculate_optimal_batch_size(CONTRACTS_PARAMS);
+            let contracts = std::mem::take(&mut self.handler_store.contracts);
+            let contracts_vec: Vec<_> = contracts.into_values().collect();
+            let chunks: Vec<_> = contracts_vec.chunks(contracts_batch_size).collect();
+
+            info!(
+                "Inserting {} contracts in {} batches of up to {} items each (calculated from {} params per item)",
+                contracts_vec.len(),
+                chunks.len(),
+                contracts_batch_size,
+                CONTRACTS_PARAMS
             );
 
-            let c = std::mem::take(&mut self.handler_store.contracts);
-            query_builder.push_values(c.values(), |mut b, s| {
-                let TxContractStore {
-                    tx_hash,
-                    parent_data_proposal_hash,
-                    verifier,
-                    program_id,
-                    state_commitment,
-                    contract_name,
-                } = s;
+            for (batch_idx, chunk) in chunks.iter().enumerate() {
+                let mut query_builder = QueryBuilder::<Postgres>::new(
+                    "INSERT INTO contracts (tx_hash, parent_dp_hash, verifier, program_id, state_commitment, contract_name) ",
+                );
 
-                b.push_bind(tx_hash)
-                    .push_bind(parent_data_proposal_hash)
-                    .push_bind(verifier)
-                    .push_bind(program_id)
-                    .push_bind(state_commitment)
-                    .push_bind(contract_name);
-            });
+                query_builder.push_values(chunk.iter(), |mut b, s| {
+                    let TxContractStore {
+                        tx_hash,
+                        parent_data_proposal_hash,
+                        verifier,
+                        program_id,
+                        state_commitment,
+                        contract_name,
+                    } = s;
 
-            query_builder.push(" ON CONFLICT (contract_name) DO UPDATE SET ");
-            query_builder.push("tx_hash = EXCLUDED.tx_hash, ");
-            query_builder.push("parent_dp_hash = EXCLUDED.parent_dp_hash, ");
-            query_builder.push("verifier = EXCLUDED.verifier, ");
-            query_builder.push("program_id = EXCLUDED.program_id, ");
-            query_builder.push("state_commitment = EXCLUDED.state_commitment ");
+                    b.push_bind(tx_hash)
+                        .push_bind(parent_data_proposal_hash)
+                        .push_bind(verifier)
+                        .push_bind(program_id)
+                        .push_bind(state_commitment)
+                        .push_bind(contract_name);
+                });
 
-            query_builder
-                .build()
-                .execute(&mut *transaction)
-                .await
-                .context("Inserting contracts")?;
+                query_builder.push(" ON CONFLICT (contract_name) DO UPDATE SET ");
+                query_builder.push("tx_hash = EXCLUDED.tx_hash, ");
+                query_builder.push("parent_dp_hash = EXCLUDED.parent_dp_hash, ");
+                query_builder.push("verifier = EXCLUDED.verifier, ");
+                query_builder.push("program_id = EXCLUDED.program_id, ");
+                query_builder.push("state_commitment = EXCLUDED.state_commitment ");
+
+                query_builder
+                    .build()
+                    .execute(&mut *transaction)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Inserting contracts batch {} of {}",
+                            batch_idx + 1,
+                            chunks.len()
+                        )
+                    })?;
+            }
         }
 
-        // Insert contract states into the database
+        // Insert contract states into the database with batching
         if !self.handler_store.contract_states.is_empty() {
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO contract_state (contract_name, block_hash, state_commitment) ",
+            const CONTRACT_STATES_PARAMS: usize = 3; // contract_name, block_hash, state_commitment
+            let contract_states_batch_size = calculate_optimal_batch_size(CONTRACT_STATES_PARAMS);
+            let contract_states = std::mem::take(&mut self.handler_store.contract_states);
+            let chunks: Vec<_> = contract_states.chunks(contract_states_batch_size).collect();
+
+            info!(
+                "Inserting {} contract states in {} batches of up to {} items each (calculated from {} params per item)",
+                contract_states.len(),
+                chunks.len(),
+                contract_states_batch_size,
+                CONTRACT_STATES_PARAMS
             );
 
-            query_builder.push_values(self.handler_store.contract_states.drain(..), |mut b, s| {
-                let TxContractStateStore {
-                    contract_name,
-                    block_hash,
-                    state_commitment,
-                } = s;
+            for (batch_idx, chunk) in chunks.iter().enumerate() {
+                let mut query_builder = QueryBuilder::<Postgres>::new(
+                    "INSERT INTO contract_state (contract_name, block_hash, state_commitment) ",
+                );
 
-                b.push_bind(contract_name)
-                    .push_bind(block_hash)
-                    .push_bind(state_commitment);
-            });
+                query_builder.push_values(chunk.iter(), |mut b, s| {
+                    let TxContractStateStore {
+                        contract_name,
+                        block_hash,
+                        state_commitment,
+                    } = s;
 
-            query_builder
-                .build()
-                .execute(&mut *transaction)
-                .await
-                .context("Inserting contract states")?;
+                    b.push_bind(contract_name)
+                        .push_bind(block_hash)
+                        .push_bind(state_commitment);
+                });
+
+                query_builder
+                    .build()
+                    .execute(&mut *transaction)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Inserting contract states batch {} of {}",
+                            batch_idx + 1,
+                            chunks.len()
+                        )
+                    })?;
+            }
         }
 
         // Then delete contracts that were deleted (slightly inefficient but we don't expect many deletions)
@@ -455,15 +596,31 @@ impl Indexer {
                 .context("Deleting contracts")?;
         }
 
-        // Insert blob proof outputs into the database
+        // Insert blob proof outputs into the database with batching
         if !self.handler_store.blob_proof_outputs.is_empty() {
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO blob_proof_outputs (proof_tx_hash, proof_parent_dp_hash, blob_tx_hash, blob_parent_dp_hash, blob_index, blob_proof_output_index, contract_name, hyle_output, settled) ",
+            const BLOB_PROOF_OUTPUT_PARAMS: usize = 9; // proof_tx_hash, proof_parent_dp_hash, blob_tx_hash, blob_parent_dp_hash, blob_index, blob_proof_output_index, contract_name, hyle_output, settled
+            let blob_proof_outputs_batch_size =
+                calculate_optimal_batch_size(BLOB_PROOF_OUTPUT_PARAMS);
+
+            let blob_proof_outputs = std::mem::take(&mut self.handler_store.blob_proof_outputs);
+            let chunks: Vec<_> = blob_proof_outputs
+                .chunks(blob_proof_outputs_batch_size)
+                .collect();
+
+            info!(
+                "Inserting {} blob proof outputs in {} batches of up to {} items each (calculated from {} params per item)",
+                blob_proof_outputs.len(),
+                chunks.len(),
+                blob_proof_outputs_batch_size,
+                BLOB_PROOF_OUTPUT_PARAMS
             );
 
-            query_builder.push_values(
-                self.handler_store.blob_proof_outputs.drain(..),
-                |mut b, s| {
+            for (batch_idx, chunk) in chunks.iter().enumerate() {
+                let mut query_builder = QueryBuilder::<Postgres>::new(
+                    "INSERT INTO blob_proof_outputs (proof_tx_hash, proof_parent_dp_hash, blob_tx_hash, blob_parent_dp_hash, blob_index, blob_proof_output_index, contract_name, hyle_output, settled) ",
+                );
+
+                query_builder.push_values(chunk.iter(), |mut b, s| {
                     let TxBlobProofOutputStore {
                         proof_tx_hash,
                         proof_parent_dp_hash,
@@ -486,14 +643,20 @@ impl Indexer {
                         .push_bind(hyle_output)
                         .push_unseparated("::jsonb")
                         .push_bind(settled);
-                },
-            );
+                });
 
-            query_builder
-                .build()
-                .execute(&mut *transaction)
-                .await
-                .context("Inserting blob proof outputs")?;
+                query_builder
+                    .build()
+                    .execute(&mut *transaction)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Inserting blob proof outputs batch {} of {}",
+                            batch_idx + 1,
+                            chunks.len()
+                        )
+                    })?;
+            }
         }
 
         if !self.handler_store.sql_updates.is_empty() {
@@ -565,7 +728,9 @@ impl Indexer {
                     })
                     .collect();
 
-                let mut query_builder = QueryBuilder::new("INSERT INTO transactions (tx_hash, parent_dp_hash, version, transaction_type, transaction_status)");
+                let mut query_builder = QueryBuilder::new(
+                    "INSERT INTO transactions (tx_hash, parent_dp_hash, version, transaction_type, transaction_status)",
+                );
 
                 query_builder.push_values(unique_txs_metadatas, |mut b, value| {
                     let tx_type: TransactionTypeDb = value.transaction_kind.into();
