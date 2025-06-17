@@ -134,9 +134,23 @@ async fn test_full_settlement_flow() -> Result<()> {
     let contract = client.get_contract("c2.hyle".into()).await?;
     assert_eq!(contract.state.0, vec![8, 8, 8]);
 
+    // Indexer can take a little longer, retry a few times
     let pg_client =
         IndexerApiHttpClient::new(format!("http://localhost:{rest_server_port}/")).unwrap();
-    let contract = pg_client.get_indexer_contract(&"c1".into()).await?;
+    let mut tries = 0;
+    let contract = loop {
+        match pg_client.get_indexer_contract(&"c1".into()).await {
+            Ok(contract) => break contract,
+            Err(e) => {
+                info!("Indexer not ready yet: {e}, retrying...");
+                tries += 1;
+                if tries > 10 {
+                    return Err(e);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        }
+    };
     assert_eq!(contract.state_commitment, vec![4, 5, 6]);
 
     let pg_client =
