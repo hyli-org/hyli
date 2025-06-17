@@ -392,6 +392,7 @@ pub mod test {
         Ok(())
     }
 
+    #[allow(clippy::indexing_slicing)]
     #[test_log::test(tokio::test)]
     async fn test_signed_buffer_block_ccp() -> Result<()> {
         let mut ctx = MempoolTestCtx::new("mempool").await;
