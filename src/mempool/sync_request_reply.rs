@@ -11,7 +11,10 @@ use hyle_net::clock::TimestampMsClock;
 use tokio::pin;
 use tracing::{debug, info, warn};
 
-use crate::p2p::network::{HeaderSigner, OutboundMessage};
+use crate::{
+    mempool::storage::MetadataOrMissingHash,
+    p2p::network::{HeaderSigner, OutboundMessage},
+};
 
 use super::{
     metrics::MempoolMetrics,
@@ -128,7 +131,7 @@ impl MempoolSync {
         };
 
         while let Some(entry) = stream.next().await {
-            if let Ok((metadata, dp_hash)) =
+            if let Ok(MetadataOrMissingHash::Metadata(metadata, dp_hash)) =
                 log_warn!(entry, "Getting entry metada to prepare sync replies")
             {
                 self.todo
