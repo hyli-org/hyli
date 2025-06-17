@@ -196,6 +196,7 @@ impl NodeState {
                 })
                 .collect(),
             timed_out_txs: vec![], // Added below as it needs the block
+            dropped_duplicate_txs: vec![],
             registered_contracts: BTreeMap::new(),
             deleted_contracts: BTreeMap::new(),
             updated_states: BTreeMap::new(),
@@ -246,6 +247,14 @@ impl NodeState {
                                 "Blob transaction: {:?} is already in the unsettled map, ignoring.",
                                 tx_id
                             );
+                            block_under_construction
+                                .dropped_duplicate_txs
+                                .push(tx_id.clone());
+                            block_under_construction
+                                .transactions_events
+                                .entry(tx_id.1.clone())
+                                .or_default()
+                                .push(TransactionStateEvent::DroppedAsDuplicate);
                         }
                         Ok(BlobTxHandled::Ok) => {
                             block_under_construction
