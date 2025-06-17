@@ -144,7 +144,7 @@ async fn test_full_settlement_flow() -> Result<()> {
                 info!("Indexer not ready yet: {e}, retrying...");
                 tries += 1;
                 if tries > 10 {
-                    return Err(e.into());
+                    return Err(e);
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
