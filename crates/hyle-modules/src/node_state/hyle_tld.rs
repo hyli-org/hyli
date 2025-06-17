@@ -113,10 +113,12 @@ fn handle_update_program_id_blob(
     if contracts.contains_key(&update.contract_name)
         || contract_changes.contains_key(&update.contract_name)
     {
-        contract_changes.insert(
-            update.contract_name.clone(),
-            SideEffect::UpdateProgramId(update.contract_name.clone(), update.program_id.clone()),
-        );
+        let new_update =
+            SideEffect::UpdateProgramId(update.contract_name.clone(), update.program_id.clone());
+        contract_changes
+            .entry(update.contract_name.clone())
+            .and_modify(|c| c.apply(new_update.clone()))
+            .or_insert(new_update);
         Ok(())
     } else {
         bail!("Contract {} is already registered", update.contract_name.0);

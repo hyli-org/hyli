@@ -36,6 +36,7 @@ enum SideEffect {
     // Pass a full Contract because it's simpler in the settlement logic
     UpdateState(Contract),
     UpdateProgramId(ContractName, ProgramId),
+    UpdateStateAndProgramId(Contract),
     Delete(ContractName),
 }
 
@@ -46,7 +47,32 @@ impl SideEffect {
             (SideEffect::Register(reg, _), SideEffect::UpdateState(contract)) => {
                 reg.state = contract.state
             }
+            (SideEffect::Register(reg, _), SideEffect::UpdateProgramId(_, program_id)) => {
+                reg.program_id = program_id;
+            }
+            (SideEffect::Register(reg, _), SideEffect::UpdateStateAndProgramId(contract)) => {
+                reg.state = contract.state;
+                reg.program_id = contract.program_id;
+            }
+
             (SideEffect::Delete(_), SideEffect::UpdateState(_)) => {}
+            (SideEffect::Delete(_), SideEffect::UpdateProgramId(..)) => {}
+            (SideEffect::Delete(_), SideEffect::UpdateStateAndProgramId(..)) => {}
+
+            (me, SideEffect::UpdateState(mut contract)) => {
+                if let SideEffect::UpdateProgramId(_, program_id) = &me {
+                    contract.program_id = program_id.clone();
+                }
+                *me = SideEffect::UpdateStateAndProgramId(contract);
+            }
+            (me, SideEffect::UpdateProgramId(_, program_id)) => {
+                if let SideEffect::UpdateState(contract) = &me {
+                    let mut contract = contract.clone();
+                    contract.program_id = program_id;
+
+                    *me = SideEffect::UpdateStateAndProgramId(contract);
+                }
+            }
             (me, other) => *me = other,
         }
     }
@@ -1025,6 +1051,23 @@ impl NodeState {
                     block_under_construction
                         .updated_program_ids
                         .insert(contract_name, program_id);
+                }
+                SideEffect::UpdateStateAndProgramId(contract) => {
+                    debug!(
+                        "✍️ Update {} contract state and program id: {:?}",
+                        &contract.name, contract.state
+                    );
+                    self.contracts.get_mut(&contract.name).unwrap().state = contract.state.clone();
+                    self.contracts.get_mut(&contract.name).unwrap().program_id =
+                        contract.program_id.clone();
+
+                    block_under_construction
+                        .updated_states
+                        .insert(contract.name.clone(), contract.state);
+
+                    block_under_construction
+                        .updated_program_ids
+                        .insert(contract.name, contract.program_id);
                 }
             }
         }
