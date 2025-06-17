@@ -1599,7 +1599,7 @@ pub mod test {
 
         // Create a chain of 3 DataProposals
         let dp1 = DataProposal::new(None, vec![]);
-        let dp1_size = LaneBytesSize(dp1.estimate_size() as u64);
+        let _dp1_size = LaneBytesSize(dp1.estimate_size() as u64);
         let dp1_hash = dp1.hashed();
         ctx.mempool
             .lanes
@@ -1613,8 +1613,8 @@ pub mod test {
             .store_data_proposal(&crypto, &lane_id, dp2.clone())?;
 
         let dp3 = DataProposal::new(Some(dp2_hash.clone()), vec![]);
-        let dp3_size = LaneBytesSize(dp3.estimate_size() as u64);
-        let dp3_hash = dp3.hashed();
+        let _dp3_size = LaneBytesSize(dp3.estimate_size() as u64);
+        let _dp3_hash = dp3.hashed();
         ctx.mempool
             .lanes
             .store_data_proposal(&crypto, &lane_id, dp3.clone())?;

@@ -8,7 +8,7 @@ use hyle_modules::{log_error, log_warn};
 use super::storage::Storage;
 use anyhow::{bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct BlockUnderConstruction {
