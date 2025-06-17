@@ -140,11 +140,11 @@ impl Display for ConsensusProposal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Hash: {}, Parent Hash: {}, Slot: {}, Cut: {:?}, staking_actions: {:?}",
+            "Hash: {}, Parent Hash: {}, Slot: {}, Cut: {}, staking_actions: {:?}",
             self.hashed(),
             self.parent_hash,
             self.slot,
-            self.cut,
+            CutDisplay(&self.cut),
             self.staking_actions,
         )
     }
