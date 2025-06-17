@@ -1004,7 +1004,6 @@ mod tests {
     use client_sdk::helpers::test::TxExecutorTestProver;
     use client_sdk::rest_client::test::NodeApiMockClient;
     use sdk::*;
-    use sha2::digest::block_buffer;
     use std::sync::Arc;
     use tempfile::tempdir;
 
