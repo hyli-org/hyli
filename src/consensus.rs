@@ -631,7 +631,9 @@ impl Consensus {
                         self.store.bft_round_state.current_proposal = ConsensusProposal {
                             slot: block.block_height.0,
                             ..Default::default()
-                        }
+                        };
+
+                        self.bft_round_state.timeout.requests.clear();
                     }
                 }
                 Ok(())
