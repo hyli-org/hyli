@@ -386,6 +386,10 @@ where
             self.catching_txs.retain(|t, _| t != &tx_id);
         }
 
+        for tx_id in block.dropped_duplicate_txs {
+            self.catching_txs.retain(|t, _| t != &tx_id);
+        }
+
         for tx in block.successful_txs {
             let tx_id = TxId(
                 block
@@ -421,7 +425,7 @@ where
             );
         }
 
-        for (_, tx) in block.txs {
+        for (tx_id, tx) in block.txs {
             if let TransactionData::Blob(tx) = tx.transaction_data {
                 if tx
                     .blobs
@@ -430,11 +434,11 @@ where
                 {
                     continue;
                 }
-                if self.store.tx_chain.contains(&tx.hashed()) {
+                if block.dropped_duplicate_txs.contains(&tx_id) {
                     debug!(
                         cn =% self.ctx.contract_name,
-                        tx_hash =% tx.hashed(),
-                        "🔇 Transaction {} already processed, skipping",
+                        tx_id =% tx_id,
+                        "🔇 Transaction duplicated {}, skipping",
                         tx.hashed()
                     );
                     continue;
@@ -1000,6 +1004,7 @@ mod tests {
     use client_sdk::helpers::test::TxExecutorTestProver;
     use client_sdk::rest_client::test::NodeApiMockClient;
     use sdk::*;
+    use sha2::digest::block_buffer;
     use std::sync::Arc;
     use tempfile::tempdir;
 
@@ -1506,6 +1511,64 @@ mod tests {
         let block_2 = node_state.craft_block_and_handle(2, proofs);
         auto_prover.handle_processed_block(block_2).await?;
         assert_eq!(read_contract_state(&node_state).value, 1);
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_auto_prover_duplicated_tx() -> Result<()> {
+        let (mut node_state, mut auto_prover, api_client) = setup().await?;
+
+        let tx = new_blob_tx(1);
+
+        tracing::info!("✨ Block 1");
+        let block_1 = node_state.craft_block_and_handle(1, vec![tx.clone()]);
+        auto_prover.handle_processed_block(block_1.clone()).await?;
+        let proofs = get_txs(&api_client).await;
+        assert_eq!(proofs.len(), 1);
+
+        tracing::info!("✨ Block 2");
+        let block_2 = node_state.craft_block_and_handle(2, vec![tx.clone()]);
+        auto_prover.handle_block(block_2.clone()).await?;
+        let proofs_2 = get_txs(&api_client).await;
+        assert_eq!(proofs_2.len(), 0);
+
+        tracing::info!("✨ Block 3");
+        let block_3 = node_state.craft_block_and_handle(3, proofs);
+        auto_prover.handle_block(block_3.clone()).await?;
+        let proofs_3 = get_txs(&api_client).await;
+        assert_eq!(proofs_3.len(), 0);
+
+        tracing::info!("✨ Block 4");
+        let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(2)]);
+        auto_prover.handle_block(block_4.clone()).await?;
+        let proofs_4 = get_txs(&api_client).await;
+        assert_eq!(proofs_4.len(), 1);
+
+        tracing::info!("✨ Block 5");
+        let block_5 = node_state.craft_block_and_handle(5, proofs_4);
+        assert_eq!(read_contract_state(&node_state).value, 1 + 2);
+
+        tracing::info!("✨ New prover catching up");
+        api_client.set_block_height(BlockHeight(5));
+
+        let mut auto_prover_catchup = new_simple_auto_prover(api_client.clone())
+            .await
+            .expect("Failed to create new auto prover");
+
+        let blocks = [block_1, block_2, block_3, block_4, block_5];
+        for block in blocks {
+            auto_prover_catchup.handle_block(block).await?;
+        }
+
+        tracing::info!("✨ Block 6");
+        let block_6 = node_state.craft_block_and_handle(6, vec![new_blob_tx(6)]);
+        auto_prover_catchup.handle_block(block_6).await?;
+        let proofs_6 = get_txs(&api_client).await;
+        assert_eq!(proofs_6.len(), 1);
+        tracing::info!("✨ Block 7");
+        let _block_7 = node_state.craft_block_and_handle(7, proofs_6);
+        assert_eq!(read_contract_state(&node_state).value, 1 + 2 + 6);
 
         Ok(())
     }
