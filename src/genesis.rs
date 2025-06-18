@@ -540,17 +540,6 @@ impl Genesis {
 
         register_hyle_contract(
             &mut register_tx,
-            "hyle".into(),
-            "hyle".into(),
-            ProgramId(vec![0, 0, 0, 0]),
-            StateCommitment::default(),
-            Some(TimeoutWindow::NoTimeout),
-            None,
-        )
-        .expect("register hyle");
-
-        register_hyle_contract(
-            &mut register_tx,
             "blst".into(),
             "blst".into(),
             NativeVerifiers::Blst.into(),
