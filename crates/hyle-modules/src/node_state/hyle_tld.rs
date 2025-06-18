@@ -118,7 +118,7 @@ fn handle_update_program_id_blob(
     let contract =
         NodeState::get_contract(contracts, contract_changes, &update.contract_name)?.clone();
 
-    let new_update = SideEffect::UpdateProgramId(update.program_id.clone());
+    let new_update = SideEffect::UpdateProgramId;
     contract_changes
         .entry(update.contract_name.clone())
         .and_modify(|c| {

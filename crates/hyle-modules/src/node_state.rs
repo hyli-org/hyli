@@ -26,8 +26,8 @@ mod timeouts;
 // Similar to OnchainEffect but slightly more adapted to nodestate settlement
 enum SideEffect {
     Register(Option<Vec<u8>>),
-    UpdateState(StateCommitment),
-    UpdateProgramId(ProgramId),
+    UpdateState,
+    UpdateProgramId,
     Delete,
 }
 
@@ -50,7 +50,7 @@ impl ModifiedContractFields {
     }
 }
 
-pub type ModifiedContractData = (Option<Contract>, ModifiedContractFields, Vec<SideEffect>);
+type ModifiedContractData = (Option<Contract>, ModifiedContractFields, Vec<SideEffect>);
 
 #[derive(Debug, Clone)]
 struct SettlementResult {
@@ -1338,7 +1338,7 @@ impl NodeState {
             .and_modify(|c| {
                 c.0.as_mut().unwrap().state = proof_metadata.1.next_state.clone();
                 c.1.state = true;
-                c.2.push(SideEffect::UpdateState(proof_metadata.1.next_state.clone()));
+                c.2.push(SideEffect::UpdateState);
             })
             .or_insert_with(|| {
                 (
@@ -1350,7 +1350,7 @@ impl NodeState {
                         state: true,
                         ..ModifiedContractFields::default()
                     },
-                    vec![SideEffect::UpdateState(proof_metadata.1.next_state.clone())],
+                    vec![SideEffect::UpdateState],
                 )
             });
 
