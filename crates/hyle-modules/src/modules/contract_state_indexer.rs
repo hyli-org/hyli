@@ -212,6 +212,14 @@ where
             }
         }
 
+        for (contract_name, tx) in block.deleted_contracts.iter() {
+            if self.contract_name == *contract_name {
+                let mut store = self.store.write().await;
+                store.state = None;
+                debug!(cn = %self.contract_name, tx_hash = %tx, "🗑️  Deleted contract '{}' state", contract_name);
+            }
+        }
+
         if !block.txs.is_empty() {
             debug!(handler = %self.contract_name, "🔨 Processing block: {}", block.block_height);
         }
@@ -293,12 +301,12 @@ where
     ) -> Result<()> {
         if let Some(state) = self.store.read().await.state.as_ref() {
             tracing::warn!(cn = %self.contract_name, "⚠️  Got re-register contract '{}'", contract.contract_name);
-            if state.get_state_commitment() != contract.state_commitment {
-                tracing::error!(cn = %self.contract_name, "⚠️  State commitment mismatch on re-register contract '{}'", contract.contract_name);
-                anyhow::bail!(
-                    "State commitment mismatch on re-register contract '{}'",
-                    contract.contract_name
-                );
+            if state.get_state_commitment() == contract.state_commitment {
+                tracing::info!(cn = %self.contract_name, "📝 Re-register contract '{}' with same state commitment", contract.contract_name);
+            } else {
+                let state = State::construct_state(contract, metadata)?;
+                tracing::warn!(cn = %self.contract_name, "📝 Contract '{}' re-built initial state", contract.contract_name);
+                self.store.write().await.state = Some(state);
             }
         } else {
             let state = State::construct_state(contract, metadata)?;
