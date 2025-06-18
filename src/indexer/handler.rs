@@ -1200,6 +1200,20 @@ impl Indexer {
             );
         }
 
+        // Handling updated contract program ids
+        for (contract_name, program_id) in block.updated_program_ids {
+            let contract_name = contract_name.0;
+            let program_id = program_id.0;
+
+            self.handler_store.sql_updates.push(
+                sqlx::query::<Postgres>(
+                    "UPDATE contracts SET program_id = $1 WHERE contract_name = $2",
+                )
+                .bind(program_id)
+                .bind(contract_name),
+            );
+        }
+
         Ok(())
     }
 }
