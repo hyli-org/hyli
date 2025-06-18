@@ -1022,8 +1022,8 @@ impl NodeState {
                 );
 
                 block_under_construction
-                    .updated_states
-                    .insert(contract.name, contract.state);
+                    .updated_program_ids
+                    .insert(contract.name, contract.program_id);
             }
         }
 
