@@ -373,7 +373,7 @@ impl NodeState {
     ) -> TimeoutWindow {
         blobs
             .into_iter()
-            .filter_map(|blob: &'a Blob| {
+            .filter_map(|blob| {
                 self.contracts
                     .get(&blob.contract_name)
                     .map(|c| c.timeout_window.clone())
