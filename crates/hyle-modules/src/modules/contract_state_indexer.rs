@@ -212,14 +212,6 @@ where
             }
         }
 
-        for (contract_name, tx) in block.deleted_contracts.iter() {
-            if self.contract_name == *contract_name {
-                let mut store = self.store.write().await;
-                store.state = None;
-                debug!(cn = %self.contract_name, tx_hash = %tx, "🗑️  Deleted contract '{}' state", contract_name);
-            }
-        }
-
         if !block.txs.is_empty() {
             debug!(handler = %self.contract_name, "🔨 Processing block: {}", block.block_height);
         }
