@@ -370,6 +370,10 @@ impl Mempool {
                 for (_, contract, _) in block.registered_contracts.into_values() {
                     self.handle_contract_registration(contract);
                 }
+                for (contract_name, program_id) in block.updated_program_ids.into_iter() {
+                    self.handle_contract_update(contract_name, program_id);
+                }
+
             }
             command_response<QueryNewCut, Cut> staking => {
                 self.handle_querynewcut(staking)
@@ -453,6 +457,19 @@ impl Mempool {
             &effect.verifier,
             &effect.program_id,
         );
+    }
+
+    fn handle_contract_update(&mut self, contract_name: ContractName, program_id: ProgramId) {
+        #[allow(clippy::expect_used, reason = "not held across await")]
+        let mut known_contracts = self.known_contracts.write().expect("logic issue");
+        if let Some(c) = known_contracts.0.get_mut(&contract_name) {
+            c.1 = program_id;
+        } else {
+            warn!(
+                "Tried to update contract {} that is not registered",
+                contract_name
+            );
+        }
     }
 
     // Optimistically parse Hyli tx blobs
