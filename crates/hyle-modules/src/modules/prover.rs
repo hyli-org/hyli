@@ -260,9 +260,12 @@ where
                 }
                 info!(
                     cn =% self.ctx.contract_name,
-                    "All catching blobs processed, catching up finished at block {} with tx {:?}",
+                    "All catching blobs processed, catching up finished at block {} with tx {}",
                     block_height,
-                    last_tx_hash
+                    last_tx_hash.as_ref().map_or_else(
+                        || "None".to_string(),
+                        |tx| tx.to_string()
+                    )
                 );
 
                 #[cfg(not(test))]
