@@ -970,7 +970,10 @@ impl NodeState {
                 Some(contract) => {
                     // Otherwise, apply any side effect and potentially note it in the map of registered contracts.
                     if !self.contracts.contains_key(&contract_name) {
-                        info!("📝 Registering contract {}", contract_name);
+                        info!(
+                            "📝 Registering contract '{}' with timeout window {:?}",
+                            contract_name, contract.timeout_window
+                        );
 
                         // Let's find the metadata - for now it's unsupported to register the same contract twice in a single TX.
                         let metadata = side_effects.into_iter().find_map(|se| {
