@@ -1335,10 +1335,12 @@ impl NodeState {
         let contract_name = contract.name.clone();
         contract_changes
             .entry(contract_name)
-            .and_modify(|c| {
-                c.0.as_mut().unwrap().state = proof_metadata.1.next_state.clone();
-                c.1.state = true;
-                c.2.push(SideEffect::UpdateState);
+            .and_modify(|u| {
+                if let Some(c) = u.0.as_mut() {
+                    c.state = proof_metadata.1.next_state.clone();
+                    u.1.state = true;
+                    u.2.push(SideEffect::UpdateState);
+                }
             })
             .or_insert_with(|| {
                 (
