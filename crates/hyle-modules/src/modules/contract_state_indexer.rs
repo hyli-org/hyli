@@ -291,9 +291,20 @@ where
         contract: &RegisterContractEffect,
         metadata: &Option<Vec<u8>>,
     ) -> Result<()> {
-        let state = State::construct_state(contract, metadata)?;
-        tracing::info!(cn = %self.contract_name, "📝 Registered suppored contract '{}'", contract.contract_name);
-        self.store.write().await.state = Some(state);
+        if let Some(state) = self.store.read().await.state.as_ref() {
+            tracing::warn!(cn = %self.contract_name, "⚠️  Got re-register contract '{}'", contract.contract_name);
+            if state.get_state_commitment() != contract.state_commitment {
+                tracing::error!(cn = %self.contract_name, "⚠️  State commitment mismatch on re-register contract '{}'", contract.contract_name);
+                anyhow::bail!(
+                    "State commitment mismatch on re-register contract '{}'",
+                    contract.contract_name
+                );
+            }
+        } else {
+            let state = State::construct_state(contract, metadata)?;
+            tracing::info!(cn = %self.contract_name, "📝 Registered suppored contract '{}'", contract.contract_name);
+            self.store.write().await.state = Some(state);
+        }
         Ok(())
     }
 }
