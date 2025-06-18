@@ -205,9 +205,7 @@ where
                 self.catching_up = None;
 
                 let mut contract = self.ctx.default_state.clone();
-                let Some(last_tx_hash) = blobs.last().map(|(_, tx, _)| tx.hashed()) else {
-                    return Ok(());
-                };
+                let last_tx_hash = blobs.last().map(|(_, tx, _)| tx.hashed());
                 for (blob_index, tx, tx_ctx) in blobs {
                     let calldata = Calldata {
                         identity: tx.identity.clone(),
@@ -264,7 +262,10 @@ where
                     cn =% self.ctx.contract_name,
                     "All catching blobs processed, catching up finished at block {} with tx {}",
                     block_height,
-                    last_tx_hash
+                    last_tx_hash.as_ref().map_or_else(
+                        || "None".to_string(),
+                        |tx| tx.to_string()
+                    )
                 );
 
                 #[cfg(not(test))]
@@ -298,8 +299,10 @@ where
                     }
                 }
 
-                self.store.tx_chain = vec![last_tx_hash.clone()];
-                self.store.state_history.insert(last_tx_hash, contract);
+                if let Some(last_tx_hash) = last_tx_hash {
+                    self.store.tx_chain = vec![last_tx_hash.clone()];
+                    self.store.state_history.insert(last_tx_hash, contract);
+                }
 
                 // Now any remaining TX is to be buffered and handled on the next block
                 info!(
