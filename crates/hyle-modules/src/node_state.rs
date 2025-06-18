@@ -50,6 +50,9 @@ impl ModifiedContractFields {
     }
 }
 
+// When processing blobs, maintain an up-to-date copy of the contract,
+// and keep track of which fields changed and the list of side effects we processed.
+// If the contract is None, then it was deleted.
 type ModifiedContractData = (Option<Contract>, ModifiedContractFields, Vec<SideEffect>);
 
 #[derive(Debug, Clone)]
@@ -927,103 +930,109 @@ impl NodeState {
 
         // Update contract states
         for (contract_name, (mc, fields, side_effects)) in contracts_changes.into_iter() {
-            if mc.is_none() {
-                debug!("✏️ Delete {} contract", contract_name);
-                self.contracts.remove(&contract_name);
+            match mc {
+                None => {
+                    debug!("✏️ Delete {} contract", contract_name);
+                    self.contracts.remove(&contract_name);
 
-                // Time-out all transactions for this contract
-                while let Some(tx_hash) = self
-                    .unsettled_transactions
-                    .get_next_unsettled_tx(&contract_name)
-                    .cloned()
-                {
-                    if let Some(popped_tx) = self.unsettled_transactions.remove(&tx_hash) {
-                        debug!("⏳ Timeout tx {} (from contract deletion)", &tx_hash);
+                    // Time-out all transactions for this contract
+                    while let Some(tx_hash) = self
+                        .unsettled_transactions
+                        .get_next_unsettled_tx(&contract_name)
+                        .cloned()
+                    {
+                        if let Some(popped_tx) = self.unsettled_transactions.remove(&tx_hash) {
+                            info!("⏳ Timeout tx {} (from contract deletion)", &tx_hash);
+                            block_under_construction
+                                .transactions_events
+                                .entry(tx_hash.clone())
+                                .or_default()
+                                .push(TransactionStateEvent::TimedOut);
+                            block_under_construction
+                                .dp_parent_hashes
+                                .insert(tx_hash.clone(), popped_tx.parent_dp_hash);
+                            block_under_construction
+                                .lane_ids
+                                .insert(tx_hash, popped_tx.tx_context.lane_id);
+                        }
+                    }
+
+                    block_under_construction
+                        .registered_contracts
+                        .remove(&contract_name);
+
+                    block_under_construction
+                        .deleted_contracts
+                        .insert(contract_name, bth.clone());
+
+                    continue;
+                }
+                Some(contract) => {
+                    // Otherwise, apply any side effect and potentially note it in the map of registered contracts.
+                    if !self.contracts.contains_key(&contract_name) {
+                        info!("📝 Registering contract {}", contract_name);
+
+                        // Let's find the metadata - for now it's unsupported to register the same contract twice in a single TX.
+                        let metadata = side_effects.into_iter().find_map(|se| {
+                            if let SideEffect::Register(m) = se {
+                                Some(m)
+                            } else {
+                                None
+                            }
+                        });
+                        if metadata.is_none() {
+                            tracing::warn!(
+                                "No register effect found for contract {} in TX {}",
+                                contract_name,
+                                bth
+                            );
+                        }
+                        block_under_construction.registered_contracts.insert(
+                            contract_name.clone(),
+                            (
+                                bth.clone(),
+                                RegisterContractEffect {
+                                    contract_name: contract_name.clone(),
+                                    program_id: contract.program_id.clone(),
+                                    state_commitment: contract.state.clone(),
+                                    verifier: contract.verifier.clone(),
+                                    timeout_window: Some(contract.timeout_window.clone()),
+                                },
+                                metadata.unwrap_or_default(),
+                            ),
+                        );
+                        // If the contract was registered, we need to remove it from the deleted contracts
                         block_under_construction
-                            .transactions_events
-                            .entry(tx_hash.clone())
-                            .or_default()
-                            .push(TransactionStateEvent::TimedOut);
+                            .deleted_contracts
+                            .remove(&contract_name);
+                    }
+
+                    self.contracts
+                        .insert(contract.name.clone(), contract.clone());
+
+                    if fields.state {
+                        debug!(
+                            "✍️  Modify '{}' state to {}",
+                            &contract_name,
+                            hex::encode(&contract.state.0)
+                        );
+
                         block_under_construction
-                            .dp_parent_hashes
-                            .insert(tx_hash.clone(), popped_tx.parent_dp_hash);
+                            .updated_states
+                            .insert(contract.name.clone(), contract.state.clone());
+                    }
+                    if fields.program_id {
+                        debug!(
+                            "✍️  Modify '{}' program_id to {}",
+                            &contract_name,
+                            hex::encode(&contract.program_id.0)
+                        );
+
                         block_under_construction
-                            .lane_ids
-                            .insert(tx_hash, popped_tx.tx_context.lane_id);
+                            .updated_program_ids
+                            .insert(contract.name, contract.program_id);
                     }
                 }
-
-                block_under_construction
-                    .registered_contracts
-                    .remove(&contract_name);
-
-                block_under_construction
-                    .deleted_contracts
-                    .insert(contract_name, bth.clone());
-
-                continue;
-            }
-            let contract = mc.unwrap();
-            // Otherwise, apply any side effect and potentially note it in the map of registered contracts.
-            if !self.contracts.contains_key(&contract_name) {
-                info!("📝 Registering contract {}", contract_name);
-
-                // Let's find the metadata - for now it's unsupported to register the same contract twice in a single TX.
-                let metadata = side_effects
-                    .into_iter()
-                    .find_map(|se| {
-                        if let SideEffect::Register(m) = se {
-                            Some(m)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_default();
-
-                block_under_construction.registered_contracts.insert(
-                    contract_name.clone(),
-                    (
-                        bth.clone(),
-                        RegisterContractEffect {
-                            contract_name: contract_name.clone(),
-                            program_id: contract.program_id.clone(),
-                            state_commitment: contract.state.clone(),
-                            verifier: contract.verifier.clone(),
-                            timeout_window: Some(contract.timeout_window.clone()),
-                        },
-                        metadata,
-                    ),
-                );
-                // If the contract was registered, we need to remove it from the deleted contracts
-                block_under_construction
-                    .deleted_contracts
-                    .remove(&contract_name);
-            }
-
-            self.contracts
-                .insert(contract.name.clone(), contract.clone());
-
-            if fields.state {
-                debug!(
-                    "✍️  Modify '{}' state to {}",
-                    &contract_name,
-                    hex::encode(&contract.state.0)
-                );
-
-                block_under_construction
-                    .updated_states
-                    .insert(contract.name.clone(), contract.state.clone());
-            }
-            if fields.program_id {
-                debug!(
-                    "✍️  Modify '{}' program_id to {}",
-                    &contract_name,
-                    hex::encode(&contract.program_id.0)
-                );
-
-                block_under_construction
-                    .updated_program_ids
-                    .insert(contract.name, contract.program_id);
             }
         }
 
