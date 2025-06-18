@@ -23,6 +23,7 @@ pub struct Block {
     pub successful_txs: Vec<TxHash>,
     pub failed_txs: Vec<TxHash>,
     pub timed_out_txs: Vec<TxHash>,
+    pub dropped_duplicate_txs: Vec<TxId>,
     pub blob_proof_outputs: Vec<HandledBlobProofOutput>,
     pub verified_blobs: Vec<(TxHash, BlobIndex, Option<usize>)>,
     pub new_bounded_validators: Vec<ValidatorPublicKey>,
@@ -31,6 +32,7 @@ pub struct Block {
         BTreeMap<ContractName, (TxHash, RegisterContractEffect, Option<Vec<u8>>)>,
     pub deleted_contracts: BTreeMap<ContractName, TxHash>,
     pub updated_states: BTreeMap<ContractName, StateCommitment>,
+    pub updated_program_ids: BTreeMap<ContractName, ProgramId>,
     pub transactions_events: BTreeMap<TxHash, Vec<TransactionStateEvent>>,
 }
 

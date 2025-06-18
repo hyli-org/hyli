@@ -1,11 +1,14 @@
-use crate::{bus::BusClientSender, consensus::CommittedConsensusProposal, model::*};
+use crate::{
+    bus::BusClientSender, consensus::CommittedConsensusProposal,
+    mempool::storage::EntryOrMissingHash, model::*,
+};
 use futures::StreamExt;
 use hyle_modules::{log_error, log_warn};
 
 use super::storage::Storage;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct BlockUnderConstruction {
@@ -38,7 +41,7 @@ impl super::Mempool {
     /// Retrieves data proposals matching the Block under construction.
     /// If data is not available locally, fails and do nothing
     async fn try_get_full_data_for_signed_block(
-        &self,
+        &mut self,
         buc: &BlockUnderConstruction,
     ) -> Result<Vec<(LaneId, Vec<DataProposal>)>> {
         trace!("Handling Block Under Construction {:?}", buc.clone());
@@ -48,30 +51,57 @@ impl super::Mempool {
         );
 
         let mut result = vec![];
-        // Try to return the asked data proposals between the last_processed_cut and the one being handled
+
         for (lane_id, to_hash, _, _) in buc.ccp.consensus_proposal.cut.iter() {
-            // FIXME: use from : &Cut instead of Option
+            trace!("Processing lane {} with to_hash {}", lane_id, to_hash);
             let from_hash = buc
                 .from
                 .as_ref()
                 .and_then(|f| f.iter().find(|el| &el.0 == lane_id))
                 .map(|el| &el.1);
 
-            let mut entries = Box::pin(self.lanes.get_entries_between_hashes(
-                lane_id, // get start hash for validator
-                from_hash.cloned(),
-                Some(to_hash.clone()),
-            ));
+            // iterate over the lane entries between from_hash and to_hash of the lane
+            let (dps, missing_hash) = {
+                trace!("Fetching data proposals for lane {}", lane_id);
+                let mut missing_hash = None;
+                let mut dps = vec![];
 
-            let mut dps = vec![];
+                let mut entries = Box::pin(self.lanes.get_entries_between_hashes(
+                    lane_id,
+                    from_hash.cloned(),
+                    Some(to_hash.clone()),
+                ));
 
-            while let Some(entry) = entries.next().await {
-                let (_, dp) = entry.context(format!(
-                    "Lane entries from {:?} to {:?} not available locally",
-                    buc.from, buc.ccp.consensus_proposal.cut
-                ))?;
+                while let Some(entry) = entries.next().await {
+                    trace!("Processing lane entry {:?}", entry);
+                    let entry_or_missing = entry.context(format!(
+                        "Lane entries from {:?} to {:?} not available locally",
+                        buc.from, buc.ccp.consensus_proposal.cut
+                    ))?;
 
-                dps.insert(0, dp);
+                    match entry_or_missing {
+                        EntryOrMissingHash::Entry(_, dp) => dps.insert(0, dp),
+                        EntryOrMissingHash::MissingHash(hash) => {
+                            debug!(
+                                "Data proposal {} not available locally for lane {}",
+                                hash, lane_id
+                            );
+                            missing_hash = Some(hash.clone());
+                            break;
+                        }
+                    }
+                }
+
+                (dps, missing_hash)
+            };
+
+            if let Some(missing_hash) = missing_hash {
+                self.send_sync_request(lane_id, from_hash, Some(&missing_hash))?;
+                bail!(
+                    "Data proposal {} not available locally for lane {}",
+                    missing_hash,
+                    lane_id
+                );
             }
 
             result.push((lane_id.clone(), dps));
@@ -80,7 +110,10 @@ impl super::Mempool {
         Ok(result)
     }
 
-    async fn build_signed_block_and_emit(&mut self, buc: &BlockUnderConstruction) -> Result<()> {
+    pub async fn build_signed_block_and_emit(
+        &mut self,
+        buc: &BlockUnderConstruction,
+    ) -> Result<()> {
         let block_data = self
             .try_get_full_data_for_signed_block(buc)
             .await
@@ -88,7 +121,7 @@ impl super::Mempool {
 
         self.metrics.constructed_block.add(1, &[]);
 
-        info!(
+        debug!(
             "🚧 Built signed block for slot {} with {} data proposals",
             buc.ccp.consensus_proposal.slot,
             block_data.len()
@@ -210,17 +243,14 @@ impl super::Mempool {
 
 #[cfg(test)]
 pub mod test {
+    use staking::state::Staking;
     use utils::TimestampMs;
 
-    use crate::consensus::ConsensusEvent;
-    use crate::mempool::storage::LaneEntryMetadata;
     use crate::mempool::MempoolNetMessage;
     use crate::tests::autobahn_testing::assert_chanmsg_matches;
-    use hyle_crypto::BlstCrypto;
 
     use super::super::test::*;
     use super::*;
-    use crate::model;
 
     #[test_log::test(tokio::test)]
     async fn signed_block_basic() -> Result<()> {
@@ -362,201 +392,203 @@ pub mod test {
         Ok(())
     }
 
+    #[allow(clippy::indexing_slicing)]
     #[test_log::test(tokio::test)]
-    async fn signed_block_buffer_ccp() -> Result<()> {
+    async fn test_signed_buffer_block_ccp() -> Result<()> {
         let mut ctx = MempoolTestCtx::new("mempool").await;
+        let mut ctx2 = MempoolTestCtx::new("mempool2").await;
 
+        let crypto1 = ctx.mempool.crypto.clone();
+        let crypto2 = ctx2.mempool.crypto.clone();
+
+        let lane_id1 = ctx.mempool.own_lane_id().clone();
+        let lane_id2 = ctx2.mempool.own_lane_id().clone();
+
+        // Create a chain of 2 DataProposals in lane 1
         let dp1 = DataProposal::new(None, vec![]);
-        let dp1_size = LaneBytesSize(dp1.estimate_size() as u64);
         let dp1_hash = dp1.hashed();
-        let dp1b = DataProposal::new(None, vec![make_register_contract_tx("toto".into())]);
-        let dp1b_size = LaneBytesSize(dp1b.estimate_size() as u64);
-        let dp1b_hash = dp1b.hashed();
-        let dp2_size = LaneBytesSize(60);
-        let dp2_hash = DataProposalHash("dp2".to_string());
-
-        let crypto2 = BlstCrypto::new("2").unwrap();
-
-        // This simulates a cut where we somehow don't have our own DP and another DP (they also happen to be the same hash)
-        let cut1 = vec![
-            (
-                ctx.mempool.get_lane(ctx.validator_pubkey()),
-                dp1_hash.clone(),
-                dp1_size,
-                AggregateSignature::default(),
-            ),
-            (
-                ctx.mempool.get_lane(crypto2.validator_pubkey()),
-                dp1b_hash.clone(),
-                dp1b_size,
-                AggregateSignature::default(),
-            ),
-        ];
-
         ctx.mempool
-            .handle_consensus_event(ConsensusEvent::CommitConsensusProposal(
-                CommittedConsensusProposal {
-                    staking: ctx.mempool.staking.clone(),
-                    consensus_proposal: model::ConsensusProposal {
-                        slot: 1,
-                        cut: cut1.clone(),
-                        staking_actions: vec![],
-                        timestamp: TimestampMs(777),
-                        parent_hash: ConsensusProposalHash("test".to_string()),
-                    },
-                    certificate: AggregateSignature::default(),
-                },
-            ))
-            .await?;
+            .lanes
+            .store_data_proposal(&crypto1, &lane_id1, dp1.clone())?;
+
+        let dp2 = DataProposal::new(Some(dp1_hash.clone()), vec![]);
+        let dp2_hash = dp2.hashed();
+        ctx.mempool
+            .lanes
+            .store_data_proposal(&crypto1, &lane_id1, dp2.clone())?;
+
+        // Create a chain of 2 DataProposals in lane 2
+        let dp3 = DataProposal::new(None, vec![]);
+        let dp3_hash = dp3.hashed();
+        ctx2.mempool
+            .lanes
+            .store_data_proposal(&crypto2, &lane_id2, dp3.clone())?;
+
+        let dp4 = DataProposal::new(Some(dp3_hash.clone()), vec![]);
+        let dp4_hash = dp4.hashed();
+        ctx2.mempool
+            .lanes
+            .store_data_proposal(&crypto2, &lane_id2, dp4.clone())?;
+
+        // Create a ConsensusProposal that references both lanes
+        let ccp = ConsensusProposal {
+            slot: 1,
+            cut: vec![
+                (
+                    lane_id1.clone(),
+                    dp2_hash,
+                    LaneBytesSize(100),
+                    AggregateSignature::default(),
+                ),
+                (
+                    lane_id2.clone(),
+                    dp4_hash.clone(),
+                    LaneBytesSize(100),
+                    AggregateSignature::default(),
+                ),
+            ],
+            staking_actions: vec![],
+            timestamp: TimestampMs(0),
+            parent_hash: ConsensusProposalHash("test".to_string()),
+        };
+
+        // Add the block to mempool 1
+        let buc = BlockUnderConstruction {
+            from: None,
+            ccp: CommittedConsensusProposal {
+                consensus_proposal: ccp,
+                staking: Staking::default(),
+                certificate: AggregateSignature::default(),
+            },
+        };
+
+        // Try to build a signed block in mempool 1
+        let result = ctx.mempool.build_signed_block_and_emit(&buc).await;
+        assert!(result.is_err());
+
+        assert!(
+            ctx.mempool_event_receiver.try_recv().is_err(),
+            "Should not have started building blocks yet"
+        );
+
+        // Verify that a sync request was sent for lane 2's DataProposals
+        match ctx
+            .assert_send(
+                &ctx2.mempool.crypto.validator_pubkey().clone(),
+                "SyncRequest",
+            )
+            .await
+            .msg
+        {
+            MempoolNetMessage::SyncRequest(from, to) => {
+                assert_eq!(from, None);
+                assert_eq!(to, Some(dp4_hash.clone()));
+            }
+            _ => panic!("Expected SyncRequest message"),
+        }
+
+        // Send the DataProposals from lane 2 to mempool 1
+        ctx.mempool
+            .lanes
+            .store_data_proposal(&crypto2, &lane_id2, dp3.clone())?;
+        ctx.mempool
+            .lanes
+            .store_data_proposal(&crypto2, &lane_id2, dp4.clone())?;
+
+        // Try to build a signed block again
+        let result = ctx.mempool.build_signed_block_and_emit(&buc).await;
+        assert!(result.is_ok());
 
         // We've received consecutive blocks so start building
         assert_chanmsg_matches!(
             ctx.mempool_event_receiver,
-            MempoolBlockEvent::StartedBuildingBlocks(height) => {
-                assert_eq!(height, BlockHeight(1));
-            }
-        );
-
-        ctx.mempool_event_receiver
-            .try_recv()
-            .expect_err("Should not build signed block");
-
-        // Now handle a second cut, one dp down
-        let cut2 = vec![
-            (
-                ctx.mempool.get_lane(ctx.validator_pubkey()),
-                dp2_hash.clone(),
-                dp2_size,
-                AggregateSignature::default(),
-            ),
-            (
-                ctx.mempool.get_lane(crypto2.validator_pubkey()),
-                dp2_hash.clone(),
-                dp2_size,
-                AggregateSignature::default(),
-            ),
-        ];
-
-        ctx.mempool
-            .handle_consensus_event(ConsensusEvent::CommitConsensusProposal(
-                CommittedConsensusProposal {
-                    staking: ctx.mempool.staking.clone(),
-                    consensus_proposal: model::ConsensusProposal {
-                        slot: 2,
-                        cut: cut2.clone(),
-                        staking_actions: vec![],
-                        timestamp: TimestampMs(888),
-                        parent_hash: ConsensusProposalHash("test".to_string()),
-                    },
-                    certificate: AggregateSignature::default(),
-                },
-            ))
-            .await?;
-
-        // We don't have the data so we still don't send anything.
-        ctx.mempool_event_receiver
-            .try_recv()
-            .expect_err("Should not build signed block");
-
-        // We send sync requests - we don't have the data.
-        match ctx
-            .assert_send(&ctx.validator_pubkey().clone(), "SyncRequest")
-            .await
-            .msg
-        {
-            MempoolNetMessage::SyncRequest(from, to) => {
-                assert_eq!(from, None);
-                assert_eq!(to, Some(dp1_hash.clone()));
-            }
-            _ => panic!("Expected DataProposal message"),
-        };
-        match ctx
-            .assert_send(&crypto2.validator_pubkey().clone(), "SyncRequest")
-            .await
-            .msg
-        {
-            MempoolNetMessage::SyncRequest(from, to) => {
-                assert_eq!(from, None);
-                assert_eq!(to, Some(dp1b_hash.clone()));
-            }
-            _ => panic!("Expected DataProposal message"),
-        };
-        match ctx
-            .assert_send(&ctx.validator_pubkey().clone(), "SyncRequest")
-            .await
-            .msg
-        {
-            MempoolNetMessage::SyncRequest(from, to) => {
-                assert_eq!(from, Some(dp1_hash.clone()));
-                assert_eq!(to, Some(dp2_hash.clone()));
-            }
-            _ => panic!("Expected DataProposal message"),
-        };
-        match ctx
-            .assert_send(&crypto2.validator_pubkey().clone(), "SyncRequest")
-            .await
-            .msg
-        {
-            MempoolNetMessage::SyncRequest(from, to) => {
-                assert_eq!(from, Some(dp1b_hash.clone()));
-                assert_eq!(to, Some(dp2_hash.clone()));
-            }
-            _ => panic!("Expected DataProposal message"),
-        };
-
-        // Receive the two DPs.
-
-        ctx.mempool
-            .on_sync_reply(
-                &ctx.validator_pubkey().clone(),
-                LaneEntryMetadata {
-                    parent_data_proposal_hash: dp1.parent_data_proposal_hash.clone(),
-                    cumul_size: dp1_size,
-                    signatures: vec![ctx
-                        .mempool
-                        .crypto
-                        .sign((dp1_hash, dp1_size))
-                        .expect("should sign")],
-                },
-                dp1.clone(),
-            )
-            .await?;
-
-        // We don't have the data so we still don't send anything.
-        ctx.mempool_event_receiver
-            .try_recv()
-            .expect_err("Should not build signed block");
-
-        ctx.mempool
-            .on_sync_reply(
-                &crypto2.validator_pubkey().clone(),
-                LaneEntryMetadata {
-                    parent_data_proposal_hash: dp1b.parent_data_proposal_hash.clone(),
-                    cumul_size: dp1b_size,
-                    signatures: vec![crypto2.sign((dp1b_hash, dp1b_size)).expect("should sign")],
-                },
-                dp1b.clone(),
-            )
-            .await?;
-
-        assert_chanmsg_matches!(
-            ctx.mempool_event_receiver,
-            MempoolBlockEvent::BuiltSignedBlock(sb) => {
-                assert_eq!(sb.consensus_proposal.cut, cut1);
+            MempoolBlockEvent::BuiltSignedBlock(signed_block) => {
+                assert_eq!(signed_block.data_proposals.len(), 2);
                 assert_eq!(
-                    sb.data_proposals,
-                    vec![
-                        (ctx.mempool.get_lane(ctx.validator_pubkey()), vec![dp1.clone()]),
-                        (ctx.mempool.get_lane(crypto2.validator_pubkey()), vec![dp1b.clone()]
-                    )]
+                    signed_block.data_proposals[0],
+                    (LaneId(crypto1.validator_pubkey().clone()), vec![dp1, dp2])
+                );
+                assert_eq!(
+                    signed_block.data_proposals[1],
+                    (LaneId(crypto2.validator_pubkey().clone()), vec![dp3, dp4])
                 );
             }
         );
 
-        // We don't have the data for the second one so no further messages.
-        ctx.mempool_event_receiver
-            .try_recv()
-            .expect_err("Should not build signed block");
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_sync_missing_dp() -> Result<()> {
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+        let ctx_owner = MempoolTestCtx::new("mempool_owner").await;
+        let lane_id = ctx_owner.mempool.own_lane_id().clone();
+        let crypto = ctx_owner.mempool.crypto.clone();
+
+        // Create a chain of 3 DataProposals
+        let dp1 = DataProposal::new(None, vec![]);
+        let dp1_hash = dp1.hashed();
+        ctx.mempool
+            .lanes
+            .store_data_proposal(&crypto, &lane_id, dp1)?;
+
+        let dp2 = DataProposal::new(Some(dp1_hash.clone()), vec![]);
+        let dp2_hash = dp2.hashed();
+        ctx.mempool
+            .lanes
+            .store_data_proposal(&crypto, &lane_id, dp2)?;
+
+        let dp3 = DataProposal::new(Some(dp2_hash.clone()), vec![]);
+        let dp3_hash = dp3.hashed();
+        ctx.mempool
+            .lanes
+            .store_data_proposal(&crypto, &lane_id, dp3)?;
+
+        // Remove dp2 to simulate a missing DataProposal
+        ctx.mempool.lanes.remove_lane_entry(&lane_id, &dp2_hash);
+
+        // Create a ConsensusProposal that references dp3
+        let ccp = ConsensusProposal {
+            slot: 1,
+            cut: vec![(
+                lane_id.clone(),
+                dp3_hash,
+                LaneBytesSize(100),
+                AggregateSignature::default(),
+            )],
+            staking_actions: vec![],
+            timestamp: TimestampMs(0),
+            parent_hash: ConsensusProposalHash("test".to_string()),
+        };
+
+        // Add the block to the mempool
+        let buc = BlockUnderConstruction {
+            from: None,
+            ccp: CommittedConsensusProposal {
+                consensus_proposal: ccp,
+                staking: Staking::default(),
+                certificate: AggregateSignature::default(),
+            },
+        };
+
+        // Try to build a signed block
+        let result = ctx.mempool.build_signed_block_and_emit(&buc).await;
+        assert!(result.is_err());
+
+        match ctx
+            .assert_send(
+                &ctx_owner.mempool.crypto.validator_pubkey().clone(),
+                "SyncRequest",
+            )
+            .await
+            .msg
+        {
+            MempoolNetMessage::SyncRequest(from, to) => {
+                assert_eq!(from, None);
+                assert_eq!(to, Some(dp2_hash.clone()));
+            }
+            _ => panic!("Expected DataProposal message"),
+        };
 
         Ok(())
     }

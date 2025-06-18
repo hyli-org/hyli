@@ -1,5 +1,6 @@
 //! Logic for processing the API inbound TXs in the mempool.
 
+use crate::mempool::storage::MetadataOrMissingHash;
 use crate::{bus::BusClientSender, model::*};
 
 use anyhow::{bail, Context, Result};
@@ -118,7 +119,12 @@ impl super::Mempool {
             Box::pin(cloned_lanes.get_pending_entries_in_lane(&own_lane_id, last_cut));
 
         while let Some(stream_entry) = entries_stream.next().await {
-            let (entry_metadata, dp_hash) = stream_entry?;
+            let MetadataOrMissingHash::Metadata(entry_metadata, dp_hash) = stream_entry? else {
+                bail!(
+                    "DataProposal not retrieved for dissemination in lane {}",
+                    self.own_lane_id()
+                );
+            };
             // If only_dp_with_hash is Some, we only disseminate that one, skip all others.
             if let Some(ref only_dp_with_hash) = only_dp_with_hash {
                 if &dp_hash != only_dp_with_hash {
@@ -221,7 +227,7 @@ impl super::Mempool {
 
         let mut cumulative_size = 0;
         let mut current_idx = 0;
-        while cumulative_size < 40_000 && current_idx < self.waiting_dissemination_txs.len() {
+        while cumulative_size < 40_000_000 && current_idx < self.waiting_dissemination_txs.len() {
             if let Some((_tx_hash, tx)) = self.waiting_dissemination_txs.get_index(current_idx) {
                 cumulative_size += tx.estimate_size();
                 current_idx += 1;
