@@ -550,7 +550,7 @@ impl Genesis {
             Some(hyle_contract.timeout_window),
             None,
         )
-        .expect("register blst");
+        .expect("register hyle");
 
         register_hyle_contract(
             &mut register_tx,
