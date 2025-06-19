@@ -121,6 +121,10 @@ struct ModuleStarter {
 }
 
 pub mod signal {
+    use std::any::TypeId;
+
+    use crate::utils::static_type_map::Pick;
+
     #[derive(Clone, Debug)]
     pub struct ShutdownModule {
         pub module: String,
@@ -130,7 +134,59 @@ pub mod signal {
         pub module: String,
     }
 
-    pub async fn async_receive_shutdown<T>(
+    /// Execute a future, cancelling it if a shutdown signal is received.
+    pub async fn shutdown_aware<M: 'static, F>(
+        receiver: &mut impl Pick<
+            tokio::sync::broadcast::Receiver<crate::modules::signal::ShutdownModule>,
+        >,
+        f: F,
+    ) -> anyhow::Result<F::Output>
+    where
+        F: std::future::IntoFuture,
+    {
+        let mut dummy = false;
+        tokio::select! {
+            _ = async_receive_shutdown::<M>(
+                &mut dummy,
+                receiver.get_mut(),
+            ) => {
+                anyhow::bail!("Shutdown received");
+            }
+            res = f => {
+                Ok(res)
+            }
+        }
+    }
+
+    /// Execute a future, cancelling it if a shutdown signal is received or a timeout is reached.
+    pub async fn shutdown_aware_timeout<M: 'static, F>(
+        receiver: &mut impl Pick<
+            tokio::sync::broadcast::Receiver<crate::modules::signal::ShutdownModule>,
+        >,
+        duration: std::time::Duration,
+        f: F,
+    ) -> anyhow::Result<F::Output>
+    where
+        F: std::future::IntoFuture,
+    {
+        let mut dummy = false;
+        tokio::select! {
+            _ = tokio::time::sleep(duration) => {
+                anyhow::bail!("Timeout reached");
+            }
+            _ = async_receive_shutdown::<M>(
+                &mut dummy,
+                receiver.get_mut(),
+            ) => {
+                anyhow::bail!("Shutdown received");
+            }
+            res = f => {
+                Ok(res)
+            }
+        }
+    }
+
+    pub async fn async_receive_shutdown<T: 'static>(
         should_shutdown: &mut bool,
         shutdown_receiver: &mut tokio::sync::broadcast::Receiver<
             crate::modules::signal::ShutdownModule,
@@ -141,13 +197,17 @@ pub mod signal {
             return Ok(());
         }
         while let Ok(shutdown_event) = shutdown_receiver.recv().await {
+            if TypeId::of::<T>() == TypeId::of::<()>() {
+                tracing::debug!("Break signal received for any module");
+                *should_shutdown = true;
+                return Ok(());
+            }
             if shutdown_event.module == std::any::type_name::<T>() {
                 tracing::debug!(
                     "Break signal received for module {}",
                     std::any::type_name::<T>()
                 );
                 *should_shutdown = true;
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 return Ok(());
             }
         }

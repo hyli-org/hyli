@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
+use std::time::Duration;
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
 use crate::bus::{BusClientSender, SharedMessageBus};
+use crate::modules::signal::shutdown_aware_timeout;
 use crate::{log_error, module_bus_client, module_handle_messages, modules::Module};
 use anyhow::{anyhow, bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -495,9 +497,7 @@ where
                 .collect::<Vec<_>>();
             let mut join_handles = Vec::new();
             self.prove_supported_blob(post_failure_blobs, &mut join_handles)?;
-            for handle in join_handles {
-                _ = log_error!(handle.await, "In proving task after failure");
-            }
+            // Don't wait, we'll want to prove the other successful proofs.
         }
 
         // 🚨 We have to handle successful transactions after the failed ones,
@@ -548,19 +548,14 @@ where
             self.populate_unsettled_if_empty();
         }
 
-        if !self.store.buffered_blobs.is_empty() {
+        let buffered = if !self.store.buffered_blobs.is_empty() {
             debug!(
                 cn =% self.ctx.contract_name,
                 "Buffer is full, processing {} blobs.",
                 self.store.buffered_blobs.len()
             );
-            let buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
             self.store.buffered_blocks_count = 0;
-            let mut join_handles = Vec::new();
-            self.prove_supported_blob(buffered, &mut join_handles)?;
-            for handle in join_handles {
-                _ = log_error!(handle.await, "In proving task");
-            }
+            Some(self.store.buffered_blobs.drain(..).collect::<Vec<_>>())
         } else if self.store.buffered_blocks_count >= self.ctx.buffer_blocks {
             // Check if we should prove some things.
             self.populate_unsettled_if_empty();
@@ -571,16 +566,38 @@ where
                     "Buffered blocks achieved, processing {} blobs",
                     self.store.buffered_blobs.len()
                 );
-                let buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
                 self.store.buffered_blocks_count = 0;
-                let mut join_handles = Vec::new();
-                self.prove_supported_blob(buffered, &mut join_handles)?;
-                for handle in join_handles {
-                    _ = log_error!(handle.await, "In proving task");
-                }
+                Some(self.store.buffered_blobs.drain(..).collect::<Vec<_>>())
+            } else {
+                None
             }
         } else {
             self.store.buffered_blocks_count += 1;
+            None
+        };
+
+        if let Some(buffered) = buffered {
+            let mut join_handles = Vec::new();
+            self.prove_supported_blob(buffered, &mut join_handles)?;
+            // Wait for all join handles, but with a 30 second timeout for the whole batch,
+            // after which we'll move on.
+            let join_handles_fut = async {
+                for handle in join_handles {
+                    _ = log_error!(handle.await, "In proving task");
+                }
+            };
+            let res = shutdown_aware_timeout::<Self, _>(
+                &mut self.bus,
+                Duration::from_secs(30),
+                join_handles_fut,
+            )
+            .await;
+            if res.is_err() {
+                info!(
+                    cn =% self.ctx.contract_name,
+                    "Proving tasks timed out after 30 seconds, continuing"
+                );
+            }
         }
 
         Ok(())
@@ -989,7 +1006,7 @@ where
                         };
                         match node_client.send_tx_proof(tx).await {
                             Ok(tx_hash) => {
-                                info!("✅ Proved {len} txs, Batch id: {batch_id}, Proof TX hash: {tx_hash}");
+                                info!("✅ Proved {len} txs in {elapsed:?}, Batch id: {batch_id}, Proof TX hash: {tx_hash}");
                             }
                             Err(e) => {
                                 error!("Failed to send proof: {e:#}");

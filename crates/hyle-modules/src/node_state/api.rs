@@ -18,6 +18,7 @@ use crate::{
         metrics::BusMetrics,
         SharedMessageBus,
     },
+    modules::signal::ShutdownModule,
     node_state::module::{QueryBlockHeight, QueryUnsettledTx, QueryUnsettledTxCount},
 };
 
@@ -30,6 +31,7 @@ struct RestBusClient {
     sender(Query<QueryUnsettledTxCount, u64>),
     sender(Query<QueryBlockHeight, BlockHeight>),
     sender(Query<QueryUnsettledTx, UnsettledBlobTransaction>),
+    receiver(ShutdownModule),
 }
 }
 
@@ -78,7 +80,7 @@ pub async fn get_contract(
     State(mut state): State<RouterState>,
 ) -> Result<impl IntoResponse, AppError> {
     let name_clone = name.clone();
-    match state.bus.request(name).await {
+    match state.bus.shutdown_aware_request::<()>(name).await {
         Ok(contract) => Ok(Json(contract)),
         err => {
             if let Err(e) = err.as_ref() {
@@ -116,7 +118,11 @@ pub async fn get_contract_settled_height(
     State(mut state): State<RouterState>,
 ) -> Result<impl IntoResponse, AppError> {
     let name_clone = name.clone();
-    match state.bus.request(QuerySettledHeight(name)).await {
+    match state
+        .bus
+        .shutdown_aware_request::<()>(QuerySettledHeight(name))
+        .await
+    {
         Ok(contract) => Ok(Json::<BlockHeight>(contract)),
         err => {
             if let Err(e) = err.as_ref() {
@@ -152,7 +158,11 @@ pub async fn get_contract_unsettled_txs_count(
     Path(name): Path<ContractName>,
     State(mut state): State<RouterState>,
 ) -> Result<impl IntoResponse, AppError> {
-    match state.bus.request(QueryUnsettledTxCount(Some(name))).await {
+    match state
+        .bus
+        .shutdown_aware_request::<()>(QueryUnsettledTxCount(Some(name)))
+        .await
+    {
         Ok(count) => Ok(Json(count)),
         err => {
             error!("{:?}", err);
@@ -175,7 +185,11 @@ pub async fn get_contract_unsettled_txs_count(
 pub async fn get_unsettled_txs_count(
     State(mut state): State<RouterState>,
 ) -> Result<impl IntoResponse, AppError> {
-    match state.bus.request(QueryUnsettledTxCount(None)).await {
+    match state
+        .bus
+        .shutdown_aware_request::<()>(QueryUnsettledTxCount(None))
+        .await
+    {
         Ok(count) => Ok(Json(count)),
         err => {
             error!("{:?}", err);
@@ -204,7 +218,7 @@ pub async fn get_unsettled_tx(
 ) -> Result<impl IntoResponse, AppError> {
     match state
         .bus
-        .request(QueryUnsettledTx(TxHash(blob_tx_hash)))
+        .shutdown_aware_request::<()>(QueryUnsettledTx(TxHash(blob_tx_hash)))
         .await
     {
         Ok(tx_context) => Ok(Json(tx_context)),
@@ -230,7 +244,11 @@ pub async fn get_unsettled_tx(
 pub async fn get_block_height(
     State(mut state): State<RouterState>,
 ) -> Result<impl IntoResponse, AppError> {
-    match state.bus.request(QueryBlockHeight {}).await {
+    match state
+        .bus
+        .shutdown_aware_request::<()>(QueryBlockHeight {})
+        .await
+    {
         Ok(block_height) => Ok(Json(block_height)),
         err => {
             error!("{:?}", err);
@@ -273,6 +291,7 @@ impl Clone for RouterState {
                     >,
                 >::get(&self.bus)
                 .clone(),
+                Pick::<tokio::sync::broadcast::Receiver<ShutdownModule>>::get(&self.bus).resubscribe(),
             ),
         }
     }
