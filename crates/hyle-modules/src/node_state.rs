@@ -371,15 +371,23 @@ impl NodeState {
         &self,
         blobs: T,
     ) -> TimeoutWindow {
-        blobs
-            .into_iter()
-            .filter_map(|blob| {
-                self.contracts
-                    .get(&blob.contract_name)
-                    .map(|c| c.timeout_window.clone())
-            })
-            .min()
-            .unwrap_or(TimeoutWindow::NoTimeout)
+        let mut timeout = TimeoutWindow::NoTimeout;
+        for blob in blobs {
+            if let Some(contract_timeout) = self
+                .contracts
+                .get(&blob.contract_name)
+                .map(|c| c.timeout_window.clone())
+            {
+                timeout = match (timeout, contract_timeout) {
+                    (TimeoutWindow::NoTimeout, contract_timeout) => contract_timeout,
+                    (TimeoutWindow::Timeout(a), TimeoutWindow::Timeout(b)) => {
+                        TimeoutWindow::Timeout(a.min(b))
+                    }
+                    _ => TimeoutWindow::NoTimeout,
+                }
+            }
+        }
+        timeout
     }
 
     fn handle_blob_tx(
