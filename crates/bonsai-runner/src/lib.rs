@@ -202,7 +202,7 @@ pub async fn run_bonsai(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
                 res.status,
                 res.state.unwrap_or_default()
             );
-            std::thread::sleep(Duration::from_secs(1));
+            tokio::time::sleep(Duration::from_secs(1)).await;
             continue;
         }
         if res.status == "SUCCEEDED" {

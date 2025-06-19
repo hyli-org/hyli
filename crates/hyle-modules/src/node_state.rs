@@ -146,6 +146,17 @@ pub struct NodeStateStore {
     unsettled_transactions: OrderedTxMap,
 }
 
+/// Make sure we register the hyle contract with the same values before genesis, and in the genesis block
+pub fn hyle_contract_definition() -> Contract {
+    Contract {
+        name: "hyle".into(),
+        program_id: ProgramId(vec![]),
+        state: StateCommitment(vec![0]),
+        verifier: Verifier("hyle".to_owned()),
+        timeout_window: TimeoutWindow::Timeout(BlockHeight(5)),
+    }
+}
+
 // TODO: we should register the 'hyle' TLD in the genesis block.
 impl Default for NodeStateStore {
     fn default() -> Self {
@@ -155,16 +166,9 @@ impl Default for NodeStateStore {
             contracts: HashMap::new(),
             unsettled_transactions: OrderedTxMap::default(),
         };
-        ret.contracts.insert(
-            "hyle".into(),
-            Contract {
-                name: "hyle".into(),
-                program_id: ProgramId(vec![]),
-                state: StateCommitment(vec![0]),
-                verifier: Verifier("hyle".to_owned()),
-                timeout_window: TimeoutWindow::Timeout(BlockHeight(5)),
-            },
-        );
+        let hyle_contract = hyle_contract_definition();
+        ret.contracts
+            .insert(hyle_contract.name.clone(), hyle_contract);
         ret
     }
 }
@@ -962,7 +966,10 @@ impl NodeState {
                 Some(contract) => {
                     // Otherwise, apply any side effect and potentially note it in the map of registered contracts.
                     if !self.contracts.contains_key(&contract_name) {
-                        info!("📝 Registering contract {}", contract_name);
+                        info!(
+                            "📝 Registering contract '{}' with timeout window {:?}",
+                            contract_name, contract.timeout_window
+                        );
 
                         // Let's find the metadata - for now it's unsupported to register the same contract twice in a single TX.
                         let metadata = side_effects.into_iter().find_map(|se| {

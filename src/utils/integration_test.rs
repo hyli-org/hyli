@@ -358,13 +358,11 @@ impl NodeIntegrationCtx {
         }
         Ok(())
     }
-    pub async fn wait_for_genesis_event(&mut self) -> Result<()> {
-        let _: GenesisEvent = self.bus_client.recv().await?;
-        Ok(())
+    pub async fn wait_for_genesis_event(&mut self) -> Result<GenesisEvent> {
+        Ok(self.bus_client.recv().await?)
     }
-    pub async fn wait_for_processed_genesis(&mut self) -> Result<()> {
-        let _: NodeStateEvent = self.bus_client.recv().await?;
-        Ok(())
+    pub async fn wait_for_processed_genesis(&mut self) -> Result<NodeStateEvent> {
+        Ok(self.bus_client.recv().await?)
     }
     pub async fn wait_for_n_blocks(&mut self, n: u32) -> Result<()> {
         for _ in 0..n {
