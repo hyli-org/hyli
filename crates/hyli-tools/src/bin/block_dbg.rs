@@ -11,7 +11,6 @@ use crossterm::{
 use hyle_contract_sdk::{Block, NodeStateEvent, TransactionData, TxId, api::NodeInfo};
 use hyle_contract_sdk::{BlockHeight, SignedBlock};
 use hyle_modules::{
-    bus::BusClientSender,
     modules::prover::{AutoProver, AutoProverCtx},
 };
 use hyle_modules::{
