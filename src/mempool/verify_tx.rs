@@ -170,7 +170,7 @@ impl super::Mempool {
                 );
             }
             DataProposalVerdict::Wait => {
-                debug!("Buffering DataProposal {}", data_proposal.hashed());
+                debug!("Buffering DataProposal {}", data_proposal_hash);
                 // Push the data proposal in the waiting list
                 self.buffered_proposals
                     .entry(lane_id.clone())
