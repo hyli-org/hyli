@@ -26,6 +26,7 @@ use hyle_modules::{
     modules::Module, utils::static_type_map::Pick,
 };
 use hyle_net::{logged_task::logged_task, ordered_join_set::OrderedJoinSet};
+use indexmap::IndexSet;
 use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
@@ -107,7 +108,11 @@ pub struct MempoolStore {
     waiting_dissemination_txs: BorshableIndexMap<TxHash, Transaction>,
     #[borsh(skip)]
     own_data_proposal_in_preparation: JoinSet<(DataProposalHash, DataProposal)>,
-    buffered_proposals: BTreeMap<LaneId, Vec<DataProposal>>,
+    // Skipped to clear on reset
+    #[borsh(skip)]
+    buffered_proposals: BTreeMap<LaneId, IndexSet<DataProposal>>, // This is an indexSet just so we can pop by idx.
+    // Skipped to clear on reset
+    #[borsh(skip)]
     buffered_podas: BTreeMap<LaneId, BTreeMap<DataProposalHash, Vec<UnaggregatedPoDA>>>,
 
     // verify_tx.rs
@@ -680,17 +685,19 @@ impl Mempool {
         self.lanes
             .put_no_verification(lane_id.clone(), (metadata, data_proposal))?;
 
-        let mut waiting_proposals = match self.buffered_proposals.get_mut(lane_id) {
+        // Retry all buffered proposals in this lane.
+        // We'll re-buffer them in the on_data_proposal logic if they fail to be processed.
+        let waiting_proposals = match self.buffered_proposals.get_mut(lane_id) {
             Some(waiting_proposals) => std::mem::take(waiting_proposals),
-            None => vec![],
+            None => Default::default(),
         };
 
         // TODO: retry remaining wp when one succeeds to be processed
-        for wp in waiting_proposals.iter_mut() {
+        for wp in waiting_proposals.into_iter() {
             if self.lanes.contains(lane_id, &wp.hashed()) {
                 continue;
             }
-            self.on_data_proposal(lane_id, wp.hashed(), std::mem::take(wp))
+            self.on_data_proposal(lane_id, wp.hashed(), wp)
                 .context("Consuming waiting data proposal")?;
         }
 
