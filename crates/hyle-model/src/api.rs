@@ -209,6 +209,16 @@ pub struct APIContract {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ApiContractData {
+    pub contract_name: ContractName,       // Name of the contract
+    pub state_block_height: BlockHeight,   // Block height where the state is captured
+    pub state_commitment: StateCommitment, // The contract state stored in JSON format
+    pub program_id: ProgramId,             // Program ID of the contract
+    pub verifier: Verifier,                // Verifier of the contract
+    pub timeout_window: Option<u64>,       // Timeout window for the contract
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct APIContractState {
     // Struct for the contract_state table
     pub contract_name: String,             // Name of the contract

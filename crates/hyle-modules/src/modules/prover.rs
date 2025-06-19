@@ -13,7 +13,8 @@ use hyle_net::logged_task::logged_task;
 use indexmap::IndexMap;
 use sdk::{
     BlobIndex, BlobTransaction, Block, BlockHeight, Calldata, ContractName, Hashed, NodeStateEvent,
-    ProofTransaction, TransactionData, TxContext, TxHash, TxId, HYLE_TESTNET_CHAIN_ID,
+    ProofTransaction, StateCommitment, TransactionData, TxContext, TxHash, TxId,
+    HYLE_TESTNET_CHAIN_ID,
 };
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
@@ -36,6 +37,7 @@ pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
     metrics: AutoProverMetrics,
     // If Some, the block to catch up to
     catching_up: Option<BlockHeight>,
+    catching_up_state: StateCommitment,
 
     catching_txs: IndexMap<TxId, (BlobTransaction, TxContext)>,
     catching_success_txs: Vec<(BlobTransaction, TxContext)>,
@@ -121,9 +123,10 @@ where
 
         let metrics = AutoProverMetrics::global(ctx.contract_name.to_string(), infos);
 
-        let current_block = ctx.node.get_block_height().await?;
-        let catching_up = match current_block.0 > 0 {
-            true => Some(current_block),
+        let contract_state = ctx.node.get_contract(ctx.contract_name.clone()).await?;
+        let catching_up_state = contract_state.state_commitment;
+        let catching_up = match contract_state.state_block_height.0 > 0 {
+            true => Some(contract_state.state_block_height),
             false => None,
         };
 
@@ -139,6 +142,7 @@ where
             ctx,
             metrics,
             catching_up,
+            catching_up_state,
             catching_success_txs: vec![],
             catching_txs: IndexMap::new(),
         })
@@ -188,6 +192,25 @@ where
                 .await
                 .context("Failed to handle settled block")?;
             if self.catching_up.is_some_and(|h| block_height.0 == h.0) {
+                let current_state = self
+                    .ctx
+                    .node
+                    .get_contract(self.ctx.contract_name.clone())
+                    .await?;
+                // If we took enough time catchup up, recompute a new catchup target.
+                if current_state.state_block_height.0 > self.catching_up.unwrap().0 + 10 {
+                    info!(
+                        cn =% self.ctx.contract_name,
+                        "🚅 Updating catch up target from {} to {}",
+                        self.catching_up.unwrap(),
+                        current_state.state_block_height
+                    );
+                    // Set the new catching up target.
+                    self.catching_up = Some(current_state.state_block_height);
+                    self.catching_up_state = current_state.state_commitment;
+                    return Ok(());
+                }
+
                 // Build blobs to execute from catching_txs
                 let mut blobs: Vec<(BlobIndex, BlobTransaction, TxContext)> = vec![];
                 for (tx, tx_ctx) in self.catching_success_txs.iter() {
@@ -278,17 +301,12 @@ where
                         "Final state after catching up: {:?}",
                         final_state
                     );
-                    let onchain = self
-                        .ctx
-                        .node
-                        .get_contract(self.ctx.contract_name.clone())
-                        .await?;
 
-                    if onchain.state != final_state {
+                    if self.catching_up_state != final_state {
                         error!(
                             cn =% self.ctx.contract_name,
                             "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
-                            onchain, final_state
+                            self.catching_up_state, final_state
                         );
                         error!(
                             cn =% self.ctx.contract_name,
@@ -296,7 +314,7 @@ where
                         );
                         anyhow::bail!(
                           "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
-                          onchain, final_state
+                          self.catching_up_state, final_state
                         );
                     }
                 }
@@ -1004,12 +1022,20 @@ where
                             contract_name: contract_name.clone(),
                             proof,
                         };
-                        match node_client.send_tx_proof(tx).await {
-                            Ok(tx_hash) => {
-                                info!("✅ Proved {len} txs in {elapsed:?}, Batch id: {batch_id}, Proof TX hash: {tx_hash}");
-                            }
-                            Err(e) => {
-                                error!("Failed to send proof: {e:#}");
+                        // If we are in nosend mode, we just log the proof and don't send it (for debugging)
+                        if std::env::var("HYLE_PROVER_NOSEND")
+                            .map(|v| v == "1" || v.to_lowercase() == "true")
+                            .unwrap_or(false)
+                        {
+                            info!("✅ Proved {len} txs in {elapsed:?}, Batch id: {batch_id}.");
+                        } else {
+                            match node_client.send_tx_proof(tx).await {
+                                Ok(tx_hash) => {
+                                    info!("✅ Proved {len} txs in {elapsed:?}, Batch id: {batch_id}, Proof TX hash: {tx_hash}");
+                                }
+                                Err(e) => {
+                                    error!("Failed to send proof: {e:#}");
+                                }
                             }
                         }
                         break;

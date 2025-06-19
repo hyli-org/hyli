@@ -6,7 +6,7 @@ use axum::{
     Json, Router,
 };
 use client_sdk::contract_indexer::AppError;
-use sdk::*;
+use sdk::{api::ApiContractData, *};
 use tracing::error;
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -26,7 +26,7 @@ use super::module::{NodeStateCtx, QuerySettledHeight};
 
 bus_client! {
 struct RestBusClient {
-    sender(Query<ContractName, Contract>),
+    sender(Query<ContractName, (BlockHeight, Contract)>),
     sender(Query<QuerySettledHeight, BlockHeight>),
     sender(Query<QueryUnsettledTxCount, u64>),
     sender(Query<QueryBlockHeight, BlockHeight>),
@@ -81,7 +81,17 @@ pub async fn get_contract(
 ) -> Result<impl IntoResponse, AppError> {
     let name_clone = name.clone();
     match state.bus.shutdown_aware_request::<()>(name).await {
-        Ok(contract) => Ok(Json(contract)),
+        Ok((block_height, contract)) => Ok(Json(ApiContractData {
+            contract_name: name_clone,
+            state_block_height: block_height,
+            state_commitment: contract.state,
+            program_id: contract.program_id,
+            verifier: contract.verifier,
+            timeout_window: match contract.timeout_window {
+                TimeoutWindow::NoTimeout => None,
+                TimeoutWindow::Timeout(window) => Some(window.0),
+            },
+        })),
         err => {
             if let Err(e) = err.as_ref() {
                 if e.to_string().contains("Contract not found") {
@@ -267,7 +277,7 @@ impl Clone for RouterState {
         Self {
             bus: RestBusClient::new(
                 Pick::<BusMetrics>::get(&self.bus).clone(),
-                Pick::<tokio::sync::broadcast::Sender<Query<ContractName, Contract>>>::get(
+                Pick::<tokio::sync::broadcast::Sender<Query<ContractName, (BlockHeight, Contract)>>>::get(
                     &self.bus,
                 )
                 .clone(),

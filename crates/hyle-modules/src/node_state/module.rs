@@ -41,7 +41,7 @@ module_bus_client! {
 pub struct NodeStateBusClient {
     sender(NodeStateEvent),
     receiver(DataEvent),
-    receiver(Query<ContractName, Contract>),
+    receiver(Query<ContractName, (BlockHeight, Contract)>),
     receiver(Query<QuerySettledHeight, BlockHeight>),
     receiver(Query<QueryUnsettledTxCount, u64>),
     receiver(Query<QueryBlockHeight , BlockHeight>),
@@ -91,8 +91,10 @@ impl Module for NodeStateModule {
             command_response<QueryBlockHeight, BlockHeight> _ => {
                 Ok(self.inner.current_height)
             }
-            command_response<ContractName, Contract> cmd => {
-                self.inner.contracts.get(cmd).cloned().context("Contract not found")
+            command_response<ContractName, (BlockHeight, Contract)> cmd => {
+                let block_height = self.inner.current_height;
+                let contract = self.inner.contracts.get(cmd).cloned().context("Contract not found")?;
+                Ok((block_height, contract))
             }
             command_response<QuerySettledHeight, BlockHeight> cmd => {
                 if !self.inner.contracts.contains_key(&cmd.0) {
