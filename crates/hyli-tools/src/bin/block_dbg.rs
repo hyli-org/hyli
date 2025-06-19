@@ -508,7 +508,8 @@ impl BlockDbg {
                                         for block in outputs {
                                             ui_state.processed_height = Some(block.block_height.0);
                                             ui_state.process_block_outputs(&block);
-                                            self.bus.send(NodeStateEvent::NewBlock(Box::new(block.clone())))?;
+                                            // Activate if you want provers on.
+                                            // self.bus.send(NodeStateEvent::NewBlock(Box::new(block.clone())))?;
                                             ui_state.processed_blocks.insert(block.block_height.0, block);
                                             ui_state.redraw = true;
                                         }
