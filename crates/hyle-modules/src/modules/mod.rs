@@ -18,7 +18,7 @@ use rand::{distributions::Alphanumeric, Rng};
 use tokio::task::JoinHandle;
 use tracing::{debug, info};
 
-const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub mod bus_ws_connector;
 pub mod contract_state_indexer;
@@ -293,13 +293,13 @@ impl ModulesHandler {
                 };
                 match res {
                     Ok(Ok(())) => {
-                        tracing::warn!("Module {} exited with no error.", module.name)
+                        tracing::warn!(module =% module.name, "Module {} exited with no error.", module.name);
                     }
                     Ok(Err(e)) => {
-                        tracing::error!("Module {} exited with error: {:?}", module.name, e)
+                        tracing::error!(module =% module.name, "Module {} exited with error: {:?}", module.name, e);
                     }
                     Err(e) => {
-                        tracing::error!("Module {} exited, error joining: {:?}", module.name, e);
+                        tracing::error!(module =% module.name, "Module {} exited, error joining: {:?}", module.name, e);
                     }
                 }
 
