@@ -21,7 +21,6 @@ use hyle_modules::{
     bus::{BusClientSender, SharedMessageBus},
     bus_client, handle_messages,
     modules::Module,
-    node_state::hyle_contract_definition,
 };
 use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
 use serde::{Deserialize, Serialize};
@@ -539,15 +538,13 @@ impl Genesis {
 
         let mut register_tx = ProvableBlobTx::new("hyle@hyle".into());
 
-        let hyle_contract = hyle_contract_definition();
-
         register_hyle_contract(
             &mut register_tx,
-            hyle_contract.name.clone(),
-            hyle_contract.name.0.clone().into(),
-            hyle_contract.program_id.clone(),
-            hyle_contract.state.clone(),
-            Some(hyle_contract.timeout_window),
+            "hyle".into(),
+            "hyle".into(),
+            ProgramId(vec![0, 0, 0, 0]),
+            StateCommitment::default(),
+            Some(TimeoutWindow::NoTimeout),
             None,
         )
         .expect("register hyle");
