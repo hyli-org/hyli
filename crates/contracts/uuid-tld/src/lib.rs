@@ -40,6 +40,8 @@ impl ContractAction for UuidTldAction {
     }
 }
 
+impl sdk::FullStateRevert for UuidTld {}
+
 impl ZkContract for UuidTld {
     fn execute(&mut self, calldata: &Calldata) -> RunResult {
         // Not an identity provider

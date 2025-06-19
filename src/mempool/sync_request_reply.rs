@@ -11,7 +11,10 @@ use hyle_net::clock::TimestampMsClock;
 use tokio::pin;
 use tracing::{debug, info, warn};
 
-use crate::p2p::network::{HeaderSigner, OutboundMessage};
+use crate::{
+    mempool::storage::MetadataOrMissingHash,
+    p2p::network::{HeaderSigner, OutboundMessage},
+};
 
 use super::{
     metrics::MempoolMetrics,
@@ -120,15 +123,16 @@ impl MempoolSync {
         }: SyncRequest,
     ) -> anyhow::Result<()> {
         if from.as_ref() == Some(&to) {
+            debug!("No need to unfold an empty interval for SyncRequest: from: {:?}, to: {}, validator: {}", from, to, validator);
             return Ok(());
         }
 
         pin! {
-            let stream = self.lanes.get_entries_metadata_between_hashes(&self.lane_id, from, Some(to));
+            let stream = self.lanes.get_entries_metadata_between_hashes(&self.lane_id, from.clone(), Some(to.clone()));
         };
 
         while let Some(entry) = stream.next().await {
-            if let Ok((metadata, dp_hash)) =
+            if let Ok(MetadataOrMissingHash::Metadata(metadata, dp_hash)) =
                 log_warn!(entry, "Getting entry metada to prepare sync replies")
             {
                 self.todo
@@ -136,8 +140,17 @@ impl MempoolSync {
                     .or_insert((metadata, Default::default()))
                     .1
                     .insert(validator.clone());
+            } else {
+                warn!("Could not get entry metadata to prepare sync replies for SyncRequest: from: {:?}, to: {}, validator: {}", from, to, validator);
+            }
+
+            // If from is None, we are just looking for the 'to' entry
+            // So one loop iteration is enough
+            if from.is_none() {
+                break;
             }
         }
+
         Ok(())
     }
 

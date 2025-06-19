@@ -89,7 +89,7 @@ impl Genesis {
         if already_handled_genesis {
             debug!("🌿 Genesis block already handled, skipping");
             // TODO: do we need a different message?
-            _ = self.bus.send(GenesisEvent::NoGenesis {})?;
+            self.bus.send(GenesisEvent::NoGenesis {})?;
             return Ok(());
         }
 
@@ -122,8 +122,6 @@ impl Genesis {
         // Wait until we've connected with all other genesis peers.
         // (We've already checked we're part of the stakers, so if we're alone carry on).
         if !single_node && self.config.genesis.stakers.len() > 1 {
-            // Cumulate heights of peers, to know whether we need a genesis step or not
-            let mut heights = vec![];
             info!("🌱 Waiting on other genesis peers to join");
             handle_messages! {
                 on_bus self.bus,
@@ -134,25 +132,20 @@ impl Genesis {
                                 continue;
                             }
 
-                            heights.push(height.0);
+                            if self.config.genesis.stakers.contains_key(&name) && height.0 > 0 {
+                                info!("🌱 Peer {}({}) has height {}, skipping genesis", &name, &pubkey, height.0);
+                                _ = self.bus.send(GenesisEvent::NoGenesis {});
+                                return Ok(());
+                            }
+
 
                             info!("🌱 New peer {}({}) added to genesis", &name, &pubkey);
                             self.peer_pubkey.insert(name.clone(), pubkey.clone());
 
                             // Once we know everyone in the initial quorum, craft & process the genesis block.
                             if self.peer_pubkey.len() == self.config.genesis.stakers.len() {
-                                let height = heights
-                                   .iter()
-                                   .max()
-                                   .unwrap_or(&0);
-
-                                if height > &0 {
-                                    info!(" Skipping Genesis because peers' height are higher than 0");
-                                    _ = self.bus.send(GenesisEvent::NoGenesis {});
-                                    return Ok(());
-                                } else {
-                                    break
-                                }
+                                info!("🌱 All genesis peers joined, creating genesis block");
+                                break;
                             } else {
                                 info!("🌱 Waiting for {} more peers to join genesis", self.config.genesis.stakers.len() - self.peer_pubkey.len());
                             }
@@ -946,5 +939,92 @@ mod tests {
 
         assert_eq!(rec1, rec2);
         assert_eq!(rec1, GenesisEvent::NoGenesis);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_emit_nogenesis_on_high_peer_height() {
+        let tmpdir = tempfile::Builder::new().tempdir().unwrap();
+
+        let mut config =
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+        config.id = "node-1".to_string();
+        config.consensus.solo = false;
+        config.genesis.stakers = [("node-1".into(), 100), ("node-2".into(), 100)]
+            .into_iter()
+            .collect();
+
+        let (mut genesis, mut bus) = new(config).await;
+
+        // Simuler la connexion d'un pair avec une height > 0
+        bus.send(PeerEvent::NewPeer {
+            name: "node-2".into(),
+            pubkey: BlstCrypto::new("node-2")
+                .unwrap()
+                .validator_pubkey()
+                .clone(),
+            height: BlockHeight(1),
+            da_address: "".into(),
+        })
+        .expect("send");
+
+        // Lancer le module Genesis
+        let result = genesis.start().await;
+
+        assert!(result.is_ok());
+
+        // Vérifier que l'événement reçu est NoGenesis
+        let rec = bus.try_recv().expect("recv");
+        assert_eq!(rec, GenesisEvent::NoGenesis);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_genesis_emitted_after_quorum_peers_at_zero_height() {
+        let tmpdir = tempfile::Builder::new().tempdir().unwrap();
+
+        let mut config =
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+        config.id = "node-1".to_string();
+        config.consensus.solo = false;
+        config.genesis.stakers = [
+            ("node-1".into(), 100),
+            ("node-2".into(), 100),
+            ("node-3".into(), 100),
+        ]
+        .into_iter()
+        .collect();
+
+        let (mut genesis, mut bus) = new(config).await;
+
+        // Envoyer le premier NewPeer à height = 0
+        bus.send(PeerEvent::NewPeer {
+            name: "node-2".into(),
+            pubkey: BlstCrypto::new("node-2")
+                .unwrap()
+                .validator_pubkey()
+                .clone(),
+            height: BlockHeight(0),
+            da_address: "".into(),
+        })
+        .expect("send");
+
+        // Ajouter un second peer à height = 0 (quorum 2f+1 atteint à ce stade : 3 sur 3)
+        bus.send(PeerEvent::NewPeer {
+            name: "node-3".into(),
+            pubkey: BlstCrypto::new("node-3")
+                .unwrap()
+                .validator_pubkey()
+                .clone(),
+            height: BlockHeight(0),
+            da_address: "".into(),
+        })
+        .expect("send");
+
+        // Lancer le module Genesis
+        let result = genesis.start().await;
+        assert!(result.is_ok());
+
+        // Vérifier que l’événement attendu est bien GenesisBlock
+        let rec = bus.try_recv().expect("Expected a GenesisBlock event");
+        assert_matches!(rec, GenesisEvent::GenesisBlock(..));
     }
 }

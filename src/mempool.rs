@@ -370,6 +370,10 @@ impl Mempool {
                 for (_, contract, _) in block.registered_contracts.into_values() {
                     self.handle_contract_registration(contract);
                 }
+                for (contract_name, program_id) in block.updated_program_ids.into_iter() {
+                    self.handle_contract_update(contract_name, program_id);
+                }
+
             }
             command_response<QueryNewCut, Cut> staking => {
                 self.handle_querynewcut(staking)
@@ -453,6 +457,19 @@ impl Mempool {
             &effect.verifier,
             &effect.program_id,
         );
+    }
+
+    fn handle_contract_update(&mut self, contract_name: ContractName, program_id: ProgramId) {
+        #[allow(clippy::expect_used, reason = "not held across await")]
+        let mut known_contracts = self.known_contracts.write().expect("logic issue");
+        if let Some(c) = known_contracts.0.get_mut(&contract_name) {
+            c.1 = program_id;
+        } else {
+            warn!(
+                "Tried to update contract {} that is not registered",
+                contract_name
+            );
+        }
     }
 
     // Optimistically parse Hyli tx blobs
@@ -566,32 +583,13 @@ impl Mempool {
                 self.on_poda_update(&lane_id, &data_proposal_hash, signatures)?
             }
             MempoolNetMessage::SyncRequest(from_data_proposal_hash, to_data_proposal_hash) => {
-                info!(
-                    "{} SyncRequest received from validator {validator} for last_data_proposal_hash {:?}",
-                    &self.own_lane_id(),
-                    to_data_proposal_hash
-                );
-
-                // Redirect to chan
-
-                let Some(to) = to_data_proposal_hash.or(self
-                    .lanes
-                    .lanes_tip
-                    .get(&self.own_lane_id())
-                    .map(|lane_id| lane_id.0.clone()))
-                else {
-                    info!("Nothing to do for this SyncRequest");
-                    return Ok(());
-                };
-
-                sync_request_sender
-                    .send(SyncRequest {
-                        from: from_data_proposal_hash,
-                        to,
-                        validator: validator.clone(),
-                    })
-                    .await
-                    .context("Sending SyncRequest to Mempool submodule")?;
+                self.on_sync_request(
+                    sync_request_sender,
+                    from_data_proposal_hash,
+                    to_data_proposal_hash,
+                    validator.clone(),
+                )
+                .await?;
             }
             MempoolNetMessage::SyncReply(metadata, data_proposal) => {
                 self.on_sync_reply(validator, metadata, data_proposal)
@@ -601,13 +599,49 @@ impl Mempool {
         Ok(())
     }
 
+    async fn on_sync_request(
+        &mut self,
+        sync_request_sender: &tokio::sync::mpsc::Sender<SyncRequest>,
+        from: Option<DataProposalHash>,
+        to: Option<DataProposalHash>,
+        validator: ValidatorPublicKey,
+    ) -> Result<()> {
+        debug!(
+            "{} SyncRequest received from validator {validator} for last_data_proposal_hash {:?}",
+            &self.own_lane_id(),
+            to
+        );
+
+        let Some(to) = to.or(self
+            .lanes
+            .lanes_tip
+            .get(&self.own_lane_id())
+            .map(|lane_id| lane_id.0.clone()))
+        else {
+            info!("Nothing to do for this SyncRequest");
+            return Ok(());
+        };
+
+        // Transmit sync request to the Mempool submodule, to build a reply
+        sync_request_sender
+            .send(SyncRequest {
+                from,
+                to,
+                validator: validator.clone(),
+            })
+            .await
+            .context("Sending SyncRequest to Mempool submodule")?;
+
+        Ok(())
+    }
+
     async fn on_sync_reply(
         &mut self,
         sender_validator: &ValidatorPublicKey,
         metadata: LaneEntryMetadata,
         data_proposal: DataProposal,
     ) -> Result<()> {
-        trace!("SyncReply from validator {sender_validator}");
+        debug!("SyncReply from validator {sender_validator}");
 
         // TODO: Introduce lane ids in sync reply
         self.metrics.sync_reply_receive(
@@ -637,7 +671,7 @@ impl Mempool {
         }
 
         // Add missing lanes to the validator's lane
-        debug!(
+        trace!(
             "Filling hole with 1 entry (parent dp hash: {:?}) for {lane_id}",
             metadata.parent_data_proposal_hash
         );
@@ -687,7 +721,7 @@ impl Mempool {
         )
         .is_err()
         {
-            info!(
+            debug!(
                 "Buffering poda of {} signatures for DP: {}",
                 podas.len(),
                 data_proposal_hash
@@ -780,8 +814,7 @@ impl Mempool {
     ) -> Result<()> {
         let enum_variant_name: &'static str = (&net_message).into();
         let error_msg = format!("Sending MempoolNetMessage::{enum_variant_name} msg on the bus");
-        _ = self
-            .bus
+        self.bus
             .send(OutboundMessage::send(
                 to,
                 self.crypto.sign_msg_with_header(net_message)?,
@@ -1571,6 +1604,67 @@ pub mod test {
             &ctx.mempool.get_lane(crypto2.validator_pubkey()),
             &data_proposal.hashed()
         ));
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_sync_request_single_dp() -> Result<()> {
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+        let lane_id = ctx.mempool.own_lane_id().clone();
+        let crypto = ctx.mempool.crypto.clone();
+
+        // Create a chain of 3 DataProposals
+        let dp1 = DataProposal::new(None, vec![]);
+        let _dp1_size = LaneBytesSize(dp1.estimate_size() as u64);
+        let dp1_hash = dp1.hashed();
+        ctx.mempool
+            .lanes
+            .store_data_proposal(&crypto, &lane_id, dp1.clone())?;
+
+        let dp2 = DataProposal::new(Some(dp1_hash.clone()), vec![]);
+        let dp2_size = LaneBytesSize(dp2.estimate_size() as u64);
+        let dp2_hash = dp2.hashed();
+        ctx.mempool
+            .lanes
+            .store_data_proposal(&crypto, &lane_id, dp2.clone())?;
+
+        let dp3 = DataProposal::new(Some(dp2_hash.clone()), vec![]);
+        let _dp3_size = LaneBytesSize(dp3.estimate_size() as u64);
+        let _dp3_hash = dp3.hashed();
+        ctx.mempool
+            .lanes
+            .store_data_proposal(&crypto, &lane_id, dp3.clone())?;
+
+        // Send a sync request for dp2 only
+        ctx.mempool
+            .on_sync_request(
+                &ctx.mempool_sync_request_sender,
+                None,
+                Some(dp2_hash.clone()),
+                crypto.validator_pubkey().clone(),
+            )
+            .await?;
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // Verify that only dp2 was sent in the sync reply
+        match ctx
+            .assert_send(&crypto.validator_pubkey().clone(), "SyncReply")
+            .await
+            .msg
+        {
+            MempoolNetMessage::SyncReply(metadata, dp) => {
+                assert_eq!(dp, dp2);
+                assert_eq!(metadata.parent_data_proposal_hash, Some(dp1_hash));
+                assert_eq!(metadata.cumul_size, dp2_size);
+                assert_eq!(metadata.signatures.len(), 1);
+            }
+            _ => panic!("Expected SyncReply message"),
+        }
+
+        // Verify no other messages were sent
+        assert!(ctx.out_receiver.try_recv().is_err());
 
         Ok(())
     }

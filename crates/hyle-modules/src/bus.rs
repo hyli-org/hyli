@@ -12,6 +12,7 @@ pub mod metrics;
 // Arbitrarily "high enough" value. Memory use is around 200Mb when setting this,
 // we can lower it for some rarely used channels if needed.
 pub const CHANNEL_CAPACITY: usize = 100000;
+pub const CHANNEL_CAP_IF_WAITING: usize = CHANNEL_CAPACITY - 10;
 
 type AnyMap = Map<dyn Any + Send + Sync>;
 
@@ -73,7 +74,14 @@ impl Default for SharedMessageBus {
 }
 
 pub trait BusClientSender<T> {
-    fn send(&mut self, message: T) -> Result<usize, tokio::sync::broadcast::error::SendError<T>>;
+    fn send(&mut self, message: T) -> anyhow::Result<()>;
+    fn send_waiting_if_full(
+        &mut self,
+        message: T,
+    ) -> impl std::future::Future<Output = anyhow::Result<()>> + Send
+    where
+        Self: Send,
+        T: Send;
 }
 pub trait BusClientReceiver<T> {
     fn recv(
@@ -119,16 +127,51 @@ impl<Client, Msg: Clone + 'static> BusClientSender<Msg> for Client
 where
     Client: Pick<tokio::sync::broadcast::Sender<Msg>> + Pick<BusMetrics> + 'static,
 {
-    fn send(
-        &mut self,
-        message: Msg,
-    ) -> Result<usize, tokio::sync::broadcast::error::SendError<Msg>> {
+    fn send(&mut self, message: Msg) -> anyhow::Result<()> {
         if Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).receiver_count() > 0 {
+            // We have a potential TOCTOU race here, so use a buffer.
+            if Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).len()
+                >= CHANNEL_CAP_IF_WAITING
+            {
+                anyhow::bail!("Channel is full, cannot send message");
+            }
             Pick::<BusMetrics>::get_mut(self).send::<Msg, Client>();
-            Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).send(message)
-        } else {
-            Ok(0)
+            Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self)
+                .send(message)
+                // Error is always "channel closed" so let's replace that
+                .map_err(|_| anyhow::anyhow!("Failed to send message"))?;
         }
+        Ok(())
+    }
+    async fn send_waiting_if_full(&mut self, message: Msg) -> anyhow::Result<()>
+    where
+        Client: Send,
+        Msg: Send,
+    {
+        if Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).receiver_count() > 0 {
+            let mut i = 0;
+            const MAX_ATTEMPTS: usize = 100; // 10s limit, we assume longer would indicate an error
+            loop {
+                // We have a potential TOCTOU race here, so use a buffer.
+                if Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).len()
+                    >= CHANNEL_CAP_IF_WAITING
+                {
+                    if i >= MAX_ATTEMPTS {
+                        anyhow::bail!("Channel is full, cannot send message");
+                    }
+                    i += 1;
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                } else {
+                    Pick::<BusMetrics>::get_mut(self).send::<Msg, Client>();
+                    break Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self)
+                        .send(message)
+                        .map(|_| ())
+                        // Error is always "channel closed" so let's replace that
+                        .map_err(|_| anyhow::anyhow!("Failed to send message"))?;
+                }
+            }
+        }
+        Ok(())
     }
 }
 

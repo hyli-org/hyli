@@ -11,6 +11,8 @@ pub mod client;
 pub mod fees;
 pub mod state;
 
+impl sdk::FullStateRevert for Staking {}
+
 impl ZkContract for Staking {
     fn execute(&mut self, calldata: &Calldata) -> RunResult {
         let (action, execution_ctx) = parse_calldata::<StakingAction>(calldata)?;

@@ -16,6 +16,7 @@ pub struct ConsensusInfo {
     pub slot: Slot,
     pub view: View,
     pub round_leader: ValidatorPublicKey,
+    pub last_timestamp: TimestampMs,
     pub validators: Vec<ValidatorPublicKey>,
 }
 
@@ -139,11 +140,11 @@ impl Display for ConsensusProposal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Hash: {}, Parent Hash: {}, Slot: {}, Cut: {:?}, staking_actions: {:?}",
+            "Hash: {}, Parent Hash: {}, Slot: {}, Cut: {}, staking_actions: {:?}",
             self.hashed(),
             self.parent_hash,
             self.slot,
-            self.cut,
+            CutDisplay(&self.cut),
             self.staking_actions,
         )
     }

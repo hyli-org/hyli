@@ -631,7 +631,9 @@ impl Consensus {
                         self.store.bft_round_state.current_proposal = ConsensusProposal {
                             slot: block.block_height.0,
                             ..Default::default()
-                        }
+                        };
+
+                        self.bft_round_state.timeout.requests.clear();
                     }
                 }
                 Ok(())
@@ -653,8 +655,7 @@ impl Consensus {
     fn broadcast_net_message(&mut self, net_message: ConsensusNetMessage) -> Result<()> {
         let signed_msg = self.sign_net_message(net_message)?;
         let enum_variant_name: &'static str = (&signed_msg.msg).into();
-        _ = self
-            .bus
+        self.bus
             .send(OutboundMessage::broadcast(signed_msg))
             .context(format!(
                 "Failed to broadcast {} msg on the bus",
@@ -671,8 +672,7 @@ impl Consensus {
     ) -> Result<()> {
         let signed_msg = self.sign_net_message(net_message)?;
         let enum_variant_name: &'static str = (&signed_msg.msg).into();
-        _ = self
-            .bus
+        self.bus
             .send(OutboundMessage::send(to, signed_msg))
             .context(format!(
                 "Failed to send {} msg on the bus",
@@ -784,8 +784,9 @@ impl Consensus {
                 let slot = self.bft_round_state.slot;
                 let view = self.bft_round_state.view;
                 let round_leader = self.round_leader()?;
+                let last_timestamp = self.bft_round_state.parent_timestamp.clone();
                 let validators = self.bft_round_state.staking.bonded().clone();
-                Ok(ConsensusInfo { slot, view, round_leader, validators })
+                Ok(ConsensusInfo { slot, view, round_leader, last_timestamp, validators })
             }
             command_response<QueryConsensusStakingState, Staking> _ => {
                 Ok(self.bft_round_state.staking.clone())

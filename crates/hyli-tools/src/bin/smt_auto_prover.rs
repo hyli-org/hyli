@@ -3,16 +3,21 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{Context, Result};
 use clap::{Parser, command};
 
-use client_sdk::{helpers::risc0::Risc0Prover, rest_client::NodeApiHttpClient};
+use client_sdk::{
+    contract_indexer::utoipa::OpenApi, helpers::risc0::Risc0Prover, rest_client::NodeApiHttpClient,
+};
+use hyle_contract_sdk::api::NodeInfo;
 use hyle_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
         ModulesHandler,
         da_listener::{DAListener, DAListenerConf},
         prover::{AutoProver, AutoProverCtx},
+        rest::{ApiDoc, RestApi, RestApiRunContext, Router},
     },
     utils::logger::setup_tracing,
 };
+use prometheus::Registry;
 use serde::{Deserialize, Serialize};
 use smt_token::client::tx_executor_handler::SmtTokenProvableState;
 
@@ -36,6 +41,19 @@ async fn main() -> Result<()> {
 
     tracing::info!("Setting up modules");
 
+    let registry = Registry::new();
+    // Init global metrics meter we expose as an endpoint
+    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+        .with_reader(
+            opentelemetry_prometheus::exporter()
+                .with_registry(registry.clone())
+                .build()
+                .context("starting prometheus exporter")?,
+        )
+        .build();
+
+    opentelemetry::global::set_meter_provider(provider.clone());
+
     let node_client =
         Arc::new(NodeApiHttpClient::new(config.node_url.clone()).context("build node client")?);
 
@@ -53,6 +71,7 @@ async fn main() -> Result<()> {
             default_state: Default::default(),
             buffer_blocks: config.buffer_blocks,
             max_txs_per_proof: config.max_txs_per_proof,
+            tx_working_window_size: config.tx_working_window_size,
         }))
         .await?;
 
@@ -62,6 +81,23 @@ async fn main() -> Result<()> {
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
         })
+        .await?;
+
+    handler
+        .build_module::<RestApi>(
+            RestApiRunContext::new(
+                config.rest_server_port,
+                NodeInfo {
+                    id: "smt_auto_prover".to_string(),
+                    pubkey: None,
+                    da_address: config.da_read_from.clone(),
+                },
+                Router::new(),
+                config.rest_server_max_body_size,
+                ApiDoc::openapi(),
+            )
+            .with_registry(registry),
+        )
         .await?;
 
     tracing::info!("Starting modules");
@@ -89,9 +125,13 @@ struct Conf {
 
     pub buffer_blocks: u32,
     pub max_txs_per_proof: usize,
+    pub tx_working_window_size: usize,
 
     /// Contract name to prove
     pub contract_name: String,
+
+    pub rest_server_port: u16,
+    pub rest_server_max_body_size: usize,
 }
 
 impl Conf {

@@ -1,7 +1,7 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::transaction_builder::TxExecutorHandler;
 use hyle_verifiers::native::verify;
-use sdk::verifiers::NativeVerifiers;
+use sdk::{verifiers::NativeVerifiers, StateCommitment};
 
 /// Convenience utility for verifying blobs for native verifiers.
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
@@ -42,5 +42,8 @@ impl TxExecutorHandler for NativeVerifierHandler {
         _: &Option<Vec<u8>>,
     ) -> anyhow::Result<Self> {
         Ok(Self)
+    }
+    fn get_state_commitment(&self) -> StateCommitment {
+        StateCommitment::default()
     }
 }

@@ -9,6 +9,7 @@ use hydentity::{
 };
 
 pub const HYLI_WALLET: &str = "wallet";
+use crate::node_state::hyle_tld::HYLI_TLD_ID;
 
 use super::*;
 

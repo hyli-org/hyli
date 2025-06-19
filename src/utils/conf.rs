@@ -7,6 +7,8 @@ use serde_with::DurationMilliSeconds;
 use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::Arc, time::Duration};
 use strum_macros::IntoStaticStr;
 
+use crate::indexer::IndexerConf;
+
 #[serde_as]
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Consensus {
@@ -141,6 +143,9 @@ pub struct Conf {
 
     /// Websocket configuration
     pub websocket: NodeWebSocketConfig,
+
+    /// Configuration for the indexer module
+    pub indexer: IndexerConf,
 }
 
 impl Conf {

@@ -236,7 +236,7 @@ where
             &block.timed_out_txs,
             &block,
             |state, tx, index, ctx| state.handle_transaction_timeout(tx, index, ctx),
-            false,
+            true,
         )
         .await?;
 
@@ -244,7 +244,7 @@ where
             &block.failed_txs,
             &block,
             |state, tx, index, ctx| state.handle_transaction_failed(tx, index, ctx),
-            false,
+            true,
         )
         .await?;
 
@@ -346,6 +346,9 @@ mod tests {
             _metadata: &Option<Vec<u8>>,
         ) -> Result<Self> {
             Ok(Self::default())
+        }
+        fn get_state_commitment(&self) -> StateCommitment {
+            self.commit()
         }
     }
 

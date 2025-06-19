@@ -22,7 +22,7 @@ bonsai-sdk = { version = "1.2.4", features = ["non_blocking"] }
 boundless-market = "0.7.0"
 hyle-net = { workspace = true }
 risc0-zkvm = { version = "2.1" }
-bytemuck = "1.23.0"
+bytemuck = "1.23.1"
 # Has to be compatible with whatever bonsai-sdk returns, which is not really documented...
 bincode = "1.3.3"
 serde = { version = "1.0.219", features = ["derive"] }
