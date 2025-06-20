@@ -375,7 +375,7 @@ impl NodeState {
         &self,
         blobs: T,
     ) -> TimeoutWindow {
-        if self.current_height.0 > 350_000 {
+        if self.current_height.0 > 440_000 {
             blobs
                 .into_iter()
                 .filter_map(|blob| {
