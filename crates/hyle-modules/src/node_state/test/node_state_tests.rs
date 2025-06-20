@@ -1365,7 +1365,7 @@ async fn test_tx_with_hyle_blob_should_have_specific_timeout_after_block3500000(
 // Check hyle-modules/src/node_state.rs l127 for the timeout window value
 #[test_log::test(tokio::test)]
 async fn test_tx_with_hyle_blob_should_have_specific_timeout() {
-    let hyle_timeout_window = BlockHeight(5);
+    let hyle_timeout_window = TimeoutWindow::NoTimeout;
 
     let mut state = new_node_state().await;
     let a1 = ContractName::new("a1");
@@ -1381,7 +1381,7 @@ async fn test_tx_with_hyle_blob_should_have_specific_timeout() {
     assert_eq!(block.timed_out_txs, vec![]);
 
     // Time out
-    let block = state.craft_block_and_handle(100 + hyle_timeout_window.0, vec![]);
+    let block = state.craft_block_and_handle(100 + 100, vec![]);
 
     // Assert that tx has timed out
     assert_eq!(block.timed_out_txs, vec![tx_hash.clone()]);
