@@ -57,7 +57,7 @@ struct MockModule<T> {
     bus: MockModuleBusClient,
     _t: std::marker::PhantomData<T>,
 }
-impl<T: 'static> MockModule<T> {
+impl<T: 'static + Send> MockModule<T> {
     async fn new(bus: SharedMessageBus) -> Result<Self> {
         Ok(Self {
             bus: MockModuleBusClient::new_from_bus(bus).await,
