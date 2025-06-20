@@ -757,6 +757,15 @@ pub enum TimeoutWindow {
     Timeout(BlockHeight),
 }
 
+impl Display for TimeoutWindow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            TimeoutWindow::NoTimeout => write!(f, "NoTimeout"),
+            TimeoutWindow::Timeout(height) => write!(f, "Timeout({})", height.0),
+        }
+    }
+}
+
 impl Default for TimeoutWindow {
     fn default() -> Self {
         TimeoutWindow::Timeout(BlockHeight(100))
@@ -835,6 +844,32 @@ pub struct UpdateContractProgramIdAction {
 }
 
 impl ContractAction for UpdateContractProgramIdAction {
+    fn as_blob(
+        &self,
+        contract_name: ContractName,
+        caller: Option<BlobIndex>,
+        callees: Option<Vec<BlobIndex>>,
+    ) -> Blob {
+        Blob {
+            contract_name,
+            data: BlobData::from(StructuredBlobData {
+                caller,
+                callees,
+                parameters: self.clone(),
+            }),
+        }
+    }
+}
+
+#[derive(
+    Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
+)]
+pub struct UpdateContractTimeoutWindowAction {
+    pub contract_name: ContractName,
+    pub timeout_window: TimeoutWindow,
+}
+
+impl ContractAction for UpdateContractTimeoutWindowAction {
     fn as_blob(
         &self,
         contract_name: ContractName,

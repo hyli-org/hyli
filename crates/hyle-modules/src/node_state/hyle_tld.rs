@@ -31,6 +31,10 @@ pub fn handle_blob_for_hyle_tld(
         StructuredBlobData::<UpdateContractProgramIdAction>::try_from(current_blob.data.clone())
     {
         handle_update_program_id_blob(contracts, contract_changes, &reg.parameters)?;
+    } else if let Ok(reg) =
+        StructuredBlobData::<UpdateContractTimeoutWindowAction>::try_from(current_blob.data.clone())
+    {
+        handle_update_timeout_window_blob(contracts, contract_changes, &reg.parameters)?;
     } else if StructuredBlobData::<NukeTxAction>::try_from(current_blob.data.clone()).is_ok() {
         // Do nothing
     } else {
@@ -136,6 +140,45 @@ fn handle_update_program_id_blob(
                 }),
                 ModifiedContractFields {
                     program_id: true,
+                    ..ModifiedContractFields::default()
+                },
+                vec![new_update],
+            )
+        });
+    Ok(())
+}
+
+fn handle_update_timeout_window_blob(
+    contracts: &HashMap<ContractName, Contract>,
+    contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
+    update: &UpdateContractTimeoutWindowAction,
+) -> Result<()> {
+    // For now, Hyli is allowed to delete all contracts but itself
+    if update.contract_name.0 == "hyle" {
+        bail!("Cannot udpate Hyli contract");
+    }
+
+    let contract =
+        NodeState::get_contract(contracts, contract_changes, &update.contract_name)?.clone();
+
+    let new_update = SideEffect::UpdateTimeoutWindow;
+    contract_changes
+        .entry(update.contract_name.clone())
+        .and_modify(|c| {
+            if let Some(contract) = c.0.as_mut() {
+                contract.timeout_window = update.timeout_window.clone();
+            }
+            c.1.timeout_window = true;
+            c.2.push(new_update.clone());
+        })
+        .or_insert_with(|| {
+            (
+                Some(Contract {
+                    timeout_window: update.timeout_window.clone(),
+                    ..contract
+                }),
+                ModifiedContractFields {
+                    timeout_window: true,
                     ..ModifiedContractFields::default()
                 },
                 vec![new_update],
