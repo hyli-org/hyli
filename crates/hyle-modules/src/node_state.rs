@@ -28,6 +28,7 @@ enum SideEffect {
     Register(Option<Vec<u8>>),
     UpdateState,
     UpdateProgramId,
+    UpdateTimeoutWindow,
     Delete,
 }
 
@@ -212,6 +213,7 @@ impl NodeState {
             deleted_contracts: BTreeMap::new(),
             updated_states: BTreeMap::new(),
             updated_program_ids: BTreeMap::new(),
+            updated_timeout_windows: BTreeMap::new(),
             transactions_events: BTreeMap::new(),
             dp_parent_hashes: BTreeMap::new(),
             lane_ids: BTreeMap::new(),
@@ -1030,7 +1032,17 @@ impl NodeState {
 
                         block_under_construction
                             .updated_program_ids
-                            .insert(contract.name, contract.program_id);
+                            .insert(contract.name.clone(), contract.program_id);
+                    }
+                    if fields.timeout_window {
+                        debug!(
+                            "✍️  Modify '{}' timeout window to {}",
+                            &contract_name, &contract.timeout_window
+                        );
+
+                        block_under_construction
+                            .updated_timeout_windows
+                            .insert(contract.name, contract.timeout_window);
                     }
                 }
             }
