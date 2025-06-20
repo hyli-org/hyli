@@ -1236,7 +1236,7 @@ async fn test_tx_reset_timeout_on_tx_settlement() {
 }
 
 #[test_log::test(tokio::test)]
-async fn test_tx_with_hyle_blob_should_have_specific_timeout_before_block440_000() {
+async fn test_tx_with_hyle_blob_should_have_specific_timeout_before_block445_000() {
     let hyle_timeout_window = TimeoutWindow::NoTimeout;
 
     let mut state = new_node_state().await;
@@ -1291,7 +1291,7 @@ async fn test_tx_with_hyle_blob_should_have_specific_timeout_before_block440_000
 }
 
 #[test_log::test(tokio::test)]
-async fn test_tx_with_hyle_blob_should_have_specific_timeout_after_block440_000() {
+async fn test_tx_with_hyle_blob_should_have_specific_timeout_after_block445_000() {
     let hyle_timeout_window = TimeoutWindow::NoTimeout;
 
     let mut state = new_node_state().await;
@@ -1344,19 +1344,19 @@ async fn test_tx_with_hyle_blob_should_have_specific_timeout_after_block440_000(
 
     let tx3_hash = tx3.hashed();
 
-    let block = state.craft_block_and_handle(440_001, vec![tx1.into(), tx2.into()]);
+    let block = state.craft_block_and_handle(445_001, vec![tx1.into(), tx2.into()]);
 
     // Assert no timeout
     assert_eq!(block.timed_out_txs, vec![]);
 
     // Current Time out behaviour
-    let block = state.craft_block_and_handle(440_001 + 5, vec![]);
+    let block = state.craft_block_and_handle(445_001 + 5, vec![]);
 
     assert_eq!(block.timed_out_txs, vec![]);
-    let block = state.craft_block_and_handle(440_001 + 100, vec![]);
+    let block = state.craft_block_and_handle(445_001 + 100, vec![]);
     assert_eq!(block.timed_out_txs, vec![tx2_hash.clone()]);
 
-    let block = state.craft_block_and_handle(441_001, vec![]);
+    let block = state.craft_block_and_handle(446_001, vec![]);
     assert_eq!(block.timed_out_txs, vec![]);
 
     assert!(state.unsettled_transactions.get(&tx2_hash).is_none());
