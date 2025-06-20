@@ -230,7 +230,7 @@ impl sqlx::Type<sqlx::Postgres> for TimeoutWindowDb {
     }
 }
 
-impl<'q> sqlx::Encode<'q, sqlx::Postgres> for TimeoutWindowDb {
+impl sqlx::Encode<'_, sqlx::Postgres> for TimeoutWindowDb {
     fn encode_by_ref(
         &self,
         buf: &mut sqlx::postgres::PgArgumentBuffer,
@@ -238,7 +238,7 @@ impl<'q> sqlx::Encode<'q, sqlx::Postgres> for TimeoutWindowDb {
         match &self.0 {
             TimeoutWindow::NoTimeout => Ok(sqlx::encode::IsNull::Yes),
             TimeoutWindow::Timeout(height) => {
-                let val: i64 = (*height)
+                let val: i64 = height
                     .0
                     .try_into()
                     .map_err(|_| format!("BlockHeight value {} overflows i64", height.0))?;

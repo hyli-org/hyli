@@ -203,6 +203,10 @@ pub fn validate_hyle_contract_blobs(tx: &BlobTransaction) -> Result<(), String> 
             if StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
                 .is_ok()
                 || StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone()).is_ok()
+                || StructuredBlobData::<UpdateContractTimeoutWindowAction>::try_from(
+                    blob.data.clone(),
+                )
+                .is_ok()
             {
                 if tx.identity.0 != HYLI_TLD_ID {
                     return Err(format!(
