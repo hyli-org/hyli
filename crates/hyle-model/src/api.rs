@@ -7,8 +7,8 @@ use utoipa::ToSchema;
 
 use crate::{
     utils::TimestampMs, BlockHash, BlockHeight, ConsensusProposalHash, ContractName,
-    DataProposalHash, Identity, LaneBytesSize, LaneId, ProgramId, StateCommitment, Transaction,
-    TransactionKind, TxHash, ValidatorPublicKey, Verifier,
+    DataProposalHash, Identity, LaneBytesSize, LaneId, ProgramId, StateCommitment, TimeoutWindow,
+    Transaction, TransactionKind, TxHash, ValidatorPublicKey, Verifier,
 };
 
 #[derive(Clone, Serialize, Deserialize, Debug, ToSchema)]
@@ -208,7 +208,7 @@ pub struct APIContract {
     pub earliest_unsettled: Option<BlockHeight>, // Earliest unsettled transaction block height
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct APINodeContract {
     pub contract_name: ContractName,       // Name of the contract
     pub state_block_height: BlockHeight,   // Block height where the state is captured
@@ -216,6 +216,93 @@ pub struct APINodeContract {
     pub program_id: ProgramId,             // Program ID of the contract
     pub verifier: Verifier,                // Verifier of the contract
     pub timeout_window: Option<u64>,       // Timeout window for the contract
+}
+
+impl<'de> Deserialize<'de> for APINodeContract {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Helper {
+            Old(crate::Contract),
+            New {
+                contract_name: ContractName,
+                state_block_height: BlockHeight,
+                state_commitment: StateCommitment,
+                program_id: ProgramId,
+                verifier: Verifier,
+                timeout_window: Option<u64>,
+            },
+        }
+
+        match Helper::deserialize(deserializer)? {
+            Helper::Old(c) => Ok(APINodeContract {
+                contract_name: c.name,
+                state_block_height: BlockHeight(0),
+                state_commitment: c.state,
+                program_id: c.program_id,
+                verifier: c.verifier,
+                timeout_window: match c.timeout_window {
+                    TimeoutWindow::Timeout(timeout) => Some(timeout.0),
+                    TimeoutWindow::NoTimeout => None,
+                },
+            }),
+            Helper::New {
+                contract_name,
+                state_block_height,
+                state_commitment,
+                program_id,
+                verifier,
+                timeout_window,
+            } => Ok(APINodeContract {
+                contract_name,
+                state_block_height,
+                state_commitment,
+                program_id,
+                verifier,
+                timeout_window,
+            }),
+        }
+    }
+}
+
+#[test]
+fn test_deserialize_api_node_contract() {
+    // Test old format
+    let old_json = serde_json::to_value(&crate::Contract {
+        name: ContractName("my_contract".to_string()),
+        program_id: ProgramId(vec![4, 5, 6]),
+        state: StateCommitment(vec![1, 2, 3]),
+        verifier: Verifier("verifier1".to_string()),
+        timeout_window: TimeoutWindow::Timeout(BlockHeight(32)),
+    })
+    .unwrap();
+    let old_contract: APINodeContract = serde_json::from_value(old_json).unwrap();
+    assert_eq!(old_contract.contract_name.0, "my_contract");
+    assert_eq!(old_contract.state_block_height.0, 0); // Default value
+    assert_eq!(old_contract.state_commitment.0, vec![1, 2, 3]);
+    assert_eq!(old_contract.program_id.0, vec![4, 5, 6]);
+    assert_eq!(old_contract.verifier.0, "verifier1");
+    assert_eq!(old_contract.timeout_window, Some(32));
+    // Test new format
+    let new_json = serde_json::to_value(&APINodeContract {
+        contract_name: ContractName("new_contract".to_string()),
+        state_block_height: BlockHeight(42),
+        state_commitment: StateCommitment(vec![7, 8, 9]),
+        program_id: ProgramId(vec![10, 11, 12]),
+        verifier: Verifier("verifier2".to_string()),
+        timeout_window: Some(123),
+    })
+    .unwrap();
+    let new_contract: APINodeContract = serde_json::from_value(new_json).unwrap();
+    assert_eq!(new_contract.contract_name.0, "new_contract");
+    assert_eq!(new_contract.state_block_height.0, 42);
+    assert_eq!(new_contract.state_commitment.0, vec![7, 8, 9]);
+    assert_eq!(new_contract.program_id.0, vec![10, 11, 12]);
+    assert_eq!(new_contract.verifier.0, "verifier2");
+    assert_eq!(new_contract.timeout_window, Some(123));
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
