@@ -146,6 +146,17 @@ pub struct NodeStateStore {
     unsettled_transactions: OrderedTxMap,
 }
 
+/// Make sure we register the hyle contract with the same values before genesis, and in the genesis block
+pub fn hyle_contract_definition() -> Contract {
+    Contract {
+        name: "hyle".into(),
+        program_id: ProgramId(vec![]),
+        state: StateCommitment(vec![0]),
+        verifier: Verifier("hyle".to_owned()),
+        timeout_window: TimeoutWindow::NoTimeout,
+    }
+}
+
 // TODO: we should register the 'hyle' TLD in the genesis block.
 impl Default for NodeStateStore {
     fn default() -> Self {
@@ -155,16 +166,9 @@ impl Default for NodeStateStore {
             contracts: HashMap::new(),
             unsettled_transactions: OrderedTxMap::default(),
         };
-        ret.contracts.insert(
-            "hyle".into(),
-            Contract {
-                name: "hyle".into(),
-                program_id: ProgramId(vec![]),
-                state: StateCommitment(vec![0]),
-                verifier: Verifier("hyle".to_owned()),
-                timeout_window: TimeoutWindow::NoTimeout,
-            },
-        );
+        let hyle_contract = hyle_contract_definition();
+        ret.contracts
+            .insert(hyle_contract.name.clone(), hyle_contract);
         ret
     }
 }
