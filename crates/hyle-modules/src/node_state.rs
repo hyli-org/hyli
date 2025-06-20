@@ -162,7 +162,7 @@ impl Default for NodeStateStore {
                 program_id: ProgramId(vec![]),
                 state: StateCommitment(vec![0]),
                 verifier: Verifier("hyle".to_owned()),
-                timeout_window: TimeoutWindow::Timeout(BlockHeight(5)),
+                timeout_window: TimeoutWindow::NoTimeout,
             },
         );
         ret
@@ -371,23 +371,35 @@ impl NodeState {
         &self,
         blobs: T,
     ) -> TimeoutWindow {
-        let mut timeout = TimeoutWindow::NoTimeout;
-        for blob in blobs {
-            if let Some(contract_timeout) = self
-                .contracts
-                .get(&blob.contract_name)
-                .map(|c| c.timeout_window.clone())
-            {
-                timeout = match (timeout, contract_timeout) {
-                    (TimeoutWindow::NoTimeout, contract_timeout) => contract_timeout,
-                    (TimeoutWindow::Timeout(a), TimeoutWindow::Timeout(b)) => {
-                        TimeoutWindow::Timeout(a.min(b))
+        if self.current_height.0 > 350_000 {
+            blobs
+                .into_iter()
+                .filter_map(|blob| {
+                    self.contracts
+                        .get(&blob.contract_name)
+                        .map(|c| c.timeout_window.clone())
+                })
+                .min()
+                .unwrap_or(TimeoutWindow::NoTimeout)
+        } else {
+            let mut timeout = TimeoutWindow::NoTimeout;
+            for blob in blobs {
+                if let Some(contract_timeout) = self
+                    .contracts
+                    .get(&blob.contract_name)
+                    .map(|c| c.timeout_window.clone())
+                {
+                    timeout = match (timeout, contract_timeout) {
+                        (TimeoutWindow::NoTimeout, contract_timeout) => contract_timeout,
+                        (TimeoutWindow::Timeout(a), TimeoutWindow::Timeout(b)) => {
+                            TimeoutWindow::Timeout(a.min(b))
+                        }
+                        _ => TimeoutWindow::NoTimeout,
                     }
-                    _ => TimeoutWindow::NoTimeout,
                 }
             }
+            timeout
         }
-        timeout
     }
 
     fn handle_blob_tx(
