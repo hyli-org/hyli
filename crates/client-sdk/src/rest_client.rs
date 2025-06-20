@@ -9,8 +9,8 @@ use anyhow::{Context, Result};
 use hyle_net::http::HttpClient;
 use sdk::{
     api::{
-        APIBlob, APIBlock, APIContract, APIRegisterContract, APIStaking, APITransaction,
-        ApiContractData, NodeInfo, TransactionWithBlobs,
+        APIBlob, APIBlock, APIContract, APINodeContract, APIRegisterContract, APIStaking,
+        APITransaction, NodeInfo, TransactionWithBlobs,
     },
     BlobIndex, BlobTransaction, BlockHash, BlockHeight, ConsensusInfo, Contract, ContractName,
     ProofTransaction, TxHash, UnsettledBlobTransaction, ValidatorPublicKey,
@@ -187,7 +187,7 @@ pub trait NodeApiClient {
     fn get_contract(
         &self,
         contract_name: ContractName,
-    ) -> Pin<Box<dyn Future<Output = Result<ApiContractData>> + Send + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<APINodeContract>> + Send + '_>>;
 
     fn get_settled_height(
         &self,
@@ -303,7 +303,7 @@ impl NodeApiClient for NodeApiHttpClient {
     fn get_contract(
         &self,
         contract_name: ContractName,
-    ) -> Pin<Box<dyn Future<Output = Result<ApiContractData>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<APINodeContract>> + Send + '_>> {
         Box::pin(async move {
             self.get(&format!("v1/contract/{}", contract_name))
                 .await
@@ -485,7 +485,7 @@ pub mod test {
         fn get_contract(
             &self,
             contract_name: ContractName,
-        ) -> Pin<Box<dyn Future<Output = Result<ApiContractData>> + Send + '_>> {
+        ) -> Pin<Box<dyn Future<Output = Result<APINodeContract>> + Send + '_>> {
             Box::pin(async move {
                 let contract = self
                     .contracts
@@ -495,7 +495,7 @@ pub mod test {
                     .cloned()
                     .ok_or_else(|| anyhow::anyhow!("Contract not found"))?;
                 let block_height = *self.block_height.lock().unwrap();
-                Ok(ApiContractData {
+                Ok(APINodeContract {
                     contract_name: contract.name.clone(),
                     state_block_height: block_height,
                     state_commitment: contract.state,

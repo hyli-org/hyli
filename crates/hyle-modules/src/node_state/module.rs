@@ -7,7 +7,7 @@ use crate::bus::{command_response::Query, BusClientSender};
 use crate::log_error;
 use crate::module_handle_messages;
 use crate::modules::{module_bus_client, Module, SharedBuildApiCtx};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use sdk::*;
 use std::path::PathBuf;
 use tracing::info;
@@ -93,8 +93,10 @@ impl Module for NodeStateModule {
             }
             command_response<ContractName, (BlockHeight, Contract)> cmd => {
                 let block_height = self.inner.current_height;
-                let contract = self.inner.contracts.get(cmd).cloned().context("Contract not found")?;
-                Ok((block_height, contract))
+                match self.inner.contracts.get(cmd).cloned() {
+                    Some(contract) => Ok((block_height, contract)),
+                    None => Err(anyhow::anyhow!("Contract not found")),
+                }
             }
             command_response<QuerySettledHeight, BlockHeight> cmd => {
                 if !self.inner.contracts.contains_key(&cmd.0) {

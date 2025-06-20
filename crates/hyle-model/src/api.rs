@@ -209,7 +209,7 @@ pub struct APIContract {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct ApiContractData {
+pub struct APINodeContract {
     pub contract_name: ContractName,       // Name of the contract
     pub state_block_height: BlockHeight,   // Block height where the state is captured
     pub state_commitment: StateCommitment, // The contract state stored in JSON format

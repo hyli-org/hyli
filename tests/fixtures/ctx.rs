@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use api::APIContract;
 use assertables::assert_ok;
 use client_sdk::{rest_client::NodeApiClient, transaction_builder::ProvableBlobTx};
+use hyle_model::api::APINodeContract;
 use testcontainers_modules::{
     postgres::Postgres,
     testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
@@ -442,7 +443,7 @@ impl E2ECtx {
         wait_indexer_height(self.indexer_client(), height).await
     }
 
-    pub async fn get_contract(&self, name: &str) -> Result<Contract> {
+    pub async fn get_contract(&self, name: &str) -> Result<APINodeContract> {
         self.client().get_contract(name.into()).await
     }
 }

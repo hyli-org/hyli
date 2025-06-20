@@ -6,7 +6,7 @@ use axum::{
     Json, Router,
 };
 use client_sdk::contract_indexer::AppError;
-use sdk::{api::ApiContractData, *};
+use sdk::{api::APINodeContract, *};
 use tracing::error;
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -81,7 +81,7 @@ pub async fn get_contract(
 ) -> Result<impl IntoResponse, AppError> {
     let name_clone = name.clone();
     match state.bus.shutdown_aware_request::<()>(name).await {
-        Ok((block_height, contract)) => Ok(Json(ApiContractData {
+        Ok((block_height, contract)) => Ok(Json(APINodeContract {
             contract_name: name_clone,
             state_block_height: block_height,
             state_commitment: contract.state,
