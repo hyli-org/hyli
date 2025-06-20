@@ -68,8 +68,15 @@ impl Module for Genesis {
         })
     }
 
-    fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
-        self.start()
+    async fn run(&mut self) -> Result<()> {
+        self.start().await
+    }
+
+    async fn persist(&self) -> Result<()> {
+        // TODO: ideally we'd wait until everyone has processed it, as there's technically a data race.
+        let file = self.config.data_directory.clone().join("genesis.bin");
+
+        Self::save_on_disk(&file, &true)
     }
 }
 
@@ -95,10 +102,6 @@ impl Genesis {
         }
 
         self.do_genesis().await?;
-
-        // TODO: ideally we'd wait until everyone has processed it, as there's technically a data race.
-
-        Self::save_on_disk(&file, &true)?;
 
         Ok(())
     }

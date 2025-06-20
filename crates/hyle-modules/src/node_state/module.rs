@@ -132,14 +132,16 @@ impl Module for NodeStateModule {
             }
         };
 
-        let _ = log_error!(
+        Ok(())
+    }
+
+    async fn persist(&self) -> Result<()> {
+        log_error!(
             Self::save_on_disk::<NodeStateStore>(
                 self.data_directory.join("node_state.bin").as_path(),
                 &self.inner,
             ),
             "Saving node state"
-        );
-
-        Ok(())
+        )
     }
 }

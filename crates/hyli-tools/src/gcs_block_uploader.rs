@@ -87,11 +87,14 @@ impl Module for GcsBlockUploader {
 
     async fn run(&mut self) -> Result<()> {
         self.start().await?;
+        Ok(())
+    }
+
+    async fn persist(&self) -> Result<()> {
         Self::save_on_disk(
             &self.config.data_directory.join("gcs_uploader.bin"),
             &self.testnet_genesis_timestamp,
-        )?;
-        Ok(())
+        )
     }
 }
 
