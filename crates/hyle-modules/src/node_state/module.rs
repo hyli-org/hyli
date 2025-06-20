@@ -7,7 +7,7 @@ use crate::bus::{command_response::Query, BusClientSender};
 use crate::log_error;
 use crate::module_handle_messages;
 use crate::modules::{module_bus_client, Module, SharedBuildApiCtx};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use sdk::*;
 use std::path::PathBuf;
 use tracing::info;
@@ -41,7 +41,7 @@ module_bus_client! {
 pub struct NodeStateBusClient {
     sender(NodeStateEvent),
     receiver(DataEvent),
-    receiver(Query<ContractName, Contract>),
+    receiver(Query<ContractName, (BlockHeight, Contract)>),
     receiver(Query<QuerySettledHeight, BlockHeight>),
     receiver(Query<QueryUnsettledTxCount, u64>),
     receiver(Query<QueryBlockHeight , BlockHeight>),
@@ -91,12 +91,16 @@ impl Module for NodeStateModule {
             command_response<QueryBlockHeight, BlockHeight> _ => {
                 Ok(self.inner.current_height)
             }
-            command_response<ContractName, Contract> cmd => {
-                self.inner.contracts.get(cmd).cloned().context("Contract not found")
+            command_response<ContractName, (BlockHeight, Contract)> cmd => {
+                let block_height = self.inner.current_height;
+                match self.inner.contracts.get(cmd).cloned() {
+                    Some(contract) => Ok((block_height, contract)),
+                    None => Err(anyhow::anyhow!("Contract {} not found", cmd)),
+                }
             }
             command_response<QuerySettledHeight, BlockHeight> cmd => {
                 if !self.inner.contracts.contains_key(&cmd.0) {
-                    return Err(anyhow::anyhow!("Contract not found"));
+                    return Err(anyhow::anyhow!("Contract {} not found", cmd.0));
                 }
                 let height = self.inner.unsettled_transactions.get_earliest_unsettled_height(&cmd.0).unwrap_or(self.inner.current_height);
                 Ok(BlockHeight(height.0 - 1))
