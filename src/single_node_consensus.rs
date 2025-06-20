@@ -84,6 +84,19 @@ impl Module for SingleNodeConsensus {
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
         self.start()
     }
+
+    async fn persist(&self) -> Result<()> {
+        if let Some(file) = &self.file {
+            if let Err(e) = Self::save_on_disk(file.as_path(), &self.store) {
+                warn!(
+                    "Failed to save consensus single node storage on disk: {}",
+                    e
+                );
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl SingleNodeConsensus {
@@ -150,14 +163,6 @@ impl SingleNodeConsensus {
                 self.handle_new_slot_tick().await?;
             },
         };
-        if let Some(file) = &self.file {
-            if let Err(e) = Self::save_on_disk(file.as_path(), &self.store) {
-                warn!(
-                    "Failed to save consensus single node storage on disk: {}",
-                    e
-                );
-            }
-        }
 
         Ok(())
     }

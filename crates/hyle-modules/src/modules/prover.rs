@@ -156,7 +156,11 @@ where
             }
         };
 
-        let _ = log_error!(
+        Ok(())
+    }
+
+    async fn persist(&self) -> Result<()> {
+        log_error!(
             Self::save_on_disk::<AutoProverStore<Contract>>(
                 self.ctx
                     .data_directory
@@ -165,9 +169,7 @@ where
                 &self.store,
             ),
             "Saving prover"
-        );
-
-        Ok(())
+        )
     }
 }
 

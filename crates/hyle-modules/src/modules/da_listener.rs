@@ -75,8 +75,21 @@ impl Module for DAListener {
         })
     }
 
-    fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
-        self.start()
+    async fn run(&mut self) -> Result<()> {
+        self.start().await
+    }
+
+    async fn persist(&self) -> Result<()> {
+        log_error!(
+            Self::save_on_disk::<NodeStateStore>(
+                self.config
+                    .data_directory
+                    .join("da_listener_node_state.bin")
+                    .as_path(),
+                &self.node_state,
+            ),
+            "Saving node state"
+        )
     }
 }
 
@@ -244,16 +257,6 @@ impl DAListener {
                 }
             };
         }
-        let _ = log_error!(
-        .            Self::save_on_disk::<NodeStateStore>(
-                       self.config
-                           .data_directory
-                           .join("da_listener_node_state.bin")
-                           .as_path(),
-                       &self.node_state,
-                   ),
-                   "Saving node state"
-               );
 
         Ok(())
     }
