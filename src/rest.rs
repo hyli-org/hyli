@@ -3,26 +3,23 @@ pub use hyle_modules::modules::rest::*;
 #[cfg(test)]
 mod tests {
     use crate::{
-        bus::bus_client, data_availability::DataAvailability, genesis::Genesis,
-        mempool::api::RestApiMessage, model::SharedRunContext, node_state::module::NodeStateModule,
-        p2p::P2P, single_node_consensus::SingleNodeConsensus, tcp_server::TcpServer,
+        data_availability::DataAvailability, genesis::Genesis, mempool::api::RestApiMessage,
+        model::SharedRunContext, node_state::module::NodeStateModule, p2p::P2P,
+        single_node_consensus::SingleNodeConsensus, tcp_server::TcpServer,
         utils::integration_test::NodeIntegrationCtxBuilder,
     };
     use anyhow::Result;
     use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
     use hyle_model::*;
     use hyle_modules::{
-        bus::SharedMessageBus,
-        module_handle_messages,
-        modules::{signal::ShutdownModule, Module},
+        bus::SharedMessageBus, module_bus_client, module_handle_messages, modules::Module,
     };
     use std::time::Duration;
     use tracing::info;
 
-    bus_client! {
+    module_bus_client! {
         struct MockBusClient {
             receiver(RestApiMessage),
-            receiver(ShutdownModule),
         }
     }
 
@@ -42,7 +39,7 @@ mod tests {
 
         async fn run(&mut self) -> Result<()> {
             module_handle_messages! {
-                on_bus self.bus,
+                on_self self,
                 listen<RestApiMessage> msg => {
                     info!("Received REST API message: {:?}", msg);
                     // Just listen to messages to skip the shutdown timer.

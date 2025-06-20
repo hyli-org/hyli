@@ -66,7 +66,7 @@ impl<T: 'static> MockModule<T> {
     }
     async fn start(&mut self) -> Result<()> {
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
         };
         Ok(())
     }

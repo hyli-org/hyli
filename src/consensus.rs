@@ -33,7 +33,7 @@ use std::ops::DerefMut;
 use std::time::Duration;
 use std::{collections::HashMap, default::Default, path::PathBuf};
 use tokio::time::interval;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, trace};
 
 pub mod api;
 pub mod metrics;
@@ -683,13 +683,13 @@ impl Consensus {
 
     async fn wait_genesis(&mut self) -> Result<()> {
         let should_shutdown = module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             listen<GenesisEvent> msg => {
                 match msg {
                     GenesisEvent::GenesisBlock(signed_block) => {
                         // Wait until we have processed the genesis block to update our Staking.
                         module_handle_messages! {
-                            on_bus self.bus,
+                            on_self self,
                             listen<NodeStateEvent> event => {
                                 let NodeStateEvent::NewBlock(block) = &event;
                                 if block.block_height.0 != 0 {
@@ -770,7 +770,7 @@ impl Consensus {
         timeout_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             listen<NodeStateEvent> event => {
                 let _ = log_error!(self.handle_node_state_event(event).await, "Error while handling data event");
             }
@@ -795,12 +795,6 @@ impl Consensus {
                 log_error!(self.bus.send(ConsensusCommand::TimeoutTick), "Cannot send message over channel")?;
             }
         };
-
-        if let Some(file) = &self.file {
-            if let Err(e) = Self::save_on_disk(file.as_path(), &self.store) {
-                warn!("Failed to save consensus storage on disk: {}", e);
-            }
-        }
 
         Ok(())
     }
@@ -833,6 +827,7 @@ pub mod test {
         },
     };
     use std::{future::Future, pin::Pin, sync::Arc};
+    use tracing::warn;
 
     use super::*;
     use crate::{

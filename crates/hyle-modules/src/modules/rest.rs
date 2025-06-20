@@ -198,7 +198,7 @@ impl RestApi {
             }
         });
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             delay_shutdown_until {
                 // When the module tries to shutdown it'll cancel the token
                 // and then we actually exit the loop when axum is done.

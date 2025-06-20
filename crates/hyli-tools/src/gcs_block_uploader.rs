@@ -98,7 +98,7 @@ impl Module for GcsBlockUploader {
 impl GcsBlockUploader {
     pub async fn start(&mut self) -> Result<()> {
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             listen<DataAvailabilityEvent> event => {
                 self.handle_data_availability_event(event).await?;
             }

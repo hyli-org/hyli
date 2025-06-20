@@ -121,7 +121,7 @@ where
 {
     pub async fn start(&mut self) -> Result<(), Error> {
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             listen<NodeStateEvent> event => {
                 _ = log_error!(self.handle_node_state_event(event)
                     .await,

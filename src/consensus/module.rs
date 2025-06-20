@@ -1,5 +1,6 @@
 use anyhow::Result;
 use hyle_modules::{bus::SharedMessageBus, modules::Module};
+use tracing::warn;
 
 use crate::model::SharedRunContext;
 
@@ -34,7 +35,17 @@ impl Module for Consensus {
         })
     }
 
-    fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
-        self.wait_genesis()
+    async fn run(&mut self) -> Result<()> {
+        self.wait_genesis().await
+    }
+
+    async fn persist(&self) -> Result<()> {
+        if let Some(file) = &self.file {
+            if let Err(e) = Self::save_on_disk(file.as_path(), &self.store) {
+                warn!("Failed to save consensus storage on disk: {}", e);
+            }
+        }
+
+        Ok(())
     }
 }
