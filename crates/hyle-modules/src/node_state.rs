@@ -150,8 +150,8 @@ pub struct NodeStateStore {
 pub fn hyle_contract_definition() -> Contract {
     Contract {
         name: "hyle".into(),
-        program_id: ProgramId(vec![]),
-        state: StateCommitment(vec![0]),
+        program_id: ProgramId(vec![0, 0, 0, 0]),
+        state: StateCommitment::default(),
         verifier: Verifier("hyle".to_owned()),
         timeout_window: TimeoutWindow::NoTimeout,
     }
