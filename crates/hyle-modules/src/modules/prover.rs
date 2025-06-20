@@ -1166,6 +1166,13 @@ mod tests {
         node_state.handle_register_contract_effect(&register);
 
         let api_client = Arc::new(NodeApiMockClient::new());
+        api_client.add_contract(Contract {
+            name: "test".into(),
+            state: TestContract::default().commit(),
+            verifier: "test".into(),
+            program_id: ProgramId(vec![]),
+            timeout_window: TimeoutWindow::Timeout(BlockHeight(timeout)),
+        });
 
         let auto_prover = new_simple_auto_prover(api_client.clone()).await?;
 
@@ -2259,8 +2266,9 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn test_auto_prover_artificial_middle_blob_failure_nobuffering() -> Result<()> {
-        let node_state = new_node_state().await;
-        let api_client = Arc::new(NodeApiMockClient::new());
+        let (node_state, api_client) =
+            scenario_auto_prover_artificial_middle_blob_failure_setup().await;
+
         let auto_prover = new_simple_auto_prover(api_client.clone()).await?;
 
         scenario_auto_prover_artificial_middle_blob_failure(node_state, api_client, auto_prover)
@@ -2272,8 +2280,9 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn test_auto_prover_artificial_middle_blob_failure_buffering() -> Result<()> {
-        let node_state = new_node_state().await;
-        let api_client = Arc::new(NodeApiMockClient::new());
+        let (node_state, api_client) =
+            scenario_auto_prover_artificial_middle_blob_failure_setup().await;
+
         let auto_prover = new_buffering_auto_prover(api_client.clone(), 10, 20).await?;
 
         scenario_auto_prover_artificial_middle_blob_failure(node_state, api_client, auto_prover)
@@ -2283,11 +2292,11 @@ mod tests {
         Ok(())
     }
 
-    async fn scenario_auto_prover_artificial_middle_blob_failure(
-        mut node_state: NodeState,
-        api_client: Arc<NodeApiMockClient>,
-        mut auto_prover: AutoProver<TestContract>,
-    ) -> Result<()> {
+    async fn scenario_auto_prover_artificial_middle_blob_failure_setup(
+    ) -> (NodeState, Arc<NodeApiMockClient>) {
+        let mut node_state = new_node_state().await;
+        let api_client = NodeApiMockClient::new();
+
         let register = RegisterContractEffect {
             verifier: "test".into(),
             program_id: ProgramId(vec![]),
@@ -2296,6 +2305,13 @@ mod tests {
             timeout_window: Some(TimeoutWindow::Timeout(BlockHeight(20))),
         };
         node_state.handle_register_contract_effect(&register);
+        api_client.add_contract(Contract {
+            name: ContractName::new("test"),
+            state: TestContract::default().commit(),
+            program_id: ProgramId(vec![]),
+            verifier: "test".into(),
+            timeout_window: TimeoutWindow::Timeout(BlockHeight(20)),
+        });
 
         let register = RegisterContractEffect {
             verifier: "test".into(),
@@ -2305,7 +2321,21 @@ mod tests {
             timeout_window: Some(TimeoutWindow::Timeout(BlockHeight(20))),
         };
         node_state.handle_register_contract_effect(&register);
+        api_client.add_contract(Contract {
+            name: ContractName::new("test2"),
+            state: TestContract::default().commit(),
+            program_id: ProgramId(vec![]),
+            verifier: "test".into(),
+            timeout_window: TimeoutWindow::Timeout(BlockHeight(20)),
+        });
+        (node_state, Arc::new(api_client))
+    }
 
+    async fn scenario_auto_prover_artificial_middle_blob_failure(
+        mut node_state: NodeState,
+        api_client: Arc<NodeApiMockClient>,
+        mut auto_prover: AutoProver<TestContract>,
+    ) -> Result<()> {
         tracing::info!("✨ Block 1");
         let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
         auto_prover.handle_processed_block(block_1).await?;

@@ -95,12 +95,12 @@ impl Module for NodeStateModule {
                 let block_height = self.inner.current_height;
                 match self.inner.contracts.get(cmd).cloned() {
                     Some(contract) => Ok((block_height, contract)),
-                    None => Err(anyhow::anyhow!("Contract not found")),
+                    None => Err(anyhow::anyhow!("Contract {} not found", cmd)),
                 }
             }
             command_response<QuerySettledHeight, BlockHeight> cmd => {
                 if !self.inner.contracts.contains_key(&cmd.0) {
-                    return Err(anyhow::anyhow!("Contract not found"));
+                    return Err(anyhow::anyhow!("Contract {} not found", cmd.0));
                 }
                 let height = self.inner.unsettled_transactions.get_earliest_unsettled_height(&cmd.0).unwrap_or(self.inner.current_height);
                 Ok(BlockHeight(height.0 - 1))
