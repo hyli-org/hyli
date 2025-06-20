@@ -8,13 +8,14 @@ use bonsai_sdk::non_blocking::Client;
 use borsh::BorshSerialize;
 use boundless_market::{
     alloy::{
-        primitives::utils::parse_ether, signers::local::PrivateKeySigner,
+        primitives::{utils::parse_ether, Uint},
+        signers::local::PrivateKeySigner,
         transports::http::reqwest::Url,
     },
     client::ClientBuilder,
     contracts::Offer,
     storage::{storage_provider_from_env, StorageProvider},
-    Deployment,
+    Deployment, GuestEnvBuilder,
 };
 use risc0_zkvm::{compute_image_id, default_executor, sha::Digestible, Receipt};
 use tracing::info;
@@ -44,6 +45,11 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
         std::env::var("BOUNDLESS_RAMP_UP_PERIOD").unwrap_or_else(|_| "15".to_string());
 
     let chain_id: u64 = chain_id.parse()?;
+    let min_price_per_mcycle = parse_ether(&min_price_per_mcycle)?;
+    let max_price_per_mcycle = parse_ether(&max_price_per_mcycle)?;
+    let timeout: u32 = timeout.parse()?;
+    let lock_timeout: u32 = lock_timeout.parse()?;
+    let ramp_up_period: u32 = ramp_up_period.parse()?;
 
     // Creates a storage provider based on the environment variables.
     //
@@ -69,20 +75,6 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
         .build()
         .await
         .context("failed to build boundless client")?;
-
-    let address = boundless_client.signer.as_ref().unwrap().address();
-    let balance = boundless_client
-        .boundless_market
-        .balance_of(address)
-        .await?;
-    info!(address = %address, "Wallet balance: {}", balance);
-    if balance < parse_ether("0.1")? {
-        info!("Wallet balance is low, depositing 0.1 ETH");
-        boundless_client
-            .boundless_market
-            .deposit(parse_ether("0.1")?)
-            .await?;
-    }
 
     // Encode the input and upload it to the storage provider.
     let guest_env = risc0_zkvm::ExecutorEnv::builder()
@@ -110,6 +102,19 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
         journal.digest()
     );
 
+    let address = boundless_client.signer.as_ref().unwrap().address();
+    let balance = boundless_client
+        .boundless_market
+        .balance_of(address)
+        .await?;
+    let max_price = max_price_per_mcycle * Uint::from(mcycles_count);
+    info!(address = %address, max_price = %max_price, "Wallet balance: {}", balance);
+    if balance < max_price {
+        let deposit = std::cmp::max(max_price, parse_ether("0.1")?);
+        info!("Wallet balance is low, depositing {deposit} ETH");
+        boundless_client.boundless_market.deposit(deposit).await?;
+    }
+
     // Create a proof request with the image, input, requirements and offer.
     // The ELF (i.e. image) is specified by the image URL.
     // The input can be specified by an URL, as in this example, or can be posted on chain by using
@@ -132,17 +137,13 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
     //     tracing::info!("Sending input inline with request");
     //     Input::inline(guest_env_bytes.clone())
     // };
-
-    let min_price_per_mcycle = parse_ether(&min_price_per_mcycle)?;
-    let max_price_per_mcycle = parse_ether(&max_price_per_mcycle)?;
-    let timeout: u32 = timeout.parse()?;
-    let lock_timeout: u32 = lock_timeout.parse()?;
-    let ramp_up_period: u32 = ramp_up_period.parse()?;
+    //
+    let env = GuestEnvBuilder::new().write_slice(&input_data).build_env();
 
     let request = boundless_client
         .new_request()
         .with_program_url(image_url)?
-        .with_stdin(input_data)
+        .with_env(env)
         // .with_requirements(Requirements::new(
         //     compute_image_id(elf)?,
         //     Predicate::digest_match(journal.digest()),
@@ -174,15 +175,31 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
         boundless_client.submit_onchain(request).await?
     };
     tracing::info!("Request 0x{request_id:x} submitted");
+    tracing::info!("https://explorer.beboundless.xyz/orders/0x{request_id:x}");
 
     // Wait for the request to be fulfilled by the market, returning the journal and seal.
-    tracing::info!("Waiting for 0x{request_id:x} to be fulfilled");
-    let (_journal, seal) = boundless_client
-        .wait_for_request_fulfillment(request_id, Duration::from_secs(5), expires_at)
+    let (journal, seal) = boundless_client
+        .wait_for_request_fulfillment(request_id, Duration::from_secs(3), expires_at)
         .await?;
     tracing::info!("Request 0x{request_id:x} fulfilled");
 
-    let receipt: Receipt = bincode::deserialize(&seal)?;
+    // write journal & seal to disk for debugging purposes
+    std::fs::write("journal.bin", bincode::serialize(&journal)?)?;
+    std::fs::write("seal.bin", seal.clone())?;
+
+    let image_id = compute_image_id(elf)?;
+    let receipt = boundless_client
+        .set_verifier
+        .fetch_receipt(seal, image_id, journal.to_vec())
+        .await?;
+
+    let receipt = receipt.root.ok_or(anyhow::anyhow!(
+        "Failed to get root from receipt, this is likely a bug in the SDK"
+    ))?;
+
+    receipt.verify(image_id).context("Verify proof")?;
+
+    info!("Receipt verified successfully");
 
     Ok(receipt)
 }
