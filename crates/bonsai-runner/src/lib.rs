@@ -14,6 +14,7 @@ use boundless_market::{
     },
     client::ClientBuilder,
     contracts::Offer,
+    deployments::NamedChain,
     storage::{storage_provider_from_env, StorageProvider},
     Deployment, GuestEnvBuilder,
 };
@@ -66,10 +67,18 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
     let wallet_private_key = PrivateKeySigner::from_str(&wallet_private_key)?;
     let rpc_url = Url::parse(&rpc_url)?;
 
+    let mut deployment = Deployment::from_chain_id(chain_id);
+
+    if let Some(dep) = deployment.as_mut() {
+        if dep.chain_id.unwrap() == NamedChain::Base as u64 && chain_id == 84532 {
+            dep.chain_id = Some(NamedChain::BaseSepolia as u64);
+        }
+    }
+
     // Create a Boundless client from the provided parameters.
     let boundless_client = ClientBuilder::new()
         .with_rpc_url(rpc_url)
-        .with_deployment(Deployment::from_chain_id(chain_id))
+        .with_deployment(deployment)
         .with_storage_provider(Some(storage_provider))
         .with_private_key(wallet_private_key)
         .build()
