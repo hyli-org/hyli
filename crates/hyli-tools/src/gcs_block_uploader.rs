@@ -87,18 +87,21 @@ impl Module for GcsBlockUploader {
 
     async fn run(&mut self) -> Result<()> {
         self.start().await?;
+        Ok(())
+    }
+
+    async fn persist(&self) -> Result<()> {
         Self::save_on_disk(
             &self.config.data_directory.join("gcs_uploader.bin"),
             &self.testnet_genesis_timestamp,
-        )?;
-        Ok(())
+        )
     }
 }
 
 impl GcsBlockUploader {
     pub async fn start(&mut self) -> Result<()> {
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             listen<DataAvailabilityEvent> event => {
                 self.handle_data_availability_event(event).await?;
             }

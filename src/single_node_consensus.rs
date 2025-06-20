@@ -84,6 +84,19 @@ impl Module for SingleNodeConsensus {
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
         self.start()
     }
+
+    async fn persist(&self) -> Result<()> {
+        if let Some(file) = &self.file {
+            if let Err(e) = Self::save_on_disk(file.as_path(), &self.store) {
+                warn!(
+                    "Failed to save consensus single node storage on disk: {}",
+                    e
+                );
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl SingleNodeConsensus {
@@ -93,7 +106,7 @@ impl SingleNodeConsensus {
             tracing::trace!("Doing genesis");
 
             let should_shutdown = module_handle_messages! {
-                on_bus self.bus,
+                on_self self,
                 listen<GenesisEvent> msg => {
                     #[allow(clippy::expect_used, reason="We want to fail to start with misconfigured genesis block")]
                     match msg {
@@ -137,7 +150,7 @@ impl SingleNodeConsensus {
         interval.tick().await; // First tick is immediate
 
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             command_response<QueryConsensusInfo, ConsensusInfo> _ => {
                 let slot = self.store.last_slot;
                 let view = 0;
@@ -150,14 +163,6 @@ impl SingleNodeConsensus {
                 self.handle_new_slot_tick().await?;
             },
         };
-        if let Some(file) = &self.file {
-            if let Err(e) = Self::save_on_disk(file.as_path(), &self.store) {
-                warn!(
-                    "Failed to save consensus single node storage on disk: {}",
-                    e
-                );
-            }
-        }
 
         Ok(())
     }

@@ -52,7 +52,7 @@ impl TcpServer {
         let mut server = TcpApiServer::start(tcp_server_port, "TcpApiServer").await?;
 
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             Some(tcp_event) = server.listen_next() => {
                 if let TcpEvent::Message { dest: _, data } = tcp_event {
                     _ = log_error!(self.bus.send(data), "Sending message on TcpServerMessage topic from connection pool");
