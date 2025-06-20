@@ -10,10 +10,7 @@ use crossterm::{
 };
 use hyle_contract_sdk::{Block, NodeStateEvent, TransactionData, TxId, api::NodeInfo};
 use hyle_contract_sdk::{BlockHeight, SignedBlock};
-use hyle_modules::{
-    bus::BusClientSender,
-    modules::prover::{AutoProver, AutoProverCtx},
-};
+use hyle_modules::modules::prover::{AutoProver, AutoProverCtx};
 use hyle_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     module_bus_client, module_handle_messages,
@@ -508,7 +505,8 @@ impl BlockDbg {
                                         for block in outputs {
                                             ui_state.processed_height = Some(block.block_height.0);
                                             ui_state.process_block_outputs(&block);
-                                            self.bus.send(NodeStateEvent::NewBlock(Box::new(block.clone())))?;
+                                            // Activate if you want provers on.
+                                            // self.bus.send(NodeStateEvent::NewBlock(Box::new(block.clone())))?;
                                             ui_state.processed_blocks.insert(block.block_height.0, block);
                                             ui_state.redraw = true;
                                         }

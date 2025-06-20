@@ -128,10 +128,10 @@ async fn test_full_settlement_flow() -> Result<()> {
     info!("➡️  Getting contracts");
 
     let contract = client.get_contract("c1".into()).await?;
-    assert_eq!(contract.state.0, vec![4, 5, 6]);
+    assert_eq!(contract.state_commitment.0, vec![4, 5, 6]);
 
     let contract = client.get_contract("c2.hyle".into()).await?;
-    assert_eq!(contract.state.0, vec![8, 8, 8]);
+    assert_eq!(contract.state_commitment.0, vec![8, 8, 8]);
 
     // Indexer can take a little longer, retry a few times
     let pg_client =
@@ -282,9 +282,9 @@ async fn test_tx_settlement_duplicates() -> Result<()> {
     hyle_node.wait_for_settled_tx(tx.hashed()).await?;
 
     let contract = client.get_contract("c1".into()).await?;
-    assert_eq!(contract.state.0, vec![4, 5, 6]);
+    assert_eq!(contract.state_commitment.0, vec![4, 5, 6]);
     let contract = client.get_contract("c2.hyle".into()).await?;
-    assert_eq!(contract.state.0, vec![8, 8, 8]);
+    assert_eq!(contract.state_commitment.0, vec![8, 8, 8]);
 
     // Recompute proofs to transition to next state
 
@@ -328,9 +328,9 @@ async fn test_tx_settlement_duplicates() -> Result<()> {
     hyle_node.wait_for_n_blocks(1).await?;
 
     let contract = client.get_contract("c1".into()).await?;
-    assert_eq!(contract.state.0, vec![4, 5, 6]);
+    assert_eq!(contract.state_commitment.0, vec![4, 5, 6]);
     let contract = client.get_contract("c2.hyle".into()).await?;
-    assert_eq!(contract.state.0, vec![8, 8, 8]);
+    assert_eq!(contract.state_commitment.0, vec![8, 8, 8]);
 
     info!("➡️  Sending proof for c1 & c2.hyle  v2 - second time");
 
@@ -346,10 +346,10 @@ async fn test_tx_settlement_duplicates() -> Result<()> {
     info!("➡️  Getting contracts");
 
     let contract = client.get_contract("c1".into()).await?;
-    assert_eq!(contract.state.0, vec![7, 8, 9]);
+    assert_eq!(contract.state_commitment.0, vec![7, 8, 9]);
 
     let contract = client.get_contract("c2.hyle".into()).await?;
-    assert_eq!(contract.state.0, vec![9, 9, 9]);
+    assert_eq!(contract.state_commitment.0, vec![9, 9, 9]);
 
     // tokio::time::sleep(Duration::from_secs(3)).await;
 
@@ -432,7 +432,7 @@ async fn test_contract_upgrade() -> Result<()> {
     // Check program ID has changed.
     assert_eq!(contract.program_id, ProgramId(vec![7, 7, 7]));
     // We use the next_state, not the state_commitment of the update effect.
-    assert_eq!(contract.state.0, vec![8, 8, 8]);
+    assert_eq!(contract.state_commitment.0, vec![8, 8, 8]);
 
     Ok(())
 }

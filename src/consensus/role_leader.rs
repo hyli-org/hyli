@@ -75,8 +75,9 @@ impl Consensus {
 
             let cut = match tokio::time::timeout(
                 self.config.consensus.slot_duration,
-                self.bus
-                    .request(QueryNewCut(self.bft_round_state.staking.clone())),
+                self.bus.shutdown_aware_request::<Self>(QueryNewCut(
+                    self.bft_round_state.staking.clone(),
+                )),
             )
             .await
             .context("Timeout while querying Mempool")

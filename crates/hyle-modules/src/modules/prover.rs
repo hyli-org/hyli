@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
+use std::time::Duration;
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
 use crate::bus::{BusClientSender, SharedMessageBus};
+use crate::modules::signal::shutdown_aware_timeout;
 use crate::{log_error, module_bus_client, module_handle_messages, modules::Module};
 use anyhow::{anyhow, bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -11,7 +13,8 @@ use hyle_net::logged_task::logged_task;
 use indexmap::IndexMap;
 use sdk::{
     BlobIndex, BlobTransaction, Block, BlockHeight, Calldata, ContractName, Hashed, NodeStateEvent,
-    ProofTransaction, TransactionData, TxContext, TxHash, TxId, HYLE_TESTNET_CHAIN_ID,
+    ProofTransaction, StateCommitment, TransactionData, TxContext, TxHash, TxId,
+    HYLE_TESTNET_CHAIN_ID,
 };
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
@@ -34,6 +37,7 @@ pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
     metrics: AutoProverMetrics,
     // If Some, the block to catch up to
     catching_up: Option<BlockHeight>,
+    catching_up_state: StateCommitment,
 
     catching_txs: IndexMap<TxId, (BlobTransaction, TxContext)>,
     catching_success_txs: Vec<(BlobTransaction, TxContext)>,
@@ -119,9 +123,10 @@ where
 
         let metrics = AutoProverMetrics::global(ctx.contract_name.to_string(), infos);
 
-        let current_block = ctx.node.get_block_height().await?;
-        let catching_up = match current_block.0 > 0 {
-            true => Some(current_block),
+        let contract_state = ctx.node.get_contract(ctx.contract_name.clone()).await?;
+        let catching_up_state = contract_state.state_commitment;
+        let catching_up = match contract_state.state_block_height.0 > 0 {
+            true => Some(contract_state.state_block_height),
             false => None,
         };
 
@@ -137,6 +142,7 @@ where
             ctx,
             metrics,
             catching_up,
+            catching_up_state,
             catching_success_txs: vec![],
             catching_txs: IndexMap::new(),
         })
@@ -188,6 +194,25 @@ where
                 .await
                 .context("Failed to handle settled block")?;
             if self.catching_up.is_some_and(|h| block_height.0 == h.0) {
+                let current_state = self
+                    .ctx
+                    .node
+                    .get_contract(self.ctx.contract_name.clone())
+                    .await?;
+                // If we took enough time catchup up, recompute a new catchup target.
+                if current_state.state_block_height.0 > self.catching_up.unwrap().0 + 10 {
+                    info!(
+                        cn =% self.ctx.contract_name,
+                        "🚅 Updating catch up target from {} to {}",
+                        self.catching_up.unwrap(),
+                        current_state.state_block_height
+                    );
+                    // Set the new catching up target.
+                    self.catching_up = Some(current_state.state_block_height);
+                    self.catching_up_state = current_state.state_commitment;
+                    return Ok(());
+                }
+
                 // Build blobs to execute from catching_txs
                 let mut blobs: Vec<(BlobIndex, BlobTransaction, TxContext)> = vec![];
                 for (tx, tx_ctx) in self.catching_success_txs.iter() {
@@ -278,17 +303,12 @@ where
                         "Final state after catching up: {:?}",
                         final_state
                     );
-                    let onchain = self
-                        .ctx
-                        .node
-                        .get_contract(self.ctx.contract_name.clone())
-                        .await?;
 
-                    if onchain.state != final_state {
+                    if self.catching_up_state != final_state {
                         error!(
                             cn =% self.ctx.contract_name,
                             "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
-                            onchain, final_state
+                            self.catching_up_state, final_state
                         );
                         error!(
                             cn =% self.ctx.contract_name,
@@ -296,7 +316,7 @@ where
                         );
                         anyhow::bail!(
                           "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
-                          onchain, final_state
+                          self.catching_up_state, final_state
                         );
                     }
                 }
@@ -497,9 +517,7 @@ where
                 .collect::<Vec<_>>();
             let mut join_handles = Vec::new();
             self.prove_supported_blob(post_failure_blobs, &mut join_handles)?;
-            for handle in join_handles {
-                _ = log_error!(handle.await, "In proving task after failure");
-            }
+            // Don't wait, we'll want to prove the other successful proofs.
         }
 
         // 🚨 We have to handle successful transactions after the failed ones,
@@ -550,19 +568,14 @@ where
             self.populate_unsettled_if_empty();
         }
 
-        if !self.store.buffered_blobs.is_empty() {
+        let buffered = if !self.store.buffered_blobs.is_empty() {
             debug!(
                 cn =% self.ctx.contract_name,
                 "Buffer is full, processing {} blobs.",
                 self.store.buffered_blobs.len()
             );
-            let buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
             self.store.buffered_blocks_count = 0;
-            let mut join_handles = Vec::new();
-            self.prove_supported_blob(buffered, &mut join_handles)?;
-            for handle in join_handles {
-                _ = log_error!(handle.await, "In proving task");
-            }
+            Some(self.store.buffered_blobs.drain(..).collect::<Vec<_>>())
         } else if self.store.buffered_blocks_count >= self.ctx.buffer_blocks {
             // Check if we should prove some things.
             self.populate_unsettled_if_empty();
@@ -573,16 +586,38 @@ where
                     "Buffered blocks achieved, processing {} blobs",
                     self.store.buffered_blobs.len()
                 );
-                let buffered = self.store.buffered_blobs.drain(..).collect::<Vec<_>>();
                 self.store.buffered_blocks_count = 0;
-                let mut join_handles = Vec::new();
-                self.prove_supported_blob(buffered, &mut join_handles)?;
-                for handle in join_handles {
-                    _ = log_error!(handle.await, "In proving task");
-                }
+                Some(self.store.buffered_blobs.drain(..).collect::<Vec<_>>())
+            } else {
+                None
             }
         } else {
             self.store.buffered_blocks_count += 1;
+            None
+        };
+
+        if let Some(buffered) = buffered {
+            let mut join_handles = Vec::new();
+            self.prove_supported_blob(buffered, &mut join_handles)?;
+            // Wait for all join handles, but with a 30 second timeout for the whole batch,
+            // after which we'll move on.
+            let join_handles_fut = async {
+                for handle in join_handles {
+                    _ = log_error!(handle.await, "In proving task");
+                }
+            };
+            let res = shutdown_aware_timeout::<Self, _>(
+                &mut self.bus,
+                Duration::from_secs(30),
+                join_handles_fut,
+            )
+            .await;
+            if res.is_err() {
+                info!(
+                    cn =% self.ctx.contract_name,
+                    "Proving tasks timed out after 30 seconds, continuing"
+                );
+            }
         }
 
         Ok(())
@@ -989,12 +1024,20 @@ where
                             contract_name: contract_name.clone(),
                             proof,
                         };
-                        match node_client.send_tx_proof(tx).await {
-                            Ok(tx_hash) => {
-                                info!("✅ Proved {len} txs, Batch id: {batch_id}, Proof TX hash: {tx_hash}");
-                            }
-                            Err(e) => {
-                                error!("Failed to send proof: {e:#}");
+                        // If we are in nosend mode, we just log the proof and don't send it (for debugging)
+                        if std::env::var("HYLE_PROVER_NOSEND")
+                            .map(|v| v == "1" || v.to_lowercase() == "true")
+                            .unwrap_or(false)
+                        {
+                            info!("✅ Proved {len} txs in {elapsed:?}, Batch id: {batch_id}.");
+                        } else {
+                            match node_client.send_tx_proof(tx).await {
+                                Ok(tx_hash) => {
+                                    info!("✅ Proved {len} txs in {elapsed:?}, Batch id: {batch_id}, Proof TX hash: {tx_hash}");
+                                }
+                                Err(e) => {
+                                    error!("Failed to send proof: {e:#}");
+                                }
                             }
                         }
                         break;
@@ -1125,6 +1168,13 @@ mod tests {
         node_state.handle_register_contract_effect(&register);
 
         let api_client = Arc::new(NodeApiMockClient::new());
+        api_client.add_contract(Contract {
+            name: "test".into(),
+            state: TestContract::default().commit(),
+            verifier: "test".into(),
+            program_id: ProgramId(vec![]),
+            timeout_window: TimeoutWindow::Timeout(BlockHeight(timeout)),
+        });
 
         let auto_prover = new_simple_auto_prover(api_client.clone()).await?;
 
@@ -2218,8 +2268,9 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn test_auto_prover_artificial_middle_blob_failure_nobuffering() -> Result<()> {
-        let node_state = new_node_state().await;
-        let api_client = Arc::new(NodeApiMockClient::new());
+        let (node_state, api_client) =
+            scenario_auto_prover_artificial_middle_blob_failure_setup().await;
+
         let auto_prover = new_simple_auto_prover(api_client.clone()).await?;
 
         scenario_auto_prover_artificial_middle_blob_failure(node_state, api_client, auto_prover)
@@ -2231,8 +2282,9 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn test_auto_prover_artificial_middle_blob_failure_buffering() -> Result<()> {
-        let node_state = new_node_state().await;
-        let api_client = Arc::new(NodeApiMockClient::new());
+        let (node_state, api_client) =
+            scenario_auto_prover_artificial_middle_blob_failure_setup().await;
+
         let auto_prover = new_buffering_auto_prover(api_client.clone(), 10, 20).await?;
 
         scenario_auto_prover_artificial_middle_blob_failure(node_state, api_client, auto_prover)
@@ -2242,11 +2294,11 @@ mod tests {
         Ok(())
     }
 
-    async fn scenario_auto_prover_artificial_middle_blob_failure(
-        mut node_state: NodeState,
-        api_client: Arc<NodeApiMockClient>,
-        mut auto_prover: AutoProver<TestContract>,
-    ) -> Result<()> {
+    async fn scenario_auto_prover_artificial_middle_blob_failure_setup(
+    ) -> (NodeState, Arc<NodeApiMockClient>) {
+        let mut node_state = new_node_state().await;
+        let api_client = NodeApiMockClient::new();
+
         let register = RegisterContractEffect {
             verifier: "test".into(),
             program_id: ProgramId(vec![]),
@@ -2255,6 +2307,13 @@ mod tests {
             timeout_window: Some(TimeoutWindow::Timeout(BlockHeight(20))),
         };
         node_state.handle_register_contract_effect(&register);
+        api_client.add_contract(Contract {
+            name: ContractName::new("test"),
+            state: TestContract::default().commit(),
+            program_id: ProgramId(vec![]),
+            verifier: "test".into(),
+            timeout_window: TimeoutWindow::Timeout(BlockHeight(20)),
+        });
 
         let register = RegisterContractEffect {
             verifier: "test".into(),
@@ -2264,7 +2323,21 @@ mod tests {
             timeout_window: Some(TimeoutWindow::Timeout(BlockHeight(20))),
         };
         node_state.handle_register_contract_effect(&register);
+        api_client.add_contract(Contract {
+            name: ContractName::new("test2"),
+            state: TestContract::default().commit(),
+            program_id: ProgramId(vec![]),
+            verifier: "test".into(),
+            timeout_window: TimeoutWindow::Timeout(BlockHeight(20)),
+        });
+        (node_state, Arc::new(api_client))
+    }
 
+    async fn scenario_auto_prover_artificial_middle_blob_failure(
+        mut node_state: NodeState,
+        api_client: Arc<NodeApiMockClient>,
+        mut auto_prover: AutoProver<TestContract>,
+    ) -> Result<()> {
         tracing::info!("✨ Block 1");
         let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
         auto_prover.handle_processed_block(block_1).await?;

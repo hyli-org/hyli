@@ -57,7 +57,7 @@ struct MockModule<T> {
     bus: MockModuleBusClient,
     _t: std::marker::PhantomData<T>,
 }
-impl<T> MockModule<T> {
+impl<T: 'static> MockModule<T> {
     async fn new(bus: SharedMessageBus) -> Result<Self> {
         Ok(Self {
             bus: MockModuleBusClient::new_from_bus(bus).await,
@@ -71,7 +71,7 @@ impl<T> MockModule<T> {
         Ok(())
     }
 }
-impl<T: Send> Module for MockModule<T> {
+impl<T: Send + 'static> Module for MockModule<T> {
     type Context = SharedRunContext;
     fn build(
         bus: SharedMessageBus,
