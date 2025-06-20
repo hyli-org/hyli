@@ -77,6 +77,7 @@ CREATE TABLE contracts (
     parent_dp_hash TEXT NOT NULL,
     verifier TEXT NOT NULL,
     program_id BYTEA NOT NULL,
+    timeout_window BIGINT,
     state_commitment BYTEA NOT NULL,
     contract_name TEXT PRIMARY KEY NOT NULL,
     FOREIGN KEY (parent_dp_hash, tx_hash) REFERENCES transactions(parent_dp_hash, tx_hash) ON DELETE CASCADE
