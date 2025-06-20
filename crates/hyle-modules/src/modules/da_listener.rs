@@ -227,13 +227,13 @@ impl DAListener {
                 self.process_block(block).await?;
             }
             module_handle_messages! {
-                on_bus self.bus,
+                on_self self,
             };
         } else {
             let mut client = self.start_client(self.start_block).await?;
 
             module_handle_messages! {
-                on_bus self.bus,
+                on_self self,
                 frame = client.recv() => {
                     if let Some(streamed_signed_block) = frame {
                         let _ = log_error!(self.processing_next_frame(streamed_signed_block).await, "Consuming da stream");
@@ -245,15 +245,15 @@ impl DAListener {
             };
         }
         let _ = log_error!(
-            Self::save_on_disk::<NodeStateStore>(
-                self.config
-                    .data_directory
-                    .join("da_listener_node_state.bin")
-                    .as_path(),
-                &self.node_state,
-            ),
-            "Saving node state"
-        );
+        .            Self::save_on_disk::<NodeStateStore>(
+                       self.config
+                           .data_directory
+                           .join("da_listener_node_state.bin")
+                           .as_path(),
+                       &self.node_state,
+                   ),
+                   "Saving node state"
+               );
 
         Ok(())
     }

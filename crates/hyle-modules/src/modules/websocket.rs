@@ -180,7 +180,7 @@ where
         });
 
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             listen<WsBroadcastMessage<Out>> msg => {
                 if let Err(e) = self.broadcast_message(msg.message).await {
                     error!("Error sending outbound message: {}", e);

@@ -364,7 +364,7 @@ impl BlockDbg {
         interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             listen<DataAvailabilityEvent> event => {
                 match event {
                     DataAvailabilityEvent::SignedBlock(block) => {

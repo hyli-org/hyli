@@ -73,6 +73,16 @@ where
         }
     }
 
+    fn persist(&self) -> impl futures::Future<Output = Result<()>> + Send {
+        async {
+            info!(
+                "Persistance is not implemented for module {}",
+                type_name::<Self>()
+            );
+            Ok(())
+        }
+    }
+
     fn load_from_disk_or_default<S>(file: &Path) -> S
     where
         S: borsh::BorshDeserialize + Default,
@@ -122,9 +132,13 @@ struct ModuleStarter {
 
 pub mod signal {
     #[derive(Clone, Debug)]
+    pub struct PersistModule {}
+
+    #[derive(Clone, Debug)]
     pub struct ShutdownModule {
         pub module: String,
     }
+
     #[derive(Clone, Debug)]
     pub struct ShutdownCompleted {
         pub module: String,
@@ -160,13 +174,16 @@ pub mod signal {
 
 #[macro_export]
 macro_rules! module_handle_messages {
-    (on_bus $bus:expr, delay_shutdown_until  $lay_shutdow_until:block, $($rest:tt)*) => {
+    (on_self $self:expr, delay_shutdown_until  $lay_shutdow_until:block, $($rest:tt)*) => {
         {
             // Safety: this is disjoint.
-            let mut shutdown_receiver = unsafe { &mut *$crate::utils::static_type_map::Pick::<tokio::sync::broadcast::Receiver<$crate::modules::signal::ShutdownModule>>::splitting_get_mut(&mut $bus) };
+            let mut shutdown_receiver = unsafe { &mut *$crate::utils::static_type_map::Pick::<tokio::sync::broadcast::Receiver<$crate::modules::signal::ShutdownModule>>::splitting_get_mut(&mut $self.bus) };
             let mut should_shutdown = false;
             $crate::handle_messages! {
-                on_bus $bus,
+                on_bus $self.bus,
+                listen<$crate::modules::signal::PersistModule> _ => {
+                    _ = $self.persist().await;
+                }
                 $($rest)*
                 Ok(_) = $crate::modules::signal::async_receive_shutdown::<Self>(&mut should_shutdown, &mut shutdown_receiver) => {
                     let res = $lay_shutdow_until;
@@ -180,13 +197,16 @@ macro_rules! module_handle_messages {
         }
 
     };
-    (on_bus $bus:expr, $($rest:tt)*) => {
+    (on_self $self:expr, $($rest:tt)*) => {
         {
             // Safety: this is disjoint.
-            let mut shutdown_receiver = unsafe { &mut *$crate::utils::static_type_map::Pick::<tokio::sync::broadcast::Receiver<$crate::modules::signal::ShutdownModule>>::splitting_get_mut(&mut $bus) };
+            let mut shutdown_receiver = unsafe { &mut *$crate::utils::static_type_map::Pick::<tokio::sync::broadcast::Receiver<$crate::modules::signal::ShutdownModule>>::splitting_get_mut(&mut $self.bus) };
             let mut should_shutdown = false;
             $crate::handle_messages! {
-                on_bus $bus,
+                on_bus $self.bus,
+                listen<$crate::modules::signal::PersistModule> _ => {
+                    _ = $self.persist().await;
+                }
                 $($rest)*
                 Ok(_) = $crate::modules::signal::async_receive_shutdown::<Self>(&mut should_shutdown, &mut shutdown_receiver) => {
                     break;
@@ -213,6 +233,7 @@ macro_rules! module_bus_client {
                 $(sender($sender),)*
                 $(receiver($receiver),)*
                 receiver($crate::modules::signal::ShutdownModule),
+                receiver($crate::modules::signal::PersistModule),
             }
         }
     }
@@ -426,7 +447,8 @@ impl ModulesHandler {
     where
         M: Module,
     {
-        module.run().await
+        module.run().await?;
+        module.persist().await
     }
 
     pub async fn build_module<M>(&mut self, ctx: M::Context) -> Result<()>
@@ -492,7 +514,7 @@ mod tests {
                     let nb_shutdowns: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
                     let cloned = Arc::clone(&nb_shutdowns);
                     module_handle_messages! {
-                        on_bus self.bus,
+                        on_self self,
                         _ = async {
                             let mut guard = cloned.lock().await;
                             (*guard) += 1;

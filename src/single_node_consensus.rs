@@ -93,7 +93,7 @@ impl SingleNodeConsensus {
             tracing::trace!("Doing genesis");
 
             let should_shutdown = module_handle_messages! {
-                on_bus self.bus,
+                on_self self,
                 listen<GenesisEvent> msg => {
                     #[allow(clippy::expect_used, reason="We want to fail to start with misconfigured genesis block")]
                     match msg {
@@ -137,7 +137,7 @@ impl SingleNodeConsensus {
         interval.tick().await; // First tick is immediate
 
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             command_response<QueryConsensusInfo, ConsensusInfo> _ => {
                 let slot = self.store.last_slot;
                 let view = 0;
