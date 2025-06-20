@@ -237,7 +237,7 @@ async fn test_register_contract_composition() {
 
     check_block_is_ok(&block);
 
-    let block = state.craft_block_and_handle(102 + 5, vec![]);
+    let block = state.craft_block_and_handle(102 + 100, vec![]);
 
     check_block_is_ok(&block);
 
