@@ -323,7 +323,7 @@ impl NodeState {
                                     debug!("{err}");
                                     block_under_construction
                                         .transactions_events
-                                        .entry(tx_id.1.clone())
+                                        .entry(blob_proof_data.blob_tx_hash.clone())
                                         .or_default()
                                         .push(TransactionStateEvent::Error(err));
                                     None
