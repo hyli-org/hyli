@@ -75,8 +75,9 @@ impl Consensus {
 
             let cut = match tokio::time::timeout(
                 self.config.consensus.slot_duration,
-                self.bus
-                    .request(QueryNewCut(self.bft_round_state.staking.clone())),
+                self.bus.shutdown_aware_request::<Self>(QueryNewCut(
+                    self.bft_round_state.staking.clone(),
+                )),
             )
             .await
             .context("Timeout while querying Mempool")
@@ -128,15 +129,12 @@ impl Consensus {
             });
 
             debug!(
-                "🚀 Starting new slot {} (view {}) with {} existing validators and {} candidates. Cut: {:?}",
+                "🚀 Starting new slot {} (view {}) with {} existing validators and {} candidates. Cut: {}",
                 self.bft_round_state.slot,
                 self.bft_round_state.view,
                 self.bft_round_state.staking.bonded().len(),
                 new_validators_to_bond.len(),
-                cut.iter()
-                    .map(|tx| format!("{}:{}({})", tx.0, tx.1, tx.2))
-                    .collect::<Vec<String>>()
-                    .join(", ")
+                CutDisplay(&cut)
             );
 
             let mut staking_actions: Vec<ConsensusStakingAction> = new_validators_to_bond

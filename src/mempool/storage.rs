@@ -23,6 +23,18 @@ pub enum CanBePutOnTop {
     Fork,
 }
 
+#[derive(Debug)]
+pub enum EntryOrMissingHash {
+    Entry(LaneEntryMetadata, DataProposal),
+    MissingHash(DataProposalHash),
+}
+
+#[derive(Debug)]
+pub enum MetadataOrMissingHash {
+    Metadata(LaneEntryMetadata, DataProposalHash),
+    MissingHash(DataProposalHash),
+}
+
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneEntryMetadata {
     pub parent_data_proposal_hash: Option<DataProposalHash>,
@@ -180,14 +192,14 @@ pub trait Storage {
         lane_id: &LaneId,
         from_data_proposal_hash: Option<DataProposalHash>,
         to_data_proposal_hash: Option<DataProposalHash>,
-    ) -> impl Stream<Item = Result<(LaneEntryMetadata, DataProposal)>>;
+    ) -> impl Stream<Item = Result<EntryOrMissingHash>>;
 
     fn get_entries_metadata_between_hashes(
         &self,
         lane_id: &LaneId,
         from_data_proposal_hash: Option<DataProposalHash>,
         to_data_proposal_hash: Option<DataProposalHash>,
-    ) -> impl Stream<Item = Result<(LaneEntryMetadata, DataProposalHash)>> {
+    ) -> impl Stream<Item = Result<MetadataOrMissingHash>> {
         // If no dp hash is provided, we use the tip of the lane
         let initial_dp_hash: Option<DataProposalHash> =
             to_data_proposal_hash.or(self.get_lane_hash_tip(lane_id).cloned());
@@ -197,7 +209,7 @@ pub trait Storage {
                     let lane_entry = self.get_metadata_by_hash(lane_id, &some_dp_hash)?;
                     match lane_entry {
                         Some(lane_entry) => {
-                            yield (lane_entry.clone(), some_dp_hash);
+                            yield MetadataOrMissingHash::Metadata(lane_entry.clone(), some_dp_hash);
                             if let Some(parent_dp_hash) = lane_entry.parent_data_proposal_hash.clone() {
                                 some_dp_hash = parent_dp_hash;
                             } else {
@@ -205,7 +217,8 @@ pub trait Storage {
                             }
                         }
                         None => {
-                            Err(anyhow::anyhow!("Local lane is incomplete: could not find DP {}", some_dp_hash))?;
+                            yield MetadataOrMissingHash::MissingHash(some_dp_hash.clone());
+                            break;
                         }
                     }
                 }
@@ -228,7 +241,7 @@ pub trait Storage {
         &self,
         lane_id: &LaneId,
         last_cut: Option<Cut>,
-    ) -> impl Stream<Item = Result<(LaneEntryMetadata, DataProposalHash)>> {
+    ) -> impl Stream<Item = Result<MetadataOrMissingHash>> {
         let lane_tip = self.get_lane_hash_tip(lane_id);
 
         let last_committed_dp_hash = match last_cut {
@@ -447,6 +460,15 @@ mod tests {
         );
     }
 
+    fn unwrap_entry(entry: &EntryOrMissingHash) -> (LaneEntryMetadata, DataProposal) {
+        match entry {
+            EntryOrMissingHash::Entry(metadata, data_proposal) => {
+                (metadata.clone(), data_proposal.clone())
+            }
+            EntryOrMissingHash::MissingHash(_) => panic!("Expected an entry, got missing hash"),
+        }
+    }
+
     #[test_log::test(tokio::test)]
     async fn test_get_lane_entries_between_hashes() {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
@@ -479,31 +501,30 @@ mod tests {
             .collect()
             .await;
         assert_eq!(2, entries_from_1_to_end.len());
-        dbg!(&dp2);
-        dbg!(&dp3);
-        dbg!(&entries_from_1_to_end);
         assert_eq!(
             dp2,
-            entries_from_1_to_end.last().unwrap().as_ref().unwrap().1
+            unwrap_entry(entries_from_1_to_end.last().unwrap().as_ref().unwrap()).1
         );
         assert_eq!(
             dp3,
-            entries_from_1_to_end.first().unwrap().as_ref().unwrap().1
+            unwrap_entry(entries_from_1_to_end.first().unwrap().as_ref().unwrap()).1
         );
 
         // [start, 2] == [2, 1]
+
         let entries_from_start_to_2: Vec<_> = storage
             .get_entries_between_hashes(lane_id, None, Some(dp2.hashed()))
             .collect()
             .await;
+
         assert_eq!(2, entries_from_start_to_2.len());
         assert_eq!(
             dp1,
-            entries_from_start_to_2.last().unwrap().as_ref().unwrap().1
+            unwrap_entry(entries_from_start_to_2.last().unwrap().as_ref().unwrap()).1
         );
         assert_eq!(
             dp2,
-            entries_from_start_to_2.first().unwrap().as_ref().unwrap().1
+            unwrap_entry(entries_from_start_to_2.first().unwrap().as_ref().unwrap()).1
         );
 
         // ]1, 2] == [2]
@@ -514,7 +535,7 @@ mod tests {
         assert_eq!(1, entries_from_1_to_2.len());
         assert_eq!(
             dp2,
-            entries_from_1_to_2.first().unwrap().as_ref().unwrap().1
+            unwrap_entry(entries_from_1_to_2.first().unwrap().as_ref().unwrap()).1
         );
 
         // ]1, 3] == [3, 2]
@@ -523,10 +544,13 @@ mod tests {
             .collect()
             .await;
         assert_eq!(2, entries_from_1_to_3.len());
-        assert_eq!(dp2, entries_from_1_to_3.last().unwrap().as_ref().unwrap().1);
+        assert_eq!(
+            dp2,
+            unwrap_entry(entries_from_1_to_3.last().unwrap().as_ref().unwrap()).1
+        );
         assert_eq!(
             dp3,
-            entries_from_1_to_3.first().unwrap().as_ref().unwrap().1
+            unwrap_entry(entries_from_1_to_3.first().unwrap().as_ref().unwrap()).1
         );
 
         // ]1, 1[ == []

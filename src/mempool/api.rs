@@ -106,6 +106,14 @@ pub async fn send_blob_transaction(
             anyhow!("Invalid identity for blob tx: {}", e),
         ));
     }
+
+    // Filter out transactions with too many blobs
+    if payload.blobs.len() > 20 {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow!("Too many blobs in transaction"),
+        ));
+    }
     handle_send(state, TransactionData::Blob(payload)).await
 }
 

@@ -8,7 +8,9 @@ use opentelemetry::KeyValue;
 use tokio::sync::Mutex;
 
 use crate::bus::BusClientSender;
+use crate::modules::signal::shutdown_aware_timeout;
 use crate::utils::profiling::LatencyMetricSink;
+use crate::utils::static_type_map::Pick;
 
 pub const CLIENT_TIMEOUT_SECONDS: u64 = 10;
 
@@ -52,7 +54,17 @@ where
     Cmd: Clone + Send + Sync + 'static,
     Res: Clone + Send + Sync + 'static,
 {
+    /// Sends a command and waits for a response.
+    /// Prefer `shutdown_aware_request` if you want to handle shutdowns gracefully.
     fn request(&mut self, cmd: Cmd) -> impl std::future::Future<Output = Result<Res>> + Send;
+    /// Sends a command and waits for a response,
+    /// but will return early if a shutdown message for M is received.
+    fn shutdown_aware_request<M: 'static>(
+        &mut self,
+        cmd: Cmd,
+    ) -> impl std::future::Future<Output = Result<Res>> + Send
+    where
+        Self: Pick<tokio::sync::broadcast::Receiver<crate::modules::signal::ShutdownModule>>;
 }
 
 impl<Cmd, Res, T: BusClientSender<Query<Cmd, Res>> + Send> CmdRespClient<Cmd, Res> for T
@@ -70,6 +82,29 @@ where
         _ = self.send(query_cmd);
 
         match tokio::time::timeout(Duration::from_secs(CLIENT_TIMEOUT_SECONDS), rx).await {
+            Ok(Ok(res)) => res,
+            Ok(Err(e)) => bail!("Error while calling topic: {}", e),
+            Err(timeouterror) => bail!(
+                "Timeout triggered while calling topic with query: {}",
+                timeouterror.to_string()
+            ),
+        }
+    }
+    async fn shutdown_aware_request<M: 'static>(&mut self, cmd: Cmd) -> Result<Res>
+    where
+        Self: Pick<tokio::sync::broadcast::Receiver<crate::modules::signal::ShutdownModule>>,
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let query_cmd = Query(Arc::new(Mutex::new(Some(InnerQuery {
+            callback: tx,
+            data: cmd,
+        }))));
+
+        _ = self.send(query_cmd);
+
+        match shutdown_aware_timeout::<M, _>(self, Duration::from_secs(CLIENT_TIMEOUT_SECONDS), rx)
+            .await
+        {
             Ok(Ok(res)) => res,
             Ok(Err(e)) => bail!("Error while calling topic: {}", e),
             Err(timeouterror) => bail!(

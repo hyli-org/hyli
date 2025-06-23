@@ -9,7 +9,7 @@ use std::{
 use anyhow::{bail, Result};
 use sdk::{
     Blob, BlobIndex, BlobTransaction, Calldata, ContractAction, ContractName, Hashed, HyleOutput,
-    Identity, ProofTransaction, RegisterContractEffect, TxContext,
+    Identity, ProofTransaction, RegisterContractEffect, StateCommitment, TxContext,
 };
 
 use crate::helpers::ClientSdkProver;
@@ -257,6 +257,7 @@ impl<S: StateUpdater> TxExecutor<S> {
             {
                 Ok(result) => result,
                 Err(e) => {
+                    tracing::error!("Execution failed for {}: {}", runner.contract_name, e);
                     // Revert all state changes
                     for (contract_name, state) in old_states.iter_mut() {
                         self.states.update(contract_name, &mut *state)?;
@@ -265,6 +266,12 @@ impl<S: StateUpdater> TxExecutor<S> {
                 }
             };
             if !out.success {
+                tracing::error!(
+                    "Execution failed on runner for blob {:?} on contract {:?} ! Program output: {}",
+                    runner.calldata.get().unwrap().index,
+                    runner.contract_name,
+                    std::str::from_utf8(&out.program_outputs).unwrap()
+                );
                 // Revert all state changes
                 for (contract_name, state) in old_states.iter_mut() {
                     self.states.update(contract_name, &mut *state)?;
@@ -373,6 +380,8 @@ pub trait TxExecutorHandler {
     ) -> anyhow::Result<Self>
     where
         Self: Sized;
+
+    fn get_state_commitment(&self) -> StateCommitment;
 }
 
 /// Macro to easily define the full state of a TxExecutor

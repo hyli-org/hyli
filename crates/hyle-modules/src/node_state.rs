@@ -4,11 +4,12 @@ use anyhow::{bail, Context, Error, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use contract_registration::validate_contract_registration_metadata;
 use contract_registration::{validate_contract_name_registration, validate_state_commitment_size};
-use hyle_tld::handle_blob_for_hyle_tld;
+use hyle_tld::{handle_blob_for_hyle_tld, validate_hyle_contract_blobs};
 use metrics::NodeStateMetrics;
 use ordered_tx_map::OrderedTxMap;
 use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
 use sdk::*;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use timeouts::Timeouts;
 use tracing::{debug, error, info, trace};
@@ -21,39 +22,51 @@ pub mod module;
 mod ordered_tx_map;
 mod timeouts;
 
+#[derive(Debug, Clone)]
+// Similar to OnchainEffect but slightly more adapted to nodestate settlement
+enum SideEffect {
+    Register(Option<Vec<u8>>),
+    UpdateState,
+    UpdateProgramId,
+    UpdateTimeoutWindow,
+    Delete,
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct ModifiedContractFields {
+    pub program_id: bool,
+    pub state: bool,
+    pub verifier: bool,
+    pub timeout_window: bool,
+}
+
+impl ModifiedContractFields {
+    pub fn all() -> Self {
+        ModifiedContractFields {
+            program_id: true,
+            state: true,
+            verifier: true,
+            timeout_window: true,
+        }
+    }
+}
+
+// When processing blobs, maintain an up-to-date copy of the contract,
+// and keep track of which fields changed and the list of side effects we processed.
+// If the contract is None, then it was deleted.
+type ModifiedContractData = (Option<Contract>, ModifiedContractFields, Vec<SideEffect>);
+
+#[derive(Debug, Clone)]
+struct SettlementResult {
+    contract_changes: BTreeMap<ContractName, ModifiedContractData>,
+    blob_proof_output_indices: Vec<usize>,
+}
+
 struct SettledTxOutput {
     // Original blob transaction, now settled.
     pub tx: UnsettledBlobTransaction,
     /// Result of the settlement
     pub result: Result<SettlementResult, ()>,
-}
-
-#[derive(Debug, Clone)]
-// Similar to OnchainEffect but slightly more adapted to nodestate settlement
-enum SideEffect {
-    Register(Contract, Option<Vec<u8>>),
-    // Pass a full Contract because it's simpler in the settlement logic
-    UpdateState(Contract),
-    Delete(ContractName),
-}
-
-impl SideEffect {
-    fn apply(&mut self, other_effect: SideEffect) {
-        tracing::trace!("Applying side effect: {:?} -> {:?}", self, other_effect);
-        match (self, other_effect) {
-            (SideEffect::Register(reg, _), SideEffect::UpdateState(contract)) => {
-                reg.state = contract.state
-            }
-            (SideEffect::Delete(_), SideEffect::UpdateState(_)) => {}
-            (me, other) => *me = other,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct SettlementResult {
-    contract_changes: BTreeMap<ContractName, SideEffect>,
-    blob_proof_output_indices: Vec<usize>,
 }
 
 /// How a new blob TX should be handled by the node.
@@ -65,6 +78,32 @@ enum BlobTxHandled {
     Duplicate,
     /// No special handling.
     Ok,
+}
+
+#[derive(
+    Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
+)]
+/// Used as a blob action to force a tx to timeout.
+pub struct NukeTxAction {
+    pub txs: BTreeMap<TxHash, Vec<HyleOutput>>,
+}
+
+impl ContractAction for NukeTxAction {
+    fn as_blob(
+        &self,
+        contract_name: ContractName,
+        caller: Option<BlobIndex>,
+        callees: Option<Vec<BlobIndex>>,
+    ) -> Blob {
+        Blob {
+            contract_name,
+            data: BlobData::from(StructuredBlobData {
+                caller,
+                callees,
+                parameters: self.clone(),
+            }),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +147,17 @@ pub struct NodeStateStore {
     unsettled_transactions: OrderedTxMap,
 }
 
+/// Make sure we register the hyle contract with the same values before genesis, and in the genesis block
+pub fn hyle_contract_definition() -> Contract {
+    Contract {
+        name: "hyle".into(),
+        program_id: ProgramId(vec![0, 0, 0, 0]),
+        state: StateCommitment::default(),
+        verifier: Verifier("hyle".to_owned()),
+        timeout_window: TimeoutWindow::NoTimeout,
+    }
+}
+
 // TODO: we should register the 'hyle' TLD in the genesis block.
 impl Default for NodeStateStore {
     fn default() -> Self {
@@ -117,16 +167,9 @@ impl Default for NodeStateStore {
             contracts: HashMap::new(),
             unsettled_transactions: OrderedTxMap::default(),
         };
-        ret.contracts.insert(
-            "hyle".into(),
-            Contract {
-                name: "hyle".into(),
-                program_id: ProgramId(vec![]),
-                state: StateCommitment(vec![0]),
-                verifier: Verifier("hyle".to_owned()),
-                timeout_window: TimeoutWindow::Timeout(BlockHeight(5)),
-            },
-        );
+        let hyle_contract = hyle_contract_definition();
+        ret.contracts
+            .insert(hyle_contract.name.clone(), hyle_contract);
         ret
     }
 }
@@ -169,9 +212,12 @@ impl NodeState {
                 })
                 .collect(),
             timed_out_txs: vec![], // Added below as it needs the block
+            dropped_duplicate_txs: vec![],
             registered_contracts: BTreeMap::new(),
             deleted_contracts: BTreeMap::new(),
             updated_states: BTreeMap::new(),
+            updated_program_ids: BTreeMap::new(),
+            updated_timeout_windows: BTreeMap::new(),
             transactions_events: BTreeMap::new(),
             dp_parent_hashes: BTreeMap::new(),
             lane_ids: BTreeMap::new(),
@@ -219,6 +265,14 @@ impl NodeState {
                                 "Blob transaction: {:?} is already in the unsettled map, ignoring.",
                                 tx_id
                             );
+                            block_under_construction
+                                .dropped_duplicate_txs
+                                .push(tx_id.clone());
+                            block_under_construction
+                                .transactions_events
+                                .entry(tx_id.1.clone())
+                                .or_default()
+                                .push(TransactionStateEvent::DroppedAsDuplicate);
                         }
                         Ok(BlobTxHandled::Ok) => {
                             block_under_construction
@@ -229,7 +283,7 @@ impl NodeState {
                         }
                         Err(e) => {
                             let err = format!("Failed to handle blob transaction: {:?}", e);
-                            error!("{err}");
+                            error!(tx_hash = %tx_id.1, "{err}");
                             block_under_construction
                                 .transactions_events
                                 .entry(tx_id.1.clone())
@@ -266,10 +320,10 @@ impl NodeState {
                                     let err = format!(
                                         "Failed to handle blob #{} in verified proof transaction {}: {err:#}",
                                         blob_proof_data.hyle_output.index, &tx_id);
-                                    info!("{err}");
+                                    debug!("{err}");
                                     block_under_construction
                                         .transactions_events
-                                        .entry(tx_id.1.clone())
+                                        .entry(blob_proof_data.blob_tx_hash.clone())
                                         .or_default()
                                         .push(TransactionStateEvent::Error(err));
                                     None
@@ -323,23 +377,35 @@ impl NodeState {
         &self,
         blobs: T,
     ) -> TimeoutWindow {
-        let mut timeout = TimeoutWindow::NoTimeout;
-        for blob in blobs {
-            if let Some(contract_timeout) = self
-                .contracts
-                .get(&blob.contract_name)
-                .map(|c| c.timeout_window.clone())
-            {
-                timeout = match (timeout, contract_timeout) {
-                    (TimeoutWindow::NoTimeout, contract_timeout) => contract_timeout,
-                    (TimeoutWindow::Timeout(a), TimeoutWindow::Timeout(b)) => {
-                        TimeoutWindow::Timeout(a.min(b))
+        if self.current_height.0 > 445_000 {
+            blobs
+                .into_iter()
+                .filter_map(|blob| {
+                    self.contracts
+                        .get(&blob.contract_name)
+                        .map(|c| c.timeout_window.clone())
+                })
+                .min()
+                .unwrap_or(TimeoutWindow::NoTimeout)
+        } else {
+            let mut timeout = TimeoutWindow::NoTimeout;
+            for blob in blobs {
+                if let Some(contract_timeout) = self
+                    .contracts
+                    .get(&blob.contract_name)
+                    .map(|c| c.timeout_window.clone())
+                {
+                    timeout = match (timeout, contract_timeout) {
+                        (TimeoutWindow::NoTimeout, contract_timeout) => contract_timeout,
+                        (TimeoutWindow::Timeout(a), TimeoutWindow::Timeout(b)) => {
+                            TimeoutWindow::Timeout(a.min(b))
+                        }
+                        _ => TimeoutWindow::NoTimeout,
                     }
-                    _ => TimeoutWindow::NoTimeout,
                 }
             }
+            timeout
         }
-        timeout
     }
 
     fn handle_blob_tx(
@@ -360,6 +426,17 @@ impl NodeState {
         let (blob_tx_hash, blobs_hash) = (tx.hashed(), tx.blobs_hash());
 
         let mut should_try_and_settle = true;
+
+        // Reject blob Tx with blobs for the 'hyle' contract if:
+        // - the identity is not the TLD itself for a DeleteContractAction
+        // - the NukeTxAction is not signed with the HyliPubKey itself
+        // No need to wait settlement, as this is a static check.
+        if let Err(validation_error) = validate_hyle_contract_blobs(tx) {
+            bail!(
+                "Blob Transaction contains invalid blobs for 'hyle' contract: {}",
+                validation_error
+            );
+        }
 
         // For now, reject blob Tx with blobs for unknown contracts.
         if tx
@@ -652,6 +729,19 @@ impl NodeState {
             }
         };
 
+        // If some blobs are still sequenced behind others, we can only settle this TX as failed.
+        // (failed TX won't change the state, so we can settle it right away).
+        if result.is_ok()
+            && !self
+                .unsettled_transactions
+                .is_next_to_settle(unsettled_tx_hash)
+        {
+            bail!(
+                "Transaction {} is not next to settle, skipping.",
+                unsettled_tx_hash
+            );
+        };
+
         // We are OK to settle now.
 
         #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
@@ -668,7 +758,7 @@ impl NodeState {
 
     fn settle_blobs_recursively<'a>(
         contracts: &HashMap<ContractName, Contract>,
-        mut contract_changes: BTreeMap<ContractName, SideEffect>,
+        mut contract_changes: BTreeMap<ContractName, ModifiedContractData>,
         mut blob_iter: impl Iterator<Item = &'a UnsettledBlobMetadata> + Clone,
         mut blob_proof_output_indices: Vec<usize>,
         events: &mut Vec<TransactionStateEvent>,
@@ -786,7 +876,7 @@ impl NodeState {
         // Transaction was settled, update our state.
 
         // Note all the TXs that we might want to try and settle next
-        let next_txs_to_try_and_settle = settled_tx
+        let mut next_txs_to_try_and_settle = settled_tx
             .blobs
             .iter()
             .filter_map(|(_, blob_metadata)| {
@@ -808,6 +898,8 @@ impl NodeState {
                 .entry(bth.clone())
                 .or_default()
                 .push(TransactionStateEvent::SettledAsFailed);
+
+            self.metrics.add_failed_transactions(1);
             info!(tx_height =% block_under_construction.block_height, "⛈️ Settled tx {} as failed", &bth);
 
             block_under_construction.failed_txs.push(bth);
@@ -821,7 +913,10 @@ impl NodeState {
             .or_default()
             .push(TransactionStateEvent::Settled);
         self.metrics.add_settled_transactions(1);
+        self.metrics.add_successful_transactions(1);
         info!(tx_height =% block_under_construction.block_height, "✨ Settled tx {}", &bth);
+
+        let mut txs_to_nuke = BTreeMap::<TxHash, Vec<HyleOutput>>::new();
 
         // Go through each blob and:
         // - keep track of which blob proof output we used to settle the TX for each blob.
@@ -834,6 +929,12 @@ impl NodeState {
             ));
 
             let blob = blob_metadata.blob;
+
+            // Keep track of all txs to nuke
+            if let Ok(data) = StructuredBlobData::<NukeTxAction>::try_from(blob.data.clone()) {
+                txs_to_nuke.extend(data.parameters.txs.clone());
+            }
+
             // Keep track of all stakers
             if blob.contract_name.0 == "staking" {
                 if let Ok(structured_blob) = StructuredBlob::try_from(blob) {
@@ -849,9 +950,9 @@ impl NodeState {
         }
 
         // Update contract states
-        for (_, side_effect) in contracts_changes.into_iter() {
-            match side_effect {
-                SideEffect::Delete(contract_name) => {
+        for (contract_name, (mc, fields, side_effects)) in contracts_changes.into_iter() {
+            match mc {
+                None => {
                     debug!("✏️ Delete {} contract", contract_name);
                     self.contracts.remove(&contract_name);
 
@@ -862,7 +963,7 @@ impl NodeState {
                         .cloned()
                     {
                         if let Some(popped_tx) = self.unsettled_transactions.remove(&tx_hash) {
-                            debug!("⏳ Timeout tx {} (from contract deletion)", &tx_hash);
+                            info!("⏳ Timeout tx {} (from contract deletion)", &tx_hash);
                             block_under_construction
                                 .transactions_events
                                 .entry(tx_hash.clone())
@@ -880,73 +981,162 @@ impl NodeState {
                     block_under_construction
                         .registered_contracts
                         .remove(&contract_name);
+
                     block_under_construction
                         .deleted_contracts
                         .insert(contract_name, bth.clone());
+
+                    continue;
                 }
-                SideEffect::Register(contract, metadata) => {
-                    let has_contract = self.contracts.contains_key(&contract.name);
-                    if has_contract {
-                        debug!(
-                            "✍️  Modify '{}', contract state: {:?}",
-                            &contract.name, contract.state
+                Some(contract) => {
+                    // Otherwise, apply any side effect and potentially note it in the map of registered contracts.
+                    if !self.contracts.contains_key(&contract_name) {
+                        info!("📝 Registering contract {}", contract_name);
+
+                        // Let's find the metadata - for now it's unsupported to register the same contract twice in a single TX.
+                        let metadata = side_effects.into_iter().find_map(|se| {
+                            if let SideEffect::Register(m) = se {
+                                Some(m)
+                            } else {
+                                None
+                            }
+                        });
+                        if metadata.is_none() {
+                            tracing::warn!(
+                                "No register effect found for contract {} in TX {}",
+                                contract_name,
+                                bth
+                            );
+                        }
+                        block_under_construction.registered_contracts.insert(
+                            contract_name.clone(),
+                            (
+                                bth.clone(),
+                                RegisterContractEffect {
+                                    contract_name: contract_name.clone(),
+                                    program_id: contract.program_id.clone(),
+                                    state_commitment: contract.state.clone(),
+                                    verifier: contract.verifier.clone(),
+                                    timeout_window: Some(contract.timeout_window.clone()),
+                                },
+                                metadata.unwrap_or_default(),
+                            ),
                         );
-                    } else {
-                        info!("📝 Registering contract {}", contract.name);
-                        debug!(
-                            "📝 Register '{}', contract state: {:?}",
-                            &contract.name, contract.state
-                        );
+                        // If the contract was registered, we need to remove it from the deleted contracts
+                        block_under_construction
+                            .deleted_contracts
+                            .remove(&contract_name);
                     }
+
                     self.contracts
                         .insert(contract.name.clone(), contract.clone());
 
-                    block_under_construction.registered_contracts.insert(
-                        contract.name.clone(),
-                        (
-                            bth.clone(),
-                            RegisterContractEffect {
-                                contract_name: contract.name.clone(),
-                                program_id: contract.program_id.clone(),
-                                state_commitment: contract.state.clone(),
-                                verifier: contract.verifier.clone(),
-                                timeout_window: Some(contract.timeout_window.clone()),
-                            },
-                            metadata,
-                        ),
-                    );
-                    block_under_construction
-                        .deleted_contracts
-                        .remove(&contract.name);
-
-                    // TODO: would be nice to have a drain-like API here.
-                    block_under_construction
-                        .updated_states
-                        .insert(contract.name, contract.state);
-                }
-                // clippy lint set here because setting it on expressions is experimental
-                #[allow(clippy::unwrap_used, reason = "we check existence before get_mut")]
-                SideEffect::UpdateState(contract) => {
-                    if !self.contracts.contains_key(&contract.name) {
-                        // We presume this was because it's been deleted so everything is OK.
+                    if fields.state {
                         debug!(
-                            "🪦 Updating contract {} cannot happen - no longer exists",
-                            &contract.name
+                            "✍️  Modify '{}' state to {}",
+                            &contract_name,
+                            hex::encode(&contract.state.0)
                         );
-                        continue;
-                    }
-                    debug!(
-                        "✍️ Update {} contract state: {:?}",
-                        &contract.name, contract.state
-                    );
-                    self.contracts.get_mut(&contract.name).unwrap().state = contract.state.clone();
 
-                    // TODO: would be nice to have a drain-like API here.
-                    block_under_construction
-                        .updated_states
-                        .insert(contract.name, contract.state);
+                        block_under_construction
+                            .updated_states
+                            .insert(contract.name.clone(), contract.state.clone());
+                    }
+                    if fields.program_id {
+                        debug!(
+                            "✍️  Modify '{}' program_id to {}",
+                            &contract_name,
+                            hex::encode(&contract.program_id.0)
+                        );
+
+                        block_under_construction
+                            .updated_program_ids
+                            .insert(contract.name.clone(), contract.program_id);
+                    }
+                    if fields.timeout_window {
+                        debug!(
+                            "✍️  Modify '{}' timeout window to {}",
+                            &contract_name, &contract.timeout_window
+                        );
+
+                        block_under_construction
+                            .updated_timeout_windows
+                            .insert(contract.name, contract.timeout_window);
+                    }
                 }
             }
+        }
+
+        if !txs_to_nuke.is_empty() {
+            tracing::debug!("Txs to nuke: {:?}", txs_to_nuke);
+
+            // For the first blob of each tx to nuke, we need to create a fake verified proof that has a hyle_output success at false
+            let mut updates: BTreeMap<TxHash, Vec<(ProgramId, HyleOutput)>> = BTreeMap::new();
+
+            for (tx_hash, hyle_outputs) in txs_to_nuke.iter() {
+                if let Some(unsettled_blob_tx) = self.unsettled_transactions.get(tx_hash) {
+                    for hyle_output in hyle_outputs {
+                        if let Some(blob_metadata) = unsettled_blob_tx.blobs.get(&hyle_output.index)
+                        {
+                            let contract_name = &blob_metadata.blob.contract_name;
+                            if let Some(contract) = self.contracts.get(contract_name) {
+                                let mut hyle_output = hyle_output.clone();
+                                // If the hyle_output received is failed, we select the current state of the contract as the initial and next state
+                                if !hyle_output.success {
+                                    hyle_output.initial_state = contract.state.clone();
+                                    hyle_output.next_state = contract.state.clone();
+                                }
+                                updates
+                                    .entry(tx_hash.clone())
+                                    .or_default()
+                                    .push((contract.program_id.clone(), hyle_output.clone()));
+                            } else {
+                                tracing::error!("Contract {} not found", contract_name);
+                            }
+                        } else {
+                            tracing::error!(
+                                "Blob at index {} not found for tx to nuke {}",
+                                hyle_output.index,
+                                tx_hash
+                            );
+                        }
+                    }
+                } else {
+                    tracing::error!("Tx to nuke {} not found", tx_hash);
+                }
+            }
+
+            let mut forced_txs = BTreeSet::new();
+
+            for (tx_hash, hyle_outputs) in updates {
+                if let Some(unsettled_blob_tx) = self.unsettled_transactions.get_mut(&tx_hash) {
+                    for (program_id, hyle_output) in hyle_outputs {
+                        if let Some(blob_metadata) =
+                            unsettled_blob_tx.blobs.get_mut(&hyle_output.index)
+                        {
+                            // This is a hack to force the settlement as failed of the TXs to nuke.
+                            forced_txs.insert(tx_hash.clone());
+                            blob_metadata
+                                .possible_proofs
+                                .push((program_id, hyle_output.clone()));
+                            block_under_construction
+                                .transactions_events
+                                .entry(tx_hash.clone())
+                                .or_default()
+                                .push(TransactionStateEvent::NewProof {
+                                    blob_index: hyle_output.index,
+                                    proof_tx_hash: bth.clone(),
+                                    program_output: hyle_output.program_outputs.clone(),
+                                });
+                        }
+                    }
+                }
+            }
+
+            // Add the TXs to nuke to the list of TXs to try and settle next, in order to force them to fail
+            // WARNING: this is a hack to force the settlement of the TXs to nuke.
+            // WARNING: In the correct path, we are supposed to settle as failed only transaction that are next to settle
+            next_txs_to_try_and_settle.extend(forced_txs);
         }
 
         // Keep track of settled txs
@@ -1051,25 +1241,25 @@ impl NodeState {
                     hyle_output.index
                 )
             }
+        } else if let Ok(_data) =
+            StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
+        {
+            // FIXME: add checks?
         }
 
         Ok(())
     }
 
     // Helper for process_proof
-    fn get_contract<'a>(
+    pub(self) fn get_contract<'a>(
         contracts: &'a HashMap<ContractName, Contract>,
-        contract_changes: &'a BTreeMap<ContractName, SideEffect>,
+        contract_changes: &'a BTreeMap<ContractName, ModifiedContractData>,
         contract_name: &ContractName,
     ) -> Result<&'a Contract, Error> {
-        let Some(contract) = contract_changes
+        let Some(Some(contract)) = contract_changes
             .get(contract_name)
-            .and_then(|c| match c {
-                SideEffect::Register(c, _) => Some(c),
-                SideEffect::UpdateState(c) => Some(c),
-                _ => None,
-            })
-            .or(contracts.get(contract_name))
+            .map(|(mc, ..)| mc.as_ref())
+            .or(contracts.get(contract_name).map(Some))
         else {
             // Contract not found (presumably no longer exists), we can't settle this TX.
             bail!(
@@ -1082,9 +1272,10 @@ impl NodeState {
 
     // Called when trying to actually settle a blob TX - processes a proof for settlement.
     // verify_hyle_output has already been called at this point.
+    // Not called for the Hyle TLD.
     fn process_proof(
         contracts: &HashMap<ContractName, Contract>,
-        contract_changes: &mut BTreeMap<ContractName, SideEffect>,
+        contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
         contract_name: &ContractName,
         proof_metadata: &(ProgramId, HyleOutput),
         current_blob: &UnsettledBlobMetadata,
@@ -1142,8 +1333,8 @@ impl NodeState {
 
                     contract_changes.insert(
                         effect.contract_name.clone(),
-                        SideEffect::Register(
-                            Contract {
+                        (
+                            Some(Contract {
                                 name: effect.contract_name.clone(),
                                 program_id: effect.program_id.clone(),
                                 state: effect.state_commitment.clone(),
@@ -1152,29 +1343,58 @@ impl NodeState {
                                     .timeout_window
                                     .clone()
                                     .unwrap_or(contract.timeout_window.clone()),
-                            },
-                            metadata.parameters.constructor_metadata,
+                            }),
+                            ModifiedContractFields::all(),
+                            vec![SideEffect::Register(
+                                metadata.parameters.constructor_metadata,
+                            )],
                         ),
                     );
                 }
                 OnchainEffect::DeleteContract(cn) => {
                     // TODO - check the contract exists ?
                     validate_contract_name_registration(&contract.name, cn)?;
-                    contract_changes.insert(cn.clone(), SideEffect::Delete(cn.clone()));
+                    contract_changes
+                        .entry(cn.clone())
+                        .and_modify(|c| {
+                            c.0 = None; // Mark the contract as deleted
+                            c.2.push(SideEffect::Delete);
+                        })
+                        .or_insert_with(|| {
+                            (
+                                None,
+                                ModifiedContractFields::all(),
+                                vec![SideEffect::Delete],
+                            )
+                        });
                 }
             }
         }
 
         // Apply the generic state updates
         let contract_name = contract.name.clone();
-        let update = SideEffect::UpdateState(Contract {
-            state: proof_metadata.1.next_state.clone(),
-            ..contract
-        });
         contract_changes
             .entry(contract_name)
-            .and_modify(|c| c.apply(update.clone()))
-            .or_insert(update);
+            .and_modify(|u| {
+                if let Some(c) = u.0.as_mut() {
+                    c.state = proof_metadata.1.next_state.clone();
+                    u.1.state = true;
+                    u.2.push(SideEffect::UpdateState);
+                }
+            })
+            .or_insert_with(|| {
+                (
+                    Some(Contract {
+                        state: proof_metadata.1.next_state.clone(),
+                        ..contract
+                    }),
+                    ModifiedContractFields {
+                        state: true,
+                        ..ModifiedContractFields::default()
+                    },
+                    vec![SideEffect::UpdateState],
+                )
+            });
 
         Ok(())
     }
@@ -1415,6 +1635,23 @@ pub mod test {
         }
     }
 
+    pub fn make_hyle_output_ter(blob_tx: BlobTransaction, blob_index: BlobIndex) -> HyleOutput {
+        HyleOutput {
+            version: 1,
+            identity: blob_tx.identity.clone(),
+            index: blob_index,
+            blobs: blob_tx.blobs.clone().into(),
+            tx_blob_count: blob_tx.blobs.len(),
+            initial_state: StateCommitment(vec![7, 8, 9]),
+            next_state: StateCommitment(vec![10, 11, 12]),
+            success: true,
+            tx_hash: blob_tx.hashed(),
+            tx_ctx: None,
+            state_reads: vec![],
+            onchain_effects: vec![],
+            program_outputs: vec![],
+        }
+    }
     pub fn make_hyle_output_with_state(
         blob_tx: BlobTransaction,
         blob_index: BlobIndex,
@@ -1445,10 +1682,33 @@ pub mod test {
                 slot: height,
                 ..ConsensusProposal::default()
             },
-            data_proposals: vec![(LaneId::default(), vec![DataProposal::new(None, txs)])],
+            data_proposals: vec![(
+                LaneId::default(),
+                vec![DataProposal::new(
+                    Some(DataProposalHash(format!("{}", height))),
+                    txs,
+                )],
+            )],
         }
     }
 
+    pub fn craft_signed_block_with_parent_dp_hash(
+        height: u64,
+        txs: Vec<Transaction>,
+        parent_dp_hash: DataProposalHash,
+    ) -> SignedBlock {
+        SignedBlock {
+            certificate: AggregateSignature::default(),
+            consensus_proposal: ConsensusProposal {
+                slot: height,
+                ..ConsensusProposal::default()
+            },
+            data_proposals: vec![(
+                LaneId::default(),
+                vec![DataProposal::new(Some(parent_dp_hash), txs)],
+            )],
+        }
+    }
     impl NodeState {
         // Convenience method to handle a signed block in tests.
         pub fn force_handle_block(&mut self, block: &SignedBlock) -> Block {
@@ -1463,6 +1723,16 @@ pub mod test {
 
         pub fn craft_block_and_handle(&mut self, height: u64, txs: Vec<Transaction>) -> Block {
             let block = craft_signed_block(height, txs);
+            self.force_handle_block(&block)
+        }
+
+        pub fn craft_block_and_handle_with_parent_dp_hash(
+            &mut self,
+            height: u64,
+            txs: Vec<Transaction>,
+            parent_dp_hash: DataProposalHash,
+        ) -> Block {
+            let block = craft_signed_block_with_parent_dp_hash(height, txs, parent_dp_hash);
             self.force_handle_block(&block)
         }
 

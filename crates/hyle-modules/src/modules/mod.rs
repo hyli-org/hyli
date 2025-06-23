@@ -9,20 +9,22 @@ use std::{
 };
 
 use crate::{
-    bus::{BusClientSender, SharedMessageBus},
+    bus::{BusClientReceiver, BusClientSender, SharedMessageBus},
     bus_client, handle_messages, log_error,
 };
 use anyhow::{bail, Error, Result};
 use axum::Router;
-use futures::future::select_all;
 use rand::{distributions::Alphanumeric, Rng};
 use tokio::task::JoinHandle;
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
+
+const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub mod bus_ws_connector;
 pub mod contract_state_indexer;
 pub mod da_listener;
 pub mod prover;
+pub mod prover_metrics;
 pub mod rest;
 pub mod websocket;
 
@@ -119,6 +121,10 @@ struct ModuleStarter {
 }
 
 pub mod signal {
+    use std::any::TypeId;
+
+    use crate::utils::static_type_map::Pick;
+
     #[derive(Clone, Debug)]
     pub struct ShutdownModule {
         pub module: String,
@@ -128,7 +134,59 @@ pub mod signal {
         pub module: String,
     }
 
-    pub async fn async_receive_shutdown<T>(
+    /// Execute a future, cancelling it if a shutdown signal is received.
+    pub async fn shutdown_aware<M: 'static, F>(
+        receiver: &mut impl Pick<
+            tokio::sync::broadcast::Receiver<crate::modules::signal::ShutdownModule>,
+        >,
+        f: F,
+    ) -> anyhow::Result<F::Output>
+    where
+        F: std::future::IntoFuture,
+    {
+        let mut dummy = false;
+        tokio::select! {
+            _ = async_receive_shutdown::<M>(
+                &mut dummy,
+                receiver.get_mut(),
+            ) => {
+                anyhow::bail!("Shutdown received");
+            }
+            res = f => {
+                Ok(res)
+            }
+        }
+    }
+
+    /// Execute a future, cancelling it if a shutdown signal is received or a timeout is reached.
+    pub async fn shutdown_aware_timeout<M: 'static, F>(
+        receiver: &mut impl Pick<
+            tokio::sync::broadcast::Receiver<crate::modules::signal::ShutdownModule>,
+        >,
+        duration: std::time::Duration,
+        f: F,
+    ) -> anyhow::Result<F::Output>
+    where
+        F: std::future::IntoFuture,
+    {
+        let mut dummy = false;
+        tokio::select! {
+            _ = tokio::time::sleep(duration) => {
+                anyhow::bail!("Timeout reached");
+            }
+            _ = async_receive_shutdown::<M>(
+                &mut dummy,
+                receiver.get_mut(),
+            ) => {
+                anyhow::bail!("Shutdown received");
+            }
+            res = f => {
+                Ok(res)
+            }
+        }
+    }
+
+    pub async fn async_receive_shutdown<T: 'static>(
         should_shutdown: &mut bool,
         shutdown_receiver: &mut tokio::sync::broadcast::Receiver<
             crate::modules::signal::ShutdownModule,
@@ -139,13 +197,17 @@ pub mod signal {
             return Ok(());
         }
         while let Ok(shutdown_event) = shutdown_receiver.recv().await {
+            if TypeId::of::<T>() == TypeId::of::<()>() {
+                tracing::debug!("Break signal received for any module");
+                *should_shutdown = true;
+                return Ok(());
+            }
             if shutdown_event.module == std::any::type_name::<T>() {
                 tracing::debug!(
                     "Break signal received for module {}",
                     std::any::type_name::<T>()
                 );
                 *should_shutdown = true;
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 return Ok(());
             }
         }
@@ -173,7 +235,7 @@ macro_rules! module_handle_messages {
                     }
                 }
             }
-            tracing::info!("Event loop listening to {} has stopped", stringify!($bus));
+            tracing::info!("Event loop listening to {} has stopped", module_path!());
             should_shutdown
         }
 
@@ -190,7 +252,7 @@ macro_rules! module_handle_messages {
                     break;
                 }
             }
-            tracing::info!("Event loop listening to {} has stopped", stringify!($bus));
+            tracing::info!("Event loop listening in {} has stopped", module_path!());
             should_shutdown
         }
     };
@@ -222,6 +284,7 @@ bus_client! {
     pub struct ShutdownClient {
         sender(signal::ShutdownModule),
         sender(signal::ShutdownCompleted),
+        receiver(signal::ShutdownModule),
         receiver(signal::ShutdownCompleted),
     }
 }
@@ -264,13 +327,42 @@ impl ModulesHandler {
             debug!("Starting module {}", module.name);
 
             let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
+            let mut shutdown_client2 = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
             let task = tokio::spawn(async move {
-                match module.starter.await {
-                    Ok(_) => tracing::debug!("Module {} exited with no error.", module.name),
+                let module_task = tokio::spawn(module.starter);
+                let timeout_task = tokio::spawn(async move {
+                    loop {
+                        if let Ok(signal::ShutdownModule { module: modname }) =
+                            shutdown_client2.recv().await
+                        {
+                            if modname == module.name {
+                                tokio::time::sleep(MODULE_SHUTDOWN_TIMEOUT).await;
+                                break;
+                            }
+                        }
+                    }
+                });
+
+                let res = tokio::select! {
+                    res = module_task => {
+                        res
+                    },
+                    _ = timeout_task => {
+                        Ok(Err(anyhow::anyhow!("Shutdown timeout reached")))
+                    }
+                };
+                match res {
+                    Ok(Ok(())) => {
+                        tracing::warn!(module =% module.name, "Module {} exited with no error.", module.name);
+                    }
+                    Ok(Err(e)) => {
+                        tracing::error!(module =% module.name, "Module {} exited with error: {:?}", module.name, e);
+                    }
                     Err(e) => {
-                        tracing::error!("Module {} exited with error: {:?}", module.name, e);
+                        tracing::error!(module =% module.name, "Module {} exited, error joining: {:?}", module.name, e);
                     }
                 }
+
                 _ = log_error!(
                     shutdown_client.send(signal::ShutdownCompleted {
                         module: module.name.to_string(),
@@ -295,33 +387,6 @@ impl ModulesHandler {
 
         let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
 
-        // Sends a trigger event when one task ends (should not, but in case of panic, no event is sent)
-        let join_set: Vec<JoinHandle<()>> = self.running_modules.drain(..).collect();
-        let started_modules_cloned = self.started_modules.clone();
-        tokio::spawn(async move {
-            trace!("Module failure listener - Join set size {}", join_set.len());
-            trace!(
-                "Module failure listener - Started modules {:?}",
-                started_modules_cloned.clone()
-            );
-            if join_set.is_empty() {
-                return;
-            }
-            let (_res, idx, _remaining) = select_all(join_set).await;
-            if let Some(module_name) = started_modules_cloned.get(idx) {
-                debug!("First module to shutdown {}", module_name);
-
-                _ = log_error!(
-                    shutdown_client.send(signal::ShutdownCompleted {
-                        module: module_name.to_string(),
-                    }),
-                    "Sending ShutdownCompleted message"
-                );
-            }
-        });
-
-        let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
-
         // Trigger shutdown chain when one shutdown message is received for a long running module
         handle_messages! {
             on_bus shutdown_client,
@@ -337,7 +402,8 @@ impl ModulesHandler {
                 }
             }
 
-            _ = tokio::time::sleep(Duration::from_secs(3)) => {
+            // Add one second as buffer to let the module cancel itself, hopefully.
+            _ = tokio::time::sleep(MODULE_SHUTDOWN_TIMEOUT + Duration::from_secs(1)) => {
                 if !self.shut_modules.is_empty() {
                     _ = self.shutdown_next_module().await;
                 }
@@ -705,8 +771,6 @@ mod tests {
     }
 
     // in case a module fails, it will emit a shutdowncompleted event that will trigger the shutdown loop and shut all other modules
-    // the module panic listener will also emit an event because the task ended (and it does not know why)
-    // That is why in case of a graceful failure, the shutdown loop receives 2 events for the failed module
     // All other modules are shut in the right order
     #[tokio::test]
     async fn test_shutdown_all_modules_if_one_fails() {
@@ -734,10 +798,7 @@ mod tests {
             shutdown_completed_receiver.recv().await.unwrap().module,
             std::any::type_name::<TestModule<u64>>().to_string()
         );
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<u64>>().to_string()
-        );
+
         // Shutdown last module first
         assert_eq!(
             shutdown_completed_receiver.recv().await.unwrap().module,

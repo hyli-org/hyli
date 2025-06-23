@@ -7,6 +7,8 @@ use serde_with::DurationMilliSeconds;
 use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::Arc, time::Duration};
 use strum_macros::IntoStaticStr;
 
+use crate::indexer::IndexerConf;
+
 #[serde_as]
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Consensus {
@@ -16,6 +18,8 @@ pub struct Consensus {
     pub timestamp_checks: TimestampCheck,
     /// Whether the network runs as a single node or with a multi-node consensus.
     pub solo: bool,
+    /// The timestamp of the genesis block, in seconds since the Unix epoch.
+    pub genesis_timestamp: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, IntoStaticStr)]
@@ -33,8 +37,8 @@ pub enum TimestampCheck {
 pub struct GenesisConf {
     /// Initial bonded stakers and their stakes
     pub stakers: HashMap<String, u64>,
-    /// Faucer configuration
-    pub faucet_password: String,
+    /// Used for testing - if true, token balance will remain in the faucet.
+    pub keep_tokens_in_faucet: bool,
 }
 
 /// Configuration for the P2P layer
@@ -139,6 +143,9 @@ pub struct Conf {
 
     /// Websocket configuration
     pub websocket: NodeWebSocketConfig,
+
+    /// Configuration for the indexer module
+    pub indexer: IndexerConf,
 }
 
 impl Conf {

@@ -11,9 +11,12 @@ pub struct OrderedTxMap {
 }
 
 impl OrderedTxMap {
-    #[allow(dead_code)]
     pub fn get(&self, hash: &TxHash) -> Option<&UnsettledBlobTransaction> {
         self.map.get(hash)
+    }
+
+    pub fn get_mut(&mut self, hash: &TxHash) -> Option<&mut UnsettledBlobTransaction> {
+        self.map.get_mut(hash)
     }
 
     /// Returns true if the tx is the next to settle for all the contracts it contains
@@ -69,7 +72,6 @@ impl OrderedTxMap {
         self.map.len()
     }
 
-    #[cfg(test)]
     pub fn get_tx_order(&self, contract: &ContractName) -> Option<&VecDeque<TxHash>> {
         self.tx_order.get(contract)
     }

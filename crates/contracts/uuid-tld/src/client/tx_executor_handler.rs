@@ -7,7 +7,8 @@ use client_sdk::{
     },
 };
 use sdk::{
-    utils::as_hyle_output, Blob, Calldata, ContractName, RegisterContractEffect, ZkContract,
+    utils::as_hyle_output, Blob, Calldata, ContractName, RegisterContractEffect, StateCommitment,
+    ZkContract,
 };
 
 pub mod metadata {
@@ -47,5 +48,9 @@ impl TxExecutorHandler for UuidTld {
         _metadata: &Option<Vec<u8>>,
     ) -> TxExecutorHandlerResult<Self> {
         Ok(Self::default())
+    }
+
+    fn get_state_commitment(&self) -> StateCommitment {
+        self.commit()
     }
 }

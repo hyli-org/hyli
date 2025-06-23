@@ -40,6 +40,7 @@ impl Consensus {
         debug!(
             sender = %sender,
             slot = %self.bft_round_state.slot,
+            view = %self.bft_round_state.view,
             "Received Prepare message: {}", consensus_proposal
         );
 
@@ -52,7 +53,8 @@ impl Consensus {
             // - we restarted but are still up-to-date - it's plausible that we have BFT slot == CP slot, indicating we haven't committed that. Expect slot + 1 or higher views.
             let is_for_current_slot = self.current_slot_prepare_is_present()
                 && (consensus_proposal.slot == self.bft_round_state.slot + 1
-                    || view > self.bft_round_state.view);
+                    || consensus_proposal.slot == self.bft_round_state.slot
+                        && view > self.bft_round_state.view);
             if prepare_follows_commit || is_for_current_slot {
                 info!(
                     "Received Prepare message for next slot while joining. Exiting joining mode."

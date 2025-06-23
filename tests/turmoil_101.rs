@@ -242,7 +242,7 @@ pub fn simulation_one_more_node(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyh
                     let contract = client_with_retries
                         .get_contract(format!("contract-{}", i).into())
                         .await?;
-                    assert_eq!(contract.name.0, format!("contract-{}", i).as_str());
+                    assert_eq!(contract.contract_name.0, format!("contract-{}", i).as_str());
                 }
                 Ok(())
             })
@@ -296,7 +296,7 @@ pub async fn submit_10_contracts(node: TurmoilHost) -> anyhow::Result<()> {
         let contract = client_with_retries
             .get_contract(format!("contract-{}", i).into())
             .await?;
-        assert_eq!(contract.name.0, format!("contract-{}", i).as_str());
+        assert_eq!(contract.contract_name.0, format!("contract-{}", i).as_str());
     }
 
     Ok(())

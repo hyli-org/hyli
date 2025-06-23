@@ -174,5 +174,5 @@ async fn test_uuid_registration() {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     };
     assert_eq!(contract.verifier, Verifier("test".into()));
-    assert_eq!(contract.state, StateCommitment(vec![0, 1, 2, 3]));
+    assert_eq!(contract.state_commitment, StateCommitment(vec![0, 1, 2, 3]));
 }

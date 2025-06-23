@@ -47,17 +47,13 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ matrix.mode.images }}
-
-      # Will produces tags given this table :
-      #
-      # | Event               | Ref                           | Docker Tags                |
-      # |---------------------|-------------------------------|----------------------------|
-      # | `pull_request`      | `refs/pull/2/merge`           | `pr-2`                     |
-      # | `push`              | `refs/heads/master`           | `master`                   |
-      # | `push`              | `refs/heads/releases/v1`      | `releases-v1`              |
-      # | `push tag`          | `refs/tags/v1.2.3`            | `v1.2.3`, `latest`         |
-      # | `push tag`          | `refs/tags/v2.0.8-beta.67`    | `v2.0.8-beta.67`, `latest` |
-      # | `workflow_dispatch` | `refs/heads/master`           | `master`                   |
+          tags: |
+            type=sha
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=ref,event=branch
+            type=ref,event=pr
 
       - name: Docker Auth
         id: docker-auth

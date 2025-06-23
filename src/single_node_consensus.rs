@@ -139,11 +139,12 @@ impl SingleNodeConsensus {
         module_handle_messages! {
             on_bus self.bus,
             command_response<QueryConsensusInfo, ConsensusInfo> _ => {
-                let slot = 0;
+                let slot = self.store.last_slot;
                 let view = 0;
                 let round_leader = self.crypto.validator_pubkey().clone();
+                let last_timestamp = TimestampMsClock::now();
                 let validators = vec![];
-                Ok(ConsensusInfo { slot, view, round_leader, validators })
+                Ok(ConsensusInfo { slot, view, round_leader, last_timestamp, validators })
             },
             _ = interval.tick() => {
                 self.handle_new_slot_tick().await?;
@@ -165,7 +166,7 @@ impl SingleNodeConsensus {
         // Query a new cut to Mempool in order to create a new CommitCut
         match self
             .bus
-            .request(QueryNewCut(self.store.staking.clone()))
+            .shutdown_aware_request::<Self>(QueryNewCut(self.store.staking.clone()))
             .await
         {
             Ok(cut) => {
@@ -191,7 +192,7 @@ impl SingleNodeConsensus {
             .crypto
             .sign_aggregate((consensus_proposal.hashed(), ConfirmAckMarker), &[])?;
 
-        _ = self.bus.send(ConsensusEvent::CommitConsensusProposal(
+        self.bus.send(ConsensusEvent::CommitConsensusProposal(
             CommittedConsensusProposal {
                 staking: Staking::default(),
                 consensus_proposal,
@@ -214,12 +215,16 @@ mod tests {
     use crate::utils::conf::Conf;
     use anyhow::Result;
     use hyle_crypto::BlstCrypto;
+    use hyle_modules::bus::dont_use_this::get_sender;
     use hyle_modules::handle_messages;
+    use hyle_modules::modules::signal::ShutdownModule;
     use std::sync::Arc;
-    use tokio::sync::broadcast::Receiver;
+    use tokio::sync::broadcast::{Receiver, Sender};
 
     pub struct TestContext {
         consensus_event_receiver: Receiver<ConsensusEvent>,
+        #[allow(dead_code)]
+        shutdown_sender: Sender<ShutdownModule>,
         single_node_consensus: SingleNodeConsensus,
     }
 
@@ -237,6 +242,7 @@ mod tests {
             let store = SingleNodeConsensusStore::default();
 
             let consensus_event_receiver = get_receiver::<ConsensusEvent>(&shared_bus).await;
+            let shutdown_sender = get_sender::<ShutdownModule>(&shared_bus).await;
             let bus = SingleNodeConsensusBusClient::new_from_bus(shared_bus.new_handle()).await;
 
             // Initialize Mempool
@@ -260,6 +266,7 @@ mod tests {
 
             TestContext {
                 consensus_event_receiver,
+                shutdown_sender,
                 single_node_consensus,
             }
         }

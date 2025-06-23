@@ -99,6 +99,14 @@ impl Staking {
     }
 
     pub fn stake(&mut self, staker: Identity, amount: u128) -> Result<String, String> {
+        // Staking is only allowed if the staker is not already staked
+        if self.stakes.contains_key(&staker) {
+            return Err(format!(
+                "Staking balance is frozen for {} (already staked)",
+                staker
+            ));
+        }
+
         info!("💰 Adding {} to stake for {}", amount, staker);
         self.stakes
             .entry(staker)

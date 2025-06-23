@@ -170,15 +170,15 @@ impl super::Mempool {
                 );
             }
             DataProposalVerdict::Wait => {
-                debug!("Buffering DataProposal");
+                debug!("Buffering DataProposal {}", data_proposal_hash);
                 // Push the data proposal in the waiting list
                 self.buffered_proposals
                     .entry(lane_id.clone())
                     .or_default()
-                    .push(data_proposal);
+                    .insert(data_proposal);
             }
             DataProposalVerdict::Refuse => {
-                debug!("Refuse vote for DataProposal");
+                debug!("Refuse vote for DataProposal {}", data_proposal.hashed());
             }
         }
         Ok(())
@@ -242,8 +242,10 @@ impl super::Mempool {
                         }
                     });
                     if let Some(child_idx) = child_idx {
-                        // We have a buffered proposal that is a child of this DP
-                        dp = Some(buffered_proposals.swap_remove(child_idx));
+                        // We have a buffered proposal that is a child of this DP, process it.
+                        // (I _would_ use a HashSet, but this requires https://github.com/rust-lang/rust/issues/59618
+                        // which is coming in 1.88)
+                        dp = buffered_proposals.swap_remove_index(child_idx);
                     }
                 }
                 if let Some(dp) = dp {

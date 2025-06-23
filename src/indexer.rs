@@ -28,6 +28,7 @@ use hyle_modules::{
     modules::{module_bus_client, Module, SharedBuildApiCtx},
 };
 use hyle_net::logged_task::logged_task;
+use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::{postgres::PgPoolOptions, PgPool, Pool, Postgres};
 use std::collections::HashMap;
@@ -63,6 +64,12 @@ pub struct Indexer {
     new_sub_receiver: tokio::sync::mpsc::Receiver<(ContractName, WebSocket)>,
     subscribers: Subscribers,
     handler_store: IndexerHandlerStore,
+    conf: IndexerConf,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct IndexerConf {
+    query_buffer_size: usize,
 }
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/indexer/migrations");
@@ -95,6 +102,7 @@ impl Module for Indexer {
             new_sub_receiver,
             subscribers,
             handler_store: IndexerHandlerStore::default(),
+            conf: ctx.0.indexer.clone(),
         };
 
         if let Ok(mut guard) = ctx.1.router.lock() {
@@ -329,6 +337,8 @@ impl std::ops::Deref for Indexer {
 mod test {
     use assert_json_diff::assert_json_include;
     use axum_test::TestServer;
+    use client_sdk::transaction_builder::ProvableBlobTx;
+    use hydentity::{client::tx_executor_handler::register_identity, HydentityAction};
     use hyle_contract_sdk::{BlobIndex, HyleOutput, Identity, ProgramId, StateCommitment, TxHash};
     use hyle_model::api::{APIBlob, APIBlock, APIContract, APITransaction, APITransactionEvents};
     use serde_json::json;
@@ -369,6 +379,9 @@ mod test {
             new_sub_receiver,
             subscribers: HashMap::new(),
             handler_store: IndexerHandlerStore::default(),
+            conf: IndexerConf {
+                query_buffer_size: 100,
+            },
         }
     }
 
@@ -391,8 +404,15 @@ mod test {
 
     pub fn new_delete_tx(tld: ContractName, contract_name: ContractName) -> BlobTransaction {
         BlobTransaction::new(
-            "hyle@hyle",
-            vec![DeleteContractAction { contract_name }.as_blob(tld, None, None)],
+            "hyli@wallet".to_string(),
+            vec![
+                HydentityAction::VerifyIdentity {
+                    nonce: 0,
+                    account: "hyli@wallet".to_string(),
+                }
+                .as_blob("wallet".into()),
+                DeleteContractAction { contract_name }.as_blob(tld, None, None),
+            ],
         )
     }
 
@@ -936,6 +956,12 @@ mod test {
         Ok(())
     }
 
+    pub fn make_register_hyli_wallet_identity_tx() -> BlobTransaction {
+        let mut tx = ProvableBlobTx::new("hyli@wallet".into());
+        register_identity(&mut tx, "wallet".into(), "password".into()).unwrap();
+        BlobTransaction::new("hyli@wallet".to_string(), tx.blobs)
+    }
+
     async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Block, Block, Block)>
     {
         let container = Postgres::default()
@@ -959,6 +985,27 @@ mod test {
             metrics: NodeStateMetrics::global("test".to_string(), "test"),
         };
 
+        let register_wallet = new_register_tx("wallet".into(), StateCommitment(vec![]));
+        let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
+
+        let register_hyli_at_wallet_proof = new_proof_tx(
+            "hyli@wallet".into(),
+            "wallet".into(),
+            BlobIndex(0),
+            &register_hyli_at_wallet.clone().into(),
+            StateCommitment(vec![]),
+            StateCommitment(vec![0]),
+        );
+
+        node_state.craft_block_and_handle(
+            1,
+            vec![
+                register_wallet.into(),
+                register_hyli_at_wallet.into(),
+                register_hyli_at_wallet_proof,
+            ],
+        );
+
         // Create a couple fake blocks with contracts
         let b1 = node_state.craft_block_and_handle(
             3,
@@ -968,24 +1015,81 @@ mod test {
                 new_register_tx(ContractName::new("c"), StateCommitment(vec![])).into(),
             ],
         );
+
+        let delete_a = new_delete_tx(ContractName::new("hyle"), ContractName::new("a"));
+        let delete_c = new_delete_tx(ContractName::new("hyle"), ContractName::new("c"));
+
+        let delete_a_proof = new_proof_tx(
+            "hyli@wallet".into(),
+            "wallet".into(),
+            BlobIndex(0),
+            &delete_a.clone().into(),
+            StateCommitment(vec![0]),
+            StateCommitment(vec![1]),
+        );
+        let delete_c_proof = new_proof_tx(
+            "hyli@wallet".into(),
+            "wallet".into(),
+            BlobIndex(0),
+            &delete_c.clone().into(),
+            StateCommitment(vec![1]),
+            StateCommitment(vec![2]),
+        );
+
         let b2 = node_state.craft_block_and_handle(
             4,
             vec![
-                new_delete_tx(ContractName::new("hyle"), ContractName::new("a")).into(),
-                new_delete_tx(ContractName::new("hyle"), ContractName::new("c")).into(),
+                delete_a.into(),
+                delete_a_proof,
+                delete_c.into(),
+                delete_c_proof,
             ],
         );
 
-        let b3 = node_state.craft_block_and_handle(
+        let delete_b = new_delete_tx(ContractName::new("hyle"), ContractName::new("b"));
+        let delete_b_proof = new_proof_tx(
+            "hyli@wallet".into(),
+            "wallet".into(),
+            BlobIndex(0),
+            &delete_b.clone().into(),
+            StateCommitment(vec![2]),
+            StateCommitment(vec![3]),
+        );
+
+        let delete_a = new_delete_tx(ContractName::new("hyle"), ContractName::new("a"));
+        let delete_a_proof = new_proof_tx(
+            "hyli@wallet".into(),
+            "wallet".into(),
+            BlobIndex(0),
+            &delete_a.clone().into(),
+            StateCommitment(vec![3]),
+            StateCommitment(vec![4]),
+        );
+
+        let delete_d = new_delete_tx(ContractName::new("hyle"), ContractName::new("d"));
+        let delete_d_proof = new_proof_tx(
+            "hyli@wallet".into(),
+            "wallet".into(),
+            BlobIndex(0),
+            &delete_d.clone().into(),
+            StateCommitment(vec![4]),
+            StateCommitment(vec![5]),
+        );
+
+        let b3 = node_state.craft_block_and_handle_with_parent_dp_hash(
             5,
             vec![
                 new_register_tx(ContractName::new("a"), StateCommitment(vec![])).into(),
-                new_delete_tx(ContractName::new("hyle"), ContractName::new("b")).into(),
-                new_delete_tx(ContractName::new("hyle"), ContractName::new("a")).into(),
+                delete_b.into(),
+                delete_b_proof,
+                delete_a.into(),
+                delete_a_proof,
                 new_register_tx(ContractName::new("a"), StateCommitment(vec![])).into(),
                 new_register_tx(ContractName::new("d"), StateCommitment(vec![])).into(),
-                new_delete_tx(ContractName::new("hyle"), ContractName::new("d")).into(),
+                delete_d.into(),
+                delete_d_proof,
             ],
+            DataProposalHash("test".to_string()),
         );
 
         Ok((container, indexer, b1, b2, b3))
