@@ -8,12 +8,13 @@ pub struct BlockPagination {
 }
 
 #[derive(OpenApi)]
-#[openapi(paths(get_blocks))]
+#[openapi(paths(get_blocks, get_data_proposals_by_lane, get_data_proposal_by_hash))]
 pub(super) struct IndexerAPI;
 
 mod blobs;
 mod blocks;
 mod contracts;
+mod data_proposals;
 mod proofs;
 mod stats;
 mod transactions;
@@ -21,6 +22,7 @@ mod transactions;
 pub use blobs::*;
 pub use blocks::*;
 pub use contracts::*;
+pub use data_proposals::*;
 pub use proofs::*;
 pub use stats::*;
 pub use transactions::*;

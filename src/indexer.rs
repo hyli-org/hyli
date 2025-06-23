@@ -224,6 +224,9 @@ impl Indexer {
             .routes(routes!(api::get_last_block))
             .routes(routes!(api::get_block))
             .routes(routes!(api::get_block_by_hash))
+            // data proposals
+            .routes(routes!(api::get_data_proposals_by_lane))
+            .routes(routes!(api::get_data_proposal_by_hash))
             // transaction
             .routes(routes!(api::get_transactions))
             .routes(routes!(api::get_transactions_by_height))
