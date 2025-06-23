@@ -1,104 +1,68 @@
 //! Public API for interacting with the node.
 
 use crate::{
-    bus::SharedMessageBus, log_error, module_bus_client, module_handle_messages, modules::Module,
+    bus::{metrics::BusMetrics, BusClientSender, SharedMessageBus},
+    log_error, module_bus_client, module_handle_messages,
+    modules::{signal::ShutdownModule, Module},
 };
 use anyhow::{Context, Result};
 pub use axum::Router;
 use axum::{
-    body::Body,
     extract::{DefaultBodyLimit, State},
-    http::{header, Request, Response, StatusCode},
-    middleware::Next,
+    http::{header, Response, StatusCode},
     response::IntoResponse,
-    routing::get,
-    Json,
+    routing::post,
 };
-use prometheus::{Encoder, Registry, TextEncoder};
-use sdk::{api::NodeInfo, *};
-use tokio::time::Instant;
+use sdk::*;
 use tokio_util::sync::CancellationToken;
 use tower_http::catch_panic::CatchPanicLayer;
 use tracing::info;
-use utoipa::OpenApi;
-use utoipa_swagger_ui::SwaggerUi;
 
 pub use client_sdk::contract_indexer::AppError;
 pub use client_sdk::rest_client as client;
 
+use super::{
+    rest::request_logger,
+    signal::{self, PersistModule},
+};
+
 module_bus_client! {
-    struct RestBusClient {
+    struct AdminBusClient {
+        sender(signal::PersistModule),
     }
 }
 
-pub struct RestApiRunContext {
+pub struct AdminApiRunContext {
     pub port: u16,
-    pub info: NodeInfo,
     pub router: Router,
-    pub registry: Registry,
     pub max_body_size: usize,
-    pub openapi: utoipa::openapi::OpenApi,
 }
 
-impl RestApiRunContext {
-    pub fn new(
-        port: u16,
-        info: NodeInfo,
-        router: Router,
-        max_body_size: usize,
-        openapi: utoipa::openapi::OpenApi,
-    ) -> RestApiRunContext {
+impl AdminApiRunContext {
+    pub fn new(port: u16, router: Router, max_body_size: usize) -> AdminApiRunContext {
         Self {
             port,
-            info,
             router,
-            registry: Registry::new(),
             max_body_size,
-            openapi,
         }
     }
-    pub fn with_registry(self, registry: Registry) -> Self {
-        Self { registry, ..self }
-    }
 }
 
-pub struct RouterState {
-    info: NodeInfo,
-    registry: Registry,
-}
-
-pub struct RestApi {
+pub struct AdminApi {
     port: u16,
     app: Option<Router>,
-    bus: RestBusClient,
+    bus: AdminBusClient,
 }
 
-#[derive(OpenApi)]
-#[openapi(
-    info(
-        description = "Hyli Node API",
-        title = "Hyli Node API",
-    ),
-    // When opening the swagger, if on some endpoint you get the error:
-    // Could not resolve reference: JSON Pointer evaluation failed while evaluating token "BlobIndex" against an ObjectElement
-    // then it means you need to add it to this list.
-    // More details here: https://github.com/juhaku/utoipa/issues/894
-    components(schemas(BlobIndex, RegisterContractEffect))
-)]
-pub struct ApiDoc;
-
-impl Module for RestApi {
-    type Context = RestApiRunContext;
+impl Module for AdminApi {
+    type Context = AdminApiRunContext;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let app = ctx.router.merge(
             Router::new()
-                .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ctx.openapi))
-                .route("/v1/info", get(get_info))
-                .route("/v1/metrics", get(get_metrics))
+                .route("/v1/admin/persist", post(persist))
                 .with_state(RouterState {
-                    info: ctx.info,
-                    registry: ctx.registry,
+                    bus: AdminBusClient::new_from_bus(bus.new_handle()).await,
                 }),
         );
         let app = app
@@ -106,10 +70,10 @@ impl Module for RestApi {
             .layer(DefaultBodyLimit::max(ctx.max_body_size)) // 10 MB
             .layer(tower_http::cors::CorsLayer::permissive())
             .layer(axum::middleware::from_fn(request_logger));
-        Ok(RestApi {
+        Ok(AdminApi {
             port: ctx.port,
             app: Some(app),
-            bus: RestBusClient::new_from_bus(bus.new_handle()).await,
+            bus: AdminBusClient::new_from_bus(bus.new_handle()).await,
         })
     }
 
@@ -118,52 +82,20 @@ impl Module for RestApi {
     }
 }
 
-pub async fn request_logger(req: Request<Body>, next: Next) -> impl IntoResponse {
-    let method = req.method().clone();
-    let uri = req.uri().clone();
-    let start_time = Instant::now();
-
-    // Passer la requête au prochain middleware ou au gestionnaire
-    let response = next.run(req).await;
-
-    let status = response.status();
-    let elapsed_time = start_time.elapsed();
-
-    // Debug log for metrics and health endpoints, info for others
-    let path = uri.path();
-    if path.starts_with("/v1/metrics") || path == "/_health" || path.starts_with("/v1/info") {
-        tracing::debug!(
-            "[{}] {} - {} ({} μs)",
-            method,
-            uri,
-            status,
-            elapsed_time.as_micros()
-        );
-    } else {
-        info!(
-            "[{}] {} - {} ({} μs)",
-            method,
-            uri,
-            status,
-            elapsed_time.as_micros()
-        );
-    }
-
-    response
+pub async fn persist(State(mut state): State<RouterState>) -> Result<impl IntoResponse, AppError> {
+    tracing::info!("Persisting modules state");
+    state
+        .bus
+        .send(signal::PersistModule {})
+        .context("Sending persist signal")?;
+    Ok(())
 }
 
-pub async fn get_info(State(state): State<RouterState>) -> Result<impl IntoResponse, AppError> {
-    Ok(Json(state.info))
+pub struct RouterState {
+    bus: AdminBusClient,
 }
 
-pub async fn get_metrics(State(s): State<RouterState>) -> Result<impl IntoResponse, AppError> {
-    let mut buffer = Vec::new();
-    let encoder = TextEncoder::new();
-    encoder.encode(&s.registry.gather(), &mut buffer)?;
-    String::from_utf8(buffer).map_err(Into::into)
-}
-
-impl RestApi {
+impl AdminApi {
     pub async fn serve(&mut self) -> Result<()> {
         info!(
             "📡  Starting {} module, listening on port {}",
@@ -214,9 +146,21 @@ impl RestApi {
 impl Clone for RouterState {
     fn clone(&self) -> Self {
         Self {
-            info: self.info.clone(),
-            registry: self.registry.clone(),
+            bus: self.bus.clone(),
         }
+    }
+}
+
+impl Clone for AdminBusClient {
+    fn clone(&self) -> AdminBusClient {
+        use crate::utils::static_type_map::Pick;
+
+        AdminBusClient::new(
+            Pick::<BusMetrics>::get(self).clone(),
+            Pick::<tokio::sync::broadcast::Sender<PersistModule>>::get(self).clone(),
+            Pick::<tokio::sync::broadcast::Receiver<ShutdownModule>>::get(self).resubscribe(),
+            Pick::<tokio::sync::broadcast::Receiver<PersistModule>>::get(self).resubscribe(),
+        )
     }
 }
 
