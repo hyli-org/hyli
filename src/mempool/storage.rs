@@ -20,6 +20,7 @@ pub use hyle_model::LaneBytesSize;
 pub enum CanBePutOnTop {
     Yes,
     No,
+    AlreadyOnTop,
     Fork,
 }
 
@@ -295,12 +296,17 @@ pub trait Storage {
     fn can_be_put_on_top(
         &mut self,
         lane_id: &LaneId,
+        data_proposal_hash: &DataProposalHash,
         parent_data_proposal_hash: Option<&DataProposalHash>,
     ) -> CanBePutOnTop {
         // Data proposal parent hash needs to match the lane tip of that validator
         if parent_data_proposal_hash == self.get_lane_hash_tip(lane_id) {
             // LEGIT DATAPROPOSAL
             return CanBePutOnTop::Yes;
+        }
+
+        if Some(data_proposal_hash) == self.get_lane_hash_tip(lane_id) {
+            return CanBePutOnTop::AlreadyOnTop;
         }
 
         if let Some(dp_parent_hash) = parent_data_proposal_hash {

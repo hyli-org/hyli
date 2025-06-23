@@ -25,6 +25,7 @@ pub enum DataProposalVerdict {
     Wait,
     Vote,
     Refuse,
+    Ignore,
 }
 
 impl super::Mempool {
@@ -180,6 +181,9 @@ impl super::Mempool {
             DataProposalVerdict::Refuse => {
                 debug!("Refuse vote for DataProposal {}", data_proposal.hashed());
             }
+            DataProposalVerdict::Ignore => {
+                debug!("Ignore DataProposal {}", data_proposal_hash);
+            }
         }
         Ok(())
     }
@@ -261,6 +265,9 @@ impl super::Mempool {
             DataProposalVerdict::Refuse => {
                 debug!("Refuse vote for DataProposal");
             }
+            DataProposalVerdict::Ignore => {
+                debug!("Ignore DataProposal {}", data_proposal.hashed());
+            }
         }
         Ok(())
     }
@@ -284,10 +291,11 @@ impl super::Mempool {
             return Ok((DataProposalVerdict::Vote, Some(lane_size)));
         }
 
-        match self
-            .lanes
-            .can_be_put_on_top(lane_id, data_proposal.parent_data_proposal_hash.as_ref())
-        {
+        match self.lanes.can_be_put_on_top(
+            lane_id,
+            &dp_hash,
+            data_proposal.parent_data_proposal_hash.as_ref(),
+        ) {
             // PARENT UNKNOWN
             CanBePutOnTop::No => {
                 // Get the last known parent hash in order to get all the next ones
@@ -304,6 +312,11 @@ impl super::Mempool {
                     data_proposal.parent_data_proposal_hash
                 );
                 Ok((DataProposalVerdict::Refuse, None))
+            }
+            CanBePutOnTop::AlreadyOnTop => {
+                // This can happen if the lane tip is updated (via a commit) before the data proposal arrived.
+                // For performance reasons, we don't to process the data proposal
+                Ok((DataProposalVerdict::Ignore, None))
             }
         }
     }
