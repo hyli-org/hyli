@@ -172,13 +172,13 @@ macro_rules! handle_messages {
     ) => {
         // Create a receiver with a unique variable $index
         // Safety: this is disjoint.
-        let $index = unsafe { &mut *Pick::<tokio::sync::broadcast::Receiver<Query<$command, $response>>>::splitting_get_mut(&mut $bus) };
+        let $index = unsafe { &mut *Pick::<tokio::sync::broadcast::Receiver<$crate::bus::command_response::Query<$command, $response>>>::splitting_get_mut(&mut $bus) };
         $crate::utils::static_type_map::paste::paste! {
-        let [<branch_ $index>] = [opentelemetry::KeyValue::new("branch", $crate::bus::metrics::BusMetrics::simplified_name::<Query<$command, $response>>())];
+        let [<branch_ $index>] = [opentelemetry::KeyValue::new("branch", $crate::bus::metrics::BusMetrics::simplified_name::<$crate::bus::command_response::Query<$command, $response>>())];
         $crate::handle_messages! {
             $(processed $bind = $fut $(, if $cond)? => $handle,)*
             processed Ok(_raw_query) = #[allow(clippy::macro_metavars_in_unsafe)] $index.recv() => {
-                receive_bus_metrics::<Query<$command, $response>,_>(&mut $bus);
+                receive_bus_metrics::<$crate::bus::command_response::Query<$command, $response>,_>(&mut $bus);
                 let _latency = $crate::utils::profiling::LatencyTimer::new(&$metrics, &[<branch_ $index>]);
                 if let Ok(mut _value) = _raw_query.take() {
                     let $res = &mut _value.data;

@@ -1,4 +1,4 @@
-use hyle_modules::{bus::command_response::Query, log_error, module_handle_messages};
+use hyle_modules::{log_error, module_handle_messages};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use crate::{
@@ -171,7 +171,7 @@ impl Module for Mempool {
                 file.join("mempool_lanes_tip.bin").as_path(),
                 &self.lanes.lanes_tip,
             ) {
-                warn!("Failed to save mempool storage on disk: {}", e);
+                warn!("Failed to save mempool lanes tip on disk: {}", e);
             }
         }
 
