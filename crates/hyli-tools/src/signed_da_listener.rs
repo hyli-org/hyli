@@ -52,7 +52,9 @@ impl DAListener {
         )
         .await?;
 
-        client.send(DataAvailabilityRequest(block_height)).await?;
+        client
+            .send(DataAvailabilityRequest::FromHeight(block_height))
+            .await?;
 
         Ok(client)
     }

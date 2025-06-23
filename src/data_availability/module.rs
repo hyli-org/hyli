@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use hyle_modules::{bus::SharedMessageBus, modules::Module};
 
@@ -18,6 +18,7 @@ impl Module for DataAvailability {
             blocks: Blocks::new(&ctx.config.data_directory.join("data_availability.db"))?,
             buffered_signed_blocks: BTreeSet::new(),
             need_catchup: false,
+            confirmed_heights: BTreeMap::new(),
             catchup_task: None,
             catchup_height: None,
         })

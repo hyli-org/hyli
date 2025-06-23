@@ -13,10 +13,11 @@ use hyle_modules::{
     modules::Module,
     utils::da_codec::{
         DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest,
-        DataAvailabilityServer,
+        DataAvailabilityServer, DATA_AVAILABILITY_REQUEST_CONFIRMATION,
     },
 };
 use hyle_net::tcp::TcpEvent;
+use tokio::{sync::RwLock, task::JoinSet};
 
 use crate::{
     bus::BusClientSender,
@@ -28,7 +29,12 @@ use crate::{
 };
 use anyhow::{Context, Error, Result};
 use core::str;
-use std::collections::BTreeSet;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    future::Future,
+    sync::Arc,
+    time::Duration,
+};
 use tracing::{debug, info, trace, warn};
 
 pub mod codec;
@@ -60,9 +66,35 @@ pub struct DataAvailability {
     need_catchup: bool,
     catchup_task: Option<tokio::task::JoinHandle<()>>,
     catchup_height: Option<BlockHeight>,
+
+    confirmed_heights: BTreeMap<String, Arc<RwLock<BlockHeight>>>,
 }
 
 impl DataAvailability {
+    /// Creates a future that waits until the peer confirms a height above or equal to the given height.
+    pub fn wait_for_confirmed_height(
+        &mut self,
+        peer_ip: String,
+        height: BlockHeight,
+    ) -> impl Future<Output = Result<()>> + Send {
+        // Wait for the peer to confirm the height
+        let confirmed_height_lock = self.confirmed_heights.entry(peer_ip.clone()).or_default();
+        let confirmed_height_lock = Arc::clone(confirmed_height_lock);
+
+        async move {
+            loop {
+                let confirmed_height = confirmed_height_lock.read().await;
+                if *confirmed_height >= height {
+                    info!("Peer {} confirmed height {}", peer_ip, height);
+                    break;
+                }
+                // Wait for a bit before checking again
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Ok(())
+        }
+    }
+
     pub async fn start(&mut self) -> Result<()> {
         info!(
             "📡  Starting DataAvailability module, listening for stream requests on port {}",
@@ -79,7 +111,11 @@ impl DataAvailability {
         let (catchup_block_sender, mut catchup_block_receiver) =
             tokio::sync::mpsc::channel::<SignedBlock>(100);
 
-        let (catchup_sender, mut catchup_receiver) = tokio::sync::mpsc::channel(100);
+        let mut joinset_client_ready_to_stream: JoinSet<(
+            Vec<ConsensusProposalHash>,
+            String,
+            BlockHeight,
+        )> = JoinSet::new();
 
         module_handle_messages! {
             on_self self,
@@ -133,13 +169,26 @@ impl DataAvailability {
 
             Some(tcp_event) = server.listen_next() => {
                 if let TcpEvent::Message { dest, data } = tcp_event {
-                    _ = self.start_streaming_to_peer(data.0, catchup_sender.clone(), &dest).await;
+                    match data {
+                        DataAvailabilityRequest::FromHeight(start_height) => {
+                            debug!("📡  Received request for data from peer {}", &dest);
+                            _ = self.start_streaming_to_peer(start_height, &mut joinset_client_ready_to_stream, &dest).await;
+                        }
+                        DataAvailabilityRequest::ConfirmedHeight(height) => {
+                            debug!("📡  Received confirmed height {} from peer {}", height, &dest);
+                            // We can safely remove the peer from the synchronized heights
+                            // as it has confirmed the height.
+
+                            let entry = self.confirmed_heights.entry(dest.clone()).or_default();
+                            *entry.write().await = height;
+                        }
+                    }
                 }
             }
 
             // Send one block to a peer as part of "catchup",
             // once we have sent all blocks the peer is presumably synchronised.
-            Some((mut block_hashes, peer_ip)) = catchup_receiver.recv() => {
+            Some(Ok((mut block_hashes, peer_ip, next_step_to_confirm))) = joinset_client_ready_to_stream.join_next() => {
 
                 #[cfg(test)]
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -150,12 +199,33 @@ impl DataAvailability {
                     debug!("📡  Sending block {} to peer {}", &hash, &peer_ip);
                     if let Ok(Some(signed_block)) = self.blocks.get(&hash)
                     {
+                        let current_height = signed_block.height();
                         // Errors will be handled when sending new blocks, ignore here.
                         if server
                             .send(peer_ip.clone(), DataAvailabilityEvent::SignedBlock(signed_block))
-                            .await.is_ok() {
-                            let _ = catchup_sender.send((block_hashes, peer_ip)).await;
+                        .await.is_ok() {
+
+                            // If we successfully sent the block, we can schedule the next one.
+                            if !block_hashes.is_empty() {
+                                if current_height >= next_step_to_confirm {
+                                    // If the block is at or above the next step to confirm
+                                    // we trigger a waiting task for the peer to confirm the height.
+                                    let wait_future = self.wait_for_confirmed_height(peer_ip.clone(), current_height);
+                                    joinset_client_ready_to_stream.spawn(async move {
+                                        _ = log_error!(wait_future.await, "Waiting before sending next block to peer");
+                                        // After the wait, we can send the next block, with a new next step to confirm.
+                                        (block_hashes, peer_ip, next_step_to_confirm + DATA_AVAILABILITY_REQUEST_CONFIRMATION)
+                                    });
+                                } else {
+                                    // Optimization, just spawn a ready future to send the next block.
+                                    joinset_client_ready_to_stream.spawn(async move {
+                                        (block_hashes, peer_ip, next_step_to_confirm)
+                                    });
+                                }
+                            }
                         }
+                    } else {
+                        warn!("📦  Block {} not found in blocks storage, cannot send to peer {}", &hash, &peer_ip);
                     }
                 }
             }
@@ -360,7 +430,11 @@ impl DataAvailability {
     async fn start_streaming_to_peer(
         &mut self,
         start_height: BlockHeight,
-        catchup_sender: tokio::sync::mpsc::Sender<(Vec<ConsensusProposalHash>, String)>,
+        joinset_stream_to_client_when_ready: &mut JoinSet<(
+            Vec<ConsensusProposalHash>,
+            String,
+            BlockHeight,
+        )>,
         peer_ip: &str,
     ) -> Result<()> {
         // Finally, stream past blocks as required.
@@ -381,9 +455,11 @@ impl DataAvailability {
             .collect();
         processed_block_hashes.reverse();
 
-        catchup_sender
-            .send((processed_block_hashes, peer_ip.to_string()))
-            .await?;
+        let peer_ip_clone = peer_ip.to_string();
+
+        // Lets unfold the block hashes into a stream of blocks, step by step.
+        joinset_stream_to_client_when_ready
+            .spawn(async move { (processed_block_hashes, peer_ip_clone, start_height + 100) });
 
         Ok(())
     }
@@ -402,7 +478,9 @@ impl DataAvailability {
         let mut client = DataAvailabilityClient::connect("block_catcher".to_string(), ip)
             .await
             .context("Error occured setting up the DA listener")?;
-        client.send(DataAvailabilityRequest(start)).await?;
+        client
+            .send(DataAvailabilityRequest::FromHeight(start))
+            .await?;
         self.catchup_task = Some(tokio::spawn(async move {
             loop {
                 match client.recv().await {
@@ -480,6 +558,7 @@ pub mod tests {
                 blocks,
                 buffered_signed_blocks: Default::default(),
                 need_catchup: false,
+                confirmed_heights: Default::default(),
                 catchup_task: None,
                 catchup_height: None,
             };
@@ -542,6 +621,7 @@ pub mod tests {
             blocks,
             buffered_signed_blocks: Default::default(),
             need_catchup: false,
+            confirmed_heights: Default::default(),
             catchup_task: None,
             catchup_height: None,
         };
@@ -591,6 +671,7 @@ pub mod tests {
             bus,
             blocks,
             buffered_signed_blocks: Default::default(),
+            confirmed_heights: Default::default(),
             need_catchup: false,
             catchup_task: None,
             catchup_height: None,
@@ -616,7 +697,7 @@ pub mod tests {
                 .unwrap();
 
         client
-            .send(DataAvailabilityRequest(BlockHeight(0)))
+            .send(DataAvailabilityRequest::FromHeight(BlockHeight(0)))
             .await
             .unwrap();
 
@@ -673,7 +754,7 @@ pub mod tests {
                 .unwrap();
 
         client
-            .send(DataAvailabilityRequest(BlockHeight(0)))
+            .send(DataAvailabilityRequest::FromHeight(BlockHeight(0)))
             .await
             .unwrap();
 

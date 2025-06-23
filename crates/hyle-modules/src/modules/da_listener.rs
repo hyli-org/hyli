@@ -102,7 +102,9 @@ impl DAListener {
         )
         .await?;
 
-        client.send(DataAvailabilityRequest(block_height)).await?;
+        client
+            .send(DataAvailabilityRequest::FromHeight(block_height))
+            .await?;
 
         Ok(client)
     }
@@ -249,6 +251,18 @@ impl DAListener {
                 on_self self,
                 frame = client.recv() => {
                     if let Some(streamed_signed_block) = frame {
+                        if let DataAvailabilityEvent::SignedBlock(ref block) = streamed_signed_block {
+                            if block.height().0 % 100 == 0 {
+                                tracing::trace!("Sending confirmed height: {}", block.height());
+                                _ = log_error!(
+                                    client
+                                    .send(DataAvailabilityRequest::ConfirmedHeight(block.height()))
+                                    .await,
+                                    "Sending confirmed height"
+                                );
+                            }
+                        }
+
                         let _ = log_error!(self.processing_next_frame(streamed_signed_block).await, "Consuming da stream");
                         client.ping().await?;
                     } else {
