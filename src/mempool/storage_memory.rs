@@ -95,7 +95,11 @@ impl Storage for LanesStorage {
         if self.contains(&lane_id, &dp_hash) {
             bail!("DataProposal {} was already in lane", dp_hash);
         }
-        match self.can_be_put_on_top(&lane_id, entry.0.parent_data_proposal_hash.as_ref()) {
+        match self.can_be_put_on_top(
+            &lane_id,
+            &dp_hash,
+            entry.0.parent_data_proposal_hash.as_ref(),
+        ) {
             CanBePutOnTop::No => bail!(
                 "Can't store DataProposal {}, as parent is unknown ",
                 dp_hash
@@ -119,6 +123,11 @@ impl Storage for LanesStorage {
                     last_known_hash,
                     entry.0.parent_data_proposal_hash
                 )
+            }
+            CanBePutOnTop::AlreadyOnTop => {
+                // This can happen if the lane tip is updated (via a commit) before the data proposal arrived.
+                // For performance reasons, we don't to process the data proposal
+                Ok(())
             }
         }
     }
