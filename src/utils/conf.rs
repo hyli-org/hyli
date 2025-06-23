@@ -130,6 +130,12 @@ pub struct Conf {
     /// Maximum body size for REST requests
     pub rest_server_max_body_size: usize,
 
+    pub run_admin_server: bool,
+    /// Server port for the admin API
+    pub admin_server_port: u16,
+    /// Maximum body size for admin requests
+    pub admin_server_max_body_size: usize,
+
     pub run_tcp_server: bool,
     /// Server port for the TCP API
     pub tcp_server_port: u16,

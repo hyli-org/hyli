@@ -18,6 +18,11 @@ run_rest_server = true
 rest_server_port = 4321
 rest_server_max_body_size = 10_485_760 # 10 MB
 
+# Rest API
+run_admin_server = true
+admin_server_port = 4322
+admin_server_max_body_size = 10_485_760 # 10 MB
+
 # TCP API
 run_tcp_server = true
 tcp_server_port = 1414

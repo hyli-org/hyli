@@ -20,6 +20,7 @@ use tracing::{debug, info};
 
 const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
+pub mod admin;
 pub mod bus_ws_connector;
 pub mod contract_state_indexer;
 pub mod da_listener;
