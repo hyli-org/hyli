@@ -8,7 +8,7 @@ use bonsai_sdk::non_blocking::Client;
 use borsh::BorshSerialize;
 use boundless_market::{
     alloy::{
-        primitives::{utils::parse_ether, Uint},
+        primitives::{utils::parse_ether, Bytes, Uint},
         signers::local::PrivateKeySigner,
         transports::http::reqwest::Url,
     },
@@ -18,7 +18,9 @@ use boundless_market::{
     storage::{storage_provider_from_env, StorageProvider},
     Deployment, GuestEnvBuilder,
 };
-use risc0_zkvm::{compute_image_id, default_executor, sha::Digestible, Receipt};
+use risc0_zkvm::{
+    compute_image_id, default_executor, sha::Digestible, Digest, Receipt, ReceiptClaim,
+};
 use tracing::info;
 
 #[allow(dead_code)]
@@ -120,7 +122,10 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
     info!(address = %address, max_price = %max_price, "Wallet balance: {}", balance);
     if balance < max_price {
         let deposit = std::cmp::max(max_price, parse_ether("0.1")?);
-        info!("Wallet balance is low, depositing {deposit} ETH");
+        info!(
+            "Wallet balance ({}) is low, depositing {} ETH",
+            balance, deposit
+        );
         boundless_client.boundless_market.deposit(deposit).await?;
     }
 
