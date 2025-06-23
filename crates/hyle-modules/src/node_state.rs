@@ -28,6 +28,7 @@ enum SideEffect {
     Register(Option<Vec<u8>>),
     UpdateState,
     UpdateProgramId,
+    UpdateTimeoutWindow,
     Delete,
 }
 
@@ -146,6 +147,17 @@ pub struct NodeStateStore {
     unsettled_transactions: OrderedTxMap,
 }
 
+/// Make sure we register the hyle contract with the same values before genesis, and in the genesis block
+pub fn hyle_contract_definition() -> Contract {
+    Contract {
+        name: "hyle".into(),
+        program_id: ProgramId(vec![0, 0, 0, 0]),
+        state: StateCommitment::default(),
+        verifier: Verifier("hyle".to_owned()),
+        timeout_window: TimeoutWindow::NoTimeout,
+    }
+}
+
 // TODO: we should register the 'hyle' TLD in the genesis block.
 impl Default for NodeStateStore {
     fn default() -> Self {
@@ -155,16 +167,9 @@ impl Default for NodeStateStore {
             contracts: HashMap::new(),
             unsettled_transactions: OrderedTxMap::default(),
         };
-        ret.contracts.insert(
-            "hyle".into(),
-            Contract {
-                name: "hyle".into(),
-                program_id: ProgramId(vec![]),
-                state: StateCommitment(vec![0]),
-                verifier: Verifier("hyle".to_owned()),
-                timeout_window: TimeoutWindow::Timeout(BlockHeight(5)),
-            },
-        );
+        let hyle_contract = hyle_contract_definition();
+        ret.contracts
+            .insert(hyle_contract.name.clone(), hyle_contract);
         ret
     }
 }
@@ -212,6 +217,7 @@ impl NodeState {
             deleted_contracts: BTreeMap::new(),
             updated_states: BTreeMap::new(),
             updated_program_ids: BTreeMap::new(),
+            updated_timeout_windows: BTreeMap::new(),
             transactions_events: BTreeMap::new(),
             dp_parent_hashes: BTreeMap::new(),
             lane_ids: BTreeMap::new(),
@@ -371,23 +377,35 @@ impl NodeState {
         &self,
         blobs: T,
     ) -> TimeoutWindow {
-        let mut timeout = TimeoutWindow::NoTimeout;
-        for blob in blobs {
-            if let Some(contract_timeout) = self
-                .contracts
-                .get(&blob.contract_name)
-                .map(|c| c.timeout_window.clone())
-            {
-                timeout = match (timeout, contract_timeout) {
-                    (TimeoutWindow::NoTimeout, contract_timeout) => contract_timeout,
-                    (TimeoutWindow::Timeout(a), TimeoutWindow::Timeout(b)) => {
-                        TimeoutWindow::Timeout(a.min(b))
+        if self.current_height.0 > 445_000 {
+            blobs
+                .into_iter()
+                .filter_map(|blob| {
+                    self.contracts
+                        .get(&blob.contract_name)
+                        .map(|c| c.timeout_window.clone())
+                })
+                .min()
+                .unwrap_or(TimeoutWindow::NoTimeout)
+        } else {
+            let mut timeout = TimeoutWindow::NoTimeout;
+            for blob in blobs {
+                if let Some(contract_timeout) = self
+                    .contracts
+                    .get(&blob.contract_name)
+                    .map(|c| c.timeout_window.clone())
+                {
+                    timeout = match (timeout, contract_timeout) {
+                        (TimeoutWindow::NoTimeout, contract_timeout) => contract_timeout,
+                        (TimeoutWindow::Timeout(a), TimeoutWindow::Timeout(b)) => {
+                            TimeoutWindow::Timeout(a.min(b))
+                        }
+                        _ => TimeoutWindow::NoTimeout,
                     }
-                    _ => TimeoutWindow::NoTimeout,
                 }
             }
+            timeout
         }
-        timeout
     }
 
     fn handle_blob_tx(
@@ -1030,7 +1048,17 @@ impl NodeState {
 
                         block_under_construction
                             .updated_program_ids
-                            .insert(contract.name, contract.program_id);
+                            .insert(contract.name.clone(), contract.program_id);
+                    }
+                    if fields.timeout_window {
+                        debug!(
+                            "✍️  Modify '{}' timeout window to {}",
+                            &contract_name, &contract.timeout_window
+                        );
+
+                        block_under_construction
+                            .updated_timeout_windows
+                            .insert(contract.name, contract.timeout_window);
                     }
                 }
             }

@@ -33,6 +33,7 @@ pub struct Block {
     pub deleted_contracts: BTreeMap<ContractName, TxHash>,
     pub updated_states: BTreeMap<ContractName, StateCommitment>,
     pub updated_program_ids: BTreeMap<ContractName, ProgramId>,
+    pub updated_timeout_windows: BTreeMap<ContractName, TimeoutWindow>,
     pub transactions_events: BTreeMap<TxHash, Vec<TransactionStateEvent>>,
 }
 
