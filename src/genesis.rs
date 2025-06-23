@@ -19,7 +19,7 @@ use hyle_contract_sdk::{
 use hyle_crypto::SharedBlstCrypto;
 use hyle_modules::{
     bus::{BusClientSender, SharedMessageBus},
-    bus_client, handle_messages,
+    bus_client, handle_messages, log_error,
     modules::Module,
     node_state::hyle_contract_definition,
 };
@@ -75,8 +75,7 @@ impl Module for Genesis {
     async fn persist(&self) -> Result<()> {
         // TODO: ideally we'd wait until everyone has processed it, as there's technically a data race.
         let file = self.config.data_directory.clone().join("genesis.bin");
-
-        Self::save_on_disk(&file, &true)
+        log_error!(Self::save_on_disk(&file, &true), "Persisting genesis state")
     }
 }
 

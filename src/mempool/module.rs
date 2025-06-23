@@ -164,15 +164,17 @@ impl Module for Mempool {
 
     async fn persist(&self) -> Result<()> {
         if let Some(file) = &self.file {
-            if let Err(e) = Self::save_on_disk(file.join("mempool.bin").as_path(), &self.inner) {
-                warn!("Failed to save mempool storage on disk: {}", e);
-            }
-            if let Err(e) = Self::save_on_disk(
-                file.join("mempool_lanes_tip.bin").as_path(),
-                &self.lanes.lanes_tip,
-            ) {
-                warn!("Failed to save mempool lanes tip on disk: {}", e);
-            }
+            _ = log_error!(
+                Self::save_on_disk(file.join("mempool.bin").as_path(), &self.inner),
+                "Persisting Mempool storage"
+            );
+            _ = log_error!(
+                Self::save_on_disk(
+                    file.join("mempool_lanes_tip.bin").as_path(),
+                    &self.lanes.lanes_tip
+                ),
+                "Persisting Mempool lanes tip"
+            );
         }
 
         Ok(())

@@ -3,12 +3,12 @@ use std::path::PathBuf;
 use anyhow::Result;
 use google_cloud_storage::client::{Client, ClientConfig};
 use google_cloud_storage::http::objects::upload::{Media, UploadObjectRequest};
-use hyle_modules::module_handle_messages;
 use hyle_modules::{
     bus::SharedMessageBus,
     modules::{Module, module_bus_client},
     utils::da_codec::DataAvailabilityEvent,
 };
+use hyle_modules::{log_error, module_handle_messages};
 use serde::{Deserialize, Serialize};
 
 module_bus_client! {
@@ -91,9 +91,12 @@ impl Module for GcsBlockUploader {
     }
 
     async fn persist(&self) -> Result<()> {
-        Self::save_on_disk(
-            &self.config.data_directory.join("gcs_uploader.bin"),
-            &self.testnet_genesis_timestamp,
+        log_error!(
+            Self::save_on_disk(
+                &self.config.data_directory.join("gcs_uploader.bin"),
+                &self.testnet_genesis_timestamp,
+            ),
+            "Persisting GCS uploader state"
         )
     }
 }
