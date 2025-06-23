@@ -12,9 +12,9 @@ use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyle_crypto::SharedBlstCrypto;
 use hyle_modules::bus::SharedMessageBus;
-use hyle_modules::module_handle_messages;
 use hyle_modules::modules::module_bus_client;
 use hyle_modules::modules::Module;
+use hyle_modules::{log_error, module_handle_messages};
 use hyle_net::clock::TimestampMsClock;
 use staking::state::Staking;
 use tracing::{debug, warn};
@@ -87,12 +87,10 @@ impl Module for SingleNodeConsensus {
 
     async fn persist(&self) -> Result<()> {
         if let Some(file) = &self.file {
-            if let Err(e) = Self::save_on_disk(file.as_path(), &self.store) {
-                warn!(
-                    "Failed to save consensus single node storage on disk: {}",
-                    e
-                );
-            }
+            _ = log_error!(
+                Self::save_on_disk(file.as_path(), &self.store),
+                "Persisting single node consensus state"
+            );
         }
 
         Ok(())
