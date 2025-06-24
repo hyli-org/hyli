@@ -371,7 +371,9 @@ impl DataAvailability {
 
         // Send the block to NodeState for processing
         _ = log_error!(
-            self.bus.send(DataEvent::OrderedSignedBlock(block)),
+            self.bus
+                .send_waiting_if_full(DataEvent::OrderedSignedBlock(block))
+                .await,
             "Sending OrderedSignedBlock"
         );
 
@@ -525,7 +527,8 @@ pub mod tests {
             };
             _ = log_error!(
                 self.node_state_bus
-                    .send(NodeStateEvent::NewBlock(Box::new(full_block))),
+                    .send_waiting_if_full(NodeStateEvent::NewBlock(Box::new(full_block)))
+                    .await,
                 "Sending NodeState event"
             );
         }
