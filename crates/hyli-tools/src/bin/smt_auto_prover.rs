@@ -10,7 +10,7 @@ use hyle_contract_sdk::api::NodeInfo;
 use hyle_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
-        ModulesHandler,
+        BuildApiContextInner, ModulesHandler,
         da_listener::{DAListener, DAListenerConf},
         prover::{AutoProver, AutoProverCtx},
         rest::{ApiDoc, RestApi, RestApiRunContext, Router},
@@ -58,8 +58,8 @@ async fn main() -> Result<()> {
         Arc::new(NodeApiHttpClient::new(config.node_url.clone()).context("build node client")?);
 
     let build_api_ctx = Arc::new(BuildApiContextInner {
-        router: Mutex::new(Some(Router::new())),
-        openapi: Mutex::new(ApiDoc::openapi()),
+        router: std::sync::Mutex::new(Some(Router::new())),
+        openapi: std::sync::Mutex::new(ApiDoc::openapi()),
     });
 
     // Initialize modules
@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
             )),
             contract_name: config.contract_name.clone().into(),
             node: node_client.clone(),
-            api: build_api_ctx.clone(),
+            api: Some(build_api_ctx.clone()),
             default_state: Default::default(),
             buffer_blocks: config.buffer_blocks,
             max_txs_per_proof: config.max_txs_per_proof,
