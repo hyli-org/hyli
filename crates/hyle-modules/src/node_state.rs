@@ -321,11 +321,22 @@ impl NodeState {
                                         "Failed to handle blob #{} in verified proof transaction {}: {err:#}",
                                         blob_proof_data.hyle_output.index, &tx_id);
                                     debug!("{err}");
-                                    block_under_construction
-                                        .transactions_events
-                                        .entry(blob_proof_data.blob_tx_hash.clone())
-                                        .or_default()
-                                        .push(TransactionStateEvent::Error(err));
+                                    // TODO: ugly workaround for the case where we haven't found the blobTx.
+                                    if block_under_construction.dp_parent_hashes.contains_key(
+                                        &blob_proof_data.blob_tx_hash,
+                                    ) {
+                                        block_under_construction
+                                            .transactions_events
+                                            .entry(blob_proof_data.blob_tx_hash.clone())
+                                            .or_default()
+                                            .push(TransactionStateEvent::Error(err));
+                                    } else {
+                                        block_under_construction
+                                            .transactions_events
+                                            .entry(tx_id.1.clone())
+                                            .or_default()
+                                            .push(TransactionStateEvent::Error(err));
+                                    }
                                     None
                                 }
                             }})
