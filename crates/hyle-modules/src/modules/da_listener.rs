@@ -247,6 +247,10 @@ impl DAListener {
 
             module_handle_messages! {
                 on_self self,
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
+                    warn!("No blocks received in the last 10 seconds, restarting client");
+                    client = self.start_client(self.node_state.current_height + 1).await?;
+                }
                 frame = client.recv() => {
                     if let Some(streamed_signed_block) = frame {
                         let _ = log_error!(self.processing_next_frame(streamed_signed_block).await, "Consuming da stream");
