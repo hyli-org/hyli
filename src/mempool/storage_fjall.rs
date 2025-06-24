@@ -209,6 +209,14 @@ impl Storage for LanesStorage {
             CanBePutOnTop::AlreadyOnTop => {
                 // This can happen if the lane tip is updated (via a commit) before the data proposal arrived.
                 // For performance reasons, we don't to process the data proposal
+                self.by_hash_metadata.insert(
+                    format!("{}:{}", lane_id, dp_hash),
+                    encode_metadata_to_item(lane_entry)?,
+                )?;
+                self.by_hash_data.insert(
+                    format!("{}:{}", lane_id, dp_hash),
+                    encode_data_proposal_to_item(data_proposal)?,
+                )?;
                 Ok(())
             }
         }

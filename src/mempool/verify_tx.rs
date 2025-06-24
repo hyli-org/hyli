@@ -57,7 +57,8 @@ impl super::Mempool {
             Some(
                 DataProposalVerdict::Empty
                 | DataProposalVerdict::Refuse
-                | DataProposalVerdict::Process,
+                | DataProposalVerdict::Process
+                | DataProposalVerdict::Ignore,
             ) => {
                 debug!(
                     "Ignoring DataProposal {:?} on lane {} (cached verdict)",
@@ -80,7 +81,7 @@ impl super::Mempool {
                     );
                 }
             }
-            _ => {}
+            Some(DataProposalVerdict::Wait) | None => {}
         }
 
         // This is annoying to run in tests because we don't have the event loop setup, so go synchronous.
