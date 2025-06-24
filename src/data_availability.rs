@@ -150,11 +150,22 @@ impl DataAvailability {
                     debug!("📡  Sending block {} to peer {}", &hash, &peer_ip);
                     if let Ok(Some(signed_block)) = self.blocks.get(&hash)
                     {
+                        #[cfg(not(test))]
+                        if signed_block.height().0 % 100 == 0 {
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        }
+
                         // Errors will be handled when sending new blocks, ignore here.
-                        if server
+                        match server
                             .send(peer_ip.clone(), DataAvailabilityEvent::SignedBlock(signed_block))
-                            .await.is_ok() {
-                            let _ = catchup_sender.send((block_hashes, peer_ip)).await;
+                            .await {
+                            Ok(_) => {
+                                let _ = log_error!(catchup_sender.send((block_hashes, peer_ip)).await, "Sending next block to peer");
+                            },
+                            Err(e) => {
+                                info!("Error while sending block {} to peer {}: {}", &hash, &peer_ip, e);
+                                // We'll handle failures when sending new blocks.
+                            }
                         }
                     }
                 }
