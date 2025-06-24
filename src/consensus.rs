@@ -285,10 +285,11 @@ impl Consensus {
             debug!("👑 I'm the new leader! 👑")
         } else {
             self.bft_round_state.state_tag = StateTag::Follower;
-            self.bft_round_state
+            self.store
+                .bft_round_state
                 .timeout
                 .state
-                .schedule_next(TimestampMsClock::now());
+                .schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
         }
 
         Ok(())
@@ -742,7 +743,7 @@ impl Consensus {
                         // TODO: this logic can be improved.
                         self.bft_round_state.state_tag = StateTag::Joining;
                         // Set up an initial timeout to ensure we don't get stuck if we miss commits
-                        self.bft_round_state.timeout.state.schedule_next(TimestampMsClock::now());
+                        self.store.bft_round_state.timeout.state.schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
 
                         break;
                     },
@@ -882,6 +883,7 @@ pub mod test {
             let store = ConsensusStore::default();
             let mut conf = Conf::default();
             conf.consensus.slot_duration = Duration::from_millis(1000);
+            conf.consensus.timeout_after = Duration::from_millis(5000);
             let bus = ConsensusBusClient::new_from_bus(shared_bus.new_handle()).await;
 
             Consensus {
@@ -958,10 +960,14 @@ pub mod test {
         pub async fn timeout(nodes: &mut [&mut ConsensusTestCtx]) {
             for n in nodes {
                 n.consensus
+                    .store
                     .bft_round_state
                     .timeout
                     .state
-                    .schedule_next(TimestampMsClock::now() - Duration::from_secs(10));
+                    .schedule_next(
+                        TimestampMsClock::now() - Duration::from_secs(10),
+                        Duration::from_secs(5),
+                    );
                 n.consensus
                     .handle_command(ConsensusCommand::TimeoutTick)
                     .await
