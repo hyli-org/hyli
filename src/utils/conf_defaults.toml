@@ -31,6 +31,7 @@ tcp_server_port = 1414
 run_indexer = true
 database_url = "postgres://postgres:postgres@localhost:5432/postgres"
 da_read_from = "127.0.0.1:4141"
+da_timeout_client_secs = 10
 
 [p2p]
 # "FullValidator" runs a full node, "LaneManager" skips consensus, or "None" to disable most modules.

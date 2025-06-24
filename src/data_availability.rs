@@ -17,7 +17,6 @@ use hyle_modules::{
     },
 };
 use hyle_net::tcp::TcpEvent;
-use tokio::task::JoinHandle;
 
 use crate::{
     bus::BusClientSender,
@@ -82,6 +81,10 @@ impl DataAvailability {
 
         let (catchup_sender, mut catchup_receiver) = tokio::sync::mpsc::channel(100);
 
+        let mut peers = vec![];
+        let mut catchup_task_checker_ticker =
+            tokio::time::interval(std::time::Duration::from_millis(5000));
+
         module_handle_messages! {
             on_self self,
             listen<MempoolBlockEvent> evt => {
@@ -108,7 +111,23 @@ impl DataAvailability {
                 }
                 match msg {
                     PeerEvent::NewPeer { da_address, .. } => {
+                        peers.push(da_address.clone());
                         self.ask_for_catchup_blocks(da_address, catchup_block_sender.clone()).await?;
+                    }
+                }
+            }
+
+            _ = catchup_task_checker_ticker.tick() => {
+                // Check if we need to revive the catchup task.
+                if self.need_catchup && self.catchup_task.as_ref().is_none_or(|t| t.is_finished()) {
+                    // If we need to catchup and no task is running, start one.
+                    if let Some(peer) = peers.first() {
+                        info!("📡  Starting catchup task with peer {}", peer);
+                        if let Err(e) = self.ask_for_catchup_blocks(peer.clone(), catchup_block_sender.clone()).await {
+                            warn!("Error while asking for catchup blocks: {:#}", e);
+                        }
+                    } else {
+                        warn!("No peers available for catchup, cannot start catchup task");
                     }
                 }
             }
