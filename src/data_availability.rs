@@ -17,6 +17,7 @@ use hyle_modules::{
     },
 };
 use hyle_net::tcp::TcpEvent;
+use rand::seq::SliceRandom;
 
 use crate::{
     bus::BusClientSender,
@@ -120,8 +121,11 @@ impl DataAvailability {
             _ = catchup_task_checker_ticker.tick() => {
                 // Check if we need to revive the catchup task.
                 if self.need_catchup && self.catchup_task.as_ref().is_none_or(|t| t.is_finished()) {
-                    // If we need to catchup and no task is running, start one.
-                    if let Some(peer) = peers.first() {
+                    let random_peer = peers
+                    .choose(&mut rand::thread_rng())
+                    .cloned();
+
+                    if let Some(peer) = random_peer {
                         info!("📡  Starting catchup task with peer {}", peer);
                         if let Err(e) = self.ask_for_catchup_blocks(peer.clone(), catchup_block_sender.clone()).await {
                             warn!("Error while asking for catchup blocks: {:#}", e);
