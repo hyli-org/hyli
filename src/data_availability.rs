@@ -18,6 +18,7 @@ use hyle_modules::{
 };
 use hyle_net::tcp::TcpEvent;
 use rand::seq::SliceRandom;
+use tokio::time::{sleep_until, Instant};
 
 use crate::{
     bus::BusClientSender,
@@ -29,7 +30,7 @@ use crate::{
 };
 use anyhow::{Context, Error, Result};
 use core::str;
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, time::Duration};
 use tracing::{debug, info, trace, warn};
 
 pub mod codec;
@@ -181,6 +182,10 @@ impl DataAvailability {
                             .await.is_ok() {
                             let _ = catchup_sender.send((block_hashes, peer_ip)).await;
                         }
+                        else {
+                            warn!("Failed to send block {} to peer {}", &hash, &peer_ip);
+                            server.drop_peer_stream(peer_ip);
+                        }
                     }
                 }
             }
@@ -233,9 +238,14 @@ impl DataAvailability {
         evt: MempoolStatusEvent,
         tcp_server: &mut DaTcpServer,
     ) {
-        tcp_server
+        let errors = tcp_server
             .broadcast(DataAvailabilityEvent::MempoolStatusEvent(evt))
             .await;
+
+        for (peer, error) in errors {
+            warn!("Error while broadcasting mempool status event {:#}", error);
+            tcp_server.drop_peer_stream(peer.clone());
+        }
     }
 
     /// if handled, returns the highest height of the processed blocks
@@ -369,9 +379,18 @@ impl DataAvailability {
 
         // TODO: use retain once async closures are supported ?
         //
-        tcp_server
+        let errors = tcp_server
             .broadcast(DataAvailabilityEvent::SignedBlock(block.clone()))
             .await;
+
+        for (peer, error) in errors {
+            warn!(
+                "Error while broadcasting block {}: {:#}",
+                block.hashed(),
+                error
+            );
+            tcp_server.drop_peer_stream(peer.clone());
+        }
 
         // Send the block to NodeState for processing
         _ = log_error!(
@@ -426,31 +445,54 @@ impl DataAvailability {
             .last()
             .map(|block| block.height() + 1)
             .unwrap_or(BlockHeight(0));
+
         let mut client = DataAvailabilityClient::connect("block_catcher".to_string(), ip)
             .await
-            .context("Error occured setting up the DA listener")?;
+            .context("Error occurred setting up the DA listener")?;
+
         client.send(DataAvailabilityRequest(start)).await?;
+
         self.catchup_task = Some(tokio::spawn(async move {
+            let timeout_duration = Duration::from_secs(10);
+            let mut deadline = Instant::now() + timeout_duration;
+
             loop {
-                match client.recv().await {
-                    None => {
+                let sleep = sleep_until(deadline);
+                tokio::pin!(sleep);
+
+                tokio::select! {
+                    _ = &mut sleep => {
+                        warn!("Timeout expired while waiting for block.");
                         break;
                     }
-                    Some(DataAvailabilityEvent::SignedBlock(block)) => {
-                        info!(
-                            "📦 Received block (height {}) from stream",
-                            block.consensus_proposal.slot
-                        );
-                        // TODO: we should wait if the stream is full.
-                        if let Err(e) = sender.send(block).await {
-                            tracing::error!("Error while sending block over channel: {:#}", e);
-                            break;
+                    received = client.recv() => {
+                        match received {
+                            None => {
+                                break;
+                            }
+                            Some(DataAvailabilityEvent::SignedBlock(block)) => {
+                                info!(
+                                    "📦 Received block (height {}) from stream",
+                                    block.consensus_proposal.slot
+                                );
+
+                                if let Err(e) = sender.send(block).await {
+                                    tracing::error!("Error while sending block over channel: {:#}", e);
+                                    break;
+                                }
+
+                                // Reset the timeout ONLY when a block is received
+                                deadline = Instant::now() + timeout_duration;
+                            }
+                            Some(_) => {
+                                tracing::trace!("Dropped received message in catchup task");
+                            }
                         }
                     }
-                    Some(_) => {}
                 }
             }
         }));
+
         Ok(())
     }
 }
