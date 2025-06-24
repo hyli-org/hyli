@@ -87,7 +87,7 @@ impl Module for NodeStateModule {
 
     async fn run(&mut self) -> Result<()> {
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             command_response<QueryBlockHeight, BlockHeight> _ => {
                 Ok(self.inner.current_height)
             }
@@ -132,14 +132,16 @@ impl Module for NodeStateModule {
             }
         };
 
-        let _ = log_error!(
+        Ok(())
+    }
+
+    async fn persist(&mut self) -> Result<()> {
+        log_error!(
             Self::save_on_disk::<NodeStateStore>(
                 self.data_directory.join("node_state.bin").as_path(),
                 &self.inner,
             ),
             "Saving node state"
-        );
-
-        Ok(())
+        )
     }
 }

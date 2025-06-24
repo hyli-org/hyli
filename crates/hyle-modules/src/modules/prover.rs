@@ -181,7 +181,7 @@ where
 
     async fn run(&mut self) -> Result<()> {
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             listen<NodeStateEvent> event => {
                 let res = log_error!(self.handle_node_state_event(event).await, "handle note state event");
                 self.metrics.snapshot_buffered_blobs(self.store.buffered_blobs.len() as u64);
@@ -193,7 +193,11 @@ where
             }
         };
 
-        let _ = log_error!(
+        Ok(())
+    }
+
+    async fn persist(&mut self) -> Result<()> {
+        log_error!(
             Self::save_on_disk::<AutoProverStore<Contract>>(
                 self.ctx
                     .data_directory
@@ -202,9 +206,7 @@ where
                 &self.store,
             ),
             "Saving prover"
-        );
-
-        Ok(())
+        )
     }
 }
 

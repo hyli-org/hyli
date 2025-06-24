@@ -47,7 +47,7 @@ impl Module for NodeWebsocketConnector {
 
     async fn run(&mut self) -> Result<()> {
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             listen<NodeStateEvent> msg => {
                 self.handle_node_state_event(msg)?;
             },

@@ -2,13 +2,13 @@
 
 mod blocks_fjall;
 mod blocks_memory;
+mod module;
 
 // Pick one of the two implementations
 use blocks_fjall::Blocks;
 //use blocks_memory::Blocks;
 
 use hyle_modules::{
-    bus::SharedMessageBus,
     log_error, module_bus_client, module_handle_messages,
     modules::Module,
     utils::da_codec::{
@@ -62,28 +62,6 @@ pub struct DataAvailability {
     catchup_height: Option<BlockHeight>,
 }
 
-impl Module for DataAvailability {
-    type Context = SharedRunContext;
-
-    async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let bus = DABusClient::new_from_bus(bus.new_handle()).await;
-
-        Ok(DataAvailability {
-            config: ctx.config.clone(),
-            bus,
-            blocks: Blocks::new(&ctx.config.data_directory.join("data_availability.db"))?,
-            buffered_signed_blocks: BTreeSet::new(),
-            need_catchup: false,
-            catchup_task: None,
-            catchup_height: None,
-        })
-    }
-
-    fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
-        self.start()
-    }
-}
-
 impl DataAvailability {
     pub async fn start(&mut self) -> Result<()> {
         info!(
@@ -104,7 +82,7 @@ impl DataAvailability {
         let (catchup_sender, mut catchup_receiver) = tokio::sync::mpsc::channel(100);
 
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             listen<MempoolBlockEvent> evt => {
                 _ = log_error!(self.handle_mempool_event(evt, &mut server).await, "Handling Mempool Event");
             }
