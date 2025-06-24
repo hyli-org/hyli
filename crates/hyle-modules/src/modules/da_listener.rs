@@ -34,6 +34,7 @@ pub struct DAListenerConf {
     pub data_directory: PathBuf,
     pub da_read_from: String,
     pub start_block: Option<BlockHeight>,
+    pub timeout_client_secs: u64,
 }
 
 impl Module for DAListener {
@@ -247,8 +248,8 @@ impl DAListener {
 
             module_handle_messages! {
                 on_self self,
-                _ = tokio::time::sleep(tokio::time::Duration::from_secs(10)) => {
-                    warn!("No blocks received in the last 10 seconds, restarting client");
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(self.config.timeout_client_secs)) => {
+                    warn!("No blocks received in the last {} seconds, restarting client", self.config.timeout_client_secs);
                     client = self.start_client(self.node_state.current_height + 1).await?;
                 }
                 frame = client.recv() => {

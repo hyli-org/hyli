@@ -17,6 +17,7 @@ use hyle_modules::{
     },
 };
 use hyle_net::tcp::TcpEvent;
+use tokio::task::JoinHandle;
 
 use crate::{
     bus::BusClientSender,
@@ -102,7 +103,7 @@ impl DataAvailability {
                 }
             }
             listen<PeerEvent> msg => {
-                if !self.need_catchup || self.catchup_task.is_some() {
+                if !self.need_catchup || self.catchup_task.as_ref().is_some_and(|t| !t.is_finished()) {
                     continue;
                 }
                 match msg {
@@ -111,6 +112,7 @@ impl DataAvailability {
                     }
                 }
             }
+
             Some(streamed_block) = catchup_block_receiver.recv() => {
 
                 let processed_height = self.handle_signed_block(streamed_block, &mut server).await;

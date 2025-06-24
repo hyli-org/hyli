@@ -344,6 +344,7 @@ async fn common_main(
                 data_directory: config.data_directory.clone(),
                 da_read_from: config.da_read_from.clone(),
                 start_block: None,
+                timeout_client_secs: config.da_timeout_client_secs,
             })
             .await?;
     }
