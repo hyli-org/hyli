@@ -506,7 +506,8 @@ pub mod tests {
             };
             _ = log_error!(
                 self.node_state_bus
-                    .send_waiting_if_full(NodeStateEvent::NewBlock(Box::new(full_block))),
+                    .send_waiting_if_full(NodeStateEvent::NewBlock(Box::new(full_block)))
+                    .await,
                 "Sending NodeState event"
             );
         }
