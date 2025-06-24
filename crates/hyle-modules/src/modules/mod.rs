@@ -74,7 +74,7 @@ where
         }
     }
 
-    fn persist(&self) -> impl futures::Future<Output = Result<()>> + Send {
+    fn persist(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
         async {
             info!(
                 "Persistance is not implemented for module {}",

@@ -116,7 +116,7 @@ where
         Ok(())
     }
 
-    async fn persist(&self) -> Result<()> {
+    async fn persist(&mut self) -> Result<()> {
         if let Err(e) = Self::save_on_disk::<ContractStateStore<State>>(
             self.file.as_path(),
             self.store.read().await.deref(),

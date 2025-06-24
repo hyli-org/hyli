@@ -85,7 +85,7 @@ impl Module for SingleNodeConsensus {
         self.start()
     }
 
-    async fn persist(&self) -> Result<()> {
+    async fn persist(&mut self) -> Result<()> {
         if let Some(file) = &self.file {
             _ = log_error!(
                 Self::save_on_disk(file.as_path(), &self.store),

@@ -72,7 +72,7 @@ impl Module for Genesis {
         self.start().await
     }
 
-    async fn persist(&self) -> Result<()> {
+    async fn persist(&mut self) -> Result<()> {
         // TODO: ideally we'd wait until everyone has processed it, as there's technically a data race.
         let file = self.config.data_directory.clone().join("genesis.bin");
         log_error!(Self::save_on_disk(&file, &true), "Persisting genesis state")

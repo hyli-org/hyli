@@ -79,7 +79,7 @@ impl Module for DAListener {
         self.start().await
     }
 
-    async fn persist(&self) -> Result<()> {
+    async fn persist(&mut self) -> Result<()> {
         log_error!(
             Self::save_on_disk::<NodeStateStore>(
                 self.config
