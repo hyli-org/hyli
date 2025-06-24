@@ -18,6 +18,7 @@ use hyle_modules::{
 };
 use hyle_net::tcp::TcpEvent;
 use rand::seq::SliceRandom;
+use tokio::time::{sleep_until, Instant};
 
 use crate::{
     bus::BusClientSender,
@@ -180,7 +181,7 @@ impl DataAvailability {
                             .send(peer_ip.clone(), DataAvailabilityEvent::SignedBlock(signed_block))
                             .await.is_ok() {
                             let _ = catchup_sender.send((block_hashes, peer_ip)).await;
-                            }
+                        }
                         else {
                             warn!("Failed to send block {} to peer {}", &hash, &peer_ip);
                             server.drop_peer_stream(peer_ip);
@@ -444,37 +445,54 @@ impl DataAvailability {
             .last()
             .map(|block| block.height() + 1)
             .unwrap_or(BlockHeight(0));
+
         let mut client = DataAvailabilityClient::connect("block_catcher".to_string(), ip)
             .await
-            .context("Error occured setting up the DA listener")?;
+            .context("Error occurred setting up the DA listener")?;
+
         client.send(DataAvailabilityRequest(start)).await?;
+
         self.catchup_task = Some(tokio::spawn(async move {
+            let timeout_duration = Duration::from_secs(10);
+            let mut deadline = Instant::now() + timeout_duration;
+
             loop {
-                match tokio::time::timeout(Duration::from_secs(10), client.recv()).await {
-                    Ok(None) => {
+                let sleep = sleep_until(deadline);
+                tokio::pin!(sleep);
+
+                tokio::select! {
+                    _ = &mut sleep => {
+                        warn!("Timeout expired while waiting for block.");
                         break;
                     }
-                    Err(e) => {
-                        warn!("Error while receiving block from stream: {:#}", e);
-                        break;
-                    }
-                    Ok(Some(DataAvailabilityEvent::SignedBlock(block))) => {
-                        info!(
-                            "📦 Received block (height {}) from stream",
-                            block.consensus_proposal.slot
-                        );
-                        // TODO: we should wait if the stream is full.
-                        if let Err(e) = sender.send(block).await {
-                            tracing::error!("Error while sending block over channel: {:#}", e);
-                            break;
+                    received = client.recv() => {
+                        match received {
+                            None => {
+                                break;
+                            }
+                            Some(DataAvailabilityEvent::SignedBlock(block)) => {
+                                info!(
+                                    "📦 Received block (height {}) from stream",
+                                    block.consensus_proposal.slot
+                                );
+
+                                if let Err(e) = sender.send(block).await {
+                                    tracing::error!("Error while sending block over channel: {:#}", e);
+                                    break;
+                                }
+
+                                // Reset the timeout ONLY when a block is received
+                                deadline = Instant::now() + timeout_duration;
+                            }
+                            Some(_) => {
+                                tracing::trace!("Dropped received message in catchup task");
+                            }
                         }
-                    }
-                    Ok(Some(_)) => {
-                        tracing::trace!("Dropped received message in catchup task");
                     }
                 }
             }
         }));
+
         Ok(())
     }
 }
