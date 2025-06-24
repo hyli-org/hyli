@@ -1,11 +1,15 @@
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 use std::time::Duration;
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
 use crate::bus::{BusClientSender, SharedMessageBus};
 use crate::modules::signal::shutdown_aware_timeout;
+use crate::modules::SharedBuildApiCtx;
 use crate::{log_error, module_bus_client, module_handle_messages, modules::Module};
 use anyhow::{anyhow, bail, Context, Result};
+use axum::extract::State;
+use axum::Router;
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::rest_client::NodeApiClient;
 use client_sdk::{helpers::ClientSdkProver, transaction_builder::TxExecutorHandler};
@@ -41,6 +45,13 @@ pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
 
     catching_txs: IndexMap<TxId, (BlobTransaction, TxContext)>,
     catching_success_txs: Vec<(BlobTransaction, TxContext)>,
+
+    router_state: Arc<Mutex<RouterData>>,
+}
+
+#[derive(Default)]
+pub struct RouterData {
+    pub is_proving: bool,
 }
 
 #[derive(Default, BorshSerialize, BorshDeserialize)]
@@ -69,6 +80,8 @@ pub struct AutoProverCtx<Contract> {
     pub prover: Arc<dyn ClientSdkProver<Vec<Calldata>> + Send + Sync>,
     pub contract_name: ContractName,
     pub node: Arc<dyn NodeApiClient + Send + Sync>,
+    // Optional API for readiness information
+    pub api: Option<SharedBuildApiCtx>,
     pub default_state: Contract,
     /// How many blocks should we buffer before generating proofs ?
     pub buffer_blocks: u32,
@@ -123,6 +136,23 @@ where
 
         let metrics = AutoProverMetrics::global(ctx.contract_name.to_string(), infos);
 
+        let router_state = Arc::new(Mutex::new(RouterData::default()));
+        if let Some(api) = &ctx.api {
+            use axum::routing::get;
+            if let Ok(mut guard) = api.router.lock() {
+                if let Some(router) = guard.take() {
+                    guard.replace(
+                        router.nest(
+                            "/v1/prover",
+                            Router::new()
+                                .route("/ready", get(is_ready))
+                                .with_state(router_state.clone()),
+                        ),
+                    );
+                }
+            }
+        }
+
         let contract_state = ctx.node.get_contract(ctx.contract_name.clone()).await?;
         let catching_up_state = contract_state.state_commitment;
         let catching_up = match contract_state.state_block_height.0 > 0 {
@@ -145,6 +175,7 @@ where
             catching_up_state,
             catching_success_txs: vec![],
             catching_txs: IndexMap::new(),
+            router_state,
         })
     }
 
@@ -174,6 +205,17 @@ where
         );
 
         Ok(())
+    }
+}
+
+pub async fn is_ready(
+    State(state): State<Arc<Mutex<RouterData>>>,
+) -> Result<impl axum::response::IntoResponse, axum::http::StatusCode> {
+    let state = state.lock().unwrap();
+    if state.is_proving {
+        Ok(axum::http::StatusCode::OK)
+    } else {
+        Err(axum::http::StatusCode::SERVICE_UNAVAILABLE)
     }
 }
 
@@ -318,6 +360,9 @@ where
                         );
                     }
                 }
+
+                // Mark ourselves ready to prove.
+                self.router_state.lock().unwrap().is_proving = true;
 
                 if let Some(last_tx_hash) = last_tx_hash {
                     self.store.tx_chain = vec![last_tx_hash.clone()];
@@ -1200,6 +1245,7 @@ mod tests {
             data_directory: data_dir,
             prover: Arc::new(TxExecutorTestProver::<TestContract>::new()),
             contract_name: ContractName("test".into()),
+            api: None,
             node: api_client,
             default_state: TestContract::default(),
             buffer_blocks,

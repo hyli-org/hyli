@@ -10,7 +10,7 @@ use hyle_contract_sdk::api::NodeInfo;
 use hyle_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
-        ModulesHandler,
+        BuildApiContextInner, ModulesHandler,
         da_listener::{DAListener, DAListenerConf},
         prover::{AutoProver, AutoProverCtx},
         rest::{ApiDoc, RestApi, RestApiRunContext, Router},
@@ -57,6 +57,11 @@ async fn main() -> Result<()> {
     let node_client =
         Arc::new(NodeApiHttpClient::new(config.node_url.clone()).context("build node client")?);
 
+    let build_api_ctx = Arc::new(BuildApiContextInner {
+        router: std::sync::Mutex::new(Some(Router::new())),
+        openapi: std::sync::Mutex::new(ApiDoc::openapi()),
+    });
+
     // Initialize modules
     let mut handler = ModulesHandler::new(&bus).await;
 
@@ -68,6 +73,7 @@ async fn main() -> Result<()> {
             )),
             contract_name: config.contract_name.clone().into(),
             node: node_client.clone(),
+            api: Some(build_api_ctx.clone()),
             default_state: Default::default(),
             buffer_blocks: config.buffer_blocks,
             max_txs_per_proof: config.max_txs_per_proof,
@@ -83,6 +89,18 @@ async fn main() -> Result<()> {
         })
         .await?;
 
+    let router = build_api_ctx
+        .router
+        .lock()
+        .expect("Context router should be available.")
+        .take()
+        .expect("Context router should be available.");
+    let openapi = build_api_ctx
+        .openapi
+        .lock()
+        .expect("OpenAPI should be available")
+        .clone();
+
     handler
         .build_module::<RestApi>(
             RestApiRunContext::new(
@@ -92,9 +110,9 @@ async fn main() -> Result<()> {
                     pubkey: None,
                     da_address: config.da_read_from.clone(),
                 },
-                Router::new(),
+                router,
                 config.rest_server_max_body_size,
-                ApiDoc::openapi(),
+                openapi,
             )
             .with_registry(registry),
         )

@@ -191,6 +191,7 @@ async fn main() -> Result<()> {
                 prover: Arc::new(prover),
                 contract_name: "oranj".into(),
                 node: Arc::new(node_client),
+                api: None,
                 default_state: Default::default(),
                 buffer_blocks: 0,
                 max_txs_per_proof: 40,
