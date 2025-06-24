@@ -29,7 +29,7 @@ use crate::{
 };
 use anyhow::{Context, Error, Result};
 use core::str;
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, time::Duration};
 use tracing::{debug, info, trace, warn};
 
 pub mod codec;
@@ -180,6 +180,10 @@ impl DataAvailability {
                             .send(peer_ip.clone(), DataAvailabilityEvent::SignedBlock(signed_block))
                             .await.is_ok() {
                             let _ = catchup_sender.send((block_hashes, peer_ip)).await;
+                            }
+                        else {
+                            warn!("Failed to send block {} to peer {}", &hash, &peer_ip);
+                            server.drop_peer_stream(peer_ip);
                         }
                     }
                 }
@@ -233,9 +237,14 @@ impl DataAvailability {
         evt: MempoolStatusEvent,
         tcp_server: &mut DaTcpServer,
     ) {
-        tcp_server
+        let errors = tcp_server
             .broadcast(DataAvailabilityEvent::MempoolStatusEvent(evt))
             .await;
+
+        for (peer, error) in errors {
+            warn!("Error while broadcasting mempool status event {:#}", error);
+            tcp_server.drop_peer_stream(peer.clone());
+        }
     }
 
     /// if handled, returns the highest height of the processed blocks
@@ -369,9 +378,18 @@ impl DataAvailability {
 
         // TODO: use retain once async closures are supported ?
         //
-        tcp_server
+        let errors = tcp_server
             .broadcast(DataAvailabilityEvent::SignedBlock(block.clone()))
             .await;
+
+        for (peer, error) in errors {
+            warn!(
+                "Error while broadcasting block {}: {:#}",
+                block.hashed(),
+                error
+            );
+            tcp_server.drop_peer_stream(peer.clone());
+        }
 
         // Send the block to NodeState for processing
         _ = log_error!(
@@ -432,11 +450,15 @@ impl DataAvailability {
         client.send(DataAvailabilityRequest(start)).await?;
         self.catchup_task = Some(tokio::spawn(async move {
             loop {
-                match client.recv().await {
-                    None => {
+                match tokio::time::timeout(Duration::from_secs(10), client.recv()).await {
+                    Ok(None) => {
                         break;
                     }
-                    Some(DataAvailabilityEvent::SignedBlock(block)) => {
+                    Err(e) => {
+                        warn!("Error while receiving block from stream: {:#}", e);
+                        break;
+                    }
+                    Ok(Some(DataAvailabilityEvent::SignedBlock(block))) => {
                         info!(
                             "📦 Received block (height {}) from stream",
                             block.consensus_proposal.slot
@@ -447,7 +469,9 @@ impl DataAvailability {
                             break;
                         }
                     }
-                    Some(_) => {}
+                    Ok(Some(_)) => {
+                        tracing::trace!("Dropped received message in catchup task");
+                    }
                 }
             }
         }));
