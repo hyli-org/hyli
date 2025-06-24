@@ -6,7 +6,7 @@ use tracing::{debug, info, trace, warn};
 use super::*;
 use crate::{
     bus::BusClientSender,
-    consensus::{role_timeout::TimeoutState, StateTag},
+    consensus::StateTag,
     model::{Hashed, Signed, ValidatorPublicKey},
     p2p::P2PCommand,
     utils::conf::TimestampCheck,
@@ -429,7 +429,7 @@ impl Consensus {
 
                 let next_max_timestamp = previous_timestamp.clone()
                     + (self.config.consensus.slot_duration * 2
-                        + TimeoutState::TIMEOUT_SECS * (self.bft_round_state.view as u32));
+                        + self.config.consensus.timeout_after * (self.bft_round_state.view as u32));
 
                 if &next_max_timestamp < timestamp {
                     bail!(

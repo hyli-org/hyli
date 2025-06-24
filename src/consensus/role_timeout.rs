@@ -21,8 +21,7 @@ pub(super) enum TimeoutState {
 }
 
 impl TimeoutState {
-    pub const TIMEOUT_SECS: Duration = Duration::from_secs(5);
-    pub fn schedule_next(&mut self, timestamp: TimestampMs) {
+    pub fn schedule_next(&mut self, timestamp: TimestampMs, duration: Duration) {
         match self {
             TimeoutState::Inactive => {
                 trace!("⏲️ Scheduling timeout");
@@ -35,7 +34,7 @@ impl TimeoutState {
             }
         }
         *self = TimeoutState::Scheduled {
-            timestamp: timestamp + TimeoutState::TIMEOUT_SECS,
+            timestamp: timestamp + duration,
         };
     }
     pub fn certificate_emitted(&mut self) {
@@ -209,10 +208,11 @@ impl Consensus {
 
                 self.broadcast_net_message((timeout, kind).into())?;
 
-                self.bft_round_state
+                self.store
+                    .bft_round_state
                     .timeout
                     .state
-                    .schedule_next(TimestampMsClock::now());
+                    .schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
 
                 Ok(())
             }
@@ -349,10 +349,11 @@ impl Consensus {
             len += 1;
             voting_power += self.get_own_voting_power();
 
-            self.bft_round_state
+            self.store
+                .bft_round_state
                 .timeout
                 .state
-                .schedule_next(TimestampMsClock::now());
+                .schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
         }
 
         // Create TC if applicable
@@ -433,10 +434,11 @@ impl Consensus {
                 };
             let ticket = ticket.context("Creating Timeout Certificate")?;
 
-            self.bft_round_state
+            self.store
+                .bft_round_state
                 .timeout
                 .state
-                .schedule_next(TimestampMsClock::now());
+                .schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
 
             let round_leader = self.next_view_leader()?;
             if &round_leader == self.crypto.validator_pubkey() {
