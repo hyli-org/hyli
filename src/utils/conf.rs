@@ -14,6 +14,8 @@ use crate::indexer::IndexerConf;
 pub struct Consensus {
     #[serde_as(as = "DurationMilliSeconds")]
     pub slot_duration: Duration,
+    #[serde_as(as = "DurationMilliSeconds")]
+    pub timeout_after: Duration,
     /// Checks during consensus that blocks have legit timestamps
     pub timestamp_checks: TimestampCheck,
     /// Whether the network runs as a single node or with a multi-node consensus.
