@@ -146,6 +146,8 @@ pub struct Conf {
     pub database_url: String,
     /// When running only the indexer, the address of the DA server to connect to
     pub da_read_from: String,
+    /// Timeout for DA client requests, in seconds, before it tries to reconnect to stream blocks
+    pub da_timeout_client_secs: u64,
 
     /// Websocket configuration
     pub websocket: NodeWebSocketConfig,

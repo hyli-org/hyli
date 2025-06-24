@@ -17,6 +17,7 @@ use hyle_modules::{
     },
 };
 use hyle_net::tcp::TcpEvent;
+use rand::seq::SliceRandom;
 
 use crate::{
     bus::BusClientSender,
@@ -81,6 +82,10 @@ impl DataAvailability {
 
         let (catchup_sender, mut catchup_receiver) = tokio::sync::mpsc::channel(100);
 
+        let mut peers = vec![];
+        let mut catchup_task_checker_ticker =
+            tokio::time::interval(std::time::Duration::from_millis(5000));
+
         module_handle_messages! {
             on_self self,
             listen<MempoolBlockEvent> evt => {
@@ -102,15 +107,35 @@ impl DataAvailability {
                 }
             }
             listen<PeerEvent> msg => {
-                if !self.need_catchup || self.catchup_task.is_some() {
+                if !self.need_catchup || self.catchup_task.as_ref().is_some_and(|t| !t.is_finished()) {
                     continue;
                 }
                 match msg {
                     PeerEvent::NewPeer { da_address, .. } => {
+                        peers.push(da_address.clone());
                         self.ask_for_catchup_blocks(da_address, catchup_block_sender.clone()).await?;
                     }
                 }
             }
+
+            _ = catchup_task_checker_ticker.tick() => {
+                // Check if we need to revive the catchup task.
+                if self.need_catchup && self.catchup_task.as_ref().is_none_or(|t| t.is_finished()) {
+                    let random_peer = peers
+                    .choose(&mut rand::thread_rng())
+                    .cloned();
+
+                    if let Some(peer) = random_peer {
+                        info!("📡  Starting catchup task with peer {}", peer);
+                        if let Err(e) = self.ask_for_catchup_blocks(peer.clone(), catchup_block_sender.clone()).await {
+                            warn!("Error while asking for catchup blocks: {:#}", e);
+                        }
+                    } else {
+                        warn!("No peers available for catchup, cannot start catchup task");
+                    }
+                }
+            }
+
             Some(streamed_block) = catchup_block_receiver.recv() => {
 
                 let processed_height = self.handle_signed_block(streamed_block, &mut server).await;
