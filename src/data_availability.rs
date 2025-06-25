@@ -18,7 +18,10 @@ use hyle_modules::{
 };
 use hyle_net::tcp::TcpEvent;
 use rand::seq::SliceRandom;
-use tokio::time::{sleep_until, Instant};
+use tokio::{
+    task::JoinSet,
+    time::{sleep_until, Instant},
+};
 
 use crate::{
     bus::BusClientSender,
@@ -81,7 +84,10 @@ impl DataAvailability {
         let (catchup_block_sender, mut catchup_block_receiver) =
             tokio::sync::mpsc::channel::<SignedBlock>(100);
 
-        let (catchup_sender, mut catchup_receiver) = tokio::sync::mpsc::channel(100);
+        // let (catchup_sender, mut catchup_receiver) = tokio::sync::mpsc::channel(100);i
+
+        let mut catchup_joinset: JoinSet<(Vec<ConsensusProposalHash>, String, usize)> =
+            tokio::task::JoinSet::new();
 
         let mut peers = vec![];
         let mut catchup_task_checker_ticker =
@@ -159,13 +165,13 @@ impl DataAvailability {
 
             Some(tcp_event) = server.listen_next() => {
                 if let TcpEvent::Message { dest, data } = tcp_event {
-                    _ = self.start_streaming_to_peer(data.0, catchup_sender.clone(), &dest).await;
+                    _ = self.start_streaming_to_peer(data.0, &mut catchup_joinset, &dest).await;
                 }
             }
 
             // Send one block to a peer as part of "catchup",
             // once we have sent all blocks the peer is presumably synchronised.
-            Some((mut block_hashes, peer_ip, retries)) = catchup_receiver.recv() => {
+            Some(Ok((mut block_hashes, peer_ip, retries))) = catchup_joinset.join_next() => {
 
                 #[cfg(test)]
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -180,7 +186,9 @@ impl DataAvailability {
                         if server
                         .try_send(peer_ip.clone(), DataAvailabilityEvent::SignedBlock(signed_block))
                         .is_ok() {
-                            let _ = catchup_sender.send((block_hashes, peer_ip, 0)).await;
+                            catchup_joinset.spawn(async move {
+                                (block_hashes, peer_ip, retries + 1)
+                            });
                         }
                         else if retries > 10 {
                             warn!("Failed to send block {} to peer {}", &hash, &peer_ip);
@@ -188,7 +196,10 @@ impl DataAvailability {
                         } else {
                             // Retry sending the block
                             block_hashes.push(hash);
-                            let _ = catchup_sender.send((block_hashes, peer_ip, retries + 1)).await;
+                            catchup_joinset.spawn(async move {
+                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                (block_hashes, peer_ip, retries + 1)
+                            });
                         }
                     }
                 }
@@ -410,7 +421,7 @@ impl DataAvailability {
     async fn start_streaming_to_peer(
         &mut self,
         start_height: BlockHeight,
-        catchup_sender: tokio::sync::mpsc::Sender<(Vec<ConsensusProposalHash>, String, usize)>,
+        catchup_joinset: &mut JoinSet<(Vec<ConsensusProposalHash>, String, usize)>,
         peer_ip: &str,
     ) -> Result<()> {
         // Finally, stream past blocks as required.
@@ -431,9 +442,9 @@ impl DataAvailability {
             .collect();
         processed_block_hashes.reverse();
 
-        catchup_sender
-            .send((processed_block_hashes, peer_ip.to_string(), 0))
-            .await?;
+        let peer_ip = peer_ip.to_string();
+
+        catchup_joinset.spawn(async move { (processed_block_hashes, peer_ip, 0) });
 
         Ok(())
     }
