@@ -1,7 +1,7 @@
 use super::api::*;
 use crate::model::*;
 use crate::node_state::module::NodeStateEvent;
-use anyhow::{Context, Error, Result, bail};
+use anyhow::{bail, Context, Error, Result};
 use chrono::{DateTime, Utc};
 use hyle_contract_sdk::TxHash;
 use hyle_model::api::{TransactionStatusDb, TransactionTypeDb};
@@ -304,16 +304,10 @@ impl Indexer {
                         TransactionData::VerifiedProof(_) => TransactionStatusDb::Success,
                     };
 
-                    let lane_id: LaneIdDb = log_error!(
-                        block
-                            .lane_ids
-                            .get(&tx_id.1)
-                            .context(format!("No lane id present for tx {}", tx_id)),
-                        "Getting lane id for tx"
-                    )
-                    .unwrap_or(&LaneId::default())
-                    .clone()
-                    .into();
+                    let lane_id: Option<LaneIdDb> = block
+                        .lane_ids
+                        .get(&tx_id.1)
+                        .map(|lane_id| lane_id.clone().into());
 
                     let identity = match tx.transaction_data {
                         TransactionData::Blob(ref tx) => Some(tx.identity.0.clone()),
@@ -1013,8 +1007,9 @@ impl Indexer {
             };
 
             if let Some(lane_id) = lane_id.as_ref() {
-                let lane_id = hex::encode(&lane_id.0.0);
-                if tx_id.0.0 == lane_id {
+                let lane_id = hex::encode(&lane_id.0 .0);
+
+                if tx_id.0 .0 == lane_id {
                     info!(
                         "Transaction {} is the first transaction in lane {}",
                         tx_id.1, lane_id
@@ -1361,12 +1356,12 @@ impl Indexer {
                 .parent_hash
                 .map(|h| h.into())
                 .unwrap_or_else(|| {
-                    DataProposalHashDb(DataProposalHash(hex::encode(&dp_metadata.lane_id.0.0)))
+                    DataProposalHashDb(DataProposalHash(hex::encode(&dp_metadata.lane_id.0 .0)))
                 });
             let dp_store = DataProposalStore {
                 hash: dp_metadata.hash.into(),
                 parent_hash: Some(parent_dp),
-                lane_id: hex::encode(&dp_metadata.lane_id.0.0),
+                lane_id: hex::encode(&dp_metadata.lane_id.0 .0),
                 tx_count: dp_metadata.tx_count as i32,
                 estimated_size: dp_metadata.estimated_size as i64,
                 block_hash: block_hash.clone(),
