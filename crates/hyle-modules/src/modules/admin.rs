@@ -1,15 +1,18 @@
 //! Public API for interacting with the node.
 
 use crate::{
-    bus::{metrics::BusMetrics, BusClientSender, SharedMessageBus},
+    bus::{
+        command_response::CmdRespClient, metrics::BusMetrics, BusClientSender, SharedMessageBus,
+    },
     log_error, module_bus_client, module_handle_messages,
     modules::{signal::ShutdownModule, Module},
+    node_state::{module::QueryNodeState, NodeStateStore},
 };
 use anyhow::{anyhow, Context, Result};
 pub use axum::Router;
 use axum::{
     body::Bytes,
-    extract::{DefaultBodyLimit, Path, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -31,6 +34,7 @@ use super::{
 module_bus_client! {
     struct AdminBusClient {
         sender(signal::PersistModule),
+        sender(crate::bus::command_response::Query<QueryNodeState, NodeStateStore>),
     }
 }
 
@@ -71,6 +75,7 @@ impl Module for AdminApi {
             Router::new()
                 .route("/v1/admin/persist", post(persist))
                 .route("/v1/admin/download/{file}", get(download))
+                .route("/v1/admin/inspect", post(inspect))
                 .with_state(RouterState {
                     bus: AdminBusClient::new_from_bus(bus.new_handle()).await,
                     data_directory: ctx.data_directory,
@@ -158,6 +163,35 @@ pub async fn download(
     }
 }
 
+struct JsonState {
+    module_name: String,
+}
+
+pub async fn inspect(
+    State(mut state): State<RouterState>,
+    // Query(json_state): Query<JsonState>,
+) -> Result<impl IntoResponse, AppError> {
+    tracing::info!("Inspecting modules state");
+    // match json_state.module_name.as_str() {
+    // "node_state" => {
+    let res: NodeStateStore = state
+        .bus
+        .shutdown_aware_request::<()>(QueryNodeState {})
+        .await?;
+    let response = serde_json::to_string(&res).context("Serializing modules")?;
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(response)
+        .unwrap())
+    // }
+    // _ => Err(AppError::from(anyhow::anyhow!(
+    // "Module {} not found",
+    // json_state.module_name
+    // ))),
+    // }
+}
+
 pub struct RouterState {
     bus: AdminBusClient,
     data_directory: PathBuf,
@@ -227,6 +261,12 @@ impl Clone for AdminBusClient {
         AdminBusClient::new(
             Pick::<BusMetrics>::get(self).clone(),
             Pick::<tokio::sync::broadcast::Sender<PersistModule>>::get(self).clone(),
+            Pick::<
+                tokio::sync::broadcast::Sender<
+                    crate::bus::command_response::Query<QueryNodeState, NodeStateStore>,
+                >,
+            >::get(self)
+            .clone(),
             Pick::<tokio::sync::broadcast::Receiver<ShutdownModule>>::get(self).resubscribe(),
             Pick::<tokio::sync::broadcast::Receiver<PersistModule>>::get(self).resubscribe(),
         )
