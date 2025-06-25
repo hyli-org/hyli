@@ -22,7 +22,7 @@ serde_json = { version = "1" }
 tracing = "0.1"
 assertables = { version = "9.6.0" }
 anymap = { version = "0.12.1" }
-syn = { version = "2.0.101" }
+syn = { version = "2.0.104" }
 quote = { version = "1.0.39" }
 rand = { version = "0.8.5" }
 futures = { version = "0.3.31" }
