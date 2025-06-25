@@ -169,7 +169,6 @@ async fn main() -> Result<()> {
                 data_directory: PathBuf::from("data"),
                 da_read_from: "localhost:4141".to_string(),
                 start_block: Some(BlockHeight(0)),
-                timeout_client_secs: 10,
             })
             .await?;
     } else {
