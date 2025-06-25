@@ -327,11 +327,10 @@ impl DataAvailability {
         // Iterative loop to avoid stack overflows
         while let Some(first_buffered) = self.buffered_signed_blocks.first() {
             if first_buffered.parent_hash() != &last_block_hash {
-                warn!(
-
-                    "Stopping processing buffered blocks because block parent hash {} does not match last block hash {}",
+                debug!(
+                    "Stopping processing buffered blocks - hole in the buffer after {} (found parent hash {})",
+                    last_block_hash,
                     first_buffered.parent_hash(),
-                    last_block_hash
                 );
                 break;
             }
