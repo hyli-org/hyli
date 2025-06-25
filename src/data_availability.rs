@@ -74,7 +74,7 @@ impl DataAvailability {
         let mut server: DaTcpServer = DataAvailabilityServer::start_with_opts(
             self.config.da_server_port,
             Some(self.config.da_max_frame_length),
-            "DAServer",
+            format!("DAServer-{}", self.config.id.clone()).as_str(),
         )
         .await?;
 
@@ -165,7 +165,7 @@ impl DataAvailability {
 
             // Send one block to a peer as part of "catchup",
             // once we have sent all blocks the peer is presumably synchronised.
-            Some((mut block_hashes, peer_ip)) = catchup_receiver.recv() => {
+            Some((mut block_hashes, peer_ip, retries)) = catchup_receiver.recv() => {
 
                 #[cfg(test)]
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -178,13 +178,17 @@ impl DataAvailability {
                     {
                         // Errors will be handled when sending new blocks, ignore here.
                         if server
-                            .send(peer_ip.clone(), DataAvailabilityEvent::SignedBlock(signed_block))
-                            .await.is_ok() {
-                            let _ = catchup_sender.send((block_hashes, peer_ip)).await;
+                        .try_send(peer_ip.clone(), DataAvailabilityEvent::SignedBlock(signed_block))
+                        .is_ok() {
+                            let _ = catchup_sender.send((block_hashes, peer_ip, 0)).await;
                         }
-                        else {
+                        else if retries > 10 {
                             warn!("Failed to send block {} to peer {}", &hash, &peer_ip);
                             server.drop_peer_stream(peer_ip);
+                        } else {
+                            // Retry sending the block
+                            block_hashes.push(hash);
+                            let _ = catchup_sender.send((block_hashes, peer_ip, retries + 1)).await;
                         }
                     }
                 }
@@ -406,7 +410,7 @@ impl DataAvailability {
     async fn start_streaming_to_peer(
         &mut self,
         start_height: BlockHeight,
-        catchup_sender: tokio::sync::mpsc::Sender<(Vec<ConsensusProposalHash>, String)>,
+        catchup_sender: tokio::sync::mpsc::Sender<(Vec<ConsensusProposalHash>, String, usize)>,
         peer_ip: &str,
     ) -> Result<()> {
         // Finally, stream past blocks as required.
@@ -428,7 +432,7 @@ impl DataAvailability {
         processed_block_hashes.reverse();
 
         catchup_sender
-            .send((processed_block_hashes, peer_ip.to_string()))
+            .send((processed_block_hashes, peer_ip.to_string(), 0))
             .await?;
 
         Ok(())
@@ -451,6 +455,13 @@ impl DataAvailability {
             .context("Error occurred setting up the DA listener")?;
 
         client.send(DataAvailabilityRequest(start)).await?;
+
+        if let Some(task) = self.catchup_task.take() {
+            if !task.is_finished() {
+                warn!("Catchup task was already running, aborting it.");
+                task.abort();
+            }
+        }
 
         self.catchup_task = Some(tokio::spawn(async move {
             let timeout_duration = Duration::from_secs(10);
