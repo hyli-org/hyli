@@ -84,8 +84,11 @@ impl DataAvailability {
         let (catchup_block_sender, mut catchup_block_receiver) =
             tokio::sync::mpsc::channel::<SignedBlock>(100);
 
-        // let (catchup_sender, mut catchup_receiver) = tokio::sync::mpsc::channel(100);i
-
+        // Used to send blocks to clients (indexers/peers)
+        // // This is a JoinSet of tuples containing:
+        // // - A vector of block hashes to send
+        // // - The peer IP address to send the blocks to
+        // // - The number of retries for sending the blocks
         let mut catchup_joinset: JoinSet<(Vec<ConsensusProposalHash>, String, usize)> =
             tokio::task::JoinSet::new();
 
