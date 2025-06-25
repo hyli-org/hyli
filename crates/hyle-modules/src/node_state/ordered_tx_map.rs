@@ -24,13 +24,7 @@ impl OrderedTxMap {
         if let Some(unsettled_blob_tx) = self.map.get(tx_hash) {
             Self::get_contracts_blocked_by_tx(unsettled_blob_tx)
                 .iter()
-                .all(|contract_name| {
-                    if self.get_next_unsettled_tx(contract_name) != Some(tx_hash) {
-                        return false;
-                    }
-                    // The tx is the next to settle for all the contracts it contains
-                    true
-                })
+                .all(|contract_name| self.get_next_unsettled_tx(contract_name) == Some(tx_hash))
         } else {
             false
         }
@@ -55,14 +49,14 @@ impl OrderedTxMap {
         let tx = self.map.get_mut(hash);
         match tx {
             Some(tx) => {
-                let is_next_unsettled_tx = tx.blobs.values().all(|blob_metadata| {
-                    if let Some(order) = self.tx_order.get(&blob_metadata.blob.contract_name) {
-                        if let Some(first) = order.front() {
-                            return first == &tx.hash;
-                        }
-                    }
-                    false
-                });
+                // Duplicates logic for efficiency / borrow-checker.
+                let is_next_unsettled_tx =
+                    Self::get_contracts_blocked_by_tx(tx)
+                        .iter()
+                        .all(|contract_name| {
+                            self.tx_order.get(contract_name).and_then(|v| v.front()) == Some(hash)
+                        });
+
                 Some((tx, is_next_unsettled_tx))
             }
             None => None,
