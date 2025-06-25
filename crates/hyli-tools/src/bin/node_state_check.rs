@@ -44,6 +44,7 @@ async fn main() -> Result<()> {
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
             start_block: Some(BlockHeight(0)),
+            timeout_client_secs: 10,
         })
         .await?;
 
