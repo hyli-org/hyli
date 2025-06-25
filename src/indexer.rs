@@ -131,7 +131,7 @@ impl Module for Indexer {
 impl Indexer {
     pub async fn start(&mut self) -> Result<()> {
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             listen<NodeStateEvent> event => {
                 _ = log_error!(self.handle_node_state_event(event)
                     .await,

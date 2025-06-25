@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use sdk::{BlockHeight, Hashed, MempoolStatusEvent, SignedBlock};
+use tokio::task::yield_now;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -34,6 +35,7 @@ pub struct DAListenerConf {
     pub data_directory: PathBuf,
     pub da_read_from: String,
     pub start_block: Option<BlockHeight>,
+    pub timeout_client_secs: u64,
 }
 
 impl Module for DAListener {
@@ -75,8 +77,21 @@ impl Module for DAListener {
         })
     }
 
-    fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
-        self.start()
+    async fn run(&mut self) -> Result<()> {
+        self.start().await
+    }
+
+    async fn persist(&mut self) -> Result<()> {
+        log_error!(
+            Self::save_on_disk::<NodeStateStore>(
+                self.config
+                    .data_directory
+                    .join("da_listener_node_state.bin")
+                    .as_path(),
+                &self.node_state,
+            ),
+            "Saving node state"
+        )
     }
 }
 
@@ -218,6 +233,7 @@ impl DAListener {
                         }
                     }
                 }
+                yield_now().await; // Yield to allow other tasks to run
             }
             // Sort blocks by block_height (numeric order)
             blocks.sort_by_key(|b| b.0.consensus_proposal.slot);
@@ -227,33 +243,31 @@ impl DAListener {
                 self.process_block(block).await?;
             }
             module_handle_messages! {
-                on_bus self.bus,
+                on_self self,
             };
         } else {
             let mut client = self.start_client(self.start_block).await?;
 
             module_handle_messages! {
-                on_bus self.bus,
+                on_self self,
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(self.config.timeout_client_secs)) => {
+                    warn!("No blocks received in the last {} seconds, restarting client", self.config.timeout_client_secs);
+                    client = self.start_client(self.node_state.current_height + 1).await?;
+                }
                 frame = client.recv() => {
                     if let Some(streamed_signed_block) = frame {
                         let _ = log_error!(self.processing_next_frame(streamed_signed_block).await, "Consuming da stream");
-                        client.ping().await?;
+                        if let Err(e) = client.ping().await {
+                            warn!("Ping failed: {}. Restarting client...", e);
+                            client = self.start_client(self.node_state.current_height + 1).await?;
+                        }
                     } else {
+                        warn!("DA stream connection lost. Reconnecting...");
                         client = self.start_client(self.node_state.current_height + 1).await?;
                     }
                 }
             };
         }
-        let _ = log_error!(
-            Self::save_on_disk::<NodeStateStore>(
-                self.config
-                    .data_directory
-                    .join("da_listener_node_state.bin")
-                    .as_path(),
-                &self.node_state,
-            ),
-            "Saving node state"
-        );
 
         Ok(())
     }

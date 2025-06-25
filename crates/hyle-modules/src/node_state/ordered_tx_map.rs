@@ -1,6 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::*;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::collections::{HashMap, VecDeque};
 
 // struct used to guarantee coherence between the 2 fields
@@ -93,6 +93,16 @@ impl OrderedTxMap {
             }
         }
         contract_names
+    }
+
+    pub fn get_next_txs_blocked_by_tx(&self, tx: &UnsettledBlobTransaction) -> BTreeSet<TxHash> {
+        let mut blocked_txs = BTreeSet::new();
+        for contract in self.get_contracts_blocked_by_tx(tx) {
+            if let Some(next_tx) = self.get_next_unsettled_tx(&contract) {
+                blocked_txs.insert(next_tx.clone());
+            }
+        }
+        blocked_txs
     }
 
     /// Returns true if the tx is the next unsettled tx for all the contracts it contains

@@ -321,11 +321,22 @@ impl NodeState {
                                         "Failed to handle blob #{} in verified proof transaction {}: {err:#}",
                                         blob_proof_data.hyle_output.index, &tx_id);
                                     debug!("{err}");
-                                    block_under_construction
-                                        .transactions_events
-                                        .entry(blob_proof_data.blob_tx_hash.clone())
-                                        .or_default()
-                                        .push(TransactionStateEvent::Error(err));
+                                    // TODO: ugly workaround for the case where we haven't found the blobTx.
+                                    if block_under_construction.dp_parent_hashes.contains_key(
+                                        &blob_proof_data.blob_tx_hash,
+                                    ) {
+                                        block_under_construction
+                                            .transactions_events
+                                            .entry(blob_proof_data.blob_tx_hash.clone())
+                                            .or_default()
+                                            .push(TransactionStateEvent::Error(err));
+                                    } else {
+                                        block_under_construction
+                                            .transactions_events
+                                            .entry(tx_id.1.clone())
+                                            .or_default()
+                                            .push(TransactionStateEvent::Error(err));
+                                    }
                                     None
                                 }
                             }})
@@ -876,15 +887,9 @@ impl NodeState {
         // Transaction was settled, update our state.
 
         // Note all the TXs that we might want to try and settle next
-        let mut next_txs_to_try_and_settle = settled_tx
-            .blobs
-            .iter()
-            .filter_map(|(_, blob_metadata)| {
-                self.unsettled_transactions
-                    .get_next_unsettled_tx(&blob_metadata.blob.contract_name)
-                    .cloned()
-            })
-            .collect::<BTreeSet<_>>();
+        let mut next_txs_to_try_and_settle = self
+            .unsettled_transactions
+            .get_next_txs_blocked_by_tx(&settled_tx);
 
         #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
         let Ok(SettlementResult {
@@ -1425,15 +1430,8 @@ impl NodeState {
                 block_under_construction.lane_ids.insert(hash, lane_id);
 
                 // Attempt to settle following transactions
-                let blob_tx_to_try_and_settle: BTreeSet<TxHash> = tx
-                    .blobs
-                    .into_values()
-                    .filter_map(|b| {
-                        self.unsettled_transactions
-                            .get_next_unsettled_tx(&b.blob.contract_name)
-                    })
-                    .cloned()
-                    .collect();
+                let blob_tx_to_try_and_settle: BTreeSet<TxHash> =
+                    self.unsettled_transactions.get_next_txs_blocked_by_tx(&tx);
 
                 // Then try to settle transactions when we can.
                 let next_unsettled_txs =
