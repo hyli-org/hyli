@@ -94,7 +94,7 @@ pub async fn get_data_proposal_by_hash(
             SELECT t.*, b.timestamp
             FROM transactions t
             LEFT JOIN blocks b ON t.block_hash = b.hash
-            WHERE t.parent_dp_hash = $1
+            WHERE t.dp_hash = $1
             ORDER BY b.height DESC, t.index DESC
             "#
         )

@@ -1332,7 +1332,9 @@ impl Indexer {
                 });
 
             // If this is the first DP in a lane (no parent_hash), ensure the virtual DP exists
-            if dp_metadata.parent_hash.is_none() {
+            if dp_metadata.parent_hash.as_ref().map(|h| &h.0)
+                == Some(&hex::encode(&dp_metadata.lane_id.0 .0))
+            {
                 let lane_id_str = hex::encode(&dp_metadata.lane_id.0 .0);
                 let lane_id_dp_hash: DataProposalHashDb =
                     DataProposalHash(lane_id_str.clone()).into();
