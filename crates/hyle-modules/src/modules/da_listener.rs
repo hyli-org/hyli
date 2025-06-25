@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use sdk::{BlockHeight, Hashed, MempoolStatusEvent, SignedBlock};
+use tokio::task::yield_now;
 use tracing::{debug, error, info, warn};
 
 use crate::{
@@ -232,6 +233,7 @@ impl DAListener {
                         }
                     }
                 }
+                yield_now().await; // Yield to allow other tasks to run
             }
             // Sort blocks by block_height (numeric order)
             blocks.sort_by_key(|b| b.0.consensus_proposal.slot);
