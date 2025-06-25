@@ -255,8 +255,12 @@ impl DAListener {
                 frame = client.recv() => {
                     if let Some(streamed_signed_block) = frame {
                         let _ = log_error!(self.processing_next_frame(streamed_signed_block).await, "Consuming da stream");
-                        client.ping().await?;
+                        if let Err(e) = client.ping().await {
+                            warn!("Ping failed: {}. Restarting client...", e);
+                            client = self.start_client(self.node_state.current_height + 1).await?;
+                        }
                     } else {
+                        warn!("DA stream connection lost. Reconnecting...");
                         client = self.start_client(self.node_state.current_height + 1).await?;
                     }
                 }
