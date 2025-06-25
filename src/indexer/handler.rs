@@ -1006,35 +1006,6 @@ impl Indexer {
                 Err(_) => (None, None),
             };
 
-            if let Some(lane_id) = lane_id.as_ref() {
-                let lane_id = hex::encode(&lane_id.0 .0);
-
-                if tx_id.0 .0 == lane_id {
-                    info!(
-                        "Transaction {} is the first transaction in lane {}",
-                        tx_id.1, lane_id
-                    );
-                    let first_dp_hash = tx_id.0.clone().into();
-                    if !self
-                        .handler_store
-                        .data_proposals
-                        .iter()
-                        .any(|dp| dp.hash == first_dp_hash)
-                    {
-                        // This is a special case for 1st transaction in a lane
-                        self.handler_store.data_proposals.push(DataProposalStore {
-                            hash: first_dp_hash,
-                            parent_hash: None,
-                            lane_id,
-                            tx_count: 1,
-                            estimated_size: 0, // TODO: calculate estimated size
-                            block_hash: block.hash.clone(),
-                            block_height,
-                            created_at: Utc::now(),
-                        });
-                    }
-                }
-            }
             self.handler_store
                 .block_txs
                 .insert(tx_id.clone(), (i, arc_block.clone(), tx.clone()));
@@ -1354,10 +1325,37 @@ impl Indexer {
             // transactions
             let parent_dp = dp_metadata
                 .parent_hash
+                .clone()
                 .map(|h| h.into())
                 .unwrap_or_else(|| {
                     DataProposalHashDb(DataProposalHash(hex::encode(&dp_metadata.lane_id.0 .0)))
                 });
+
+            // If this is the first DP in a lane (no parent_hash), ensure the virtual DP exists
+            if dp_metadata.parent_hash.is_none() {
+                let lane_id_str = hex::encode(&dp_metadata.lane_id.0 .0);
+                let lane_id_dp_hash: DataProposalHashDb =
+                    DataProposalHash(lane_id_str.clone()).into();
+
+                if !self
+                    .handler_store
+                    .data_proposals
+                    .iter()
+                    .any(|dp| dp.hash == lane_id_dp_hash)
+                {
+                    self.handler_store.data_proposals.push(DataProposalStore {
+                        hash: lane_id_dp_hash,
+                        parent_hash: None,
+                        lane_id: lane_id_str,
+                        tx_count: 0, // Virtual DP, no actual transactions
+                        estimated_size: 0,
+                        block_hash: block_hash.clone(),
+                        block_height: block_height_i64,
+                        created_at: into_utc_date_time(&block_timestamp)?,
+                    });
+                }
+            }
+
             let dp_store = DataProposalStore {
                 hash: dp_metadata.hash.into(),
                 parent_hash: Some(parent_dp),

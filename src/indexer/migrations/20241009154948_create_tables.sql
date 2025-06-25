@@ -29,7 +29,7 @@ CREATE TABLE data_proposals (
 );
 
 CREATE TYPE transaction_type AS ENUM ('blob_transaction', 'proof_transaction', 'stake');
-CREATE TYPE transaction_status AS ENUM ('data_proposal_created','waiting_dissemination','success', 'failure', 'sequenced', 'timed_out');
+CREATE TYPE transaction_status AS ENUM ('data_proposal_created', 'waiting_dissemination','success', 'failure', 'sequenced', 'timed_out');
 
 CREATE TABLE transactions (
     dp_hash TEXT,                                           -- Data Proposal hash
@@ -44,8 +44,6 @@ CREATE TABLE transactions (
     index INT,                              -- Index of the transaction within the block
     identity TEXT,                          -- Identity (NULL except for blob transactions)
     PRIMARY KEY (parent_dp_hash, tx_hash),
-    FOREIGN KEY (parent_dp_hash) REFERENCES data_proposals(hash) ON DELETE CASCADE,
-    FOREIGN KEY (dp_hash) REFERENCES data_proposals(hash) ON DELETE CASCADE,
 
     CHECK (length(tx_hash) = 64),
     CHECK (length(lane_id) = 96)

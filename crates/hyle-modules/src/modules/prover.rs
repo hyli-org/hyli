@@ -2580,7 +2580,7 @@ mod tests {
             timed_out_txs: vec![],
             lane_ids: BTreeMap::from_iter(vec![(
                 other_tx.hashed(),
-                LaneId(ValidatorPublicKey(vec![5])),
+                LaneId(ValidatorPublicKey(vec![0; 48])),
             )]),
             ..Default::default()
         };
