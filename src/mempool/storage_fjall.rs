@@ -7,7 +7,7 @@ use fjall::{
 };
 use futures::Stream;
 use hyle_model::LaneId;
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::{
     mempool::storage::MetadataOrMissingHash,
@@ -313,9 +313,11 @@ impl Storage for LanesStorage {
         from_data_proposal_hash: Option<DataProposalHash>,
         to_data_proposal_hash: Option<DataProposalHash>,
     ) -> impl Stream<Item = anyhow::Result<EntryOrMissingHash>> {
-        debug!(
+        tracing::trace!(
             "Getting entries between hashes for lane {}: from {:?} to {:?}",
-            lane_id, from_data_proposal_hash, to_data_proposal_hash
+            lane_id,
+            from_data_proposal_hash,
+            to_data_proposal_hash
         );
         let metadata_stream = self.get_entries_metadata_between_hashes(
             lane_id,
