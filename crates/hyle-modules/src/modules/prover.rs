@@ -2596,15 +2596,19 @@ mod tests {
         block_4.successful_txs = vec![success_tx_2.hashed()];
         block_4.timed_out_txs = vec![failing_tx_1.hashed()];
         block_4.failed_txs = vec![failing_tx_4.hashed()];
-        block_4
-            .dp_parent_hashes
-            .insert(failing_tx_4.hashed(), DataProposalHash(format!("{}", 4)));
-        block_4
-            .dp_parent_hashes
-            .insert(success_tx_2.hashed(), DataProposalHash(format!("{}", 2)));
-        block_4
-            .dp_parent_hashes
-            .insert(failing_tx_1.hashed(), DataProposalHash(format!("{}", 1)));
+        block_4.dp_parent_hashes.insert(
+            failing_tx_4.hashed(),
+            DataProposalHash(format!("{:064x}", 4)),
+        );
+        block_4.dp_parent_hashes.insert(
+            success_tx_2.hashed(),
+            DataProposalHash(format!("{:064x}", 2)),
+        );
+        block_4.dp_parent_hashes.insert(
+            failing_tx_1.hashed(),
+            DataProposalHash(format!("{:064x}", 1)),
+        );
+
         auto_prover
             .handle_node_state_event(NodeStateEvent::NewBlock(Box::new(block_4.clone())))
             .await?;
