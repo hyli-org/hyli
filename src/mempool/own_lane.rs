@@ -501,6 +501,7 @@ impl super::Mempool {
     }
 }
 
+#[allow(clippy::indexing_slicing)]
 #[cfg(test)]
 pub mod test {
     use core::panic;
