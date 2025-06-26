@@ -57,9 +57,9 @@ pub struct RouterData {
 #[derive(Default, BorshSerialize, BorshDeserialize)]
 pub struct AutoProverStore<Contract> {
     // These are other unsettled transactions that are waiting to be proved
-    unsettled_txs: Vec<(BlobTransaction, TxContext)>,
+    unsettled_txs: Vec<(BlobTransaction, TxContext, TxId)>,
     // These are the transactions that are currently being proved
-    proving_txs: Vec<(BlobTransaction, TxContext)>,
+    proving_txs: Vec<(BlobTransaction, TxContext, TxId)>,
     state_history: BTreeMap<TxHash, Contract>,
     tx_chain: Vec<TxHash>,
     buffered_blobs: Vec<(Vec<BlobIndex>, BlobTransaction, TxContext)>,
@@ -119,7 +119,7 @@ where
             .data_directory
             .join(format!("autoprover_{}.bin", ctx.contract_name).as_str());
 
-        let store = match Self::load_from_disk::<AutoProverStore<Contract>>(file.as_path()) {
+        let mut store = match Self::load_from_disk::<AutoProverStore<Contract>>(file.as_path()) {
             Some(store) => store,
             None => AutoProverStore::<Contract> {
                 unsettled_txs: vec![],
@@ -166,6 +166,36 @@ where
             catching_up
         );
 
+        let catching_txs = if catching_up.is_some() && !store.tx_chain.is_empty() {
+            // If we are restarting from serialized data and are catching up, we need to do some setup.
+            // Move all unsettled transactions to catching_txs and restart.
+            let mut txs = std::mem::take(&mut store.proving_txs);
+            txs.extend(std::mem::take(&mut store.unsettled_txs));
+
+            // Clear the rest
+            store.tx_chain.truncate(1);
+            let history_start = store
+                .state_history
+                .remove(&store.tx_chain.first().expect("must exist"))
+                .expect("We should have at least one transaction in the tx_chain");
+            store.state_history = BTreeMap::new();
+            store.state_history.insert(
+                store.tx_chain.last().expect("must exist").clone(),
+                history_start.clone(),
+            );
+            store.buffered_blobs.clear();
+            store.buffered_blocks_count = 0;
+            tracing::info!(
+                cn =% ctx.contract_name,
+                "Loaded {} unsettled transactions from disk, restarting from {}",
+                txs.len(),
+                store.tx_chain.last().expect("must exist")
+            );
+            IndexMap::from_iter(txs.into_iter().map(|(tx, tx_ctx, id)| (id, (tx, tx_ctx))))
+        } else {
+            IndexMap::new()
+        };
+
         Ok(AutoProver {
             bus,
             store,
@@ -174,7 +204,7 @@ where
             catching_up,
             catching_up_state,
             catching_success_txs: vec![],
-            catching_txs: IndexMap::new(),
+            catching_txs,
             router_state,
         })
     }
@@ -382,9 +412,11 @@ where
                     .tx_chain
                     .extend(self.catching_txs.keys().map(|id| &id.1).cloned());
 
-                self.store
-                    .unsettled_txs
-                    .extend(std::mem::take(&mut self.catching_txs).into_values());
+                self.store.unsettled_txs.extend(
+                    std::mem::take(&mut self.catching_txs)
+                        .into_iter()
+                        .map(|(id, (tx, tx_ctx))| (tx, tx_ctx, id)),
+                );
             }
         } else {
             self.handle_processed_block(*block).await?;
@@ -536,7 +568,7 @@ where
                         .clone(),
                     chain_id: HYLE_TESTNET_CHAIN_ID,
                 };
-                self.add_tx_to_waiting(tx, tx_ctx);
+                self.add_tx_to_waiting(tx, tx_ctx, tx_id);
             }
         }
 
@@ -558,7 +590,7 @@ where
                 .proving_txs
                 .iter()
                 .skip(replay_from)
-                .map(|(tx, tx_ctx)| self.get_provable_blobs(tx.clone(), tx_ctx.clone()))
+                .map(|(tx, tx_ctx, _)| self.get_provable_blobs(tx.clone(), tx_ctx.clone()))
                 .collect::<Vec<_>>();
             let mut join_handles = Vec::new();
             self.prove_supported_blob(post_failure_blobs, &mut join_handles)?;
@@ -691,20 +723,22 @@ where
                     .store
                     .proving_txs
                     .iter()
-                    .map(|(tx, tx_ctx)| self.get_provable_blobs(tx.clone(), tx_ctx.clone()))
+                    .map(|(tx, tx_ctx, _)| self.get_provable_blobs(tx.clone(), tx_ctx.clone()))
                     .collect::<Vec<_>>();
             }
         }
     }
 
-    fn add_tx_to_waiting(&mut self, tx: BlobTransaction, tx_ctx: TxContext) {
+    fn add_tx_to_waiting(&mut self, tx: BlobTransaction, tx_ctx: TxContext, tx_id: TxId) {
         debug!(
             cn =% self.ctx.contract_name,
             tx_hash =% tx.hashed(),
             "Adding waiting tx {}",
             tx.hashed()
         );
-        self.store.unsettled_txs.push((tx.clone(), tx_ctx.clone()));
+        self.store
+            .unsettled_txs
+            .push((tx.clone(), tx_ctx.clone(), tx_id));
     }
 
     fn get_provable_blobs(
@@ -790,7 +824,7 @@ where
             .store
             .proving_txs
             .iter()
-            .position(|(t, _)| t.hashed() == *hash);
+            .position(|(t, _, _)| t.hashed() == *hash);
         if let Some(pos) = tx {
             self.store.proving_txs.remove(pos);
             self.store
@@ -802,7 +836,7 @@ where
                 .store
                 .unsettled_txs
                 .iter()
-                .position(|(t, _)| t.hashed() == *hash);
+                .position(|(t, _, _)| t.hashed() == *hash);
             if let Some(pos) = tx {
                 self.store.unsettled_txs.remove(pos);
                 return Some(pos);
@@ -848,7 +882,7 @@ where
                     cn =% self.ctx.contract_name,
                     tx_hash =% tx,
                     "Unsettled txs: {:?}",
-                    self.store.proving_txs.iter().map(|(t, _)| t.hashed()).collect::<Vec<_>>()
+                    self.store.proving_txs.iter().map(|(t, _, _)| t.hashed()).collect::<Vec<_>>()
                 );
             }
         } else {
@@ -859,7 +893,7 @@ where
     }
 
     fn clear_state_history_after_failed(&mut self, idx: usize) -> Result<()> {
-        for (tx, _ctx) in self.store.proving_txs.clone().iter().skip(idx) {
+        for (tx, _, _) in self.store.proving_txs.clone().iter().skip(idx) {
             debug!(
                 cn =% self.ctx.contract_name,
                 tx_hash =% tx.hashed(),

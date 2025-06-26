@@ -1529,3 +1529,80 @@ async fn test_auto_prover_catchup_mixed_pending_and_failures() -> Result<()> {
 
     Ok(())
 }
+
+#[test_log::test(tokio::test)]
+async fn test_auto_prover_serialize_and_resume() -> Result<()> {
+    // Step 1: Run a couple of blocks with a node state
+    let (mut node_state, mut prover, api_client) = setup_with_timeout(10).await?;
+    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
+
+    prover.handle_block(block_1.clone()).await?;
+
+    let mut proofs = get_txs(&api_client).await;
+    assert_eq!(proofs.len(), 1);
+
+    let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2), proofs.pop().unwrap()]);
+    let block_3 = node_state.craft_block_and_handle(3, vec![]);
+    let blocks = vec![block_1.clone(), block_2.clone(), block_3.clone()];
+
+    api_client.set_block_height(BlockHeight(2));
+
+    // Step 2: Start a prover, catch up with the blocks
+    let temp_dir = tempdir()?;
+    let data_dir = temp_dir.path().to_path_buf();
+    let ctx = Arc::new(AutoProverCtx {
+        data_directory: data_dir,
+        prover: Arc::new(TxExecutorTestProver::<TestContract>::new()),
+        contract_name: ContractName("test".into()),
+        api: None,
+        node: api_client.clone(),
+        default_state: TestContract::default(),
+        buffer_blocks: 0,
+        max_txs_per_proof: 1,
+        tx_working_window_size: 3,
+    });
+
+    let bus = SharedMessageBus::new(BusMetrics::global("default".to_string()));
+    let mut auto_prover = AutoProver::<TestContract>::build(bus.new_handle(), ctx.clone())
+        .await
+        .unwrap();
+
+    for block in &blocks {
+        auto_prover.handle_block(block.clone()).await?;
+    }
+
+    let mut proofs = get_txs(&api_client).await;
+    assert_eq!(proofs.len(), 1);
+
+    // Step 3: Serialize the prover state
+    auto_prover.persist().await?;
+
+    // Step 4: Run a couple more blocks
+    let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]); //, proofs.pop().unwrap()]);
+    let block_5 = node_state.craft_block_and_handle(5, vec![new_blob_tx(5)]);
+    let block_6 = node_state.craft_block_and_handle(6, vec![]);
+    let more_blocks = vec![block_4.clone(), block_5.clone(), block_6.clone()];
+
+    api_client.set_block_height(BlockHeight(5));
+
+    let mut auto_prover = AutoProver::<TestContract>::build(bus.new_handle(), ctx)
+        .await
+        .unwrap();
+
+    // Step 6: Catch up again with all blocks
+    for block in more_blocks.iter() {
+        auto_prover.handle_block(block.clone()).await?;
+    }
+
+    auto_prover.handle_block(block_6.clone()).await?;
+
+    let proofs = get_txs(&api_client).await;
+    assert_eq!(proofs.len(), 3);
+
+    node_state.craft_block_and_handle(7, proofs);
+
+    // Step 7: Check that the contract state is as expected
+    let expected = 1 + 2 + 4 + 5;
+    assert_eq!(read_contract_state(&node_state).value, expected);
+    Ok(())
+}
