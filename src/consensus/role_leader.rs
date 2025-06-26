@@ -104,11 +104,6 @@ impl Consensus {
                             max_delay.clone() - current_timestamp,
                             Duration::from_millis(500),
                         );
-                        tracing::warn!(
-                            "Delaying slot start for {}ms (until {})",
-                            sleep_for.as_millis(),
-                            max_delay
-                        );
                         tokio::spawn(async move {
                             tokio::time::sleep(sleep_for).await;
                             let _ = command_sender
