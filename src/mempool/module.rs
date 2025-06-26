@@ -153,7 +153,12 @@ impl Module for Mempool {
                 _  = log_error!(self.prepare_new_data_proposal(), "Try preparing a new data proposal on tick");
             }
             _ = disseminate_timer.tick() => {
-                if let Ok(true) = log_error!(self.disseminate_data_proposals(None).await, "Disseminate data proposals on tick") {
+                if let Ok(true) = log_error!(
+                    self
+                    .redisseminate_oldest_data_proposal()
+                    .await,
+                    "Disseminate data proposals on tick"
+                ) {
                     disseminate_timer.reset();
                 }
             }

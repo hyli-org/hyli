@@ -1,12 +1,12 @@
 use anyhow::Result;
 use async_stream::try_stream;
 use borsh::{BorshDeserialize, BorshSerialize};
-use futures::Stream;
+use futures::{Stream, StreamExt};
 use hyle_crypto::BlstCrypto;
 use hyle_model::{DataSized, LaneId};
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
-use std::vec;
+use std::{future::Future, vec};
 use tracing::error;
 
 use crate::model::{
@@ -257,6 +257,36 @@ pub trait Storage {
             last_committed_dp_hash.clone(),
             lane_tip.cloned(),
         )
+    }
+
+    /// Get oldest entry in the lane wrt the last committed cut.
+    fn get_oldest_pending_entry(
+        &self,
+        lane_id: &LaneId,
+        last_cut: Option<Cut>,
+    ) -> impl Future<Output = Result<Option<(LaneEntryMetadata, DataProposalHash)>>> {
+        async move {
+            let mut stream = Box::pin(self.get_pending_entries_in_lane(lane_id, last_cut));
+            let mut last_entry = None;
+
+            while let Some(entry) = stream.next().await {
+                match entry? {
+                    MetadataOrMissingHash::Metadata(metadata, dp_hash) => {
+                        last_entry = Some((metadata, dp_hash));
+                    }
+                    MetadataOrMissingHash::MissingHash(_) => {
+                        // Missing entry, should not happen
+                        tracing::warn!(
+                            "Missing entry in lane {} while trying to get oldest entry",
+                            lane_id
+                        );
+                        return Ok(None);
+                    }
+                }
+            }
+
+            Ok(last_entry)
+        }
     }
 
     /// For unknown DataProposals in the new cut, we need to remove all DataProposals that we have after the previous cut.
