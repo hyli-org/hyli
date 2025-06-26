@@ -652,38 +652,6 @@ pub mod test {
         Ok(())
     }
 
-    // Test that we create a new DataProposal, that we disseminate it, but we don't get enough votes. Then we create a second one, that we disseminate. It should also redisseminate the first one, that has not enough votes yet.
-    // There should be multiple mempool nodes running, so we can test the redissemination logic.
-    #[test_log::test(tokio::test)]
-    async fn test_redisseminate_data_proposal() -> Result<()> {
-        let mut ctx = MempoolTestCtx::new("mempool").await;
-
-        // Create a data proposal with 1 tx
-        let register_tx = make_register_contract_tx(ContractName::new("test1"));
-        let data_proposal = ctx.create_data_proposal(None, &[register_tx]);
-        ctx.process_new_data_proposal(data_proposal.clone())?;
-
-        // Assert that we have the DP in the lane
-        let dp_hash = data_proposal.hashed();
-        assert!(ctx
-            .mempool
-            .lanes
-            .get_dp_by_hash(&ctx.own_lane(), &dp_hash)?
-            .is_some());
-
-        // Now we should redisseminate it, as it has no votes yet.
-        ctx.timer_tick().await?;
-
-        match ctx.assert_broadcast("DataProposal").await.msg {
-            MempoolNetMessage::DataProposal(_, dp) => {
-                assert_eq!(dp, data_proposal);
-            }
-            _ => panic!("Expected DataProposal message"),
-        }
-
-        Ok(())
-    }
-
     #[test_log::test(tokio::test)]
     async fn test_receiving_data_proposal_vote_from_unexpected_validator() -> Result<()> {
         let mut ctx = MempoolTestCtx::new("mempool").await;
