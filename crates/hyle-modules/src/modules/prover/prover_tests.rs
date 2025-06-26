@@ -1571,7 +1571,7 @@ async fn test_auto_prover_serialize_and_resume() -> Result<()> {
         auto_prover.handle_block(block.clone()).await?;
     }
 
-    let mut proofs = get_txs(&api_client).await;
+    let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
     // Step 3: Serialize the prover state

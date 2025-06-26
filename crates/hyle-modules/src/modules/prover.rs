@@ -176,7 +176,7 @@ where
             store.tx_chain.truncate(1);
             let history_start = store
                 .state_history
-                .remove(&store.tx_chain.first().expect("must exist"))
+                .remove(store.tx_chain.first().expect("must exist"))
                 .expect("We should have at least one transaction in the tx_chain");
             store.state_history = BTreeMap::new();
             store.state_history.insert(
