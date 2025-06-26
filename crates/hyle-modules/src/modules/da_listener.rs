@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use sdk::{BlockHeight, Hashed, MempoolStatusEvent, SignedBlock};
 use tokio::task::yield_now;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     bus::{BusClientSender, SharedMessageBus},
@@ -150,7 +150,7 @@ impl DAListener {
                     );
                 }
                 let processed_block = self.node_state.handle_signed_block(&block)?;
-                debug!("📦 Handled block outputs: {:?}", processed_block);
+                trace!("📦 Handled block outputs: {:?}", processed_block);
                 self.bus
                     .send_waiting_if_full(NodeStateEvent::NewBlock(Box::new(processed_block)))
                     .await?;
