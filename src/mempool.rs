@@ -798,7 +798,7 @@ pub mod test {
         pub async fn timer_tick(&mut self) -> Result<bool> {
             let Ok(true) = self.mempool.prepare_new_data_proposal() else {
                 info!("No new data proposal to prepare");
-                return self.mempool.redisseminate_oldest_data_proposal().await;
+                return self.mempool.disseminate_data_proposals(None).await;
             };
 
             let (dp_hash, dp) = self
@@ -809,7 +809,11 @@ pub mod test {
                 .context("join next data proposal in preparation")??;
 
             Ok(self.mempool.resume_new_data_proposal(dp, dp_hash).await?
-                || self.mempool.redisseminate_oldest_data_proposal().await?)
+                || self.mempool.disseminate_data_proposals(None).await?)
+        }
+
+        pub async fn disseminate_timer_tick(&mut self) -> Result<bool> {
+            self.mempool.redisseminate_oldest_data_proposal().await
         }
 
         pub async fn handle_poda_update(

@@ -827,6 +827,21 @@ pub mod test {
             }
         }
 
+        assert!(dps.len() == 1, "Should have the most recent DataProposal");
+        assert_eq!(dps[0].1.txs.len(), 1);
+        assert_eq!(dps[0].1.txs[0], tx2);
+
+        ctx1.disseminate_timer_tick().await?;
+
+        // Récupère les deux DataProposals broadcastées par ctx1
+        let mut dps = vec![];
+        for _ in 0..1 {
+            match ctx1.assert_broadcast("DataProposal").await.msg {
+                MempoolNetMessage::DataProposal(hash, dp) => dps.push((hash, dp)),
+                _ => panic!("Expected DataProposal message"),
+            }
+        }
+
         assert!(dps.len() == 1, "Should have the oldest DataProposal");
         assert_eq!(dps[0].1.txs.len(), 1);
         assert_eq!(dps[0].1.txs[0], tx1);

@@ -597,6 +597,37 @@ mod tests {
         assert_eq!(0, entries_from_1_to_1.len());
     }
 
+    // Test to get oldest pending entry in a lane containing 3 DataProposals
+    #[test_log::test(tokio::test)]
+    async fn test_get_oldest_pending_entry() {
+        let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
+        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let mut storage = setup_storage();
+
+        let dp1 = DataProposal::new(None, vec![]);
+        let dp2 = DataProposal::new(Some(dp1.hashed()), vec![]);
+        let dp3 = DataProposal::new(Some(dp2.hashed()), vec![]);
+
+        storage
+            .store_data_proposal(&crypto, lane_id, dp1.clone())
+            .unwrap();
+        storage
+            .store_data_proposal(&crypto, lane_id, dp2.clone())
+            .unwrap();
+        storage
+            .store_data_proposal(&crypto, lane_id, dp3.clone())
+            .unwrap();
+
+        // Get oldest pending entry
+        let oldest_entry = storage
+            .get_oldest_pending_entry(lane_id, None)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(dp1.hashed(), oldest_entry.1);
+    }
+
     #[test_log::test]
     fn test_lane_size() {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
