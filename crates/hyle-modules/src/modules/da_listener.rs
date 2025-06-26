@@ -8,11 +8,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     bus::{BusClientSender, SharedMessageBus},
-    modules::{
-        module_bus_client,
-        signal::{shutdown_aware, ShutdownModule},
-        Module,
-    },
+    modules::{module_bus_client, Module},
     node_state::{metrics::NodeStateMetrics, module::NodeStateEvent, NodeState, NodeStateStore},
     utils::da_codec::{DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest},
 };
