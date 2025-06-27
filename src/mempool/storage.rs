@@ -1,12 +1,12 @@
 use anyhow::Result;
 use async_stream::try_stream;
 use borsh::{BorshDeserialize, BorshSerialize};
-use futures::Stream;
+use futures::{Stream, StreamExt};
 use hyle_crypto::BlstCrypto;
 use hyle_model::{DataSized, LaneId};
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
-use std::vec;
+use std::{future::Future, vec};
 use tracing::error;
 
 use crate::model::{
@@ -257,6 +257,36 @@ pub trait Storage {
             last_committed_dp_hash.clone(),
             lane_tip.cloned(),
         )
+    }
+
+    /// Get oldest entry in the lane wrt the last committed cut.
+    fn get_oldest_pending_entry(
+        &self,
+        lane_id: &LaneId,
+        last_cut: Option<Cut>,
+    ) -> impl Future<Output = Result<Option<(LaneEntryMetadata, DataProposalHash)>>> {
+        async move {
+            let mut stream = Box::pin(self.get_pending_entries_in_lane(lane_id, last_cut));
+            let mut last_entry = None;
+
+            while let Some(entry) = stream.next().await {
+                match entry? {
+                    MetadataOrMissingHash::Metadata(metadata, dp_hash) => {
+                        last_entry = Some((metadata, dp_hash));
+                    }
+                    MetadataOrMissingHash::MissingHash(_) => {
+                        // Missing entry, should not happen
+                        tracing::warn!(
+                            "Missing entry in lane {} while trying to get oldest entry",
+                            lane_id
+                        );
+                        return Ok(None);
+                    }
+                }
+            }
+
+            Ok(last_entry)
+        }
     }
 
     /// For unknown DataProposals in the new cut, we need to remove all DataProposals that we have after the previous cut.
@@ -565,6 +595,37 @@ mod tests {
             .collect()
             .await;
         assert_eq!(0, entries_from_1_to_1.len());
+    }
+
+    // Test to get oldest pending entry in a lane containing 3 DataProposals
+    #[test_log::test(tokio::test)]
+    async fn test_get_oldest_pending_entry() {
+        let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
+        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let mut storage = setup_storage();
+
+        let dp1 = DataProposal::new(None, vec![]);
+        let dp2 = DataProposal::new(Some(dp1.hashed()), vec![]);
+        let dp3 = DataProposal::new(Some(dp2.hashed()), vec![]);
+
+        storage
+            .store_data_proposal(&crypto, lane_id, dp1.clone())
+            .unwrap();
+        storage
+            .store_data_proposal(&crypto, lane_id, dp2.clone())
+            .unwrap();
+        storage
+            .store_data_proposal(&crypto, lane_id, dp3.clone())
+            .unwrap();
+
+        // Get oldest pending entry
+        let oldest_entry = storage
+            .get_oldest_pending_entry(lane_id, None)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(dp1.hashed(), oldest_entry.1);
     }
 
     #[test_log::test]

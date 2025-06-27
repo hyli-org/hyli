@@ -797,6 +797,7 @@ pub mod test {
 
         pub async fn timer_tick(&mut self) -> Result<bool> {
             let Ok(true) = self.mempool.prepare_new_data_proposal() else {
+                debug!("No new data proposal to prepare");
                 return self.mempool.disseminate_data_proposals(None).await;
             };
 
@@ -809,6 +810,10 @@ pub mod test {
 
             Ok(self.mempool.resume_new_data_proposal(dp, dp_hash).await?
                 || self.mempool.disseminate_data_proposals(None).await?)
+        }
+
+        pub async fn disseminate_timer_tick(&mut self) -> Result<bool> {
+            self.mempool.redisseminate_oldest_data_proposal().await
         }
 
         pub async fn handle_poda_update(

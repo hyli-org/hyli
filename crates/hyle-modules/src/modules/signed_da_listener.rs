@@ -183,12 +183,19 @@ impl SignedDAListener {
 
             module_handle_messages! {
                 on_self self,
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(self.config.timeout_client_secs)) => {
+                    warn!("No blocks received in the last {} seconds, restarting client", self.config.timeout_client_secs);
+                    client = self.start_client(self.current_block).await?;
+                }
                 frame = client.recv() => {
                     if let Some(streamed_signed_block) = frame {
                         let _ = log_error!(self.processing_next_frame(streamed_signed_block).await, "Consuming da stream");
-                        client.ping().await?;
+                        if let Err(e) = client.ping().await {
+                            warn!("Ping failed: {}. Restarting client...", e);
+                            client = self.start_client(self.current_block).await?;
+                        }
                     } else {
-                        warn!("Data availability stream ended, restarting client from block {}", self.current_block);
+                        warn!("DA stream connection lost. Reconnecting...");
                         client = self.start_client(self.current_block).await?;
                     }
                 }
