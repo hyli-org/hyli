@@ -22,6 +22,7 @@ COPY --from=builder /usr/src/hyle/target/release/gcs_uploader ./
 COPY --from=builder /usr/src/hyle/target/release/smt_auto_prover ./
 COPY --from=builder /usr/src/hyle/target/release/nuke_tx ./
 COPY --from=builder /usr/src/hyle/target/release/health_check ./
+COPY --from=builder /usr/src/hyle/target/release/node_state_check ./
 
 VOLUME /hyle/data
 
