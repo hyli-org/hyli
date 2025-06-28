@@ -155,10 +155,9 @@ impl super::Mempool {
             .get_oldest_pending_entry(&self.own_lane_id(), last_cut)
             .await?
         else {
-            bail!(
-                "Missing oldest entry in our own lane {}",
-                self.own_lane_id()
-            );
+            // No pending proposal, ignore.
+            debug!("No pending DataProposal in lane {}", &self.own_lane_id());
+            return Ok(true);
         };
 
         self.rebroadcast_data_proposal(&metadata, &dp_hash)
