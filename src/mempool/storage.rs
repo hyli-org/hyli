@@ -726,8 +726,9 @@ mod tests {
             signatures: vec![],
         };
         storage
-            .put_no_verification(lane_id.clone(), (entry, data_proposal))
+            .put_no_verification(lane_id.clone(), (entry, data_proposal.clone()))
             .unwrap();
+        storage.update_lane_tip(lane_id.clone(), data_proposal.hashed(), cumul_size);
         let pending: Vec<_> = storage
             .get_pending_entries_in_lane(lane_id, None)
             .collect()
