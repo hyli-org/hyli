@@ -101,8 +101,8 @@ impl Module for Mempool {
                 dp.estimate_size()
             );
             metadata.cumul_size = LaneBytesSize(69627580);
-            // Don't change signatures - any present should be for the incorrect size,
-            // but that shouldn't matter.
+            // Clear signatures to reset incorrect ones.
+            metadata.signatures.clear();
             lanes.put_no_verification(bugged_lane_id.clone(), (metadata, dp))?;
         } else {
             tracing::warn!("Bugged DP A not found in lanes storage");
@@ -118,8 +118,8 @@ impl Module for Mempool {
                 dp.estimate_size()
             );
             metadata.cumul_size = LaneBytesSize(69853242);
-            // Don't change signatures - any present should be for the incorrect size,
-            // but that shouldn't matter.
+            // Clear signatures to reset incorrect ones.
+            metadata.signatures.clear();
             lanes.put_no_verification(bugged_lane_id.clone(), (metadata, dp))?;
         } else {
             tracing::warn!("Bugged DP B not found in lanes storage");
@@ -258,5 +258,31 @@ impl Module for Mempool {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    #[test_log::test]
+    fn test_mempool_module() {
+        let bugged_dp_hash_a = DataProposalHash(
+            "3fe68d0d7d08581dec2e89291fb34ce77cd591edb47d11ec0f19f7d5b5dd508e".to_string(),
+        );
+        let bugged_dp_hash_b = DataProposalHash(
+            "1d233eb54f1cedd262daacf6ecdf07257333810c5612563c35d41ade71f4bff2".to_string(),
+        );
+        #[allow(clippy::unwrap_used, reason = "hardcoded bugfix")]
+        let bugged_lane_id = LaneId(ValidatorPublicKey(hex::decode("afac1e7cf451ee4659a2b12822acfb54a8aaabb9acd0db917974838ffa7c8da9eb6a856df16a336c772247dc06f2f86e").unwrap()));
+
+        let mut lanes = LanesStorage::new(&PathBuf::from("bug"), BTreeMap::new()).unwrap();
+
+        let bugged_metadata = lanes.get_metadata_by_hash(&bugged_lane_id, &bugged_dp_hash_b);
+        let bugged_dp = lanes.get_dp_by_hash(&bugged_lane_id, &bugged_dp_hash_b);
+
+        tracing::warn!("Bugged tip: {:?}", bugged_metadata);
     }
 }
