@@ -33,7 +33,7 @@ fn main() {
     let max_timestamp_age_secs = args.max_timestamp_age_secs;
 
     // Check age of last block
-    let consensus_info = ureq::get(format!("{}/v1/consensus/info", base_url))
+    let consensus_info = ureq::get(format!("{base_url}/v1/consensus/info"))
         .header("Accept", "application/json")
         .call()
         .expect("Failed to get consensus info")
@@ -55,7 +55,7 @@ fn main() {
     }
 
     // Check NB of unsettled transactions
-    let unsettled_count = ureq::get(format!("{}/v1/unsettled_txs_count", base_url))
+    let unsettled_count = ureq::get(format!("{base_url}/v1/unsettled_txs_count"))
         .call()
         .expect("Failed to get unsettled tx count")
         .body_mut()

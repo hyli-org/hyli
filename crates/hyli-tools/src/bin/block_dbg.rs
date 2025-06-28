@@ -516,7 +516,7 @@ impl BlockDbg {
                                     // Dump state of node state to a file
                                     if let Some(node_state) = &ui_state.node_state {
                                         let mut file = std::fs::File::create("node_state.log")?;
-                                        file.write_all(format!("{:#?}", node_state).as_bytes())?;
+                                        file.write_all(format!("{node_state:#?}").as_bytes())?;
                                         tracing::info!("Node state dumped to {:?}", "node_state.log");
                                     }
                                     ui_state.processing = false;
@@ -582,12 +582,12 @@ impl BlockDbg {
             state.select(Some(selected.min(items.len().saturating_sub(1))));
             let block_title = if ui_state.processing {
                 if let Some(height) = ui_state.processed_height {
-                    format!("Blocks (Processing... {})", height)
+                    format!("Blocks (Processing... {height})")
                 } else {
                     "Blocks (Processing...)".to_string()
                 }
             } else if let Some(height) = ui_state.processed_height {
-                format!("Blocks (Processed up to {})", height)
+                format!("Blocks (Processed up to {height})")
             } else {
                 format!("Blocks (Loaded {}))", blocks.len())
             };

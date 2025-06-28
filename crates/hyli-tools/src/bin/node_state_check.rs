@@ -175,7 +175,7 @@ impl NodeStateCheck {
         let hash_result = hasher.finalize();
         tracing::info!("Node state SHA256: {:x}", hash_result);
         if let Some(expected_hash) = &self.config.expected_hash {
-            if expected_hash != &format!("{:x}", hash_result) {
+            if expected_hash != &format!("{hash_result:x}") {
                 tracing::error!(
                     "Node state hash mismatch! Expected: {}, Got: {:x}",
                     expected_hash,
