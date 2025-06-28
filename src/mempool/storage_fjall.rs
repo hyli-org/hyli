@@ -6,8 +6,7 @@ use fjall::{
     Config, Keyspace, KvSeparationOptions, PartitionCreateOptions, PartitionHandle, Slice,
 };
 use futures::Stream;
-use hyle_model::{DataSized, LaneId};
-use opentelemetry_sdk::metrics::data;
+use hyle_model::LaneId;
 use tracing::info;
 
 use crate::{
@@ -17,7 +16,7 @@ use crate::{
 use hyle_modules::log_warn;
 
 use super::{
-    storage::{CanBePutOnTop, EntryOrMissingHash, LaneEntryMetadata, Storage},
+    storage::{EntryOrMissingHash, LaneEntryMetadata, Storage},
     ValidatorDAG,
 };
 
@@ -94,7 +93,7 @@ impl Storage for LanesStorage {
 
     fn contains(&self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> bool {
         self.by_hash_metadata
-            .contains_key(format!("{}:{}", lane_id, dp_hash))
+            .contains_key(format!("{lane_id}:{dp_hash}"))
             .unwrap_or(false)
     }
 
@@ -104,8 +103,7 @@ impl Storage for LanesStorage {
         dp_hash: &DataProposalHash,
     ) -> Result<Option<LaneEntryMetadata>> {
         let item = log_warn!(
-            self.by_hash_metadata
-                .get(format!("{}:{}", lane_id, dp_hash)),
+            self.by_hash_metadata.get(format!("{lane_id}:{dp_hash}")),
             "Can't find DP metadata {} for validator {}",
             dp_hash,
             lane_id
@@ -119,7 +117,7 @@ impl Storage for LanesStorage {
         dp_hash: &DataProposalHash,
     ) -> Result<Option<DataProposal>> {
         let item = log_warn!(
-            self.by_hash_data.get(format!("{}:{}", lane_id, dp_hash)),
+            self.by_hash_data.get(format!("{lane_id}:{dp_hash}")),
             "Can't find DP data {} for validator {}",
             dp_hash,
             lane_id
@@ -143,7 +141,7 @@ impl Storage for LanesStorage {
         if let Some((lane_hash_tip, _)) = self.lanes_tip.get(&lane_id).cloned() {
             if let Some(lane_entry) = self.get_metadata_by_hash(&lane_id, &lane_hash_tip)? {
                 self.by_hash_metadata
-                    .remove(format!("{}:{}", lane_id, lane_hash_tip))?;
+                    .remove(format!("{lane_id}:{lane_hash_tip}"))?;
                 // Check if have the data locally after regardless - if we don't, print an error but delete metadata anyways for consistency.
                 let Some(dp) = self.get_dp_by_hash(&lane_id, &lane_hash_tip)? else {
                     bail!(
@@ -153,7 +151,7 @@ impl Storage for LanesStorage {
                     );
                 };
                 self.by_hash_data
-                    .remove(format!("{}:{}", lane_id, lane_hash_tip))?;
+                    .remove(format!("{lane_id}:{lane_hash_tip}"))?;
                 self.update_lane_tip(lane_id, lane_hash_tip.clone(), lane_entry.cumul_size);
                 return Ok(Some((lane_hash_tip, (lane_entry, dp))));
             }
@@ -168,11 +166,11 @@ impl Storage for LanesStorage {
     ) -> Result<()> {
         let dp_hash = data_proposal.hashed();
         self.by_hash_metadata.insert(
-            format!("{}:{}", lane_id, dp_hash),
+            format!("{lane_id}:{dp_hash}"),
             encode_metadata_to_item(lane_entry)?,
         )?;
         self.by_hash_data.insert(
-            format!("{}:{}", lane_id, dp_hash),
+            format!("{lane_id}:{dp_hash}"),
             encode_data_proposal_to_item(data_proposal)?,
         )?;
         Ok(())
@@ -184,7 +182,7 @@ impl Storage for LanesStorage {
         dp_hash: &DataProposalHash,
         vote_msgs: T,
     ) -> Result<Vec<ValidatorDAG>> {
-        let key = format!("{}:{}", lane_id, dp_hash);
+        let key = format!("{lane_id}:{dp_hash}");
         let Some(mut lem) = log_warn!(
             self.by_hash_metadata.get(key.clone()),
             "Can't find lane entry metadata {} for lane {}",
@@ -292,10 +290,10 @@ impl Storage for LanesStorage {
     #[cfg(test)]
     fn remove_lane_entry(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) {
         self.by_hash_metadata
-            .remove(format!("{}:{}", lane_id, dp_hash))
+            .remove(format!("{lane_id}:{dp_hash}"))
             .unwrap();
         self.by_hash_data
-            .remove(format!("{}:{}", lane_id, dp_hash))
+            .remove(format!("{lane_id}:{dp_hash}"))
             .unwrap();
     }
 }

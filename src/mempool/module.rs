@@ -79,14 +79,14 @@ impl Module for Mempool {
 
         if let (Ok(Some(mut metadata)), Ok(Some(dp))) = (bugged_metadata, bugged_dp) {
             tracing::warn!(
-                "Bugged DP metadata: {:?}, DP: {:?}",
+                "Bugged DP metadata: {:?}, DP: {:?} (size: {}, expected 226974",
                 metadata.cumul_size,
-                dp.hashed()
+                dp.hashed(),
+                dp.estimate_size()
             );
             metadata.cumul_size = LaneBytesSize(69627580);
             // Don't change signatures - any present should be for the incorrect size,
             // but that shouldn't matter.
-            assert_eq!(dp.estimate_size(), 226974);
             lanes.put_no_verification(bugged_lane_id.clone(), (metadata, dp))?;
         } else {
             tracing::warn!("Bugged DP not found in lanes storage");

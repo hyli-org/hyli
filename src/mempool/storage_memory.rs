@@ -10,7 +10,7 @@ use hyle_model::{LaneBytesSize, LaneId};
 use tracing::info;
 
 use super::{
-    storage::{CanBePutOnTop, EntryOrMissingHash, LaneEntryMetadata, Storage},
+    storage::{EntryOrMissingHash, LaneEntryMetadata, Storage},
     ValidatorDAG,
 };
 use crate::{
