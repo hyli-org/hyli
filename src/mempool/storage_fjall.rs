@@ -6,7 +6,8 @@ use fjall::{
     Config, Keyspace, KvSeparationOptions, PartitionCreateOptions, PartitionHandle, Slice,
 };
 use futures::Stream;
-use hyle_model::LaneId;
+use hyle_model::{DataSized, LaneId};
+use opentelemetry_sdk::metrics::data;
 use tracing::info;
 
 use crate::{
@@ -158,67 +159,6 @@ impl Storage for LanesStorage {
             }
         }
         Ok(None)
-    }
-
-    fn put(
-        &mut self,
-        lane_id: LaneId,
-        (lane_entry, data_proposal): (LaneEntryMetadata, DataProposal),
-    ) -> Result<()> {
-        let dp_hash = data_proposal.hashed();
-
-        if self.contains(&lane_id, &dp_hash) {
-            bail!("DataProposal {} was already in lane", dp_hash);
-        }
-
-        match self.can_be_put_on_top(
-            &lane_id,
-            &dp_hash,
-            lane_entry.parent_data_proposal_hash.as_ref(),
-        ) {
-            CanBePutOnTop::No => bail!(
-                "Can't store DataProposal {}, as parent is unknown ",
-                dp_hash
-            ),
-            CanBePutOnTop::Yes => {
-                // Add DataProposal metadata to validator's lane
-                self.by_hash_metadata.insert(
-                    format!("{}:{}", lane_id, dp_hash),
-                    encode_metadata_to_item(lane_entry.clone())?,
-                )?;
-
-                // Add DataProposal data to validator's lane
-                self.by_hash_data.insert(
-                    format!("{}:{}", lane_id, dp_hash),
-                    encode_data_proposal_to_item(data_proposal)?,
-                )?;
-
-                // Validator's lane tip is only updated if DP-chain is respected
-                self.update_lane_tip(lane_id, dp_hash, lane_entry.cumul_size);
-
-                Ok(())
-            }
-            CanBePutOnTop::Fork => {
-                let last_known_hash = self.lanes_tip.get(&lane_id);
-                bail!(
-                    "DataProposal cannot be put in lane because it creates a fork: last dp hash {:?} while proposed parent_data_proposal_hash: {:?}",
-                    last_known_hash,
-                    lane_entry.parent_data_proposal_hash
-                )
-            }
-            CanBePutOnTop::AlreadyOnTop => {
-                // This can happen if the lane tip is updated (via a commit) before the data proposal arrived.
-                self.by_hash_metadata.insert(
-                    format!("{}:{}", lane_id, dp_hash),
-                    encode_metadata_to_item(lane_entry)?,
-                )?;
-                self.by_hash_data.insert(
-                    format!("{}:{}", lane_id, dp_hash),
-                    encode_data_proposal_to_item(data_proposal)?,
-                )?;
-                Ok(())
-            }
-        }
     }
 
     fn put_no_verification(

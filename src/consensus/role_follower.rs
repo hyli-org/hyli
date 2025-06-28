@@ -349,6 +349,7 @@ impl Consensus {
                 .find(|(v, ..)| v == lane_id)
             {
                 if &cut.1 == data_proposal_hash {
+                    // TODO: ensure other metadata is the same as the previous cut.
                     debug!(
                         "DataProposal {} from lane {} was already in the last cut, not checking PoDA",
                         data_proposal_hash, lane_id

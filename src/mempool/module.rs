@@ -2,8 +2,8 @@ use hyle_modules::{log_error, module_handle_messages};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use crate::{
-    consensus::ConsensusEvent, model::*, node_state::module::NodeStateEvent,
-    p2p::network::MsgWithHeader, utils::conf::P2pMode,
+    consensus::ConsensusEvent, mempool::storage::Storage, model::*,
+    node_state::module::NodeStateEvent, p2p::network::MsgWithHeader, utils::conf::P2pMode,
 };
 
 use client_sdk::tcp_client::TcpServerMessage;
@@ -40,7 +40,7 @@ impl Module for Mempool {
         )
         .unwrap_or_default();
 
-        let lanes_tip =
+        let mut lanes_tip =
             Self::load_from_disk::<BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>>(
                 ctx.config
                     .data_directory
@@ -48,6 +48,49 @@ impl Module for Mempool {
                     .as_path(),
             )
             .unwrap_or_default();
+
+        // Testnet bug fix - we had an issue that led to a specific DP being double-counted. This accounts for that in nodes that behaved correctly.
+        // This is a workaround for the issue, and should be removed in the future.
+        // The issue is that the staking was updated to a higher value, and we can't go back down to the correct, lower value.
+        // So as a hack, we'll just update the metadata with the higher value.
+        // The nodes won't actually redisseminate this DP, and any new one will use correct values.
+        let bugged_dp_hash = DataProposalHash(
+            "3fe68d0d7d08581dec2e89291fb34ce77cd591edb47d11ec0f19f7d5b5dd508e".to_string(),
+        );
+        #[allow(clippy::unwrap_used, reason = "hardcoded bugfix")]
+        let bugged_lane_id = LaneId(ValidatorPublicKey(hex::decode("afac1e7cf451ee4659a2b12822acfb54a8aaabb9acd0db917974838ffa7c8da9eb6a856df16a336c772247dc06f2f86e").unwrap()));
+        let bugged_tip = lanes_tip.get_mut(&bugged_lane_id);
+        tracing::warn!("Bugged tip: {:?}", bugged_tip);
+        if let Some((dp, size)) = bugged_tip {
+            if dp == &bugged_dp_hash {
+                if size.0 == 69400606 {
+                    tracing::warn!("Fixing bugged tip in Mempool");
+                    *size = LaneBytesSize(69627580);
+                } else {
+                    tracing::warn!("Bugged tip already fixed in Mempool");
+                }
+            }
+        }
+
+        let mut lanes = LanesStorage::new(&ctx.config.data_directory, lanes_tip)?;
+
+        let bugged_metadata = lanes.get_metadata_by_hash(&bugged_lane_id, &bugged_dp_hash);
+        let bugged_dp = lanes.get_dp_by_hash(&bugged_lane_id, &bugged_dp_hash);
+
+        if let (Ok(Some(mut metadata)), Ok(Some(dp))) = (bugged_metadata, bugged_dp) {
+            tracing::warn!(
+                "Bugged DP metadata: {:?}, DP: {:?}",
+                metadata.cumul_size,
+                dp.hashed()
+            );
+            metadata.cumul_size = LaneBytesSize(69627580);
+            // Don't change signatures - any present should be for the incorrect size,
+            // but that shouldn't matter.
+            assert_eq!(dp.estimate_size(), 226974);
+            lanes.put_no_verification(bugged_lane_id.clone(), (metadata, dp))?;
+        } else {
+            tracing::warn!("Bugged DP not found in lanes storage");
+        }
 
         // Register the Hyli contract to be able to handle registrations.
         #[allow(clippy::expect_used, reason = "not held across await")]
@@ -65,7 +108,7 @@ impl Module for Mempool {
             conf: ctx.config.clone(),
             crypto: Arc::clone(&ctx.crypto),
             metrics,
-            lanes: LanesStorage::new(&ctx.config.data_directory, lanes_tip)?,
+            lanes,
             inner: attributes,
         })
     }
@@ -146,7 +189,6 @@ impl Module for Mempool {
                 // Fatal here, if we loose the dp in the join next error, it's lost
                 if let Ok((own_dp_hash, own_dp)) = log_error!(own_dp, "Getting result for data proposal preparation from joinset"){
                     _ = log_error!(self.resume_new_data_proposal(own_dp, own_dp_hash).await, "Resuming own data proposal creation");
-                    disseminate_timer.reset();
                 }
             }
             _ = new_dp_timer.tick() => {
