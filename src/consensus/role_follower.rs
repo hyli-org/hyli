@@ -349,6 +349,7 @@ impl Consensus {
                 .find(|(v, ..)| v == lane_id)
             {
                 if &cut.1 == data_proposal_hash {
+                    // TODO: ensure other metadata is the same as the previous cut.
                     debug!(
                         "DataProposal {} from lane {} was already in the last cut, not checking PoDA",
                         data_proposal_hash, lane_id
@@ -676,21 +677,17 @@ impl Consensus {
         // TODO: improve on this.
         #[cfg(not(test))]
         let node_to_ask = {
+            use rand::prelude::IteratorRandom;
             let bonded = self.bft_round_state.staking.bonded();
             if bonded.is_empty() {
                 None
             } else {
-                let i: usize = rand::random();
-                // Skip us
-                if bonded
-                    .get(i)
-                    .map(|x| x == self.crypto.validator_pubkey())
-                    .unwrap_or(true)
-                {
-                    bonded.get((i + 1) % bonded.len()).cloned()
-                } else {
-                    bonded.get(i).cloned()
-                }
+                let mut rng = rand::thread_rng();
+                bonded
+                    .iter()
+                    .filter(|pk| pk != &self.crypto.validator_pubkey())
+                    .choose(&mut rng)
+                    .cloned()
             }
         };
         // For test deterministically always use the sender
