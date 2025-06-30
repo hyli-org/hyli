@@ -2,8 +2,8 @@ use hyle_modules::{log_error, module_handle_messages};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use crate::{
-    consensus::ConsensusEvent, mempool::storage::Storage, model::*,
-    node_state::module::NodeStateEvent, p2p::network::MsgWithHeader, utils::conf::P2pMode,
+    consensus::ConsensusEvent, model::*, node_state::module::NodeStateEvent,
+    p2p::network::MsgWithHeader, utils::conf::P2pMode,
 };
 
 use client_sdk::tcp_client::TcpServerMessage;
@@ -40,7 +40,7 @@ impl Module for Mempool {
         )
         .unwrap_or_default();
 
-        let mut lanes_tip =
+        let lanes_tip =
             Self::load_from_disk::<BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>>(
                 ctx.config
                     .data_directory
@@ -49,81 +49,10 @@ impl Module for Mempool {
             )
             .unwrap_or_default();
 
-        // Testnet bug fix - we had an issue that led to a specific DP being double-counted. This accounts for that in nodes that behaved correctly.
-        // This is a workaround for the issue, and should be removed in the future.
-        // The issue is that the staking was updated to a higher value, and we can't go back down to the correct, lower value.
-        // So as a hack, we'll just update the metadata with the higher value.
-        // The nodes won't actually redisseminate this DP, and any new one will use correct values.
-        let bugged_dp_hash_a = DataProposalHash(
-            "3fe68d0d7d08581dec2e89291fb34ce77cd591edb47d11ec0f19f7d5b5dd508e".to_string(),
-        );
-        let bugged_dp_hash_b = DataProposalHash(
-            "1d233eb54f1cedd262daacf6ecdf07257333810c5612563c35d41ade71f4bff2".to_string(),
-        );
-        #[allow(clippy::unwrap_used, reason = "hardcoded bugfix")]
-        let bugged_lane_id = LaneId(ValidatorPublicKey(hex::decode("afac1e7cf451ee4659a2b12822acfb54a8aaabb9acd0db917974838ffa7c8da9eb6a856df16a336c772247dc06f2f86e").unwrap()));
-        let bugged_tip = lanes_tip.get_mut(&bugged_lane_id);
-        tracing::warn!("Bugged tip: {:?}", bugged_tip);
-        if let Some((dp, size)) = bugged_tip {
-            if dp == &bugged_dp_hash_a {
-                if size.0 == 69400606 {
-                    tracing::warn!("Fixing bugged tip in Mempool");
-                    *size = LaneBytesSize(69627580);
-                } else {
-                    tracing::warn!("Bugged tip already fixed in Mempool");
-                }
-            } else if dp == &bugged_dp_hash_b {
-                if size.0 == 69626268 {
-                    tracing::warn!("Fixing bugged tip in Mempool");
-                    *size = LaneBytesSize(69853242);
-                } else {
-                    tracing::warn!("Bugged tip already fixed in Mempool");
-                }
-            } else {
-                tracing::warn!(
-                    "Bugged tip in Mempool has unexpected DP hash: {:?}, expected {:?} or {:?}",
-                    dp,
-                    bugged_dp_hash_a,
-                    bugged_dp_hash_b
-                );
-            }
-        }
-
-        let mut lanes = LanesStorage::new(&ctx.config.data_directory, lanes_tip)?;
-
-        let bugged_metadata = lanes.get_metadata_by_hash(&bugged_lane_id, &bugged_dp_hash_a);
-        let bugged_dp = lanes.get_dp_by_hash(&bugged_lane_id, &bugged_dp_hash_a);
-        if let (Ok(Some(mut metadata)), Ok(Some(dp))) = (bugged_metadata, bugged_dp) {
-            tracing::warn!(
-                "Bugged DP metadata: {:?}, DP: {:?} (size: {}, expected 226974",
-                metadata.cumul_size,
-                dp.hashed(),
-                dp.estimate_size()
-            );
-            metadata.cumul_size = LaneBytesSize(69627580);
-            // Clear signatures to reset incorrect ones.
-            metadata.signatures.clear();
-            lanes.put_no_verification(bugged_lane_id.clone(), (metadata, dp))?;
-        } else {
-            tracing::warn!("Bugged DP A not found in lanes storage");
-        }
-
-        let bugged_metadata = lanes.get_metadata_by_hash(&bugged_lane_id, &bugged_dp_hash_b);
-        let bugged_dp = lanes.get_dp_by_hash(&bugged_lane_id, &bugged_dp_hash_b);
-        if let (Ok(Some(mut metadata)), Ok(Some(dp))) = (bugged_metadata, bugged_dp) {
-            tracing::warn!(
-                "Bugged DP metadata: {:?}, DP: {:?} (size: {}, expected 225662",
-                metadata.cumul_size,
-                dp.hashed(),
-                dp.estimate_size()
-            );
-            metadata.cumul_size = LaneBytesSize(69853242);
-            // Clear signatures to reset incorrect ones.
-            metadata.signatures.clear();
-            lanes.put_no_verification(bugged_lane_id.clone(), (metadata, dp))?;
-        } else {
-            tracing::warn!("Bugged DP B not found in lanes storage");
-        }
+        // NB - testnet
+        // Because of a bug, the dataproposal 3fe68d0d7d08581dec2e89291fb34ce77cd591edb47d11ec0f19f7d5b5dd508e
+        // in lane afac1e7cf451ee4659a2b12822acfb54a8aaabb9acd0db917974838ffa7c8da9eb6a856df16a336c772247dc06f2f86e
+        // was double-counted, and the size was updated to a higher value.
 
         // Register the Hyli contract to be able to handle registrations.
         #[allow(clippy::expect_used, reason = "not held across await")]
@@ -141,7 +70,7 @@ impl Module for Mempool {
             conf: ctx.config.clone(),
             crypto: Arc::clone(&ctx.crypto),
             metrics,
-            lanes,
+            lanes: LanesStorage::new(&ctx.config.data_directory, lanes_tip)?,
             inner: attributes,
         })
     }
@@ -258,31 +187,5 @@ impl Module for Mempool {
         }
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::*;
-
-    #[test_log::test]
-    fn test_mempool_module() {
-        let bugged_dp_hash_a = DataProposalHash(
-            "3fe68d0d7d08581dec2e89291fb34ce77cd591edb47d11ec0f19f7d5b5dd508e".to_string(),
-        );
-        let bugged_dp_hash_b = DataProposalHash(
-            "1d233eb54f1cedd262daacf6ecdf07257333810c5612563c35d41ade71f4bff2".to_string(),
-        );
-        #[allow(clippy::unwrap_used, reason = "hardcoded bugfix")]
-        let bugged_lane_id = LaneId(ValidatorPublicKey(hex::decode("afac1e7cf451ee4659a2b12822acfb54a8aaabb9acd0db917974838ffa7c8da9eb6a856df16a336c772247dc06f2f86e").unwrap()));
-
-        let mut lanes = LanesStorage::new(&PathBuf::from("bug"), BTreeMap::new()).unwrap();
-
-        let bugged_metadata = lanes.get_metadata_by_hash(&bugged_lane_id, &bugged_dp_hash_b);
-        let bugged_dp = lanes.get_dp_by_hash(&bugged_lane_id, &bugged_dp_hash_b);
-
-        tracing::warn!("Bugged tip: {:?}", bugged_metadata);
     }
 }
