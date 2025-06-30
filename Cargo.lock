@@ -1234,9 +1234,9 @@ dependencies = [
 
 [[package]]
 name = "assertables"
-version = "9.7.1"
+version = "9.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8ea58571e7a793f14036fcb1e63b4350b5121a8765d194c0efc234e752c8199"
+checksum = "54caed2f33dafa664c6b8b6d4064d5045bdfd43517b0d31758943df205e63226"
 
 [[package]]
 name = "async-attributes"
