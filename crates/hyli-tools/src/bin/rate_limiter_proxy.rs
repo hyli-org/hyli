@@ -184,7 +184,7 @@ async fn proxy_handler(
     let (parts, body) = req.into_parts();
     let hyper_req = hyper::Request::from_parts(parts, body);
 
-    debug!("Forwarding request to target: {}", hyper_req.uri());
+    tracing::debug!("Forwarding request to target: {}", hyper_req.uri());
 
     // Forward the request
     match client.request(hyper_req).await {
