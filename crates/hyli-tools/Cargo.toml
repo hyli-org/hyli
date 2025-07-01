@@ -96,7 +96,7 @@ rate-proxy = [
     "dep:chrono",
 ]
 
-default = ["ui"]
+default = ["ui", "rate-proxy"]
 ui = ["dep:ratatui", "dep:crossterm"]
 
 [package.metadata.cargo-machete]
