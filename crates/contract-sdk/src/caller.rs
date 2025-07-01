@@ -47,8 +47,7 @@ impl ExecutionContext {
                 Ok(())
             }
             None => Err(alloc::format!(
-                "Blob with contract name {} not found in callees",
-                contract_name
+                "Blob with contract name {contract_name} not found in callees"
             )),
         }
     }

@@ -94,8 +94,7 @@ fn check_transfer_blob(blobs: &IndexedBlobs, index: BlobIndex, amount: u128) -> 
             Ok(())
         }
         els => Err(format!(
-            "Wrong HyllarAction, should be a transfer {:?} to 'staking' but was {:?}",
-            amount, els
+            "Wrong HyllarAction, should be a transfer {amount:?} to 'staking' but was {els:?}"
         )),
     }
 }

@@ -182,7 +182,7 @@ impl Display for CutDisplay<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut cut_str = String::new();
         for (lane_id, hash, size, _) in self.0.iter() {
-            cut_str.push_str(&format!("{}:{}({}), ", lane_id, hash, size));
+            cut_str.push_str(&format!("{lane_id}:{hash}({size}), "));
         }
         write!(f, "{}", cut_str.trim_end())
     }

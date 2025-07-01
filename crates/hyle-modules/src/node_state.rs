@@ -282,7 +282,7 @@ impl NodeState {
                                 .push(TransactionStateEvent::Sequenced);
                         }
                         Err(e) => {
-                            let err = format!("Failed to handle blob transaction: {:?}", e);
+                            let err = format!("Failed to handle blob transaction: {e:?}");
                             error!(tx_hash = %tx_id.1, "{err}");
                             block_under_construction
                                 .transactions_events
@@ -670,7 +670,7 @@ impl NodeState {
                 }
                 Err(e) => {
                     unsettlable_txs.insert(bth.clone());
-                    let e = format!("Failed to settle: {}", e);
+                    let e = format!("Failed to settle: {e}");
                     debug!(tx_hash = %bth, "{e}");
                     events.push(TransactionStateEvent::SettleEvent(e));
                 }
@@ -812,7 +812,7 @@ impl NodeState {
                 }
                 Err(err) => {
                     // We have a valid proof of failure, we short-circuit.
-                    let msg = format!("Could not settle blob proof output for 'hyle': {:?}", err);
+                    let msg = format!("Could not settle blob proof output for 'hyle': {err:?}");
                     debug!("{msg}");
                     events.push(TransactionStateEvent::SettleEvent(msg));
                     Some(Err(()))
@@ -837,8 +837,7 @@ impl NodeState {
             ) {
                 // Not a valid proof, log it and try the next one.
                 let msg = format!(
-                    "Could not settle blob proof output #{} for contract '{}': {}",
-                    i, contract_name, msg
+                    "Could not settle blob proof output #{i} for contract '{contract_name}': {msg}"
                 );
                 debug!("{msg}");
                 events.push(TransactionStateEvent::SettleEvent(msg));
@@ -1696,7 +1695,7 @@ pub mod test {
             data_proposals: vec![(
                 LaneId::default(),
                 vec![DataProposal::new(
-                    Some(DataProposalHash(format!("{}", height))),
+                    Some(DataProposalHash(format!("{height}"))),
                     txs,
                 )],
             )],

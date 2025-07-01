@@ -139,7 +139,9 @@ impl Consensus {
         if sender != round_leader {
             bail!(
                 "Prepare consensus message for {} {} does not come from current leader {}. I won't vote for it.",
-                self.bft_round_state.slot, self.bft_round_state.view, round_leader
+                self.bft_round_state.slot,
+                self.bft_round_state.view,
+                round_leader
             );
         }
 
@@ -371,7 +373,9 @@ impl Consensus {
 
             // Verify that DataProposal received enough votes
             if voting_power < f + 1 {
-                bail!("PoDA for lane {lane_id} does not have enough validators that signed his DataProposal");
+                bail!(
+                    "PoDA for lane {lane_id} does not have enough validators that signed his DataProposal"
+                );
             }
 
             // Verify that PoDA signature is valid
@@ -382,7 +386,9 @@ impl Consensus {
             }) {
                 Ok(valid) => {
                     if !valid {
-                        bail!("Failed to aggregate signatures into valid one. Messages might be different.");
+                        bail!(
+                            "Failed to aggregate signatures into valid one. Messages might be different."
+                        );
                     }
                 }
                 Err(err) => bail!("Failed to verify PoDA: {}", err),
@@ -481,27 +487,27 @@ impl Consensus {
             || is_next_slot_and_current_proposal_is_present
         {
             debug!(
-            "Trying to process timeout Certificate against consensus proposal slot: {}, view: {}",
-            prepare_slot, prepare_view,
-        );
+                "Trying to process timeout Certificate against consensus proposal slot: {}, view: {}",
+                prepare_slot, prepare_view,
+            );
 
             // Check the ticket matches the CP
             if let TCKind::PrepareQC((_, cp)) = tc_kind_data {
                 if cp != consensus_proposal {
                     bail!(
-                    "Timeout Certificate does not match consensus proposal. Expected {}, got {}",
-                    cp.hashed(),
-                    consensus_proposal.hashed()
-                );
+                        "Timeout Certificate does not match consensus proposal. Expected {}, got {}",
+                        cp.hashed(),
+                        consensus_proposal.hashed()
+                    );
                 }
             }
 
             tracing::debug!(
-            "Slot info service: prepare slot {}, bft round state slot {}, current proposal slot {}",
-            prepare_slot,
-            self.bft_round_state.slot,
-            self.bft_round_state.current_proposal.slot
-        );
+                "Slot info service: prepare slot {}, bft round state slot {}, current proposal slot {}",
+                prepare_slot,
+                self.bft_round_state.slot,
+                self.bft_round_state.current_proposal.slot
+            );
 
             // If ticket for next slot && correct parent hash, fast forward
             if is_next_slot_and_current_proposal_is_present
@@ -512,7 +518,11 @@ impl Consensus {
                 // Safety assumption: we can't actually verify a TC for the next slot, but since it matches our hash,
                 // since we have no staking actions in the prepare we're good.
                 if self.current_proposal_changes_voting_power() {
-                    bail!("Timeout Certificate slot {} view {} is for the next slot, and current proposal changes voting power", prepare_slot, prepare_view);
+                    bail!(
+                        "Timeout Certificate slot {} view {} is for the next slot, and current proposal changes voting power",
+                        prepare_slot,
+                        prepare_view
+                    );
                 }
 
                 // SOOOOO here we're stuck actually, because we don't have the commit certificate.

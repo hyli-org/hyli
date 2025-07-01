@@ -230,10 +230,10 @@ pub fn validate_hyle_contract_blobs(tx: &BlobTransaction) -> Result<(), String> 
                 };
 
                 let expected_data = borsh::to_vec(&nuke_data.parameters.txs)
-                    .map_err(|e| format!("Failed to serialize tx hashes: {}", e))?;
+                    .map_err(|e| format!("Failed to serialize tx hashes: {e}"))?;
                 let secp_blob = CheckSecp256k1::new(&calldata, &expected_data)
                     .expect()
-                    .map_err(|e| format!("Failed to verify secp256k1 signature: {}", e))?;
+                    .map_err(|e| format!("Failed to verify secp256k1 signature: {e}"))?;
 
                 // Assert that the secp256k1 signature is from Hyli
                 // FIXME: use config to pass the pubkey
@@ -254,8 +254,7 @@ pub fn validate_hyle_contract_blobs(tx: &BlobTransaction) -> Result<(), String> 
                 // Do nothing
             } else {
                 return Err(format!(
-                    "Unsupported permissioned action on hyle contract: {:?}",
-                    blob
+                    "Unsupported permissioned action on hyle contract: {blob:?}"
                 ));
             }
         }
