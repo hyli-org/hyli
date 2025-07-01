@@ -674,9 +674,7 @@ impl Consensus {
         let enum_variant_name: &'static str = (&signed_msg.msg).into();
         self.bus
             .send(OutboundMessage::send(to, signed_msg))
-            .context(format!(
-                "Failed to send {enum_variant_name} msg on the bus"
-            ))?;
+            .context(format!("Failed to send {enum_variant_name} msg on the bus"))?;
         Ok(())
     }
 

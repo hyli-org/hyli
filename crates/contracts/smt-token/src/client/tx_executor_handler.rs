@@ -26,7 +26,9 @@ impl SmtTokenProvableState {
     pub fn get_state(&self) -> HashMap<Identity, Account> {
         self.0
             .store()
-            .leaves_map().values().map(|account| (account.address.clone(), account.clone()))
+            .leaves_map()
+            .values()
+            .map(|account| (account.address.clone(), account.clone()))
             .collect()
     }
 
@@ -582,9 +584,6 @@ mod tests {
             tx_ctx: None,
             private_input: vec![],
         });
-        assert_eq!(
-            ho.unwrap_err(),
-            format!("Owner account {owner} not found")
-        );
+        assert_eq!(ho.unwrap_err(), format!("Owner account {owner} not found"));
     }
 }

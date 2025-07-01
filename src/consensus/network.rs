@@ -185,10 +185,7 @@ impl Display for ConsensusNetMessage {
 
         match self {
             ConsensusNetMessage::Prepare(cp, ticket, view) => {
-                write!(
-                    f,
-                    "{enum_variant} CP: {cp}, ticket: {ticket}, view: {view}"
-                )
+                write!(f, "{enum_variant} CP: {cp}, ticket: {ticket}, view: {view}")
             }
             ConsensusNetMessage::PrepareVote(cphash) => {
                 write!(f, "{} (CP hash: {})", enum_variant, cphash.msg.0)

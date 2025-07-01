@@ -100,9 +100,7 @@ async fn main() {
                 let contract_name = tx.contract_name.clone();
 
                 node.send_tx_proof(tx).await.unwrap();
-                println!(
-                    "✅ Proof tx sent for {contract_name}. Tx hash: {tx_hash}"
-                );
+                println!("✅ Proof tx sent for {contract_name}. Tx hash: {tx_hash}");
             }
         }
         Commands::VerifyIdentity {
@@ -143,9 +141,7 @@ async fn main() {
                 let tx_hash = tx.hashed();
                 let contract_name = tx.contract_name.clone();
                 node.send_tx_proof(tx).await.unwrap();
-                println!(
-                    "✅ Proof tx sent for {contract_name}. Tx hash: {tx_hash}"
-                );
+                println!("✅ Proof tx sent for {contract_name}. Tx hash: {tx_hash}");
             }
         }
     }

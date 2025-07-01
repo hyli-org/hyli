@@ -167,10 +167,7 @@ impl Consensus {
         if received_slot > self.bft_round_state.slot || received_view > self.bft_round_state.view {
             debug!(
                 "Timeout Certificate (Slot: {}, view: {}) does not match expected (Slot: {}, view: {})",
-                received_slot,
-                received_view,
-                self.bft_round_state.slot,
-                self.bft_round_state.view,
+                received_slot, received_view, self.bft_round_state.slot, self.bft_round_state.view,
             );
             return Ok(());
         }
@@ -325,7 +322,10 @@ impl Consensus {
             .staking
             .compute_voting_power(&timeout_validators);
 
-        info!("Got {voting_power} voting power with {len} timeout requests for the same view {}. f is {f}", self.store.bft_round_state.view);
+        info!(
+            "Got {voting_power} voting power with {len} timeout requests for the same view {}. f is {f}",
+            self.store.bft_round_state.view
+        );
 
         // Count requests and if f+1 requests, and not already part of it, join the mutiny
         if voting_power > f && !timeout_validators.contains(self.crypto.validator_pubkey()) {
@@ -363,7 +363,9 @@ impl Consensus {
                 TimeoutState::CertificateEmitted
             )
         {
-            debug!("⏲️ ⏲️ Creating a timeout certificate with {len} timeout requests and {voting_power} voting power");
+            debug!(
+                "⏲️ ⏲️ Creating a timeout certificate with {len} timeout requests and {voting_power} voting power"
+            );
 
             let ticket: Result<_, anyhow::Error> =
                 match &self.bft_round_state.timeout.highest_seen_prepare_qc {

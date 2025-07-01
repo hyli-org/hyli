@@ -53,9 +53,7 @@ impl MempoolMetrics {
             received_dp: my_meter
                 .u64_counter(format!("{mempool}_received_dp"))
                 .build(),
-            hashed_dp: my_meter
-                .u64_counter(format!("{mempool}_hashed_dp"))
-                .build(),
+            hashed_dp: my_meter.u64_counter(format!("{mempool}_hashed_dp")).build(),
             processed_dp: my_meter
                 .u64_counter(format!("{mempool}_processed_dp"))
                 .build(),

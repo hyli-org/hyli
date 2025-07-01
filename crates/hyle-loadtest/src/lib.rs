@@ -433,10 +433,8 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
                     contract_name: random_hyllar_contract.clone(),
                     verifier: verifier.clone(),
                     program_id: hyle_contracts::HYLLAR_ID.to_vec().into(),
-                    state_commitment: Hyllar::custom(format!(
-                        "faucet@{random_hydentity_contract}"
-                    ))
-                    .commit(),
+                    state_commitment: Hyllar::custom(format!("faucet@{random_hydentity_contract}"))
+                        .commit(),
                     ..Default::default()
                 }
                 .as_blob("hyle".into(), None, None),
