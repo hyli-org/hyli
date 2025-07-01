@@ -36,40 +36,38 @@ impl MempoolMetrics {
         let mempool = "mempool";
 
         MempoolMetrics {
-            api_tx: my_meter.u64_counter(format!("{}_api_tx", mempool)).build(),
-            dp_vote: my_meter.u64_counter(format!("{}_dp_vote", mempool)).build(),
+            api_tx: my_meter.u64_counter(format!("{mempool}_api_tx")).build(),
+            dp_vote: my_meter.u64_counter(format!("{mempool}_dp_vote")).build(),
             sync_request: my_meter
-                .u64_counter(format!("{}_sync_request", mempool))
+                .u64_counter(format!("{mempool}_sync_request"))
                 .build(),
             sync_reply: my_meter
-                .u64_counter(format!("{}_sync_reply", mempool))
+                .u64_counter(format!("{mempool}_sync_reply"))
                 .build(),
-            mempool_sync: my_meter.u64_counter(format!("{}_sync", mempool)).build(),
+            mempool_sync: my_meter.u64_counter(format!("{mempool}_sync")).build(),
             tx_waiting_dissemination: my_meter
-                .u64_gauge(format!("{}_tx_waiting_dissemination", mempool))
+                .u64_gauge(format!("{mempool}_tx_waiting_dissemination"))
                 .build(),
-            new_cut: my_meter.u64_counter(format!("{}_new_cut", mempool)).build(),
+            new_cut: my_meter.u64_counter(format!("{mempool}_new_cut")).build(),
 
             received_dp: my_meter
-                .u64_counter(format!("{}_received_dp", mempool))
+                .u64_counter(format!("{mempool}_received_dp"))
                 .build(),
-            hashed_dp: my_meter
-                .u64_counter(format!("{}_hashed_dp", mempool))
-                .build(),
+            hashed_dp: my_meter.u64_counter(format!("{mempool}_hashed_dp")).build(),
             processed_dp: my_meter
-                .u64_counter(format!("{}_processed_dp", mempool))
+                .u64_counter(format!("{mempool}_processed_dp"))
                 .build(),
             constructed_block: my_meter
-                .u64_counter(format!("{}_constructed_block", mempool))
+                .u64_counter(format!("{mempool}_constructed_block"))
                 .build(),
             on_data_vote: my_meter
-                .u64_counter(format!("{}_on_data_vote", mempool))
+                .u64_counter(format!("{mempool}_on_data_vote"))
                 .build(),
             dp_disseminations: my_meter
-                .u64_counter(format!("{}_dp_disseminations", mempool))
+                .u64_counter(format!("{mempool}_dp_disseminations"))
                 .build(),
             created_data_proposals: my_meter
-                .u64_counter(format!("{}_created_data_proposals", mempool))
+                .u64_counter(format!("{mempool}_created_data_proposals"))
                 .build(),
         }
     }
@@ -112,25 +110,25 @@ impl MempoolMetrics {
         self.dp_vote.add(
             1,
             &[
-                KeyValue::new("sender", format!("{}", sender)),
-                KeyValue::new("dest", format!("{}", dest)),
+                KeyValue::new("sender", format!("{sender}")),
+                KeyValue::new("dest", format!("{dest}")),
             ],
         )
     }
 
     pub fn add_received_dp(&self, lane_id: &LaneId) {
         self.received_dp
-            .add(1, &[KeyValue::new("lane_id", format!("{}", lane_id))])
+            .add(1, &[KeyValue::new("lane_id", format!("{lane_id}"))])
     }
 
     pub fn add_hashed_dp(&self, lane_id: &LaneId) {
         self.hashed_dp
-            .add(1, &[KeyValue::new("lane_id", format!("{}", lane_id))])
+            .add(1, &[KeyValue::new("lane_id", format!("{lane_id}"))])
     }
 
     pub fn add_processed_dp(&self, lane_id: &LaneId) {
         self.processed_dp
-            .add(1, &[KeyValue::new("lane_id", format!("{}", lane_id))])
+            .add(1, &[KeyValue::new("lane_id", format!("{lane_id}"))])
     }
 
     /// *emitted* a sync request
@@ -138,8 +136,8 @@ impl MempoolMetrics {
         self.sync_request.add(
             1,
             &[
-                KeyValue::new("lane", format!("{}", lane)),
-                KeyValue::new("requester", format!("{}", requester)),
+                KeyValue::new("lane", format!("{lane}")),
+                KeyValue::new("requester", format!("{requester}")),
             ],
         );
     }
@@ -148,8 +146,8 @@ impl MempoolMetrics {
         self.sync_reply.add(
             1,
             &[
-                KeyValue::new("lane", format!("{}", lane)),
-                KeyValue::new("requester", format!("{}", requester)),
+                KeyValue::new("lane", format!("{lane}")),
+                KeyValue::new("requester", format!("{requester}")),
             ],
         )
     }
@@ -159,8 +157,8 @@ impl MempoolMetrics {
         self.mempool_sync.add(
             1,
             &[
-                KeyValue::new("lane", format!("{}", lane)),
-                KeyValue::new("requester", format!("{}", requester)),
+                KeyValue::new("lane", format!("{lane}")),
+                KeyValue::new("requester", format!("{requester}")),
                 KeyValue::new("status", "processed"),
             ],
         );
@@ -171,8 +169,8 @@ impl MempoolMetrics {
         self.mempool_sync.add(
             1,
             &[
-                KeyValue::new("lane", format!("{}", lane)),
-                KeyValue::new("requester", format!("{}", requester)),
+                KeyValue::new("lane", format!("{lane}")),
+                KeyValue::new("requester", format!("{requester}")),
                 KeyValue::new("status", "failure"),
             ],
         );
@@ -183,8 +181,8 @@ impl MempoolMetrics {
         self.mempool_sync.add(
             1,
             &[
-                KeyValue::new("lane", format!("{}", lane)),
-                KeyValue::new("requester", format!("{}", requester)),
+                KeyValue::new("lane", format!("{lane}")),
+                KeyValue::new("requester", format!("{requester}")),
                 KeyValue::new("status", "throttled"),
             ],
         );

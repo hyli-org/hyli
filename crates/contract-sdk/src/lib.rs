@@ -282,14 +282,14 @@ mod tests {
     fn test_txhash_display() {
         let txhash_str = "test_txhash";
         let txhash = TxHash::new(txhash_str);
-        assert_eq!(format!("{}", txhash), txhash_str);
+        assert_eq!(format!("{txhash}"), txhash_str);
     }
 
     #[test]
     fn test_blobindex_display() {
         let index = 42;
         let blob_index = BlobIndex::from(index);
-        assert_eq!(format!("{}", blob_index), index.to_string());
+        assert_eq!(format!("{blob_index}"), index.to_string());
     }
 
     #[test]
