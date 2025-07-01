@@ -43,7 +43,7 @@ impl ConfMaker {
                 format!("{}-{}", prefix, self.i)
             },
             p2p: P2pConf {
-                public_address: format!("127.0.0.1:{}", p2p_port),
+                public_address: format!("127.0.0.1:{p2p_port}"),
                 server_port: p2p_port,
                 mode: if prefix == "indexer" {
                     P2pMode::None
@@ -54,7 +54,7 @@ impl ConfMaker {
             },
             admin_server_port: admin_port,
             da_server_port: da_port,
-            da_public_address: format!("127.0.0.1:{}", da_port),
+            da_public_address: format!("127.0.0.1:{da_port}"),
             tcp_server_port: tcp_port,
             rest_server_port: rest_port,
             websocket: NodeWebSocketConfig {
@@ -104,7 +104,7 @@ pub struct TestProcess {
 async fn stream_output<R: tokio::io::AsyncRead + Unpin>(output: R) -> anyhow::Result<()> {
     let mut reader = tokio::io::BufReader::new(output).lines();
     while let Some(line) = reader.next_line().await? {
-        println!("{}", line);
+        println!("{line}");
     }
     Ok(())
 }

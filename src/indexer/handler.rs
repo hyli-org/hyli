@@ -236,7 +236,7 @@ impl Indexer {
                         block
                             .lane_ids
                             .get(&tx_id.1)
-                            .context(format!("No lane id present for tx {}", tx_id)),
+                            .context(format!("No lane id present for tx {tx_id}")),
                         "Getting lane id for tx"
                     )
                     .unwrap_or(&LaneId::default())

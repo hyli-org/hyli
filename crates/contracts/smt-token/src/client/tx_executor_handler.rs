@@ -26,9 +26,7 @@ impl SmtTokenProvableState {
     pub fn get_state(&self) -> HashMap<Identity, Account> {
         self.0
             .store()
-            .leaves_map()
-            .iter()
-            .map(|(_, account)| (account.address.clone(), account.clone()))
+            .leaves_map().values().map(|account| (account.address.clone(), account.clone()))
             .collect()
     }
 
@@ -343,7 +341,7 @@ impl SmtTokenProvableState {
                     .get_account(&sender)?
                     .ok_or(anyhow!("Sender account {} not found", sender))?;
                 if sender == recipient {
-                    Ok(format!("Transferred {} to {}", amount, recipient))
+                    Ok(format!("Transferred {amount} to {recipient}"))
                 } else {
                     let mut recipient_account = self
                         .get_account(&recipient)?
@@ -383,7 +381,7 @@ impl SmtTokenProvableState {
                     .get_account(&owner)?
                     .ok_or(anyhow!("Owner account {} not found", owner))?;
                 if owner == recipient {
-                    Ok(format!("Transferred {} to {}", amount, recipient))
+                    Ok(format!("Transferred {amount} to {recipient}"))
                 } else {
                     let mut recipient_account = self
                         .get_account(&recipient)?
@@ -445,7 +443,7 @@ impl SmtTokenProvableState {
                 if let Err(e) = self.0.update(owner_key, owner_account) {
                     bail!("Failed to update owner account: {e}");
                 }
-                Ok(format!("Approved {} to {}", amount, spender))
+                Ok(format!("Approved {amount} to {spender}"))
             }
         }
     }
@@ -553,7 +551,7 @@ mod tests {
         });
         assert!(ho.is_ok());
         let output = String::from_utf8(ho.unwrap().0).unwrap();
-        assert!(output.contains(&format!("Transferred {} to {}", amount, recipient)));
+        assert!(output.contains(&format!("Transferred {amount} to {recipient}")));
     }
 
     #[test]
@@ -586,7 +584,7 @@ mod tests {
         });
         assert_eq!(
             ho.unwrap_err(),
-            format!("Owner account {} not found", owner)
+            format!("Owner account {owner} not found")
         );
     }
 }

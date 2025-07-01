@@ -170,8 +170,7 @@ pub fn welcome_message(conf: &conf::Conf) {
                 format!("| peers: [{}]", conf.p2p.peers.join(" ")).to_string()
             };
             format!(
-                "{} | {}ms | timestamps: {} {}",
-                c_mode, sd, timestamp_checks, peers
+                "{c_mode} | {sd}ms | timestamps: {timestamp_checks} {peers}"
             )
         } else {
             "".to_string()

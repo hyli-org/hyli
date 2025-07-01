@@ -36,7 +36,7 @@ impl HttpClient {
         let authority = uri.authority().context("URI Authority")?.clone();
         let host = authority.host().to_string();
         let port = authority.port_u16().unwrap_or(80);
-        let addr = format!("{}:{}", host, port);
+        let addr = format!("{host}:{port}");
         let stream = crate::net::TcpStream::connect(addr)
             .await
             .context("TCP connection")?;

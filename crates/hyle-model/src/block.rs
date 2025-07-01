@@ -46,7 +46,7 @@ impl Block {
         Ok(self
             .dp_parent_hashes
             .get(tx_hash)
-            .context(format!("No parent dp hash found for tx {}", tx_hash))?
+            .context(format!("No parent dp hash found for tx {tx_hash}"))?
             .clone())
     }
 
@@ -54,7 +54,7 @@ impl Block {
         Ok(self
             .lane_ids
             .get(tx_hash)
-            .context(format!("No lane id found for tx {}", tx_hash))?
+            .context(format!("No lane id found for tx {tx_hash}"))?
             .clone())
     }
 

@@ -141,7 +141,7 @@ pub mod noir {
         let salt: [u8; 16] = rng.random();
         let mut salt_hex = String::with_capacity(salt.len() * 2);
         for b in &salt {
-            write!(salt_hex, "{:02x}", b).unwrap();
+            write!(salt_hex, "{b:02x}").unwrap();
         }
 
         // Create the temp files struct which will auto-clean on function exit
@@ -395,7 +395,7 @@ mod tests {
                     }]
                 );
             }
-            Err(e) => panic!("Noir verification failed: {:?}", e),
+            Err(e) => panic!("Noir verification failed: {e:?}"),
         }
     }
 

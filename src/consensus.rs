@@ -659,8 +659,7 @@ impl Consensus {
         self.bus
             .send(OutboundMessage::broadcast(signed_msg))
             .context(format!(
-                "Failed to broadcast {} msg on the bus",
-                enum_variant_name
+                "Failed to broadcast {enum_variant_name} msg on the bus"
             ))?;
         Ok(())
     }
@@ -676,8 +675,7 @@ impl Consensus {
         self.bus
             .send(OutboundMessage::send(to, signed_msg))
             .context(format!(
-                "Failed to send {} msg on the bus",
-                enum_variant_name
+                "Failed to send {enum_variant_name} msg on the bus"
             ))?;
         Ok(())
     }
@@ -1168,7 +1166,7 @@ pub mod test {
 
             match rec {
                 Ok(OutboundMessage::BroadcastMessage(net_msg)) => {
-                    panic!("{description}: Broadcast message found: {:?}", net_msg)
+                    panic!("{description}: Broadcast message found: {net_msg:?}")
                 }
                 els => {
                     info!("{description}: Got {:?}", els);
@@ -1192,7 +1190,7 @@ pub mod test {
             } = rec
             {
                 if let NetMessage::ConsensusMessage(msg) = net_msg {
-                    assert_eq!(to, &dest, "Got message {:?}", msg);
+                    assert_eq!(to, &dest, "Got message {msg:?}");
                     Box::pin(async move { msg })
                 } else {
                     warn!("{description}: skipping non-consensus message, details in debug");
