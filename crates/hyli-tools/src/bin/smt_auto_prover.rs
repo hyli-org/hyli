@@ -35,6 +35,8 @@ async fn main() -> Result<()> {
 
     setup_tracing(&config.log_format, "smt auto prover".to_string())?;
 
+    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
+
     tracing::info!("Starting smt auto prover");
 
     let bus = SharedMessageBus::new(BusMetrics::global("smt_auto_prover".to_string()));

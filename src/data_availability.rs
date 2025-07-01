@@ -190,7 +190,7 @@ impl DataAvailability {
                         .try_send(peer_ip.clone(), DataAvailabilityEvent::SignedBlock(signed_block))
                         .is_ok() {
                             catchup_joinset.spawn(async move {
-                                (block_hashes, peer_ip, retries + 1)
+                                (block_hashes, peer_ip, 0)
                             });
                         }
                         else if retries > 10 {
@@ -200,7 +200,7 @@ impl DataAvailability {
                             // Retry sending the block
                             block_hashes.push(hash);
                             catchup_joinset.spawn(async move {
-                                tokio::time::sleep(Duration::from_millis(100)).await;
+                                tokio::time::sleep(Duration::from_millis(100 * (retries as u64))).await;
                                 (block_hashes, peer_ip, retries + 1)
                             });
                         }

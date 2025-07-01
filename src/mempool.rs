@@ -234,7 +234,7 @@ pub type ValidatorDAG = SignedByValidator<(DataProposalHash, LaneBytesSize)>;
 impl Display for MempoolNetMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let enum_variant: &'static str = self.into();
-        write!(f, "{}", enum_variant)
+        write!(f, "{enum_variant}")
     }
 }
 
@@ -641,8 +641,7 @@ impl Mempool {
     ) -> Result<()> {
         let enum_variant_name: &'static str = (&net_message).into();
         let error_msg = format!(
-            "Broadcasting MempoolNetMessage::{} msg only for: {:?} on the bus",
-            enum_variant_name, only_for
+            "Broadcasting MempoolNetMessage::{enum_variant_name} msg only for: {only_for:?} on the bus"
         );
         self.bus
             .send(OutboundMessage::broadcast_only_for(
@@ -797,6 +796,7 @@ pub mod test {
 
         pub async fn timer_tick(&mut self) -> Result<bool> {
             let Ok(true) = self.mempool.prepare_new_data_proposal() else {
+                debug!("No new data proposal to prepare");
                 return self.mempool.disseminate_data_proposals(None).await;
             };
 
@@ -809,6 +809,10 @@ pub mod test {
 
             Ok(self.mempool.resume_new_data_proposal(dp, dp_hash).await?
                 || self.mempool.disseminate_data_proposals(None).await?)
+        }
+
+        pub async fn disseminate_timer_tick(&mut self) -> Result<bool> {
+            self.mempool.redisseminate_oldest_data_proposal().await
         }
 
         pub async fn handle_poda_update(
@@ -854,16 +858,14 @@ pub mod test {
                         msg
                     } else {
                         println!(
-                            "{description}: Mempool OutboundMessage message is missing, found {}",
-                            net_msg
+                            "{description}: Mempool OutboundMessage message is missing, found {net_msg}"
                         );
                         self.assert_broadcast_only_for(description)
                     }
                 }
                 _ => {
                     println!(
-                        "{description}: Broadcast OutboundMessage message is missing, found {:?}",
-                        rec
+                        "{description}: Broadcast OutboundMessage message is missing, found {rec:?}",
                     );
                     self.assert_broadcast_only_for(description)
                 }
@@ -945,18 +947,12 @@ pub mod test {
                         if let NetMessage::MempoolMessage(msg) = net_msg {
                             msg
                         } else {
-                            println!(
-                            "{description}: Mempool OutboundMessage message is missing, found {}",
-                            net_msg
-                        );
+                            println!("{description}: Mempool OutboundMessage message is missing, found {net_msg}");
                             self.assert_broadcast(description.as_str()).await
                         }
                     }
                     _ => {
-                        println!(
-                        "{description}: Broadcast OutboundMessage message is missing, found {:?}",
-                        rec
-                    );
+                        println!("{description}: Broadcast OutboundMessage message is missing, found {rec:?}");
                         self.assert_broadcast(description.as_str()).await
                     }
                 }
