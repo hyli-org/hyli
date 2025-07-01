@@ -1695,7 +1695,7 @@ pub mod test {
             data_proposals: vec![(
                 LaneId::default(),
                 vec![DataProposal::new(
-                    Some(DataProposalHash(format!("{:064x}", height))),
+                    Some(DataProposalHash(format!("{height:064x}"))),
                     txs,
                 )],
             )],
