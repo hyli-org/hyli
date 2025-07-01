@@ -177,7 +177,7 @@ async fn build_hyle_node() -> Result<(String, NodeIntegrationCtx)> {
         pg.get_host_port_ipv4(5432).await.unwrap()
     );
     Ok((
-        format!("http://localhost:{}/", rest_port),
+        format!("http://localhost:{rest_port}/"),
         builder.build().await?,
     ))
 }

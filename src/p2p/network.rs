@@ -55,11 +55,11 @@ impl Display for NetMessage {
         let enum_variant: &'static str = self.into();
         match self {
             NetMessage::MempoolMessage(msg) => {
-                _ = write!(f, "NetMessage::{} ", enum_variant);
+                _ = write!(f, "NetMessage::{enum_variant} ");
                 write!(f, "{} (sent at {})", msg.msg, msg.header.msg.timestamp)
             }
             NetMessage::ConsensusMessage(msg) => {
-                _ = write!(f, "NetMessage::{} ", enum_variant);
+                _ = write!(f, "NetMessage::{enum_variant} ");
                 write!(f, "{} (sent at {})", msg.msg, msg.header.msg.timestamp)
             }
         }

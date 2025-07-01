@@ -129,7 +129,7 @@ where
             tcp_server: TcpServer::start_with_opts(
                 port,
                 max_frame_length,
-                format!("P2P-{}", node_id).as_str(),
+                format!("P2P-{node_id}").as_str(),
             )
             .await?,
             peers: HashMap::new(),
@@ -526,7 +526,7 @@ where
         let peer = self
             .peers
             .get(pubkey)
-            .context(format!("Peer not found {}", pubkey))?;
+            .context(format!("Peer not found {pubkey}"))?;
 
         tracing::info!(
             "Attempt to reconnect to {}/{}",
@@ -625,7 +625,7 @@ where
             canal
         );
 
-        let addr = format!("{}/{}", public_addr, canal);
+        let addr = format!("{public_addr}/{canal}");
 
         self.connecting.insert(
             (public_addr.clone(), canal.clone()),
@@ -688,8 +688,7 @@ where
         {
             self.try_start_connection_for_peer(&validator_pub_key, canal)
                 .context(format!(
-                    "Re-handshaking after message sending error with peer {}",
-                    validator_pub_key
+                    "Re-handshaking after message sending error with peer {validator_pub_key}"
                 ))?;
             bail!(
                 "Failed to send message to peer {}: {:?}",

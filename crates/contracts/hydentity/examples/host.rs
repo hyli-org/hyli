@@ -88,7 +88,7 @@ async fn main() {
 
             // Send the blob transaction
             let blob_tx_hash = node.send_tx_blob(transaction.to_blob_tx()).await.unwrap();
-            println!("✅ Blob tx sent. Tx hash: {}", blob_tx_hash);
+            println!("✅ Blob tx sent. Tx hash: {blob_tx_hash}");
 
             // ----
             // Prove the state transition
@@ -100,10 +100,7 @@ async fn main() {
                 let contract_name = tx.contract_name.clone();
 
                 node.send_tx_proof(tx).await.unwrap();
-                println!(
-                    "✅ Proof tx sent for {}. Tx hash: {}",
-                    contract_name, tx_hash
-                );
+                println!("✅ Proof tx sent for {contract_name}. Tx hash: {tx_hash}");
             }
         }
         Commands::VerifyIdentity {
@@ -134,7 +131,7 @@ async fn main() {
 
             // Send the blob transaction
             let blob_tx_hash = node.send_tx_blob(transaction.to_blob_tx()).await.unwrap();
-            println!("✅ Blob tx sent. Tx hash: {}", blob_tx_hash);
+            println!("✅ Blob tx sent. Tx hash: {blob_tx_hash}");
 
             // ----
             // Prove the state transition
@@ -144,10 +141,7 @@ async fn main() {
                 let tx_hash = tx.hashed();
                 let contract_name = tx.contract_name.clone();
                 node.send_tx_proof(tx).await.unwrap();
-                println!(
-                    "✅ Proof tx sent for {}. Tx hash: {}",
-                    contract_name, tx_hash
-                );
+                println!("✅ Proof tx sent for {contract_name}. Tx hash: {tx_hash}");
             }
         }
     }
