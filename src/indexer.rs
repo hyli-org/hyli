@@ -133,14 +133,13 @@ impl Indexer {
             on_self self,
             listen<NodeStateEvent> event => {
                 let NodeStateEvent::NewBlock(ref block) = event;
-                if block.block_height.0 == 1_000_001 {
+                if block.block_height.0 <= 1_000_000 {
                     info!("Indexer received a block at height 1_000_001, stopping the indexer for a clean dump.");
-                    break;
-                }
 
-                _ = log_error!(self.handle_node_state_event(event)
-                    .await,
-                    "Indexer handling node state event");
+                    _ = log_error!(self.handle_node_state_event(event)
+                        .await,
+                        "Indexer handling node state event");
+                }
             }
 
             listen<MempoolStatusEvent> _event => {
