@@ -409,9 +409,11 @@ impl Indexer {
                         proof,
                     } = s;
 
+                    let pr: Vec<u8> = vec![];
+
                     b.push_bind(parent_data_proposal_hash)
                         .push_bind(tx_hash)
-                        .push_bind(proof);
+                        .push_bind(pr);
                 });
 
                 query_builder.push(" ON CONFLICT(parent_dp_hash, tx_hash) DO NOTHING");
