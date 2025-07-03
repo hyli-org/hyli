@@ -71,7 +71,7 @@ stakers = {}
 keep_tokens_in_faucet = false
 
 [websocket]
-enabled = true
+enabled = false
 server_port = 8080
 ws_path = "/ws"
 health_path = "/ws_health"

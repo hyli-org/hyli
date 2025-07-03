@@ -132,9 +132,15 @@ impl Indexer {
         module_handle_messages! {
             on_self self,
             listen<NodeStateEvent> event => {
-                _ = log_error!(self.handle_node_state_event(event)
-                    .await,
-                    "Indexer handling node state event");
+                let NodeStateEvent::NewBlock(ref block) = event;
+                // todo: use a config parameter to control the block height threshold
+                if block.block_height.0 >= 1_000_000 {
+                    _ = log_error!(self.handle_node_state_event(event)
+                        .await,
+                        "Indexer handling node state event");
+                } else{
+                    tracing::trace!("Skipping block height {} in indexer", block.block_height.0);
+                }
             }
 
             listen<MempoolStatusEvent> _event => {
