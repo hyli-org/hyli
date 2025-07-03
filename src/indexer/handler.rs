@@ -384,49 +384,67 @@ impl Indexer {
 
         // Insert proofs into the database with batching
         if !self.handler_store.tx_data_proofs.is_empty() {
-            const PROOFS_PARAMS: usize = 3; // parent_dp_hash, tx_hash, proof
-            let proofs_batch_size = calculate_optimal_batch_size(PROOFS_PARAMS);
-            let tx_data_proofs = std::mem::take(&mut self.handler_store.tx_data_proofs);
-            let chunks: Vec<_> = tx_data_proofs.chunks(proofs_batch_size).collect();
+            // Calculate total size of proofs
+            let total_proof_size: usize = self
+                .handler_store
+                .tx_data_proofs
+                .iter()
+                .map(|p| p.proof.len())
+                .sum();
 
-            info!(
-                "Inserting {} proofs in {} batches of up to {} items each (calculated from {} params per item)",
-                tx_data_proofs.len(),
-                chunks.len(),
-                proofs_batch_size,
-                PROOFS_PARAMS
-            );
+            // Only upload proofs if we have more than the configured minimum size
+            if total_proof_size > self.conf.gcs_min_upload_size {
+                let tx_data_proofs = std::mem::take(&mut self.handler_store.tx_data_proofs);
 
-            for (batch_idx, chunk) in chunks.iter().enumerate() {
-                let mut query_builder = QueryBuilder::<Postgres>::new(
-                    "INSERT INTO proofs (parent_dp_hash, tx_hash, proof) ",
-                );
+                // Upload to GCS if client is configured
+                if let Some(gcs_client) = &self.gcs_client {
+                    if let (Some(bucket), Some(prefix)) =
+                        (&self.conf.gcs_bucket, &self.conf.gcs_prefix)
+                    {
+                        for proof_store in &tx_data_proofs {
+                            let object_name = format!(
+                                "{}/proofs/{}/{}.bin",
+                                prefix,
+                                proof_store.parent_data_proposal_hash.0,
+                                proof_store.tx_hash.0
+                            );
 
-                query_builder.push_values(chunk.iter(), |mut b, s| {
-                    let TxProofStore {
-                        tx_hash,
-                        parent_data_proposal_hash,
-                        proof,
-                    } = s;
+                            let upload_request =
+                                google_cloud_storage::http::objects::upload::UploadObjectRequest {
+                                    bucket: bucket.clone(),
+                                    generation: Some(0), // 0 means - don't overwrite existing objects
+                                    ..Default::default()
+                                };
 
-                    b.push_bind(parent_data_proposal_hash)
-                        .push_bind(tx_hash)
-                        .push_bind(proof);
-                });
+                            let media = google_cloud_storage::http::objects::upload::Media::new(
+                                object_name.clone(),
+                            );
+                            let upload_type =
+                                google_cloud_storage::http::objects::upload::UploadType::Simple(
+                                    media,
+                                );
 
-                query_builder.push(" ON CONFLICT(parent_dp_hash, tx_hash) DO NOTHING");
-
-                query_builder
-                    .build()
-                    .execute(&mut *transaction)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Inserting proofs batch {} of {}",
-                            batch_idx + 1,
-                            chunks.len()
-                        )
-                    })?;
+                            // Upload asynchronously, log errors but don't fail the indexing process
+                            let gcs_client = gcs_client.clone();
+                            let upload_request = upload_request.clone();
+                            let proof = proof_store.proof.clone();
+                            let tx_hash = proof_store.tx_hash.0.clone();
+                            let upload_type = upload_type.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = gcs_client
+                                    .upload_object(&upload_request, proof, &upload_type)
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        "Failed to upload proof {} to GCS: {}",
+                                        tx_hash,
+                                        e
+                                    );
+                                }
+                            });
+                        }
+                    }
+                }
             }
         }
 
@@ -884,11 +902,14 @@ impl Indexer {
                 // Then insert the proof in to the proof table.
                 match &tx_data.proof {
                     Some(proof_data) => {
-                        self.handler_store.tx_data_proofs.push(TxProofStore {
-                            tx_hash: tx_hash.clone(),
-                            parent_data_proposal_hash: parent_data_proposal_hash.clone(),
-                            proof: proof_data.0.clone(),
-                        });
+                        // Only pushing proof if GCS client is configured
+                        if self.gcs_client.is_some() {
+                            self.handler_store.tx_data_proofs.push(TxProofStore {
+                                tx_hash: tx_hash.clone(),
+                                parent_data_proposal_hash: parent_data_proposal_hash.clone(),
+                                proof: proof_data.0.clone(),
+                            });
+                        }
                     }
                     None => {
                         tracing::trace!(
