@@ -17,6 +17,7 @@ use axum::{
     Router,
 };
 use futures::{SinkExt, StreamExt};
+use google_cloud_storage::client::{Client, ClientConfig};
 use handler::IndexerHandlerStore;
 use hyle_model::api::{
     BlobWithStatus, TransactionStatusDb, TransactionTypeDb, TransactionWithBlobs,
@@ -56,7 +57,6 @@ pub struct IndexerApiState {
     new_sub_sender: mpsc::Sender<(ContractName, WebSocket)>,
 }
 
-#[derive(Debug)]
 pub struct Indexer {
     bus: IndexerBusClient,
     state: IndexerApiState,
@@ -64,11 +64,15 @@ pub struct Indexer {
     subscribers: Subscribers,
     handler_store: IndexerHandlerStore,
     conf: IndexerConf,
+    gcs_client: Option<Client>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct IndexerConf {
     query_buffer_size: usize,
+    pub gcs_bucket: Option<String>,
+    pub gcs_prefix: Option<String>,
+    pub gcs_min_upload_size: usize,
 }
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/indexer/migrations");
@@ -92,6 +96,23 @@ impl Module for Indexer {
 
         let subscribers = HashMap::new();
 
+        // Initialize GCS client if bucket and prefix are configured
+        let gcs_client = if ctx.0.indexer.gcs_bucket.is_some() && ctx.0.indexer.gcs_prefix.is_some()
+        {
+            match ClientConfig::default().with_auth().await {
+                Ok(config) => {
+                    tracing::info!("Initializing GCS client for proof storage");
+                    Some(Client::new(config))
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to initialize GCS client for proof storage: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let indexer = Indexer {
             bus,
             state: IndexerApiState {
@@ -102,6 +123,7 @@ impl Module for Indexer {
             subscribers,
             handler_store: IndexerHandlerStore::default(),
             conf: ctx.0.indexer.clone(),
+            gcs_client,
         };
 
         if let Ok(mut guard) = ctx.1.router.lock() {
@@ -374,7 +396,11 @@ mod test {
             handler_store: IndexerHandlerStore::default(),
             conf: IndexerConf {
                 query_buffer_size: 100,
+                gcs_bucket: None,
+                gcs_prefix: None,
+                gcs_min_upload_size: 10 * 1024 * 1024, // 10MB
             },
+            gcs_client: None,
         }
     }
 

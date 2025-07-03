@@ -80,3 +80,7 @@ events = ["node_state", "new_block", "new_tx"]
 
 [indexer]
 query_buffer_size = 100
+
+gcs_bucket = "testnet_proofs"
+gcs_prefix = "local"
+gcs_min_upload_size = 10485760 # 10MB
