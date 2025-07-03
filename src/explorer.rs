@@ -102,19 +102,19 @@ impl Module for Explorer {
 
         let explorer = Explorer::new(bus, pool).await;
 
-        if let Ok(mut guard) = ctx.1.router.lock() {
-            if let Some(router) = guard.take() {
-                guard.replace(router.nest("/v1/indexer", explorer.api(Some(&ctx.1))));
-                return Ok(explorer);
-            }
-        }
-
         if let Ok(mut guard) = ctx.1.openapi.lock() {
             tracing::info!("Adding OpenAPI for Indexer");
             let openapi = guard.clone().nest("/v1/indexer", IndexerAPI::openapi());
             *guard = openapi;
         } else {
             tracing::error!("Failed to add OpenAPI for Indexer");
+        }
+
+        if let Ok(mut guard) = ctx.1.router.lock() {
+            if let Some(router) = guard.take() {
+                guard.replace(router.nest("/v1/indexer", explorer.api(Some(&ctx.1))));
+                return Ok(explorer);
+            }
         }
 
         anyhow::bail!("context router should be available");
@@ -128,7 +128,7 @@ impl Module for Explorer {
 impl Explorer {
     pub async fn start(&mut self) -> Result<()> {
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             listen<WsExplorerBlobTx> info => {
                 self.send_blob_transaction_to_websocket_subscribers(
                     info
@@ -265,7 +265,6 @@ impl Explorer {
             .await;
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn send_blob_transaction_to_websocket_subscribers(&self, info: WsExplorerBlobTx) {
         let WsExplorerBlobTx {
             tx,
