@@ -25,6 +25,7 @@ use hydentity::Hydentity;
 use hyle_crypto::SharedBlstCrypto;
 use hyle_modules::{
     modules::{
+        admin::{AdminApi, AdminApiRunContext},
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::{DAListener, DAListenerConf},
@@ -171,10 +172,7 @@ pub fn welcome_message(conf: &conf::Conf) {
             } else {
                 format!("| peers: [{}]", conf.p2p.peers.join(" ")).to_string()
             };
-            format!(
-                "{} | {}ms | timestamps: {} {}",
-                c_mode, sd, timestamp_checks, peers
-            )
+            format!("{c_mode} | {sd}ms | timestamps: {timestamp_checks} {peers}")
         } else {
             "".to_string()
         },
@@ -352,6 +350,7 @@ async fn common_main(
                 data_directory: config.data_directory.clone(),
                 da_read_from: config.da_read_from.clone(),
                 start_block: None,
+                timeout_client_secs: config.da_timeout_client_secs,
             })
             .await?;
     }
@@ -397,6 +396,16 @@ async fn common_main(
                 )
                 .with_registry(registry),
             )
+            .await?;
+    }
+
+    if config.run_admin_server {
+        handler
+            .build_module::<AdminApi>(AdminApiRunContext::new(
+                config.admin_server_port,
+                Router::new(),
+                config.admin_server_max_body_size,
+            ))
             .await?;
     }
 

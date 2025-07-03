@@ -58,7 +58,7 @@ struct MockModule<T> {
     bus: MockModuleBusClient,
     _t: std::marker::PhantomData<T>,
 }
-impl<T> MockModule<T> {
+impl<T: 'static + Send> MockModule<T> {
     async fn new(bus: SharedMessageBus) -> Result<Self> {
         Ok(Self {
             bus: MockModuleBusClient::new_from_bus(bus).await,
@@ -67,12 +67,12 @@ impl<T> MockModule<T> {
     }
     async fn start(&mut self) -> Result<()> {
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
         };
         Ok(())
     }
 }
-impl<T: Send> Module for MockModule<T> {
+impl<T: Send + 'static> Module for MockModule<T> {
     type Context = SharedRunContext;
     fn build(
         bus: SharedMessageBus,
@@ -368,13 +368,11 @@ impl NodeIntegrationCtx {
         }
         Ok(())
     }
-    pub async fn wait_for_genesis_event(&mut self) -> Result<()> {
-        let _: GenesisEvent = self.bus_client.recv().await?;
-        Ok(())
+    pub async fn wait_for_genesis_event(&mut self) -> Result<GenesisEvent> {
+        Ok(self.bus_client.recv().await?)
     }
-    pub async fn wait_for_processed_genesis(&mut self) -> Result<()> {
-        let _: NodeStateEvent = self.bus_client.recv().await?;
-        Ok(())
+    pub async fn wait_for_processed_genesis(&mut self) -> Result<NodeStateEvent> {
+        Ok(self.bus_client.recv().await?)
     }
     pub async fn wait_for_n_blocks(&mut self, n: u32) -> Result<()> {
         for _ in 0..n {

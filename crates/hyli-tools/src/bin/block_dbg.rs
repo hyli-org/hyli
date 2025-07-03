@@ -10,9 +10,11 @@ use crossterm::{
 };
 use hyle_contract_sdk::{Block, NodeStateEvent, TransactionData, TxId, api::NodeInfo};
 use hyle_contract_sdk::{BlockHeight, SignedBlock};
-use hyle_modules::{
-    bus::BusClientSender,
-    modules::prover::{AutoProver, AutoProverCtx},
+use hyle_model::DataEvent;
+use hyle_modules::modules::{
+    da_listener::DAListenerConf,
+    prover::{AutoProver, AutoProverCtx},
+    signed_da_listener::SignedDAListener,
 };
 use hyle_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
@@ -23,9 +25,7 @@ use hyle_modules::{
         rest::{ApiDoc, RestApi, RestApiRunContext, Router},
     },
     node_state::NodeState,
-    utils::da_codec::DataAvailabilityEvent,
 };
-use hyli_tools::signed_da_listener::DAListenerConf;
 use ratatui::{
     prelude::*,
     widgets::{Block as TuiBlock, *},
@@ -168,10 +168,11 @@ async fn main() -> Result<()> {
 
     if !has_blocks {
         handler
-            .build_module::<hyli_tools::signed_da_listener::DAListener>(DAListenerConf {
+            .build_module::<SignedDAListener>(DAListenerConf {
                 data_directory: PathBuf::from("data"),
                 da_read_from: "localhost:4141".to_string(),
                 start_block: Some(BlockHeight(0)),
+                timeout_client_secs: 10,
             })
             .await?;
     } else {
@@ -194,6 +195,7 @@ async fn main() -> Result<()> {
                 prover: Arc::new(prover),
                 contract_name: "oranj".into(),
                 node: Arc::new(node_client),
+                api: None,
                 default_state: Default::default(),
                 buffer_blocks: 0,
                 max_txs_per_proof: 40,
@@ -256,7 +258,7 @@ async fn main() -> Result<()> {
 module_bus_client! {
 struct DumpBusClient {
     sender(NodeStateEvent),
-    receiver(DataAvailabilityEvent),
+    receiver(DataEvent),
 }
 }
 // Purpose: dump all blocks to a file in a specific folder
@@ -364,10 +366,10 @@ impl BlockDbg {
         interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
         module_handle_messages! {
-            on_bus self.bus,
-            listen<DataAvailabilityEvent> event => {
+            on_self self,
+            listen<DataEvent> event => {
                 match event {
-                    DataAvailabilityEvent::SignedBlock(block) => {
+                    DataEvent::OrderedSignedBlock(block) => {
                         tracing::info!("Received block: {:?}, saving it to {:?}", block, self.outfolder);
                         let txs = block.count_txs();
                         ui_state.blocks.push((block.clone(), txs));
@@ -379,9 +381,6 @@ impl BlockDbg {
                             .context("Failed to create block file")?;
                         borsh::to_writer(&mut file, &(block, txs))
                             .context("Failed to serialize block")?;
-                    }
-                    _ => {
-                        /* ignore */
                     }
                 }
             },
@@ -508,7 +507,8 @@ impl BlockDbg {
                                         for block in outputs {
                                             ui_state.processed_height = Some(block.block_height.0);
                                             ui_state.process_block_outputs(&block);
-                                            self.bus.send(NodeStateEvent::NewBlock(Box::new(block.clone())))?;
+                                            // Activate if you want provers on.
+                                            // self.bus.send(NodeStateEvent::NewBlock(Box::new(block.clone())))?;
                                             ui_state.processed_blocks.insert(block.block_height.0, block);
                                             ui_state.redraw = true;
                                         }
@@ -516,7 +516,7 @@ impl BlockDbg {
                                     // Dump state of node state to a file
                                     if let Some(node_state) = &ui_state.node_state {
                                         let mut file = std::fs::File::create("node_state.log")?;
-                                        file.write_all(format!("{:#?}", node_state).as_bytes())?;
+                                        file.write_all(format!("{node_state:#?}").as_bytes())?;
                                         tracing::info!("Node state dumped to {:?}", "node_state.log");
                                     }
                                     ui_state.processing = false;
@@ -582,12 +582,12 @@ impl BlockDbg {
             state.select(Some(selected.min(items.len().saturating_sub(1))));
             let block_title = if ui_state.processing {
                 if let Some(height) = ui_state.processed_height {
-                    format!("Blocks (Processing... {})", height)
+                    format!("Blocks (Processing... {height})")
                 } else {
                     "Blocks (Processing...)".to_string()
                 }
             } else if let Some(height) = ui_state.processed_height {
-                format!("Blocks (Processed up to {})", height)
+                format!("Blocks (Processed up to {height})")
             } else {
                 format!("Blocks (Loaded {}))", blocks.len())
             };

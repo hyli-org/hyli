@@ -3,26 +3,23 @@ pub use hyle_modules::modules::rest::*;
 #[cfg(test)]
 mod tests {
     use crate::{
-        bus::bus_client, data_availability::DataAvailability, genesis::Genesis,
-        mempool::api::RestApiMessage, model::SharedRunContext, node_state::module::NodeStateModule,
-        p2p::P2P, single_node_consensus::SingleNodeConsensus, tcp_server::TcpServer,
+        data_availability::DataAvailability, genesis::Genesis, mempool::api::RestApiMessage,
+        model::SharedRunContext, node_state::module::NodeStateModule, p2p::P2P,
+        single_node_consensus::SingleNodeConsensus, tcp_server::TcpServer,
         utils::integration_test::NodeIntegrationCtxBuilder,
     };
     use anyhow::Result;
     use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
     use hyle_model::*;
     use hyle_modules::{
-        bus::SharedMessageBus,
-        module_handle_messages,
-        modules::{signal::ShutdownModule, Module},
+        bus::SharedMessageBus, module_bus_client, module_handle_messages, modules::Module,
     };
     use std::time::Duration;
     use tracing::info;
 
-    bus_client! {
+    module_bus_client! {
         struct MockBusClient {
             receiver(RestApiMessage),
-            receiver(ShutdownModule),
         }
     }
 
@@ -42,7 +39,7 @@ mod tests {
 
         async fn run(&mut self) -> Result<()> {
             module_handle_messages! {
-                on_bus self.bus,
+                on_self self,
                 listen<RestApiMessage> msg => {
                     info!("Received REST API message: {:?}", msg);
                     // Just listen to messages to skip the shutdown timer.
@@ -70,14 +67,14 @@ mod tests {
 
         let node = builder.build().await.expect("Failed to build node");
 
-        let client = NodeApiHttpClient::new(format!("http://localhost:{}", rest_client))
+        let client = NodeApiHttpClient::new(format!("http://localhost:{rest_client}"))
             .expect("Failed to create client");
 
         node.wait_for_rest_api(&client).await.unwrap();
 
         // Spawn a task to send requests
         let request_handle = tokio::spawn({
-            let client = NodeApiHttpClient::new(format!("http://localhost:{}", rest_client))
+            let client = NodeApiHttpClient::new(format!("http://localhost:{rest_client}"))
                 .expect("Failed to create client");
             let dummy_tx = BlobTransaction::new(
                 "test@identity",
@@ -114,16 +111,14 @@ mod tests {
             .get_node_info()
             .await
             .expect_err("Expected request to fail after shutdown");
-        let err = format!("{:#}", err);
+        let err = format!("{err:#}");
         assert!(
             err.to_string().contains("getting node info"),
-            "Expected connection error, got: {}",
-            err
+            "Expected connection error, got: {err}"
         );
         assert!(
             err.to_string().contains("Connection refused"),
-            "Expected connection error, got: {}",
-            err
+            "Expected connection error, got: {err}"
         );
     }
 }

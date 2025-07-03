@@ -63,6 +63,7 @@ pub struct TxContractStore {
     pub parent_data_proposal_hash: DataProposalHashDb,
     pub verifier: String,
     pub program_id: Vec<u8>,
+    pub timeout_window: Option<TimeoutWindowDb>,
     pub state_commitment: Vec<u8>,
     pub contract_name: String,
 }
@@ -235,7 +236,7 @@ impl Indexer {
                         block
                             .lane_ids
                             .get(&tx_id.1)
-                            .context(format!("No lane id present for tx {}", tx_id)),
+                            .context(format!("No lane id present for tx {tx_id}")),
                         "Getting lane id for tx"
                     )
                     .unwrap_or(&LaneId::default())
@@ -499,7 +500,7 @@ impl Indexer {
 
             for (batch_idx, chunk) in chunks.iter().enumerate() {
                 let mut query_builder = QueryBuilder::<Postgres>::new(
-                    "INSERT INTO contracts (tx_hash, parent_dp_hash, verifier, program_id, state_commitment, contract_name) ",
+                    "INSERT INTO contracts (tx_hash, parent_dp_hash, verifier, program_id, timeout_window, state_commitment, contract_name) ",
                 );
 
                 query_builder.push_values(chunk.iter(), |mut b, s| {
@@ -508,6 +509,7 @@ impl Indexer {
                         parent_data_proposal_hash,
                         verifier,
                         program_id,
+                        timeout_window,
                         state_commitment,
                         contract_name,
                     } = s;
@@ -521,6 +523,7 @@ impl Indexer {
                         .push_bind(parent_data_proposal_hash)
                         .push_bind(verifier)
                         .push_bind(program_id)
+                        .push_bind(timeout_window)
                         .push_bind(state_commitment)
                         .push_bind(contract_name);
                 });
@@ -530,6 +533,7 @@ impl Indexer {
                 query_builder.push("parent_dp_hash = EXCLUDED.parent_dp_hash, ");
                 query_builder.push("verifier = EXCLUDED.verifier, ");
                 query_builder.push("program_id = EXCLUDED.program_id, ");
+                query_builder.push("timeout_window = EXCLUDED.timeout_window, ");
                 query_builder.push("state_commitment = EXCLUDED.state_commitment ");
 
                 query_builder
@@ -1162,6 +1166,7 @@ impl Indexer {
                     parent_data_proposal_hash: tx_parent_dp_hash.clone(),
                     verifier: verifier.clone(),
                     program_id: program_id.clone(),
+                    timeout_window: contract.timeout_window.clone().map(|tw| tw.into()),
                     state_commitment: state_commitment.clone(),
                     contract_name: contract_name.clone(),
                 },
@@ -1201,6 +1206,34 @@ impl Indexer {
                     "UPDATE contracts SET state_commitment = $1 WHERE contract_name = $2",
                 )
                 .bind(state_commitment)
+                .bind(contract_name),
+            );
+        }
+
+        // Handling updated contract program ids
+        for (contract_name, program_id) in block.updated_program_ids {
+            let contract_name = contract_name.0;
+            let program_id = program_id.0;
+
+            self.handler_store.sql_updates.push(
+                sqlx::query::<Postgres>(
+                    "UPDATE contracts SET program_id = $1 WHERE contract_name = $2",
+                )
+                .bind(program_id)
+                .bind(contract_name),
+            );
+        }
+
+        // Handling updated contract program ids
+        for (contract_name, timeout_window) in block.updated_timeout_windows {
+            let contract_name = contract_name.0;
+
+            let timeout_window_db: TimeoutWindowDb = timeout_window.into();
+            self.handler_store.sql_updates.push(
+                sqlx::query::<Postgres>(
+                    "UPDATE contracts SET timeout_window = $1 WHERE contract_name = $2",
+                )
+                .bind(timeout_window_db)
                 .bind(contract_name),
             );
         }

@@ -1,15 +1,21 @@
 repos:
-  - repo: https://github.com/doublify/pre-commit-rust
-    rev: v1.0
+  - repo: local
     hooks:
-      - id: fmt
-      - id: clippy
-        args:
-          [
-            "--workspace",
-            "--",
-            "-D",
-            "warnings",
-          ]
-      - id: cargo-check
-        args: ["--workspace"]
+      - id: cargo-fmt-check
+        name: Cargo fmt check
+        entry: cargo fmt --all
+        language: system
+        files: '\.rs$'
+        pass_filenames: false
+      - id: cargo-clippy-fix
+        name: Cargo clippy fix
+        entry: cargo clippy --all-targets --all-features --workspace
+        language: system
+        files: '\.rs$'
+        pass_filenames: false
+      - id: cargo-check-local
+        name: Cargo check
+        entry: cargo check
+        language: system
+        files: '\.rs$'
+        pass_filenames: false

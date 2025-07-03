@@ -4,7 +4,7 @@ In this crate you will find some helpers function to build your Smart Contract o
 
 🚧 This is work in progress, all of this is subject to changes. See [examples](https://github.com/hyli-org/examples) for usages.
 
-# Model
+## Model
 
 Some of the models are defined in `hyle-model` crates, which is re-exported by this crate.
 
@@ -18,7 +18,7 @@ use hyle_model::ZkProgramInput;
 
 It allows you to only depends on crate `contract-sdk` in your contract's code.
 
-# Entrypoints
+## Entrypoints
 
 The inputs of the zkVM should be of type ZkProgramInput defined in
 
@@ -53,7 +53,7 @@ pub fn as_hyle_output(
 ) -> HyleOutput
 ```
 
-# Helpers
+## Helpers
 
 You can find in `erc20.rs` and `identity_prover.rs` some structs & traits used to help building contracts of token transfers & identity providing.
 These are only helpers to build new contracts, not required standards.

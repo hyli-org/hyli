@@ -1,5 +1,6 @@
 use crate::node_state::{
-    contract_registration::validate_contract_registration_metadata, NukeTxAction,
+    contract_registration::validate_contract_registration_metadata, ModifiedContractData,
+    ModifiedContractFields, NodeState, NukeTxAction,
 };
 use anyhow::{bail, Result};
 use sdk::secp256k1::CheckSecp256k1;
@@ -12,7 +13,7 @@ pub const HYLI_TLD_ID: &str = "hyli@wallet";
 
 pub fn handle_blob_for_hyle_tld(
     contracts: &HashMap<ContractName, Contract>,
-    contract_changes: &mut BTreeMap<ContractName, SideEffect>,
+    contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
     current_blob: &Blob,
 ) -> Result<()> {
     // TODO: check the identity of the caller here.
@@ -26,6 +27,14 @@ pub fn handle_blob_for_hyle_tld(
         StructuredBlobData::<DeleteContractAction>::try_from(current_blob.data.clone())
     {
         handle_delete_blob(contracts, contract_changes, &reg.parameters)?;
+    } else if let Ok(reg) =
+        StructuredBlobData::<UpdateContractProgramIdAction>::try_from(current_blob.data.clone())
+    {
+        handle_update_program_id_blob(contracts, contract_changes, &reg.parameters)?;
+    } else if let Ok(reg) =
+        StructuredBlobData::<UpdateContractTimeoutWindowAction>::try_from(current_blob.data.clone())
+    {
+        handle_update_timeout_window_blob(contracts, contract_changes, &reg.parameters)?;
     } else if StructuredBlobData::<NukeTxAction>::try_from(current_blob.data.clone()).is_ok() {
         // Do nothing
     } else {
@@ -36,7 +45,7 @@ pub fn handle_blob_for_hyle_tld(
 
 fn handle_register_blob(
     contracts: &HashMap<ContractName, Contract>,
-    contract_changes: &mut BTreeMap<ContractName, SideEffect>,
+    contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
     reg: &RegisterContractAction,
 ) -> Result<()> {
     // Check name, it's either a direct subdomain or a TLD
@@ -57,15 +66,16 @@ fn handle_register_blob(
 
     contract_changes.insert(
         reg.contract_name.clone(),
-        SideEffect::Register(
-            Contract {
+        (
+            Some(Contract {
                 name: reg.contract_name.clone(),
                 program_id: reg.program_id.clone(),
                 state: reg.state_commitment.clone(),
                 verifier: reg.verifier.clone(),
                 timeout_window: reg.timeout_window.clone().unwrap_or_default(),
-            },
-            reg.constructor_metadata.clone(),
+            }),
+            ModifiedContractFields::all(),
+            vec![SideEffect::Register(reg.constructor_metadata.clone())],
         ),
     );
     Ok(())
@@ -73,7 +83,7 @@ fn handle_register_blob(
 
 fn handle_delete_blob(
     contracts: &HashMap<ContractName, Contract>,
-    contract_changes: &mut BTreeMap<ContractName, SideEffect>,
+    contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
     delete: &DeleteContractAction,
 ) -> Result<()> {
     // For now, Hyli is allowed to delete all contracts but itself
@@ -87,12 +97,94 @@ fn handle_delete_blob(
     {
         contract_changes.insert(
             delete.contract_name.clone(),
-            SideEffect::Delete(delete.contract_name.clone()),
+            (
+                None,
+                ModifiedContractFields::all(),
+                vec![SideEffect::Delete],
+            ),
         );
         Ok(())
     } else {
         bail!("Contract {} is already registered", delete.contract_name.0);
     }
+}
+
+fn handle_update_program_id_blob(
+    contracts: &HashMap<ContractName, Contract>,
+    contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
+    update: &UpdateContractProgramIdAction,
+) -> Result<()> {
+    // For now, Hyli is allowed to delete all contracts but itself
+    if update.contract_name.0 == "hyle" {
+        bail!("Cannot udpate Hyli contract");
+    }
+
+    let contract =
+        NodeState::get_contract(contracts, contract_changes, &update.contract_name)?.clone();
+
+    let new_update = SideEffect::UpdateProgramId;
+    contract_changes
+        .entry(update.contract_name.clone())
+        .and_modify(|c| {
+            if let Some(contract) = c.0.as_mut() {
+                contract.program_id = update.program_id.clone();
+            }
+            c.1.program_id = true;
+            c.2.push(new_update.clone());
+        })
+        .or_insert_with(|| {
+            (
+                Some(Contract {
+                    program_id: update.program_id.clone(),
+                    ..contract
+                }),
+                ModifiedContractFields {
+                    program_id: true,
+                    ..ModifiedContractFields::default()
+                },
+                vec![new_update],
+            )
+        });
+    Ok(())
+}
+
+fn handle_update_timeout_window_blob(
+    contracts: &HashMap<ContractName, Contract>,
+    contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
+    update: &UpdateContractTimeoutWindowAction,
+) -> Result<()> {
+    // For now, Hyli is allowed to delete all contracts but itself
+    if update.contract_name.0 == "hyle" {
+        bail!("Cannot udpate Hyli contract");
+    }
+
+    let contract =
+        NodeState::get_contract(contracts, contract_changes, &update.contract_name)?.clone();
+
+    let new_update = SideEffect::UpdateTimeoutWindow;
+    contract_changes
+        .entry(update.contract_name.clone())
+        .and_modify(|c| {
+            if let Some(contract) = c.0.as_mut() {
+                contract.timeout_window = update.timeout_window.clone();
+            }
+            c.1.timeout_window = true;
+            c.2.push(new_update.clone());
+        })
+        .or_insert_with(|| {
+            (
+                Some(Contract {
+                    timeout_window: update.timeout_window.clone(),
+                    ..contract
+                }),
+                ModifiedContractFields {
+                    timeout_window: true,
+                    ..ModifiedContractFields::default()
+                },
+                vec![new_update],
+            )
+        });
+    Ok(())
 }
 
 /// Validates hyle contract blobs by ensuring actions are authorized and properly signed
@@ -108,7 +200,14 @@ pub fn validate_hyle_contract_blobs(tx: &BlobTransaction) -> Result<(), String> 
     for (index, blob) in tx.blobs.iter().enumerate() {
         if blob.contract_name.0 == "hyle" {
             // Check identity authorization for privileged actions
-            if StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone()).is_ok() {
+            if StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
+                .is_ok()
+                || StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone()).is_ok()
+                || StructuredBlobData::<UpdateContractTimeoutWindowAction>::try_from(
+                    blob.data.clone(),
+                )
+                .is_ok()
+            {
                 if tx.identity.0 != HYLI_TLD_ID {
                     return Err(format!(
                         "Unauthorized action for 'hyle' TLD from identity: {}",
@@ -131,10 +230,10 @@ pub fn validate_hyle_contract_blobs(tx: &BlobTransaction) -> Result<(), String> 
                 };
 
                 let expected_data = borsh::to_vec(&nuke_data.parameters.txs)
-                    .map_err(|e| format!("Failed to serialize tx hashes: {}", e))?;
+                    .map_err(|e| format!("Failed to serialize tx hashes: {e}"))?;
                 let secp_blob = CheckSecp256k1::new(&calldata, &expected_data)
                     .expect()
-                    .map_err(|e| format!("Failed to verify secp256k1 signature: {}", e))?;
+                    .map_err(|e| format!("Failed to verify secp256k1 signature: {e}"))?;
 
                 // Assert that the secp256k1 signature is from Hyli
                 // FIXME: use config to pass the pubkey
@@ -155,8 +254,7 @@ pub fn validate_hyle_contract_blobs(tx: &BlobTransaction) -> Result<(), String> 
                 // Do nothing
             } else {
                 return Err(format!(
-                    "Unsupported permissioned action on hyle contract: {:?}",
-                    blob
+                    "Unsupported permissioned action on hyle contract: {blob:?}"
                 ));
             }
         }

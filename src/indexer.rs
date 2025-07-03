@@ -76,7 +76,7 @@ impl Module for Indexer {
 impl Indexer {
     pub async fn start(&mut self) -> Result<()> {
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             listen<NodeStateEvent> event => {
                 _ = log_error!(self.handle_node_state_event(event)
                     .await,
@@ -292,20 +292,19 @@ mod test {
         tx_status: TransactionStatusDb,
     ) {
         let transactions_response = server
-            .get(format!("/transaction/hash/{}", tx_hash).as_str())
+            .get(format!("/transaction/hash/{tx_hash}").as_str())
             .await;
         transactions_response.assert_status_ok();
         let json_response = transactions_response.json::<APITransaction>();
         assert_eq!(
             json_response.transaction_status, tx_status,
-            "Transaction status mismatch for tx_hash: {}",
-            tx_hash
+            "Transaction status mismatch for tx_hash: {tx_hash}"
         );
     }
 
     async fn assert_tx_not_found(server: &TestServer, tx_hash: TxHash) {
         let transactions_response = server
-            .get(format!("/transaction/hash/{}", tx_hash).as_str())
+            .get(format!("/transaction/hash/{tx_hash}").as_str())
             .await;
         transactions_response.assert_status_not_found();
     }

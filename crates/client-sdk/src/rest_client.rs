@@ -9,8 +9,8 @@ use anyhow::{Context, Result};
 use hyle_net::http::HttpClient;
 use sdk::{
     api::{
-        APIBlob, APIBlock, APIContract, APIRegisterContract, APIStaking, APITransaction, NodeInfo,
-        TransactionWithBlobs,
+        APIBlob, APIBlock, APIContract, APINodeContract, APIRegisterContract, APIStaking,
+        APITransaction, NodeInfo, TransactionWithBlobs,
     },
     BlobIndex, BlobTransaction, BlockHash, BlockHeight, ConsensusInfo, Contract, ContractName,
     ProofTransaction, TxHash, UnsettledBlobTransaction, ValidatorPublicKey,
@@ -187,7 +187,7 @@ pub trait NodeApiClient {
     fn get_contract(
         &self,
         contract_name: ContractName,
-    ) -> Pin<Box<dyn Future<Output = Result<Contract>> + Send + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<APINodeContract>> + Send + '_>>;
 
     fn get_settled_height(
         &self,
@@ -303,11 +303,11 @@ impl NodeApiClient for NodeApiHttpClient {
     fn get_contract(
         &self,
         contract_name: ContractName,
-    ) -> Pin<Box<dyn Future<Output = Result<Contract>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<APINodeContract>> + Send + '_>> {
         Box::pin(async move {
-            self.get(&format!("v1/contract/{}", contract_name))
+            self.get(&format!("v1/contract/{contract_name}"))
                 .await
-                .context(format!("getting contract {}", contract_name))
+                .context(format!("getting contract {contract_name}"))
         })
     }
 
@@ -318,7 +318,7 @@ impl NodeApiClient for NodeApiHttpClient {
         Box::pin(async move {
             self.get(&format!("v1/unsettled_tx/{blob_tx_hash}"))
                 .await
-                .context(format!("getting tx {}", blob_tx_hash))
+                .context(format!("getting tx {blob_tx_hash}"))
         })
     }
 
@@ -330,8 +330,7 @@ impl NodeApiClient for NodeApiHttpClient {
             self.get(&format!("v1/contract/{contract_name}/settled_height"))
                 .await
                 .context(format!(
-                    "getting earliest unsettled height for contract {}",
-                    contract_name
+                    "getting earliest unsettled height for contract {contract_name}"
                 ))
         })
     }
@@ -351,7 +350,7 @@ impl DerefMut for NodeApiHttpClient {
 
 #[allow(dead_code)]
 pub mod test {
-    use sdk::{hyle_model_utils::TimestampMs, Hashed};
+    use sdk::{hyle_model_utils::TimestampMs, Hashed, TimeoutWindow};
 
     use super::*;
     use std::sync::{Arc, Mutex};
@@ -485,14 +484,27 @@ pub mod test {
         fn get_contract(
             &self,
             contract_name: ContractName,
-        ) -> Pin<Box<dyn Future<Output = Result<Contract>> + Send + '_>> {
+        ) -> Pin<Box<dyn Future<Output = Result<APINodeContract>> + Send + '_>> {
             Box::pin(async move {
-                self.contracts
+                let contract = self
+                    .contracts
                     .lock()
                     .unwrap()
                     .get(&contract_name)
                     .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("Contract not found"))
+                    .ok_or_else(|| anyhow::anyhow!("Contract not found"))?;
+                let block_height = *self.block_height.lock().unwrap();
+                Ok(APINodeContract {
+                    contract_name: contract.name.clone(),
+                    state_block_height: block_height,
+                    state_commitment: contract.state,
+                    program_id: contract.program_id,
+                    verifier: contract.verifier,
+                    timeout_window: match contract.timeout_window {
+                        TimeoutWindow::NoTimeout => None,
+                        TimeoutWindow::Timeout(window) => Some(window.0),
+                    },
+                })
             })
         }
 
