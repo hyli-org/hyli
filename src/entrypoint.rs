@@ -302,6 +302,10 @@ async fn common_main(
     }
 
     if config.run_explorer {
+        if !config.run_indexer {
+            bail!("Cannot run explorer without indexer");
+        }
+
         handler
             .build_module::<Explorer>((config.clone(), build_api_ctx.clone()))
             .await?;

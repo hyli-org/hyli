@@ -186,6 +186,7 @@ impl Conf {
             )
             .set_override_option("data_directory", data_directory)?
             .set_override_option("run_indexer", run_indexer)?
+            .set_override_option("run_explorer", run_indexer)?
             .build()?
             .try_deserialize()?;
         // Mostly for convenience, ignore ourself from the peers list
