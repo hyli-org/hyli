@@ -244,8 +244,7 @@ where
     Contract: TxExecutorHandler + Debug + Clone + Send + Sync + 'static,
 {
     async fn handle_block(&mut self, block: Block) -> Result<()> {
-        self.handle_node_state_event(NodeStateEvent::NewBlock(Box::new(block)))
-            .await
+        self.handle_node_state_event(block).await
     }
 }
 
@@ -1448,23 +1447,17 @@ async fn test_auto_prover_catchup_mixed_pending_and_failures() -> Result<()> {
     // Block 1: Failing TX
     let failing_tx_1 = new_failing_blob_tx(1);
     let block_1 = node_state.craft_block_and_handle(1, vec![failing_tx_1.clone()]);
-    auto_prover
-        .handle_node_state_event(NodeStateEvent::NewBlock(Box::new(block_1.clone())))
-        .await?;
+    auto_prover.handle_node_state_event(block_1.clone()).await?;
 
     // Block 2: Successful TX
     let success_tx_2 = new_blob_tx(2);
     let block_2 = node_state.craft_block_and_handle(2, vec![success_tx_2.clone()]);
-    auto_prover
-        .handle_node_state_event(NodeStateEvent::NewBlock(Box::new(block_2.clone())))
-        .await?;
+    auto_prover.handle_node_state_event(block_2.clone()).await?;
 
     // Block 3: Pending TX (not settled yet, so not included in successful/failed/timed out)
     let pending_tx = new_blob_tx(3);
     let block_3 = node_state.craft_block_and_handle(3, vec![pending_tx.clone()]);
-    auto_prover
-        .handle_node_state_event(NodeStateEvent::NewBlock(Box::new(block_3.clone())))
-        .await?;
+    auto_prover.handle_node_state_event(block_3.clone()).await?;
 
     // Block 4: Failing TX, and result of 1/2/4
     let failing_tx_4 = new_failing_blob_tx(4);
@@ -1481,15 +1474,11 @@ async fn test_auto_prover_catchup_mixed_pending_and_failures() -> Result<()> {
     block_4
         .dp_parent_hashes
         .insert(failing_tx_1.hashed(), DataProposalHash(format!("{}", 1)));
-    auto_prover
-        .handle_node_state_event(NodeStateEvent::NewBlock(Box::new(block_4.clone())))
-        .await?;
+    auto_prover.handle_node_state_event(block_4.clone()).await?;
 
     // Block 5 is empty
     let block_5 = node_state.craft_block_and_handle(5, vec![]);
-    auto_prover
-        .handle_node_state_event(NodeStateEvent::NewBlock(Box::new(block_5.clone())))
-        .await?;
+    auto_prover.handle_node_state_event(block_5.clone()).await?;
 
     // Block 6: some other TX
     let other_tx = new_blob_tx(6);
@@ -1508,9 +1497,7 @@ async fn test_auto_prover_catchup_mixed_pending_and_failures() -> Result<()> {
         )]),
         ..Default::default()
     };
-    auto_prover
-        .handle_node_state_event(NodeStateEvent::NewBlock(Box::new(block_6.clone())))
-        .await?;
+    auto_prover.handle_node_state_event(block_6.clone()).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);

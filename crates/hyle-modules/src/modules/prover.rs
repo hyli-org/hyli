@@ -6,7 +6,8 @@ use std::{fmt::Debug, path::PathBuf, sync::Arc};
 use crate::bus::{BusClientSender, SharedMessageBus};
 use crate::modules::signal::shutdown_aware_timeout;
 use crate::modules::SharedBuildApiCtx;
-use crate::node_state::NodeStateStore;
+use crate::node_state::module::NodeStateModule;
+use crate::node_state::{NodeState, NodeStateStore};
 use crate::{log_error, module_bus_client, module_handle_messages, modules::Module};
 use anyhow::{anyhow, bail, Context, Result};
 use axum::extract::State;
@@ -17,8 +18,8 @@ use client_sdk::{helpers::ClientSdkProver, transaction_builder::TxExecutorHandle
 use hyle_net::logged_task::logged_task;
 use indexmap::IndexMap;
 use sdk::{
-    BlobIndex, BlobTransaction, Block, BlockHeight, Calldata, ContractName, Hashed, NodeStateEvent,
-    ProofTransaction, StateCommitment, TransactionData, TxContext, TxHash, TxId,
+    BlobIndex, BlobTransaction, Block, BlockHeight, Calldata, ContractName, Hashed,
+    ProofTransaction, SignedBlock, StateCommitment, TransactionData, TxContext, TxHash, TxId,
     HYLE_TESTNET_CHAIN_ID,
 };
 use tokio::task::JoinHandle;
@@ -40,6 +41,7 @@ pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
     ctx: Arc<AutoProverCtx<Contract>>,
     store: AutoProverStore<Contract>,
     metrics: AutoProverMetrics,
+    node_state: NodeState,
     // If Some, the block to catch up to
     catching_up: Option<BlockHeight>,
     catching_up_state: StateCommitment,
@@ -72,7 +74,7 @@ module_bus_client! {
 #[derive(Debug)]
 pub struct AutoProverBusClient<Contract: Send + Sync + Clone + 'static> {
     sender(AutoProverEvent<Contract>),
-    receiver(NodeStateEvent),
+    receiver(SignedBlock),
 }
 }
 
@@ -133,6 +135,18 @@ where
             },
         };
 
+        let node_state_file = ctx
+            .data_directory
+            .join(format!("node_state_autoprover_{}.bin", ctx.contract_name).as_str());
+
+        let node_state_store =
+            NodeStateModule::load_from_disk::<NodeStateStore>(node_state_file.as_path())
+                .unwrap_or_default();
+
+        let mut node_state =
+            NodeState::create(format!("autoprover-{}", ctx.contract_name), "autoprover");
+        node_state.store = node_state_store;
+
         let infos = ctx.prover.info();
 
         let metrics = AutoProverMetrics::global(ctx.contract_name.to_string(), infos);
@@ -167,11 +181,19 @@ where
             catching_up
         );
 
+        // Load node state
+        let txs_from_node_state: Vec<(BlobTransaction, TxContext, TxId)> =
+            Self::catchup_from_node_state(&node_state.store, &ctx.contract_name)
+                .context("Failed to handle node state")?
+                .map(|(tx_id, (tx, tx_ctx))| (tx, tx_ctx, tx_id))
+                .collect();
+
         let catching_txs = if catching_up.is_some() && !store.tx_chain.is_empty() {
             // If we are restarting from serialized data and are catching up, we need to do some setup.
             // Move all unsettled transactions to catching_txs and restart.
             let mut txs = std::mem::take(&mut store.proving_txs);
             txs.extend(std::mem::take(&mut store.unsettled_txs));
+            txs.extend(txs_from_node_state);
 
             // Clear the rest
             store.tx_chain.truncate(1);
@@ -202,6 +224,7 @@ where
             store,
             ctx,
             metrics,
+            node_state,
             catching_up,
             catching_up_state,
             catching_success_txs: vec![],
@@ -213,7 +236,10 @@ where
     async fn run(&mut self) -> Result<()> {
         module_handle_messages! {
             on_self self,
-            listen<NodeStateEvent> event => {
+            listen<SignedBlock> signed_block => {
+                let event = self.node_state
+                    .handle_signed_block(&signed_block)
+                    .context("Failed to handle signed block")?;
                 let res = log_error!(self.handle_node_state_event(event).await, "handle note state event");
                 self.metrics.snapshot_buffered_blobs(self.store.buffered_blobs.len() as u64);
                 self.metrics
@@ -256,14 +282,13 @@ impl<Contract> AutoProver<Contract>
 where
     Contract: TxExecutorHandler + Debug + Clone + Send + Sync + 'static,
 {
-    async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
-        let NodeStateEvent::NewBlock(block) = event;
+    async fn handle_node_state_event(&mut self, block: Block) -> Result<()> {
         if self
             .catching_up
             .is_some_and(|h| block.block_height.0 <= h.0)
         {
             let block_height = block.block_height;
-            self.handle_catchup_block(*block)
+            self.handle_catchup_block(block)
                 .await
                 .context("Failed to handle settled block")?;
             if self.catching_up.is_some_and(|h| block_height.0 == h.0) {
@@ -420,30 +445,34 @@ where
                 );
             }
         } else {
-            self.handle_processed_block(*block).await?;
+            self.handle_processed_block(block).await?;
         }
 
         Ok(())
     }
 
-    async fn handle_node_state(&mut self, node_state_store: &NodeStateStore) -> Result<()> {
+    fn catchup_from_node_state<'a>(
+        node_state_store: &'a NodeStateStore,
+        contract_name: &'a ContractName,
+    ) -> Result<impl Iterator<Item = (TxId, (BlobTransaction, TxContext))> + 'a> {
         // Iterate over unsettled txs in the store
-        for (tx_id, tx) in node_state_store.unsettled_transactions(&self.ctx.contract_name)? {
-            if tx
-                .blobs
-                .iter()
-                .any(|(_, b)| b.blob.contract_name == self.ctx.contract_name)
-            {
-                let blob_transaction = BlobTransaction::new(
-                    tx.identity.clone(),
-                    tx.blobs.values().map(|b| b.blob.clone()).collect(),
-                );
-                self.catching_txs
-                    .insert(tx_id, (blob_transaction, tx.tx_context.clone()));
-            }
-        }
-
-        Ok(())
+        Ok(node_state_store
+            .unsettled_transactions(contract_name)?
+            .filter_map(move |(tx_id, tx)| {
+                if tx
+                    .blobs
+                    .iter()
+                    .any(|(_, b)| &b.blob.contract_name == contract_name)
+                {
+                    let blob_transaction = BlobTransaction::new(
+                        tx.identity.clone(),
+                        tx.blobs.values().map(|b| b.blob.clone()).collect(),
+                    );
+                    Some((tx_id, (blob_transaction, tx.tx_context.clone())))
+                } else {
+                    None
+                }
+            }))
     }
 
     async fn handle_catchup_block(&mut self, block: Block) -> Result<()> {

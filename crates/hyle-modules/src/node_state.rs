@@ -181,7 +181,7 @@ impl NodeStateStore {
     ) -> anyhow::Result<impl Iterator<Item = (TxId, &UnsettledBlobTransaction)>> {
         let tx_order = self
             .unsettled_transactions
-            .get_tx_order(&contract_name)
+            .get_tx_order(contract_name)
             .context("Get tx order for contract")?;
         Ok(tx_order.iter().filter_map(|tx_hash| {
             self.unsettled_transactions
