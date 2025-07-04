@@ -174,6 +174,23 @@ impl Default for NodeStateStore {
     }
 }
 
+impl NodeStateStore {
+    pub fn unsettled_transactions(
+        &self,
+        contract_name: &ContractName,
+    ) -> anyhow::Result<impl Iterator<Item = (TxId, &UnsettledBlobTransaction)>> {
+        let tx_order = self
+            .unsettled_transactions
+            .get_tx_order(&contract_name)
+            .context("Get tx order for contract")?;
+        Ok(tx_order.iter().filter_map(|tx_hash| {
+            self.unsettled_transactions
+                .get(tx_hash)
+                .map(|tx| (TxId(tx.parent_dp_hash.clone(), tx_hash.clone()), tx))
+        }))
+    }
+}
+
 impl NodeState {
     pub fn handle_signed_block(&mut self, signed_block: &SignedBlock) -> Result<Block> {
         let next_block = self.current_height + 1 == signed_block.height();

@@ -6,6 +6,7 @@ use std::{fmt::Debug, path::PathBuf, sync::Arc};
 use crate::bus::{BusClientSender, SharedMessageBus};
 use crate::modules::signal::shutdown_aware_timeout;
 use crate::modules::SharedBuildApiCtx;
+use crate::node_state::NodeStateStore;
 use crate::{log_error, module_bus_client, module_handle_messages, modules::Module};
 use anyhow::{anyhow, bail, Context, Result};
 use axum::extract::State;
@@ -420,6 +421,26 @@ where
             }
         } else {
             self.handle_processed_block(*block).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn handle_node_state(&mut self, node_state_store: &NodeStateStore) -> Result<()> {
+        // Iterate over unsettled txs in the store
+        for (tx_id, tx) in node_state_store.unsettled_transactions(&self.ctx.contract_name)? {
+            if tx
+                .blobs
+                .iter()
+                .any(|(_, b)| b.blob.contract_name == self.ctx.contract_name)
+            {
+                let blob_transaction = BlobTransaction::new(
+                    tx.identity.clone(),
+                    tx.blobs.values().map(|b| b.blob.clone()).collect(),
+                );
+                self.catching_txs
+                    .insert(tx_id, (blob_transaction, tx.tx_context.clone()));
+            }
         }
 
         Ok(())
