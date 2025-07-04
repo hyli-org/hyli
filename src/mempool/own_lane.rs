@@ -57,7 +57,7 @@ impl super::Mempool {
         let new_voting_power = self.staking.compute_voting_power(validators.as_slice());
         let f = self.staking.compute_f();
         // Only send the message if voting power exceeds f, 2 * f or is exactly 3 * f + 1
-        // This garentees that the message is sent only once per threshold
+        // This guarantees that the message is sent only once per threshold
         if old_voting_power < f && new_voting_power >= f
             || old_voting_power < 2 * f && new_voting_power >= 2 * f
             || new_voting_power > 3 * f
@@ -307,7 +307,7 @@ impl super::Mempool {
 
         // Brittle logic - some TXs might have been skipped over due to size limits.
         // This means their WaitingDissemination status will not be updated (as their TxId effectively changes).
-        // Listeners might need to update any TX with this DPHash as parent and _not_ withing txs_metadatas.
+        // Listeners might need to update any TX with this DPHash as parent and _not_ within txs_metadatas.
         self.bus
             .send(MempoolStatusEvent::DataProposalCreated {
                 parent_data_proposal_hash,
