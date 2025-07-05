@@ -1,13 +1,27 @@
 use anyhow::{anyhow, bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::{utils::parse_calldata, Calldata, Identity};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
-use crate::{account::Account, SmtTokenAction};
+use crate::{account::Account, SmtTokenAction, FAUCET_ID, TOTAL_SUPPLY};
 
-#[derive(Default, Debug, Clone, BorshSerialize, BorshDeserialize)]
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct LightSmtExecutor {
     pub balances: HashMap<Identity, Account>,
+}
+
+impl Default for LightSmtExecutor {
+    fn default() -> Self {
+        let mut balances = HashMap::new();
+        // Initialize the faucet account with a total supply
+        let faucet_account = Account {
+            address: FAUCET_ID.into(),
+            balance: TOTAL_SUPPLY,
+            allowances: BTreeMap::new(),
+        };
+        balances.insert(faucet_account.address.clone(), faucet_account);
+        LightSmtExecutor { balances }
+    }
 }
 
 pub struct LightExecutorOutput {
