@@ -65,15 +65,11 @@ ureq = { version = "3.0.11", default-features = false, features = ["json"] }
 # Rate limiting proxy (optional feature)
 axum = { version = "0.7", optional = true }
 tower_governor = { version = "0.6", optional = true }
-governor = { version = "0.6", default-features = false, features = [
-    "dashmap",
-], optional = true }
 tower-http = { version = "0.6.5", features = [
     "trace",
     "cors",
     "catch-panic",
 ], optional = true }
-tower = { version = "0.4", optional = true }
 hyper = { version = "1.0", optional = true }
 hyper-util = { version = "0.1", optional = true }
 dashmap = { version = "6.1.0", optional = true }
@@ -87,9 +83,7 @@ risc0 = ["client-sdk/risc0"]
 rate-proxy = [
     "dep:axum",
     "dep:tower_governor",
-    "dep:governor",
     "dep:tower-http",
-    "dep:tower",
     "dep:hyper",
     "dep:hyper-util",
     "dep:dashmap",
@@ -99,5 +93,3 @@ rate-proxy = [
 default = ["ui", "rate-proxy"]
 ui = ["dep:ratatui", "dep:crossterm"]
 
-[package.metadata.cargo-machete]
-ignored = ["client-sdk", "opentelemetry"]
