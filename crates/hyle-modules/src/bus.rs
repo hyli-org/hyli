@@ -150,13 +150,13 @@ where
     {
         if Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).receiver_count() > 0 {
             let mut i = 0;
-            const MAX_ATTEMPTS: usize = 100; // 10s limit, we assume longer would indicate an error
+            const HIGH_NB_OF_ATTEMPTS: usize = 100; // 10s limit, we assume longer would indicate an error
             loop {
                 // We have a potential TOCTOU race here, so use a buffer.
                 if Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).len()
                     >= CHANNEL_CAP_IF_WAITING
                 {
-                    if i % MAX_ATTEMPTS == 0 {
+                    if i % HIGH_NB_OF_ATTEMPTS == 0 {
                         tracing::warn!(
                             "Channel {} is full (client {}), cannot send message, waiting another 10s...",
                             type_name::<Msg>(),
