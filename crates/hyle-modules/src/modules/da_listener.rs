@@ -54,13 +54,12 @@ impl Module for DAListener {
             metrics: NodeStateMetrics::global("da_listener".to_string(), "da_listener"),
         };
 
-        let start_block = 
-            // Annoying edge case: on startup this will be 0, but we do want to process block 0.
-            // Otherwise, we've already processed the block so we don't actually need that.
-            match node_state.current_height {
-                BlockHeight(0) => BlockHeight(0),
-                _ => node_state.current_height + 1,
-            };
+        // Annoying edge case: on startup this will be 0, but we do want to process block 0.
+        // Otherwise, we've already processed the block so we don't actually need that.
+        let start_block = match node_state.current_height {
+            BlockHeight(0) => BlockHeight(0),
+            _ => node_state.current_height + 1,
+        };
 
         let bus = DAListenerBusClient::new_from_bus(bus.new_handle()).await;
 
