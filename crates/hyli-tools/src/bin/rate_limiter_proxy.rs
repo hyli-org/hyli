@@ -161,6 +161,7 @@ async fn blob_proxy_handler(
             config.metrics.increment_blob_tx(contract, true);
         }
         tracing::warn!(
+            identity = %identity,
             "Rate limit exceeded for identity: {}, contracts: {:?}",
             identity,
             limited_contracts
