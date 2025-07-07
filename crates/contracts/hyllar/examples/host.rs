@@ -40,6 +40,6 @@ async fn main() {
         println!("Error: {err:?}");
         return;
     }
-    println!("proof size: {:?}", proof.unwrap().0.len());
+    println!("proof size: {:?}", proof.unwrap().data.0.len());
     return;
 }

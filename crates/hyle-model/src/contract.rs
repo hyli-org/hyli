@@ -480,6 +480,21 @@ pub struct ProgramId(pub Vec<u8>);
 #[cfg_attr(feature = "full", derive(Serialize, utoipa::ToSchema))]
 pub struct ProofData(#[cfg_attr(feature = "full", serde(with = "base64_field"))] pub Vec<u8>);
 
+#[derive(Debug, Default, PartialEq, Eq, Clone, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "full", derive(Serialize, utoipa::ToSchema))]
+pub struct ProofMetadata {
+    pub cycles: Option<u64>,
+    pub prover: Option<String>,
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Clone, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "full", derive(Serialize, utoipa::ToSchema))]
+pub struct Proof {
+    pub data: ProofData,
+    pub metadata: ProofMetadata,
+}
+
 #[cfg(feature = "full")]
 impl<'de> Deserialize<'de> for ProofData {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>

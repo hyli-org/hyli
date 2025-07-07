@@ -45,9 +45,10 @@ async fn prove_handler(
     }
 
     // Appeler la fonction `run_bonsai`
-    let receipt = hyle_bonsai_runner::run_bonsai(&payload.elf, payload.input_data)
+    let res = hyle_bonsai_runner::run_bonsai(&payload.elf, payload.input_data)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let receipt = res.receipt;
 
     Ok(Json(ProveResponse { receipt }))
 }
