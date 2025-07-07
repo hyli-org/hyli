@@ -397,6 +397,7 @@ async fn common_main(
                 config.admin_server_port,
                 Router::new(),
                 config.admin_server_max_body_size,
+                config.data_directory.clone(),
             ))
             .await?;
     }

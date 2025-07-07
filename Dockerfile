@@ -8,7 +8,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY .cargo/config.toml .cargo/config.toml
 COPY src ./src
 COPY crates ./crates
-RUN cargo build --release -F sp1 -F risc0
+RUN cargo build --release -F sp1 -F risc0 -F rate-proxy
 
 # RUNNER
 FROM $BASE_IMAGE 
@@ -23,6 +23,7 @@ COPY --from=builder /usr/src/hyle/target/release/smt_auto_prover ./
 COPY --from=builder /usr/src/hyle/target/release/nuke_tx ./
 COPY --from=builder /usr/src/hyle/target/release/health_check ./
 COPY --from=builder /usr/src/hyle/target/release/node_state_check ./
+COPY --from=builder /usr/src/hyle/target/release/rate_limiter_proxy ./
 
 VOLUME /hyle/data
 
