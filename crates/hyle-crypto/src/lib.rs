@@ -74,7 +74,7 @@ impl BlstCrypto {
             }
             println!("---------------------- 🚨 SECURITY 🚨  ------------------------------ ");
             println!();
-            println!("WARN SAFETY: Could not load secret from env: '{}' and HYLE_USE_KEYRING != true, generating secret from validator name.", err);
+            println!("WARN SAFETY: Could not load secret from env: '{err}' and HYLE_USE_KEYRING != true, generating secret from validator name.");
             println!("Note: this is fine during local development phase, but a critical issue in production");
             println!();
             println!("---------------------- 🚨 SECURITY 🚨  ------------------------------ ");

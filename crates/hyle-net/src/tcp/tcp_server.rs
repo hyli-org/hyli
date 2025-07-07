@@ -214,7 +214,7 @@ where
         let stream = self
             .sockets
             .get_mut(&socket_addr)
-            .context(format!("Retrieving client {}", socket_addr))?;
+            .context(format!("Retrieving client {socket_addr}"))?;
 
         let binary_data = to_tcp_message(&msg)?;
         stream
@@ -229,7 +229,7 @@ where
         let stream = self
             .sockets
             .get_mut(&socket_addr)
-            .context(format!("Retrieving client {}", socket_addr))?;
+            .context(format!("Retrieving client {socket_addr}"))?;
 
         let binary_data = to_tcp_message(&msg)?;
         stream
@@ -242,7 +242,7 @@ where
         let stream = self
             .sockets
             .get_mut(&socket_addr)
-            .context(format!("Retrieving client {}", socket_addr))?;
+            .context(format!("Retrieving client {socket_addr}"))?;
 
         stream
             .sender

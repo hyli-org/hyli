@@ -107,7 +107,7 @@ where
             .take(8)
             .map(char::from)
             .collect();
-        let tmp = file.with_extension(format!("{}.tmp", salt));
+        let tmp = file.with_extension(format!("{salt}.tmp"));
         debug!("Saving on disk in a tmp file {:?}", tmp.clone());
         let mut buf_writer =
             BufWriter::new(log_error!(fs::File::create(tmp.as_path()), "Create file")?);

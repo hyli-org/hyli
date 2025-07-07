@@ -67,14 +67,14 @@ mod tests {
 
         let node = builder.build().await.expect("Failed to build node");
 
-        let client = NodeApiHttpClient::new(format!("http://localhost:{}", rest_client))
+        let client = NodeApiHttpClient::new(format!("http://localhost:{rest_client}"))
             .expect("Failed to create client");
 
         node.wait_for_rest_api(&client).await.unwrap();
 
         // Spawn a task to send requests
         let request_handle = tokio::spawn({
-            let client = NodeApiHttpClient::new(format!("http://localhost:{}", rest_client))
+            let client = NodeApiHttpClient::new(format!("http://localhost:{rest_client}"))
                 .expect("Failed to create client");
             let dummy_tx = BlobTransaction::new(
                 "test@identity",
@@ -111,16 +111,14 @@ mod tests {
             .get_node_info()
             .await
             .expect_err("Expected request to fail after shutdown");
-        let err = format!("{:#}", err);
+        let err = format!("{err:#}");
         assert!(
             err.to_string().contains("getting node info"),
-            "Expected connection error, got: {}",
-            err
+            "Expected connection error, got: {err}"
         );
         assert!(
             err.to_string().contains("Connection refused"),
-            "Expected connection error, got: {}",
-            err
+            "Expected connection error, got: {err}"
         );
     }
 }

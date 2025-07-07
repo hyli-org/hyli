@@ -49,6 +49,11 @@ impl Module for Mempool {
             )
             .unwrap_or_default();
 
+        // NB - testnet
+        // Because of a bug, the dataproposal 3fe68d0d7d08581dec2e89291fb34ce77cd591edb47d11ec0f19f7d5b5dd508e
+        // in lane afac1e7cf451ee4659a2b12822acfb54a8aaabb9acd0db917974838ffa7c8da9eb6a856df16a336c772247dc06f2f86e
+        // was double-counted, and the size was updated to a higher value.
+
         // Register the Hyli contract to be able to handle registrations.
         #[allow(clippy::expect_used, reason = "not held across await")]
         attributes
@@ -146,7 +151,6 @@ impl Module for Mempool {
                 // Fatal here, if we loose the dp in the join next error, it's lost
                 if let Ok((own_dp_hash, own_dp)) = log_error!(own_dp, "Getting result for data proposal preparation from joinset"){
                     _ = log_error!(self.resume_new_data_proposal(own_dp, own_dp_hash).await, "Resuming own data proposal creation");
-                    disseminate_timer.reset();
                 }
             }
             _ = new_dp_timer.tick() => {

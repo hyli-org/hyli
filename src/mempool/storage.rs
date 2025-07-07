@@ -62,7 +62,6 @@ pub trait Storage {
         &mut self,
         lane_id: LaneId,
     ) -> Result<Option<(DataProposalHash, (LaneEntryMetadata, DataProposal))>>;
-    fn put(&mut self, lane_id: LaneId, entry: (LaneEntryMetadata, DataProposal)) -> Result<()>;
     fn put_no_verification(
         &mut self,
         lane_id: LaneId,
@@ -164,25 +163,80 @@ pub trait Storage {
         // Add DataProposal to validator's lane
         let data_proposal_hash = data_proposal.hashed();
 
-        let dp_size = data_proposal.estimate_size();
-        let lane_size = self.get_lane_size_tip(lane_id).cloned().unwrap_or_default();
-        let cumul_size = lane_size + dp_size;
+        if self.contains(lane_id, &data_proposal_hash) {
+            anyhow::bail!("DataProposal {} was already in lane", data_proposal_hash);
+        }
 
-        let msg = (data_proposal_hash.clone(), cumul_size);
-        let signatures = vec![crypto.sign(msg)?];
+        let verdict = self.can_be_put_on_top(
+            lane_id,
+            &data_proposal_hash,
+            data_proposal.parent_data_proposal_hash.as_ref(),
+        );
 
-        // FIXME: Investigate if we can directly use put_no_verification
-        self.put(
-            lane_id.clone(),
-            (
-                LaneEntryMetadata {
-                    parent_data_proposal_hash: data_proposal.parent_data_proposal_hash.clone(),
-                    cumul_size,
-                    signatures,
-                },
-                data_proposal,
-            ),
-        )?;
+        let cumul_size = match verdict {
+            CanBePutOnTop::No => {
+                anyhow::bail!(
+                    "Can't store DataProposal {}, as parent is unknown",
+                    data_proposal_hash
+                );
+            }
+            CanBePutOnTop::Fork => {
+                let last_known_hash = self.get_lane_hash_tip(lane_id);
+                anyhow::bail!(
+                    "DataProposal cannot be put in lane because it creates a fork: tip dp hash {:?} while proposed parent_data_proposal_hash: {:?}",
+                    last_known_hash,
+                    data_proposal.parent_data_proposal_hash
+                )
+            }
+            CanBePutOnTop::Yes => {
+                let dp_size = data_proposal.estimate_size();
+                let lane_size = self.get_lane_size_tip(lane_id).cloned().unwrap_or_default();
+                let cumul_size = lane_size + dp_size;
+
+                let msg = (data_proposal_hash.clone(), cumul_size);
+                let signatures = vec![crypto.sign(msg)?];
+
+                self.put_no_verification(
+                    lane_id.clone(),
+                    (
+                        LaneEntryMetadata {
+                            parent_data_proposal_hash: data_proposal
+                                .parent_data_proposal_hash
+                                .clone(),
+                            cumul_size,
+                            signatures,
+                        },
+                        data_proposal,
+                    ),
+                )?;
+                // We optimistically update our lane tip here, we'll potentially clean this later.
+                self.update_lane_tip(lane_id.clone(), data_proposal_hash.clone(), cumul_size);
+                cumul_size
+            }
+            CanBePutOnTop::AlreadyOnTop => {
+                // This can happen if the lane tip is updated (via a commit) before the data proposal is processed.
+                // Store it anyways - this ensures caller end up in a consistent state.
+                // The lane_size already contains the size of the current data proposal, so we don't need to adjust it.
+                let cumul_size = self.get_lane_size_tip(lane_id).cloned().unwrap_or_default();
+                let msg = (data_proposal_hash.clone(), cumul_size);
+                let signatures = vec![crypto.sign(msg)?];
+                self.put_no_verification(
+                    lane_id.clone(),
+                    (
+                        LaneEntryMetadata {
+                            parent_data_proposal_hash: data_proposal
+                                .parent_data_proposal_hash
+                                .clone(),
+                            cumul_size,
+                            signatures,
+                        },
+                        data_proposal,
+                    ),
+                )?;
+                cumul_size
+            }
+        };
+
         Ok((data_proposal_hash, cumul_size))
     }
 
@@ -323,6 +377,7 @@ pub trait Storage {
     /// Returns CanBePutOnTop::Yes if the DataProposal can be put in the lane
     /// Returns CanBePutOnTop::False if the DataProposal can't be put in the lane because the parent is unknown
     /// Returns CanBePutOnTop::Fork if the DataProposal creates a fork
+    /// Returns CanBePutOnTop::AlreadyOnTop if the DataProposal is already on top of the lane
     fn can_be_put_on_top(
         &mut self,
         lane_id: &LaneId,
@@ -382,7 +437,7 @@ mod tests {
         };
         let dp_hash = data_proposal.hashed();
         storage
-            .put(lane_id.clone(), (entry.clone(), data_proposal.clone()))
+            .put_no_verification(lane_id.clone(), (entry.clone(), data_proposal.clone()))
             .unwrap();
         assert!(storage.contains(lane_id, &dp_hash));
         assert_eq!(
@@ -412,7 +467,7 @@ mod tests {
         };
         let dp_hash = data_proposal.hashed();
         storage
-            .put(lane_id.clone(), (entry.clone(), data_proposal.clone()))
+            .put_no_verification(lane_id.clone(), (entry.clone(), data_proposal.clone()))
             .unwrap();
         entry.signatures.push(SignedByValidator {
             msg: (dp_hash.clone(), cumul_size),
@@ -491,8 +546,7 @@ mod tests {
         assert_eq!(
             2,
             lane_entry.signatures.len(),
-            "{lane_id2}'s lane entry: {:?}",
-            lane_entry
+            "{lane_id2}'s lane entry: {lane_entry:?}"
         );
     }
 
@@ -672,8 +726,9 @@ mod tests {
             signatures: vec![],
         };
         storage
-            .put(lane_id.clone(), (entry, data_proposal))
+            .put_no_verification(lane_id.clone(), (entry, data_proposal.clone()))
             .unwrap();
+        storage.update_lane_tip(lane_id.clone(), data_proposal.hashed(), cumul_size);
         let pending: Vec<_> = storage
             .get_pending_entries_in_lane(lane_id, None)
             .collect()
@@ -695,7 +750,7 @@ mod tests {
             signatures: vec![],
         };
         storage
-            .put(lane_id.clone(), (entry, data_proposal))
+            .put_no_verification(lane_id.clone(), (entry, data_proposal))
             .unwrap();
         let latest = storage.get_latest_car(lane_id, &staking, None).unwrap();
         assert!(latest.is_none());
