@@ -124,14 +124,16 @@ impl std::fmt::Debug for IndexerHandlerStore {
     }
 }
 
+use hyle_modules::bus::BusClientSender;
+
 impl Indexer {
     pub async fn handle_node_state_block(&mut self, block: Block) -> Result<(), Error> {
-        self.handle_processed_block(block);
+        self.handle_processed_block(block.clone())?;
 
         self.bus
-            .send(NodeStateEvent::NewBlock(Box::new(block.clone())));
+            .send(NodeStateEvent::NewBlock(Box::new(block.clone())))?;
 
-        if self.handler_store.blocks.len() >= self.conf.query_buffer_size {
+        if self.handler_store.blocks.len() >= self.conf.indexer.query_buffer_size {
             // If we have more than configured blocks, we dump the store to the database
             self.dump_store_to_db().await?;
         }

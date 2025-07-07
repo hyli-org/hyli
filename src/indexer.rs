@@ -3,7 +3,7 @@
 mod api;
 mod handler;
 
-use crate::node_state::module::NodeStateEvent;
+use crate::utils::conf::Conf;
 use crate::{model::*, utils::conf::SharedConf};
 use anyhow::{Context, Result};
 use api::*;
@@ -34,6 +34,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::{postgres::PgPoolOptions, PgPool, Pool, Postgres};
 use std::collections::HashMap;
+use std::ops::Deref;
 use tokio::select;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info};
@@ -44,6 +45,7 @@ use utoipa_axum::routes;
 module_bus_client! {
 #[derive(Debug)]
 struct IndexerBusClient {
+    sender(NodeStateEvent),
     receiver(SignedBlock),
     receiver(MempoolStatusEvent),
 }
@@ -66,7 +68,7 @@ pub struct Indexer {
     subscribers: Subscribers,
     node_state: NodeState,
     handler_store: IndexerHandlerStore,
-    conf: IndexerConf,
+    conf: Conf,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -103,6 +105,7 @@ impl Module for Indexer {
         let mut node_state = NodeState::create(ctx.0.id.clone(), "indexer");
         node_state.store = node_state_store;
 
+        let conf: Conf = ctx.0.deref().clone();
         let indexer = Indexer {
             bus,
             state: IndexerApiState {
@@ -113,7 +116,7 @@ impl Module for Indexer {
             subscribers,
             node_state,
             handler_store: IndexerHandlerStore::default(),
-            conf: ctx.0.indexer.clone(),
+            conf,
         };
 
         if let Ok(mut guard) = ctx.1.router.lock() {
@@ -137,6 +140,21 @@ impl Module for Indexer {
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
         self.start()
     }
+
+    async fn persist(&mut self) -> Result<()> {
+        NodeStateModule::save_on_disk(
+            &self.conf.data_directory.join("indexer_node_state.bin"),
+            &self.node_state.store,
+        )
+        .context("Failed to save node state to disk")?;
+
+        NodeStateModule::save_on_disk(
+            &self.conf.data_directory.join("da_start_height.bin"),
+            &self.node_state.store.current_height,
+        )
+        .context("Failed to save DA start height to disk")?;
+        Ok(())
+    }
 }
 
 impl Indexer {
@@ -144,9 +162,9 @@ impl Indexer {
         module_handle_messages! {
             on_self self,
             listen<SignedBlock> signed_block => {
-                let event = self.node_state.handle_signed_block(&signed_block)
+                let block = self.node_state.handle_signed_block(&signed_block)
                     .context("Failed to handle block in node state")?;
-                _ = log_error!(self.handle_node_state_event(NodeStateEvent::NewBlock(Box::new(event)))
+                _ = log_error!(self.handle_node_state_block(block)
                     .await,
                     "Indexer handling node state event");
             }
@@ -377,6 +395,11 @@ mod test {
     async fn new_indexer(pool: PgPool) -> Indexer {
         let (new_sub_sender, new_sub_receiver) = tokio::sync::mpsc::channel(100);
 
+        let mut conf = Conf::default();
+        conf.indexer = IndexerConf {
+            query_buffer_size: 100,
+        };
+
         Indexer {
             bus: IndexerBusClient::new_from_bus(SharedMessageBus::default()).await,
             state: IndexerApiState {
@@ -387,9 +410,7 @@ mod test {
             new_sub_receiver,
             subscribers: HashMap::new(),
             handler_store: IndexerHandlerStore::default(),
-            conf: IndexerConf {
-                query_buffer_size: 100,
-            },
+            conf,
         }
     }
 

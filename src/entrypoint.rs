@@ -22,6 +22,7 @@ use anyhow::{bail, Context, Result};
 use axum::Router;
 use hydentity::Hydentity;
 use hyle_crypto::SharedBlstCrypto;
+use hyle_model::BlockHeight;
 use hyle_modules::{
     modules::{
         admin::{AdminApi, AdminApiRunContext},
@@ -339,14 +340,6 @@ async fn common_main(
     } else {
         handler
             .build_module::<SignedDAListener>(DAListenerConf {
-                data_directory: config.data_directory.clone(),
-                da_read_from: config.da_read_from.clone(),
-                start_block: None,
-                timeout_client_secs: config.da_timeout_client_secs,
-            })
-            .await?;
-        handler
-            .build_module::<DAListener>(DAListenerConf {
                 data_directory: config.data_directory.clone(),
                 da_read_from: config.da_read_from.clone(),
                 start_block: None,

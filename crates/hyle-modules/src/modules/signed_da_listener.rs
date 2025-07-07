@@ -32,7 +32,13 @@ impl Module for SignedDAListener {
     type Context = DAListenerConf;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let current_block = ctx.start_block.unwrap_or_default();
+        let start_block_in_file =
+            std::fs::read_to_string(ctx.data_directory.join("da_start_height.bin"))
+                .ok()
+                .and_then(|s| s.trim().parse::<u64>().ok())
+                .map(BlockHeight);
+
+        let current_block = ctx.start_block.or(start_block_in_file).unwrap_or_default();
 
         let bus = SignedDAListenerBusClient::new_from_bus(bus.new_handle()).await;
 
