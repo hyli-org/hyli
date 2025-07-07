@@ -1,6 +1,9 @@
 use anyhow::{anyhow, bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
-use sdk::{utils::parse_calldata, Calldata, Identity};
+use client_sdk::light_executor::{
+    parse_structured_blob_from_tx, LightContractExecutor, LightExecutorOutput,
+};
+use sdk::{BlobIndex, BlobTransaction, Identity, TxContext};
 use std::collections::{BTreeMap, HashMap};
 
 use crate::{account::Account, SmtTokenAction, FAUCET_ID, TOTAL_SUPPLY};
@@ -24,17 +27,32 @@ impl Default for LightSmtExecutor {
     }
 }
 
-pub struct LightExecutorOutput {
-    pub success: bool,
-    pub program_outputs: Vec<u8>,
-}
+impl LightContractExecutor<'_, '_> for LightSmtExecutor {
+    type Scratchpad = ();
+    type ExtraData = ();
 
-impl LightSmtExecutor {
-    pub fn handle(&mut self, calldata: &Calldata) -> Result<LightExecutorOutput> {
-        let (action, _) =
-            parse_calldata::<SmtTokenAction>(calldata).map_err(|e| anyhow::anyhow!(e))?;
+    fn prepare_for_tx(
+        &mut self,
+        _tx: &BlobTransaction,
+        _index: BlobIndex,
+        _tx_ctx: Option<&TxContext>,
+        _extra_data: Self::ExtraData,
+    ) -> Result<Self::Scratchpad> {
+        Ok(())
+    }
 
-        self.inner_handle(action)
+    fn handle_blob(
+        &mut self,
+        tx: &BlobTransaction,
+        index: BlobIndex,
+        _tx_ctx: Option<&TxContext>,
+        _extra_data: Self::ExtraData,
+    ) -> Result<LightExecutorOutput> {
+        let Some(parsed_blob) = parse_structured_blob_from_tx::<SmtTokenAction>(tx, index) else {
+            return Err(anyhow!("Failed to parse structured blob from transaction"));
+        };
+
+        self.inner_handle(parsed_blob.data.parameters)
             .map(|ok| LightExecutorOutput {
                 success: true,
                 program_outputs: ok.into_bytes(),
@@ -46,6 +64,17 @@ impl LightSmtExecutor {
                 })
             })
     }
+
+    // Nothing to do on failure / success, we don't actually change the state.
+    fn on_failure(&mut self, _scratchpad: Self::Scratchpad) -> Result<()> {
+        Ok(())
+    }
+    fn on_success(&mut self, _scratchpad: Self::Scratchpad) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl LightSmtExecutor {
     fn inner_handle(&mut self, action: SmtTokenAction) -> Result<String> {
         match action {
             SmtTokenAction::Transfer {
@@ -66,10 +95,17 @@ impl LightSmtExecutor {
                         .context("Insufficient balance")?;
                 }
                 let recipient_account = self.balances.entry(recipient).or_default();
-                recipient_account.balance = recipient_account
-                    .balance
-                    .checked_add(amount)
-                    .context("Overflow in recipient balance")?;
+                match recipient_account.balance.checked_add(amount) {
+                    Some(new_balance) => {
+                        recipient_account.balance = new_balance;
+                    }
+                    None => {
+                        // Revert sub for idempotency
+                        let sender_account = self.balances.get_mut(&sender).unwrap();
+                        sender_account.balance += amount;
+                        return Err(anyhow!("Overflow in recipient balance"));
+                    }
+                }
 
                 Ok(format!(
                     "Transferred {} to {}",
@@ -100,23 +136,40 @@ impl LightSmtExecutor {
                         );
                     }
 
+                    owner_account.balance = owner_account
+                        .balance
+                        .checked_sub(amount)
+                        .context("Insufficient balance")?;
+
+                    // Do this second for idempotency
                     owner_account.update_allowances(
                         spender.clone(),
                         allowance
                             .checked_sub(amount)
                             .context("Allowance underflow")?,
                     );
-
-                    owner_account.balance = owner_account
-                        .balance
-                        .checked_sub(amount)
-                        .context("Insufficient balance")?;
                 }
                 let recipient_account = self.balances.entry(recipient).or_default();
-                recipient_account.balance = recipient_account
+                match recipient_account
                     .balance
                     .checked_add(amount)
-                    .context("Overflow in recipient balance")?;
+                    .context("Overflow in recipient balance")
+                {
+                    Ok(new_balance) => {
+                        recipient_account.balance = new_balance;
+                    }
+                    Err(err) => {
+                        // Revert sub for idempotency
+                        let sender_account = self.balances.get_mut(&spender).unwrap();
+                        sender_account.balance += amount;
+                        let owner_account = self.balances.get_mut(&owner).unwrap();
+                        owner_account.update_allowances(
+                            spender.clone(),
+                            owner_account.allowances.get(&spender).cloned().unwrap_or(0) + amount,
+                        );
+                        return Err(err);
+                    }
+                }
 
                 Ok(format!(
                     "Transferred {} to {}",
