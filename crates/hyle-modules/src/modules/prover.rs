@@ -130,6 +130,9 @@ where
                 buffered_blobs: vec![],
                 buffered_blocks_count: 0,
                 batch_id: 0,
+                #[cfg(test)]
+                next_height: BlockHeight(1),
+                #[cfg(not(test))]
                 next_height: BlockHeight(0),
             },
         };
