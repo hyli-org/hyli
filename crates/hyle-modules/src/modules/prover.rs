@@ -65,6 +65,7 @@ pub struct AutoProverStore<Contract> {
     buffered_blobs: Vec<(Vec<BlobIndex>, BlobTransaction, TxContext)>,
     buffered_blocks_count: u32,
     batch_id: u64,
+    next_height: BlockHeight,
 }
 
 module_bus_client! {
@@ -129,6 +130,7 @@ where
                 buffered_blobs: vec![],
                 buffered_blocks_count: 0,
                 batch_id: 0,
+                next_height: BlockHeight(0),
             },
         };
 
@@ -257,6 +259,23 @@ where
 {
     async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
         let NodeStateEvent::NewBlock(block) = event;
+        if block.block_height.0 < self.store.next_height.0 {
+            info!(
+                cn =% self.ctx.contract_name,
+                "Ignoring already proved block {}. Expecting block {}",
+                block.block_height,
+                self.store.next_height
+            );
+            return Ok(());
+        } else if block.block_height.0 > self.store.next_height.0 {
+            bail!(
+                "Received future block {} but expected block {}",
+                block.block_height,
+                self.store.next_height
+            );
+        }
+        self.store.next_height = block.block_height + 1;
+
         if self
             .catching_up
             .is_some_and(|h| block.block_height.0 <= h.0)
