@@ -137,6 +137,23 @@ async fn blob_proxy_handler(
             vac.insert(contract_map);
         }
     }
+
+    // Count all rate-limited contracts for metrics
+
+    let ratelimited = config
+        .rate_limits
+        .iter()
+        .map(|entry| {
+            entry
+                .value()
+                .iter()
+                .filter(|(_, (count, date))| count >= &config.daily_limit && date == &today)
+                .count()
+        })
+        .sum::<usize>();
+
+    config.metrics.set_currently_limited(ratelimited as u64);
+
     if limited {
         // Update metrics
 
@@ -344,8 +361,7 @@ impl RateLimiterMetrics {
         self.blob_tx_counter.add(1, &self.labels(contract, blocked));
     }
 
-    pub fn set_currently_limited(&self, value: u64, contract: &str) {
-        self.currently_limited_gauge
-            .record(value, &[KeyValue::new("contract", contract.to_string())]);
+    pub fn set_currently_limited(&self, value: u64) {
+        self.currently_limited_gauge.record(value, &[]);
     }
 }
