@@ -56,8 +56,17 @@ impl ModifiedContractFields {
 // If the contract is None, then it was deleted.
 type ModifiedContractData = (Option<Contract>, ModifiedContractFields, Vec<SideEffect>);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SettlementStatus {
+    Idle,
+    SettleAsSuccess,
+    SettleAsFailed,
+    NotReadyToSettle,
+}
+
 #[derive(Debug, Clone)]
 struct SettlementResult {
+    settlement_status: SettlementStatus,
     contract_changes: BTreeMap<ContractName, ModifiedContractData>,
     blob_proof_output_indices: Vec<usize>,
 }
@@ -66,7 +75,7 @@ struct SettledTxOutput {
     // Original blob transaction, now settled.
     pub tx: UnsettledBlobTransaction,
     /// Result of the settlement
-    pub result: Result<SettlementResult, ()>,
+    pub settlement_result: SettlementResult,
 }
 
 /// How a new blob TX should be handled by the node.
@@ -661,11 +670,15 @@ impl NodeState {
             match self.try_to_settle_blob_tx(&bth, events, dp_parent_hash, lane_id) {
                 Ok(SettledTxOutput {
                     tx: settled_tx,
-                    result,
+                    settlement_result,
                 }) => {
                     // Settle the TX and add any new TXs to try and settle next.
-                    let mut txs =
-                        self.on_settled_blob_tx(block_under_construction, bth, settled_tx, result);
+                    let mut txs = self.on_settled_blob_tx(
+                        block_under_construction,
+                        bth,
+                        settled_tx,
+                        settlement_result,
+                    );
                     blob_tx_to_try_and_settle.append(&mut txs)
                 }
                 Err(e) => {
@@ -711,7 +724,7 @@ impl NodeState {
 
         let updated_contracts = BTreeMap::new();
 
-        let result = if
+        let settlement_result = if
         /*
         Fail fast: try to find a stateless (native verifiers are considered stateless for now) contract
         with a hyle output to success false (in all possible combinations)
@@ -724,34 +737,47 @@ impl NodeState {
                     .any(|possible_proof| !possible_proof.1.success)
         }) {
             debug!("Settling fast as failed because native blob was failed");
-            Err(())
+            SettlementResult {
+                settlement_status: SettlementStatus::SettleAsFailed,
+                contract_changes: BTreeMap::new(),
+                blob_proof_output_indices: vec![],
+            }
         } else {
-            match Self::settle_blobs_recursively(
+            Self::settle_blobs_recursively(
                 &self.contracts,
+                SettlementStatus::Idle,
                 updated_contracts,
                 unsettled_tx.blobs.values(),
                 vec![],
                 events,
-            ) {
-                Some(res) => res,
-                None => {
-                    bail!("Tx: {} is not ready to settle.", unsettled_tx.hash);
-                }
-            }
+            )
         };
 
-        // If some blobs are still sequenced behind others, we can only settle this TX as failed.
-        // (failed TX won't change the state, so we can settle it right away).
-        if result.is_ok()
-            && !self
-                .unsettled_transactions
-                .is_next_to_settle(unsettled_tx_hash)
-        {
-            bail!(
-                "Transaction {} is not next to settle, skipping.",
-                unsettled_tx_hash
-            );
-        };
+        match settlement_result.settlement_status {
+            SettlementStatus::SettleAsSuccess => {
+                if !self
+                    .unsettled_transactions
+                    .is_next_to_settle(unsettled_tx_hash)
+                {
+                    bail!(
+                        "Transaction {} is not next to settle, skipping.",
+                        unsettled_tx_hash
+                    );
+                };
+            }
+            SettlementStatus::NotReadyToSettle => {
+                bail!("Tx: {} is not ready to settle.", unsettled_tx.hash);
+            }
+            SettlementStatus::SettleAsFailed => {
+                // If some blobs are still sequenced behind others, we can only settle this TX as failed.
+                // (failed TX won't change the state, so we can settle it right away).
+            }
+            SettlementStatus::Idle => {
+                unreachable!(
+                    "Settlement status should not be Idle when trying to settle a blob tx"
+                );
+            }
+        }
 
         // We are OK to settle now.
 
@@ -763,33 +789,37 @@ impl NodeState {
 
         Ok(SettledTxOutput {
             tx: unsettled_tx,
-            result,
+            settlement_result,
         })
     }
 
     fn settle_blobs_recursively<'a>(
         contracts: &HashMap<ContractName, Contract>,
+        mut settlement_status: SettlementStatus,
         mut contract_changes: BTreeMap<ContractName, ModifiedContractData>,
         mut blob_iter: impl Iterator<Item = &'a UnsettledBlobMetadata> + Clone,
         mut blob_proof_output_indices: Vec<usize>,
         events: &mut Vec<TransactionStateEvent>,
-    ) -> Option<Result<SettlementResult, ()>> {
+    ) -> SettlementResult {
         // Recursion end-case: we succesfully settled all prior blobs, so success.
         let Some(current_blob) = blob_iter.next() else {
             tracing::trace!("Settlement - Done");
-            return Some(Ok(SettlementResult {
+            if settlement_status == SettlementStatus::Idle {
+                // All blobs have been processed, if settlement status is still idle, this means:
+                // - no blobs are proven to be failing
+                // - no blobs are proven to be not ready for settlement
+                settlement_status = SettlementStatus::SettleAsSuccess;
+            }
+            return SettlementResult {
+                settlement_status,
                 contract_changes,
                 blob_proof_output_indices,
-            }));
+            };
         };
 
         let contract_name = &current_blob.blob.contract_name;
         blob_proof_output_indices.push(0);
 
-        #[allow(
-            clippy::unwrap_used,
-            reason = "all contract names are validated to exist above"
-        )]
         // Super special case - the hyle contract has "synthetic proofs".
         // We need to check the current state of 'current_contracts' to check validity,
         // so we really can't do this before we've settled the earlier blobs.
@@ -804,6 +834,7 @@ impl NodeState {
                     tracing::trace!("Settlement - OK side effect");
                     Self::settle_blobs_recursively(
                         contracts,
+                        settlement_status,
                         contract_changes,
                         blob_iter.clone(),
                         blob_proof_output_indices.clone(),
@@ -815,7 +846,11 @@ impl NodeState {
                     let msg = format!("Could not settle blob proof output for 'hyle': {err:?}");
                     debug!("{msg}");
                     events.push(TransactionStateEvent::SettleEvent(msg));
-                    Some(Err(()))
+                    SettlementResult {
+                        settlement_status: SettlementStatus::SettleAsFailed,
+                        contract_changes,
+                        blob_proof_output_indices,
+                    }
                 }
             };
         }
@@ -852,24 +887,36 @@ impl NodeState {
                 );
                 debug!("{msg}");
                 events.push(TransactionStateEvent::SettleEvent(msg));
-                return Some(Err(()));
+                return SettlementResult {
+                    settlement_status: SettlementStatus::SettleAsFailed,
+                    contract_changes,
+                    blob_proof_output_indices,
+                };
             }
 
             tracing::trace!("Settlement - OK blob");
-            match Self::settle_blobs_recursively(
+            let settlement_result = Self::settle_blobs_recursively(
                 contracts,
+                settlement_status.clone(),
                 current_contracts,
                 blob_iter.clone(),
                 blob_proof_output_indices.clone(),
                 events,
-            ) {
-                // If this proof settles, early return, otherwise try the next one (with continue for explicitness)
-                Some(res) => return Some(res),
+            );
+            // If this proof settles, early return, otherwise try the next one (with continue for explicitness)
+            match settlement_result.settlement_status {
+                SettlementStatus::SettleAsSuccess | SettlementStatus::SettleAsFailed => {
+                    return settlement_result;
+                }
                 _ => continue,
             }
         }
         // If we end up here we didn't manage to settle all blobs, so the TX isn't ready yet.
-        None
+        SettlementResult {
+            settlement_status: SettlementStatus::NotReadyToSettle,
+            contract_changes,
+            blob_proof_output_indices,
+        }
     }
 
     /// Handle a settled blob transaction.
@@ -881,7 +928,7 @@ impl NodeState {
         block_under_construction: &mut Block,
         bth: TxHash,
         settled_tx: UnsettledBlobTransaction,
-        tx_result: Result<SettlementResult, ()>,
+        settlement_result: SettlementResult,
     ) -> BTreeSet<TxHash> {
         // Transaction was settled, update our state.
 
@@ -890,25 +937,30 @@ impl NodeState {
             .unsettled_transactions
             .get_next_txs_blocked_by_tx(&settled_tx);
 
-        #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
-        let Ok(SettlementResult {
-            contract_changes: contracts_changes,
-            blob_proof_output_indices,
-        }) = tx_result
-        else {
-            // If it's a failed settlement, mark it so and move on.
-            block_under_construction
-                .transactions_events
-                .entry(bth.clone())
-                .or_default()
-                .push(TransactionStateEvent::SettledAsFailed);
+        match settlement_result.settlement_status {
+            SettlementStatus::SettleAsFailed => {
+                // If it's a failed settlement, mark it so and move on.
+                block_under_construction
+                    .transactions_events
+                    .entry(bth.clone())
+                    .or_default()
+                    .push(TransactionStateEvent::SettledAsFailed);
 
-            self.metrics.add_failed_transactions(1);
-            info!(tx_height =% block_under_construction.block_height, "⛈️ Settled tx {} as failed", &bth);
+                self.metrics.add_failed_transactions(1);
+                info!(tx_height =% block_under_construction.block_height, "⛈️ Settled tx {} as failed", &bth);
 
-            block_under_construction.failed_txs.push(bth);
-            return next_txs_to_try_and_settle;
-        };
+                block_under_construction.failed_txs.push(bth);
+                return next_txs_to_try_and_settle;
+            }
+            SettlementStatus::NotReadyToSettle | SettlementStatus::Idle => {
+                unreachable!(
+                        "Settlement status should not be NotReadyToSettle nor Idle when trying to settle a blob tx"
+                    );
+            }
+            SettlementStatus::SettleAsSuccess => {
+                // We can move on to settle the TX
+            }
+        }
 
         // Otherwise process the side effects.
         block_under_construction
@@ -929,7 +981,10 @@ impl NodeState {
             block_under_construction.verified_blobs.push((
                 bth.clone(),
                 blob_index,
-                blob_proof_output_indices.get(blob_index.0).cloned(),
+                settlement_result
+                    .blob_proof_output_indices
+                    .get(blob_index.0)
+                    .cloned(),
             ));
 
             let blob = blob_metadata.blob;
@@ -954,7 +1009,9 @@ impl NodeState {
         }
 
         // Update contract states
-        for (contract_name, (mc, fields, side_effects)) in contracts_changes.into_iter() {
+        for (contract_name, (mc, fields, side_effects)) in
+            settlement_result.contract_changes.into_iter()
+        {
             match mc {
                 None => {
                     debug!("✏️ Delete {} contract", contract_name);
