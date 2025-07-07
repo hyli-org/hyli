@@ -160,9 +160,8 @@ impl LightSmtExecutor {
                     }
                     Err(err) => {
                         // Revert sub for idempotency
-                        let sender_account = self.balances.get_mut(&spender).unwrap();
-                        sender_account.balance += amount;
                         let owner_account = self.balances.get_mut(&owner).unwrap();
+                        owner_account.balance += amount;
                         owner_account.update_allowances(
                             spender.clone(),
                             owner_account.allowances.get(&spender).cloned().unwrap_or(0) + amount,
