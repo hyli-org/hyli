@@ -801,55 +801,6 @@ impl NodeState {
         mut blob_proof_output_indices: Vec<usize>,
         events: &mut Vec<TransactionStateEvent>,
     ) -> SettlementResult {
-        // PRE-SCAN: Check if any blob has a valid proof with success=false
-        // This allows us to fail early even if earlier blobs don't have proofs yet
-        if settlement_status == SettlementStatus::Idle {
-            for (blob_index, blob_metadata) in blob_iter.clone().enumerate() {
-                let contract_name = &blob_metadata.blob.contract_name;
-
-                // Skip hyle contract - it has special handling
-                if contract_name.0 == "hyle" {
-                    continue;
-                }
-
-                // Get the current contract state (either from changes or original)
-                let current_contract =
-                    Self::get_contract(contracts, &contract_changes, contract_name);
-                if current_contract.is_err() {
-                    continue; // Contract doesn't exist, skip
-                }
-                let current_contract = current_contract.unwrap();
-
-                for (proof_index, (program_id, hyle_output)) in
-                    blob_metadata.possible_proofs.iter().enumerate()
-                {
-                    // Check if this is a valid proof with success=false
-                    if !hyle_output.success
-                        && hyle_output.initial_state == current_contract.state
-                        && *program_id == current_contract.program_id
-                    {
-                        // We found a valid proof with success=false, settle as failed immediately
-                        let msg = format!(
-                            "Pre-scan: Found valid proof with success=false for blob {blob_index} - {:?}",
-                            String::from_utf8(hyle_output.program_outputs.clone())
-                        );
-                        debug!("{msg}");
-                        events.push(TransactionStateEvent::SettleEvent(msg));
-
-                        // Build the indices up to this blob
-                        let mut indices = vec![0; blob_index + 1];
-                        indices[blob_index] = proof_index;
-
-                        return SettlementResult {
-                            settlement_status: SettlementStatus::SettleAsFailed,
-                            contract_changes,
-                            blob_proof_output_indices: indices,
-                        };
-                    }
-                }
-            }
-        }
-
         // Recursion end-case: we successfully settled all prior blobs, so success.
         let Some(current_blob) = blob_iter.next() else {
             tracing::trace!("Settlement - Done");
@@ -904,72 +855,105 @@ impl NodeState {
             };
         }
 
-        // Regular case: go through each proof for this blob. If they settle, carry on recursively.
+        // Regular case: go through each proof for this blob.
+        // If they settle, carry on recursively.
+        // Check for valid failure proofs first before trying success paths
+        // This allows early settlement as failed even if earlier blobs (of different contracts) aren't ready
         for (i, proof_metadata) in current_blob.possible_proofs.iter().enumerate() {
-            #[allow(clippy::unwrap_used, reason = "pushed above so last must exist")]
-            let blob_index = blob_proof_output_indices.last_mut().unwrap();
-            *blob_index = i;
-
-            // TODO: ideally make this CoW
-            let mut current_contracts = contract_changes.clone();
-            if let Err(msg) = Self::process_proof(
-                contracts,
-                &mut current_contracts,
-                contract_name,
-                proof_metadata,
-                current_blob,
-            ) {
-                // Not a valid proof, log it and try the next one.
-                let msg = format!(
-                    "Could not settle blob proof output #{i} for contract '{contract_name}': {msg}"
-                );
-                debug!("{msg}");
-                events.push(TransactionStateEvent::SettleEvent(msg));
-                continue;
-            }
+            // Validation to see if this is a potentially valid failure proof
             if !proof_metadata.1.success {
-                // We have a valid proof of failure, we short-circuit.
-                let msg = format!(
-                    "Proven failure for blob {} - {:?}",
-                    i,
-                    String::from_utf8(proof_metadata.1.program_outputs.clone())
-                );
-                debug!("{msg}");
-                events.push(TransactionStateEvent::SettleEvent(msg));
+                let current_contract =
+                    Self::get_contract(contracts, &contract_changes, contract_name);
 
-                return SettlementResult {
-                    settlement_status: SettlementStatus::SettleAsFailed,
-                    contract_changes,
-                    blob_proof_output_indices,
-                };
-            }
+                if let Ok(current_contract) = current_contract {
+                    // Check if this is a valid failure proof
+                    if proof_metadata.1.initial_state == current_contract.state
+                        && proof_metadata.0 == current_contract.program_id
+                    {
+                        // Valid failure proof found! Set index and return failed status
+                        #[allow(clippy::unwrap_used, reason = "pushed above so last must exist")]
+                        let blob_index = blob_proof_output_indices.last_mut().unwrap();
+                        *blob_index = i;
 
-            tracing::trace!("Settlement - OK blob");
+                        let msg = format!(
+                            "Proven failure for blob {} - {:?}",
+                            i,
+                            String::from_utf8(proof_metadata.1.program_outputs.clone())
+                        );
+                        debug!("{msg}");
+                        events.push(TransactionStateEvent::SettleEvent(msg));
 
-            // Try to settle the remaining blobs with this proof
-            let settlement_result = Self::settle_blobs_recursively(
-                contracts,
-                settlement_status.clone(),
-                current_contracts,
-                blob_iter.clone(),
-                blob_proof_output_indices.clone(),
-                events,
-            );
-
-            // If this proof settles, early return, otherwise try the next one (with continue for explicitness)
-            match settlement_result.settlement_status {
-                SettlementStatus::SettleAsSuccess | SettlementStatus::SettleAsFailed => {
-                    return settlement_result;
+                        return SettlementResult {
+                            settlement_status: SettlementStatus::SettleAsFailed,
+                            contract_changes,
+                            blob_proof_output_indices,
+                        };
+                    }
                 }
-                _ => continue,
+            } else {
+                #[allow(clippy::unwrap_used, reason = "pushed above so last must exist")]
+                let blob_index = blob_proof_output_indices.last_mut().unwrap();
+                *blob_index = i;
+
+                // TODO: ideally make this CoW
+                let mut current_contracts = contract_changes.clone();
+                if let Err(msg) = Self::process_proof(
+                    contracts,
+                    &mut current_contracts,
+                    contract_name,
+                    proof_metadata,
+                    current_blob,
+                ) {
+                    // Not a valid proof, log it and try the next one.
+                    let msg = format!(
+                        "Could not settle blob proof output #{i} for contract '{contract_name}': {msg}"
+                    );
+                    debug!("{msg}");
+                    events.push(TransactionStateEvent::SettleEvent(msg));
+                    continue;
+                }
+
+                tracing::trace!("Settlement - OK blob");
+
+                // Try to settle the remaining blobs with this proof
+                let settlement_result = Self::settle_blobs_recursively(
+                    contracts,
+                    settlement_status.clone(),
+                    current_contracts,
+                    blob_iter.clone(),
+                    blob_proof_output_indices.clone(),
+                    events,
+                );
+
+                // If this proof settles, early return, otherwise try the next one (with continue for explicitness)
+                match settlement_result.settlement_status {
+                    SettlementStatus::SettleAsSuccess | SettlementStatus::SettleAsFailed => {
+                        return settlement_result;
+                    }
+                    _ => continue,
+                }
             }
         }
 
-        // If we end up here we didn't manage to settle all blobs, so the TX isn't ready yet
-        settlement_status = SettlementStatus::NotReadyToSettle;
-
-        SettlementResult {
+        // If no proofs worked for this blob, continue exploring remaining blobs
+        // for potential failure proofs before giving up
+        let remaining_settlement = Self::settle_blobs_recursively(
+            contracts,
             settlement_status,
+            contract_changes.clone(),
+            blob_iter,
+            blob_proof_output_indices.clone(),
+            events,
+        );
+
+        // If we found a failure in remaining blobs, return it
+        if remaining_settlement.settlement_status == SettlementStatus::SettleAsFailed {
+            return remaining_settlement;
+        }
+
+        // Otherwise, this blob wasn't ready, so the TX isn't ready yet
+        SettlementResult {
+            settlement_status: SettlementStatus::NotReadyToSettle,
             contract_changes,
             blob_proof_output_indices,
         }
