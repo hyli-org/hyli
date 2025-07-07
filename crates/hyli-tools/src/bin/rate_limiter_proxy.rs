@@ -334,13 +334,13 @@ impl RateLimiterMetrics {
 
         RateLimiterMetrics {
             fallback_counter: my_meter
-                .u64_counter(format!("{}_fallback_counter", rate_limiter))
+                .u64_counter(format!("{rate_limiter}_fallback_counter"))
                 .build(),
             blob_tx_counter: my_meter
-                .u64_counter(format!("{}_blob_tx_counter", rate_limiter))
+                .u64_counter(format!("{rate_limiter}_blob_tx_counter"))
                 .build(),
             currently_limited_gauge: my_meter
-                .u64_gauge(format!("{}_currently_limited_counter", rate_limiter))
+                .u64_gauge(format!("{rate_limiter}_currently_limited_counter"))
                 .build(),
         }
     }
