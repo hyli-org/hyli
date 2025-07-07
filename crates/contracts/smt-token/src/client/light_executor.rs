@@ -75,7 +75,7 @@ impl LightContractExecutor<'_, '_> for LightSmtExecutor {
 }
 
 impl LightSmtExecutor {
-    fn inner_handle(&mut self, action: SmtTokenAction) -> Result<String> {
+    pub fn inner_handle(&mut self, action: SmtTokenAction) -> Result<String> {
         match action {
             SmtTokenAction::Transfer {
                 sender,
@@ -188,5 +188,101 @@ impl LightSmtExecutor {
                 Ok(format!("Approved {amount} to {spender}"))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use hyle_smt_token::client::light_executor::LightSmtExecutor;
+    use hyle_smt_token::{SmtTokenAction, FAUCET_ID, TOTAL_SUPPLY};
+    use sdk::Identity;
+
+    fn identity(name: &str) -> Identity {
+        Identity::from(name)
+    }
+
+    #[test]
+    fn test_transfer() {
+        let mut exec = LightSmtExecutor::default();
+        let sender = Identity::from(FAUCET_ID);
+        let recipient = identity("bob@hydentity");
+        let amount = 1000u128;
+        let action = SmtTokenAction::Transfer {
+            sender: sender.clone(),
+            recipient: recipient.clone(),
+            amount,
+        };
+        let res = exec.inner_handle(action).unwrap();
+        assert_eq!(res, format!("Transferred {amount} to {recipient}"));
+        assert_eq!(exec.balances[&sender].balance, TOTAL_SUPPLY - amount);
+        assert_eq!(exec.balances[&recipient].balance, amount);
+    }
+
+    #[test]
+    fn test_transfer_insufficient_balance() {
+        let mut exec = LightSmtExecutor::default();
+        let sender = identity("bob@hydentity");
+        let recipient = identity("alice@hydentity");
+        let amount = 1000u128;
+        let action = SmtTokenAction::Transfer {
+            sender: sender.clone(),
+            recipient: recipient.clone(),
+            amount,
+        };
+        let err = exec.inner_handle(action).unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_approve_and_transfer_from() {
+        let mut exec = LightSmtExecutor::default();
+        let owner = Identity::from(FAUCET_ID);
+        let spender = identity("bob@hydentity");
+        let recipient = identity("alice@hydentity");
+        let amount = 500u128;
+        // Approve
+        let approve = SmtTokenAction::Approve {
+            owner: owner.clone(),
+            spender: spender.clone(),
+            amount,
+        };
+        exec.inner_handle(approve).unwrap();
+        assert_eq!(exec.balances[&owner].allowances[&spender], amount);
+        // TransferFrom
+        let transfer_from = SmtTokenAction::TransferFrom {
+            owner: owner.clone(),
+            spender: spender.clone(),
+            recipient: recipient.clone(),
+            amount,
+        };
+        let res = exec.inner_handle(transfer_from).unwrap();
+        assert_eq!(res, format!("Transferred {amount} to {recipient}"));
+        assert_eq!(exec.balances[&owner].balance, TOTAL_SUPPLY - amount);
+        assert_eq!(exec.balances[&owner].allowances[&spender], 0);
+        assert_eq!(exec.balances[&recipient].balance, amount);
+    }
+
+    #[test]
+    fn test_transfer_from_allowance_exceeded() {
+        let mut exec = LightSmtExecutor::default();
+        let owner = Identity::from(FAUCET_ID);
+        let spender = identity("bob@hydentity");
+        let recipient = identity("alice@hydentity");
+        let amount = 500u128;
+        // Approve less than amount
+        let approve = SmtTokenAction::Approve {
+            owner: owner.clone(),
+            spender: spender.clone(),
+            amount: 100,
+        };
+        exec.inner_handle(approve).unwrap();
+        let transfer_from = SmtTokenAction::TransferFrom {
+            owner: owner.clone(),
+            spender: spender.clone(),
+            recipient: recipient.clone(),
+            amount,
+        };
+        let err = exec.inner_handle(transfer_from).unwrap_err();
+        assert!(err.to_string().contains("Allowance exceeded"));
     }
 }
