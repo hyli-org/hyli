@@ -220,7 +220,7 @@ impl Clone for RouterState {
     }
 }
 
-fn handle_panic(err: Box<dyn std::any::Any + Send + 'static>) -> Response<String> {
+pub fn handle_panic(err: Box<dyn std::any::Any + Send + 'static>) -> Response<String> {
     let details = if let Some(s) = err.downcast_ref::<String>() {
         s.clone()
     } else if let Some(s) = err.downcast_ref::<&str>() {
