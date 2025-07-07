@@ -94,7 +94,8 @@ impl LightSmtExecutor {
                         .checked_sub(amount)
                         .context("Insufficient balance")?;
                 }
-                let recipient_account = self.balances.entry(recipient).or_default();
+                let recipient_account = self.balances.entry(recipient.clone()).or_default();
+                recipient_account.address = recipient;
                 match recipient_account.balance.checked_add(amount) {
                     Some(new_balance) => {
                         recipient_account.balance = new_balance;
@@ -149,7 +150,8 @@ impl LightSmtExecutor {
                             .context("Allowance underflow")?,
                     );
                 }
-                let recipient_account = self.balances.entry(recipient).or_default();
+                let recipient_account = self.balances.entry(recipient.clone()).or_default();
+                recipient_account.address = recipient;
                 match recipient_account
                     .balance
                     .checked_add(amount)
