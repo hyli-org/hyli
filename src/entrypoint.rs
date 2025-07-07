@@ -28,6 +28,7 @@ use hyle_modules::{
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::{DAListener, DAListenerConf},
+        signed_da_listener::SignedDAListener,
         websocket::WebSocketModule,
         BuildApiContextInner,
     },
@@ -252,9 +253,6 @@ async fn common_main(
 
     if config.run_indexer {
         handler
-            .build_module::<Indexer>((config.clone(), build_api_ctx.clone()))
-            .await?;
-        handler
             .build_module::<ContractStateIndexer<Hyllar>>(ContractStateIndexerCtx {
                 contract_name: "hyllar".into(),
                 data_directory: config.data_directory.clone(),
@@ -296,6 +294,9 @@ async fn common_main(
                 api: build_api_ctx.clone(),
             })
             .await?;
+        handler
+            .build_module::<Indexer>((config.clone(), build_api_ctx.clone()))
+            .await?;
     }
 
     if config.p2p.mode != conf::P2pMode::None {
@@ -336,6 +337,14 @@ async fn common_main(
 
         handler.build_module::<P2P>(ctx.clone()).await?;
     } else {
+        handler
+            .build_module::<SignedDAListener>(DAListenerConf {
+                data_directory: config.data_directory.clone(),
+                da_read_from: config.da_read_from.clone(),
+                start_block: None,
+                timeout_client_secs: config.da_timeout_client_secs,
+            })
+            .await?;
         handler
             .build_module::<DAListener>(DAListenerConf {
                 data_directory: config.data_directory.clone(),

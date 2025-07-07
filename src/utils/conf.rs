@@ -150,6 +150,8 @@ pub struct Conf {
     pub da_read_from: String,
     /// Timeout for DA client requests, in seconds, before it tries to reconnect to stream blocks
     pub da_timeout_client_secs: u64,
+    /// Start block for the DA client to read from, if not specified, it will read from the beginning
+    pub da_start_block: Option<u64>,
 
     /// Websocket configuration
     pub websocket: NodeWebSocketConfig,

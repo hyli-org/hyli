@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::Result;
-use sdk::{BlockHeight, DataEvent, Hashed, SignedBlock};
+use sdk::{BlockHeight, DataEvent, Hashed, MempoolStatusEvent, SignedBlock};
 use tokio::task::yield_now;
 use tracing::{debug, info, warn};
 
@@ -16,6 +16,7 @@ module_bus_client! {
 #[derive(Debug)]
 struct SignedDAListenerBusClient {
     sender(DataEvent),
+    sender(MempoolStatusEvent),
 }
 }
 

@@ -125,10 +125,11 @@ impl std::fmt::Debug for IndexerHandlerStore {
 }
 
 impl Indexer {
-    pub async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<(), Error> {
-        match event {
-            NodeStateEvent::NewBlock(block) => self.handle_processed_block(*block)?,
-        };
+    pub async fn handle_node_state_block(&mut self, block: Block) -> Result<(), Error> {
+        self.handle_processed_block(block);
+
+        self.bus
+            .send(NodeStateEvent::NewBlock(Box::new(block.clone())));
 
         if self.handler_store.blocks.len() >= self.conf.query_buffer_size {
             // If we have more than configured blocks, we dump the store to the database

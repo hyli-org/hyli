@@ -22,6 +22,8 @@ use hyle_model::api::{
     BlobWithStatus, TransactionStatusDb, TransactionTypeDb, TransactionWithBlobs,
 };
 use hyle_model::utils::TimestampMs;
+use hyle_modules::node_state::module::NodeStateModule;
+use hyle_modules::node_state::{NodeState, NodeStateStore};
 use hyle_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
@@ -42,7 +44,7 @@ use utoipa_axum::routes;
 module_bus_client! {
 #[derive(Debug)]
 struct IndexerBusClient {
-    receiver(NodeStateEvent),
+    receiver(SignedBlock),
     receiver(MempoolStatusEvent),
 }
 }
@@ -62,6 +64,7 @@ pub struct Indexer {
     state: IndexerApiState,
     new_sub_receiver: tokio::sync::mpsc::Receiver<(ContractName, WebSocket)>,
     subscribers: Subscribers,
+    node_state: NodeState,
     handler_store: IndexerHandlerStore,
     conf: IndexerConf,
 }
@@ -92,6 +95,14 @@ impl Module for Indexer {
 
         let subscribers = HashMap::new();
 
+        // Load node state from node_state.bin if it exists or create a new default
+        let node_state_path = ctx.0.data_directory.join("indexer_node_state.bin");
+        let node_state_store =
+            NodeStateModule::load_from_disk_or_default::<NodeStateStore>(&node_state_path);
+
+        let mut node_state = NodeState::create(ctx.0.id.clone(), "indexer");
+        node_state.store = node_state_store;
+
         let indexer = Indexer {
             bus,
             state: IndexerApiState {
@@ -100,6 +111,7 @@ impl Module for Indexer {
             },
             new_sub_receiver,
             subscribers,
+            node_state,
             handler_store: IndexerHandlerStore::default(),
             conf: ctx.0.indexer.clone(),
         };
@@ -131,8 +143,10 @@ impl Indexer {
     pub async fn start(&mut self) -> Result<()> {
         module_handle_messages! {
             on_self self,
-            listen<NodeStateEvent> event => {
-                _ = log_error!(self.handle_node_state_event(event)
+            listen<SignedBlock> signed_block => {
+                let event = self.node_state.handle_signed_block(&signed_block)
+                    .context("Failed to handle block in node state")?;
+                _ = log_error!(self.handle_node_state_event(NodeStateEvent::NewBlock(Box::new(event)))
                     .await,
                     "Indexer handling node state event");
             }
@@ -369,6 +383,7 @@ mod test {
                 db: pool,
                 new_sub_sender,
             },
+            node_state: NodeState::create("indexer".to_string(), "indexer"),
             new_sub_receiver,
             subscribers: HashMap::new(),
             handler_store: IndexerHandlerStore::default(),
