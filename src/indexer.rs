@@ -402,9 +402,11 @@ mod test {
     async fn new_indexer(pool: PgPool) -> Indexer {
         let (new_sub_sender, new_sub_receiver) = tokio::sync::mpsc::channel(100);
 
-        let mut conf = Conf::default();
-        conf.indexer = IndexerConf {
-            query_buffer_size: 100,
+        let conf = Conf {
+            indexer: IndexerConf {
+                query_buffer_size: 100,
+            },
+            ..Conf::default()
         };
 
         Indexer {
