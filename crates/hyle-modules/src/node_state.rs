@@ -10,7 +10,7 @@ use ordered_tx_map::OrderedTxMap;
 use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
 use sdk::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use timeouts::Timeouts;
 use tracing::{debug, error, info, trace};
 
@@ -282,7 +282,7 @@ impl NodeState {
                                 .push(TransactionStateEvent::Sequenced);
                         }
                         Err(e) => {
-                            let err = format!("Failed to handle blob transaction: {:?}", e);
+                            let err = format!("Failed to handle blob transaction: {e:?}");
                             error!(tx_hash = %tx_id.1, "{err}");
                             block_under_construction
                                 .transactions_events
@@ -670,7 +670,7 @@ impl NodeState {
                 }
                 Err(e) => {
                     unsettlable_txs.insert(bth.clone());
-                    let e = format!("Failed to settle: {}", e);
+                    let e = format!("Failed to settle: {e}");
                     debug!(tx_hash = %bth, "{e}");
                     events.push(TransactionStateEvent::SettleEvent(e));
                 }
@@ -812,7 +812,7 @@ impl NodeState {
                 }
                 Err(err) => {
                     // We have a valid proof of failure, we short-circuit.
-                    let msg = format!("Could not settle blob proof output for 'hyle': {:?}", err);
+                    let msg = format!("Could not settle blob proof output for 'hyle': {err:?}");
                     debug!("{msg}");
                     events.push(TransactionStateEvent::SettleEvent(msg));
                     Some(Err(()))
@@ -837,8 +837,7 @@ impl NodeState {
             ) {
                 // Not a valid proof, log it and try the next one.
                 let msg = format!(
-                    "Could not settle blob proof output #{} for contract '{}': {}",
-                    i, contract_name, msg
+                    "Could not settle blob proof output #{i} for contract '{contract_name}': {msg}"
                 );
                 debug!("{msg}");
                 events.push(TransactionStateEvent::SettleEvent(msg));
@@ -961,6 +960,8 @@ impl NodeState {
                     debug!("✏️ Delete {} contract", contract_name);
                     self.contracts.remove(&contract_name);
 
+                    let mut potentially_blocked_contracts = HashSet::new();
+
                     // Time-out all transactions for this contract
                     while let Some(tx_hash) = self
                         .unsettled_transactions
@@ -969,6 +970,9 @@ impl NodeState {
                     {
                         if let Some(popped_tx) = self.unsettled_transactions.remove(&tx_hash) {
                             info!("⏳ Timeout tx {} (from contract deletion)", &tx_hash);
+
+                            potentially_blocked_contracts
+                                .extend(OrderedTxMap::get_contracts_blocked_by_tx(&popped_tx));
                             block_under_construction
                                 .transactions_events
                                 .entry(tx_hash.clone())
@@ -980,6 +984,14 @@ impl NodeState {
                             block_under_construction
                                 .lane_ids
                                 .insert(tx_hash, popped_tx.tx_context.lane_id);
+                        }
+                    }
+
+                    for contract in potentially_blocked_contracts {
+                        if let Some(tx_hash) =
+                            self.unsettled_transactions.get_next_unsettled_tx(&contract)
+                        {
+                            next_txs_to_try_and_settle.insert(tx_hash.clone());
                         }
                     }
 
@@ -1683,7 +1695,7 @@ pub mod test {
             data_proposals: vec![(
                 LaneId::default(),
                 vec![DataProposal::new(
-                    Some(DataProposalHash(format!("{}", height))),
+                    Some(DataProposalHash(format!("{height}"))),
                     txs,
                 )],
             )],

@@ -32,7 +32,7 @@ impl TryFrom<&Verifier> for NativeVerifiers {
             "blst" => Ok(Self::Blst),
             "sha3_256" => Ok(Self::Sha3_256),
             "secp256k1" => Ok(Self::Secp256k1),
-            _ => Err(format!("Unknown native verifier: {}", value)),
+            _ => Err(format!("Unknown native verifier: {value}")),
         }
     }
 }

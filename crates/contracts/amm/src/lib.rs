@@ -150,10 +150,10 @@ impl Amm {
         let normalized_pair = UnorderedTokenPair::new(pair.0, pair.1);
 
         if self.pairs.contains_key(&normalized_pair) {
-            return Err(format!("Pair {:?} already exists", normalized_pair));
+            return Err(format!("Pair {normalized_pair:?} already exists"));
         }
 
-        let program_outputs = format!("Pair {:?} created", normalized_pair);
+        let program_outputs = format!("Pair {normalized_pair:?} created");
 
         self.pairs.insert(normalized_pair, amounts);
 
@@ -175,7 +175,7 @@ impl Amm {
         let normalized_pair = UnorderedTokenPair::new(pair.0.clone(), pair.1.clone());
         let is_normalized_order = pair.0 <= pair.1;
         let Some((prev_x, prev_y)) = self.pairs.get_mut(&normalized_pair) else {
-            return Err(format!("Pair {:?} not found in AMM state", pair));
+            return Err(format!("Pair {pair:?} not found in AMM state"));
         };
         let expected_to_amount = if is_normalized_order {
             let amount = *prev_y - (*prev_x * *prev_y / (*prev_x + from_amount));
@@ -351,7 +351,7 @@ mod tests {
 
         let result = state.create_new_pair(("token1".to_string(), "token2".to_string()), (20, 50));
 
-        println!("result: {:?}", result);
+        println!("result: {result:?}");
         assert!(result.is_ok());
         let normalized_token_pair =
             UnorderedTokenPair::new("token1".to_string(), "token2".to_string());

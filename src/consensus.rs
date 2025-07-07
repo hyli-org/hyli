@@ -53,7 +53,7 @@ pub use network::*;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ConsensusCommand {
     TimeoutTick,
-    StartNewSlot(bool),
+    StartNewSlot(Option<TimestampMs>), // If none, may delay, if some, may delay up to that timestamp
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, BorshSerialize, BorshDeserialize)]
@@ -505,7 +505,7 @@ impl Consensus {
             // Setup our ticket for the next round
             // Send Prepare message to all validators
             self.bft_round_state.leader.pending_ticket = Some(ticket);
-            self.bus.send(ConsensusCommand::StartNewSlot(true))?;
+            self.bus.send(ConsensusCommand::StartNewSlot(None))?;
             Ok(())
         } else if self.is_part_of_consensus(self.crypto.validator_pubkey()) {
             Ok(())
@@ -659,8 +659,7 @@ impl Consensus {
         self.bus
             .send(OutboundMessage::broadcast(signed_msg))
             .context(format!(
-                "Failed to broadcast {} msg on the bus",
-                enum_variant_name
+                "Failed to broadcast {enum_variant_name} msg on the bus"
             ))?;
         Ok(())
     }
@@ -675,10 +674,7 @@ impl Consensus {
         let enum_variant_name: &'static str = (&signed_msg.msg).into();
         self.bus
             .send(OutboundMessage::send(to, signed_msg))
-            .context(format!(
-                "Failed to send {} msg on the bus",
-                enum_variant_name
-            ))?;
+            .context(format!("Failed to send {enum_variant_name} msg on the bus"))?;
         Ok(())
     }
 
@@ -756,7 +752,7 @@ impl Consensus {
 
         if self.is_round_leader() {
             self.bft_round_state.leader.pending_ticket = Some(Ticket::Genesis);
-            self.bus.send(ConsensusCommand::StartNewSlot(true))?;
+            self.bus.send(ConsensusCommand::StartNewSlot(None))?;
         }
         self.start().await
     }
@@ -1116,14 +1112,14 @@ pub mod test {
 
         pub async fn start_round(&mut self) {
             self.consensus
-                .start_round(TimestampMsClock::now(), false)
+                .start_round(TimestampMsClock::now(), Some(TimestampMs(0)))
                 .await
                 .expect("Failed to start slot");
         }
 
         pub async fn start_round_at(&mut self, current_timestamp: TimestampMs) {
             self.consensus
-                .start_round(current_timestamp, false)
+                .start_round(current_timestamp, Some(TimestampMs(0)))
                 .await
                 .expect("Failed to start slot");
         }
@@ -1168,7 +1164,7 @@ pub mod test {
 
             match rec {
                 Ok(OutboundMessage::BroadcastMessage(net_msg)) => {
-                    panic!("{description}: Broadcast message found: {:?}", net_msg)
+                    panic!("{description}: Broadcast message found: {net_msg:?}")
                 }
                 els => {
                     info!("{description}: Got {:?}", els);
@@ -1192,7 +1188,7 @@ pub mod test {
             } = rec
             {
                 if let NetMessage::ConsensusMessage(msg) = net_msg {
-                    assert_eq!(to, &dest, "Got message {:?}", msg);
+                    assert_eq!(to, &dest, "Got message {msg:?}");
                     Box::pin(async move { msg })
                 } else {
                     warn!("{description}: skipping non-consensus message, details in debug");

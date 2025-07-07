@@ -56,7 +56,7 @@ pub struct TurmoilCtx {
 impl TurmoilCtx {
     pub fn build_conf(temp_dir: &TempDir, i: usize) -> Conf {
         let mut node_conf = Conf {
-            id: format!("node-{}", i),
+            id: format!("node-{i}"),
             ..ConfMaker::default().default
         };
 

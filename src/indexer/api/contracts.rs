@@ -257,7 +257,7 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for TimeoutWindowDb {
             None => TimeoutWindow::NoTimeout,
             Some(val) => {
                 if val < 0 {
-                    return Err(format!("Negative BlockHeight not allowed: {}", val).into());
+                    return Err(format!("Negative BlockHeight not allowed: {val}").into());
                 }
                 TimeoutWindow::Timeout(BlockHeight(val as u64))
             }

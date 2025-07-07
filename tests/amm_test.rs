@@ -70,8 +70,7 @@ mod e2e_amm {
             assert_eq!(
                 state.balance_of(account).expect("Account not found"),
                 *expected,
-                "Incorrect balance for {}",
-                account
+                "Incorrect balance for {account}"
             );
         }
         Ok(())
