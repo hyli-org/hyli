@@ -19,7 +19,7 @@ hex = "0.4.3"
 borsh = "1.5.6"
 
 bonsai-sdk = { version = "1.2.4", features = ["non_blocking"] }
-boundless-market = "0.7.0"
+boundless-market = "0.11.0"
 hyle-net = { workspace = true }
 risc0-zkvm = { version = "2.1" }
 bytemuck = "1.23.1"
