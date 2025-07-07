@@ -22,13 +22,12 @@ use anyhow::{bail, Context, Result};
 use axum::Router;
 use hydentity::Hydentity;
 use hyle_crypto::SharedBlstCrypto;
-use hyle_model::BlockHeight;
 use hyle_modules::{
     modules::{
         admin::{AdminApi, AdminApiRunContext},
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
-        da_listener::{DAListener, DAListenerConf},
+        da_listener::DAListenerConf,
         signed_da_listener::SignedDAListener,
         websocket::WebSocketModule,
         BuildApiContextInner,

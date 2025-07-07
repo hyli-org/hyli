@@ -8,6 +8,7 @@ use tracing::{debug, info, warn};
 use crate::{
     bus::{BusClientSender, SharedMessageBus},
     modules::{da_listener::DAListenerConf, module_bus_client, Module},
+    node_state::module::NodeStateModule,
     utils::da_codec::{DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest},
 };
 use crate::{log_error, module_handle_messages};
@@ -32,13 +33,21 @@ impl Module for SignedDAListener {
     type Context = DAListenerConf;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let start_block_in_file =
-            std::fs::read_to_string(ctx.data_directory.join("da_start_height.bin"))
-                .ok()
-                .and_then(|s| s.trim().parse::<u64>().ok())
-                .map(BlockHeight);
+        let start_block_in_file = NodeStateModule::load_from_disk::<BlockHeight>(
+            ctx.data_directory.join("da_start_height.bin").as_path(),
+        );
+
+        debug!(
+            "Building SignedDAListener with start block from file: {:?}",
+            start_block_in_file
+        );
 
         let current_block = ctx.start_block.or(start_block_in_file).unwrap_or_default();
+
+        info!(
+            "SignedDAListener current block height set to: {}",
+            current_block
+        );
 
         let bus = SignedDAListenerBusClient::new_from_bus(bus.new_handle()).await;
 
@@ -188,6 +197,11 @@ impl SignedDAListener {
         } else {
             let mut client = self.start_client(self.current_block).await?;
 
+            info!(
+                "Starting DA client for signed blocks at block {}",
+                self.current_block
+            );
+
             module_handle_messages! {
                 on_self self,
                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(self.config.timeout_client_secs)) => {
@@ -212,8 +226,13 @@ impl SignedDAListener {
     }
 
     async fn processing_next_frame(&mut self, event: DataAvailabilityEvent) -> Result<()> {
-        if let DataAvailabilityEvent::SignedBlock(block) = event {
-            self.process_block(block).await?;
+        match event {
+            DataAvailabilityEvent::SignedBlock(block) => {
+                self.process_block(block).await?;
+            }
+            DataAvailabilityEvent::MempoolStatusEvent(status) => {
+                self.bus.send_waiting_if_full(status).await?;
+            }
         }
 
         Ok(())

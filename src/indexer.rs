@@ -46,7 +46,7 @@ module_bus_client! {
 #[derive(Debug)]
 struct IndexerBusClient {
     sender(NodeStateEvent),
-    receiver(SignedBlock),
+    receiver(DataEvent),
     receiver(MempoolStatusEvent),
 }
 }
@@ -148,9 +148,16 @@ impl Module for Indexer {
         )
         .context("Failed to save node state to disk")?;
 
+        let persisted_da_start_height = BlockHeight(self.node_state.current_height.0 + 1);
+
+        tracing::debug!(
+            "Indexer saving DA start height: {}",
+            &persisted_da_start_height
+        );
+
         NodeStateModule::save_on_disk(
             &self.conf.data_directory.join("da_start_height.bin"),
-            &self.node_state.store.current_height,
+            &persisted_da_start_height,
         )
         .context("Failed to save DA start height to disk")?;
         Ok(())
@@ -161,7 +168,7 @@ impl Indexer {
     pub async fn start(&mut self) -> Result<()> {
         module_handle_messages! {
             on_self self,
-            listen<SignedBlock> signed_block => {
+            listen<DataEvent> DataEvent::OrderedSignedBlock(signed_block) => {
                 let block = self.node_state.handle_signed_block(&signed_block)
                     .context("Failed to handle block in node state")?;
                 _ = log_error!(self.handle_node_state_block(block)
