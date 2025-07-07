@@ -21,6 +21,11 @@ path = "src/bin/nuke_tx.rs"
 name = "health_check"
 path = "src/bin/health_check.rs"
 
+[[bin]]
+name = "rate_limiter_proxy"
+path = "src/bin/rate_limiter_proxy.rs"
+required-features = ["rate-proxy"]
+
 [dependencies]
 hyle-contract-sdk = { workspace = true }
 client-sdk = { workspace = true, features = ["rest"] }
@@ -57,11 +62,34 @@ google-cloud-storage = "0.24.0"
 # Health check
 ureq = { version = "3.0.11", default-features = false, features = ["json"] }
 
+# Rate limiting proxy (optional feature)
+axum = { version = "0.7", optional = true }
+tower_governor = { version = "0.6", optional = true }
+tower-http = { version = "0.6.5", features = [
+    "trace",
+    "cors",
+    "catch-panic",
+], optional = true }
+hyper = { version = "1.0", optional = true }
+hyper-util = { version = "0.1", optional = true }
+dashmap = { version = "6.1.0", optional = true }
+chrono = { version = "0.4.41", features = [
+    "clock",
+], default-features = false, optional = true }
+
+
 [features]
 risc0 = ["client-sdk/risc0"]
+rate-proxy = [
+    "dep:axum",
+    "dep:tower_governor",
+    "dep:tower-http",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:dashmap",
+    "dep:chrono",
+]
 
-default = ["ui"]
+default = ["ui", "rate-proxy"]
 ui = ["dep:ratatui", "dep:crossterm"]
 
-[package.metadata.cargo-machete]
-ignored = ["client-sdk", "opentelemetry"]
