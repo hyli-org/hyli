@@ -11,6 +11,7 @@ use hyle_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
         BuildApiContextInner, ModulesHandler,
+        admin::{AdminApi, AdminApiRunContext},
         da_listener::{DAListener, DAListenerConf},
         prover::{AutoProver, AutoProverCtx},
         rest::{ApiDoc, RestApi, RestApiRunContext, Router},
@@ -104,6 +105,17 @@ async fn main() -> Result<()> {
         .expect("OpenAPI should be available")
         .clone();
 
+    if config.run_admin_server {
+        handler
+            .build_module::<AdminApi>(AdminApiRunContext::new(
+                config.admin_server_port,
+                Router::new(),
+                config.admin_server_max_body_size,
+                config.data_directory.clone(),
+            ))
+            .await?;
+    }
+
     handler
         .build_module::<RestApi>(
             RestApiRunContext::new(
@@ -153,6 +165,10 @@ struct Conf {
 
     pub rest_server_port: u16,
     pub rest_server_max_body_size: usize,
+
+    pub run_admin_server: bool,
+    pub admin_server_port: u16,
+    pub admin_server_max_body_size: usize,
 }
 
 impl Conf {
