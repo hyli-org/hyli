@@ -993,9 +993,11 @@ impl NodeState {
 
             let blob = blob_metadata.blob;
 
-            // Keep track of all txs to nuke
-            if let Ok(data) = StructuredBlobData::<NukeTxAction>::try_from(blob.data.clone()) {
-                txs_to_nuke.extend(data.parameters.txs.clone());
+            if blob.contract_name.0 == "hyle" {
+                // Keep track of all txs to nuke
+                if let Ok(data) = StructuredBlobData::<NukeTxAction>::try_from(blob.data.clone()) {
+                    txs_to_nuke.extend(data.parameters.txs.clone());
+                }
             }
 
             // Keep track of all stakers
