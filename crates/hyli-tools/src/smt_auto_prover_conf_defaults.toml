@@ -22,3 +22,7 @@ contract_name = "oranj"
 
 rest_server_port = 4321
 rest_server_max_body_size = 10485760 # 10 MB
+
+run_admin_server = true
+admin_server_port = 4322
+admin_server_max_body_size = 10485760 # 10 MB
