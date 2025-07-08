@@ -485,6 +485,7 @@ pub struct ProofData(#[cfg_attr(feature = "full", serde(with = "base64_field"))]
 pub struct ProofMetadata {
     pub cycles: Option<u64>,
     pub prover: Option<String>,
+    /// SessionId, TxHash, ... of the proof request on a prover network
     pub id: Option<String>,
 }
 
