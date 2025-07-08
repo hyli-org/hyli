@@ -58,9 +58,13 @@ type ModifiedContractData = (Option<Contract>, ModifiedContractFields, Vec<SideE
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SettlementStatus {
-    Idle,
+    // When starting to settle a BlobTx, we need to have a "Unknown" status that will be updated when a tx is flagged as failed, or as not ready to settle.
+    // At the end of the settlement recursion, if status is still Unknown, then the tx is settled as success.
+    Unknown,
     SettleAsSuccess,
     SettleAsFailed,
+    // This status is used to flag a tx not ready to settle.
+    // This can happens when a blob did not receive any proof; and that any following blob did not settled as failed.
     NotReadyToSettle,
 }
 
@@ -745,7 +749,7 @@ impl NodeState {
         } else {
             Self::settle_blobs_recursively(
                 &self.contracts,
-                SettlementStatus::Idle,
+                SettlementStatus::Unknown,
                 updated_contracts,
                 unsettled_tx.blobs.values(),
                 vec![],
@@ -772,7 +776,7 @@ impl NodeState {
                 // If some blobs are still sequenced behind others, we can only settle this TX as failed.
                 // (failed TX won't change the state, so we can settle it right away).
             }
-            SettlementStatus::Idle => {
+            SettlementStatus::Unknown => {
                 unreachable!(
                     "Settlement status should not be Idle when trying to settle a blob tx"
                 );
@@ -804,7 +808,7 @@ impl NodeState {
         // Recursion end-case: we succesfully settled all prior blobs, so success.
         let Some(current_blob) = blob_iter.next() else {
             tracing::trace!("Settlement - Done");
-            if settlement_status == SettlementStatus::Idle {
+            if settlement_status == SettlementStatus::Unknown {
                 // All blobs have been processed, if settlement status is still idle, this means:
                 // - no blobs are proven to be failing
                 // - no blobs are proven to be not ready for settlement
@@ -952,7 +956,7 @@ impl NodeState {
                 block_under_construction.failed_txs.push(bth);
                 return next_txs_to_try_and_settle;
             }
-            SettlementStatus::NotReadyToSettle | SettlementStatus::Idle => {
+            SettlementStatus::NotReadyToSettle | SettlementStatus::Unknown => {
                 unreachable!(
                         "Settlement status should not be NotReadyToSettle nor Idle when trying to settle a blob tx"
                     );
