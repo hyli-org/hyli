@@ -148,6 +148,19 @@ impl Indexer {
         Ok(())
     }
 
+    pub(crate) fn empty_store(&self) -> bool {
+        self.handler_store.blocks.is_empty()
+            && self.handler_store.block_txs.is_empty()
+            && self.handler_store.tx_data.is_empty()
+            && self.handler_store.tx_data_proofs.is_empty()
+            && self.handler_store.transactions_events.is_empty()
+            && self.handler_store.sql_updates.is_empty()
+            && self.handler_store.contracts.is_empty()
+            && self.handler_store.contract_states.is_empty()
+            && self.handler_store.deleted_contracts.is_empty()
+            && self.handler_store.blob_proof_outputs.is_empty()
+    }
+
     pub(crate) async fn dump_store_to_db(&mut self) -> Result<()> {
         if self.handler_store.blocks.is_empty() {
             return Ok(());
