@@ -131,6 +131,12 @@ impl Indexer {
     pub async fn start(&mut self) -> Result<()> {
         module_handle_messages! {
             on_self self,
+            delay_shutdown_until {
+                self.dump_store_to_db()
+                    .await
+                    .context("Indexer failed to dump store to DB")?;
+                self.empty_store()
+            },
             listen<NodeStateEvent> event => {
                 _ = log_error!(self.handle_node_state_event(event)
                     .await,
