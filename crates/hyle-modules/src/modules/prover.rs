@@ -1119,11 +1119,14 @@ where
                     Ok(proof) => {
                         let elapsed = start.elapsed();
                         metrics.record_generation_time(elapsed.as_secs_f64());
-                        metrics.record_proof_size(proof.0.len() as u64);
+                        metrics.record_proof_size(proof.data.0.len() as u64);
                         metrics.record_proof_success();
+                        if let Some(cycles) = proof.metadata.cycles {
+                            metrics.record_proof_cycles(cycles);
+                        }
                         let tx = ProofTransaction {
                             contract_name: contract_name.clone(),
-                            proof,
+                            proof: proof.data,
                         };
                         // If we are in nosend mode, we just log the proof and don't send it (for debugging)
                         if std::env::var("HYLE_PROVER_NOSEND")

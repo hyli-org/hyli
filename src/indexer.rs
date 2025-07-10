@@ -168,6 +168,12 @@ impl Indexer {
     pub async fn start(&mut self) -> Result<()> {
         module_handle_messages! {
             on_self self,
+            delay_shutdown_until {
+                self.dump_store_to_db()
+                    .await
+                    .context("Indexer failed to dump store to DB")?;
+                self.empty_store()
+            },
             listen<DataEvent> DataEvent::OrderedSignedBlock(signed_block) => {
                 let block = self.node_state.handle_signed_block(&signed_block)
                     .context("Failed to handle block in node state")?;
