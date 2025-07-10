@@ -5,15 +5,17 @@ use crate::{
     log_error, module_bus_client, module_handle_messages,
     modules::{signal::ShutdownModule, Module},
 };
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 pub use axum::Router;
 use axum::{
-    extract::{DefaultBodyLimit, State},
-    http::{header, Response, StatusCode},
-    response::IntoResponse,
-    routing::post,
+    body::Bytes,
+    extract::{DefaultBodyLimit, Path, State},
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
+    routing::{get, post},
 };
 use sdk::*;
+use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 use tower_http::catch_panic::CatchPanicLayer;
 use tracing::info;
@@ -36,14 +38,21 @@ pub struct AdminApiRunContext {
     pub port: u16,
     pub router: Router,
     pub max_body_size: usize,
+    pub data_directory: PathBuf,
 }
 
 impl AdminApiRunContext {
-    pub fn new(port: u16, router: Router, max_body_size: usize) -> AdminApiRunContext {
+    pub fn new(
+        port: u16,
+        router: Router,
+        max_body_size: usize,
+        data_directory: PathBuf,
+    ) -> AdminApiRunContext {
         Self {
             port,
             router,
             max_body_size,
+            data_directory,
         }
     }
 }
@@ -61,8 +70,10 @@ impl Module for AdminApi {
         let app = ctx.router.merge(
             Router::new()
                 .route("/v1/admin/persist", post(persist))
+                .route("/v1/admin/download/{file}", get(download))
                 .with_state(RouterState {
                     bus: AdminBusClient::new_from_bus(bus.new_handle()).await,
+                    data_directory: ctx.data_directory,
                 }),
         );
         let app = app
@@ -91,8 +102,65 @@ pub async fn persist(State(mut state): State<RouterState>) -> Result<impl IntoRe
     Ok(())
 }
 
+pub async fn download(
+    Path(file_path): Path<String>,
+    State(state): State<RouterState>,
+) -> Result<impl IntoResponse, AppError> {
+    // Construct the full path by joining the data directory with the requested file path
+    let full_path = state.data_directory.join(&file_path);
+
+    // Security check: ensure the file is within the data directory
+    if !full_path.starts_with(&state.data_directory) {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow!("Invalid file path"),
+        ));
+    }
+
+    // Check if the file exists
+    if !full_path.exists() {
+        return Err(AppError(StatusCode::NOT_FOUND, anyhow!("File not found")));
+    }
+
+    // Check if it's actually a file (not a directory)
+    if !full_path.is_file() {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow!("Path is not a file"),
+        ));
+    }
+
+    // Read the file content
+    match tokio::fs::read(&full_path).await {
+        Ok(content) => {
+            // Try to determine content type based on file extension
+            let content_type = if let Some(ext) = full_path.extension() {
+                match ext.to_str().unwrap_or("").to_lowercase().as_str() {
+                    "json" => "application/json",
+                    "txt" => "text/plain",
+                    "bin" => "application/octet-stream",
+                    _ => "application/octet-stream",
+                }
+            } else {
+                "application/octet-stream"
+            };
+
+            Ok((
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, content_type)],
+                Bytes::from(content),
+            ))
+        }
+        Err(_) => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            anyhow!("Failed to read file"),
+        )),
+    }
+}
+
 pub struct RouterState {
     bus: AdminBusClient,
+    data_directory: PathBuf,
 }
 
 impl AdminApi {
@@ -147,6 +215,7 @@ impl Clone for RouterState {
     fn clone(&self) -> Self {
         Self {
             bus: self.bus.clone(),
+            data_directory: self.data_directory.clone(),
         }
     }
 }

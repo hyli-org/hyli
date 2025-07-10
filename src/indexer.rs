@@ -3,7 +3,7 @@
 mod api;
 mod handler;
 
-use crate::node_state::module::NodeStateEvent;
+use crate::utils::conf::Conf;
 use crate::{model::*, utils::conf::SharedConf};
 use anyhow::{Context, Result};
 use api::*;
@@ -23,6 +23,8 @@ use hyle_model::api::{
     BlobWithStatus, TransactionStatusDb, TransactionTypeDb, TransactionWithBlobs,
 };
 use hyle_model::utils::TimestampMs;
+use hyle_modules::node_state::module::NodeStateModule;
+use hyle_modules::node_state::{NodeState, NodeStateStore};
 use hyle_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
@@ -33,6 +35,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::{postgres::PgPoolOptions, PgPool, Pool, Postgres};
 use std::collections::HashMap;
+use std::ops::Deref;
 use tokio::select;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{error, info};
@@ -43,7 +46,8 @@ use utoipa_axum::routes;
 module_bus_client! {
 #[derive(Debug)]
 struct IndexerBusClient {
-    receiver(NodeStateEvent),
+    sender(NodeStateEvent),
+    receiver(DataEvent),
     receiver(MempoolStatusEvent),
 }
 }
@@ -62,9 +66,9 @@ pub struct Indexer {
     state: IndexerApiState,
     new_sub_receiver: tokio::sync::mpsc::Receiver<(ContractName, WebSocket)>,
     subscribers: Subscribers,
+    node_state: NodeState,
     handler_store: IndexerHandlerStore,
-    conf: IndexerConf,
-    gcs_client: Option<Client>,
+    conf: Conf,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -96,23 +100,15 @@ impl Module for Indexer {
 
         let subscribers = HashMap::new();
 
-        // Initialize GCS client if bucket and prefix are configured
-        let gcs_client = if ctx.0.indexer.gcs_bucket.is_some() && ctx.0.indexer.gcs_prefix.is_some()
-        {
-            match ClientConfig::default().with_auth().await {
-                Ok(config) => {
-                    tracing::info!("Initializing GCS client for proof storage");
-                    Some(Client::new(config))
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to initialize GCS client for proof storage: {}", e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        // Load node state from node_state.bin if it exists or create a new default
+        let node_state_path = ctx.0.data_directory.join("indexer_node_state.bin");
+        let node_state_store =
+            NodeStateModule::load_from_disk_or_default::<NodeStateStore>(&node_state_path);
 
+        let mut node_state = NodeState::create(ctx.0.id.clone(), "indexer");
+        node_state.store = node_state_store;
+
+        let conf: Conf = ctx.0.deref().clone();
         let indexer = Indexer {
             bus,
             state: IndexerApiState {
@@ -121,9 +117,9 @@ impl Module for Indexer {
             },
             new_sub_receiver,
             subscribers,
+            node_state,
             handler_store: IndexerHandlerStore::default(),
-            conf: ctx.0.indexer.clone(),
-            gcs_client,
+            conf,
         };
 
         if let Ok(mut guard) = ctx.1.router.lock() {
@@ -147,14 +143,44 @@ impl Module for Indexer {
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
         self.start()
     }
+
+    async fn persist(&mut self) -> Result<()> {
+        NodeStateModule::save_on_disk(
+            &self.conf.data_directory.join("indexer_node_state.bin"),
+            &self.node_state.store,
+        )
+        .context("Failed to save node state to disk")?;
+
+        let persisted_da_start_height = BlockHeight(self.node_state.current_height.0 + 1);
+
+        tracing::debug!(
+            "Indexer saving DA start height: {}",
+            &persisted_da_start_height
+        );
+
+        NodeStateModule::save_on_disk(
+            &self.conf.data_directory.join("da_start_height.bin"),
+            &persisted_da_start_height,
+        )
+        .context("Failed to save DA start height to disk")?;
+        Ok(())
+    }
 }
 
 impl Indexer {
     pub async fn start(&mut self) -> Result<()> {
         module_handle_messages! {
             on_self self,
-            listen<NodeStateEvent> event => {
-                _ = log_error!(self.handle_node_state_event(event)
+            delay_shutdown_until {
+                self.dump_store_to_db()
+                    .await
+                    .context("Indexer failed to dump store to DB")?;
+                self.empty_store()
+            },
+            listen<DataEvent> DataEvent::OrderedSignedBlock(signed_block) => {
+                let block = self.node_state.handle_signed_block(&signed_block)
+                    .context("Failed to handle block in node state")?;
+                _ = log_error!(self.handle_node_state_block(block)
                     .await,
                     "Indexer handling node state event");
             }
@@ -385,22 +411,24 @@ mod test {
     async fn new_indexer(pool: PgPool) -> Indexer {
         let (new_sub_sender, new_sub_receiver) = tokio::sync::mpsc::channel(100);
 
+        let conf = Conf {
+            indexer: IndexerConf {
+                query_buffer_size: 100,
+            },
+            ..Conf::default()
+        };
+
         Indexer {
             bus: IndexerBusClient::new_from_bus(SharedMessageBus::default()).await,
             state: IndexerApiState {
                 db: pool,
                 new_sub_sender,
             },
+            node_state: NodeState::create("indexer".to_string(), "indexer"),
             new_sub_receiver,
             subscribers: HashMap::new(),
             handler_store: IndexerHandlerStore::default(),
-            conf: IndexerConf {
-                query_buffer_size: 100,
-                gcs_bucket: None,
-                gcs_prefix: None,
-                gcs_min_upload_size: 10 * 1024 * 1024, // 10MB
-            },
-            gcs_client: None,
+            conf,
         }
     }
 
