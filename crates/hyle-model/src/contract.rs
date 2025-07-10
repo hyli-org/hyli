@@ -863,7 +863,7 @@ impl ContractAction for RegisterContractAction {
             data: BlobData::from(StructuredBlobData {
                 caller,
                 callees,
-                parameters: self.clone(),
+                parameters: HyleTLDAction::RegisterContract(self.clone()),
             }),
         }
     }
@@ -1000,6 +1000,12 @@ impl Hashed<TxHash> for RegisterContractEffect {
         let hash_bytes = hasher.finalize();
         TxHash(hex::encode(hash_bytes))
     }
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
+pub enum HyleTLDAction {
+    RegisterContract(RegisterContractAction),
+    DeleteContract(DeleteContractAction),
 }
 
 #[cfg(feature = "full")]

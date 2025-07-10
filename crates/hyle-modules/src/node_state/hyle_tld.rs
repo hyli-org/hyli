@@ -19,15 +19,17 @@ pub fn handle_blob_for_hyle_tld(
     // TODO: check the identity of the caller here.
 
     // TODO: support unstructured blobs as well ?
+    if let Ok(reg) = StructuredBlobData::<HyleTLDAction>::try_from(current_blob.data.clone()) {
+        match reg.parameters {
+            HyleTLDAction::RegisterContract(register_contract_action) => {
+                handle_register_blob(contracts, contract_changes, &register_contract_action)?;
+            }
+            HyleTLDAction::DeleteContract(delete_contract_action) => {
+                handle_delete_blob(contracts, contract_changes, &delete_contract_action)?;
+            }
+        }
+    }
     if let Ok(reg) =
-        StructuredBlobData::<RegisterContractAction>::try_from(current_blob.data.clone())
-    {
-        handle_register_blob(contracts, contract_changes, &reg.parameters)?;
-    } else if let Ok(reg) =
-        StructuredBlobData::<DeleteContractAction>::try_from(current_blob.data.clone())
-    {
-        handle_delete_blob(contracts, contract_changes, &reg.parameters)?;
-    } else if let Ok(reg) =
         StructuredBlobData::<UpdateContractProgramIdAction>::try_from(current_blob.data.clone())
     {
         handle_update_program_id_blob(contracts, contract_changes, &reg.parameters)?;
