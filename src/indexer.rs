@@ -350,7 +350,7 @@ impl Indexer {
                         .iter()
                         .map(|blob| BlobWithStatus {
                             contract_name: blob.contract_name.0.clone(),
-                            data: blob.data.0.clone(),
+                            data: blob.data.1.clone(),
                             proof_outputs: vec![],
                         })
                         .collect(),
@@ -472,11 +472,11 @@ mod test {
                 vec![
                     Blob {
                         contract_name: first_contract_name,
-                        data: BlobData(vec![1, 2, 3]),
+                        data: BlobData::unstructured(vec![1, 2, 3]),
                     },
                     Blob {
                         contract_name: second_contract_name,
-                        data: BlobData(vec![1, 2, 3]),
+                        data: BlobData::unstructured(vec![1, 2, 3]),
                     },
                 ],
             )),

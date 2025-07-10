@@ -82,11 +82,11 @@ async fn test_full_settlement_flow() -> Result<()> {
         vec![
             Blob {
                 contract_name: "c1".into(),
-                data: BlobData(vec![0, 1, 2, 3]),
+                data: BlobData::unstructured(vec![0, 1, 2, 3]),
             },
             Blob {
                 contract_name: "c2.hyle".into(),
-                data: BlobData(vec![0, 1, 2, 3]),
+                data: BlobData::unstructured(vec![0, 1, 2, 3]),
             },
         ],
     );
@@ -219,11 +219,11 @@ async fn test_tx_settlement_duplicates() -> Result<()> {
         vec![
             Blob {
                 contract_name: "c1".into(),
-                data: BlobData(vec![0, 1, 2, 3]),
+                data: BlobData::unstructured(vec![0, 1, 2, 3]),
             },
             Blob {
                 contract_name: "c2.hyle".into(),
-                data: BlobData(vec![0, 1, 2, 3]),
+                data: BlobData::unstructured(vec![0, 1, 2, 3]),
             },
         ],
     );

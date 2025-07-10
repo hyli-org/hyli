@@ -63,7 +63,7 @@ impl<'a> CheckSecp256k1<'a> {
         };
 
         let secp_data: Secp256k1Blob =
-            borsh::from_slice(&secp_blob.data.0).map_err(|_| "Failed to decode Secp256k1Blob")?;
+            borsh::from_slice(&secp_blob.data.1).map_err(|_| "Failed to decode Secp256k1Blob")?;
 
         // Verify that the identity matches the user
         if secp_data.identity != self.calldata.identity {

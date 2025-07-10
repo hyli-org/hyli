@@ -32,7 +32,7 @@ where
         }
     };
 
-    let Ok(parameters) = borsh::from_slice::<Action>(blob.data.0.as_slice()) else {
+    let Ok(parameters) = borsh::from_slice::<Action>(blob.data.1.as_slice()) else {
         return Err(format!("Could not deserialize Blob at index {index}"));
     };
 
@@ -89,7 +89,7 @@ where
         }
     };
 
-    let Ok(parameters) = borsh::from_slice::<Action>(blob.data.0.as_slice()) else {
+    let Ok(parameters) = borsh::from_slice::<Action>(blob.data.1.as_slice()) else {
         return None;
     };
 
@@ -254,7 +254,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyle_model::{Blob, BlobData, ContractName, TxHash};
+    use hyle_model::{Blob, BlobData, BlobDataType, ContractName, TxHash};
 
     fn make_calldata(
         identity: Identity,
@@ -281,6 +281,7 @@ mod tests {
         Blob {
             contract_name: ContractName::new(contract),
             data: BlobData(
+                BlobDataType::Structured,
                 borsh::to_vec(&StructuredBlobData {
                     caller,
                     callees,

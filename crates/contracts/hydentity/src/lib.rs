@@ -181,7 +181,10 @@ impl ContractAction for HydentityAction {
     ) -> Blob {
         Blob {
             contract_name,
-            data: sdk::BlobData(borsh::to_vec(self).expect("failed to encode program inputs")),
+            data: sdk::BlobData(
+                sdk::BlobDataType::Unstructured,
+                borsh::to_vec(self).expect("failed to encode program inputs"),
+            ),
         }
     }
 }

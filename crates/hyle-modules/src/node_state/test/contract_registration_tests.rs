@@ -77,7 +77,7 @@ async fn test_register_contract_failure() {
         "hyle@hyle",
         vec![Blob {
             contract_name: "hyle".into(),
-            data: BlobData(vec![0, 1, 2, 3]),
+            data: BlobData::unstructured(vec![0, 1, 2, 3]),
         }],
     );
     let register_good = make_register_tx("hyle@hyle".into(), "hyle".into(), "c1.hyle".into());
@@ -178,7 +178,7 @@ async fn test_register_contract_composition() {
             .as_blob("hyle".into(), None, None),
             Blob {
                 contract_name: "hydentity".into(),
-                data: BlobData(vec![0, 1, 2, 3]),
+                data: BlobData::unstructured(vec![0, 1, 2, 3]),
             },
         ],
     );
@@ -769,7 +769,7 @@ async fn test_unknown_contract_and_delete_cleanup() {
         "test@unknown",
         vec![Blob {
             contract_name: "unknown".into(),
-            data: BlobData(vec![1, 2, 3, 4]),
+            data: BlobData::unstructured(vec![1, 2, 3, 4]),
         }],
     );
 
@@ -792,14 +792,14 @@ async fn test_unknown_contract_and_delete_cleanup() {
         "test@to_delete",
         vec![Blob {
             contract_name: "to_delete".into(),
-            data: BlobData(vec![1, 2, 3, 4]),
+            data: BlobData::unstructured(vec![1, 2, 3, 4]),
         }],
     );
     let blob_tx3 = BlobTransaction::new(
         "test2@to_delete",
         vec![Blob {
             contract_name: "to_delete".into(),
-            data: BlobData(vec![5, 6, 7, 8]),
+            data: BlobData::unstructured(vec![5, 6, 7, 8]),
         }],
     );
     let blob_tx1_hash = blob_tx1.hashed();
@@ -962,7 +962,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
         Identity::new("test@c1"),
         vec![Blob {
             contract_name: c1.clone(),
-            data: BlobData(vec![0, 1, 2, 3]),
+            data: BlobData::unstructured(vec![0, 1, 2, 3]),
         }],
     );
 
@@ -990,7 +990,7 @@ async fn test_pending_tx_then_contract_upgrade_and_settlement_order() {
         Identity::new("user@foo"),
         vec![Blob {
             contract_name: contract_name.clone(),
-            data: BlobData(vec![1, 2, 3]),
+            data: BlobData::unstructured(vec![1, 2, 3]),
         }],
     );
     let tx2_hash = tx2.hashed();
@@ -1007,7 +1007,7 @@ async fn test_pending_tx_then_contract_upgrade_and_settlement_order() {
         Identity::new("user2@foo"),
         vec![Blob {
             contract_name: contract_name.clone(),
-            data: BlobData(vec![4, 5, 6]),
+            data: BlobData::unstructured(vec![4, 5, 6]),
         }],
     );
     let tx4_hash = tx4.hashed();

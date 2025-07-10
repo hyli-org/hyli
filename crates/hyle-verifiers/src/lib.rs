@@ -382,7 +382,7 @@ mod tests {
                             BlobIndex(0),
                             Blob {
                                 contract_name: "webauthn".into(),
-                                data: BlobData(vec![3, 1, 1, 2, 1, 1, 2, 1, 1, 0])
+                                data: BlobData::unstructured(vec![3, 1, 1, 2, 1, 1, 2, 1, 1, 0])
                             }
                         )]),
                         tx_blob_count: 1,

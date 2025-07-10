@@ -1560,7 +1560,7 @@ pub mod test {
     fn new_blob(contract: &str) -> Blob {
         Blob {
             contract_name: ContractName::new(contract),
-            data: BlobData(vec![0, 1, 2, 3]),
+            data: BlobData::unstructured(vec![0, 1, 2, 3]),
         }
     }
 
@@ -1580,7 +1580,7 @@ pub mod test {
 
         Blob {
             contract_name: ContractName::new(contract),
-            data: BlobData(data),
+            data: BlobData::unstructured(data),
         }
     }
 
@@ -1589,7 +1589,7 @@ pub mod test {
 
         Blob {
             contract_name: ContractName::new(contract),
-            data: BlobData(data),
+            data: BlobData::unstructured(data),
         }
     }
 

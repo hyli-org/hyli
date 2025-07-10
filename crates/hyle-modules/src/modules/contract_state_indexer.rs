@@ -361,7 +361,7 @@ mod tests {
             index: BlobIndex,
             _tx_context: TxContext,
         ) -> Result<Option<()>> {
-            self.0 = tx.blobs.get(index.0).unwrap().data.0.clone();
+            self.0 = tx.blobs.get(index.0).unwrap().data.1.clone();
             Ok(None)
         }
 
@@ -413,7 +413,7 @@ mod tests {
         let contract_name = ContractName::from("test_contract");
         let blob = Blob {
             contract_name: contract_name.clone(),
-            data: BlobData(vec![1, 2, 3]),
+            data: BlobData::unstructured(vec![1, 2, 3]),
         };
         let tx = BlobTransaction::new("test", vec![blob]);
         let tx_hash = tx.hashed();
@@ -442,7 +442,7 @@ mod tests {
         let contract_name = ContractName::from("test_contract");
         let blob = Blob {
             contract_name: contract_name.clone(),
-            data: BlobData(vec![1, 2, 3]),
+            data: BlobData::unstructured(vec![1, 2, 3]),
         };
         let tx = BlobTransaction::new("test", vec![blob]);
         let tx_id = TxId(DataProposalHash::default(), tx.hashed());

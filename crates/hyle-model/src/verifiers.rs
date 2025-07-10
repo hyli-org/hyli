@@ -63,7 +63,10 @@ impl ContractAction for BlstSignatureBlob {
         #[allow(clippy::expect_used)]
         Blob {
             contract_name,
-            data: BlobData(borsh::to_vec(self).expect("failed to encode BlstSignatureBlob")),
+            data: BlobData(
+                crate::BlobDataType::Unstructured,
+                borsh::to_vec(self).expect("failed to encode BlstSignatureBlob"),
+            ),
         }
     }
 }
@@ -92,7 +95,10 @@ impl ContractAction for ShaBlob {
         #[allow(clippy::expect_used)]
         Blob {
             contract_name,
-            data: BlobData(borsh::to_vec(self).expect("failed to encode ShaBlob")),
+            data: BlobData(
+                crate::BlobDataType::Unstructured,
+                borsh::to_vec(self).expect("failed to encode ShaBlob"),
+            ),
         }
     }
 }
@@ -157,7 +163,10 @@ impl ContractAction for Secp256k1Blob {
         #[allow(clippy::expect_used)]
         Blob {
             contract_name,
-            data: BlobData(borsh::to_vec(self).expect("failed to encode Secp256k1Blob")),
+            data: BlobData(
+                crate::BlobDataType::Unstructured,
+                borsh::to_vec(self).expect("failed to encode Secp256k1Blob"),
+            ),
         }
     }
 }

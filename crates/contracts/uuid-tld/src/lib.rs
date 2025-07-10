@@ -35,7 +35,10 @@ impl ContractAction for UuidTldAction {
         #[allow(clippy::expect_used)]
         Blob {
             contract_name,
-            data: BlobData(borsh::to_vec(self).expect("failed to encode BlstSignatureBlob")),
+            data: BlobData(
+                sdk::BlobDataType::Unstructured,
+                borsh::to_vec(self).expect("failed to encode BlstSignatureBlob"),
+            ),
         }
     }
 }
@@ -169,7 +172,7 @@ mod test {
             blobs: vec![
                 Blob {
                     contract_name: "test".into(),
-                    data: BlobData(vec![]),
+                    data: BlobData(BlobDataType::Unstructured, vec![]),
                 },
                 action.as_blob("uuid".into(), None, None),
             ]

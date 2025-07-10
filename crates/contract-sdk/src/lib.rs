@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn test_blobdata_encoding() {
-        let blob_data = BlobData(vec![1, 2, 3, 4]);
+        let blob_data = BlobData(BlobDataType::Unstructured, vec![1, 2, 3, 4]);
         let encoded = borsh::to_vec(&blob_data).expect("Failed to encode BlobData");
         let decoded: BlobData = borsh::from_slice(&encoded).expect("Failed to decode BlobData");
         assert_eq!(blob_data, decoded);

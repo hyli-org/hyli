@@ -197,14 +197,66 @@ impl Add<usize> for BlobIndex {
     Default, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize,
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
-pub struct BlobData(pub Vec<u8>);
+pub struct BlobData(pub BlobDataType, pub Vec<u8>);
+
+#[derive(
+    Default,
+    Debug,
+    Serialize,
+    Deserialize,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    BorshSerialize,
+    BorshDeserialize,
+)]
+#[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
+#[borsh(use_discriminant = true)]
+pub enum BlobDataType {
+    #[default]
+    Structured = 0x00,
+    Unstructured = 0x80,
+
+    RegisterContract = 0x01,
+    DeleteContract = 0x02,
+    UpgradeContractProgramId = 0x03,
+    UpdateContractTimeoutWindow = 0x04,
+
+    NukeTxAction = 0xe0,
+}
+
+impl BlobDataType {
+    pub fn as_bytes(&self) -> [u8; 1] {
+        [*self as u8]
+    }
+}
+
+impl Copy for BlobDataType {}
+
+impl BlobData {
+    pub fn unstructured(data: Vec<u8>) -> Self {
+        BlobData(BlobDataType::Unstructured, data)
+    }
+
+    pub fn structured(data: Vec<u8>) -> Self {
+        BlobData(BlobDataType::Structured, data)
+    }
+
+    pub fn register_contract(data: StructuredBlobData<RegisterContractAction>) -> Self {
+        BlobData(
+            BlobDataType::RegisterContract,
+            borsh::to_vec(&data).expect("failed to encode BlobData"),
+        )
+    }
+}
 
 impl std::fmt::Debug for BlobData {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        if self.0.len() > 20 {
-            write!(f, "BlobData({}...)", hex::encode(&self.0[..20]))
+        if self.1.len() > 20 {
+            write!(f, "BlobData({}...)", hex::encode(&self.1[..20]))
         } else {
-            write!(f, "BlobData({})", hex::encode(&self.0))
+            write!(f, "BlobData({})", hex::encode(&self.1))
         }
     }
 }
@@ -326,21 +378,24 @@ impl BorshDeserialize for StructuredBlobData<DropEndOfReader> {
 
 impl<Action: BorshSerialize> From<StructuredBlobData<Action>> for BlobData {
     fn from(val: StructuredBlobData<Action>) -> Self {
-        BlobData(borsh::to_vec(&val).expect("failed to encode BlobData"))
+        BlobData(
+            BlobDataType::Structured,
+            borsh::to_vec(&val).expect("failed to encode BlobData"),
+        )
     }
 }
 impl<Action: BorshDeserialize> TryFrom<BlobData> for StructuredBlobData<Action> {
     type Error = std::io::Error;
 
     fn try_from(val: BlobData) -> Result<StructuredBlobData<Action>, Self::Error> {
-        borsh::from_slice(&val.0)
+        borsh::from_slice(&val.1)
     }
 }
 impl TryFrom<BlobData> for StructuredBlobData<DropEndOfReader> {
     type Error = std::io::Error;
 
     fn try_from(val: BlobData) -> Result<StructuredBlobData<DropEndOfReader>, Self::Error> {
-        borsh::from_slice(&val.0)
+        borsh::from_slice(&val.1)
     }
 }
 
@@ -387,7 +442,7 @@ impl Hashed<BlobHash> for Blob {
 
         let mut hasher = Sha3_256::new();
         hasher.update(self.contract_name.0.clone());
-        hasher.update(self.data.0.clone());
+        hasher.update(self.data.1.clone());
         let hash_bytes = hasher.finalize();
         BlobHash(hex::encode(hash_bytes))
     }
@@ -412,7 +467,7 @@ impl<Action: BorshDeserialize> TryFrom<Blob> for StructuredBlob<Action> {
     type Error = std::io::Error;
 
     fn try_from(val: Blob) -> Result<StructuredBlob<Action>, Self::Error> {
-        let data = borsh::from_slice(&val.data.0)?;
+        let data = borsh::from_slice(&val.data.1)?;
         Ok(StructuredBlob {
             contract_name: val.contract_name,
             data,
@@ -860,7 +915,7 @@ impl ContractAction for RegisterContractAction {
     ) -> Blob {
         Blob {
             contract_name,
-            data: BlobData::from(StructuredBlobData {
+            data: BlobData::register_contract(StructuredBlobData {
                 caller,
                 callees,
                 parameters: self.clone(),

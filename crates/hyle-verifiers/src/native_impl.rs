@@ -10,7 +10,7 @@ pub(crate) fn verify_native_impl(
 ) -> anyhow::Result<(Identity, bool)> {
     match verifier {
         NativeVerifiers::Blst => {
-            let blob = borsh::from_slice::<BlstSignatureBlob>(&blob.data.0)?;
+            let blob = borsh::from_slice::<BlstSignatureBlob>(&blob.data.1)?;
 
             let msg = [blob.data, blob.identity.0.as_bytes().to_vec()].concat();
             // TODO: refacto BlstCrypto to avoid using ValidatorPublicKey here
@@ -24,7 +24,7 @@ pub(crate) fn verify_native_impl(
             Ok((blob.identity, BlstCrypto::verify(&msg)?))
         }
         NativeVerifiers::Sha3_256 => {
-            let blob = borsh::from_slice::<ShaBlob>(&blob.data.0)?;
+            let blob = borsh::from_slice::<ShaBlob>(&blob.data.1)?;
 
             let mut hasher = sha3::Sha3_256::new();
             hasher.update(blob.data);
@@ -33,7 +33,7 @@ pub(crate) fn verify_native_impl(
             Ok((blob.identity, res == blob.sha))
         }
         NativeVerifiers::Secp256k1 => {
-            let blob = borsh::from_slice::<Secp256k1Blob>(&blob.data.0)?;
+            let blob = borsh::from_slice::<Secp256k1Blob>(&blob.data.1)?;
 
             // Convert the public key bytes to a secp256k1 PublicKey
             let public_key = PublicKey::from_slice(&blob.public_key)

@@ -80,7 +80,7 @@ mod tests {
                 "test@identity",
                 vec![Blob {
                     contract_name: "identity".into(),
-                    data: BlobData(vec![0, 1, 2, 3]),
+                    data: BlobData::unstructured(vec![0, 1, 2, 3]),
                 }],
             );
             async move {

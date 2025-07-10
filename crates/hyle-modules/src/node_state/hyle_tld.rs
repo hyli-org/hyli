@@ -19,27 +19,73 @@ pub fn handle_blob_for_hyle_tld(
     // TODO: check the identity of the caller here.
 
     // TODO: support unstructured blobs as well ?
-    if let Ok(reg) =
-        StructuredBlobData::<RegisterContractAction>::try_from(current_blob.data.clone())
-    {
-        handle_register_blob(contracts, contract_changes, &reg.parameters)?;
-    } else if let Ok(reg) =
-        StructuredBlobData::<DeleteContractAction>::try_from(current_blob.data.clone())
-    {
-        handle_delete_blob(contracts, contract_changes, &reg.parameters)?;
-    } else if let Ok(reg) =
-        StructuredBlobData::<UpdateContractProgramIdAction>::try_from(current_blob.data.clone())
-    {
-        handle_update_program_id_blob(contracts, contract_changes, &reg.parameters)?;
-    } else if let Ok(reg) =
-        StructuredBlobData::<UpdateContractTimeoutWindowAction>::try_from(current_blob.data.clone())
-    {
-        handle_update_timeout_window_blob(contracts, contract_changes, &reg.parameters)?;
-    } else if StructuredBlobData::<NukeTxAction>::try_from(current_blob.data.clone()).is_ok() {
-        // Do nothing
-    } else {
-        bail!("Invalid blob data for TLD");
-    }
+    match current_blob.data.0 {
+        BlobDataType::RegisterContract => {
+            if let Ok(reg) =
+                StructuredBlobData::<RegisterContractAction>::try_from(current_blob.data.clone())
+            {
+                handle_register_blob(contracts, contract_changes, &reg.parameters)?;
+            } else {
+                bail!(
+                    "Failed to parse RegisterContractAction from blob data: {:?}",
+                    current_blob.data.0
+                );
+            }
+        }
+        BlobDataType::DeleteContract => {
+            if let Ok(reg) =
+                StructuredBlobData::<DeleteContractAction>::try_from(current_blob.data.clone())
+            {
+                handle_delete_blob(contracts, contract_changes, &reg.parameters)?;
+            } else {
+                bail!(
+                    "Failed to parse DeleteContractAction from blob data: {:?}",
+                    current_blob.data.0
+                );
+            }
+        }
+        BlobDataType::UpgradeContractProgramId => {
+            if let Ok(reg) = StructuredBlobData::<UpdateContractProgramIdAction>::try_from(
+                current_blob.data.clone(),
+            ) {
+                handle_update_program_id_blob(contracts, contract_changes, &reg.parameters)?;
+            } else {
+                bail!(
+                    "Failed to parse UpdateContractProgramIdAction from blob data: {:?}",
+                    current_blob.data.0
+                );
+            }
+        }
+        BlobDataType::UpdateContractTimeoutWindow => {
+            if let Ok(reg) = StructuredBlobData::<UpdateContractTimeoutWindowAction>::try_from(
+                current_blob.data.clone(),
+            ) {
+                handle_update_timeout_window_blob(contracts, contract_changes, &reg.parameters)?;
+            } else {
+                bail!(
+                    "Failed to parse UpdateContractTimeoutWindowAction from blob data: {:?}",
+                    current_blob.data.0
+                );
+            }
+        }
+        BlobDataType::NukeTxAction => {
+            if StructuredBlobData::<NukeTxAction>::try_from(current_blob.data.clone()).is_ok() {
+                // Do nothing
+            } else {
+                bail!(
+                    "Failed to parse NukeTxAction from blob data: {:?}",
+                    current_blob.data.0
+                );
+            }
+        }
+        _ => {
+            bail!(
+                "Unsupported blob data type for hyle TLD: {:?}",
+                current_blob.data.0
+            );
+        }
+    };
+
     Ok(())
 }
 

@@ -48,7 +48,7 @@ impl ZkContract for TestContract {
 
 impl TxExecutorHandler for TestContract {
     fn build_commitment_metadata(&self, blob: &Blob) -> Result<Vec<u8>> {
-        let action = borsh::from_slice::<u32>(&blob.data.0)
+        let action = borsh::from_slice::<u32>(&blob.data.1)
             .context("Failed to parse action from blob data")?;
         if action == 66 {
             return Err(anyhow!("Order 66 is forbidden. Jedi are safe."));
@@ -199,7 +199,7 @@ fn new_blob_tx(val: u32) -> Transaction {
         format!("{id}@test"),
         vec![Blob {
             contract_name: "test".into(),
-            data: BlobData(borsh::to_vec(&val).unwrap()),
+            data: BlobData::unstructured(borsh::to_vec(&val).unwrap()),
         }],
     );
     tracing::info!(
@@ -217,7 +217,7 @@ fn new_failing_blob_tx(val: u32) -> Transaction {
         format!("failing_{id}@test"),
         vec![Blob {
             contract_name: "test".into(),
-            data: BlobData(borsh::to_vec(&val).unwrap()),
+            data: BlobData::unstructured(borsh::to_vec(&val).unwrap()),
         }],
     );
     tracing::info!(
@@ -506,11 +506,11 @@ async fn test_auto_prover_instant_failed() -> Result<()> {
         vec![
             Blob {
                 contract_name: "doesnotexist".into(),
-                data: BlobData(borsh::to_vec(&3).unwrap()),
+                data: BlobData::unstructured(borsh::to_vec(&3).unwrap()),
             },
             Blob {
                 contract_name: "test".into(),
-                data: BlobData(borsh::to_vec(&3).unwrap()),
+                data: BlobData::unstructured(borsh::to_vec(&3).unwrap()),
             },
         ],
     );
@@ -595,11 +595,11 @@ async fn test_auto_prover_two_blobs_in_tx() -> Result<()> {
         vec![
             Blob {
                 contract_name: "test".into(),
-                data: BlobData(borsh::to_vec(&2).unwrap()),
+                data: BlobData::unstructured(borsh::to_vec(&2).unwrap()),
             },
             Blob {
                 contract_name: "test".into(),
-                data: BlobData(borsh::to_vec(&3).unwrap()),
+                data: BlobData::unstructured(borsh::to_vec(&3).unwrap()),
             },
         ],
     );
@@ -1280,7 +1280,7 @@ async fn scenario_auto_prover_artificial_middle_blob_failure(
         Identity::new("toto@test2"),
         vec![Blob {
             contract_name: "test2".into(),
-            data: BlobData(vec![1, 2, 3]),
+            data: BlobData::unstructured(vec![1, 2, 3]),
         }],
     );
 
@@ -1295,7 +1295,7 @@ async fn scenario_auto_prover_artificial_middle_blob_failure(
         vec![
             Blob {
                 contract_name: "test2".into(),
-                data: BlobData(vec![4, 5, 6]),
+                data: BlobData::unstructured(vec![4, 5, 6]),
             },
             failing_tx_data.blobs[0].clone(),
         ],

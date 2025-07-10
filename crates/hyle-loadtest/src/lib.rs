@@ -12,9 +12,9 @@ use client_sdk::{contract_states, transaction_builder};
 use hydentity::client::tx_executor_handler::{register_identity, verify_identity};
 use hydentity::Hydentity;
 use hyle_contract_sdk::{
-    Blob, BlobData, BlobTransaction, Calldata, ContractAction, ContractName, Hashed, HyleOutput,
-    Identity, RegisterContractAction, StateCommitment, TimeoutWindow, Transaction, TxHash,
-    ZkContract,
+    Blob, BlobData, BlobDataType, BlobTransaction, Calldata, ContractAction, ContractName, Hashed,
+    HyleOutput, Identity, RegisterContractAction, StateCommitment, TimeoutWindow, Transaction,
+    TxHash, ZkContract,
 };
 use hyle_contracts::{HYDENTITY_ELF, HYLLAR_ELF};
 use hyllar::client::tx_executor_handler::transfer;
@@ -686,7 +686,7 @@ pub async fn send_massive_blob(users: u32, url: String) -> Result<()> {
             ident.clone(),
             vec![Blob {
                 contract_name: "massive_blob_test".into(),
-                data: BlobData(data),
+                data: BlobData(BlobDataType::Unstructured, data),
             }],
         );
         info!("Generated blob transaction {i}/{users} : {:?}", tx.hashed());

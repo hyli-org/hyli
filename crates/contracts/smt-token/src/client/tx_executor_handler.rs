@@ -497,7 +497,7 @@ mod tests {
 
         let blob = Blob {
             contract_name: ContractName::new("oranj"),
-            data: BlobData(vec![1, 2, 3, 4, 5]),
+            data: BlobData(sdk::BlobDataType::Unstructured, vec![1, 2, 3, 4, 5]),
         };
 
         let commitment = smt_token.build_commitment_metadata(&blob).unwrap();

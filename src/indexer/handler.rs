@@ -881,7 +881,7 @@ impl Indexer {
 
                         let identity = blob_tx.identity.0.clone();
                         let contract_name = blob.contract_name.0.clone();
-                        let blob_data = blob.data.0.clone();
+                        let blob_data = blob.data.1.clone();
                         let tx_hash = tx_hash.clone();
                         let parent_data_proposal_hash = parent_data_proposal_hash.clone();
 

@@ -42,7 +42,7 @@ impl ContractHandler for Hydentity {
             data,
         } = tx.blobs.get(index.0).context("Failed to get blob")?;
 
-        let action: HydentityAction = borsh::from_slice(&data.0)?;
+        let action: HydentityAction = borsh::from_slice(&data.1)?;
         match action {
             HydentityAction::RegisterIdentity { account } => {
                 let (name, hash) = Hydentity::parse_id(&account)?;

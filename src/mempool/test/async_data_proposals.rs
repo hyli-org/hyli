@@ -97,7 +97,7 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
         Identity(format!("toto@{}", contract_name.0)),
         vec![Blob {
             contract_name: contract_name.clone(),
-            data: BlobData(vec![]),
+            data: BlobData::unstructured(vec![]),
         }],
     );
     let blob_tx_hash = blob_tx.hashed();

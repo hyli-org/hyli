@@ -143,7 +143,7 @@ fn parse_blobs(blob_data: &mut Vec<String>) -> Result<IndexedBlobs, Error> {
             BlobIndex(index),
             Blob {
                 contract_name: contract_name.into(),
-                data: hyle_model::BlobData(blob),
+                data: hyle_model::BlobData::unstructured(blob),
             },
         ));
     }
