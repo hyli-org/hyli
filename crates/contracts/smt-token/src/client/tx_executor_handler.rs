@@ -206,9 +206,9 @@ impl TxExecutorHandler for SmtTokenProvableState {
         let next_commitment: SmtTokenContract =
             borsh::from_slice(&next).map_err(|e| e.to_string())?;
 
-        initial_commitment
-            .steps
-            .insert(0, next_commitment.steps[0].clone());
+        if let Some(step) = next_commitment.steps.into_iter().next() {
+            initial_commitment.steps.insert(0, step);
+        }
 
         borsh::to_vec(&initial_commitment).map_err(|e| e.to_string())
     }
