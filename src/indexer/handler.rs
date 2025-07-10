@@ -1,4 +1,5 @@
 use super::api::*;
+use crate::google_cloud_storage_client::GCSRequest;
 use crate::model::*;
 use crate::node_state::module::NodeStateEvent;
 use anyhow::{bail, Context, Error, Result};
@@ -38,13 +39,6 @@ pub struct TxDataStore {
     pub contract_name: String,
     pub blob_data: Vec<u8>,
     pub verified: bool,
-}
-
-#[derive(Debug)]
-pub struct TxProofStore {
-    pub tx_hash: TxHashDb,
-    pub parent_data_proposal_hash: DataProposalHashDb,
-    pub proof: Vec<u8>,
 }
 
 #[derive(Debug)]
@@ -93,7 +87,6 @@ pub(crate) struct IndexerHandlerStore {
     blocks: Vec<Arc<Block>>,
     block_txs: HashMap<TxId, (i32, Arc<Block>, Transaction)>,
     tx_data: Vec<TxDataStore>,
-    tx_data_proofs: Vec<TxProofStore>,
     transactions_events: Vec<TxEventStore>,
     sql_updates: Vec<
         sqlx::query::Query<
@@ -114,7 +107,6 @@ impl std::fmt::Debug for IndexerHandlerStore {
             .field("blocks", &self.blocks.len())
             .field("block_txs", &self.block_txs.len())
             .field("tx_data", &self.tx_data.len())
-            .field("tx_data_proofs", &self.tx_data_proofs.len())
             .field("transactions_events", &self.transactions_events.len())
             .field("sql_updates", &self.sql_updates.len())
             .field("contracts", &self.contracts.len())
@@ -152,7 +144,6 @@ impl Indexer {
         self.handler_store.blocks.is_empty()
             && self.handler_store.block_txs.is_empty()
             && self.handler_store.tx_data.is_empty()
-            && self.handler_store.tx_data_proofs.is_empty()
             && self.handler_store.transactions_events.is_empty()
             && self.handler_store.sql_updates.is_empty()
             && self.handler_store.contracts.is_empty()
@@ -395,72 +386,6 @@ impl Indexer {
                             tx_contracts_chunks.len()
                         )
                     })?;
-            }
-        }
-
-        // Insert proofs into the database with batching
-        if !self.handler_store.tx_data_proofs.is_empty() {
-            // Calculate total size of proofs
-            let total_proof_size: usize = self
-                .handler_store
-                .tx_data_proofs
-                .iter()
-                .map(|p| p.proof.len())
-                .sum();
-
-            // Only upload proofs if we have more than the configured minimum size
-            if total_proof_size > self.conf.gcs_min_upload_size {
-                let tx_data_proofs = std::mem::take(&mut self.handler_store.tx_data_proofs);
-
-                // Upload to GCS if client is configured
-                if let Some(gcs_client) = &self.gcs_client {
-                    if let (Some(bucket), Some(prefix)) =
-                        (&self.conf.gcs_bucket, &self.conf.gcs_prefix)
-                    {
-                        for proof_store in &tx_data_proofs {
-                            let object_name = format!(
-                                "{}/proofs/{}/{}.bin",
-                                prefix,
-                                proof_store.parent_data_proposal_hash.0,
-                                proof_store.tx_hash.0
-                            );
-
-                            let upload_request =
-                                google_cloud_storage::http::objects::upload::UploadObjectRequest {
-                                    bucket: bucket.clone(),
-                                    generation: Some(0), // 0 means - don't overwrite existing objects
-                                    ..Default::default()
-                                };
-
-                            let media = google_cloud_storage::http::objects::upload::Media::new(
-                                object_name.clone(),
-                            );
-                            let upload_type =
-                                google_cloud_storage::http::objects::upload::UploadType::Simple(
-                                    media,
-                                );
-
-                            // Upload asynchronously, log errors but don't fail the indexing process
-                            let gcs_client = gcs_client.clone();
-                            let upload_request = upload_request.clone();
-                            let proof = proof_store.proof.clone();
-                            let tx_hash = proof_store.tx_hash.0.clone();
-                            let upload_type = upload_type.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = gcs_client
-                                    .upload_object(&upload_request, proof, &upload_type)
-                                    .await
-                                {
-                                    tracing::warn!(
-                                        "Failed to upload proof {} to GCS: {}",
-                                        tx_hash,
-                                        e
-                                    );
-                                }
-                            });
-                        }
-                    }
-                }
             }
         }
 
@@ -915,23 +840,26 @@ impl Indexer {
                     });
             }
             TransactionData::VerifiedProof(tx_data) => {
-                // Then insert the proof in to the proof table.
-                match &tx_data.proof {
-                    Some(proof_data) => {
-                        // Only pushing proof if GCS client is configured
-                        if self.gcs_client.is_some() {
-                            self.handler_store.tx_data_proofs.push(TxProofStore {
-                                tx_hash: tx_hash.clone(),
-                                parent_data_proposal_hash: parent_data_proposal_hash.clone(),
-                                proof: proof_data.0.clone(),
-                            });
+                // Only pushing proof if proof persistance is enabled.
+                if self.conf.indexer.persist_proofs {
+                    // Then insert the proof in to the proof table.
+                    match &tx_data.proof {
+                        Some(proof_data) => {
+                            _ = log_error!(
+                                self.bus.send(GCSRequest::ProofUpload {
+                                    proof: proof_data.0.clone(),
+                                    parent_data_proposal_hash: parent_data_proposal_hash.0.clone(),
+                                    tx_hash: tx_hash.0.clone(),
+                                }),
+                                "Sending proof upload request to GCS"
+                            );
                         }
-                    }
-                    None => {
-                        tracing::trace!(
-                            "Verified proof TX {:?} does not contain a proof",
-                            &tx_hash
-                        );
+                        None => {
+                            tracing::trace!(
+                                "Verified proof TX {:?} does not contain a proof",
+                                &tx_hash
+                            );
+                        }
                     }
                 };
             }

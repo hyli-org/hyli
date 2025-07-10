@@ -3,6 +3,7 @@
 mod api;
 mod handler;
 
+use crate::google_cloud_storage_client::GCSRequest;
 use crate::utils::conf::Conf;
 use crate::{model::*, utils::conf::SharedConf};
 use anyhow::{Context, Result};
@@ -17,7 +18,6 @@ use axum::{
     Router,
 };
 use futures::{SinkExt, StreamExt};
-use google_cloud_storage::client::{Client, ClientConfig};
 use handler::IndexerHandlerStore;
 use hyle_model::api::{
     BlobWithStatus, TransactionStatusDb, TransactionTypeDb, TransactionWithBlobs,
@@ -47,6 +47,7 @@ module_bus_client! {
 #[derive(Debug)]
 struct IndexerBusClient {
     sender(NodeStateEvent),
+    sender(GCSRequest),
     receiver(DataEvent),
     receiver(MempoolStatusEvent),
 }
@@ -74,9 +75,7 @@ pub struct Indexer {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct IndexerConf {
     query_buffer_size: usize,
-    pub gcs_bucket: Option<String>,
-    pub gcs_prefix: Option<String>,
-    pub gcs_min_upload_size: usize,
+    pub persist_proofs: bool,
 }
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/indexer/migrations");
@@ -414,6 +413,7 @@ mod test {
         let conf = Conf {
             indexer: IndexerConf {
                 query_buffer_size: 100,
+                persist_proofs: false,
             },
             ..Conf::default()
         };
