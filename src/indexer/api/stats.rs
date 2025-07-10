@@ -215,11 +215,15 @@ pub async fn get_proof_stats(
     let transactions = log_error!(
         sqlx::query_as::<_, ProofStat>(
             r#"
+WITH bpo_distinct AS (
+  SELECT DISTINCT contract_name, proof_tx_hash
+  FROM blob_proof_outputs
+)
 SELECT
-    c.verifier,
-    COUNT(DISTINCT bpo.proof_tx_hash) AS proof_count
-FROM blob_proof_outputs bpo
-JOIN contracts c ON bpo.contract_name = c.contract_name
+  c.verifier,
+  COUNT(*) AS proof_count
+FROM bpo_distinct b
+JOIN contracts c ON b.contract_name = c.contract_name
 GROUP BY c.verifier
 ORDER BY proof_count DESC;
         "#,
