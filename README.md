@@ -95,16 +95,19 @@ HYLE_CONSENSUS__SLOT_DURATION=100
 ### Build Locally
 
 ```bash
-# Build the dependency image, this is a cache layer for faster iteration builds
-docker build . -t hyle-dep -f Dockerfile.dependencies
+# Build the dependency image, this is a cache layer for faster iteration builds (give your architecture to platform parameter: amd64, arm64)
+docker buildx build --platform linux/arm64 -f Dockerfile.dependencies -t hyle-dep:arm64 .
 # Build the node image
-docker build . -t hyle
+docker buildx build --platform linux/arm64 -t hyle:arm64 .
 ```
 
 ### Run Locally with Docker
 
 ```bash
-docker run -v ./db:/hyle/data -e HYLE_RUN_INDEXER=false -p 4321:4321 -p 1234:1234 hyle
+docker run --rm --platform linux/arm64 \
+  -e HYLE_RUN_INDEXER=true \
+  -p 4321:4321 -p 1234:1234 \
+  hyle:arm64
 ```
 
 > 🛠️ **Note**: If you encounter permission issues with the `/hyle/data` volume, add the `--privileged` flag.
