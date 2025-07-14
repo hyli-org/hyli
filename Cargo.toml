@@ -142,7 +142,7 @@ fjall = { version = "2.10.0" }
 
 dhat = { version = "0.3.3", optional = true }
 alloc-metrics = { version = "0.1.1", optional = true }
-utoipa = { version = "5.3.1", features = ["axum_extras"] }
+utoipa = { version = "5.4.0", features = ["axum_extras"] }
 utoipa-axum = { version = "0.2.0" }
 testcontainers-modules = { version = "0.12.1", features = ["postgres"] }
 toml = "0.8.22"
