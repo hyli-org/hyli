@@ -63,7 +63,7 @@ google-cloud-storage = "0.24.0"
 ureq = { version = "3.0.11", default-features = false, features = ["json"] }
 
 # Rate limiting proxy (optional feature)
-axum = { version = "0.7", optional = true }
+axum = { version = "0.8", optional = true }
 tower_governor = { version = "0.6", optional = true }
 tower-http = { version = "0.6.5", features = [
     "trace",
