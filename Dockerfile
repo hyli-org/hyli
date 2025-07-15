@@ -1,5 +1,5 @@
 ARG DEP_IMAGE=hyle-dep:arm64
-ARG BASE_IMAGE=debian:bookworm-slim
+ARG BASE_IMAGE=ghcr.io/hyli-org/base:main
 
 FROM ${DEP_IMAGE} AS builder
 
