@@ -2,13 +2,9 @@ use anyhow::Result;
 use fjall::{
     Config, Keyspace, KvSeparationOptions, PartitionCreateOptions, PartitionHandle, Slice,
 };
+use sdk::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock};
 use std::{fmt::Debug, path::Path};
 use tracing::{error, info, trace};
-
-use crate::{
-    model::ConsensusProposalHash,
-    model::{BlockHeight, Hashed, SignedBlock},
-};
 
 struct FjallHashKey(ConsensusProposalHash);
 struct FjallHeightKey([u8; 8]);

@@ -1,12 +1,8 @@
 #![allow(unused)]
-use std::path::Path;
-
-use crate::{
-    model::ConsensusProposalHash,
-    model::{BlockHeight, Hashed, SignedBlock},
-};
 use anyhow::Result;
 use indexmap::IndexMap;
+use sdk::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock};
+use std::path::Path;
 use tracing::{info, trace};
 
 #[derive(Debug)]
