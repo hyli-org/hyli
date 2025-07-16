@@ -1,4 +1,4 @@
-ARG DEP_IMAGE=hyle-dep:arm64
+ARG DEP_IMAGE=hyle-dep
 ARG BASE_IMAGE=ghcr.io/hyli-org/base:main
 
 FROM ${DEP_IMAGE} AS builder
@@ -10,14 +10,10 @@ COPY Cargo.toml Cargo.lock ./
 COPY .cargo/config.toml .cargo/config.toml
 COPY src ./src
 COPY crates ./crates
-RUN cargo build --release -F sp1 -F risc0
+RUN cargo build --release -F sp1 -F risc0 -F rate-proxy
 
 # RUNNER
 FROM ${BASE_IMAGE} AS runner
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-       ca-certificates curl libc6 binutils \
-    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /hyle
 

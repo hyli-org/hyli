@@ -11,6 +11,8 @@ RUN curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/refs/
 FROM ubuntu:noble
 COPY --from=amd64-tools /usr/local/cargo/bin/r0vm /usr/local/bin/r0vm
 COPY --from=amd64-tools /usr/local/bin/bbup        /usr/local/bin/bbup
+COPY --from=amd64-tools /root/.bb                  /root/.bb
+ENV PATH="/root/.bb:$PATH" 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl libssl-dev ca-certificates \
+        curl libssl-dev ca-certificates libc6 binutils \
  && rm -rf /var/lib/apt/lists/*
