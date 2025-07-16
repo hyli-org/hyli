@@ -107,9 +107,9 @@ async fn blob_proxy_handler(
     };
 
     // Reject if contract names is not 'faucet' or 'wallet'.
-    if !contract_names
+    if contract_names
         .iter()
-        .any(|name| name == "faucet" || name == "wallet")
+        .any(|name| name != "faucet" && name != "wallet")
     {
         tracing::warn!(
             "Invalid contract names in blob transaction from IP: {}, identity: {}, contracts: {:?}",
