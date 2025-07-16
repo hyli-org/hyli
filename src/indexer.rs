@@ -223,14 +223,21 @@ mod test {
 
     async fn new_indexer(pool: PgPool) -> (Indexer, Explorer) {
         let bus = SharedMessageBus::default();
+
+        let conf = Conf {
+            indexer: IndexerConf {
+                query_buffer_size: 100,
+            },
+            ..Conf::default()
+        };
         (
             Indexer {
                 bus: IndexerBusClient::new_from_bus(bus.new_handle()).await,
                 db: pool.clone(),
+                node_state: NodeState::create("indexer".to_string(), "indexer"),
+
                 handler_store: IndexerHandlerStore::default(),
-                conf: IndexerConf {
-                    query_buffer_size: 100,
-                },
+                conf,
             },
             Explorer::new(bus, pool).await,
         )
