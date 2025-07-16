@@ -105,8 +105,22 @@ async fn blob_proxy_handler(
             return Err(StatusCode::BAD_REQUEST);
         }
     };
-    // Rate limiting logic (optimized)
 
+    // Reject if contract names is not 'faucet' or 'wallet'.
+    if !contract_names
+        .iter()
+        .any(|name| name == "faucet" || name == "wallet")
+    {
+        tracing::warn!(
+            "Invalid contract names in blob transaction from IP: {}, identity: {}, contracts: {:?}",
+            ip,
+            identity,
+            contract_names
+        );
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    // Rate limiting logic
     let today = Local::now().date_naive();
     let mut limited = false;
     let mut limited_contracts = Vec::new();
