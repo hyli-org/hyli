@@ -225,26 +225,33 @@ pub async fn get_transactions(
         match pagination.start_block {
             Some(start_block) => sqlx::query_as::<_, TransactionDb>(
                 r#"
-            SELECT t.*, b.timestamp
-            FROM transactions t
-            LEFT JOIN blocks b ON t.block_hash = b.hash
-            WHERE b.height <= $1 and b.height > $2 AND t.transaction_type = 'blob_transaction'
-            ORDER BY b.height DESC, t.index DESC
-            LIMIT $3
-            "#,
+                SELECT t.*, b.timestamp
+                FROM (
+                    SELECT *
+                    FROM transactions t
+                    WHERE t.transaction_type = 'blob_transaction'
+                        AND t.block_height <= $1 AND t.block_height > $2
+                    ORDER BY t.block_height DESC, t.index DESC
+                    LIMIT $3
+                ) t
+                LEFT JOIN blocks b ON t.block_hash = b.hash
+                "#,
             )
             .bind(start_block)
-            .bind(start_block - pagination.nb_results.unwrap_or(10)) // Fine if this goes negative
+            .bind(start_block - pagination.nb_results.unwrap_or(10))
             .bind(pagination.nb_results.unwrap_or(10)),
             None => sqlx::query_as::<_, TransactionDb>(
                 r#"
-            SELECT t.*, b.timestamp
-            FROM transactions t
-            LEFT JOIN blocks b ON t.block_hash = b.hash
-            WHERE t.transaction_type = 'blob_transaction'
-            ORDER BY b.height DESC, t.index DESC
-            LIMIT $1
-            "#,
+                SELECT t.*, b.timestamp
+                FROM (
+                    SELECT *
+                    FROM transactions t
+                    WHERE t.transaction_type = 'blob_transaction'
+                    ORDER BY t.block_height DESC, t.index DESC
+                    LIMIT $1
+                ) t
+                LEFT JOIN blocks b ON t.block_hash = b.hash
+                "#,
             )
             .bind(pagination.nb_results.unwrap_or(10)),
         }

@@ -2,14 +2,19 @@
 
 mod handler;
 
+use std::ops::Deref;
+
 use crate::explorer::api::{DataProposalHashDb, TxHashDb};
 use crate::explorer::WsExplorerBlobTx;
 use crate::node_state::module::NodeStateEvent;
+use crate::utils::conf::Conf;
 use crate::{model::*, utils::conf::SharedConf};
 use anyhow::{Context, Result};
 use handler::IndexerHandlerStore;
 use hyle_model::utils::TimestampMs;
 use hyle_modules::bus::BusClientSender;
+use hyle_modules::node_state::module::NodeStateModule;
+use hyle_modules::node_state::{NodeState, NodeStateStore};
 use hyle_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
@@ -23,7 +28,8 @@ module_bus_client! {
 #[derive(Debug)]
 struct IndexerBusClient {
     sender(WsExplorerBlobTx),
-    receiver(NodeStateEvent),
+    sender(NodeStateEvent),
+    receiver(DataEvent),
     receiver(MempoolStatusEvent),
 }
 }
@@ -32,8 +38,9 @@ struct IndexerBusClient {
 pub struct Indexer {
     bus: IndexerBusClient,
     db: PgPool,
+    node_state: NodeState,
     handler_store: IndexerHandlerStore,
-    conf: IndexerConf,
+    conf: Conf,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -58,11 +65,22 @@ impl Module for Indexer {
 
         tokio::time::timeout(tokio::time::Duration::from_secs(60), MIGRATOR.run(&pool)).await??;
 
+        // Load node state from node_state.bin if it exists or create a new default
+        let node_state_path = ctx.0.data_directory.join("indexer_node_state.bin");
+        let node_state_store =
+            NodeStateModule::load_from_disk_or_default::<NodeStateStore>(&node_state_path);
+
+        let mut node_state = NodeState::create(ctx.0.id.clone(), "indexer");
+        node_state.store = node_state_store;
+
+        let conf: Conf = ctx.0.deref().clone();
+
         let indexer = Indexer {
             bus,
             db: pool,
+            node_state,
             handler_store: IndexerHandlerStore::default(),
-            conf: ctx.0.indexer.clone(),
+            conf,
         };
 
         Ok(indexer)
@@ -71,14 +89,44 @@ impl Module for Indexer {
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
         self.start()
     }
+
+    async fn persist(&mut self) -> Result<()> {
+        NodeStateModule::save_on_disk(
+            &self.conf.data_directory.join("indexer_node_state.bin"),
+            &self.node_state.store,
+        )
+        .context("Failed to save node state to disk")?;
+
+        let persisted_da_start_height = BlockHeight(self.node_state.current_height.0 + 1);
+
+        tracing::debug!(
+            "Indexer saving DA start height: {}",
+            &persisted_da_start_height
+        );
+
+        NodeStateModule::save_on_disk(
+            &self.conf.data_directory.join("da_start_height.bin"),
+            &persisted_da_start_height,
+        )
+        .context("Failed to save DA start height to disk")?;
+        Ok(())
+    }
 }
 
 impl Indexer {
     pub async fn start(&mut self) -> Result<()> {
         module_handle_messages! {
             on_self self,
-            listen<NodeStateEvent> event => {
-                _ = log_error!(self.handle_node_state_event(event)
+            delay_shutdown_until {
+                self.dump_store_to_db()
+                    .await
+                    .context("Indexer failed to dump store to DB")?;
+                self.empty_store()
+            },
+            listen<DataEvent> DataEvent::OrderedSignedBlock(signed_block) => {
+                let block = self.node_state.handle_signed_block(&signed_block)
+                    .context("Failed to handle block in node state")?;
+                _ = log_error!(self.handle_node_state_block(block)
                     .await,
                     "Indexer handling node state event");
             }

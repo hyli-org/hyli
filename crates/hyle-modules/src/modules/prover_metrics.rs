@@ -12,6 +12,8 @@ pub struct AutoProverMetrics {
     proof_generation_time: Histogram<f64>,
     proof_size_bytes_histogram: Histogram<u64>,
     proof_size_bytes_counter: Counter<u64>,
+    proof_cycles_histogram: Histogram<u64>,
+    proof_cycles_counter: Counter<u64>,
     proof_num_retries: Counter<u64>,
     buffered_blobs: Gauge<u64>,
     unsettled_blobs: Gauge<u64>,
@@ -42,6 +44,12 @@ impl AutoProverMetrics {
                 .build(),
             proof_size_bytes_counter: my_meter
                 .u64_counter("proof_client_proof_size_bytes_counter")
+                .build(),
+            proof_cycles_histogram: my_meter
+                .u64_histogram("proof_client_proof_cycles_histogram")
+                .build(),
+            proof_cycles_counter: my_meter
+                .u64_counter("proof_client_proof_cycles_counter")
                 .build(),
             buffered_blobs: my_meter.u64_gauge("proof_client_buffered_blobs").build(),
             unsettled_blobs: my_meter.u64_gauge("proof_client_unsettled_blobs").build(),
@@ -81,6 +89,13 @@ impl AutoProverMetrics {
             .record(size, &self.get_labels());
 
         self.proof_size_bytes_counter.add(size, &self.get_labels());
+    }
+
+    pub fn record_proof_cycles(&self, cycles: u64) {
+        self.proof_cycles_histogram
+            .record(cycles, &self.get_labels());
+
+        self.proof_cycles_counter.add(cycles, &self.get_labels());
     }
 
     pub fn record_proof_retry(&self) {
