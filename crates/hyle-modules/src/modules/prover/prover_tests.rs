@@ -536,7 +536,7 @@ async fn test_auto_prover_duplicated_tx() -> Result<()> {
 
     tracing::info!("✨ Block 1");
     let block_1 = node_state.craft_block_and_handle(1, vec![tx.clone()]);
-    auto_prover.handle_processed_block(block_1.clone()).await?;
+    auto_prover.handle_block(block_1.clone()).await?;
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 

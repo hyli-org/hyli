@@ -106,7 +106,7 @@ impl ProofTxBuilder {
                     )
                     .await;
                 proof.map(|proof| ProofTransaction {
-                    proof,
+                    proof: proof.data,
                     contract_name: runner.contract_name.clone(),
                 })
             }
