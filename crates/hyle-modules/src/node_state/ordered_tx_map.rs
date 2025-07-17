@@ -307,10 +307,10 @@ mod tests {
     #[test]
     fn test_remove_extra_contract() {
         let mut map = OrderedTxMap::default();
-        let contract1 = ContractName::new("c1");
+        let contract1 = ContractName::new("hyle");
         let contract2 = ContractName::new("c2");
 
-        let mut tx = new_tx("tx1", "c1");
+        let mut tx = new_tx("tx1", "hyle");
         tx.blobs.insert(
             BlobIndex(1),
             UnsettledBlobMetadata {
