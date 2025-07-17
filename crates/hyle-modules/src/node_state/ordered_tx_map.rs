@@ -77,6 +77,10 @@ impl OrderedTxMap {
         let mut contract_names = HashSet::new();
         for blob in tx.blobs.values() {
             contract_names.insert(blob.blob.contract_name.clone());
+            // Temp hack for speed.
+            if blob.blob.contract_name.0 != "hyle" {
+                continue;
+            }
             // This is a bit horrible, we should try to be leaner.
             if let Ok(data) =
                 StructuredBlobData::<RegisterContractAction>::try_from(blob.blob.data.clone())
@@ -138,7 +142,9 @@ impl OrderedTxMap {
             let contract_names = Self::get_contracts_blocked_by_tx(tx);
             for contract_name in contract_names {
                 if let Some(vec) = self.tx_order.get_mut(&contract_name) {
-                    vec.retain(|h| h != &tx.hash);
+                    if let Some(pos) = vec.iter().position(|h| h == &tx.hash) {
+                        vec.remove(pos);
+                    }
                     if vec.is_empty() {
                         self.tx_order.remove(&contract_name);
                     }
