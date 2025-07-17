@@ -25,12 +25,6 @@ use tracing::{debug, error, info, warn};
 
 use super::prover_metrics::AutoProverMetrics;
 
-enum CatchingState {
-    Unsettled,
-    Rejected,
-    Success,
-}
-
 /// `AutoProver` is a module that handles the proving of transactions
 /// It listens to the node state events and processes all blobs in the block's transactions
 /// for a given contract.
@@ -49,7 +43,8 @@ pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
     catching_up: Option<BlockHeight>,
     catching_up_state: StateCommitment,
 
-    catching_txs: IndexMap<TxId, (BlobTransaction, TxContext, CatchingState)>,
+    catching_txs: IndexMap<TxId, (BlobTransaction, TxContext)>,
+    catching_success_txs: Vec<(BlobTransaction, TxContext)>,
 
     router_state: Arc<Mutex<RouterData>>,
 }
@@ -201,10 +196,7 @@ where
                 txs.len(),
                 store.tx_chain.last().expect("must exist")
             );
-            IndexMap::from_iter(
-                txs.into_iter()
-                    .map(|(tx, tx_ctx, id)| (id, (tx, tx_ctx, CatchingState::Unsettled))),
-            )
+            IndexMap::from_iter(txs.into_iter().map(|(tx, tx_ctx, id)| (id, (tx, tx_ctx))))
         } else {
             IndexMap::new()
         };
@@ -216,6 +208,7 @@ where
             metrics,
             catching_up,
             catching_up_state,
+            catching_success_txs: vec![],
             catching_txs,
             router_state,
         })
@@ -269,12 +262,6 @@ where
 {
     async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
         let NodeStateEvent::NewBlock(block) = event;
-        tracing::debug!(
-            cn =% self.ctx.contract_name,
-            block_height =% block.block_height,
-            "Handling new block {}",
-            block.block_height
-        );
         if block.block_height.0 < self.store.next_height.0 {
             info!(
                 cn =% self.ctx.contract_name,
@@ -320,22 +307,13 @@ where
                     return Ok(());
                 }
 
-                // Build blobs to execute and to prove from catching_txs
+                // Build blobs to execute from catching_txs
                 let mut blobs: Vec<(BlobIndex, BlobTransaction, TxContext)> = vec![];
-                let mut unsettled_txs: Vec<(BlobTransaction, TxContext, TxId)> = vec![];
-                for (tx_id, (tx, tx_ctx, state)) in std::mem::take(&mut self.catching_txs) {
-                    match state {
-                        CatchingState::Unsettled => {
-                            unsettled_txs.push((tx.clone(), tx_ctx.clone(), tx_id));
+                for (tx, tx_ctx) in self.catching_success_txs.iter() {
+                    for (index, blob) in tx.blobs.iter().enumerate() {
+                        if blob.contract_name == self.ctx.contract_name {
+                            blobs.push((index.into(), tx.clone(), tx_ctx.clone()));
                         }
-                        CatchingState::Success => {
-                            for (index, blob) in tx.blobs.iter().enumerate() {
-                                if blob.contract_name == self.ctx.contract_name {
-                                    blobs.push((index.into(), tx.clone(), tx_ctx.clone()));
-                                }
-                            }
-                        }
-                        CatchingState::Rejected => { /* ignore */ }
                     }
                 }
 
@@ -449,14 +427,18 @@ where
                 info!(
                     cn =% self.ctx.contract_name,
                     "Storing remaining {} unsettled TXs after catching up",
-                    unsettled_txs.len()
+                    self.catching_txs.len()
                 );
                 // Store all TXs in our waiting buffer.
                 self.store
                     .tx_chain
-                    .extend(unsettled_txs.first().map(|(tx, _, _)| tx.hashed()));
+                    .extend(self.catching_txs.keys().map(|id| &id.1).cloned());
 
-                self.store.unsettled_txs.extend(unsettled_txs);
+                self.store.unsettled_txs.extend(
+                    std::mem::take(&mut self.catching_txs)
+                        .into_iter()
+                        .map(|(id, (tx, tx_ctx))| (tx, tx_ctx, id)),
+                );
             }
         } else {
             self.handle_processed_block(*block).await?;
@@ -466,13 +448,6 @@ where
     }
 
     async fn handle_catchup_block(&mut self, block: Block) -> Result<()> {
-        if block.block_height.0 % 1000 == 0 {
-            // Cleanup
-            self.catching_txs.retain(|_, (_, _, state)| {
-                matches!(state, CatchingState::Unsettled | CatchingState::Success)
-            });
-        }
-
         for (_, tx) in block.txs {
             if let TransactionData::Blob(tx) = tx.transaction_data {
                 if tx
@@ -502,7 +477,7 @@ where
                             .clone(),
                         tx.hashed(),
                     ),
-                    (tx.clone(), tx_ctx, CatchingState::Unsettled),
+                    (tx.clone(), tx_ctx),
                 );
             }
         }
@@ -518,9 +493,7 @@ where
                 tx,
             );
 
-            if let Some((_, _, state)) = self.catching_txs.get_mut(&tx_id) {
-                *state = CatchingState::Rejected;
-            }
+            self.catching_txs.retain(|t, _| t != &tx_id);
         }
 
         // Only used to reduce size of catching_txs
@@ -534,15 +507,11 @@ where
                 tx,
             );
 
-            if let Some((_, _, state)) = self.catching_txs.get_mut(&tx_id) {
-                *state = CatchingState::Rejected;
-            }
+            self.catching_txs.retain(|t, _| t != &tx_id);
         }
 
         for tx_id in block.dropped_duplicate_txs {
-            if let Some((_, _, state)) = self.catching_txs.get_mut(&tx_id) {
-                *state = CatchingState::Rejected;
-            }
+            self.catching_txs.retain(|t, _| t != &tx_id);
         }
 
         for tx in block.successful_txs {
@@ -554,8 +523,9 @@ where
                     .clone(),
                 tx,
             );
-            if let Some((_, _, state)) = self.catching_txs.get_mut(&tx_id) {
-                *state = CatchingState::Success;
+
+            if let Some((tx, tx_ctx)) = self.catching_txs.shift_remove(&tx_id) {
+                self.catching_success_txs.push((tx, tx_ctx));
             }
         }
 
