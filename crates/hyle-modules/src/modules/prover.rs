@@ -966,7 +966,7 @@ where
             let mut contract = self
                 .get_state_of_prev_tx(&tx_hash)
                 .ok_or_else(|| anyhow!("Failed to get state of previous tx {}", tx_hash))?;
-            let initial_contract = contract.clone();
+            //let initial_contract = contract.clone();
             let mut error: Option<String> = None;
 
             for blob_index in blob_indexes {
@@ -1064,6 +1064,8 @@ where
                 );
                 self.bus
                     .send(AutoProverEvent::FailedTx(tx_hash.clone(), e))?;
+                // Must exist - we failed above otherwise.
+                let initial_contract = self.get_state_of_prev_tx(&tx_hash).unwrap();
                 self.store.state_history.insert(tx_hash, initial_contract);
             } else {
                 debug!(
@@ -1073,10 +1075,10 @@ where
                     "Adding state history for tx {}",
                     tx.hashed()
                 );
-                self.bus.send(AutoProverEvent::SuccessTx(
+                /*self.bus.send(AutoProverEvent::SuccessTx(
                     tx_hash.clone(),
                     contract.clone(),
-                ))?;
+                ))?;*/
                 self.store.state_history.insert(tx_hash, contract);
             }
         }
