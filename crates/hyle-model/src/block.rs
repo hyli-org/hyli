@@ -35,6 +35,7 @@ pub struct Block {
     pub updated_program_ids: BTreeMap<ContractName, ProgramId>,
     pub updated_timeout_windows: BTreeMap<ContractName, TimeoutWindow>,
     pub transactions_events: BTreeMap<TxHash, Vec<TransactionStateEvent>>,
+    pub all_transactions_events: Vec<(TxHash, TransactionStateEvent)>,
 }
 
 impl Block {

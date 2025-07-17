@@ -5058,7 +5058,6 @@ dependencies = [
  "hyle-model",
  "hyle-net",
  "hyle-verifiers",
- "indexmap 2.9.0",
  "opentelemetry",
  "paste",
  "prometheus",
