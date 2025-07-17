@@ -48,7 +48,6 @@ prometheus = { workspace = true }
 opentelemetry = { workspace = true }
 
 test-log = { workspace = true, features = ["color", "trace"], optional = true }
-indexmap = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
