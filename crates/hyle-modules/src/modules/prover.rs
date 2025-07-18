@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use std::time::Duration;
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
@@ -14,7 +14,6 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::rest_client::NodeApiClient;
 use client_sdk::{helpers::ClientSdkProver, transaction_builder::TxExecutorHandler};
 use hyle_net::logged_task::logged_task;
-use indexmap::IndexMap;
 use sdk::{
     BlobIndex, BlobTransaction, Block, BlockHeight, Calldata, ContractName, Hashed, NodeStateEvent,
     ProofTransaction, StateCommitment, TransactionData, TxContext, TxHash, TxId,
@@ -24,6 +23,12 @@ use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use super::prover_metrics::AutoProverMetrics;
+
+#[derive(Debug)]
+enum TxState {
+    Unsettled,
+    Settled,
+}
 
 /// `AutoProver` is a module that handles the proving of transactions
 /// It listens to the node state events and processes all blobs in the block's transactions
@@ -43,7 +48,8 @@ pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
     catching_up: Option<BlockHeight>,
     catching_up_state: StateCommitment,
 
-    catching_txs: IndexMap<TxId, (BlobTransaction, TxContext)>,
+    global_tx_nonce: u64,
+    catching_txs: HashMap<TxHash, (BlobTransaction, TxContext, TxId, u64, TxState)>,
     catching_success_txs: Vec<(BlobTransaction, TxContext)>,
 
     router_state: Arc<Mutex<RouterData>>,
@@ -171,6 +177,7 @@ where
             catching_up
         );
 
+        let mut global_tx_nonce = 0;
         let catching_txs = if catching_up.is_some() && !store.tx_chain.is_empty() {
             // If we are restarting from serialized data and are catching up, we need to do some setup.
             // Move all unsettled transactions to catching_txs and restart.
@@ -196,9 +203,15 @@ where
                 txs.len(),
                 store.tx_chain.last().expect("must exist")
             );
-            IndexMap::from_iter(txs.into_iter().map(|(tx, tx_ctx, id)| (id, (tx, tx_ctx))))
+            HashMap::from_iter(txs.into_iter().map(|(tx, tx_ctx, id)| {
+                global_tx_nonce += 1;
+                (
+                    id.1.clone(),
+                    (tx, tx_ctx, id, global_tx_nonce, TxState::Unsettled),
+                )
+            }))
         } else {
-            IndexMap::new()
+            HashMap::new()
         };
 
         Ok(AutoProver {
@@ -209,6 +222,7 @@ where
             catching_up,
             catching_up_state,
             catching_success_txs: vec![],
+            global_tx_nonce,
             catching_txs,
             router_state,
         })
@@ -424,20 +438,29 @@ where
                 }
 
                 // Now any remaining TX is to be buffered and handled on the next block
+                // Sort them by global nonce as the map is in insertion order.
+                let mut catching_txs: Vec<_> = std::mem::take(&mut self.catching_txs)
+                    .into_iter()
+                    .filter(|(_, (_, _, _, _, state))| matches!(state, TxState::Unsettled))
+                    .collect();
+                catching_txs.sort_by_key(|(_, (_, _, _, global_tx_nonce, _))| *global_tx_nonce);
+
                 info!(
                     cn =% self.ctx.contract_name,
                     "Storing remaining {} unsettled TXs after catching up",
-                    self.catching_txs.len()
+                    catching_txs.len()
                 );
                 // Store all TXs in our waiting buffer.
-                self.store
-                    .tx_chain
-                    .extend(self.catching_txs.keys().map(|id| &id.1).cloned());
+                self.store.tx_chain.extend(
+                    catching_txs
+                        .iter()
+                        .map(|(_, (_, _, tx_id, _, _))| tx_id.1.clone()),
+                );
 
                 self.store.unsettled_txs.extend(
-                    std::mem::take(&mut self.catching_txs)
+                    catching_txs
                         .into_iter()
-                        .map(|(id, (tx, tx_ctx))| (tx, tx_ctx, id)),
+                        .map(|(_, (tx, tx_ctx, tx_id, _, _))| (tx, tx_ctx, tx_id)),
                 );
             }
         } else {
@@ -447,99 +470,95 @@ where
         Ok(())
     }
 
-    async fn handle_catchup_block(&mut self, block: Block) -> Result<()> {
-        for (_, tx) in block.txs {
-            if let TransactionData::Blob(tx) = tx.transaction_data {
-                if tx
-                    .blobs
-                    .iter()
-                    .all(|b| b.contract_name != self.ctx.contract_name)
-                {
-                    continue;
+    async fn handle_catchup_block(&mut self, mut block: Block) -> Result<()> {
+        for (hash, event) in block.all_transactions_events {
+            match event {
+                sdk::TransactionStateEvent::Sequenced => {
+                    let tx_entry_idx = block.txs.iter().position(|(id, _)| id.1 == hash);
+                    if tx_entry_idx.is_none() {
+                        warn!(
+                            cn =% self.ctx.contract_name,
+                            tx_hash =% hash,
+                            "Transaction {} not found in block {}",
+                            hash,
+                            block.block_height
+                        );
+                        continue;
+                    }
+                    let (_, tx) = block.txs.swap_remove(tx_entry_idx.unwrap());
+                    if let TransactionData::Blob(tx) = tx.transaction_data {
+                        if tx
+                            .blobs
+                            .iter()
+                            .all(|b| b.contract_name != self.ctx.contract_name)
+                        {
+                            continue;
+                        }
+                        let tx_ctx = TxContext {
+                            block_height: block.block_height,
+                            block_hash: block.hash.clone(),
+                            timestamp: block.block_timestamp.clone(),
+                            lane_id: block
+                                .lane_ids
+                                .get(&tx.hashed())
+                                .ok_or_else(|| {
+                                    anyhow!("Missing lane id in block for {}", tx.hashed())
+                                })?
+                                .clone(),
+                            chain_id: HYLE_TESTNET_CHAIN_ID,
+                        };
+                        self.global_tx_nonce += 1;
+                        self.catching_txs.insert(
+                            tx.hashed(),
+                            (
+                                tx.clone(),
+                                tx_ctx,
+                                TxId(
+                                    block.dp_parent_hashes.get(&tx.hashed()).unwrap().clone(),
+                                    tx.hashed(),
+                                ),
+                                self.global_tx_nonce,
+                                TxState::Unsettled,
+                            ),
+                        );
+                    }
                 }
-                let tx_ctx = TxContext {
-                    block_height: block.block_height,
-                    block_hash: block.hash.clone(),
-                    timestamp: block.block_timestamp.clone(),
-                    lane_id: block
-                        .lane_ids
-                        .get(&tx.hashed())
-                        .ok_or_else(|| anyhow!("Missing lane id in block for {}", tx.hashed()))?
-                        .clone(),
-                    chain_id: HYLE_TESTNET_CHAIN_ID,
-                };
-                self.catching_txs.insert(
-                    TxId(
-                        block
-                            .dp_parent_hashes
-                            .get(&tx.hashed())
-                            .ok_or_else(|| anyhow!("Missing DP in block for {}", tx.hashed()))?
-                            .clone(),
-                        tx.hashed(),
-                    ),
-                    (tx.clone(), tx_ctx),
-                );
-            }
-        }
-
-        // Only used to reduce size of catching_txs
-        for tx in block.timed_out_txs {
-            let tx_id = TxId(
-                block
-                    .dp_parent_hashes
-                    .get(&tx)
-                    .ok_or_else(|| anyhow!("Missing DP in block for {}", tx))?
-                    .clone(),
-                tx,
-            );
-
-            self.catching_txs.retain(|t, _| t != &tx_id);
-        }
-
-        // Only used to reduce size of catching_txs
-        for tx in block.failed_txs {
-            let tx_id = TxId(
-                block
-                    .dp_parent_hashes
-                    .get(&tx)
-                    .ok_or_else(|| anyhow!("Missing DP in block for {}", tx))?
-                    .clone(),
-                tx,
-            );
-
-            self.catching_txs.retain(|t, _| t != &tx_id);
-        }
-
-        for tx_id in block.dropped_duplicate_txs {
-            self.catching_txs.retain(|t, _| t != &tx_id);
-        }
-
-        for tx in block.successful_txs {
-            let tx_id = TxId(
-                block
-                    .dp_parent_hashes
-                    .get(&tx)
-                    .ok_or_else(|| anyhow!("Missing DP in block for {}", tx))?
-                    .clone(),
-                tx,
-            );
-
-            if let Some((tx, tx_ctx)) = self.catching_txs.shift_remove(&tx_id) {
-                self.catching_success_txs.push((tx, tx_ctx));
+                sdk::TransactionStateEvent::Settled => {
+                    if let Some((ref mut tx, ref mut tx_ctx, _, _, state)) =
+                        self.catching_txs.get_mut(&hash)
+                    {
+                        self.catching_success_txs
+                            .push((std::mem::take(tx), std::mem::take(tx_ctx)));
+                        *state = TxState::Settled;
+                    }
+                }
+                sdk::TransactionStateEvent::SettledAsFailed => {
+                    if let Some((_, _, _, _, state)) = self.catching_txs.get_mut(&hash) {
+                        *state = TxState::Settled;
+                    }
+                }
+                sdk::TransactionStateEvent::TimedOut => {
+                    if let Some((_, _, _, _, state)) = self.catching_txs.get_mut(&hash) {
+                        *state = TxState::Settled;
+                    }
+                }
+                sdk::TransactionStateEvent::Error(_) => { /* ignore */ }
+                sdk::TransactionStateEvent::NewProof { .. } => { /* ignore */ }
+                sdk::TransactionStateEvent::SettleEvent(_) => { /* ignore */ }
+                sdk::TransactionStateEvent::DroppedAsDuplicate => { /* ignore */ }
             }
         }
 
         Ok(())
     }
 
-    async fn handle_processed_block(&mut self, block: Block) -> Result<()> {
+    async fn handle_processed_block(&mut self, mut block: Block) -> Result<()> {
         tracing::trace!(
             cn =% self.ctx.contract_name,
             block_height =% block.block_height,
             "Handling processed block {}",
             block.block_height
         );
-        let mut insta_failed_txs = vec![];
         if block.block_height.0 % 1000 == 0 {
             info!(
                 cn =% self.ctx.contract_name,
@@ -549,64 +568,86 @@ where
             );
         }
 
-        for (tx_id, tx) in block.txs {
-            if let TransactionData::Blob(tx) = tx.transaction_data {
-                if tx
-                    .blobs
-                    .iter()
-                    .all(|b| b.contract_name != self.ctx.contract_name)
-                {
-                    continue;
-                }
-                if block.dropped_duplicate_txs.contains(&tx_id) {
-                    debug!(
-                        cn =% self.ctx.contract_name,
-                        tx_id =% tx_id,
-                        "🔇 Transaction duplicated {}, skipping",
-                        tx.hashed()
-                    );
-                    continue;
-                }
-                if block.failed_txs.contains(&tx.hashed()) {
-                    debug!(
-                        cn =% self.ctx.contract_name,
-                        tx_hash =% tx.hashed(),
-                        "🔇 Transaction {} insta-failed in block, skipping",
-                        tx.hashed()
-                    );
-                    insta_failed_txs.push(tx.hashed());
-                    continue;
-                }
-                self.store.tx_chain.push(tx.hashed());
-
-                let tx_ctx = TxContext {
-                    block_height: block.block_height,
-                    block_hash: block.hash.clone(),
-                    timestamp: block.block_timestamp.clone(),
-                    lane_id: block
-                        .lane_ids
-                        .get(&tx.hashed())
-                        .ok_or_else(|| anyhow!("Missing lane id in block for {}", tx.hashed()))?
-                        .clone(),
-                    chain_id: HYLE_TESTNET_CHAIN_ID,
-                };
-                self.add_tx_to_waiting(tx, tx_ctx, tx_id);
-            }
-        }
-
         let mut replay_from = None;
-        for tx in block.timed_out_txs {
-            self.settle_tx_failed(&mut replay_from, &tx)?;
+        let mut insta_failed_txs = vec![];
+        let mut success_txs = vec![];
+        for (tx_hash, event) in block.all_transactions_events {
+            match event {
+                sdk::TransactionStateEvent::Sequenced => {
+                    let tx_entry_idx = block.txs.iter().position(|(id, _)| id.1 == tx_hash);
+                    if tx_entry_idx.is_none() {
+                        warn!(
+                            cn =% self.ctx.contract_name,
+                            tx_hash =% tx_hash,
+                            "Transaction {} not found in block {}",
+                            tx_hash,
+                            block.block_height
+                        );
+                        continue;
+                    }
+                    let (tx_id, tx) = block.txs.swap_remove(tx_entry_idx.unwrap());
+                    if let TransactionData::Blob(blob_tx) = tx.transaction_data {
+                        if blob_tx
+                            .blobs
+                            .iter()
+                            .all(|b| b.contract_name != self.ctx.contract_name)
+                        {
+                            continue;
+                        }
+                        if block.failed_txs.contains(&blob_tx.hashed()) {
+                            debug!(
+                                cn =% self.ctx.contract_name,
+                                tx_hash =% blob_tx.hashed(),
+                                "🔇 Transaction {} insta-failed in block, skipping",
+                                blob_tx.hashed()
+                            );
+                            insta_failed_txs.push(blob_tx.hashed());
+                            continue;
+                        }
+                        self.store.tx_chain.push(blob_tx.hashed());
+                        let tx_ctx = TxContext {
+                            block_height: block.block_height,
+                            block_hash: block.hash.clone(),
+                            timestamp: block.block_timestamp.clone(),
+                            lane_id: block
+                                .lane_ids
+                                .get(&blob_tx.hashed())
+                                .ok_or_else(|| {
+                                    anyhow!("Missing lane id in block for {}", blob_tx.hashed())
+                                })?
+                                .clone(),
+                            chain_id: HYLE_TESTNET_CHAIN_ID,
+                        };
+                        self.add_tx_to_waiting(blob_tx, tx_ctx, tx_id);
+                    }
+                }
+                sdk::TransactionStateEvent::Settled => {
+                    success_txs.push(tx_hash.clone());
+                }
+                sdk::TransactionStateEvent::SettledAsFailed
+                | sdk::TransactionStateEvent::TimedOut => {
+                    if insta_failed_txs.contains(&tx_hash) {
+                        continue;
+                    }
+                    self.settle_tx_failed(&mut replay_from, &tx_hash)?;
+                }
+                sdk::TransactionStateEvent::DroppedAsDuplicate => {
+                    // Ignore
+                }
+                sdk::TransactionStateEvent::Error(_) => {
+                    // Ignore
+                }
+                sdk::TransactionStateEvent::NewProof { .. } => {
+                    // Ignore
+                }
+                sdk::TransactionStateEvent::SettleEvent(_) => {
+                    // Ignore
+                }
+            }
         }
 
-        for tx in block.failed_txs {
-            if insta_failed_txs.contains(&tx) {
-                continue;
-            }
-            self.settle_tx_failed(&mut replay_from, &tx)?;
-        }
+        // Replay after failed transactions.
         if let Some(replay_from) = replay_from {
-            // TODO: we have to replay them immediately, to re-populate state_history
             let post_failure_blobs = self
                 .store
                 .proving_txs
@@ -623,10 +664,11 @@ where
         // as we drop hitory of previous successful transactions when a transaction succeeds,
         // we won't find the parent state of the failed transaction, thus reverting to default state.
         // Covered by test test_auto_prover_tx_failed_after_success_in_same_block
-        for tx in block.successful_txs {
+        for tx in success_txs {
             self.settle_tx_success(&tx)?;
         }
 
+        // Contract state consistency check
         if let Some(contract) = block.updated_states.get(&self.ctx.contract_name) {
             if let Some(prover_state) = self
                 .store
@@ -825,7 +867,13 @@ where
                tx
             );
             let found = self.store.state_history.remove(tx);
-            self.store.tx_chain.retain(|h| h != tx);
+            let tx_chain_pos = self
+                .store
+                .tx_chain
+                .iter()
+                .position(|h| h == tx)
+                .expect("We should have the tx in the chain");
+            self.store.tx_chain.remove(tx_chain_pos);
             if found.is_some() {
                 *replay_from = Some(std::cmp::min(replay_from.unwrap_or(pos), pos));
                 self.clear_state_history_after_failed(pos)?;
@@ -849,9 +897,14 @@ where
             .position(|(t, _, _)| t.hashed() == *hash);
         if let Some(pos) = tx {
             self.store.proving_txs.remove(pos);
-            self.store
+            if let Some(idx) = self
+                .store
                 .buffered_blobs
-                .retain(|(_, t, _)| t.hashed() != *hash);
+                .iter()
+                .position(|(_, t, _)| t.hashed() == *hash)
+            {
+                self.store.buffered_blobs.remove(idx);
+            }
             return Some(pos);
         } else {
             let tx = self
