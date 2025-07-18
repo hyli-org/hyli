@@ -896,13 +896,14 @@ where
             .position(|(t, _, _)| t.hashed() == *hash);
         if let Some(pos) = tx {
             self.store.proving_txs.remove(pos);
-            let idx = self
+            if let Some(idx) = self
                 .store
-                .tx_chain
+                .buffered_blobs
                 .iter()
-                .position(|h| h == hash)
-                .expect("We should have the tx in the chain");
-            self.store.buffered_blobs.remove(idx);
+                .position(|(_, t, _)| t.hashed() == *hash)
+            {
+                self.store.buffered_blobs.remove(idx);
+            }
             return Some(pos);
         } else {
             let tx = self
