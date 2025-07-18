@@ -1521,10 +1521,10 @@ async fn test_auto_prover_catchup_mixed_pending_and_failures() -> Result<()> {
     else {
         panic!("Expected VerifiedProof transaction data");
     };
-    assert_eq!(proof.proven_blobs.len(), 2);
+    assert_eq!(proof.proven_blobs.len(), 4);
     assert_eq!(
         proof.proven_blobs.last().unwrap().hyle_output.next_state,
-        StateCommitment(vec![2 + 3 + 6, 0, 0, 0])
+        StateCommitment(vec![2 + 3, 0, 0, 0])
     );
 
     Ok(())

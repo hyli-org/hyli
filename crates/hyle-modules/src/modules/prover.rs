@@ -507,6 +507,7 @@ where
                                 .clone(),
                             chain_id: HYLE_TESTNET_CHAIN_ID,
                         };
+                        self.global_tx_nonce += 1;
                         self.catching_txs.insert(
                             tx.hashed(),
                             (
@@ -520,33 +521,24 @@ where
                                 TxState::Unsettled,
                             ),
                         );
-                        self.global_tx_nonce += 1;
                     }
                 }
                 sdk::TransactionStateEvent::Settled => {
-                    if let Some((_, _, tx_id, _, state)) = self.catching_txs.get_mut(&hash) {
-                        if matches!(state, TxState::Settled) {
-                            tracing::warn!(
-                                "Transaction {} already settled (on settle), ignoring",
-                                tx_id
-                            );
-                        }
+                    if let Some((ref mut tx, ref mut tx_ctx, _, _, state)) =
+                        self.catching_txs.get_mut(&hash)
+                    {
+                        self.catching_success_txs
+                            .push((std::mem::take(tx), std::mem::take(tx_ctx)));
                         *state = TxState::Settled;
                     }
                 }
                 sdk::TransactionStateEvent::SettledAsFailed => {
-                    if let Some((_, _, tx_id, _, state)) = self.catching_txs.get_mut(&hash) {
-                        if matches!(state, TxState::Settled) {
-                            tracing::warn!("Transaction {} already settled (on fail)", tx_id);
-                        }
+                    if let Some((_, _, _, _, state)) = self.catching_txs.get_mut(&hash) {
                         *state = TxState::Settled;
                     }
                 }
                 sdk::TransactionStateEvent::TimedOut => {
-                    if let Some((_, _, tx_id, _, state)) = self.catching_txs.get_mut(&hash) {
-                        if matches!(state, TxState::Settled) {
-                            tracing::warn!("Transaction {} already settled (on timeout)", tx_id);
-                        }
+                    if let Some((_, _, _, _, state)) = self.catching_txs.get_mut(&hash) {
                         *state = TxState::Settled;
                     }
                 }
@@ -578,6 +570,7 @@ where
 
         let mut replay_from = None;
         let mut insta_failed_txs = vec![];
+        let mut success_txs = vec![];
         for (tx_hash, event) in block.all_transactions_events {
             match event {
                 sdk::TransactionStateEvent::Sequenced => {
@@ -629,7 +622,7 @@ where
                     }
                 }
                 sdk::TransactionStateEvent::Settled => {
-                    self.settle_tx_success(&tx_hash)?;
+                    success_txs.push(tx_hash.clone());
                 }
                 sdk::TransactionStateEvent::SettledAsFailed
                 | sdk::TransactionStateEvent::TimedOut => {
@@ -665,6 +658,14 @@ where
             let mut join_handles = Vec::new();
             self.prove_supported_blob(post_failure_blobs, &mut join_handles)?;
             // Don't wait, we'll want to prove the other successful proofs.
+        }
+
+        // 🚨 We have to handle successful transactions after the failed ones,
+        // as we drop hitory of previous successful transactions when a transaction succeeds,
+        // we won't find the parent state of the failed transaction, thus reverting to default state.
+        // Covered by test test_auto_prover_tx_failed_after_success_in_same_block
+        for tx in success_txs {
+            self.settle_tx_success(&tx)?;
         }
 
         // Contract state consistency check
