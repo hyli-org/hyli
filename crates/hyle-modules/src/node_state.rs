@@ -32,6 +32,118 @@ enum SideEffect {
     Delete,
 }
 
+// Optimized blob action type detection to avoid multiple deserializations
+#[derive(Debug)]
+enum BlobActionType {
+    RegisterContract(RegisterContractAction),
+    DeleteContract(DeleteContractAction),
+    UpdateContractProgramId(UpdateContractProgramIdAction),
+    UpdateContractTimeoutWindow(UpdateContractTimeoutWindowAction),
+    NukeTx(NukeTxAction),
+    Unknown,
+}
+
+// Fast action type discriminant detection without full deserialization
+#[derive(Debug, PartialEq)]
+enum ActionTypeDiscriminant {
+    RegisterContract = 0,
+    DeleteContract = 1,
+    UpdateContractProgramId = 2,
+    UpdateContractTimeoutWindow = 3,
+    NukeTx = 4,
+    Unknown = 255,
+}
+
+impl BlobActionType {
+    /// Parse blob data once and determine the action type using lazy deserialization
+    /// This reads only the discriminant first to fail-fast on wrong types
+    fn from_blob_data(blob_data: &BlobData) -> Self {
+        Self::from_blob_data_lazy(blob_data).unwrap_or(BlobActionType::Unknown)
+    }
+
+    /// Lazy deserialization: peek at discriminant first, then deserialize only the correct type
+    fn from_blob_data_lazy(blob_data: &BlobData) -> Option<Self> {
+        let discriminant = Self::peek_action_discriminant(blob_data)?;
+
+        match discriminant {
+            ActionTypeDiscriminant::RegisterContract => {
+                StructuredBlobData::<RegisterContractAction>::try_from(blob_data.clone())
+                    .ok()
+                    .map(|data| Self::RegisterContract(data.parameters))
+            }
+            ActionTypeDiscriminant::DeleteContract => {
+                StructuredBlobData::<DeleteContractAction>::try_from(blob_data.clone())
+                    .ok()
+                    .map(|data| Self::DeleteContract(data.parameters))
+            }
+            ActionTypeDiscriminant::UpdateContractProgramId => {
+                StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob_data.clone())
+                    .ok()
+                    .map(|data| Self::UpdateContractProgramId(data.parameters))
+            }
+            ActionTypeDiscriminant::UpdateContractTimeoutWindow => {
+                StructuredBlobData::<UpdateContractTimeoutWindowAction>::try_from(blob_data.clone())
+                    .ok()
+                    .map(|data| Self::UpdateContractTimeoutWindow(data.parameters))
+            }
+            ActionTypeDiscriminant::NukeTx => {
+                StructuredBlobData::<NukeTxAction>::try_from(blob_data.clone())
+                    .ok()
+                    .map(|data| Self::NukeTx(data.parameters))
+            }
+            ActionTypeDiscriminant::Unknown => None,
+        }
+    }
+
+    /// Peek at the action discriminant without full deserialization
+    /// This reads only the minimal bytes needed to identify the action type
+    fn peek_action_discriminant(blob_data: &BlobData) -> Option<ActionTypeDiscriminant> {
+        use std::io::Read;
+
+        let mut reader = std::io::Cursor::new(&blob_data.0);
+
+        // Skip caller: Option<BlobIndex>
+        if let Err(_) = Self::skip_option_blob_index(&mut reader) {
+            return None;
+        }
+
+        // Skip callees: Option<Vec<BlobIndex>>
+        if let Err(_) = Self::skip_option_vec_blob_index(&mut reader) {
+            return None;
+        }
+
+        // Now we're at the start of the Action enum
+        // Try to read the discriminant (first byte of the enum)
+        let mut discriminant_byte = [0u8; 1];
+        if reader.read_exact(&mut discriminant_byte).is_err() {
+            return None;
+        }
+
+        match discriminant_byte[0] {
+            0 => Some(ActionTypeDiscriminant::RegisterContract),
+            1 => Some(ActionTypeDiscriminant::DeleteContract),
+            2 => Some(ActionTypeDiscriminant::UpdateContractProgramId),
+            3 => Some(ActionTypeDiscriminant::UpdateContractTimeoutWindow),
+            4 => Some(ActionTypeDiscriminant::NukeTx),
+            _ => Some(ActionTypeDiscriminant::Unknown),
+        }
+    }
+
+    /// Skip Option<BlobIndex> in the byte stream
+    fn skip_option_blob_index<R: std::io::Read>(reader: &mut R) -> std::io::Result<()> {
+        use borsh::BorshDeserialize;
+        let _: Option<BlobIndex> = Option::deserialize_reader(reader)?;
+        Ok(())
+    }
+
+    /// Skip Option<Vec<BlobIndex>> in the byte stream
+    fn skip_option_vec_blob_index<R: std::io::Read>(reader: &mut R) -> std::io::Result<()> {
+        use borsh::BorshDeserialize;
+        let _: Option<Vec<BlobIndex>> = Option::deserialize_reader(reader)?;
+        Ok(())
+    }
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct ModifiedContractFields {
     pub program_id: bool,
@@ -974,9 +1086,10 @@ impl NodeState {
             let blob = blob_metadata.blob;
 
             if blob.contract_name.0 == "hyle" {
-                // Keep track of all txs to nuke
-                if let Ok(data) = StructuredBlobData::<NukeTxAction>::try_from(blob.data.clone()) {
-                    txs_to_nuke.extend(data.parameters.txs.clone());
+                // Keep track of all txs to nuke - optimized single parse
+                let blob_action = BlobActionType::from_blob_data(&blob.data);
+                if let BlobActionType::NukeTx(data) = blob_action {
+                    txs_to_nuke.extend(data.txs.clone());
                 }
             }
 
@@ -1257,54 +1370,65 @@ impl NodeState {
             .context("Blob index out of bounds")?
             .blob;
 
+        // Optimized: Parse blob data once instead of multiple try_from calls
+        let blob_action = BlobActionType::from_blob_data(&blob.data);
+
         // Verify that each side effect has a matching register/delete contract action in this specific blob
-        if let Ok(data) = StructuredBlobData::<RegisterContractAction>::try_from(blob.data.clone())
-        {
-            let Some(eff) = hyle_output.onchain_effects.first() else {
-                bail!(
-                    "Proof for RegisterContractAction blob #{} does not have any onchain effects",
-                    hyle_output.index
-                )
-            };
-            if let OnchainEffect::RegisterContract(effect) = eff {
-                if effect != &data.parameters.into() {
+        match blob_action {
+            BlobActionType::RegisterContract(data) => {
+                let Some(eff) = hyle_output.onchain_effects.first() else {
                     bail!(
-                        "Proof for RegisterContractAction blob #{} does not match the onchain effect",
+                        "Proof for RegisterContractAction blob #{} does not have any onchain effects",
+                        hyle_output.index
+                    )
+                };
+                if let OnchainEffect::RegisterContract(effect) = eff {
+                    if effect != &data.into() {
+                        bail!(
+                            "Proof for RegisterContractAction blob #{} does not match the onchain effect",
+                            hyle_output.index
+                        )
+                    }
+                } else {
+                    bail!(
+                        "Proof for RegisterContractAction blob #{} does not have a register onchain effect",
                         hyle_output.index
                     )
                 }
-            } else {
-                bail!(
-                    "Proof for RegisterContractAction blob #{} does not have a register onchain effect",
-                    hyle_output.index
-                )
             }
-        } else if let Ok(data) =
-            StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone())
-        {
-            let Some(eff) = hyle_output.onchain_effects.first() else {
-                bail!(
-                    "Proof for DeleteContractAction blob #{} does not have any onchain effects",
-                    hyle_output.index
-                )
-            };
-            if let OnchainEffect::DeleteContract(effect) = eff {
-                if effect != &data.parameters.contract_name {
+            BlobActionType::DeleteContract(data) => {
+                let Some(eff) = hyle_output.onchain_effects.first() else {
                     bail!(
-                        "Proof for DeleteContractAction blob #{} does not match the onchain effect",
+                        "Proof for DeleteContractAction blob #{} does not have any onchain effects",
+                        hyle_output.index
+                    )
+                };
+                if let OnchainEffect::DeleteContract(effect) = eff {
+                    if effect != &data.contract_name {
+                        bail!(
+                            "Proof for DeleteContractAction blob #{} does not match the onchain effect",
+                            hyle_output.index
+                        )
+                    }
+                } else {
+                    bail!(
+                        "Proof for DeleteContractAction blob #{} does not have a delete onchain effect",
                         hyle_output.index
                     )
                 }
-            } else {
-                bail!(
-                    "Proof for DeleteContractAction blob #{} does not have a delete onchain effect",
-                    hyle_output.index
-                )
             }
-        } else if let Ok(_data) =
-            StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
-        {
-            // FIXME: add checks?
+            BlobActionType::UpdateContractProgramId(_data) => {
+                // FIXME: add checks?
+            }
+            BlobActionType::UpdateContractTimeoutWindow(_data) => {
+                // FIXME: add checks?
+            }
+            BlobActionType::NukeTx(_data) => {
+                // No specific verification needed for NukeTx action types
+            }
+            BlobActionType::Unknown => {
+                // No specific verification needed for unknown action types
+            }
         }
 
         Ok(())

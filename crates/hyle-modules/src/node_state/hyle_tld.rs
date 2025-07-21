@@ -1,6 +1,6 @@
 use crate::node_state::{
-    contract_registration::validate_contract_registration_metadata, ModifiedContractData,
-    ModifiedContractFields, NodeState, NukeTxAction,
+    contract_registration::validate_contract_registration_metadata, BlobActionType,
+    ModifiedContractData, ModifiedContractFields, NodeState,
 };
 use anyhow::{bail, Result};
 use sdk::secp256k1::CheckSecp256k1;
@@ -19,26 +19,27 @@ pub fn handle_blob_for_hyle_tld(
     // TODO: check the identity of the caller here.
 
     // TODO: support unstructured blobs as well ?
-    if let Ok(reg) =
-        StructuredBlobData::<RegisterContractAction>::try_from(current_blob.data.clone())
-    {
-        handle_register_blob(contracts, contract_changes, &reg.parameters)?;
-    } else if let Ok(reg) =
-        StructuredBlobData::<DeleteContractAction>::try_from(current_blob.data.clone())
-    {
-        handle_delete_blob(contracts, contract_changes, &reg.parameters)?;
-    } else if let Ok(reg) =
-        StructuredBlobData::<UpdateContractProgramIdAction>::try_from(current_blob.data.clone())
-    {
-        handle_update_program_id_blob(contracts, contract_changes, &reg.parameters)?;
-    } else if let Ok(reg) =
-        StructuredBlobData::<UpdateContractTimeoutWindowAction>::try_from(current_blob.data.clone())
-    {
-        handle_update_timeout_window_blob(contracts, contract_changes, &reg.parameters)?;
-    } else if StructuredBlobData::<NukeTxAction>::try_from(current_blob.data.clone()).is_ok() {
-        // Do nothing
-    } else {
-        bail!("Invalid blob data for TLD");
+    let blob_action = BlobActionType::from_blob_data(&current_blob.data);
+
+    match blob_action {
+        BlobActionType::RegisterContract(reg) => {
+            handle_register_blob(contracts, contract_changes, &reg)?;
+        }
+        BlobActionType::DeleteContract(reg) => {
+            handle_delete_blob(contracts, contract_changes, &reg)?;
+        }
+        BlobActionType::UpdateContractProgramId(reg) => {
+            handle_update_program_id_blob(contracts, contract_changes, &reg)?;
+        }
+        BlobActionType::UpdateContractTimeoutWindow(reg) => {
+            handle_update_timeout_window_blob(contracts, contract_changes, &reg)?;
+        }
+        BlobActionType::NukeTx(_) => {
+            // Do nothing
+        }
+        BlobActionType::Unknown => {
+            bail!("Invalid blob data for TLD");
+        }
     }
     Ok(())
 }
@@ -199,63 +200,60 @@ pub fn validate_hyle_contract_blobs(tx: &BlobTransaction) -> Result<(), String> 
     // Collect NukeTxAction blobs and secp256k1 blobs
     for (index, blob) in tx.blobs.iter().enumerate() {
         if blob.contract_name.0 == "hyle" {
+            let blob_action = BlobActionType::from_blob_data(&blob.data);
+
             // Check identity authorization for privileged actions
-            if StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
-                .is_ok()
-                || StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone()).is_ok()
-                || StructuredBlobData::<UpdateContractTimeoutWindowAction>::try_from(
-                    blob.data.clone(),
-                )
-                .is_ok()
-            {
-                if tx.identity.0 != HYLI_TLD_ID {
+            match blob_action {
+                BlobActionType::UpdateContractProgramId(_)
+                | BlobActionType::DeleteContract(_)
+                | BlobActionType::UpdateContractTimeoutWindow(_) => {
+                    if tx.identity.0 != HYLI_TLD_ID {
+                        return Err(format!(
+                            "Unauthorized action for 'hyle' TLD from identity: {}",
+                            tx.identity.0
+                        ));
+                    }
+                }
+                BlobActionType::NukeTx(nuke_data) => {
+                    // Collect NukeTxAction blobs for signature validation
+                    let calldata = Calldata {
+                        tx_hash: tx.hashed(),
+                        identity: tx.identity.clone(),
+                        blobs: tx.blobs.clone().into(),
+                        tx_blob_count: tx.blobs.len(),
+                        index: BlobIndex(index),
+                        tx_ctx: None,
+                        private_input: Vec::new(),
+                    };
+
+                    let expected_data = borsh::to_vec(&nuke_data.txs)
+                        .map_err(|e| format!("Failed to serialize tx hashes: {e}"))?;
+                    let secp_blob = CheckSecp256k1::new(&calldata, &expected_data)
+                        .expect()
+                        .map_err(|e| format!("Failed to verify secp256k1 signature: {e}"))?;
+
+                    // Assert that the secp256k1 signature is from Hyli
+                    // FIXME: use config to pass the pubkey
+                    let public_key = std::env::var("HYLI_TLD_PUBKEY")
+                        .map_err(|_| "HYLI_TLD_PUBKEY environment variable not set")?;
+                    let hyli_tld_pubkey = hex::decode(&public_key)
+                        .map_err(|_| "Invalid hex format for HYLI_TLD_PUBKEY")?;
+
+                    if secp_blob.public_key != hyli_tld_pubkey.as_slice() {
+                        return Err(format!(
+                            "Secp256k1 signature is not from Hyli: {}",
+                            hex::encode(secp_blob.public_key)
+                        ));
+                    }
+                }
+                BlobActionType::RegisterContract(_) => {
+                    // Do nothing
+                }
+                BlobActionType::Unknown => {
                     return Err(format!(
-                        "Unauthorized action for 'hyle' TLD from identity: {}",
-                        tx.identity.0
+                        "Unsupported permissioned action on hyle contract: {blob:?}"
                     ));
                 }
-            }
-            // Collect NukeTxAction blobs for signature validation
-            else if let Ok(nuke_data) =
-                StructuredBlobData::<NukeTxAction>::try_from(blob.data.clone())
-            {
-                let calldata = Calldata {
-                    tx_hash: tx.hashed(),
-                    identity: tx.identity.clone(),
-                    blobs: tx.blobs.clone().into(),
-                    tx_blob_count: tx.blobs.len(),
-                    index: BlobIndex(index),
-                    tx_ctx: None,
-                    private_input: Vec::new(),
-                };
-
-                let expected_data = borsh::to_vec(&nuke_data.parameters.txs)
-                    .map_err(|e| format!("Failed to serialize tx hashes: {e}"))?;
-                let secp_blob = CheckSecp256k1::new(&calldata, &expected_data)
-                    .expect()
-                    .map_err(|e| format!("Failed to verify secp256k1 signature: {e}"))?;
-
-                // Assert that the secp256k1 signature is from Hyli
-                // FIXME: use config to pass the pubkey
-                let public_key = std::env::var("HYLI_TLD_PUBKEY")
-                    .map_err(|_| "HYLI_TLD_PUBKEY environment variable not set")?;
-                let hyli_tld_pubkey = hex::decode(&public_key)
-                    .map_err(|_| "Invalid hex format for HYLI_TLD_PUBKEY")?;
-
-                if secp_blob.public_key != hyli_tld_pubkey.as_slice() {
-                    return Err(format!(
-                        "Secp256k1 signature is not from Hyli: {}",
-                        hex::encode(secp_blob.public_key)
-                    ));
-                }
-            } else if StructuredBlobData::<RegisterContractAction>::try_from(blob.data.clone())
-                .is_ok()
-            {
-                // Do nothing
-            } else {
-                return Err(format!(
-                    "Unsupported permissioned action on hyle contract: {blob:?}"
-                ));
             }
         }
     }
