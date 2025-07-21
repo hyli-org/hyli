@@ -102,8 +102,8 @@ rand = { version = "=0.8.5" }
 rand_seeder = { version = "0.4.0" }
 ratatui = { version = "0.29.0", default-features = false }
 readonly = { version = "0.2.12", default-features = false }
-risc0-build = { version = "2.1", default-features = false }
-risc0-zkvm = { version = "2.1", default-features = false }
+risc0-build = { version = "=2.3", default-features = false }
+risc0-zkvm = { version = "=2.3", default-features = false }
 secp256k1 = { version = "0.31.1" }
 seq-macro = { version = "0.3.6", default-features = false }
 serde = { version = "1.0" }
