@@ -1,4 +1,4 @@
-use super::IndexerApiState;
+use super::ExplorerApiState;
 use axum::{extract::State, http::StatusCode, Json};
 use hyle_model::api::{NetworkStats, ProofStat};
 
@@ -25,7 +25,7 @@ struct PeakStat {
     )
 )]
 pub async fn get_stats(
-    State(state): State<IndexerApiState>,
+    State(state): State<ExplorerApiState>,
 ) -> Result<Json<NetworkStats>, StatusCode> {
     let total_transactions = log_error!(
         sqlx::query_scalar("SELECT count(*) as txs FROM transactions")
@@ -48,10 +48,14 @@ pub async fn get_stats(
     let txs_last_day = log_error!(
         sqlx::query_scalar(
             "
-            SELECT count(*) as txs FROM transactions
-            LEFT JOIN blocks b ON transactions.block_hash = b.hash
-            WHERE b.timestamp > now() - interval '1 day'
-            OR b.timestamp IS NULL
+WITH recent_blocks AS (
+  SELECT hash
+  FROM blocks
+  WHERE timestamp > now() - interval '1 day'
+)
+SELECT count(*)
+FROM transactions
+JOIN recent_blocks b ON transactions.block_hash = b.hash
             "
         )
         .fetch_optional(&state.db)
@@ -82,22 +86,24 @@ pub async fn get_stats(
     let graph_tx_volume = log_error!(
         sqlx::query_as::<_, Point>(
             "
-            WITH hours AS (
-                SELECT generate_series(
-                    date_trunc('hour', now()) - interval '5 hours',
-                    date_trunc('hour', now()),
-                    interval '1 hour'
-                ) AS x
-            )
-            SELECT 
-                extract(epoch from h.x)::bigint AS x,
-                count(t.*)::bigint AS y
-            FROM hours h
-            LEFT JOIN blocks b ON date_trunc('hour', b.timestamp) = h.x
-            LEFT JOIN transactions t ON t.block_hash = b.hash
-            GROUP BY h.x
-            ORDER BY h.x;
-            "
+WITH hours AS (
+  SELECT generate_series(
+    date_trunc('hour', now()) - interval '5 hours',
+    date_trunc('hour', now()),
+    interval '1 hour'
+  ) AS hour_start
+)
+SELECT 
+  extract(epoch FROM h.hour_start)::bigint AS x,
+  (
+    SELECT count(*) 
+    FROM transactions t
+    JOIN blocks b ON t.block_hash = b.hash
+    WHERE b.timestamp >= h.hour_start
+      AND b.timestamp < h.hour_start + interval '1 hour'
+  )::bigint AS y
+FROM hours h
+ORDER BY h.hour_start;            "
         )
         .fetch_all(&state.db)
         .await,
@@ -154,16 +160,23 @@ pub async fn get_stats(
     let peak_txs = log_error!(
         sqlx::query_as::<_, PeakStat>(
             "
-            SELECT
-              extract(epoch FROM date_trunc('minute', b.timestamp))::bigint  AS minute_bucket,
-              count(*)::bigint                  AS tx_count
-            FROM blocks b
-            JOIN transactions t ON t.block_hash = b.hash
-            WHERE b.timestamp >= now() - interval '24 hours'
-            GROUP BY 1
-            ORDER BY 2 DESC
-            LIMIT 1;
-            "
+WITH recent_blocks AS (
+  SELECT hash, date_trunc('minute', timestamp) AS minute
+  FROM blocks
+  WHERE timestamp >= now() - interval '24 hours'
+),
+tx_counts AS (
+  SELECT
+    extract(epoch FROM rb.minute)::bigint AS minute_bucket,
+    count(*)::bigint AS tx_count
+  FROM recent_blocks rb
+  JOIN transactions t ON t.block_hash = rb.hash
+  GROUP BY rb.minute
+)
+SELECT *
+FROM tx_counts
+ORDER BY tx_count DESC
+LIMIT 1;            "
         )
         .fetch_optional(&state.db)
         .await,
@@ -197,16 +210,20 @@ pub async fn get_stats(
     )
 )]
 pub async fn get_proof_stats(
-    State(state): State<IndexerApiState>,
+    State(state): State<ExplorerApiState>,
 ) -> Result<Json<Vec<ProofStat>>, StatusCode> {
     let transactions = log_error!(
         sqlx::query_as::<_, ProofStat>(
             r#"
+WITH bpo_distinct AS (
+  SELECT DISTINCT contract_name, proof_tx_hash
+  FROM blob_proof_outputs
+)
 SELECT
-    c.verifier,
-    COUNT(DISTINCT bpo.proof_tx_hash) AS proof_count
-FROM blob_proof_outputs bpo
-JOIN contracts c ON bpo.contract_name = c.contract_name
+  c.verifier,
+  COUNT(*) AS proof_count
+FROM bpo_distinct b
+JOIN contracts c ON b.contract_name = c.contract_name
 GROUP BY c.verifier
 ORDER BY proof_count DESC;
         "#,

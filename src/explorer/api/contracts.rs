@@ -1,4 +1,4 @@
-use super::{IndexerApiState, TxHashDb};
+use super::{ExplorerApiState, TxHashDb};
 use api::{APIContract, APIContractState};
 use axum::{
     extract::{Path, State},
@@ -66,35 +66,48 @@ impl From<ContractStateDb> for APIContractState {
     )
 )]
 pub async fn list_contracts(
-    State(state): State<IndexerApiState>,
+    State(state): State<ExplorerApiState>,
 ) -> Result<Json<Vec<APIContract>>, StatusCode> {
     let contract = log_error!(
         sqlx::query_as::<_, ContractDb>(
             r#"
-        SELECT
-          c.*,
-          COUNT(t.*)                             			          AS total_tx,
-          COUNT(t.*)
-            FILTER (WHERE t.transaction_status = 'sequenced')   AS unsettled_tx,
-          (
-            SELECT min(bl.height)
-            FROM blocks bl
-            JOIN transactions t2 ON t2.block_hash = bl.hash
-            WHERE t2.transaction_status = 'sequenced'
-              AND EXISTS (
-                SELECT 1 FROM blobs b2
-                WHERE b2.parent_dp_hash = t2.parent_dp_hash
-                  AND b2.tx_hash = t2.tx_hash
-                  AND b2.contract_name = c.contract_name
-              )
-          ) AS earliest_unsettled
-        FROM contracts AS c
-        LEFT JOIN txs_contracts as tx_c
-          on tx_c.contract_name = c.contract_name
-        LEFT JOIN transactions AS t
-          ON t.parent_dp_hash = tx_c.parent_dp_hash
-         AND t.tx_hash       = tx_c.tx_hash
-        GROUP BY c.contract_name;
+WITH sequenced_tx AS (
+    SELECT parent_dp_hash, tx_hash, block_hash
+    FROM transactions
+    WHERE transaction_status = 'sequenced'
+),
+contract_stats AS (
+    SELECT
+        tc.contract_name,
+        COUNT(*) AS total_tx,
+        COUNT(stx.parent_dp_hash) AS unsettled_tx
+    FROM txs_contracts tc
+    LEFT JOIN sequenced_tx stx
+      ON stx.parent_dp_hash = tc.parent_dp_hash
+      AND stx.tx_hash = tc.tx_hash
+    GROUP BY tc.contract_name
+),
+earliest_unsettled AS (
+    SELECT
+        b.contract_name,
+        MIN(bl.height) AS earliest_height
+    FROM blobs b
+    INNER JOIN sequenced_tx stx
+      ON stx.parent_dp_hash = b.parent_dp_hash
+      AND stx.tx_hash = b.tx_hash
+    INNER JOIN blocks bl
+      ON bl.hash = stx.block_hash
+    GROUP BY b.contract_name
+)
+SELECT
+    c.*,
+    COALESCE(cs.total_tx, 0) AS total_tx,
+    COALESCE(cs.unsettled_tx, 0) AS unsettled_tx,
+    eu.earliest_height AS earliest_unsettled
+FROM contracts c
+LEFT JOIN contract_stats cs ON c.contract_name = cs.contract_name
+LEFT JOIN earliest_unsettled eu ON c.contract_name = eu.contract_name
+ORDER BY c.contract_name;
 "#
         )
         .fetch_all(&state.db)
@@ -120,7 +133,7 @@ pub async fn list_contracts(
 )]
 pub async fn get_contract(
     Path(contract_name): Path<String>,
-    State(state): State<IndexerApiState>,
+    State(state): State<ExplorerApiState>,
 ) -> Result<Json<APIContract>, StatusCode> {
     let contract = log_error!(
         sqlx::query_as::<_, ContractDb>(
@@ -180,7 +193,7 @@ pub async fn get_contract(
 )]
 pub async fn get_contract_state_by_height(
     Path((contract_name, height)): Path<(String, i64)>,
-    State(state): State<IndexerApiState>,
+    State(state): State<ExplorerApiState>,
 ) -> Result<Json<APIContractState>, StatusCode> {
     let contract = log_error!(
         sqlx::query_as::<_, ContractStateDb>(
