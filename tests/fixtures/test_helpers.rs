@@ -83,6 +83,7 @@ impl Default for ConfMaker {
         default.indexer.persist_proofs = false; // Disable proof persistence for tests
 
         default.run_indexer = false; // disable indexer by default to avoid needed PG
+        default.run_explorer = false; // disable indexer by default to avoid needed PG
 
         info!("Default conf: {:?}", default);
 

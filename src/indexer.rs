@@ -1,28 +1,19 @@
 //! Index system for historical data.
 
-mod api;
 mod handler;
 
 use crate::google_cloud_storage_client::GCSRequest;
+use std::ops::Deref;
+
+use crate::explorer::api::{DataProposalHashDb, TxHashDb};
+use crate::explorer::WsExplorerBlobTx;
+use crate::node_state::module::NodeStateEvent;
 use crate::utils::conf::Conf;
 use crate::{model::*, utils::conf::SharedConf};
 use anyhow::{Context, Result};
-use api::*;
-use axum::{
-    extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, State,
-    },
-    response::IntoResponse,
-    routing::get,
-    Router,
-};
-use futures::{SinkExt, StreamExt};
 use handler::IndexerHandlerStore;
-use hyle_model::api::{
-    BlobWithStatus, TransactionStatusDb, TransactionTypeDb, TransactionWithBlobs,
-};
 use hyle_model::utils::TimestampMs;
+use hyle_modules::bus::BusClientSender;
 use hyle_modules::node_state::module::NodeStateModule;
 use hyle_modules::node_state::{NodeState, NodeStateStore};
 use hyle_modules::{
@@ -30,22 +21,14 @@ use hyle_modules::{
     log_error, module_handle_messages,
     modules::{module_bus_client, Module, SharedBuildApiCtx},
 };
-use hyle_net::logged_task::logged_task;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::{postgres::PgPoolOptions, PgPool, Pool, Postgres};
-use std::collections::HashMap;
-use std::ops::Deref;
-use tokio::select;
-use tokio::sync::{broadcast, mpsc};
-use tracing::{error, info};
-use utoipa::OpenApi;
-use utoipa_axum::router::OpenApiRouter;
-use utoipa_axum::routes;
 
 module_bus_client! {
 #[derive(Debug)]
 struct IndexerBusClient {
+    sender(WsExplorerBlobTx),
     sender(NodeStateEvent),
     sender(GCSRequest),
     receiver(DataEvent),
@@ -53,20 +36,9 @@ struct IndexerBusClient {
 }
 }
 
-// TODO: generalize for all tx types
-type Subscribers = HashMap<ContractName, Vec<broadcast::Sender<TransactionWithBlobs>>>;
-
-#[derive(Debug, Clone)]
-pub struct IndexerApiState {
-    db: PgPool,
-    new_sub_sender: mpsc::Sender<(ContractName, WebSocket)>,
-}
-
 pub struct Indexer {
     bus: IndexerBusClient,
-    state: IndexerApiState,
-    new_sub_receiver: tokio::sync::mpsc::Receiver<(ContractName, WebSocket)>,
-    subscribers: Subscribers,
+    db: PgPool,
     node_state: NodeState,
     handler_store: IndexerHandlerStore,
     conf: Conf,
@@ -95,10 +67,6 @@ impl Module for Indexer {
 
         tokio::time::timeout(tokio::time::Duration::from_secs(60), MIGRATOR.run(&pool)).await??;
 
-        let (new_sub_sender, new_sub_receiver) = tokio::sync::mpsc::channel(100);
-
-        let subscribers = HashMap::new();
-
         // Load node state from node_state.bin if it exists or create a new default
         let node_state_path = ctx.0.data_directory.join("indexer_node_state.bin");
         let node_state_store =
@@ -108,35 +76,16 @@ impl Module for Indexer {
         node_state.store = node_state_store;
 
         let conf: Conf = ctx.0.deref().clone();
+
         let indexer = Indexer {
             bus,
-            state: IndexerApiState {
-                db: pool,
-                new_sub_sender,
-            },
-            new_sub_receiver,
-            subscribers,
+            db: pool,
             node_state,
             handler_store: IndexerHandlerStore::default(),
             conf,
         };
 
-        if let Ok(mut guard) = ctx.1.router.lock() {
-            if let Some(router) = guard.take() {
-                guard.replace(router.nest("/v1/indexer", indexer.api(Some(&ctx.1))));
-                return Ok(indexer);
-            }
-        }
-
-        if let Ok(mut guard) = ctx.1.openapi.lock() {
-            tracing::info!("Adding OpenAPI for Indexer");
-            let openapi = guard.clone().nest("/v1/indexer", IndexerAPI::openapi());
-            *guard = openapi;
-        } else {
-            tracing::error!("Failed to add OpenAPI for Indexer");
-        }
-
-        anyhow::bail!("context router should be available");
+        Ok(indexer)
     }
 
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
@@ -190,60 +139,13 @@ impl Indexer {
                 //     "Indexer handling mempool status event");
             }
 
-            Some((contract_name, socket)) = self.new_sub_receiver.recv() => {
-
-                let (tx, mut rx) = broadcast::channel(100);
-                // Append tx to the list of subscribers for contract_name
-                self.subscribers.entry(contract_name)
-                    .or_default()
-                    .push(tx);
-
-                logged_task(async move {
-                        let (mut ws_tx, mut ws_rx) = socket.split();
-
-                        loop {
-                            select! {
-                                maybe_transaction = rx.recv() => {
-                                    match maybe_transaction {
-                                        Ok(transaction) => {
-                                            if let Ok(json) = log_error!(serde_json::to_vec(&transaction),
-                                                "Serialize transaction to JSON") {
-                                                if ws_tx.send(Message::Binary(json.into())).await.is_err() {
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                        _ => break,
-                                    }
-                                },
-                                // Branch to handle incoming messages from ws
-                                maybe_msg = ws_rx.next() => {
-                                    match maybe_msg {
-                                        Some(Ok(message)) => {
-                                            if let Message::Close(frame) = message {
-                                                info!("WS closed by client: {:?}", frame);
-                                                let _ = ws_tx.send(Message::Close(frame)).await;
-                                                break;
-                                            }
-                                        }
-                                        Some(Err(e)) => {
-                                            error!("Error while getting message from WS: {}", e);
-                                            break;
-                                        }
-                                        None => break,
-                                    }
-                                }
-                            }
-                        }
-                    });
-            }
         };
         Ok(())
     }
 
     pub async fn get_last_block(&self) -> Result<Option<BlockHeight>> {
         let rows = sqlx::query("SELECT max(height) as max FROM blocks")
-            .fetch_one(&self.state.db)
+            .fetch_one(&self.db)
             .await?;
         Ok(rows
             .try_get("max")
@@ -251,76 +153,9 @@ impl Indexer {
             .unwrap_or(None))
     }
 
-    pub fn api(&self, ctx: Option<&SharedBuildApiCtx>) -> Router<()> {
-        #[derive(OpenApi)]
-        struct IndexerAPI;
-
-        let (router, api) = OpenApiRouter::with_openapi(IndexerAPI::openapi())
-            // stats
-            .routes(routes!(api::get_stats))
-            .routes(routes!(api::get_proof_stats))
-            // block
-            .routes(routes!(api::get_blocks))
-            .routes(routes!(api::get_last_block))
-            .routes(routes!(api::get_block))
-            .routes(routes!(api::get_block_by_hash))
-            // transaction
-            .routes(routes!(api::get_transactions))
-            .routes(routes!(api::get_transactions_by_height))
-            .routes(routes!(api::get_transactions_by_contract))
-            .routes(routes!(api::get_transaction_with_hash))
-            .routes(routes!(api::get_transaction_events))
-            .routes(routes!(api::get_blob_transactions_by_contract))
-            .route(
-                "/blob_transactions/contract/{contract_name}/ws",
-                get(Self::get_blob_transactions_by_contract_ws_handler),
-            )
-            // proof transaction
-            .routes(routes!(api::get_proofs))
-            .routes(routes!(api::get_proofs_by_height))
-            .routes(routes!(api::get_proof_with_hash))
-            // blob
-            .routes(routes!(api::get_blobs_by_tx_hash))
-            .routes(routes!(api::get_blob))
-            // contract
-            .routes(routes!(api::list_contracts))
-            .routes(routes!(api::get_contract))
-            .routes(routes!(api::get_contract_state_by_height))
-            .split_for_parts();
-
-        if let Some(ctx) = ctx {
-            if let Ok(mut o) = ctx.openapi.lock() {
-                *o = o.clone().nest("/v1/indexer", api);
-            }
-        }
-
-        router.with_state(self.state.clone())
-    }
-
-    async fn get_blob_transactions_by_contract_ws_handler(
-        ws: WebSocketUpgrade,
-        Path(contract_name): Path<String>,
-        State(state): State<IndexerApiState>,
-    ) -> impl IntoResponse {
-        ws.on_upgrade(move |socket| {
-            Self::get_blob_transactions_by_contract_ws(socket, contract_name, state.new_sub_sender)
-        })
-    }
-
-    async fn get_blob_transactions_by_contract_ws(
-        socket: WebSocket,
-        contract_name: String,
-        new_sub_sender: mpsc::Sender<(ContractName, WebSocket)>,
-    ) {
-        // TODO: properly handle errors and ws messages
-        _ = new_sub_sender
-            .send((ContractName(contract_name), socket))
-            .await;
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn send_blob_transaction_to_websocket_subscribers(
-        &self,
+        &mut self,
         tx: &BlobTransaction,
         tx_hash: TxHashDb,
         dp_hash: DataProposalHashDb,
@@ -330,38 +165,16 @@ impl Indexer {
         lane_id: Option<LaneId>,
         timestamp: Option<TimestampMs>,
     ) {
-        for (contrat_name, senders) in self.subscribers.iter() {
-            if tx
-                .blobs
-                .iter()
-                .any(|blob| &blob.contract_name == contrat_name)
-            {
-                let enriched_tx = TransactionWithBlobs {
-                    tx_hash: tx_hash.0.clone(),
-                    parent_dp_hash: dp_hash.0.clone(),
-                    block_hash: block_hash.clone(),
-                    index,
-                    version,
-                    transaction_type: TransactionTypeDb::BlobTransaction,
-                    transaction_status: TransactionStatusDb::Sequenced,
-                    lane_id: lane_id.clone(),
-                    timestamp: timestamp.clone(),
-                    identity: tx.identity.0.clone(),
-                    blobs: tx
-                        .blobs
-                        .iter()
-                        .map(|blob| BlobWithStatus {
-                            contract_name: blob.contract_name.0.clone(),
-                            data: blob.data.0.clone(),
-                            proof_outputs: vec![],
-                        })
-                        .collect(),
-                };
-                senders.iter().for_each(|sender| {
-                    let _ = sender.send(enriched_tx.clone());
-                });
-            }
-        }
+        let _ = self.bus.send(WsExplorerBlobTx {
+            tx: tx.clone(),
+            tx_hash,
+            dp_hash,
+            block_hash: block_hash.clone(),
+            index,
+            version,
+            lane_id,
+            timestamp,
+        });
     }
 }
 
@@ -369,7 +182,7 @@ impl std::ops::Deref for Indexer {
     type Target = Pool<Postgres>;
 
     fn deref(&self) -> &Self::Target {
-        &self.state.db
+        &self.db
     }
 }
 
@@ -380,13 +193,16 @@ mod test {
     use client_sdk::transaction_builder::ProvableBlobTx;
     use hydentity::{client::tx_executor_handler::register_identity, HydentityAction};
     use hyle_contract_sdk::{BlobIndex, HyleOutput, Identity, ProgramId, StateCommitment, TxHash};
-    use hyle_model::api::{APIBlob, APIBlock, APIContract, APITransaction, APITransactionEvents};
+    use hyle_model::api::{
+        APIBlob, APIBlock, APIContract, APITransaction, APITransactionEvents, TransactionStatusDb,
+    };
     use serde_json::json;
     use std::future::IntoFuture;
     use utils::TimestampMs;
 
     use crate::{
         bus::SharedMessageBus,
+        explorer::Explorer,
         model::{
             Blob, BlobData, BlobProofOutput, ProofData, SignedBlock, Transaction, TransactionData,
             VerifiedProofTransaction,
@@ -402,13 +218,13 @@ mod test {
         testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
     };
 
-    async fn setup_test_server(indexer: &Indexer) -> Result<TestServer> {
-        let router = indexer.api(None);
+    async fn setup_test_server(explorer: &Explorer) -> Result<TestServer> {
+        let router = explorer.api(None);
         TestServer::new(router)
     }
 
-    async fn new_indexer(pool: PgPool) -> Indexer {
-        let (new_sub_sender, new_sub_receiver) = tokio::sync::mpsc::channel(100);
+    async fn new_indexer(pool: PgPool) -> (Indexer, Explorer) {
+        let bus = SharedMessageBus::default();
 
         let conf = Conf {
             indexer: IndexerConf {
@@ -417,19 +233,17 @@ mod test {
             },
             ..Conf::default()
         };
+        (
+            Indexer {
+                bus: IndexerBusClient::new_from_bus(bus.new_handle()).await,
+                db: pool.clone(),
+                node_state: NodeState::create("indexer".to_string(), "indexer"),
 
-        Indexer {
-            bus: IndexerBusClient::new_from_bus(SharedMessageBus::default()).await,
-            state: IndexerApiState {
-                db: pool,
-                new_sub_sender,
+                handler_store: IndexerHandlerStore::default(),
+                conf,
             },
-            node_state: NodeState::create("indexer".to_string(), "indexer"),
-            new_sub_receiver,
-            subscribers: HashMap::new(),
-            handler_store: IndexerHandlerStore::default(),
-            conf,
-        }
+            Explorer::new(bus, pool).await,
+        )
     }
 
     fn new_register_tx(
@@ -570,8 +384,8 @@ mod test {
             .unwrap();
         MIGRATOR.run(&db).await.unwrap();
 
-        let mut indexer = new_indexer(db).await;
-        let server = setup_test_server(&indexer).await?;
+        let (mut indexer, explorer) = new_indexer(db).await;
+        let server = setup_test_server(&explorer).await?;
 
         let initial_state = StateCommitment(vec![1, 2, 3]);
         let next_state = StateCommitment(vec![4, 5, 6]);
@@ -1024,7 +838,7 @@ mod test {
             .await
             .unwrap();
         MIGRATOR.run(&db).await.unwrap();
-        let indexer = new_indexer(db).await;
+        let (indexer, _) = new_indexer(db).await;
 
         let mut node_state = NodeState {
             store: NodeStateStore::default(),
@@ -1148,7 +962,7 @@ mod test {
         indexer.handle_processed_block(b1.clone()).unwrap();
         indexer.dump_store_to_db().await.unwrap();
         let rows = sqlx::query("SELECT * FROM contracts")
-            .fetch_all(&indexer.state.db)
+            .fetch_all(&indexer.db)
             .await
             .context("fetch contracts")?;
         assert_eq!(
@@ -1161,7 +975,7 @@ mod test {
         indexer.handle_processed_block(b2.clone()).unwrap();
         indexer.dump_store_to_db().await.unwrap();
         let rows = sqlx::query("SELECT * FROM contracts")
-            .fetch_all(&indexer.state.db)
+            .fetch_all(&indexer.db)
             .await
             .context("fetch contracts")?;
         assert_eq!(
@@ -1175,7 +989,7 @@ mod test {
         indexer.dump_store_to_db().await.unwrap();
 
         let rows = sqlx::query("SELECT * FROM contracts")
-            .fetch_all(&indexer.state.db)
+            .fetch_all(&indexer.db)
             .await
             .context("fetch contracts")?;
         assert_eq!(
@@ -1196,7 +1010,7 @@ mod test {
         indexer.dump_store_to_db().await.unwrap();
 
         let rows = sqlx::query("SELECT * FROM contracts")
-            .fetch_all(&indexer.state.db)
+            .fetch_all(&indexer.db)
             .await
             .context("fetch contracts")?;
         assert_eq!(
@@ -1231,8 +1045,8 @@ mod test {
             .await
             .context("insert test data")?;
 
-        let indexer = new_indexer(db).await;
-        let server = setup_test_server(&indexer).await?;
+        let (_indexer, explorer) = new_indexer(db).await;
+        let server = setup_test_server(&explorer).await?;
 
         // Multiple txs with same hash -- all in different blocks
 
@@ -1338,8 +1152,8 @@ mod test {
             .await
             .context("insert test data")?;
 
-        let mut indexer = new_indexer(db).await;
-        let server = setup_test_server(&indexer).await?;
+        let (_indexer, mut explorer) = new_indexer(db).await;
+        let server = setup_test_server(&explorer).await?;
 
         // Blocks
         // Get all blocks
@@ -1478,7 +1292,7 @@ mod test {
         let listener = hyle_net::net::bind_tcp_listener(0).await.unwrap();
         let addr = listener.local_addr().unwrap();
 
-        tokio::spawn(axum::serve(listener, indexer.api(None)).into_future());
+        tokio::spawn(axum::serve(listener, explorer.api(None)).into_future());
 
         let _ = tokio_tungstenite::connect_async(format!(
             "ws://{addr}/blob_transactions/contract/contract_1/ws"
@@ -1486,7 +1300,7 @@ mod test {
         .await
         .unwrap();
 
-        if let Some(tx) = indexer.new_sub_receiver.recv().await {
+        if let Some(tx) = explorer.new_sub_receiver.recv().await {
             let (contract_name, _) = tx;
             assert_eq!(contract_name, ContractName::new("contract_1"));
         }
