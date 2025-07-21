@@ -128,10 +128,7 @@ docker buildx build --platform linux/arm64 -t hyle .
 ### Run Locally with Docker
 
 ```bash
-docker run --rm \
-  -e HYLE_RUN_INDEXER=true \
-  -p 4321:4321 -p 1234:1234 \
-  hyle
+docker run -v ./db:/hyle/data -e HYLE_RUN_INDEXER=false -p 4321:4321 -p 1234:1234 hyle
 ```
 
 > 🛠️ **Note**: If you build on MacOS (Apple Silicon), add `--platform linux/arm64` to run script.
