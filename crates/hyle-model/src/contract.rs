@@ -199,54 +199,33 @@ impl Add<usize> for BlobIndex {
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct BlobData(pub BlobDataType, pub Vec<u8>);
 
-#[derive(
-    Default,
-    Debug,
-    Serialize,
-    Deserialize,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    BorshSerialize,
-    BorshDeserialize,
-)]
-#[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
-#[borsh(use_discriminant = true)]
-pub enum BlobDataType {
-    #[default]
-    Structured = 0x00,
-    Unstructured = 0x80,
+pub type BlobDataType = u32;
 
-    RegisterContract = 0x01,
-    DeleteContract = 0x02,
-    UpgradeContractProgramId = 0x03,
-    UpdateContractTimeoutWindow = 0x04,
-
-    NukeTxAction = 0xe0,
-}
-
-impl BlobDataType {
-    pub fn as_bytes(&self) -> [u8; 1] {
-        [*self as u8]
-    }
-}
-
-impl Copy for BlobDataType {}
+pub const BLOB_DATA_TYPE_STRUCTURED: BlobDataType = 0xcafe00;
+pub const BLOB_DATA_TYPE_UNSTRUCTURED: BlobDataType = 0xcafe80;
+pub const BLOB_DATA_TYPE_REGISTER_CONTRACT: BlobDataType = 0xcafe01;
+pub const BLOB_DATA_TYPE_DELETE_CONTRACT: BlobDataType = 0xcafe02;
+pub const BLOB_DATA_TYPE_UPGRADE_CONTRACT_PROGRAM_ID: BlobDataType = 0xcafe03;
+pub const BLOB_DATA_TYPE_UPDATE_CONTRACT_TIMEOUT_WINDOW: BlobDataType = 0xcafe04;
+pub const BLOB_DATA_TYPE_NUKE_TX_ACTION: BlobDataType = 0xcafee0;
 
 impl BlobData {
     pub fn unstructured(data: Vec<u8>) -> Self {
-        BlobData(BlobDataType::Unstructured, data)
+        BlobData(BLOB_DATA_TYPE_UNSTRUCTURED, data)
     }
 
     pub fn structured(data: Vec<u8>) -> Self {
-        BlobData(BlobDataType::Structured, data)
+        BlobData(BLOB_DATA_TYPE_STRUCTURED, data)
     }
 
     pub fn register_contract(data: StructuredBlobData<RegisterContractAction>) -> Self {
+        Self::from_with_flag(BLOB_DATA_TYPE_REGISTER_CONTRACT, &data)
+    }
+
+    pub fn from_with_flag<T: BorshSerialize>(flag: BlobDataType, data: &T) -> Self {
         BlobData(
-            BlobDataType::RegisterContract,
-            borsh::to_vec(&data).expect("failed to encode BlobData"),
+            flag,
+            borsh::to_vec(data).expect("failed to encode BlobData"),
         )
     }
 }
@@ -379,7 +358,7 @@ impl BorshDeserialize for StructuredBlobData<DropEndOfReader> {
 impl<Action: BorshSerialize> From<StructuredBlobData<Action>> for BlobData {
     fn from(val: StructuredBlobData<Action>) -> Self {
         BlobData(
-            BlobDataType::Structured,
+            BLOB_DATA_TYPE_STRUCTURED,
             borsh::to_vec(&val).expect("failed to encode BlobData"),
         )
     }
@@ -941,11 +920,14 @@ impl ContractAction for UpdateContractProgramIdAction {
     ) -> Blob {
         Blob {
             contract_name,
-            data: BlobData::from(StructuredBlobData {
-                caller,
-                callees,
-                parameters: self.clone(),
-            }),
+            data: BlobData::from_with_flag(
+                BLOB_DATA_TYPE_UPGRADE_CONTRACT_PROGRAM_ID,
+                &StructuredBlobData {
+                    caller,
+                    callees,
+                    parameters: self.clone(),
+                },
+            ),
         }
     }
 }
@@ -967,11 +949,14 @@ impl ContractAction for UpdateContractTimeoutWindowAction {
     ) -> Blob {
         Blob {
             contract_name,
-            data: BlobData::from(StructuredBlobData {
-                caller,
-                callees,
-                parameters: self.clone(),
-            }),
+            data: BlobData::from_with_flag(
+                BLOB_DATA_TYPE_UPDATE_CONTRACT_TIMEOUT_WINDOW,
+                &StructuredBlobData {
+                    caller,
+                    callees,
+                    parameters: self.clone(),
+                },
+            ),
         }
     }
 }
@@ -993,11 +978,14 @@ impl ContractAction for DeleteContractAction {
     ) -> Blob {
         Blob {
             contract_name,
-            data: BlobData::from(StructuredBlobData {
-                caller,
-                callees,
-                parameters: self.clone(),
-            }),
+            data: BlobData::from_with_flag(
+                BLOB_DATA_TYPE_DELETE_CONTRACT,
+                &StructuredBlobData {
+                    caller,
+                    callees,
+                    parameters: self.clone(),
+                },
+            ),
         }
     }
 }

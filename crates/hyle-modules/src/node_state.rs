@@ -110,11 +110,14 @@ impl ContractAction for NukeTxAction {
     ) -> Blob {
         Blob {
             contract_name,
-            data: BlobData::from(StructuredBlobData {
-                caller,
-                callees,
-                parameters: self.clone(),
-            }),
+            data: BlobData::from_with_flag(
+                BLOB_DATA_TYPE_NUKE_TX_ACTION,
+                &StructuredBlobData {
+                    caller,
+                    callees,
+                    parameters: self.clone(),
+                },
+            ),
         }
     }
 }

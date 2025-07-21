@@ -64,7 +64,7 @@ impl ContractAction for BlstSignatureBlob {
         Blob {
             contract_name,
             data: BlobData(
-                crate::BlobDataType::Unstructured,
+                crate::BLOB_DATA_TYPE_UNSTRUCTURED,
                 borsh::to_vec(self).expect("failed to encode BlstSignatureBlob"),
             ),
         }
@@ -96,7 +96,7 @@ impl ContractAction for ShaBlob {
         Blob {
             contract_name,
             data: BlobData(
-                crate::BlobDataType::Unstructured,
+                crate::BLOB_DATA_TYPE_UNSTRUCTURED,
                 borsh::to_vec(self).expect("failed to encode ShaBlob"),
             ),
         }
@@ -164,7 +164,7 @@ impl ContractAction for Secp256k1Blob {
         Blob {
             contract_name,
             data: BlobData(
-                crate::BlobDataType::Unstructured,
+                crate::BLOB_DATA_TYPE_UNSTRUCTURED,
                 borsh::to_vec(self).expect("failed to encode Secp256k1Blob"),
             ),
         }

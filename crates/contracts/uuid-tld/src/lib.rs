@@ -36,7 +36,7 @@ impl ContractAction for UuidTldAction {
         Blob {
             contract_name,
             data: BlobData(
-                sdk::BlobDataType::Unstructured,
+                sdk::BLOB_DATA_TYPE_UNSTRUCTURED,
                 borsh::to_vec(self).expect("failed to encode BlstSignatureBlob"),
             ),
         }
@@ -172,7 +172,7 @@ mod test {
             blobs: vec![
                 Blob {
                     contract_name: "test".into(),
-                    data: BlobData(BlobDataType::Unstructured, vec![]),
+                    data: BlobData(BLOB_DATA_TYPE_UNSTRUCTURED, vec![]),
                 },
                 action.as_blob("uuid".into(), None, None),
             ]

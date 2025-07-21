@@ -254,7 +254,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyle_model::{Blob, BlobData, BlobDataType, ContractName, TxHash};
+    use hyle_model::{Blob, BlobData, ContractName, TxHash, BLOB_DATA_TYPE_STRUCTURED};
 
     fn make_calldata(
         identity: Identity,
@@ -280,14 +280,13 @@ mod tests {
     ) -> Blob {
         Blob {
             contract_name: ContractName::new(contract),
-            data: BlobData(
-                BlobDataType::Structured,
-                borsh::to_vec(&StructuredBlobData {
+            data: BlobData::from_with_flag(
+                BLOB_DATA_TYPE_STRUCTURED,
+                &StructuredBlobData {
                     caller,
                     callees,
                     parameters: (),
-                })
-                .unwrap(),
+                },
             ),
         }
     }

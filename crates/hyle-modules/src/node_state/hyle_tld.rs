@@ -20,7 +20,7 @@ pub fn handle_blob_for_hyle_tld(
 
     // TODO: support unstructured blobs as well ?
     match current_blob.data.0 {
-        BlobDataType::RegisterContract => {
+        BLOB_DATA_TYPE_REGISTER_CONTRACT => {
             if let Ok(reg) =
                 StructuredBlobData::<RegisterContractAction>::try_from(current_blob.data.clone())
             {
@@ -32,7 +32,7 @@ pub fn handle_blob_for_hyle_tld(
                 );
             }
         }
-        BlobDataType::DeleteContract => {
+        BLOB_DATA_TYPE_DELETE_CONTRACT => {
             if let Ok(reg) =
                 StructuredBlobData::<DeleteContractAction>::try_from(current_blob.data.clone())
             {
@@ -44,7 +44,7 @@ pub fn handle_blob_for_hyle_tld(
                 );
             }
         }
-        BlobDataType::UpgradeContractProgramId => {
+        BLOB_DATA_TYPE_UPGRADE_CONTRACT_PROGRAM_ID => {
             if let Ok(reg) = StructuredBlobData::<UpdateContractProgramIdAction>::try_from(
                 current_blob.data.clone(),
             ) {
@@ -56,7 +56,7 @@ pub fn handle_blob_for_hyle_tld(
                 );
             }
         }
-        BlobDataType::UpdateContractTimeoutWindow => {
+        BLOB_DATA_TYPE_UPDATE_CONTRACT_TIMEOUT_WINDOW => {
             if let Ok(reg) = StructuredBlobData::<UpdateContractTimeoutWindowAction>::try_from(
                 current_blob.data.clone(),
             ) {
@@ -68,7 +68,7 @@ pub fn handle_blob_for_hyle_tld(
                 );
             }
         }
-        BlobDataType::NukeTxAction => {
+        BLOB_DATA_TYPE_NUKE_TX_ACTION => {
             if StructuredBlobData::<NukeTxAction>::try_from(current_blob.data.clone()).is_ok() {
                 // Do nothing
             } else {
