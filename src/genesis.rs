@@ -671,20 +671,19 @@ impl Genesis {
                 signature: Signature("fake".into()),
                 validators: initial_validators.clone(),
             },
-            consensus_proposal: ConsensusProposal {
-                slot: 0,
-                // TODO: genesis block should have a consistent, up-to-date timestamp
-                timestamp: TimestampMs((self.config.consensus.genesis_timestamp * 1000) as u128),
+            consensus_proposal: ConsensusProposal::new(
+                0,
+                ConsensusProposalHash("genesis".into()),
                 // TODO: We aren't actually storing the data proposal above, so we cannot store it here,
                 // or we might mistakenly request data from that cut, but mempool hasn't seen it.
                 // This should be fixed by storing the data proposal in mempool or handling this whole thing differently.
-                cut: vec![/*(
+                vec![/*(
                     round_leader.clone(), dp.hash(), AggregateSignature {
                         signature: Signature("fake".into()),
                         validators: initial_validators.clone()
                     }
                 )*/],
-                staking_actions: initial_validators
+                initial_validators
                     .iter()
                     .map(|v| {
                         SignedByValidator {
@@ -699,8 +698,9 @@ impl Genesis {
                         .into()
                     })
                     .collect(),
-                parent_hash: ConsensusProposalHash("genesis".into()),
-            },
+                // TODO: genesis block should have a consistent, up-to-date timestamp
+                TimestampMs((self.config.consensus.genesis_timestamp * 1000) as u128),
+            ),
         }
     }
 }

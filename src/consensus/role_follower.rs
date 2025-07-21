@@ -918,22 +918,14 @@ mod tests {
     async fn test_buffer_prepare_message_and_fetch_missing_parent_with_gaps() {
         // Create a chain of proposals
         let current_proposal = ConsensusProposal::default();
-        let missing_prepare1 = ConsensusProposal {
-            parent_hash: current_proposal.hashed(),
-            ..ConsensusProposal::default()
-        };
-        let buffered_prepare = ConsensusProposal {
-            parent_hash: missing_prepare1.hashed(),
-            ..ConsensusProposal::default()
-        };
-        let missing_prepare2 = ConsensusProposal {
-            parent_hash: buffered_prepare.hashed(),
-            ..ConsensusProposal::default()
-        };
-        let just_received_prepare = ConsensusProposal {
-            parent_hash: missing_prepare2.hashed(),
-            ..ConsensusProposal::default()
-        };
+        let missing_prepare1 =
+            ConsensusProposal::default_with_parent_hash(current_proposal.hashed());
+        let buffered_prepare =
+            ConsensusProposal::default_with_parent_hash(missing_prepare1.hashed());
+        let missing_prepare2 =
+            ConsensusProposal::default_with_parent_hash(buffered_prepare.hashed());
+        let just_received_prepare =
+            ConsensusProposal::default_with_parent_hash(missing_prepare2.hashed());
 
         let bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
         let mut sync_request_rv = get_receiver::<OutboundMessage>(&bus).await;

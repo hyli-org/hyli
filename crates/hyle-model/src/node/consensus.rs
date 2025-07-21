@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, sync::RwLock};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
@@ -81,31 +81,109 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for ConsensusProposalHash {
     }
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Default,
-    Serialize,
-    Deserialize,
-    BorshSerialize,
-    BorshDeserialize,
-    PartialEq,
-    Eq,
-    Ord,
-    PartialOrd,
-)]
+#[derive(Debug, Default, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
 pub struct ConsensusProposal {
     pub slot: Slot,
     pub parent_hash: ConsensusProposalHash,
     pub cut: Cut,
     pub staking_actions: Vec<ConsensusStakingAction>,
     pub timestamp: TimestampMs,
+
+    #[borsh(skip)]
+    #[serde(skip_serializing, skip_deserializing)]
+    hash_cache: RwLock<Option<ConsensusProposalHash>>,
 }
+
+impl ConsensusProposal {
+    pub fn new(
+        slot: Slot,
+        parent_hash: ConsensusProposalHash,
+        cut: Cut,
+        staking_actions: Vec<ConsensusStakingAction>,
+        timestamp: TimestampMs,
+    ) -> Self {
+        Self {
+            slot,
+            parent_hash,
+            cut,
+            staking_actions,
+            timestamp,
+            hash_cache: RwLock::new(None),
+        }
+    }
+
+    pub fn default_with_slot(slot: Slot) -> Self {
+        Self {
+            slot,
+            ..Self::default()
+        }
+    }
+
+    pub fn default_with_parent_hash(parent_hash: ConsensusProposalHash) -> Self {
+        Self {
+            parent_hash,
+            ..Self::default()
+        }
+    }
+
+    pub fn default_with_cut(cut: Cut) -> Self {
+        Self {
+            cut,
+            ..Self::default()
+        }
+    }
+}
+
+impl Clone for ConsensusProposal {
+    fn clone(&self) -> Self {
+        Self {
+            slot: self.slot,
+            parent_hash: self.parent_hash.clone(),
+            cut: self.cut.clone(),
+            staking_actions: self.staking_actions.clone(),
+            timestamp: self.timestamp.clone(),
+            hash_cache: RwLock::new(self.hash_cache.read().unwrap().clone()),
+        }
+    }
+}
+
+impl Ord for ConsensusProposal {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.slot
+            .cmp(&other.slot)
+            .then_with(|| self.parent_hash.cmp(&other.parent_hash))
+            .then_with(|| self.cut.cmp(&other.cut))
+            .then_with(|| self.staking_actions.cmp(&other.staking_actions))
+            .then_with(|| self.timestamp.cmp(&other.timestamp))
+    }
+}
+
+impl PartialOrd for ConsensusProposal {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for ConsensusProposal {
+    fn eq(&self, other: &Self) -> bool {
+        self.slot == other.slot
+            && self.parent_hash == other.parent_hash
+            && self.cut == other.cut
+            && self.staking_actions == other.staking_actions
+            && self.timestamp == other.timestamp
+    }
+}
+
+impl Eq for ConsensusProposal {}
 
 /// This is the hash of the proposal, signed by validators
 /// Any consensus-critical data should be hashed here.
 impl Hashed<ConsensusProposalHash> for ConsensusProposal {
     fn hashed(&self) -> ConsensusProposalHash {
+        if let Some(hash) = self.hash_cache.read().unwrap().clone() {
+            return hash;
+        }
+
         let mut hasher = Sha3_256::new();
         hasher.update(self.slot.to_le_bytes());
         self.cut.iter().for_each(|(lane_id, hash, _, _)| {
@@ -126,7 +204,9 @@ impl Hashed<ConsensusProposalHash> for ConsensusProposal {
         });
         hasher.update(self.timestamp.0.to_le_bytes());
         hasher.update(self.parent_hash.0.as_bytes());
-        ConsensusProposalHash(hex::encode(hasher.finalize()))
+        let hash = ConsensusProposalHash(hex::encode(hasher.finalize()));
+        *self.hash_cache.write().unwrap() = Some(hash.clone());
+        hash
     }
 }
 
@@ -204,6 +284,7 @@ mod tests {
             staking_actions: vec![],
             timestamp: TimestampMs(1),
             parent_hash: ConsensusProposalHash("".to_string()),
+            hash_cache: RwLock::new(None),
         };
         let hash = proposal.hashed();
         assert_eq!(hash.0.len(), 64);
@@ -231,6 +312,7 @@ mod tests {
             .into()],
             timestamp: TimestampMs(1),
             parent_hash: ConsensusProposalHash("parent".to_string()),
+            hash_cache: RwLock::new(None),
         };
         let mut b = ConsensusProposal {
             slot: 1,
@@ -255,6 +337,7 @@ mod tests {
             .into()],
             timestamp: TimestampMs(1),
             parent_hash: ConsensusProposalHash("parent".to_string()),
+            hash_cache: RwLock::new(None),
         };
         assert_ne!(a.hashed(), b.hashed());
         if let ConsensusStakingAction::Bond { candidate: a } =

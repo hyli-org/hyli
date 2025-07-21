@@ -1094,13 +1094,13 @@ pub mod test {
                 .handle_consensus_event(ConsensusEvent::CommitConsensusProposal(
                     CommittedConsensusProposal {
                         staking: self.mempool.staking.clone(),
-                        consensus_proposal: model::ConsensusProposal {
+                        consensus_proposal: model::ConsensusProposal::new(
                             slot,
-                            cut: cut.clone(),
-                            staking_actions: vec![],
-                            timestamp: TimestampMs(777),
-                            parent_hash: ConsensusProposalHash("test".to_string()),
-                        },
+                            ConsensusProposalHash("test".to_string()),
+                            cut.clone(),
+                            vec![],
+                            TimestampMs(777),
+                        ),
                         certificate: AggregateSignature::default(),
                     },
                 ))
@@ -1139,15 +1139,12 @@ pub mod test {
         let crypto2 = BlstCrypto::new("2").unwrap();
         let pubkey2 = crypto2.validator_pubkey();
 
-        ctx.handle_consensus_event(ConsensusProposal {
-            cut: vec![(
-                LaneId(pubkey2.clone()),
-                DataProposalHash("dp_hash_in_cut".to_owned()),
-                LaneBytesSize::default(),
-                PoDA::default(),
-            )],
-            ..ConsensusProposal::default()
-        })
+        ctx.handle_consensus_event(ConsensusProposal::default_with_cut(vec![(
+            LaneId(pubkey2.clone()),
+            DataProposalHash("dp_hash_in_cut".to_owned()),
+            LaneBytesSize::default(),
+            PoDA::default(),
+        )]))
         .await;
 
         // Assert that we send a SyncReply

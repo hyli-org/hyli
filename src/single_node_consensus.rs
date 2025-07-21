@@ -181,13 +181,13 @@ impl SingleNodeConsensus {
             }
         };
         let new_slot = self.store.last_slot + 1;
-        let consensus_proposal = ConsensusProposal {
-            slot: new_slot,
-            timestamp: TimestampMsClock::now(),
-            cut: self.store.last_cut.clone(),
-            staking_actions: vec![],
-            parent_hash: std::mem::take(&mut self.store.last_consensus_proposal_hash),
-        };
+        let consensus_proposal = ConsensusProposal::new(
+            new_slot,
+            std::mem::take(&mut self.store.last_consensus_proposal_hash),
+            self.store.last_cut.clone(),
+            vec![],
+            TimestampMsClock::now(),
+        );
 
         self.store.last_consensus_proposal_hash = consensus_proposal.hashed();
 

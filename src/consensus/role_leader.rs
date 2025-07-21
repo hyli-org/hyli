@@ -161,13 +161,13 @@ impl Consensus {
             }
 
             // Start Consensus with following cut
-            self.bft_round_state.current_proposal = ConsensusProposal {
-                slot: self.bft_round_state.slot,
+            self.bft_round_state.current_proposal = ConsensusProposal::new(
+                self.bft_round_state.slot,
+                self.bft_round_state.parent_hash.clone(),
                 cut,
                 staking_actions,
-                timestamp: current_timestamp,
-                parent_hash: self.bft_round_state.parent_hash.clone(),
-            };
+                current_timestamp,
+            );
         }
         self.bft_round_state.leader.step = Step::PrepareVote;
 

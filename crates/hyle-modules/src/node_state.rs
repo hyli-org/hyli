@@ -1749,12 +1749,11 @@ pub mod test {
     }
 
     pub fn craft_signed_block(height: u64, txs: Vec<Transaction>) -> SignedBlock {
+        let mut consensus_proposal = ConsensusProposal::default();
+        consensus_proposal.slot = height;
         SignedBlock {
             certificate: AggregateSignature::default(),
-            consensus_proposal: ConsensusProposal {
-                slot: height,
-                ..ConsensusProposal::default()
-            },
+            consensus_proposal,
             data_proposals: vec![(
                 LaneId::default(),
                 vec![DataProposal::new(
@@ -1772,10 +1771,7 @@ pub mod test {
     ) -> SignedBlock {
         SignedBlock {
             certificate: AggregateSignature::default(),
-            consensus_proposal: ConsensusProposal {
-                slot: height,
-                ..ConsensusProposal::default()
-            },
+            consensus_proposal: ConsensusProposal::default_with_slot(height),
             data_proposals: vec![(
                 LaneId::default(),
                 vec![DataProposal::new(Some(parent_dp_hash), txs)],

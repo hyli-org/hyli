@@ -1044,10 +1044,7 @@ async fn autobahn_rejoin_flow() {
     let mut blocks = vec![SignedBlock {
         data_proposals: vec![],
         certificate: AggregateSignature::default(),
-        consensus_proposal: ConsensusProposal {
-            slot: 0,
-            ..ConsensusProposal::default()
-        },
+        consensus_proposal: ConsensusProposal::default_with_slot(0),
     }];
 
     for _ in 0..2 {

@@ -431,9 +431,10 @@ pub mod test {
             .store_data_proposal(&crypto2, &lane_id2, dp4.clone())?;
 
         // Create a ConsensusProposal that references both lanes
-        let ccp = ConsensusProposal {
-            slot: 1,
-            cut: vec![
+        let ccp = ConsensusProposal::new(
+            1,
+            ConsensusProposalHash("test".to_string()),
+            vec![
                 (
                     lane_id1.clone(),
                     dp2_hash,
@@ -447,10 +448,9 @@ pub mod test {
                     AggregateSignature::default(),
                 ),
             ],
-            staking_actions: vec![],
-            timestamp: TimestampMs(0),
-            parent_hash: ConsensusProposalHash("test".to_string()),
-        };
+            vec![],
+            TimestampMs(0),
+        );
 
         // Add the block to mempool 1
         let buc = BlockUnderConstruction {
@@ -548,18 +548,18 @@ pub mod test {
         ctx.mempool.lanes.remove_lane_entry(&lane_id, &dp2_hash);
 
         // Create a ConsensusProposal that references dp3
-        let ccp = ConsensusProposal {
-            slot: 1,
-            cut: vec![(
+        let ccp = ConsensusProposal::new(
+            1,
+            ConsensusProposalHash("test".to_string()),
+            vec![(
                 lane_id.clone(),
                 dp3_hash,
                 LaneBytesSize(100),
                 AggregateSignature::default(),
             )],
-            staking_actions: vec![],
-            timestamp: TimestampMs(0),
-            parent_hash: ConsensusProposalHash("test".to_string()),
-        };
+            vec![],
+            TimestampMs(0),
+        );
 
         // Add the block to the mempool
         let buc = BlockUnderConstruction {

@@ -629,11 +629,8 @@ impl Consensus {
                         self.store.bft_round_state.view = 0;
                         self.store.bft_round_state.parent_hash = block.hash.clone();
                         // Some of our internal logic relies on BFT slot + 1 == cp slot to mean we have committed, so do that.
-                        self.store.bft_round_state.current_proposal = ConsensusProposal {
-                            slot: block.block_height.0,
-                            ..Default::default()
-                        };
-
+                        self.store.bft_round_state.current_proposal =
+                            ConsensusProposal::default_with_slot(block.block_height.0 + 1);
                         self.bft_round_state.timeout.requests.clear();
                     }
                 }
@@ -1318,18 +1315,18 @@ pub mod test {
 
         node1.start_round().await;
 
-        let cp = ConsensusProposal {
-            slot: 2,
-            timestamp: TimestampMs(123),
-            cut: vec![(
+        let cp = ConsensusProposal::new(
+            2,
+            ConsensusProposalHash("hash".into()),
+            vec![(
                 LaneId(node2.pubkey()),
                 DataProposalHash("test".to_string()),
                 LaneBytesSize::default(),
                 AggregateSignature::default(),
             )],
-            staking_actions: vec![],
-            parent_hash: ConsensusProposalHash("hash".into()),
-        };
+            vec![],
+            TimestampMs(123),
+        );
 
         // Create wrong prepare
         let prepare_msg = node1
@@ -1398,18 +1395,18 @@ pub mod test {
         let prepare_msg = node2
             .consensus
             .sign_net_message(ConsensusNetMessage::Prepare(
-                ConsensusProposal {
-                    slot: 1,
-                    timestamp: TimestampMs(123),
-                    cut: vec![(
+                ConsensusProposal::new(
+                    1,
+                    ConsensusProposalHash("hash".into()),
+                    vec![(
                         LaneId(node2.pubkey()),
                         DataProposalHash("test".to_string()),
                         LaneBytesSize::default(),
                         AggregateSignature::default(),
                     )],
-                    staking_actions: vec![],
-                    parent_hash: ConsensusProposalHash("hash".into()),
-                },
+                    vec![],
+                    TimestampMs(123),
+                ),
                 Ticket::Genesis,
                 0,
             ))
@@ -1447,18 +1444,18 @@ pub mod test {
         let prepare_msg = node3
             .consensus
             .sign_net_message(ConsensusNetMessage::Prepare(
-                ConsensusProposal {
-                    slot: 1,
-                    timestamp: TimestampMs(123),
-                    cut: vec![(
+                ConsensusProposal::new(
+                    1,
+                    ConsensusProposalHash("hash".into()),
+                    vec![(
                         LaneId(node2.pubkey()),
                         DataProposalHash("test".to_string()),
                         LaneBytesSize::default(),
                         AggregateSignature::default(),
                     )],
-                    staking_actions: vec![],
-                    parent_hash: ConsensusProposalHash("hash".into()),
-                },
+                    vec![],
+                    TimestampMs(123),
+                ),
                 Ticket::Genesis,
                 0,
             ))
