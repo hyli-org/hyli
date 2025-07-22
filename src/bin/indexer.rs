@@ -21,6 +21,9 @@ pub struct Args {
 /// Use dhat to profile memory usage
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     #[cfg(feature = "dhat")]

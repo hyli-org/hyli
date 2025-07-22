@@ -228,6 +228,7 @@ toml = { workspace = true }
 zip = "=3.0.0"
 seq-macro = "0.3.6"
 async-stream = "0.3.6"
+mimalloc = "0.1.47"
 
 [package.metadata.cargo-machete]
 ignored = ["zip", "bytes", "tokio-util"]
