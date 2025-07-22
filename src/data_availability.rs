@@ -477,7 +477,11 @@ impl DataAvailability {
         }
 
         self.catchup_task = Some(tokio::spawn(async move {
-            let timeout_duration = Duration::from_secs(10);
+            let timeout_duration = std::env::var("HYLE_DA_SLEEP_TIMEOUT")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .map(Duration::from_secs)
+                .unwrap_or_else(|| Duration::from_secs(10));
             let mut deadline = Instant::now() + timeout_duration;
 
             loop {
