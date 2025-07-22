@@ -6,6 +6,7 @@ use crate::{
     data_availability::DataAvailability,
     explorer::Explorer,
     genesis::Genesis,
+    google_cloud_storage_client::GoogleCloudStorageClient,
     indexer::Indexer,
     mempool::Mempool,
     model::{api::NodeInfo, SharedRunContext},
@@ -255,6 +256,12 @@ async fn common_main(
     let mut handler = ModulesHandler::new(&bus).await;
 
     if config.run_indexer {
+        if config.indexer.persist_proofs {
+            handler
+                .build_module::<GoogleCloudStorageClient>(config.clone())
+                .await?;
+        }
+
         handler
             .build_module::<ContractStateIndexer<Hyllar>>(ContractStateIndexerCtx {
                 contract_name: "hyllar".into(),

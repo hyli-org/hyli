@@ -2,6 +2,7 @@
 
 mod handler;
 
+use crate::google_cloud_storage_client::GCSRequest;
 use std::ops::Deref;
 
 use crate::explorer::api::{DataProposalHashDb, TxHashDb};
@@ -29,12 +30,12 @@ module_bus_client! {
 struct IndexerBusClient {
     sender(WsExplorerBlobTx),
     sender(NodeStateEvent),
+    sender(GCSRequest),
     receiver(DataEvent),
     receiver(MempoolStatusEvent),
 }
 }
 
-#[derive(Debug)]
 pub struct Indexer {
     bus: IndexerBusClient,
     db: PgPool,
@@ -46,6 +47,7 @@ pub struct Indexer {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct IndexerConf {
     query_buffer_size: usize,
+    pub persist_proofs: bool,
 }
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/indexer/migrations");
@@ -227,6 +229,7 @@ mod test {
         let conf = Conf {
             indexer: IndexerConf {
                 query_buffer_size: 100,
+                persist_proofs: false,
             },
             ..Conf::default()
         };
