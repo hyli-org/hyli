@@ -1,4 +1,4 @@
-use super::api::*;
+use crate::explorer::api::*;
 use crate::model::*;
 use crate::node_state::module::NodeStateEvent;
 use anyhow::{bail, Context, Error, Result};
@@ -124,13 +124,13 @@ impl std::fmt::Debug for IndexerHandlerStore {
     }
 }
 
-impl Indexer {
-    pub async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<(), Error> {
-        match event {
-            NodeStateEvent::NewBlock(block) => self.handle_processed_block(*block)?,
-        };
+use hyle_modules::bus::BusClientSender;
 
-        if self.handler_store.blocks.len() >= self.conf.query_buffer_size {
+impl Indexer {
+    pub async fn handle_node_state_block(&mut self, block: Block) -> Result<(), Error> {
+        self.handle_processed_block(block.clone())?;
+
+        if self.handler_store.blocks.len() >= self.conf.indexer.query_buffer_size {
             // If we have more than configured blocks, we dump the store to the database
             self.dump_store_to_db().await?;
         }
@@ -142,7 +142,23 @@ impl Indexer {
             }
         }
 
+        self.bus
+            .send(NodeStateEvent::NewBlock(Box::new(block.clone())))?;
+
         Ok(())
+    }
+
+    pub(crate) fn empty_store(&self) -> bool {
+        self.handler_store.blocks.is_empty()
+            && self.handler_store.block_txs.is_empty()
+            && self.handler_store.tx_data.is_empty()
+            && self.handler_store.tx_data_proofs.is_empty()
+            && self.handler_store.transactions_events.is_empty()
+            && self.handler_store.sql_updates.is_empty()
+            && self.handler_store.contracts.is_empty()
+            && self.handler_store.contract_states.is_empty()
+            && self.handler_store.deleted_contracts.is_empty()
+            && self.handler_store.blob_proof_outputs.is_empty()
     }
 
     pub(crate) async fn dump_store_to_db(&mut self) -> Result<()> {
@@ -150,7 +166,7 @@ impl Indexer {
             return Ok(());
         }
 
-        let mut transaction = self.state.db.begin().await?;
+        let mut transaction = self.db.begin().await?;
 
         // Insert blocks into the database
         if !self.handler_store.blocks.is_empty() {
@@ -514,6 +530,11 @@ impl Indexer {
                         contract_name,
                     } = s;
 
+                    info!(
+                        "Inserting contract {} with tx hash {} and parent data proposal hash {}",
+                        contract_name, tx_hash.0, parent_data_proposal_hash.0
+                    );
+
                     b.push_bind(tx_hash)
                         .push_bind(parent_data_proposal_hash)
                         .push_bind(verifier)
@@ -678,7 +699,7 @@ impl Indexer {
     }
 
     pub async fn handle_mempool_status_event(&mut self, event: MempoolStatusEvent) -> Result<()> {
-        let mut transaction = self.state.db.begin().await?;
+        let mut transaction = self.db.begin().await?;
         match event {
             MempoolStatusEvent::WaitingDissemination {
                 parent_data_proposal_hash,

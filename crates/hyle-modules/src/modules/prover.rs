@@ -65,6 +65,7 @@ pub struct AutoProverStore<Contract> {
     buffered_blobs: Vec<(Vec<BlobIndex>, BlobTransaction, TxContext)>,
     buffered_blocks_count: u32,
     batch_id: u64,
+    next_height: BlockHeight,
 }
 
 module_bus_client! {
@@ -129,6 +130,10 @@ where
                 buffered_blobs: vec![],
                 buffered_blocks_count: 0,
                 batch_id: 0,
+                #[cfg(test)]
+                next_height: BlockHeight(1),
+                #[cfg(not(test))]
+                next_height: BlockHeight(0),
             },
         };
 
@@ -257,6 +262,23 @@ where
 {
     async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
         let NodeStateEvent::NewBlock(block) = event;
+        if block.block_height.0 < self.store.next_height.0 {
+            info!(
+                cn =% self.ctx.contract_name,
+                "Ignoring already proved block {}. Expecting block {}",
+                block.block_height,
+                self.store.next_height
+            );
+            return Ok(());
+        } else if block.block_height.0 > self.store.next_height.0 {
+            bail!(
+                "Received future block {} but expected block {}",
+                block.block_height,
+                self.store.next_height
+            );
+        }
+        self.store.next_height = block.block_height + 1;
+
         if self
             .catching_up
             .is_some_and(|h| block.block_height.0 <= h.0)
@@ -944,7 +966,7 @@ where
             let mut contract = self
                 .get_state_of_prev_tx(&tx_hash)
                 .ok_or_else(|| anyhow!("Failed to get state of previous tx {}", tx_hash))?;
-            let initial_contract = contract.clone();
+            //let initial_contract = contract.clone();
             let mut error: Option<String> = None;
 
             for blob_index in blob_indexes {
@@ -1042,6 +1064,8 @@ where
                 );
                 self.bus
                     .send(AutoProverEvent::FailedTx(tx_hash.clone(), e))?;
+                // Must exist - we failed above otherwise.
+                let initial_contract = self.get_state_of_prev_tx(&tx_hash).unwrap();
                 self.store.state_history.insert(tx_hash, initial_contract);
             } else {
                 debug!(
@@ -1051,10 +1075,10 @@ where
                     "Adding state history for tx {}",
                     tx.hashed()
                 );
-                self.bus.send(AutoProverEvent::SuccessTx(
+                /*self.bus.send(AutoProverEvent::SuccessTx(
                     tx_hash.clone(),
                     contract.clone(),
-                ))?;
+                ))?;*/
                 self.store.state_history.insert(tx_hash, contract);
             }
         }
@@ -1097,11 +1121,14 @@ where
                     Ok(proof) => {
                         let elapsed = start.elapsed();
                         metrics.record_generation_time(elapsed.as_secs_f64());
-                        metrics.record_proof_size(proof.0.len() as u64);
+                        metrics.record_proof_size(proof.data.0.len() as u64);
                         metrics.record_proof_success();
+                        if let Some(cycles) = proof.metadata.cycles {
+                            metrics.record_proof_cycles(cycles);
+                        }
                         let tx = ProofTransaction {
                             contract_name: contract_name.clone(),
-                            proof,
+                            proof: proof.data,
                         };
                         // If we are in nosend mode, we just log the proof and don't send it (for debugging)
                         if std::env::var("HYLE_PROVER_NOSEND")

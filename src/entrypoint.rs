@@ -4,6 +4,7 @@ use crate::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     consensus::Consensus,
     data_availability::DataAvailability,
+    explorer::Explorer,
     genesis::Genesis,
     indexer::Indexer,
     mempool::Mempool,
@@ -27,7 +28,8 @@ use hyle_modules::{
         admin::{AdminApi, AdminApiRunContext},
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
-        da_listener::{DAListener, DAListenerConf},
+        da_listener::DAListenerConf,
+        signed_da_listener::SignedDAListener,
         websocket::WebSocketModule,
         BuildApiContextInner,
     },
@@ -76,6 +78,7 @@ impl RunPg {
             pg.get_host_port_ipv4(5432).await?
         );
         config.run_indexer = true;
+        config.run_explorer = true;
 
         Ok(Self {
             pg,
@@ -127,7 +130,7 @@ pub fn welcome_message(conf: &conf::Conf) {
    ██║  ██║╚██╗ ██╔╝██║     ██║         {validator_details}
    ███████║ ╚████╔╝ ██║     ██║       {check_p2p} p2p::{p2p_port} | {check_http} http::{http_port} | {check_tcp} tcp::{tcp_port} | ◆ da::{da_port}
    ██╔══██║  ╚██╔╝  ██║     ██║     
-   ██║  ██║   ██║   ███████╗██║     {check_indexer} indexer {database_url}
+   ██║  ██║   ██║   ███████╗██║     {check_indexer} indexer {check_explorer} explorer db: {database_url}
    ╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝     ∎ {data_directory}
  
    Minimal, yet sufficient. Hope You Like It.
@@ -150,7 +153,8 @@ pub fn welcome_message(conf: &conf::Conf) {
         tcp_port = conf.tcp_server_port,
         da_port = conf.da_public_address,
         check_indexer = check_or_cross(conf.run_indexer),
-        database_url = if conf.run_indexer {
+        check_explorer = check_or_cross(conf.run_explorer),
+        database_url = if conf.run_indexer || conf.run_explorer {
             format!("↯ {}", mask_postgres_uri(conf.database_url.as_str()))
         } else {
             "".to_string()
@@ -252,9 +256,6 @@ async fn common_main(
 
     if config.run_indexer {
         handler
-            .build_module::<Indexer>((config.clone(), build_api_ctx.clone()))
-            .await?;
-        handler
             .build_module::<ContractStateIndexer<Hyllar>>(ContractStateIndexerCtx {
                 contract_name: "hyllar".into(),
                 data_directory: config.data_directory.clone(),
@@ -296,6 +297,15 @@ async fn common_main(
                 api: build_api_ctx.clone(),
             })
             .await?;
+        handler
+            .build_module::<Indexer>((config.clone(), build_api_ctx.clone()))
+            .await?;
+    }
+
+    if config.run_explorer {
+        handler
+            .build_module::<Explorer>((config.clone(), build_api_ctx.clone()))
+            .await?;
     }
 
     if config.p2p.mode != conf::P2pMode::None {
@@ -335,9 +345,9 @@ async fn common_main(
         }
 
         handler.build_module::<P2P>(ctx.clone()).await?;
-    } else {
+    } else if config.run_indexer {
         handler
-            .build_module::<DAListener>(DAListenerConf {
+            .build_module::<SignedDAListener>(DAListenerConf {
                 data_directory: config.data_directory.clone(),
                 da_read_from: config.da_read_from.clone(),
                 start_block: None,
