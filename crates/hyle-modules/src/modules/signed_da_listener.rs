@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use anyhow::Result;
 use sdk::{BlockHeight, DataEvent, Hashed, MempoolStatusEvent, SignedBlock};
@@ -7,7 +7,10 @@ use tracing::{debug, info, warn};
 
 use crate::{
     bus::{BusClientSender, SharedMessageBus},
-    modules::{da_listener::DAListenerConf, module_bus_client, Module},
+    modules::{
+        da_listener::DAListenerConf, data_availability::blocks_fjall::Blocks, module_bus_client,
+        Module,
+    },
     node_state::module::NodeStateModule,
     utils::da_codec::{DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest},
 };
@@ -189,6 +192,19 @@ impl SignedDAListener {
 
             info!("Got {} blocks from folder. Processing...", blocks.len());
             for (block, _) in blocks {
+                self.process_block(block).await?;
+            }
+            module_handle_messages! {
+                on_self self,
+            };
+        } else if let Some(folder) = self.config.da_read_from.strip_prefix("da:") {
+            info!("Reading blocks from DA {folder}");
+            let mut blocks = Blocks::new(&PathBuf::from(folder))?;
+            let block_hashes = blocks
+                .range(BlockHeight(0), BlockHeight(u64::MAX))
+                .collect::<Result<Vec<_>>>()?;
+            for block_hash in block_hashes {
+                let block = blocks.get(&block_hash)?.unwrap();
                 self.process_block(block).await?;
             }
             module_handle_messages! {
