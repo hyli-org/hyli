@@ -978,8 +978,12 @@ impl NodeState {
 
             if blob.contract_name.0 == "hyle" {
                 // Keep track of all txs to nuke
-                if let Ok(data) = StructuredBlobData::<NukeTxAction>::try_from(blob.data.clone()) {
-                    txs_to_nuke.extend(data.parameters.txs.clone());
+                if blob.data.0 == BLOB_DATA_TYPE_NUKE_TX_ACTION {
+                    if let Ok(data) =
+                        StructuredBlobData::<NukeTxAction>::try_from(blob.data.clone())
+                    {
+                        txs_to_nuke.extend(data.parameters.txs.clone());
+                    }
                 }
             }
 
@@ -1261,53 +1265,75 @@ impl NodeState {
             .blob;
 
         // Verify that each side effect has a matching register/delete contract action in this specific blob
-        if let Ok(data) = StructuredBlobData::<RegisterContractAction>::try_from(blob.data.clone())
-        {
-            let Some(eff) = hyle_output.onchain_effects.first() else {
-                bail!(
+        if blob.data.0 == BLOB_DATA_TYPE_REGISTER_CONTRACT {
+            if let Ok(data) =
+                StructuredBlobData::<RegisterContractAction>::try_from(blob.data.clone())
+            {
+                let Some(eff) = hyle_output.onchain_effects.first() else {
+                    bail!(
                     "Proof for RegisterContractAction blob #{} does not have any onchain effects",
                     hyle_output.index
                 )
-            };
-            if let OnchainEffect::RegisterContract(effect) = eff {
-                if effect != &data.parameters.into() {
-                    bail!(
+                };
+                if let OnchainEffect::RegisterContract(effect) = eff {
+                    if effect != &data.parameters.into() {
+                        bail!(
                         "Proof for RegisterContractAction blob #{} does not match the onchain effect",
                         hyle_output.index
                     )
-                }
-            } else {
-                bail!(
+                    }
+                } else {
+                    bail!(
                     "Proof for RegisterContractAction blob #{} does not have a register onchain effect",
                     hyle_output.index
                 )
-            }
-        } else if let Ok(data) =
-            StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone())
-        {
-            let Some(eff) = hyle_output.onchain_effects.first() else {
-                bail!(
-                    "Proof for DeleteContractAction blob #{} does not have any onchain effects",
-                    hyle_output.index
-                )
-            };
-            if let OnchainEffect::DeleteContract(effect) = eff {
-                if effect != &data.parameters.contract_name {
-                    bail!(
-                        "Proof for DeleteContractAction blob #{} does not match the onchain effect",
-                        hyle_output.index
-                    )
                 }
             } else {
                 bail!(
+                    "Failed to parse RegisterContractAction from blob data: {}",
+                    hex::encode(&blob.data.1)
+                );
+            }
+        } else if blob.data.0 == BLOB_DATA_TYPE_DELETE_CONTRACT {
+            if let Ok(data) =
+                StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone())
+            {
+                let Some(eff) = hyle_output.onchain_effects.first() else {
+                    bail!(
+                        "Proof for DeleteContractAction blob #{} does not have any onchain effects",
+                        hyle_output.index
+                    )
+                };
+                if let OnchainEffect::DeleteContract(effect) = eff {
+                    if effect != &data.parameters.contract_name {
+                        bail!(
+                        "Proof for DeleteContractAction blob #{} does not match the onchain effect",
+                        hyle_output.index
+                    )
+                    }
+                } else {
+                    bail!(
                     "Proof for DeleteContractAction blob #{} does not have a delete onchain effect",
                     hyle_output.index
                 )
+                }
+            } else {
+                bail!(
+                    "Failed to parse DeleteContractAction from blob data: {}",
+                    hex::encode(&blob.data.1)
+                );
             }
-        } else if let Ok(_data) =
-            StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
-        {
-            // FIXME: add checks?
+        } else if blob.data.0 == BLOB_DATA_TYPE_UPGRADE_CONTRACT_PROGRAM_ID {
+            if let Ok(_data) =
+                StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
+            {
+                // FIXME: add checks?
+            } else {
+                bail!(
+                    "Failed to parse UpdateContractProgramIdAction from blob data: {}",
+                    hex::encode(&blob.data.1)
+                );
+            }
         }
 
         Ok(())
