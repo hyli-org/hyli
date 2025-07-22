@@ -11,7 +11,7 @@ pub mod metrics;
 
 // Arbitrarily "high enough" value. Memory use is around 200Mb when setting this,
 // we can lower it for some rarely used channels if needed.
-pub const CHANNEL_CAPACITY: usize = 100000;
+pub const CHANNEL_CAPACITY: usize = 10000;
 pub const CHANNEL_CAP_IF_WAITING: usize = CHANNEL_CAPACITY - 10;
 
 type AnyMap = Map<dyn Any + Send + Sync>;
