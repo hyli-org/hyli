@@ -44,7 +44,7 @@ pub fn handle_blob_for_hyle_tld(
                 );
             }
         }
-        BLOB_DATA_TYPE_UPGRADE_CONTRACT_PROGRAM_ID => {
+        BLOB_DATA_TYPE_UPDATE_CONTRACT_PROGRAM_ID => {
             if let Ok(reg) = StructuredBlobData::<UpdateContractProgramIdAction>::try_from(
                 current_blob.data.clone(),
             ) {

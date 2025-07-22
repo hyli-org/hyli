@@ -1323,7 +1323,7 @@ impl NodeState {
                     hex::encode(&blob.data.1)
                 );
             }
-        } else if blob.data.0 == BLOB_DATA_TYPE_UPGRADE_CONTRACT_PROGRAM_ID {
+        } else if blob.data.0 == BLOB_DATA_TYPE_UPDATE_CONTRACT_PROGRAM_ID {
             if let Ok(_data) =
                 StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
             {

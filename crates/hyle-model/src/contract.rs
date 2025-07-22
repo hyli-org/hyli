@@ -205,7 +205,7 @@ pub const BLOB_DATA_TYPE_STRUCTURED: BlobDataType = 0xcafe00;
 pub const BLOB_DATA_TYPE_UNSTRUCTURED: BlobDataType = 0xcafe80;
 pub const BLOB_DATA_TYPE_REGISTER_CONTRACT: BlobDataType = 0xcafe01;
 pub const BLOB_DATA_TYPE_DELETE_CONTRACT: BlobDataType = 0xcafe02;
-pub const BLOB_DATA_TYPE_UPGRADE_CONTRACT_PROGRAM_ID: BlobDataType = 0xcafe03;
+pub const BLOB_DATA_TYPE_UPDATE_CONTRACT_PROGRAM_ID: BlobDataType = 0xcafe03;
 pub const BLOB_DATA_TYPE_UPDATE_CONTRACT_TIMEOUT_WINDOW: BlobDataType = 0xcafe04;
 pub const BLOB_DATA_TYPE_NUKE_TX_ACTION: BlobDataType = 0xcafee0;
 
@@ -921,7 +921,7 @@ impl ContractAction for UpdateContractProgramIdAction {
         Blob {
             contract_name,
             data: BlobData::from_with_flag(
-                BLOB_DATA_TYPE_UPGRADE_CONTRACT_PROGRAM_ID,
+                BLOB_DATA_TYPE_UPDATE_CONTRACT_PROGRAM_ID,
                 &StructuredBlobData {
                     caller,
                     callees,
