@@ -33,7 +33,7 @@ fn main() -> std::io::Result<()> {
     vkey.read_to_end(&mut vkey_data)?;
 
     let ho =
-        hyle_verifiers::noir_utils::parse_noir_output(&proof_data, &vkey_data).map_err(|e| {
+        hyli_verifiers::noir_utils::parse_noir_output(&proof_data, &vkey_data).map_err(|e| {
             eprintln!("Error parsing output: {e}");
             std::io::Error::new(std::io::ErrorKind::InvalidData, e)
         })?;

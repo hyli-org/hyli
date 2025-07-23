@@ -370,7 +370,7 @@ impl super::Mempool {
                 }
                 // TODO: we should check if the registration handler contract exists.
                 // TODO: would be good to not need to clone here.
-                self.handle_hyle_contract_registration(blob_tx);
+                self.handle_hyli_contract_registration(blob_tx);
             }
             TransactionData::Proof(ref proof_tx) => {
                 debug!(
@@ -450,29 +450,29 @@ impl super::Mempool {
 
         let is_recursive = proof_transaction.contract_name.0 == "risc0-recursion";
 
-        let (hyle_outputs, program_ids) = if is_recursive {
-            let (program_ids, hyle_outputs) =
+        let (hyli_outputs, program_ids) = if is_recursive {
+            let (program_ids, hyli_outputs) =
                 verify_recursive_proof(&proof_transaction.proof, &verifier, &program_id)
                     .context("verify_rec_proof")?;
-            (hyle_outputs, program_ids)
+            (hyli_outputs, program_ids)
         } else {
-            let hyle_outputs = verify_proof(&proof_transaction.proof, &verifier, &program_id)
+            let hyli_outputs = verify_proof(&proof_transaction.proof, &verifier, &program_id)
                 .context("verify_proof")?;
-            let len = hyle_outputs.len();
-            (hyle_outputs, vec![program_id.clone(); len])
+            let len = hyli_outputs.len();
+            (hyli_outputs, vec![program_id.clone(); len])
         };
 
-        let tx_hashes = hyle_outputs
+        let tx_hashes = hyli_outputs
             .iter()
             .map(|ho| ho.tx_hash.clone())
             .collect::<Vec<_>>();
 
-        std::iter::zip(&tx_hashes, std::iter::zip(&hyle_outputs, &program_ids)).for_each(
-            |(blob_tx_hash, (hyle_output, program_id))| {
+        std::iter::zip(&tx_hashes, std::iter::zip(&hyli_outputs, &program_ids)).for_each(
+            |(blob_tx_hash, (hyli_output, program_id))| {
                 debug!(
-                    "Blob tx hash {} verified with hyle output {:?} and program id {}",
+                    "Blob tx hash {} verified with hyli output {:?} and program id {}",
                     blob_tx_hash,
-                    hyle_output,
+                    hyli_output,
                     hex::encode(&program_id.0)
                 );
             },
@@ -484,12 +484,12 @@ impl super::Mempool {
             proof: Some(proof_transaction.proof),
             contract_name: proof_transaction.contract_name.clone(),
             is_recursive,
-            proven_blobs: std::iter::zip(tx_hashes, std::iter::zip(hyle_outputs, program_ids))
+            proven_blobs: std::iter::zip(tx_hashes, std::iter::zip(hyli_outputs, program_ids))
                 .map(
-                    |(blob_tx_hash, (hyle_output, program_id))| BlobProofOutput {
+                    |(blob_tx_hash, (hyli_output, program_id))| BlobProofOutput {
                         original_proof_hash: ProofDataHash("todo?".to_owned()),
                         blob_tx_hash: blob_tx_hash.clone(),
-                        hyle_output,
+                        hyli_output,
                         program_id,
                     },
                 )
@@ -511,7 +511,7 @@ pub mod test {
         tests::autobahn_testing::assert_chanmsg_matches,
     };
     use anyhow::Result;
-    use hyle_crypto::BlstCrypto;
+    use hyli_crypto::BlstCrypto;
 
     use crate::mempool::test::*;
 

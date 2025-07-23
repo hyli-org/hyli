@@ -3,8 +3,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use clap::{Parser, command};
 
-use hyle_contract_sdk::BlockHeight;
-use hyle_modules::{
+use hyli_contract_sdk::BlockHeight;
+use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{ModulesHandler, da_listener::DAListenerConf, signed_da_listener::SignedDAListener},
     utils::logger::setup_tracing,

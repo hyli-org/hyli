@@ -1,6 +1,6 @@
 FROM rust:slim-bookworm AS chef 
 RUN cargo install cargo-chef 
-WORKDIR /usr/src/hyle
+WORKDIR /usr/src/hyli
 
 
 FROM chef AS planner
@@ -12,7 +12,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef 
 RUN apt-get update && apt-get install -y g++ curl libdbus-1-dev pkg-config libssl-dev
-COPY --from=planner /usr/src/hyle/recipe.json recipe.json
+COPY --from=planner /usr/src/hyli/recipe.json recipe.json
 
 # Build dependencies 
 RUN cargo chef cook --release --features sp1,risc0 --recipe-path recipe.json

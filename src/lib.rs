@@ -8,7 +8,7 @@
 //!
 //! ## Shortcuts to important pages
 //!
-//! * [Hyli contract sdk](../hyle_contract_sdk)
+//! * [Hyli contract sdk](../hyli_contract_sdk)
 //!
 //! ## Useful links
 //!

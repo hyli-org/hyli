@@ -4,7 +4,7 @@ use crate::{model::*, p2p::network::PeerEvent, utils::conf::SharedConf};
 use anyhow::{Error, Result};
 use client_sdk::{
     contract_states,
-    helpers::register_hyle_contract,
+    helpers::register_hyli_contract,
     transaction_builder::{
         ProofTxBuilder, ProvableBlobTx, TxExecutor, TxExecutorBuilder, TxExecutorHandler,
     },
@@ -13,15 +13,15 @@ use hydentity::{
     client::tx_executor_handler::{register_identity, verify_identity},
     Hydentity,
 };
-use hyle_contract_sdk::{
+use hyli_contract_sdk::{
     Blob, Calldata, ContractName, Identity, ProgramId, StateCommitment, ZkContract,
 };
-use hyle_crypto::SharedBlstCrypto;
-use hyle_modules::{
+use hyli_crypto::SharedBlstCrypto;
+use hyli_modules::{
     bus::{BusClientSender, SharedMessageBus},
     bus_client, handle_messages, log_error,
     modules::Module,
-    node_state::hyle_contract_definition,
+    node_state::hyli_contract_definition,
 };
 use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
 use serde::{Deserialize, Serialize};
@@ -239,7 +239,7 @@ impl Genesis {
                                 .expect("Genesis TXes on unregistered contracts")
                                 .clone(),
                             blob_tx_hash: blob_tx_hash.clone(),
-                            hyle_output: out,
+                            hyli_output: out,
                         })
                         .collect(),
                     is_recursive: true,
@@ -480,7 +480,7 @@ impl Genesis {
             let tx_hash = ptx.to_blob_tx().hashed();
             ptx.outputs.push((
                 token.into(),
-                HyleOutput {
+                HyliOutput {
                     version: 1,
                     initial_state: initial_state.clone(),
                     next_state: next_state.clone(),
@@ -508,10 +508,10 @@ impl Genesis {
         Vec<Transaction>,
         TxExecutor<States>,
     ) {
-        let staking_program_id = hyle_contracts::STAKING_ID.to_vec();
-        let hyllar_program_id = hyle_contracts::HYLLAR_ID.to_vec();
-        let smt_token_program_id = hyle_contracts::SMT_TOKEN_ID.to_vec();
-        let hydentity_program_id = hyle_contracts::HYDENTITY_ID.to_vec();
+        let staking_program_id = hyli_contracts::STAKING_ID.to_vec();
+        let hyllar_program_id = hyli_contracts::HYLLAR_ID.to_vec();
+        let smt_token_program_id = hyli_contracts::SMT_TOKEN_ID.to_vec();
+        let hydentity_program_id = hyli_contracts::HYDENTITY_ID.to_vec();
 
         let hydentity_state = hydentity::Hydentity::default();
         let staking_state = staking::state::Staking::new();
@@ -524,7 +524,7 @@ impl Genesis {
         .build();
 
         let mut map = BTreeMap::default();
-        map.insert("hyle".into(), ProgramId(vec![0, 0, 0, 0]));
+        map.insert("hyli".into(), ProgramId(vec![0, 0, 0, 0]));
         map.insert("blst".into(), NativeVerifiers::Blst.into());
         map.insert("sha3_256".into(), NativeVerifiers::Sha3_256.into());
         map.insert("secp256k1".into(), NativeVerifiers::Secp256k1.into());
@@ -536,25 +536,25 @@ impl Genesis {
         map.insert("staking".into(), ProgramId(staking_program_id.clone()));
         map.insert(
             "risc0-recursion".into(),
-            ProgramId(hyle_contracts::RISC0_RECURSION_ID.to_vec()),
+            ProgramId(hyli_contracts::RISC0_RECURSION_ID.to_vec()),
         );
 
-        let mut register_tx = ProvableBlobTx::new("hyle@hyle".into());
+        let mut register_tx = ProvableBlobTx::new("hyli@hyli".into());
 
-        let hyle_contract = hyle_contract_definition();
+        let hyli_contract = hyli_contract_definition();
 
-        register_hyle_contract(
+        register_hyli_contract(
             &mut register_tx,
-            hyle_contract.name.clone(),
-            hyle_contract.name.0.clone().into(),
-            hyle_contract.program_id.clone(),
-            hyle_contract.state.clone(),
-            Some(hyle_contract.timeout_window),
+            hyli_contract.name.clone(),
+            hyli_contract.name.0.clone().into(),
+            hyli_contract.program_id.clone(),
+            hyli_contract.state.clone(),
+            Some(hyli_contract.timeout_window),
             None,
         )
-        .expect("register hyle");
+        .expect("register hyli");
 
-        register_hyle_contract(
+        register_hyli_contract(
             &mut register_tx,
             "blst".into(),
             "blst".into(),
@@ -565,7 +565,7 @@ impl Genesis {
         )
         .expect("register blst");
 
-        register_hyle_contract(
+        register_hyli_contract(
             &mut register_tx,
             "sha3_256".into(),
             "sha3_256".into(),
@@ -576,7 +576,7 @@ impl Genesis {
         )
         .expect("register sha3_256");
 
-        register_hyle_contract(
+        register_hyli_contract(
             &mut register_tx,
             "secp256k1".into(),
             "secp256k1".into(),
@@ -587,10 +587,10 @@ impl Genesis {
         )
         .expect("register secp256k1");
 
-        register_hyle_contract(
+        register_hyli_contract(
             &mut register_tx,
             "staking".into(),
-            hyle_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_1.into(),
             staking_program_id.clone().into(),
             ctx.staking.commit(),
             None,
@@ -598,10 +598,10 @@ impl Genesis {
         )
         .expect("register staking");
 
-        register_hyle_contract(
+        register_hyli_contract(
             &mut register_tx,
             "hyllar".into(),
-            hyle_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_1.into(),
             hyllar_program_id.clone().into(),
             ctx.hyllar.commit(),
             None,
@@ -613,10 +613,10 @@ impl Genesis {
         let root = *smt.0.root();
         for token in ["oranj", "oxygen", "vitamin"] {
             info!("🌱 Registering SMT token {token}");
-            register_hyle_contract(
+            register_hyli_contract(
                 &mut register_tx,
                 token.into(),
-                hyle_model::verifiers::RISC0_1.into(),
+                hyli_model::verifiers::RISC0_1.into(),
                 smt_token_program_id.clone().into(),
                 StateCommitment(Into::<[u8; 32]>::into(root).to_vec()),
                 None,
@@ -625,10 +625,10 @@ impl Genesis {
             .expect("register SMT token");
         }
 
-        register_hyle_contract(
+        register_hyli_contract(
             &mut register_tx,
             "hydentity".into(),
-            hyle_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_1.into(),
             hydentity_program_id.clone().into(),
             ctx.hydentity.commit(),
             None,
@@ -636,11 +636,11 @@ impl Genesis {
         )
         .expect("register hydentity");
 
-        register_hyle_contract(
+        register_hyli_contract(
             &mut register_tx,
             "risc0-recursion".into(),
-            hyle_model::verifiers::RISC0_1.into(),
-            hyle_contracts::RISC0_RECURSION_ID.to_vec().into(),
+            hyli_model::verifiers::RISC0_1.into(),
+            hyli_contracts::RISC0_RECURSION_ID.to_vec().into(),
             StateCommitment::default(),
             None,
             None,
@@ -712,7 +712,7 @@ mod tests {
     use super::*;
     use crate::bus::{BusClientReceiver, SharedMessageBus};
     use crate::utils::conf::Conf;
-    use hyle_crypto::BlstCrypto;
+    use hyli_crypto::BlstCrypto;
     use std::sync::Arc;
 
     bus_client! {

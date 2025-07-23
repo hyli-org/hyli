@@ -8,19 +8,19 @@ use std::time::Duration;
 
 use client_sdk::rest_client::NodeApiClient;
 use fixtures::turmoil::TurmoilHost;
-use hyle_model::{
+use hyli_model::{
     BlobTransaction, ContractAction, ContractName, ProgramId, RegisterContractAction,
     StateCommitment,
 };
-use hyle_modules::log_error;
-use hyle_net::net::Sim;
+use hyli_modules::log_error;
+use hyli_net::net::Sim;
 use rand::{rngs::StdRng, SeedableRng};
 
 use crate::fixtures::{test_helpers::wait_height, turmoil::TurmoilCtx};
 
 pub fn make_register_contract_tx(name: ContractName) -> BlobTransaction {
     BlobTransaction::new(
-        "hyle@hyle",
+        "hyli@hyli",
         vec![RegisterContractAction {
             verifier: "test".into(),
             program_id: ProgramId(vec![]),
@@ -28,7 +28,7 @@ pub fn make_register_contract_tx(name: ContractName) -> BlobTransaction {
             contract_name: name,
             ..Default::default()
         }
-        .as_blob("hyle".into(), None, None)],
+        .as_blob("hyli".into(), None, None)],
     )
 }
 
@@ -39,7 +39,7 @@ macro_rules! turmoil_simple {
             fn [<turmoil_ $simulation _ $seed _ $test>]() -> anyhow::Result<()> {
                 tracing::info!("Starting test {} with seed {}", stringify!([<turmoil_ $simulation _ $seed _ $test>]), $seed);
                 let rng = StdRng::seed_from_u64($seed);
-                let mut sim = hyle_net::turmoil::Builder::new()
+                let mut sim = hyli_net::turmoil::Builder::new()
                     .simulation_duration(Duration::from_secs(120))
                     .tick_duration(Duration::from_millis(20))
                     .min_message_latency(Duration::from_millis(20))

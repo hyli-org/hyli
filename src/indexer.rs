@@ -11,11 +11,11 @@ use crate::utils::conf::Conf;
 use crate::{model::*, utils::conf::SharedConf};
 use anyhow::{Context, Result};
 use handler::IndexerHandlerStore;
-use hyle_model::utils::TimestampMs;
-use hyle_modules::bus::BusClientSender;
-use hyle_modules::node_state::module::NodeStateModule;
-use hyle_modules::node_state::{NodeState, NodeStateStore};
-use hyle_modules::{
+use hyli_model::utils::TimestampMs;
+use hyli_modules::bus::BusClientSender;
+use hyli_modules::node_state::module::NodeStateModule;
+use hyli_modules::node_state::{NodeState, NodeStateStore};
+use hyli_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
     modules::{module_bus_client, Module, SharedBuildApiCtx},
@@ -190,8 +190,8 @@ mod test {
     use axum_test::TestServer;
     use client_sdk::transaction_builder::ProvableBlobTx;
     use hydentity::{client::tx_executor_handler::register_identity, HydentityAction};
-    use hyle_contract_sdk::{BlobIndex, HyleOutput, Identity, ProgramId, StateCommitment, TxHash};
-    use hyle_model::api::{
+    use hyli_contract_sdk::{BlobIndex, HyliOutput, Identity, ProgramId, StateCommitment, TxHash};
+    use hyli_model::api::{
         APIBlob, APIBlock, APIContract, APITransaction, APITransactionEvents, TransactionStatusDb,
     };
     use serde_json::json;
@@ -248,7 +248,7 @@ mod test {
         state_commitment: StateCommitment,
     ) -> BlobTransaction {
         BlobTransaction::new(
-            "hyle@hyle",
+            "hyli@hyli",
             vec![RegisterContractAction {
                 verifier: "test".into(),
                 program_id: ProgramId(vec![3, 2, 1]),
@@ -256,7 +256,7 @@ mod test {
                 contract_name,
                 ..Default::default()
             }
-            .as_blob("hyle".into(), None, None)],
+            .as_blob("hyli".into(), None, None)],
         )
     }
 
@@ -319,7 +319,7 @@ mod test {
                     original_proof_hash: proof.hashed(),
                     program_id: ProgramId(vec![3, 2, 1]),
                     blob_tx_hash: blob_transaction.hashed(),
-                    hyle_output: HyleOutput {
+                    hyli_output: HyliOutput {
                         version: 1,
                         initial_state,
                         next_state,
@@ -873,8 +873,8 @@ mod test {
             ],
         );
 
-        let delete_a = new_delete_tx(ContractName::new("hyle"), ContractName::new("a"));
-        let delete_c = new_delete_tx(ContractName::new("hyle"), ContractName::new("c"));
+        let delete_a = new_delete_tx(ContractName::new("hyli"), ContractName::new("a"));
+        let delete_c = new_delete_tx(ContractName::new("hyli"), ContractName::new("c"));
 
         let delete_a_proof = new_proof_tx(
             "hyli@wallet".into(),
@@ -903,7 +903,7 @@ mod test {
             ],
         );
 
-        let delete_b = new_delete_tx(ContractName::new("hyle"), ContractName::new("b"));
+        let delete_b = new_delete_tx(ContractName::new("hyli"), ContractName::new("b"));
         let delete_b_proof = new_proof_tx(
             "hyli@wallet".into(),
             "wallet".into(),
@@ -913,7 +913,7 @@ mod test {
             StateCommitment(vec![3]),
         );
 
-        let delete_a = new_delete_tx(ContractName::new("hyle"), ContractName::new("a"));
+        let delete_a = new_delete_tx(ContractName::new("hyli"), ContractName::new("a"));
         let delete_a_proof = new_proof_tx(
             "hyli@wallet".into(),
             "wallet".into(),
@@ -923,7 +923,7 @@ mod test {
             StateCommitment(vec![4]),
         );
 
-        let delete_d = new_delete_tx(ContractName::new("hyle"), ContractName::new("d"));
+        let delete_d = new_delete_tx(ContractName::new("hyli"), ContractName::new("d"));
         let delete_d_proof = new_proof_tx(
             "hyli@wallet".into(),
             "wallet".into(),
@@ -1286,7 +1286,7 @@ mod test {
         assert!(!transactions_response.text().is_empty());
 
         // Websocket
-        let listener = hyle_net::net::bind_tcp_listener(0).await.unwrap();
+        let listener = hyli_net::net::bind_tcp_listener(0).await.unwrap();
         let addr = listener.local_addr().unwrap();
 
         tokio::spawn(axum::serve(listener, explorer.api(None)).into_future());

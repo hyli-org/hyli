@@ -1,5 +1,5 @@
 [package]
-name = "hyle-smt-token"
+name = "hyli-smt-token"
 description = "Hyli Smart Contract"
 license = "MIT"
 version = { workspace = true }
@@ -34,7 +34,7 @@ client-sdk = { workspace = true, features = [
 
 [dev-dependencies]
 # Active client feature for tests
-hyle-smt-token = { path = ".", features = ["client"] }
+hyli-smt-token = { path = ".", features = ["client"] }
 tokio = { workspace = true, features = ["full", "tracing"] }
 
 risc0-zkvm = { workspace = true, features = ['std', 'prove'] }

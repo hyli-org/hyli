@@ -3,7 +3,7 @@ use crate::{
     mempool::storage::EntryOrMissingHash, model::*,
 };
 use futures::StreamExt;
-use hyle_modules::{log_error, log_warn};
+use hyli_modules::{log_error, log_warn};
 
 use super::storage::Storage;
 use anyhow::{bail, Context, Result};

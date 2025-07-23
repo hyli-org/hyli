@@ -4798,7 +4798,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyle"
+name = "hyli"
 version = "0.13.0-rc.4"
 dependencies = [
  "alloc-metrics",
@@ -4818,21 +4818,21 @@ dependencies = [
  "fjall",
  "futures",
  "hex",
- "hyle-amm",
- "hyle-client-sdk",
- "hyle-contract-sdk",
- "hyle-contracts",
- "hyle-crypto",
- "hyle-hydentity",
- "hyle-hyllar",
- "hyle-model",
- "hyle-modules",
- "hyle-net",
- "hyle-risc0-recursion",
- "hyle-smt-token",
- "hyle-staking",
- "hyle-uuid-tld",
- "hyle-verifiers",
+ "hyli-amm",
+ "hyli-client-sdk",
+ "hyli-contract-sdk",
+ "hyli-contracts",
+ "hyli-crypto",
+ "hyli-hydentity",
+ "hyli-hyllar",
+ "hyli-model",
+ "hyli-modules",
+ "hyli-net",
+ "hyli-risc0-recursion",
+ "hyli-smt-token",
+ "hyli-staking",
+ "hyli-uuid-tld",
+ "hyli-verifiers",
  "indexmap 2.10.0",
  "opentelemetry",
  "opentelemetry-prometheus",
@@ -4864,20 +4864,20 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyle-amm"
+name = "hyli-amm"
 version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "borsh",
- "hyle-client-sdk",
- "hyle-contract-sdk",
- "hyle-hyllar",
+ "hyli-client-sdk",
+ "hyli-contract-sdk",
+ "hyli-hyllar",
  "risc0-zkvm",
  "serde",
 ]
 
 [[package]]
-name = "hyle-bonsai-runner"
+name = "hyli-bonsai-runner"
 version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
@@ -4888,7 +4888,7 @@ dependencies = [
  "boundless-market",
  "bytemuck",
  "hex",
- "hyle-net",
+ "hyli-net",
  "risc0-zkvm",
  "serde",
  "serde_json",
@@ -4898,16 +4898,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyle-client-sdk"
+name = "hyli-client-sdk"
 version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "axum 0.8.4",
  "bincode",
  "borsh",
- "hyle-bonsai-runner",
- "hyle-contract-sdk",
- "hyle-net",
+ "hyli-bonsai-runner",
+ "hyli-contract-sdk",
+ "hyli-net",
  "risc0-zkvm",
  "serde",
  "serde_json",
@@ -4921,11 +4921,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyle-contract-sdk"
+name = "hyli-contract-sdk"
 version = "0.13.0-rc.4"
 dependencies = [
  "borsh",
- "hyle-model",
+ "hyli-model",
  "risc0-zkvm",
  "serde",
  "sha2",
@@ -4935,45 +4935,45 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyle-contracts"
+name = "hyli-contracts"
 version = "0.13.0-rc.4"
 dependencies = [
- "hyle-amm",
- "hyle-contract-sdk",
- "hyle-hydentity",
- "hyle-hyllar",
- "hyle-risc0-recursion",
- "hyle-smt-token",
- "hyle-staking",
- "hyle-uuid-tld",
+ "hyli-amm",
+ "hyli-contract-sdk",
+ "hyli-hydentity",
+ "hyli-hyllar",
+ "hyli-risc0-recursion",
+ "hyli-smt-token",
+ "hyli-staking",
+ "hyli-uuid-tld",
  "risc0-build",
 ]
 
 [[package]]
-name = "hyle-crypto"
+name = "hyli-crypto"
 version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "blst",
  "borsh",
  "hex",
- "hyle-model",
+ "hyli-model",
  "keyring",
  "rand 0.9.1",
  "whoami",
 ]
 
 [[package]]
-name = "hyle-hydentity"
+name = "hyli-hydentity"
 version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "borsh",
  "clap",
  "hex",
- "hyle-client-sdk",
- "hyle-contract-sdk",
- "hyle-hydentity",
+ "hyli-client-sdk",
+ "hyli-contract-sdk",
+ "hyli-hydentity",
  "mockall",
  "risc0-zkvm",
  "serde",
@@ -4984,14 +4984,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyle-hyllar"
+name = "hyli-hyllar"
 version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "borsh",
- "hyle-client-sdk",
- "hyle-contract-sdk",
- "hyle-hyllar",
+ "hyli-client-sdk",
+ "hyli-contract-sdk",
+ "hyli-hyllar",
  "mockall",
  "risc0-zkvm",
  "serde",
@@ -5001,17 +5001,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyle-loadtest"
+name = "hyli-loadtest"
 version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "borsh",
  "clap",
- "hyle-client-sdk",
- "hyle-contract-sdk",
- "hyle-contracts",
- "hyle-hydentity",
- "hyle-hyllar",
+ "hyli-client-sdk",
+ "hyli-contract-sdk",
+ "hyli-contracts",
+ "hyli-hydentity",
+ "hyli-hyllar",
  "rand 0.9.1",
  "tokio",
  "tracing",
@@ -5019,7 +5019,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyle-model"
+name = "hyli-model"
 version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
@@ -5042,7 +5042,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyle-modules"
+name = "hyli-modules"
 version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
@@ -5053,12 +5053,12 @@ dependencies = [
  "fjall",
  "futures",
  "hex",
- "hyle-client-sdk",
- "hyle-contract-sdk",
- "hyle-hydentity",
- "hyle-model",
- "hyle-net",
- "hyle-verifiers",
+ "hyli-client-sdk",
+ "hyli-contract-sdk",
+ "hyli-hydentity",
+ "hyli-model",
+ "hyli-net",
+ "hyli-verifiers",
  "indexmap 2.10.0",
  "opentelemetry",
  "paste",
@@ -5084,7 +5084,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyle-net"
+name = "hyli-net"
 version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
@@ -5094,8 +5094,8 @@ dependencies = [
  "futures",
  "hex",
  "http-body-util",
- "hyle-contract-sdk",
- "hyle-crypto",
+ "hyli-contract-sdk",
+ "hyli-crypto",
  "hyper 1.6.0",
  "hyper-util",
  "opentelemetry",
@@ -5113,26 +5113,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyle-noir-tools"
+name = "hyli-noir-tools"
 version = "0.13.0-rc.4"
 dependencies = [
- "hyle-verifiers",
+ "hyli-verifiers",
  "tracing",
  "tracing-subscriber 0.3.19",
 ]
 
 [[package]]
-name = "hyle-risc0-recursion"
+name = "hyli-risc0-recursion"
 version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "borsh",
  "hex",
- "hyle-client-sdk",
- "hyle-contract-sdk",
- "hyle-contracts",
- "hyle-hydentity",
- "hyle-risc0-recursion",
+ "hyli-client-sdk",
+ "hyli-contract-sdk",
+ "hyli-contracts",
+ "hyli-hydentity",
+ "hyli-risc0-recursion",
  "risc0-zkvm",
  "serde",
  "tempfile",
@@ -5141,14 +5141,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyle-smt-token"
+name = "hyli-smt-token"
 version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "borsh",
- "hyle-client-sdk",
- "hyle-contract-sdk",
- "hyle-smt-token",
+ "hyli-client-sdk",
+ "hyli-contract-sdk",
+ "hyli-smt-token",
  "mockall",
  "risc0-zkvm",
  "serde",
@@ -5159,26 +5159,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyle-staking"
+name = "hyli-staking"
 version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "borsh",
- "hyle-client-sdk",
- "hyle-contract-sdk",
- "hyle-hyllar",
+ "hyli-client-sdk",
+ "hyli-contract-sdk",
+ "hyli-hyllar",
  "risc0-zkvm",
  "serde",
  "sha2",
 ]
 
 [[package]]
-name = "hyle-uuid-tld"
+name = "hyli-uuid-tld"
 version = "0.13.0-rc.4"
 dependencies = [
  "borsh",
- "hyle-client-sdk",
- "hyle-contract-sdk",
+ "hyli-client-sdk",
+ "hyli-contract-sdk",
  "rand 0.9.1",
  "rand_seeder",
  "risc0-zkvm",
@@ -5186,15 +5186,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyle-verifiers"
+name = "hyli-verifiers"
 version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "bincode",
  "borsh",
  "hex",
- "hyle-crypto",
- "hyle-model",
+ "hyli-crypto",
+ "hyli-model",
  "once_cell",
  "rand 0.9.1",
  "risc0-zkvm",
@@ -5208,7 +5208,7 @@ dependencies = [
 
 [[package]]
 name = "hyli_tools"
-version = "0.1.0"
+version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "axum 0.8.4",
@@ -5220,11 +5220,11 @@ dependencies = [
  "dashmap",
  "google-cloud-storage",
  "hex",
- "hyle-client-sdk",
- "hyle-contract-sdk",
- "hyle-model",
- "hyle-modules",
- "hyle-smt-token",
+ "hyli-client-sdk",
+ "hyli-contract-sdk",
+ "hyli-model",
+ "hyli-modules",
+ "hyli-smt-token",
  "hyper 1.6.0",
  "hyper-util",
  "opentelemetry",

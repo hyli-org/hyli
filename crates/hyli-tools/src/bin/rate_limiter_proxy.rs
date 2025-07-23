@@ -11,7 +11,7 @@ use chrono::{Local, NaiveDate};
 use clap::Parser;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
-use hyle_modules::{modules::rest::handle_panic, utils::logger::setup_tracing};
+use hyli_modules::{modules::rest::handle_panic, utils::logger::setup_tracing};
 use hyper::body::Incoming;
 use hyper_util::{
     client::legacy::{Client, connect::HttpConnector},

@@ -114,7 +114,7 @@ jobs:
       # For keyring dependencies
       - run: sudo apt install libdbus-1-dev pkg-config
       - name: Build model
-        run: cargo build -p hyle-model --no-default-features
+        run: cargo build -p hyli-model --no-default-features
       - name: Build
         run: cargo build --no-default-features
       - name: Build with sp1

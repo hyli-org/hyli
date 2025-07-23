@@ -3,11 +3,11 @@ use crate::model::*;
 use crate::node_state::module::NodeStateEvent;
 use anyhow::{bail, Context, Error, Result};
 use chrono::{DateTime, Utc};
-use hyle_contract_sdk::TxHash;
-use hyle_model::api::{TransactionStatusDb, TransactionTypeDb};
-use hyle_model::utils::TimestampMs;
-use hyle_modules::{log_error, log_warn};
-use hyle_net::clock::TimestampMsClock;
+use hyli_contract_sdk::TxHash;
+use hyli_model::api::{TransactionStatusDb, TransactionTypeDb};
+use hyli_model::utils::TimestampMs;
+use hyli_modules::{log_error, log_warn};
+use hyli_net::clock::TimestampMsClock;
 use sqlx::Postgres;
 use sqlx::QueryBuilder;
 use sqlx::Row;
@@ -84,7 +84,7 @@ pub struct TxBlobProofOutputStore {
     pub blob_index: i32,
     pub blob_proof_output_index: i32,
     pub contract_name: String,
-    pub hyle_output: String,
+    pub hyli_output: String,
     pub settled: bool,
 }
 
@@ -124,7 +124,7 @@ impl std::fmt::Debug for IndexerHandlerStore {
     }
 }
 
-use hyle_modules::bus::BusClientSender;
+use hyli_modules::bus::BusClientSender;
 
 impl Indexer {
     pub async fn handle_node_state_block(&mut self, block: Block) -> Result<(), Error> {
@@ -646,7 +646,7 @@ impl Indexer {
 
         // Insert blob proof outputs into the database with batching
         if !self.handler_store.blob_proof_outputs.is_empty() {
-            const BLOB_PROOF_OUTPUT_PARAMS: usize = 9; // proof_tx_hash, proof_parent_dp_hash, blob_tx_hash, blob_parent_dp_hash, blob_index, blob_proof_output_index, contract_name, hyle_output, settled
+            const BLOB_PROOF_OUTPUT_PARAMS: usize = 9; // proof_tx_hash, proof_parent_dp_hash, blob_tx_hash, blob_parent_dp_hash, blob_index, blob_proof_output_index, contract_name, hyli_output, settled
             let blob_proof_outputs_batch_size =
                 calculate_optimal_batch_size(BLOB_PROOF_OUTPUT_PARAMS);
 
@@ -665,7 +665,7 @@ impl Indexer {
 
             for (batch_idx, chunk) in chunks.iter().enumerate() {
                 let mut query_builder = QueryBuilder::<Postgres>::new(
-                    "INSERT INTO blob_proof_outputs (proof_tx_hash, proof_parent_dp_hash, blob_tx_hash, blob_parent_dp_hash, blob_index, blob_proof_output_index, contract_name, hyle_output, settled) ",
+                    "INSERT INTO blob_proof_outputs (proof_tx_hash, proof_parent_dp_hash, blob_tx_hash, blob_parent_dp_hash, blob_index, blob_proof_output_index, contract_name, hyli_output, settled) ",
                 );
 
                 query_builder.push_values(chunk.iter(), |mut b, s| {
@@ -677,7 +677,7 @@ impl Indexer {
                         blob_index,
                         blob_proof_output_index,
                         contract_name,
-                        hyle_output,
+                        hyli_output,
                         settled,
                     } = s;
 
@@ -688,7 +688,7 @@ impl Indexer {
                         .push_bind(blob_index)
                         .push_bind(blob_proof_output_index)
                         .push_bind(contract_name)
-                        .push_bind(hyle_output)
+                        .push_bind(hyli_output)
                         .push_unseparated("::jsonb")
                         .push_bind(settled);
                 });
@@ -1122,8 +1122,8 @@ impl Indexer {
                 i32::try_from(handled_blob_proof_output.blob_proof_output_index).map_err(|_| {
                     anyhow::anyhow!("Blob proof output index is too large to fit into an i32")
                 })?;
-            let serialized_hyle_output =
-                serde_json::to_string(&handled_blob_proof_output.hyle_output)?;
+            let serialized_hyli_output =
+                serde_json::to_string(&handled_blob_proof_output.hyli_output)?;
 
             self.handler_store
                 .blob_proof_outputs
@@ -1135,7 +1135,7 @@ impl Indexer {
                     blob_index,
                     blob_proof_output_index,
                     contract_name: handled_blob_proof_output.contract_name.0.clone(),
-                    hyle_output: serialized_hyle_output,
+                    hyli_output: serialized_hyli_output,
                     settled: false,
                 });
         }

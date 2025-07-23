@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use anyhow::Context;
 use client_sdk::rest_client::NodeApiHttpClient;
-use hyle::{entrypoint::main_process, utils::conf::Conf};
-use hyle_crypto::BlstCrypto;
-use hyle_net::net::Sim;
+use hyli::{entrypoint::main_process, utils::conf::Conf};
+use hyli_crypto::BlstCrypto;
+use hyli_net::net::Sim;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tempfile::TempDir;
 use tokio::sync::Mutex;
@@ -79,7 +79,7 @@ impl TurmoilCtx {
 
         let temp_dir = tempfile::Builder::new()
             .prefix(seed.to_string().as_str())
-            .prefix("hyle-turmoil")
+            .prefix("hyli-turmoil")
             .tempdir()
             .unwrap();
 

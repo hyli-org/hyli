@@ -1,0 +1,44 @@
+[package]
+name = "hyli-net"
+description = "Hyli network SDK"
+license = "MIT"
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
+
+[dependencies]
+sdk = { workspace = true, features = ["full-model"] }
+hyli-crypto = { workspace = true }
+
+anyhow = { workspace = true }
+borsh = { workspace = true }
+tracing = { workspace = true }
+
+# Tcp feature
+tokio = { workspace = true }
+tokio-util = { workspace = true, features = ["codec"] }
+futures = { workspace = true }
+turmoil = { workspace = true, optional = true }
+bytes = { workspace = true }
+hex = { workspace = true }
+paste = { workspace = true }
+serde_json = { workspace = true }
+http-body-util = { workspace = true }
+
+hyper = { workspace = true, features = ["client", "http1"] }
+hyper-util = { workspace = true }
+serde = { workspace = true }
+axum = { workspace = true }
+tower-service = { workspace = true }
+opentelemetry = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true, features = ["std"] }
+seq-macro = { workspace = true }
+test-log = { workspace = true, features = ["color", "trace"] }
+
+[features]
+# default = ["turmoil"]
+turmoil = ["dep:turmoil"]

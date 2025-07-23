@@ -66,13 +66,13 @@ where
             private_input: vec![],
         };
 
-        let hyle_output = self.handle(&calldata)?;
-        let program_outputs = str::from_utf8(&hyle_output.program_outputs).unwrap_or("no output");
+        let hyli_output = self.handle(&calldata)?;
+        let program_outputs = str::from_utf8(&hyli_output.program_outputs).unwrap_or("no output");
 
         info!("🚀 Executed {contract_name}: {}", program_outputs);
         debug!(
             handler = %contract_name,
-            "hyle_output: {:?}", hyle_output
+            "hyli_output: {:?}", hyli_output
         );
         Ok(None)
     }

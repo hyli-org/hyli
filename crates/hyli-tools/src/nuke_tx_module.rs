@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
-use hyle_model::{
-    BlobTransaction, ContractAction, HyleOutput, Identity, NodeStateEvent, TxHash,
+use hyli_model::{
+    BlobTransaction, ContractAction, HyliOutput, Identity, NodeStateEvent, TxHash,
     verifiers::Secp256k1Blob,
 };
-use hyle_modules::{
+use hyli_modules::{
     bus::SharedMessageBus, module_bus_client, modules::Module, node_state::NukeTxAction,
 };
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
@@ -20,12 +20,12 @@ module_bus_client! {
 }
 pub struct NukeTxModuleCtx {
     pub config: Conf,
-    pub txs: BTreeMap<TxHash, Vec<HyleOutput>>,
+    pub txs: BTreeMap<TxHash, Vec<HyliOutput>>,
 }
 
 pub struct NukeTxModule {
     _bus: NukeTxBusClient,
-    remaining_txs: BTreeMap<TxHash, Vec<HyleOutput>>,
+    remaining_txs: BTreeMap<TxHash, Vec<HyliOutput>>,
     node_client: NodeApiHttpClient,
     secret_key: SecretKey,
 }
@@ -86,10 +86,10 @@ impl NukeTxModule {
         };
 
         // Create the nuke blob
-        let nuke_blob = nuke_action.as_blob("hyle".into(), None, None);
+        let nuke_blob = nuke_action.as_blob("hyli".into(), None, None);
 
         let secp_blob_data = Secp256k1Blob {
-            identity: Identity::new("hyle@hyle"),
+            identity: Identity::new("hyli@hyli"),
             data: data_hash,
             public_key: public_key.serialize(),
             signature,
@@ -98,7 +98,7 @@ impl NukeTxModule {
         let secp_blob = secp_blob_data.as_blob();
 
         // Create and send the nuke transaction
-        let nuke_tx = BlobTransaction::new(Identity::new("hyle@hyle"), vec![secp_blob, nuke_blob]);
+        let nuke_tx = BlobTransaction::new(Identity::new("hyli@hyli"), vec![secp_blob, nuke_blob]);
         let tx_hash = self
             .node_client
             .send_tx_blob(nuke_tx)
@@ -139,7 +139,7 @@ impl Conf {
         }
         let conf: Self = s
             .add_source(
-                config::Environment::with_prefix("hyle")
+                config::Environment::with_prefix("hyli")
                     .separator("__")
                     .prefix_separator("_"),
             )

@@ -3,13 +3,13 @@ use std::pin::Pin;
 use anyhow::Result;
 use borsh::BorshSerialize;
 use sdk::{
-    Calldata, ContractName, HyleOutput, ProgramId, Proof, ProofData, RegisterContractAction,
+    Calldata, ContractName, HyliOutput, ProgramId, Proof, ProofData, RegisterContractAction,
     StateCommitment, TimeoutWindow, Verifier,
 };
 
 use crate::transaction_builder::ProvableBlobTx;
 
-pub fn register_hyle_contract(
+pub fn register_hyli_contract(
     builder: &mut ProvableBlobTx,
     new_contract_name: ContractName,
     verifier: Verifier,
@@ -19,7 +19,7 @@ pub fn register_hyle_contract(
     constructor_metadata: Option<Vec<u8>>,
 ) -> anyhow::Result<()> {
     builder.add_action(
-        "hyle".into(),
+        "hyli".into(),
         RegisterContractAction {
             contract_name: new_contract_name,
             verifier,
@@ -350,9 +350,9 @@ pub mod test {
             calldata: Calldata,
         ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>> {
             Box::pin(async move {
-                let hyle_output = execute(commitment_metadata.clone(), calldata.clone())?;
+                let hyli_output = execute(commitment_metadata.clone(), calldata.clone())?;
                 Ok(Proof {
-                    data: ProofData(borsh::to_vec(&hyle_output).expect("Failed to encode proof")),
+                    data: ProofData(borsh::to_vec(&hyli_output).expect("Failed to encode proof")),
                     metadata: ProofMetadata {
                         cycles: None,
                         prover: None,
@@ -379,8 +379,8 @@ pub mod test {
             Box::pin(async move {
                 let mut proofs = Vec::new();
                 for call in calldata {
-                    let hyle_output = test::execute(commitment_metadata.clone(), call)?;
-                    proofs.push(hyle_output);
+                    let hyli_output = test::execute(commitment_metadata.clone(), call)?;
+                    proofs.push(hyli_output);
                 }
                 Ok(Proof {
                     data: ProofData(borsh::to_vec(&proofs)?),
@@ -401,10 +401,10 @@ pub mod test {
         }
     }
 
-    pub fn execute(commitment_metadata: Vec<u8>, calldata: Calldata) -> Result<HyleOutput> {
+    pub fn execute(commitment_metadata: Vec<u8>, calldata: Calldata) -> Result<HyliOutput> {
         // FIXME: this is a hack to make the test pass.
         let initial_state = StateCommitment(commitment_metadata);
-        let hyle_output = HyleOutput {
+        let hyli_output = HyliOutput {
             version: 1,
             initial_state: initial_state.clone(),
             next_state: initial_state,
@@ -419,6 +419,6 @@ pub mod test {
             onchain_effects: vec![],
             program_outputs: vec![],
         };
-        Ok(hyle_output)
+        Ok(hyli_output)
     }
 }

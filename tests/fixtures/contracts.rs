@@ -1,7 +1,7 @@
-use hyle_contract_sdk::ProgramId;
-use hyle_contract_sdk::StateCommitment;
-use hyle_contract_sdk::Verifier;
-use hyle_contract_sdk::ZkContract;
+use hyli_contract_sdk::ProgramId;
+use hyli_contract_sdk::StateCommitment;
+use hyli_contract_sdk::Verifier;
+use hyli_contract_sdk::ZkContract;
 use hyllar::Hyllar;
 
 use super::ctx::E2EContract;
@@ -10,7 +10,7 @@ pub struct ERC20TestContract {}
 
 impl E2EContract for ERC20TestContract {
     fn verifier() -> Verifier {
-        hyle_model::verifiers::RISC0_1.into()
+        hyli_model::verifiers::RISC0_1.into()
     }
 
     fn program_id() -> ProgramId {
@@ -31,11 +31,11 @@ pub struct HydentityTestContract {}
 
 impl E2EContract for HydentityTestContract {
     fn verifier() -> Verifier {
-        hyle_model::verifiers::RISC0_1.into()
+        hyli_model::verifiers::RISC0_1.into()
     }
 
     fn program_id() -> ProgramId {
-        hyle_contracts::HYDENTITY_ID.to_vec().into()
+        hyli_contracts::HYDENTITY_ID.to_vec().into()
     }
 
     fn state_commitment() -> StateCommitment {
@@ -53,11 +53,11 @@ impl HyllarTestContract {
 
 impl E2EContract for HyllarTestContract {
     fn verifier() -> Verifier {
-        hyle_model::verifiers::RISC0_1.into()
+        hyli_model::verifiers::RISC0_1.into()
     }
 
     fn program_id() -> ProgramId {
-        hyle_contracts::HYLLAR_ID.to_vec().into()
+        hyli_contracts::HYLLAR_ID.to_vec().into()
     }
 
     fn state_commitment() -> StateCommitment {
@@ -69,11 +69,11 @@ pub struct AmmTestContract {}
 
 impl E2EContract for AmmTestContract {
     fn verifier() -> Verifier {
-        hyle_model::verifiers::RISC0_1.into()
+        hyli_model::verifiers::RISC0_1.into()
     }
 
     fn program_id() -> ProgramId {
-        hyle_contracts::AMM_ID.to_vec().into()
+        hyli_contracts::AMM_ID.to_vec().into()
     }
 
     fn state_commitment() -> StateCommitment {

@@ -22,8 +22,8 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use axum::Router;
 use hydentity::Hydentity;
-use hyle_crypto::SharedBlstCrypto;
-use hyle_modules::{
+use hyli_crypto::SharedBlstCrypto;
+use hyli_modules::{
     modules::{
         admin::{AdminApi, AdminApiRunContext},
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},

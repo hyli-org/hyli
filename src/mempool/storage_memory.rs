@@ -6,7 +6,7 @@ use std::{
 use anyhow::{bail, Result};
 use async_stream::try_stream;
 use futures::Stream;
-use hyle_model::{LaneBytesSize, LaneId};
+use hyli_model::{LaneBytesSize, LaneId};
 use tracing::info;
 
 use super::{

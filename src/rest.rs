@@ -1,4 +1,4 @@
-pub use hyle_modules::modules::rest::*;
+pub use hyli_modules::modules::rest::*;
 
 #[cfg(test)]
 mod tests {
@@ -10,8 +10,8 @@ mod tests {
     };
     use anyhow::Result;
     use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
-    use hyle_model::*;
-    use hyle_modules::{
+    use hyli_model::*;
+    use hyli_modules::{
         bus::SharedMessageBus, module_bus_client, module_handle_messages, modules::Module,
     };
     use std::time::Duration;

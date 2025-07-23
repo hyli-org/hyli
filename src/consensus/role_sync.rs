@@ -2,7 +2,7 @@ use anyhow::Result;
 use tracing::debug;
 
 use super::{role_follower::Prepare, *};
-use hyle_model::{ConsensusProposalHash, ValidatorPublicKey};
+use hyli_model::{ConsensusProposalHash, ValidatorPublicKey};
 
 impl Consensus {
     /// When a validator receives a sync request from another validator, it will check if it has the prepare message in its buffer.

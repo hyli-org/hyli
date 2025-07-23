@@ -1,5 +1,5 @@
 use anyhow::Result;
-use hyle_modules::{bus::SharedMessageBus, log_error, modules::Module};
+use hyli_modules::{bus::SharedMessageBus, log_error, modules::Module};
 
 use crate::model::SharedRunContext;
 

@@ -7,10 +7,10 @@ use client_sdk::transaction_builder::ProvableBlobTx;
 use client_sdk::transaction_builder::TxExecutor;
 use client_sdk::transaction_builder::TxExecutorBuilder;
 use client_sdk::transaction_builder::TxExecutorHandler;
-use hyle_hydentity::Hydentity;
-use hyle_hydentity::HydentityAction;
+use hyli_hydentity::Hydentity;
+use hyli_hydentity::HydentityAction;
 use sdk::Hashed;
-use sdk::{Blob, Calldata, ContractName, HyleOutput};
+use sdk::{Blob, Calldata, ContractName, HyliOutput};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -77,7 +77,7 @@ async fn main() {
 
             let mut transaction = ProvableBlobTx::new(identity.clone().into());
 
-            hyle_hydentity::client::tx_executor_handler::register_identity(
+            hyli_hydentity::client::tx_executor_handler::register_identity(
                 &mut transaction,
                 ContractName::new("hydentity"),
                 password,

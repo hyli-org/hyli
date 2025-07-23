@@ -8,15 +8,15 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     execute, terminal,
 };
-use hyle_contract_sdk::{Block, NodeStateEvent, TransactionData, TxId, api::NodeInfo};
-use hyle_contract_sdk::{BlockHeight, SignedBlock};
-use hyle_model::DataEvent;
-use hyle_modules::modules::{
+use hyli_contract_sdk::{Block, NodeStateEvent, TransactionData, TxId, api::NodeInfo};
+use hyli_contract_sdk::{BlockHeight, SignedBlock};
+use hyli_model::DataEvent;
+use hyli_modules::modules::{
     da_listener::DAListenerConf,
     prover::{AutoProver, AutoProverCtx},
     signed_da_listener::SignedDAListener,
 };
-use hyle_modules::{
+use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     module_bus_client, module_handle_messages,
     modules::{

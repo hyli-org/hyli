@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use hyle_amm::Amm;
+use hyli_amm::Amm;
 use sdk::{
     guest::{execute, GuestEnv, Risc0Env},
     Calldata,

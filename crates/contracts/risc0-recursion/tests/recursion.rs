@@ -3,8 +3,8 @@ use client_sdk::{
     transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
 };
 use hydentity::{client::tx_executor_handler::register_identity, Hydentity};
-use hyle_risc0_recursion::ProofInput;
-use sdk::{Blob, Calldata, ContractName, HyleOutput};
+use hyli_risc0_recursion::ProofInput;
+use sdk::{Blob, Calldata, ContractName, HyliOutput};
 
 contract_states!(
     struct States {
@@ -54,11 +54,11 @@ async fn test_recursion() {
         .add_assumption(second_receipt.clone())
         .write(&vec![
             ProofInput {
-                image_id: hyle_contracts::HYDENTITY_ID,
+                image_id: hyli_contracts::HYDENTITY_ID,
                 journal: first_receipt.journal.bytes,
             },
             ProofInput {
-                image_id: hyle_contracts::HYDENTITY_ID,
+                image_id: hyli_contracts::HYDENTITY_ID,
                 journal: second_receipt.journal.bytes,
             },
         ])
@@ -67,11 +67,11 @@ async fn test_recursion() {
         .unwrap();
 
     let receipt = risc0_zkvm::default_prover()
-        .prove(env, hyle_contracts::RISC0_RECURSION_ELF)
+        .prove(env, hyli_contracts::RISC0_RECURSION_ELF)
         .unwrap()
         .receipt;
 
-    receipt.verify(hyle_contracts::RISC0_RECURSION_ID).unwrap();
+    receipt.verify(hyli_contracts::RISC0_RECURSION_ID).unwrap();
 
     let outputs: Vec<([u8; 32], Vec<u8>)> =
         receipt.journal.decode().expect("Failed to decode journal");
@@ -80,17 +80,17 @@ async fn test_recursion() {
         .map(|x| {
             (
                 x.0,
-                risc0_zkvm::serde::from_slice::<Vec<HyleOutput>, _>(&x.1).unwrap(),
+                risc0_zkvm::serde::from_slice::<Vec<HyliOutput>, _>(&x.1).unwrap(),
             )
         })
         .collect::<Vec<_>>();
 
-    assert_eq!(outputs.first().unwrap().0, hyle_contracts::HYDENTITY_ID,);
+    assert_eq!(outputs.first().unwrap().0, hyli_contracts::HYDENTITY_ID,);
     assert_eq!(
         String::from_utf8(outputs.first().unwrap().1[0].program_outputs.clone()).unwrap(),
         "Successfully registered identity for account: bob@hydentity:f08bf16792a8efe265e37068568042c25aa6e2c3df0d0cb3c5eed7c78abc7348"
     );
-    assert_eq!(outputs.last().unwrap().0, hyle_contracts::HYDENTITY_ID,);
+    assert_eq!(outputs.last().unwrap().0, hyli_contracts::HYDENTITY_ID,);
     assert_eq!(
         String::from_utf8(outputs.last().unwrap().1[0].program_outputs.clone()).unwrap(),
         "Successfully registered identity for account: alice@hydentity:8333a333420eb181556e8e021a7b682dc1fa58a2560547938eb3c11bc74ecdbd"

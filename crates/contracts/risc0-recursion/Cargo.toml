@@ -1,5 +1,5 @@
 [package]
-name = "hyle-risc0-recursion"
+name = "hyli-risc0-recursion"
 description = "Hyli Smart Contract"
 license-file = { workspace = true }
 version = { workspace = true }
@@ -26,7 +26,7 @@ risc0-zkvm = { workspace = true, optional = true, features = ['std'] }
 
 [dev-dependencies]
 # Activate client in examples.
-hyle-risc0-recursion = { path = ".", features = ["client"] }
+hyli-risc0-recursion = { path = ".", features = ["client"] }
 
 client-sdk = { workspace = true }
 sdk = { workspace = true, features = ["full-model"] }
@@ -35,7 +35,7 @@ anyhow = { workspace = true }
 borsh = { workspace = true }
 hex = { workspace = true }
 hydentity = { workspace = true, features = ["client"] }
-hyle-contracts = { path = ".." }
+hyli-contracts = { path = ".." }
 tokio = { workspace = true }
 risc0-zkvm = { workspace = true, features = ['std', 'prove'] }
 tempfile = { workspace = true }

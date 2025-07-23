@@ -3,12 +3,12 @@ use std::path::PathBuf;
 use anyhow::Result;
 use google_cloud_storage::client::{Client, ClientConfig};
 use google_cloud_storage::http::objects::upload::{Media, UploadObjectRequest};
-use hyle_model::DataEvent;
-use hyle_modules::{
+use hyli_model::DataEvent;
+use hyli_modules::{
     bus::SharedMessageBus,
     modules::{Module, module_bus_client},
 };
-use hyle_modules::{log_error, module_handle_messages};
+use hyli_modules::{log_error, module_handle_messages};
 use serde::{Deserialize, Serialize};
 
 module_bus_client! {
@@ -46,7 +46,7 @@ impl Conf {
         }
         let conf: Self = s
             .add_source(
-                config::Environment::with_prefix("hyle")
+                config::Environment::with_prefix("hyli")
                     .separator("__")
                     .prefix_separator("_"),
             )

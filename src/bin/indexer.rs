@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use hyle::{
+use hyli::{
     entrypoint::RunPg,
     utils::conf::{self, P2pMode},
 };
-use hyle_modules::{log_error, utils::logger::setup_tracing};
+use hyli_modules::{log_error, utils::logger::setup_tracing};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -46,8 +46,8 @@ async fn main() -> Result<()> {
     };
 
     log_error!(
-        hyle::entrypoint::main_process(config, None).await,
-        "Error running hyle indexer"
+        hyli::entrypoint::main_process(config, None).await,
+        "Error running hyli indexer"
     )?;
 
     Ok(())

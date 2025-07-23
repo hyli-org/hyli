@@ -30,7 +30,7 @@ async fn main() {
         .route("/prove", post(prove_handler))
         .layer(axum::Extension(shared_api_keys));
 
-    let listener = hyle_net::net::bind_tcp_listener(3000).await.unwrap();
+    let listener = hyli_net::net::bind_tcp_listener(3000).await.unwrap();
     info!("Server listening on {}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
@@ -45,7 +45,7 @@ async fn prove_handler(
     }
 
     // Appeler la fonction `run_bonsai`
-    let res = hyle_bonsai_runner::run_bonsai(&payload.elf, payload.input_data)
+    let res = hyli_bonsai_runner::run_bonsai(&payload.elf, payload.input_data)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let receipt = res.receipt;

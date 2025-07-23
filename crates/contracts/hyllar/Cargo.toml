@@ -1,5 +1,5 @@
 [package]
-name = "hyle-hyllar"
+name = "hyli-hyllar"
 description = "Hyli Smart Contract"
 license = "MIT"
 version = { workspace = true }
@@ -36,7 +36,7 @@ client-sdk = { workspace = true, features = [
 
 [dev-dependencies]
 # Active client feature for tests
-hyle-hyllar = { path = ".", features = ["client"] }
+hyli-hyllar = { path = ".", features = ["client"] }
 
 tokio = { workspace = true, features = ["full", "tracing"] }
 risc0-zkvm = { workspace = true, features = ['std', 'prove'] }

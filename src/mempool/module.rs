@@ -1,4 +1,4 @@
-use hyle_modules::{log_error, module_handle_messages};
+use hyli_modules::{log_error, module_handle_messages};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use crate::{
@@ -7,8 +7,8 @@ use crate::{
 };
 
 use client_sdk::tcp_client::TcpServerMessage;
-use hyle_model::{DataProposalHash, LaneBytesSize, LaneId, ProgramId, Verifier};
-use hyle_modules::{bus::SharedMessageBus, modules::Module};
+use hyli_model::{DataProposalHash, LaneBytesSize, LaneId, ProgramId, Verifier};
+use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use tracing::warn;
 
 use super::{api::RestApiMessage, MempoolNetMessage, QueryNewCut};
@@ -61,8 +61,8 @@ impl Module for Mempool {
             .write()
             .expect("logic issue")
             .0
-            .entry("hyle".into())
-            .or_insert_with(|| (Verifier("hyle".to_owned()), ProgramId(vec![])));
+            .entry("hyli".into())
+            .or_insert_with(|| (Verifier("hyli".to_owned()), ProgramId(vec![])));
 
         Ok(Mempool {
             bus,

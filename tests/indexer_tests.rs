@@ -7,7 +7,7 @@ use anyhow::Result;
 mod fixtures;
 
 mod e2e_indexer {
-    use hyle_model::BlockHeight;
+    use hyli_model::BlockHeight;
 
     use super::*;
 

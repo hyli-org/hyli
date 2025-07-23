@@ -11,8 +11,8 @@ use crate::{
     p2p::P2PCommand,
     utils::conf::TimestampCheck,
 };
-use hyle_crypto::BlstCrypto;
-use hyle_model::{
+use hyli_crypto::BlstCrypto;
+use hyli_model::{
     utils::TimestampMs, AggregateSignature, ConsensusProposal, ConsensusProposalHash,
     ConsensusStakingAction, Cut, LaneBytesSize, LaneId, SignedByValidator, ValidatorCandidacy,
     View,

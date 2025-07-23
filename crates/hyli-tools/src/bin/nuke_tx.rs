@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, command};
 use std::collections::BTreeMap;
 
-use hyle_model::{HyleOutput, TxHash};
-use hyle_modules::utils::logger::setup_tracing;
+use hyli_model::{HyliOutput, TxHash};
+use hyli_modules::utils::logger::setup_tracing;
 
 use hyli_tools::nuke_tx_module::{Conf, NukeTxModule, NukeTxModuleCtx};
 
@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
     for tx_hash in args.tx_hashes {
         txs.insert(
             TxHash(tx_hash),
-            vec![HyleOutput {
+            vec![HyliOutput {
                 success: false,
                 ..Default::default()
             }],
@@ -41,12 +41,12 @@ async fn main() -> Result<()> {
     tracing::info!("Will nuke {} transactions: {:?}", txs.len(), txs.keys());
 
     // Create message bus
-    let bus = hyle_modules::bus::SharedMessageBus::new(
-        hyle_modules::bus::metrics::BusMetrics::global("nuke_tx".to_string()),
+    let bus = hyli_modules::bus::SharedMessageBus::new(
+        hyli_modules::bus::metrics::BusMetrics::global("nuke_tx".to_string()),
     );
 
     // Initialize modules
-    let mut handler = hyle_modules::modules::ModulesHandler::new(&bus).await;
+    let mut handler = hyli_modules::modules::ModulesHandler::new(&bus).await;
 
     // Add NukeTx module
     handler

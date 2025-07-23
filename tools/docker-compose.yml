@@ -1,60 +1,60 @@
 services:
-  hyle1:
+  hyli1:
     build: ./..
     privileged: true
     network_mode: host
     environment:
-      - HYLE_ID=leader-1
-      - HYLE_REST_ADDRESS=localhost:4001
-      - HYLE_P2P__ADDRESS=localhost:1001
-      - HYLE_DA_ADDRESS=localhost:4141
-      - HYLE_TCP_ADDRESS=localhost:1414
+      - HYLI_ID=leader-1
+      - HYLI_REST_ADDRESS=localhost:4001
+      - HYLI_P2P__ADDRESS=localhost:1001
+      - HYLI_DA_ADDRESS=localhost:4141
+      - HYLI_TCP_ADDRESS=localhost:1414
       - RUST_LOG=debug
-      - HYLE_CONSENSUS__SLOT_DURATION=3000
-  hyle2:
+      - HYLI_CONSENSUS__SLOT_DURATION=3000
+  hyli2:
     build: ./..
     privileged: true
     environment:
-      - HYLE_ID=hyle2
-      - HYLE_P2P__PEERS=localhost:1001
-      - HYLE_REST_ADDRESS=localhost:4002
-      - HYLE_P2P__ADDRESS=localhost:1002
-      - HYLE_DA_ADDRESS=localhost:4142
-      - HYLE_TCP_ADDRESS=localhost:2414
+      - HYLI_ID=hyli2
+      - HYLI_P2P__PEERS=localhost:1001
+      - HYLI_REST_ADDRESS=localhost:4002
+      - HYLI_P2P__ADDRESS=localhost:1002
+      - HYLI_DA_ADDRESS=localhost:4142
+      - HYLI_TCP_ADDRESS=localhost:2414
       - RUST_LOG=debug
-      - HYLE_CONSENSUS__SLOT_DURATION=3000
-    network_mode: host
-    depends_on:
-      - hyle1
-  hyle3:
-    build: ./..
-    privileged: true
-    environment:
-      - HYLE_ID=hyle3
-      - HYLE_P2P__PEERS=localhost:1001,localhost:1002
-      - HYLE_REST_ADDRESS=localhost:4003
-      - HYLE_P2P__ADDRESS=localhost:1003
-      - RUST_LOG=debug
-      - HYLE_DA_ADDRESS=localhost:4143
-      - HYLE_TCP_ADDRESS=localhost:3414
-      - HYLE_CONSENSUS__SLOT_DURATION=3000
+      - HYLI_CONSENSUS__SLOT_DURATION=3000
     network_mode: host
     depends_on:
-      - hyle1
-  hyle4:
+      - hyli1
+  hyli3:
     build: ./..
     privileged: true
     environment:
-      - HYLE_ID=hyle4
-      - HYLE_P2P__PEERS=localhost:1001,localhost:1002,localhost:1003
-      - HYLE_REST_ADDRESS=localhost:4004
-      - HYLE_P2P__ADDRESS=localhost:1004
+      - HYLI_ID=hyli3
+      - HYLI_P2P__PEERS=localhost:1001,localhost:1002
+      - HYLI_REST_ADDRESS=localhost:4003
+      - HYLI_P2P__ADDRESS=localhost:1003
       - RUST_LOG=debug
-      - HYLE_DA_ADDRESS=localhost:4144
-      - HYLE_CONSENSUS__SLOT_DURATION=3000
+      - HYLI_DA_ADDRESS=localhost:4143
+      - HYLI_TCP_ADDRESS=localhost:3414
+      - HYLI_CONSENSUS__SLOT_DURATION=3000
     network_mode: host
     depends_on:
-      - hyle1
+      - hyli1
+  hyli4:
+    build: ./..
+    privileged: true
+    environment:
+      - HYLI_ID=hyli4
+      - HYLI_P2P__PEERS=localhost:1001,localhost:1002,localhost:1003
+      - HYLI_REST_ADDRESS=localhost:4004
+      - HYLI_P2P__ADDRESS=localhost:1004
+      - RUST_LOG=debug
+      - HYLI_DA_ADDRESS=localhost:4144
+      - HYLI_CONSENSUS__SLOT_DURATION=3000
+    network_mode: host
+    depends_on:
+      - hyli1
 
   prometheus:
     image: prom/prometheus:latest
@@ -66,10 +66,10 @@ services:
       - "9090:9090" # Port pour accéder à l'interface de Prometheus
     network_mode: host
     depends_on:
-      - hyle1
-      - hyle2
-      - hyle3
-      - hyle4
+      - hyli1
+      - hyli2
+      - hyli3
+      - hyli4
 
   grafana:
     image: grafana/grafana:latest
