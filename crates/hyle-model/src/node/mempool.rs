@@ -142,6 +142,14 @@ impl Hashed<DataProposalHash> for DataProposal {
         hash
     }
 }
+
+// Warning: hashing DPs can be slow, so use with care
+impl std::hash::Hash for DataProposal {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.hashed().hash(state);
+    }
+}
+
 impl Display for DataProposalHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
@@ -165,5 +173,17 @@ pub type Cut = Vec<(LaneId, DataProposalHash, LaneBytesSize, PoDA)>;
 impl Display for TxId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}/{}", &self.0 .0, &self.1 .0)
+    }
+}
+
+// Can't impl-display, but we can still make it a little nicer by default
+pub struct CutDisplay<'a>(pub &'a Cut);
+impl Display for CutDisplay<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut cut_str = String::new();
+        for (lane_id, hash, size, _) in self.0.iter() {
+            cut_str.push_str(&format!("{lane_id}:{hash}({size}), "));
+        }
+        write!(f, "{}", cut_str.trim_end())
     }
 }

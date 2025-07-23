@@ -1,21 +1,27 @@
 //! # Hyli Contract SDK
 //!
-//! This crate contains tools to be used in smart contracts that runs on rust zkvm like Risc0 or
-//! SP1.
+//! This crate provides helper tools for writing smart contracts that run inside a Rust-based zkVM,
+//! such as [Risc0](https://github.com/risc0/risc0) or [SP1](https://github.com/succinctlabs/sp1).
 //!
-//! ## How to build a contract on Hyli ?
+//! ## Building a contract on Hyli
 //!
-//! To build a contract, you will need to create a contract lib, with a struct that implements
-//! the [ZkContract] trait.
+//! To write a contract for Hyli:
 //!
-//! Then you will need a zkvm binary that will execute this code. Take a look at the
-//! [Guest module for contract zkvm](crate::guest).
+//! - Create a library crate that defines a struct implementing the [`ZkContract`] trait.
+//! - Build a corresponding zkVM binary that runs your contract logic.
 //!
-//! You can start from our templates for [Risc0](https://github.com/hyli-org/template-risc0)
-//! or [SP1](https://github.com/hyli-org/template-sp1).
+//! See [`crate::guest`] for details on how to configure and run your contract inside the zkVM.
 //!
-//! If your contract needs to interact with other contracts, take a look at
-//! [StructuredBlobData]. More is coming on that soon.
+//! You can use our app scaffold to get started:
+//!
+//! - [scaffold](https://github.com/hyli-org/app-scaffold/)
+//! - [Quickstart documentation](https://docs.hyli.org/quickstart/)
+//!
+//! ## Contract interoperability
+//!
+//! If your contract needs to exchange data with others, refer to [`StructuredBlobData`].
+//! More documentation about this will follow.
+
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
@@ -132,6 +138,38 @@ pub trait ZkContract {
     }
 }
 
+pub trait TransactionalZkContract
+where
+    Self: ZkContract,
+{
+    type State;
+    fn initial_state(&self) -> Self::State;
+
+    fn revert(&mut self, initial_state: Self::State);
+
+    fn on_success(&mut self) -> StateCommitment {
+        self.commit()
+    }
+}
+
+pub trait FullStateRevert {}
+
+impl<T> TransactionalZkContract for T
+where
+    T: FullStateRevert,
+    Self: Sized + Clone + ZkContract,
+{
+    type State = Self;
+
+    fn initial_state(&self) -> Self::State {
+        self.clone()
+    }
+
+    fn revert(&mut self, initial_state: Self::State) {
+        *self = initial_state;
+    }
+}
+
 pub const fn to_u8_array(val: &[u32; 8]) -> [u8; 32] {
     [
         (val[0] & 0xFF) as u8,
@@ -244,14 +282,14 @@ mod tests {
     fn test_txhash_display() {
         let txhash_str = "test_txhash";
         let txhash = TxHash::new(txhash_str);
-        assert_eq!(format!("{}", txhash), txhash_str);
+        assert_eq!(format!("{txhash}"), txhash_str);
     }
 
     #[test]
     fn test_blobindex_display() {
         let index = 42;
         let blob_index = BlobIndex::from(index);
-        assert_eq!(format!("{}", blob_index), index.to_string());
+        assert_eq!(format!("{blob_index}"), index.to_string());
     }
 
     #[test]

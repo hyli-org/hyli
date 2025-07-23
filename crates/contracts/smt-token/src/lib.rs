@@ -6,7 +6,7 @@ use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
 use sdk::utils::parse_calldata;
 use sdk::{
     Blob, BlobData, BlobIndex, Calldata, ContractAction, ContractName, Identity, StateCommitment,
-    StructuredBlobData,
+    StructuredBlobData, TransactionalZkContract,
 };
 use sdk::{RunResult, ZkContract};
 use sparse_merkle_tree::traits::Value;
@@ -68,6 +68,18 @@ impl SmtTokenContract {
             commitment,
             steps: vec![SmtTokenStep { proof, accounts }],
         }
+    }
+}
+
+impl TransactionalZkContract for SmtTokenContract {
+    type State = sdk::StateCommitment;
+
+    fn initial_state(&self) -> Self::State {
+        self.commitment.clone()
+    }
+
+    fn revert(&mut self, initial_state: Self::State) {
+        self.commitment = initial_state;
     }
 }
 
@@ -270,10 +282,12 @@ impl SmtTokenContract {
             }
         }
 
-        accounts
-            .get_mut(&owner)
-            .ok_or("Owner account not found")?
-            .update_allowances(spender.clone(), amount);
+        let account = accounts.get_mut(&owner).unwrap();
+        // 0-balance is treated as non-existent account
+        if account.balance == 0 {
+            return Err(format!("Owner account {owner} not found"));
+        }
+        account.update_allowances(spender.clone(), amount);
 
         let owner_account = accounts.get(&owner).ok_or("Owner account not found")?;
         let owner_key = owner_account.get_key();
@@ -285,7 +299,7 @@ impl SmtTokenContract {
             .expect("Failed to compute new root");
 
         self.commitment = StateCommitment(Into::<[u8; 32]>::into(new_root).to_vec());
-        Ok(format!("Approved {} to {}", amount, spender))
+        Ok(format!("Approved {amount} to {spender}"))
     }
 }
 

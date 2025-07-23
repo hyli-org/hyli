@@ -43,6 +43,7 @@ CREATE TABLE blobs (
     CHECK (blob_index >= 0),           -- Ensure the index is positive
     FOREIGN KEY (parent_dp_hash, tx_hash) REFERENCES transactions(parent_dp_hash, tx_hash) ON DELETE CASCADE
 );
+create index idx_blobs_contract_name on blobs(contract_name);
 
 -- This table stores actual proofs, which may not be present in all indexers
 CREATE TABLE proofs (
@@ -76,6 +77,7 @@ CREATE TABLE contracts (
     parent_dp_hash TEXT NOT NULL,
     verifier TEXT NOT NULL,
     program_id BYTEA NOT NULL,
+    timeout_window BIGINT,
     state_commitment BYTEA NOT NULL,
     contract_name TEXT PRIMARY KEY NOT NULL,
     FOREIGN KEY (parent_dp_hash, tx_hash) REFERENCES transactions(parent_dp_hash, tx_hash) ON DELETE CASCADE
@@ -118,3 +120,12 @@ CREATE INDEX idx_tx_fast_lookup
     index          DESC
   )
 INCLUDE (block_hash);
+
+create table txs_contracts (
+    parent_dp_hash TEXT NOT NULL,  -- Foreign key linking to the parent_dp_hash BlobTransactions
+    tx_hash TEXT NOT NULL,  -- Foreign key linking to the tx_hash BlobTransactions
+    contract_name TEXT NOT NULL,       -- Contract name associated with the blob
+    PRIMARY KEY (parent_dp_hash, tx_hash, contract_name)
+);
+create index idx_txs_contracts_name on txs_contracts(contract_name);
+

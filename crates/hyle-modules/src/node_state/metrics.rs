@@ -11,6 +11,8 @@ pub struct NodeStateMetrics {
     scheduled_timeouts: Gauge<u64>,
     contracts: Gauge<u64>,
     settled_transactions: Counter<u64>,
+    failed_transactions: Counter<u64>,
+    successful_transactions: Counter<u64>,
     current_height: Gauge<u64>,
     triggered_timeouts: Counter<u64>,
 }
@@ -39,6 +41,12 @@ impl NodeStateMetrics {
             settled_transactions: my_meter
                 .u64_counter(format!("{node_state}_settled_transactions"))
                 .build(),
+            failed_transactions: my_meter
+                .u64_counter(format!("{node_state}_failed_transactions"))
+                .build(),
+            successful_transactions: my_meter
+                .u64_counter(format!("{node_state}_successful_transactions"))
+                .build(),
             current_height: my_meter
                 .u64_gauge(format!("{node_state}_current_height"))
                 .build(),
@@ -58,6 +66,14 @@ impl NodeStateMetrics {
     }
     pub fn add_settled_transactions(&self, value: u64) {
         self.settled_transactions
+            .add(value, &[KeyValue::new("module_name", self.module_name)]);
+    }
+    pub fn add_failed_transactions(&self, value: u64) {
+        self.failed_transactions
+            .add(value, &[KeyValue::new("module_name", self.module_name)]);
+    }
+    pub fn add_successful_transactions(&self, value: u64) {
+        self.successful_transactions
             .add(value, &[KeyValue::new("module_name", self.module_name)]);
     }
     pub fn record_unsettled_transactions(&self, value: u64) {

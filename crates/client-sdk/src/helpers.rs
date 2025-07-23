@@ -3,7 +3,7 @@ use std::pin::Pin;
 use anyhow::Result;
 use borsh::BorshSerialize;
 use sdk::{
-    Calldata, ContractName, HyleOutput, ProgramId, ProofData, RegisterContractAction,
+    Calldata, ContractName, HyleOutput, ProgramId, Proof, ProofData, RegisterContractAction,
     StateCommitment, TimeoutWindow, Verifier,
 };
 
@@ -47,7 +47,7 @@ pub trait ClientSdkProver<T: BorshSerialize + Send> {
         &self,
         commitment_metadata: Vec<u8>,
         calldatas: T,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProofData>> + Send + '_>>;
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>>;
     fn info(&self) -> ProverInfo;
 }
 
@@ -55,6 +55,7 @@ pub trait ClientSdkProver<T: BorshSerialize + Send> {
 pub mod risc0 {
 
     use borsh::BorshSerialize;
+    use sdk::ProofMetadata;
 
     use super::*;
 
@@ -69,18 +70,34 @@ pub mod risc0 {
             &self,
             commitment_metadata: Vec<u8>,
             calldatas: T,
-        ) -> Result<ProofData> {
+        ) -> Result<Proof> {
             let explicit = std::env::var("RISC0_PROVER").unwrap_or_default();
-            let receipt = match explicit.to_lowercase().as_str() {
+            let (receipt, metadata) = match explicit.to_lowercase().as_str() {
                 "bonsai" => {
                     let input_data =
                         bonsai_runner::as_input_data(&(commitment_metadata, calldatas))?;
-                    bonsai_runner::run_bonsai(self.binary, input_data.clone()).await?
+                    let res = bonsai_runner::run_bonsai(self.binary, input_data.clone()).await?;
+                    (
+                        res.receipt,
+                        ProofMetadata {
+                            cycles: res.cycles,
+                            prover: Some(explicit),
+                            id: None,
+                        },
+                    )
                 }
                 "boundless" => {
                     let input_data =
                         bonsai_runner::as_input_data(&(commitment_metadata, calldatas))?;
-                    bonsai_runner::run_boundless(self.binary, input_data).await?
+                    let res = bonsai_runner::run_boundless(self.binary, input_data).await?;
+                    (
+                        res.receipt,
+                        ProofMetadata {
+                            cycles: res.cycles,
+                            prover: Some(explicit),
+                            id: None,
+                        },
+                    )
                 }
                 _ => {
                     let input_data = borsh::to_vec(&(commitment_metadata, calldatas))?;
@@ -92,12 +109,22 @@ pub mod risc0 {
 
                     let prover = risc0_zkvm::default_prover();
                     let prove_info = prover.prove(env, self.binary)?;
-                    prove_info.receipt
+                    (
+                        prove_info.receipt,
+                        ProofMetadata {
+                            cycles: Some(prove_info.stats.total_cycles),
+                            prover: None,
+                            id: None,
+                        },
+                    )
                 }
             };
 
             let encoded_receipt = borsh::to_vec(&receipt).expect("Unable to encode receipt");
-            Ok(ProofData(encoded_receipt))
+            Ok(Proof {
+                data: ProofData(encoded_receipt),
+                metadata,
+            })
         }
     }
 
@@ -106,7 +133,7 @@ pub mod risc0 {
             &self,
             commitment_metadata: Vec<u8>,
             calldatas: T,
-        ) -> Pin<Box<dyn std::future::Future<Output = Result<ProofData>> + Send + '_>> {
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>> {
             Box::pin(self.prove(commitment_metadata, calldatas))
         }
 
@@ -122,6 +149,7 @@ pub mod risc0 {
 
 #[cfg(feature = "sp1")]
 pub mod sp1 {
+    use sdk::ProofMetadata;
     use sp1_sdk::{
         network::builder::NetworkProverBuilder, EnvProver, NetworkProver, ProverClient,
         SP1ProvingKey, SP1Stdin,
@@ -178,31 +206,64 @@ pub mod sp1 {
             &self,
             commitment_metadata: Vec<u8>,
             calldatas: T,
-        ) -> Result<ProofData> {
+        ) -> Result<Proof> {
             // Setup the inputs.
             let mut stdin = SP1Stdin::new();
             let encoded = borsh::to_vec(&(commitment_metadata, calldatas))?;
             stdin.write_vec(encoded);
 
             // Generate the proof based on the prover type
-            let proof = match &self.client {
-                ProverType::Local(client) => client
-                    .prove(&self.pk, &stdin)
-                    .compressed()
-                    .run()
-                    .expect("failed to generate proof"),
-                ProverType::Network(client) => client
-                    .prove(&self.pk, &stdin)
-                    // Core proofs are limite to 5M cycles
-                    .compressed()
-                    // Reserved strategy is better for higher usage throughput
-                    .strategy(sp1_sdk::network::FulfillmentStrategy::Reserved)
-                    .run()
-                    .expect("failed to generate proof"),
+            let (proof, metadata) = match &self.client {
+                ProverType::Local(client) => {
+                    let exec = client
+                        .execute(&self.pk.elf, &stdin)
+                        .run()
+                        .expect("failed to execute program");
+                    let cycles = exec.1.total_instruction_count();
+
+                    (
+                        client
+                            .prove(&self.pk, &stdin)
+                            .compressed()
+                            .run()
+                            .expect("failed to generate proof"),
+                        ProofMetadata {
+                            cycles: Some(cycles),
+                            prover: Some("sp1_local".to_string()),
+                            id: None,
+                        },
+                    )
+                }
+                ProverType::Network(client) => {
+                    let exec = client
+                        .execute(&self.pk.elf, &stdin)
+                        .run()
+                        .expect("failed to execute program");
+                    let cycles = exec.1.total_instruction_count();
+
+                    (
+                        client
+                            .prove(&self.pk, &stdin)
+                            // Core proofs are limite to 5M cycles
+                            .compressed()
+                            // Reserved strategy is better for higher usage throughput
+                            .strategy(sp1_sdk::network::FulfillmentStrategy::Reserved)
+                            .run()
+                            .expect("failed to generate proof"),
+                        ProofMetadata {
+                            cycles: Some(cycles),
+                            prover: Some("sp1_network".to_string()),
+                            id: None,
+                        },
+                    )
+                }
             };
 
             let encoded_receipt = bincode::serialize(&proof)?;
-            Ok(ProofData(encoded_receipt))
+            Ok(Proof {
+                data: ProofData(encoded_receipt),
+                metadata,
+            })
         }
     }
 
@@ -211,7 +272,7 @@ pub mod sp1 {
             &self,
             commitment_metadata: Vec<u8>,
             calldatas: T,
-        ) -> Pin<Box<dyn std::future::Future<Output = Result<ProofData>> + Send + '_>> {
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>> {
             Box::pin(self.prove(commitment_metadata, calldatas))
         }
         fn info(&self) -> ProverInfo {
@@ -226,7 +287,7 @@ pub mod sp1 {
 
 pub mod test {
     use borsh::BorshDeserialize;
-    use sdk::ZkContract;
+    use sdk::{ProofMetadata, TransactionalZkContract, ZkContract};
 
     use super::*;
 
@@ -249,17 +310,26 @@ pub mod test {
         }
     }
 
-    impl<C: ZkContract + Clone + BorshDeserialize + 'static> ClientSdkProver<Vec<Calldata>>
-        for TxExecutorTestProver<C>
+    impl<C: ZkContract + TransactionalZkContract + BorshDeserialize + 'static>
+        ClientSdkProver<Vec<Calldata>> for TxExecutorTestProver<C>
     {
         fn prove(
             &self,
             commitment_metadata: Vec<u8>,
             calldatas: Vec<Calldata>,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ProofData>> + Send + '_>>
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>>
         {
             let hos = sdk::guest::execute::<C>(&commitment_metadata, &calldatas);
-            Box::pin(async move { Ok(ProofData(borsh::to_vec(&hos).unwrap())) })
+            Box::pin(async move {
+                Ok(Proof {
+                    data: ProofData(borsh::to_vec(&hos).unwrap()),
+                    metadata: ProofMetadata {
+                        cycles: None,
+                        prover: None,
+                        id: None,
+                    },
+                })
+            })
         }
 
         fn info(&self) -> ProverInfo {
@@ -278,12 +348,17 @@ pub mod test {
             &self,
             commitment_metadata: Vec<u8>,
             calldata: Calldata,
-        ) -> Pin<Box<dyn std::future::Future<Output = Result<ProofData>> + Send + '_>> {
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>> {
             Box::pin(async move {
                 let hyle_output = execute(commitment_metadata.clone(), calldata.clone())?;
-                Ok(ProofData(
-                    borsh::to_vec(&hyle_output).expect("Failed to encode proof"),
-                ))
+                Ok(Proof {
+                    data: ProofData(borsh::to_vec(&hyle_output).expect("Failed to encode proof")),
+                    metadata: ProofMetadata {
+                        cycles: None,
+                        prover: None,
+                        id: None,
+                    },
+                })
             })
         }
         fn info(&self) -> ProverInfo {
@@ -300,14 +375,21 @@ pub mod test {
             &self,
             commitment_metadata: Vec<u8>,
             calldata: Vec<Calldata>,
-        ) -> Pin<Box<dyn std::future::Future<Output = Result<ProofData>> + Send + '_>> {
+        ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>> {
             Box::pin(async move {
                 let mut proofs = Vec::new();
                 for call in calldata {
                     let hyle_output = test::execute(commitment_metadata.clone(), call)?;
                     proofs.push(hyle_output);
                 }
-                Ok(ProofData(borsh::to_vec(&proofs)?))
+                Ok(Proof {
+                    data: ProofData(borsh::to_vec(&proofs)?),
+                    metadata: ProofMetadata {
+                        cycles: None,
+                        prover: None,
+                        id: None,
+                    },
+                })
             })
         }
         fn info(&self) -> ProverInfo {

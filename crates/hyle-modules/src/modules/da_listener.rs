@@ -3,11 +3,12 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use sdk::{BlockHeight, Hashed, MempoolStatusEvent, SignedBlock};
-use tracing::{debug, error, info, warn};
+use tokio::task::yield_now;
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{
     bus::{BusClientSender, SharedMessageBus},
-    modules::{module_bus_client, Module},
+    modules::{data_availability::blocks_fjall::Blocks, module_bus_client, Module},
     node_state::{metrics::NodeStateMetrics, module::NodeStateEvent, NodeState, NodeStateStore},
     utils::da_codec::{DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest},
 };
@@ -33,7 +34,9 @@ pub struct DAListener {
 pub struct DAListenerConf {
     pub data_directory: PathBuf,
     pub da_read_from: String,
+    /// Used only by SignedDAListener
     pub start_block: Option<BlockHeight>,
+    pub timeout_client_secs: u64,
 }
 
 impl Module for DAListener {
@@ -51,14 +54,12 @@ impl Module for DAListener {
             metrics: NodeStateMetrics::global("da_listener".to_string(), "da_listener"),
         };
 
-        let start_block = ctx.start_block.unwrap_or(
-            // Annoying edge case: on startup this will be 0, but we do want to process block 0.
-            // Otherwise, we've already processed the block so we don't actually need that.
-            match node_state.current_height {
-                BlockHeight(0) => BlockHeight(0),
-                _ => node_state.current_height + 1,
-            },
-        );
+        // Annoying edge case: on startup this will be 0, but we do want to process block 0.
+        // Otherwise, we've already processed the block so we don't actually need that.
+        let start_block = match node_state.current_height {
+            BlockHeight(0) => BlockHeight(0),
+            _ => node_state.current_height + 1,
+        };
 
         let bus = DAListenerBusClient::new_from_bus(bus.new_handle()).await;
 
@@ -75,8 +76,21 @@ impl Module for DAListener {
         })
     }
 
-    fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
-        self.start()
+    async fn run(&mut self) -> Result<()> {
+        self.start().await
+    }
+
+    async fn persist(&mut self) -> Result<()> {
+        log_error!(
+            Self::save_on_disk::<NodeStateStore>(
+                self.config
+                    .data_directory
+                    .join("da_listener_node_state.bin")
+                    .as_path(),
+                &self.node_state,
+            ),
+            "Saving node state"
+        )
     }
 }
 
@@ -105,7 +119,8 @@ impl DAListener {
             );
             let processed_block = self.node_state.handle_signed_block(&block)?;
             self.bus
-                .send(NodeStateEvent::NewBlock(Box::new(processed_block)))?;
+                .send_waiting_if_full(NodeStateEvent::NewBlock(Box::new(processed_block)))
+                .await?;
             return Ok(());
         }
 
@@ -134,9 +149,10 @@ impl DAListener {
                     );
                 }
                 let processed_block = self.node_state.handle_signed_block(&block)?;
-                debug!("📦 Handled block outputs: {:?}", processed_block);
+                trace!("📦 Handled block outputs: {:?}", processed_block);
                 self.bus
-                    .send(NodeStateEvent::NewBlock(Box::new(processed_block)))?;
+                    .send_waiting_if_full(NodeStateEvent::NewBlock(Box::new(processed_block)))
+                    .await?;
 
                 // Process any buffered blocks that are now in sequence
                 self.process_buffered_blocks().await?;
@@ -172,7 +188,8 @@ impl DAListener {
                 let processed_block = self.node_state.handle_signed_block(&block)?;
                 debug!("📦 Handled buffered block outputs: {:?}", processed_block);
                 self.bus
-                    .send(NodeStateEvent::NewBlock(Box::new(processed_block)))?;
+                    .send_waiting_if_full(NodeStateEvent::NewBlock(Box::new(processed_block)))
+                    .await?;
             } else {
                 error!(
                     "📦 Buffered block is not in sequence: {} {}",
@@ -196,29 +213,73 @@ impl DAListener {
     }
 
     pub async fn start(&mut self) -> Result<()> {
-        let mut client = self.start_client(self.start_block).await?;
+        if let Some(folder) = self.config.da_read_from.strip_prefix("folder:") {
+            info!("Reading blocks from folder {folder}");
+            let mut blocks = vec![];
+            let mut entries = std::fs::read_dir(folder)
+                .unwrap_or_else(|_| std::fs::read_dir(".").unwrap())
+                .filter_map(|e| e.ok())
+                .collect::<Vec<_>>();
+            entries.sort_by_key(|e| e.file_name());
+            for entry in entries {
+                let path = entry.path();
+                if path.extension().map(|e| e == "bin").unwrap_or(false) {
+                    if let Ok(bytes) = std::fs::read(&path) {
+                        if let Ok((block, tx_count)) =
+                            borsh::from_slice::<(SignedBlock, usize)>(&bytes)
+                        {
+                            blocks.push((block, tx_count));
+                        }
+                    }
+                }
+                yield_now().await; // Yield to allow other tasks to run
+            }
+            // Sort blocks by block_height (numeric order)
+            blocks.sort_by_key(|b| b.0.consensus_proposal.slot);
 
-        module_handle_messages! {
-            on_bus self.bus,
-            frame = client.recv() => {
-                if let Some(streamed_signed_block) = frame {
-                    let _ = log_error!(self.processing_next_frame(streamed_signed_block).await, "Consuming da stream");
-                    client.ping().await?;
-                } else {
+            info!("Got {} blocks from folder. Processing...", blocks.len());
+            for (block, _) in blocks {
+                self.process_block(block).await?;
+            }
+            module_handle_messages! {
+                on_self self,
+            };
+        } else if let Some(folder) = self.config.da_read_from.strip_prefix("da:") {
+            info!("Reading blocks from DA {folder}");
+            let mut blocks = Blocks::new(&PathBuf::from(folder))?;
+            let block_hashes = blocks
+                .range(BlockHeight(0), BlockHeight(u64::MAX))
+                .collect::<Result<Vec<_>>>()?;
+            for block_hash in block_hashes {
+                let block = blocks.get(&block_hash)?.unwrap();
+                self.process_block(block).await?;
+            }
+            module_handle_messages! {
+                on_self self,
+            };
+        } else {
+            let mut client = self.start_client(self.start_block).await?;
+
+            module_handle_messages! {
+                on_self self,
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(self.config.timeout_client_secs)) => {
+                    warn!("No blocks received in the last {} seconds, restarting client", self.config.timeout_client_secs);
                     client = self.start_client(self.node_state.current_height + 1).await?;
                 }
-            }
-        };
-        let _ = log_error!(
-            Self::save_on_disk::<NodeStateStore>(
-                self.config
-                    .data_directory
-                    .join("da_listener_node_state.bin")
-                    .as_path(),
-                &self.node_state,
-            ),
-            "Saving node state"
-        );
+                frame = client.recv() => {
+                    if let Some(streamed_signed_block) = frame {
+                        let _ = log_error!(self.processing_next_frame(streamed_signed_block).await, "Consuming da stream");
+                        if let Err(e) = client.ping().await {
+                            warn!("Ping failed: {}. Restarting client...", e);
+                            client = self.start_client(self.node_state.current_height + 1).await?;
+                        }
+                    } else {
+                        warn!("DA stream connection lost. Reconnecting...");
+                        client = self.start_client(self.node_state.current_height + 1).await?;
+                    }
+                }
+            };
+        }
 
         Ok(())
     }
@@ -229,7 +290,7 @@ impl DAListener {
                 self.process_block(block).await?;
             }
             DataAvailabilityEvent::MempoolStatusEvent(mempool_status_event) => {
-                self.bus.send(mempool_status_event)?;
+                self.bus.send_waiting_if_full(mempool_status_event).await?;
             }
         }
 

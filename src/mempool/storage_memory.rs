@@ -10,10 +10,13 @@ use hyle_model::{LaneBytesSize, LaneId};
 use tracing::info;
 
 use super::{
-    storage::{CanBePutOnTop, LaneEntryMetadata, Storage},
+    storage::{EntryOrMissingHash, LaneEntryMetadata, Storage},
     ValidatorDAG,
 };
-use crate::model::{DataProposal, DataProposalHash, Hashed};
+use crate::{
+    mempool::storage::MetadataOrMissingHash,
+    model::{DataProposal, DataProposalHash, Hashed},
+};
 
 #[derive(Default)]
 pub struct LanesStorage {
@@ -85,39 +88,6 @@ impl Storage for LanesStorage {
             }
         }
         Ok(None)
-    }
-
-    fn put(&mut self, lane_id: LaneId, entry: (LaneEntryMetadata, DataProposal)) -> Result<()> {
-        let dp_hash = entry.1.hashed();
-        if self.contains(&lane_id, &dp_hash) {
-            bail!("DataProposal {} was already in lane", dp_hash);
-        }
-        match self.can_be_put_on_top(&lane_id, entry.0.parent_data_proposal_hash.as_ref()) {
-            CanBePutOnTop::No => bail!(
-                "Can't store DataProposal {}, as parent is unknown ",
-                dp_hash
-            ),
-            CanBePutOnTop::Yes => {
-                // Add both metadata and data to validator's lane
-                self.by_hash
-                    .entry(lane_id.clone())
-                    .or_default()
-                    .insert(dp_hash.clone(), entry.clone());
-
-                // Validator's lane tip is only updated if DP-chain is respected
-                self.update_lane_tip(lane_id, dp_hash, entry.0.cumul_size);
-
-                Ok(())
-            }
-            CanBePutOnTop::Fork => {
-                let last_known_hash = self.lanes_tip.get(&lane_id);
-                bail!(
-                    "DataProposal cannot be put in lane because it creates a fork: last dp hash {:?} while proposed parent_data_proposal_hash: {:?}",
-                    last_known_hash,
-                    entry.0.parent_data_proposal_hash
-                )
-            }
-        }
     }
 
     fn put_no_verification(
@@ -196,7 +166,7 @@ impl Storage for LanesStorage {
         lane_id: &LaneId,
         from_data_proposal_hash: Option<DataProposalHash>,
         to_data_proposal_hash: Option<DataProposalHash>,
-    ) -> impl Stream<Item = Result<(LaneEntryMetadata, DataProposal)>> {
+    ) -> impl Stream<Item = Result<EntryOrMissingHash>> {
         let metadata_stream = self.get_entries_metadata_between_hashes(
             lane_id,
             from_data_proposal_hash,
@@ -205,13 +175,23 @@ impl Storage for LanesStorage {
 
         try_stream! {
             for await md in metadata_stream {
-                let (metadata, dp_hash) = md?;
-
-                let data_proposal = self.get_dp_by_hash(lane_id, &dp_hash)?.ok_or_else(|| {
-                    anyhow::anyhow!("Data proposal {} not found in lane {}", dp_hash, lane_id)
-                })?;
-
-                yield (metadata, data_proposal);
+                match md? {
+                    MetadataOrMissingHash::MissingHash(dp_hash) => {
+                        yield EntryOrMissingHash::MissingHash(dp_hash);
+                        break;
+                    }
+                    MetadataOrMissingHash::Metadata(metadata, dp_hash) => {
+                        match self.get_dp_by_hash(lane_id, &dp_hash)? {
+                            Some(data_proposal) => {
+                                yield EntryOrMissingHash::Entry(metadata, data_proposal);
+                            }
+                            None => {
+                                yield EntryOrMissingHash::MissingHash(dp_hash);
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         }
     }

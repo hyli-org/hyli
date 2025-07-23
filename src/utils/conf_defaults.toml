@@ -18,14 +18,21 @@ run_rest_server = true
 rest_server_port = 4321
 rest_server_max_body_size = 10_485_760 # 10 MB
 
+# Rest API
+run_admin_server = true
+admin_server_port = 4322
+admin_server_max_body_size = 10_485_760 # 10 MB
+
 # TCP API
 run_tcp_server = true
 tcp_server_port = 1414
 
 # Indexer
 run_indexer = true
+run_explorer = true
 database_url = "postgres://postgres:postgres@localhost:5432/postgres"
 da_read_from = "127.0.0.1:4141"
+da_timeout_client_secs = 10
 
 [p2p]
 # "FullValidator" runs a full node, "LaneManager" skips consensus, or "None" to disable most modules.
@@ -43,8 +50,10 @@ ping_interval = 10
 
 
 [consensus]
-# Time between blocks (will change in the future)
+# Time to wait before producing a new block when no new transactions are received.
 slot_duration = 1000
+# Time to wait before sending a timeout message for the slot/view.
+timeout_after = 5000
 # Whether to check timestamp consistency of produced blocks
 timestamp_checks = "Monotonic"
 # Whether to run the single-node or full consensus
@@ -69,3 +78,6 @@ ws_path = "/ws"
 health_path = "/ws_health"
 peer_check_interval = 100
 events = ["node_state", "new_block", "new_tx"]
+
+[indexer]
+query_buffer_size = 100

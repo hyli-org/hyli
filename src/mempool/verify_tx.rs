@@ -25,6 +25,7 @@ pub enum DataProposalVerdict {
     Wait,
     Vote,
     Refuse,
+    Ignore,
 }
 
 impl super::Mempool {
@@ -56,7 +57,8 @@ impl super::Mempool {
             Some(
                 DataProposalVerdict::Empty
                 | DataProposalVerdict::Refuse
-                | DataProposalVerdict::Process,
+                | DataProposalVerdict::Process
+                | DataProposalVerdict::Ignore,
             ) => {
                 debug!(
                     "Ignoring DataProposal {:?} on lane {} (cached verdict)",
@@ -79,7 +81,7 @@ impl super::Mempool {
                     );
                 }
             }
-            _ => {}
+            Some(DataProposalVerdict::Wait) | None => {}
         }
 
         // This is annoying to run in tests because we don't have the event loop setup, so go synchronous.
@@ -170,15 +172,18 @@ impl super::Mempool {
                 );
             }
             DataProposalVerdict::Wait => {
-                debug!("Buffering DataProposal");
+                debug!("Buffering DataProposal {}", data_proposal_hash);
                 // Push the data proposal in the waiting list
                 self.buffered_proposals
                     .entry(lane_id.clone())
                     .or_default()
-                    .push(data_proposal);
+                    .insert(data_proposal);
             }
             DataProposalVerdict::Refuse => {
-                debug!("Refuse vote for DataProposal");
+                debug!("Refuse vote for DataProposal {}", data_proposal.hashed());
+            }
+            DataProposalVerdict::Ignore => {
+                debug!("Ignore DataProposal {}", data_proposal_hash);
             }
         }
         Ok(())
@@ -242,8 +247,10 @@ impl super::Mempool {
                         }
                     });
                     if let Some(child_idx) = child_idx {
-                        // We have a buffered proposal that is a child of this DP
-                        dp = Some(buffered_proposals.swap_remove(child_idx));
+                        // We have a buffered proposal that is a child of this DP, process it.
+                        // (I _would_ use a HashSet, but this requires https://github.com/rust-lang/rust/issues/59618
+                        // which is coming in 1.88)
+                        dp = buffered_proposals.swap_remove_index(child_idx);
                     }
                 }
                 if let Some(dp) = dp {
@@ -258,6 +265,9 @@ impl super::Mempool {
             }
             DataProposalVerdict::Refuse => {
                 debug!("Refuse vote for DataProposal");
+            }
+            DataProposalVerdict::Ignore => {
+                debug!("Ignore DataProposal {}", data_proposal.hashed());
             }
         }
         Ok(())
@@ -282,10 +292,11 @@ impl super::Mempool {
             return Ok((DataProposalVerdict::Vote, Some(lane_size)));
         }
 
-        match self
-            .lanes
-            .can_be_put_on_top(lane_id, data_proposal.parent_data_proposal_hash.as_ref())
-        {
+        match self.lanes.can_be_put_on_top(
+            lane_id,
+            &dp_hash,
+            data_proposal.parent_data_proposal_hash.as_ref(),
+        ) {
             // PARENT UNKNOWN
             CanBePutOnTop::No => {
                 // Get the last known parent hash in order to get all the next ones
@@ -302,6 +313,11 @@ impl super::Mempool {
                     data_proposal.parent_data_proposal_hash
                 );
                 Ok((DataProposalVerdict::Refuse, None))
+            }
+            CanBePutOnTop::AlreadyOnTop => {
+                // This can happen if the lane tip is updated (via a commit) before the data proposal arrived.
+                // For performance reasons, we don't to process the data proposal
+                Ok((DataProposalVerdict::Ignore, None))
             }
         }
     }

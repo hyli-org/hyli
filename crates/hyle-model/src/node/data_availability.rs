@@ -151,6 +151,7 @@ pub enum TransactionStateEvent {
     Settled,
     SettledAsFailed,
     TimedOut,
+    DroppedAsDuplicate,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]

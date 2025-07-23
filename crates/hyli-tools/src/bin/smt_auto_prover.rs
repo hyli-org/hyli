@@ -3,16 +3,22 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{Context, Result};
 use clap::{Parser, command};
 
-use client_sdk::{helpers::risc0::Risc0Prover, rest_client::NodeApiHttpClient};
+use client_sdk::{
+    contract_indexer::utoipa::OpenApi, helpers::risc0::Risc0Prover, rest_client::NodeApiHttpClient,
+};
+use hyle_contract_sdk::api::NodeInfo;
 use hyle_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
-        ModulesHandler,
+        BuildApiContextInner, ModulesHandler,
+        admin::{AdminApi, AdminApiRunContext},
         da_listener::{DAListener, DAListenerConf},
         prover::{AutoProver, AutoProverCtx},
+        rest::{ApiDoc, RestApi, RestApiRunContext, Router},
     },
     utils::logger::setup_tracing,
 };
+use prometheus::Registry;
 use serde::{Deserialize, Serialize};
 use smt_token::client::tx_executor_handler::SmtTokenProvableState;
 
@@ -30,14 +36,34 @@ async fn main() -> Result<()> {
 
     setup_tracing(&config.log_format, "smt auto prover".to_string())?;
 
+    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
+
     tracing::info!("Starting smt auto prover");
 
     let bus = SharedMessageBus::new(BusMetrics::global("smt_auto_prover".to_string()));
 
     tracing::info!("Setting up modules");
 
+    let registry = Registry::new();
+    // Init global metrics meter we expose as an endpoint
+    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+        .with_reader(
+            opentelemetry_prometheus::exporter()
+                .with_registry(registry.clone())
+                .build()
+                .context("starting prometheus exporter")?,
+        )
+        .build();
+
+    opentelemetry::global::set_meter_provider(provider.clone());
+
     let node_client =
         Arc::new(NodeApiHttpClient::new(config.node_url.clone()).context("build node client")?);
+
+    let build_api_ctx = Arc::new(BuildApiContextInner {
+        router: std::sync::Mutex::new(Some(Router::new())),
+        openapi: std::sync::Mutex::new(ApiDoc::openapi()),
+    });
 
     // Initialize modules
     let mut handler = ModulesHandler::new(&bus).await;
@@ -50,9 +76,11 @@ async fn main() -> Result<()> {
             )),
             contract_name: config.contract_name.clone().into(),
             node: node_client.clone(),
+            api: Some(build_api_ctx.clone()),
             default_state: Default::default(),
             buffer_blocks: config.buffer_blocks,
             max_txs_per_proof: config.max_txs_per_proof,
+            tx_working_window_size: config.tx_working_window_size,
         }))
         .await?;
 
@@ -61,7 +89,48 @@ async fn main() -> Result<()> {
             start_block: None,
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
+            timeout_client_secs: 10,
         })
+        .await?;
+
+    let router = build_api_ctx
+        .router
+        .lock()
+        .expect("Context router should be available.")
+        .take()
+        .expect("Context router should be available.");
+    let openapi = build_api_ctx
+        .openapi
+        .lock()
+        .expect("OpenAPI should be available")
+        .clone();
+
+    if config.run_admin_server {
+        handler
+            .build_module::<AdminApi>(AdminApiRunContext::new(
+                config.admin_server_port,
+                Router::new(),
+                config.admin_server_max_body_size,
+                config.data_directory.clone(),
+            ))
+            .await?;
+    }
+
+    handler
+        .build_module::<RestApi>(
+            RestApiRunContext::new(
+                config.rest_server_port,
+                NodeInfo {
+                    id: "smt_auto_prover".to_string(),
+                    pubkey: None,
+                    da_address: config.da_read_from.clone(),
+                },
+                router,
+                config.rest_server_max_body_size,
+                openapi,
+            )
+            .with_registry(registry),
+        )
         .await?;
 
     tracing::info!("Starting modules");
@@ -89,9 +158,17 @@ struct Conf {
 
     pub buffer_blocks: u32,
     pub max_txs_per_proof: usize,
+    pub tx_working_window_size: usize,
 
     /// Contract name to prove
     pub contract_name: String,
+
+    pub rest_server_port: u16,
+    pub rest_server_max_body_size: usize,
+
+    pub run_admin_server: bool,
+    pub admin_server_port: u16,
+    pub admin_server_max_body_size: usize,
 }
 
 impl Conf {

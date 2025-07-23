@@ -11,6 +11,8 @@ pub mod client;
 pub mod fees;
 pub mod state;
 
+impl sdk::FullStateRevert for Staking {}
+
 impl ZkContract for Staking {
     fn execute(&mut self, calldata: &Calldata) -> RunResult {
         let (action, execution_ctx) = parse_calldata::<StakingAction>(calldata)?;
@@ -92,8 +94,7 @@ fn check_transfer_blob(blobs: &IndexedBlobs, index: BlobIndex, amount: u128) -> 
             Ok(())
         }
         els => Err(format!(
-            "Wrong HyllarAction, should be a transfer {:?} to 'staking' but was {:?}",
-            amount, els
+            "Wrong HyllarAction, should be a transfer {amount:?} to 'staking' but was {els:?}"
         )),
     }
 }

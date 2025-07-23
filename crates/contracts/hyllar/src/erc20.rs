@@ -104,26 +104,26 @@ pub trait ERC20 {
         match action {
             HyllarAction::TotalSupply => self
                 .total_supply()
-                .map(|supply| format!("Total Supply: {}", supply)),
+                .map(|supply| format!("Total Supply: {supply}")),
             HyllarAction::BalanceOf { account } => self
                 .balance_of(&account)
-                .map(|balance| format!("Balance of {}: {}", account, balance)),
+                .map(|balance| format!("Balance of {account}: {balance}")),
             HyllarAction::Transfer { recipient, amount } => self
                 .transfer(&caller, &recipient, amount)
-                .map(|_| format!("Transferred {} to {}", amount, recipient)),
+                .map(|_| format!("Transferred {amount} to {recipient}")),
             HyllarAction::TransferFrom {
                 owner,
                 recipient,
                 amount,
             } => self
                 .transfer_from(&owner, &caller, &recipient, amount)
-                .map(|_| format!("Transferred {} from {} to {}", amount, owner, recipient)),
+                .map(|_| format!("Transferred {amount} from {owner} to {recipient}")),
             HyllarAction::Approve { spender, amount } => self
                 .approve(&caller, &spender, amount)
-                .map(|_| format!("Approved {} for {}", amount, spender,)),
+                .map(|_| format!("Approved {amount} for {spender}",)),
             HyllarAction::Allowance { owner, spender } => self
                 .allowance(&owner, &spender)
-                .map(|allowance| format!("Allowance of {} by {}: {}", spender, owner, allowance)),
+                .map(|allowance| format!("Allowance of {spender} by {owner}: {allowance}")),
         }
     }
 

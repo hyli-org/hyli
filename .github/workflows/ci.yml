@@ -14,7 +14,7 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       matrix:
         toolchain:
@@ -51,11 +51,10 @@ jobs:
 
       - name: Install r0vm
         run: |
-          wget https://github.com/risc0/risc0/releases/download/v2.1.0/cargo-risczero-x86_64-unknown-linux-gnu.tgz
+          wget https://github.com/risc0/risc0/releases/download/v2.3.1/cargo-risczero-x86_64-unknown-linux-gnu.tgz
           tar xzvf cargo-risczero-x86_64-unknown-linux-gnu.tgz
           echo "$PWD" >> $GITHUB_PATH
-      - run: cargo build --verbose
-      - run: cargo nextest run --profile ci --workspace
+      - run: cargo nextest run --cargo-profile ci --workspace --tests
       - run: cargo test --doc --workspace
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
@@ -85,7 +84,7 @@ jobs:
       - run: sudo apt install libdbus-1-dev pkg-config
       - name: Install r0vm
         run: |
-          wget https://github.com/risc0/risc0/releases/download/v2.1.0/cargo-risczero-x86_64-unknown-linux-gnu.tgz
+          wget https://github.com/risc0/risc0/releases/download/v2.3.1/cargo-risczero-x86_64-unknown-linux-gnu.tgz
           tar xzvf cargo-risczero-x86_64-unknown-linux-gnu.tgz
           echo "$PWD" >> $GITHUB_PATH
       - name: Generate code coverage

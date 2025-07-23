@@ -113,12 +113,12 @@ impl Module for RestApi {
         })
     }
 
-    fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
-        self.serve()
+    async fn run(&mut self) -> Result<()> {
+        self.serve().await
     }
 }
 
-async fn request_logger(req: Request<Body>, next: Next) -> impl IntoResponse {
+pub async fn request_logger(req: Request<Body>, next: Next) -> impl IntoResponse {
     let method = req.method().clone();
     let uri = req.uri().clone();
     let start_time = Instant::now();
@@ -198,7 +198,7 @@ impl RestApi {
             }
         });
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             delay_shutdown_until {
                 // When the module tries to shutdown it'll cancel the token
                 // and then we actually exit the loop when axum is done.
@@ -220,7 +220,7 @@ impl Clone for RouterState {
     }
 }
 
-fn handle_panic(err: Box<dyn std::any::Any + Send + 'static>) -> Response<String> {
+pub fn handle_panic(err: Box<dyn std::any::Any + Send + 'static>) -> Response<String> {
     let details = if let Some(s) = err.downcast_ref::<String>() {
         s.clone()
     } else if let Some(s) = err.downcast_ref::<&str>() {

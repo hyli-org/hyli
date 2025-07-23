@@ -102,8 +102,7 @@ impl Staking {
         // Staking is only allowed if the staker is not already staked
         if self.stakes.contains_key(&staker) {
             return Err(format!(
-                "Staking balance is frozen for {} (already staked)",
-                staker
+                "Staking balance is frozen for {staker} (already staked)"
             ));
         }
 

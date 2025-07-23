@@ -1,7 +1,27 @@
+#![cfg(test)]
+
 use assertables::assert_err;
 use sdk::hyle_model_utils::TimestampMs;
 
+use crate::node_state::test::contract_registration_tests::{
+    make_register_hyli_wallet_identity_tx, make_register_tx,
+};
+use ::secp256k1::{ecdsa::Signature, rand, Message, PublicKey, Secp256k1, SecretKey};
+use sha2::Digest;
+
 use super::*;
+
+fn sign_data(secret_key: &SecretKey, expected_data: &[u8]) -> ([u8; 32], [u8; 64]) {
+    // Hash the expected data
+    let mut hasher = sha2::Sha256::new();
+    hasher.update(expected_data);
+    let data_hash = hasher.finalize().into();
+    let message = Message::from_digest(data_hash);
+    let mut signature = secret_key.sign_ecdsa(message);
+    signature.normalize_s();
+
+    (data_hash, signature.serialize_compact())
+}
 
 #[test_log::test(tokio::test)]
 async fn happy_path_with_tx_context() {
@@ -1215,10 +1235,82 @@ async fn test_tx_reset_timeout_on_tx_settlement() {
     );
 }
 
+#[test_log::test(tokio::test)]
+async fn test_tx_with_hyle_blob_should_have_specific_timeout_after_block445_000() {
+    let hyle_timeout_window = TimeoutWindow::NoTimeout;
+
+    let mut state = new_node_state().await;
+
+    let tx1 = BlobTransaction::new(
+        "hyle@hyle",
+        vec![RegisterContractAction {
+            verifier: "test".into(),
+            program_id: ProgramId(vec![]),
+            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+            contract_name: ContractName::new("a1"),
+            ..Default::default()
+        }
+        .as_blob("hyle".into(), None, None)],
+    );
+
+    let tx1_hash = tx1.hashed();
+
+    let tx2 = BlobTransaction::new(
+        "hyle@hyle",
+        vec![
+            new_blob("a1"),
+            RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: ContractName::new("c1"),
+                ..Default::default()
+            }
+            .as_blob("hyle".into(), None, None),
+        ],
+    );
+
+    let tx2_hash = tx2.hashed();
+
+    let tx3 = BlobTransaction::new(
+        "hyle@hyle",
+        vec![
+            new_blob("a1"),
+            RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: ContractName::new("c2"),
+                ..Default::default()
+            }
+            .as_blob("hyle".into(), None, None),
+        ],
+    );
+
+    let tx3_hash = tx3.hashed();
+
+    let block = state.craft_block_and_handle(445_001, vec![tx1.into(), tx2.into()]);
+
+    // Assert no timeout
+    assert_eq!(block.timed_out_txs, vec![]);
+
+    // Current Time out behaviour
+    let block = state.craft_block_and_handle(445_001 + 5, vec![]);
+
+    assert_eq!(block.timed_out_txs, vec![]);
+    let block = state.craft_block_and_handle(445_001 + 100, vec![]);
+    assert_eq!(block.timed_out_txs, vec![tx2_hash.clone()]);
+
+    let block = state.craft_block_and_handle(446_001, vec![]);
+    assert_eq!(block.timed_out_txs, vec![]);
+
+    assert!(state.unsettled_transactions.get(&tx2_hash).is_none());
+}
+
 // Check hyle-modules/src/node_state.rs l127 for the timeout window value
 #[test_log::test(tokio::test)]
 async fn test_tx_with_hyle_blob_should_have_specific_timeout() {
-    let hyle_timeout_window = BlockHeight(5);
+    let hyle_timeout_window = TimeoutWindow::NoTimeout;
 
     let mut state = new_node_state().await;
     let a1 = ContractName::new("a1");
@@ -1234,7 +1326,7 @@ async fn test_tx_with_hyle_blob_should_have_specific_timeout() {
     assert_eq!(block.timed_out_txs, vec![]);
 
     // Time out
-    let block = state.craft_block_and_handle(100 + hyle_timeout_window.0, vec![]);
+    let block = state.craft_block_and_handle(100 + 100, vec![]);
 
     // Assert that tx has timed out
     assert_eq!(block.timed_out_txs, vec![tx_hash.clone()]);
@@ -1511,4 +1603,132 @@ async fn test_tx_3_not_settled_when_tx_2_fails_even_with_proof() {
     assert!(block.successful_txs.contains(&tx1_hash));
     assert!(block.failed_txs.contains(&tx2_hash));
     assert!(block.successful_txs.contains(&tx3_hash));
+}
+
+#[test_log::test(tokio::test)]
+async fn test_nuke_transaction_forces_target_to_fail() {
+    use sdk::verifiers::Secp256k1Blob;
+    use sha3::Digest;
+
+    let secp = Secp256k1::new();
+    let (secret_key, public_key) = secp.generate_keypair(&mut rand::rng());
+
+    // Set the public key as environment variable
+    std::env::set_var("HYLI_TLD_PUBKEY", hex::encode(public_key.serialize()));
+
+    let mut state = new_node_state().await;
+    let mut register_secp256k1 = make_register_contract_effect("secp256k1".into());
+    register_secp256k1.program_id = NativeVerifiers::Secp256k1.into();
+    register_secp256k1.verifier = Verifier("secp256k1".to_string());
+    state.handle_register_contract_effect(&register_secp256k1);
+
+    // Register contract_a and secp256k1 contracts
+    let contract_a = ContractName::new("contract_a");
+    let hyli_identity = Identity::new("hyle@hyle");
+    let register_contract_a =
+        make_register_tx(hyli_identity.clone(), "hyle".into(), contract_a.clone());
+
+    // Create three normal transactions
+    let tx1 = BlobTransaction::new(
+        Identity::new("user1@contract_a"),
+        vec![new_blob("contract_a")],
+    );
+    let tx2 = BlobTransaction::new(
+        Identity::new("user2@contract_a"),
+        vec![new_blob("contract_a")],
+    );
+    let tx3 = BlobTransaction::new(
+        Identity::new("user3@contract_a"),
+        vec![new_blob("contract_a")],
+    );
+
+    let tx1_hash = tx1.hashed();
+    let tx2_hash = tx2.hashed();
+    let tx3_hash = tx3.hashed();
+
+    // Submit all transactions
+    state.craft_block_and_handle(
+        1,
+        vec![
+            register_contract_a.into(),
+            tx1.clone().into(),
+            tx2.clone().into(),
+            tx3.clone().into(),
+        ],
+    );
+
+    // Create a nuke transaction targeting tx2
+    let hyle_output_tx2 = hyle_model::HyleOutput {
+        success: false,
+        ..Default::default()
+    };
+    let hyle_output_tx3 = hyle_model::HyleOutput {
+        success: true,
+        initial_state: StateCommitment(vec![4, 5, 6]),
+        next_state: StateCommitment(vec![10, 11, 12]),
+        ..Default::default()
+    };
+    let nuke_action = NukeTxAction {
+        txs: BTreeMap::from([
+            (tx2_hash.clone(), vec![hyle_output_tx2]),
+            (tx3_hash.clone(), vec![hyle_output_tx3]),
+        ]),
+    };
+    let nuke_blob = nuke_action.as_blob("hyle".into(), None, None);
+
+    // Create secp256k1 blob that signs the transaction hash data
+    let expected_data = borsh::to_vec(&nuke_action.txs).unwrap();
+
+    let (data_hash, signature) = sign_data(&secret_key, &expected_data);
+
+    let secp_blob_data = Secp256k1Blob {
+        identity: Identity::new("hyle@hyle"),
+        data: data_hash,
+        public_key: public_key.serialize(),
+        signature,
+    };
+
+    let secp_blob = secp_blob_data.as_blob();
+
+    let nuke_tx = BlobTransaction::new(Identity::new("hyle@hyle"), vec![secp_blob, nuke_blob]);
+    let nuke_tx_hash = nuke_tx.hashed();
+
+    // Submit nuke transaction (secp256k1 is native so no proof needed)
+    let nuke_block = state.craft_block_and_handle(2, vec![nuke_tx.into()]);
+
+    // Verify that nuke tx succeeded
+    assert!(nuke_block.successful_txs.contains(&nuke_tx_hash));
+    // Verify that tx2 failed (was nuked) - the key test
+    assert!(nuke_block.failed_txs.contains(&tx2_hash));
+
+    // Create proofs for all transactions
+    let proof1 = new_proof_tx(
+        &contract_a,
+        &make_hyle_output_with_state(tx1.clone(), BlobIndex(0), &[0, 1, 2, 3], &[4, 5, 6]),
+        &tx1_hash,
+    );
+
+    let proof2 = new_proof_tx(
+        &contract_a,
+        &make_hyle_output_with_state(tx2.clone(), BlobIndex(0), &[4, 5, 6], &[7, 8, 9]),
+        &tx2_hash,
+    );
+
+    // Then submit proofs for the other transactions
+    let block = state.craft_block_and_handle(3, vec![proof1.into(), proof2.into()]);
+
+    // Verify that tx1 succeeded
+    assert!(block.successful_txs.contains(&tx1_hash));
+
+    // Verify that tx3 succeeded (tx2 failure doesn't block tx3)
+    assert!(block.successful_txs.contains(&tx3_hash));
+
+    // Verify the final state - should be [10, 11, 12] from tx3
+    assert_eq!(
+        state.contracts.get(&contract_a).unwrap().state.0,
+        vec![10, 11, 12]
+    );
+
+    // Verify that tx2 is no longer in unsettled transactions
+    assert!(state.unsettled_transactions.get(&tx2_hash).is_none());
 }

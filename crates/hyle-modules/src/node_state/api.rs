@@ -6,7 +6,7 @@ use axum::{
     Json, Router,
 };
 use client_sdk::contract_indexer::AppError;
-use sdk::*;
+use sdk::{api::APINodeContract, *};
 use tracing::error;
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
@@ -18,17 +18,20 @@ use crate::{
         metrics::BusMetrics,
         SharedMessageBus,
     },
-    node_state::module::{QueryBlockHeight, QueryUnsettledTx},
+    modules::signal::ShutdownModule,
+    node_state::module::{QueryBlockHeight, QueryUnsettledTx, QueryUnsettledTxCount},
 };
 
 use super::module::{NodeStateCtx, QuerySettledHeight};
 
 bus_client! {
 struct RestBusClient {
-    sender(Query<ContractName, Contract>),
+    sender(Query<ContractName, (BlockHeight, Contract)>),
     sender(Query<QuerySettledHeight, BlockHeight>),
+    sender(Query<QueryUnsettledTxCount, u64>),
     sender(Query<QueryBlockHeight, BlockHeight>),
     sender(Query<QueryUnsettledTx, UnsettledBlobTransaction>),
+    receiver(ShutdownModule),
 }
 }
 
@@ -48,6 +51,8 @@ pub async fn api(bus: SharedMessageBus, ctx: &NodeStateCtx) -> Router<()> {
         .routes(routes!(get_block_height))
         .routes(routes!(get_contract))
         .routes(routes!(get_contract_settled_height))
+        .routes(routes!(get_contract_unsettled_txs_count))
+        .routes(routes!(get_unsettled_txs_count))
         // TODO: figure out if we want to rely on the indexer instead
         .routes(routes!(get_unsettled_tx))
         .split_for_parts();
@@ -75,8 +80,18 @@ pub async fn get_contract(
     State(mut state): State<RouterState>,
 ) -> Result<impl IntoResponse, AppError> {
     let name_clone = name.clone();
-    match state.bus.request(name).await {
-        Ok(contract) => Ok(Json(contract)),
+    match state.bus.shutdown_aware_request::<()>(name).await {
+        Ok((block_height, contract)) => Ok(Json(APINodeContract {
+            contract_name: name_clone,
+            state_block_height: block_height,
+            state_commitment: contract.state,
+            program_id: contract.program_id,
+            verifier: contract.verifier,
+            timeout_window: match contract.timeout_window {
+                TimeoutWindow::NoTimeout => None,
+                TimeoutWindow::Timeout(window) => Some(window.0),
+            },
+        })),
         err => {
             if let Err(e) = err.as_ref() {
                 if e.to_string().contains("Contract not found") {
@@ -113,7 +128,11 @@ pub async fn get_contract_settled_height(
     State(mut state): State<RouterState>,
 ) -> Result<impl IntoResponse, AppError> {
     let name_clone = name.clone();
-    match state.bus.request(QuerySettledHeight(name)).await {
+    match state
+        .bus
+        .shutdown_aware_request::<()>(QuerySettledHeight(name))
+        .await
+    {
         Ok(contract) => Ok(Json::<BlockHeight>(contract)),
         err => {
             if let Err(e) = err.as_ref() {
@@ -136,6 +155,64 @@ pub async fn get_contract_settled_height(
 
 #[utoipa::path(
     get,
+    path = "/contract/{name}/unsettled_txs_count",
+    params(
+        ("name" = String, Path, description = "Contract name"),
+    ),
+    tag = "Node State",
+    responses(
+        (status = OK, body = u64, description = "Returns the number of unsettled transactions for a specific contract")
+    )
+)]
+pub async fn get_contract_unsettled_txs_count(
+    Path(name): Path<ContractName>,
+    State(mut state): State<RouterState>,
+) -> Result<impl IntoResponse, AppError> {
+    match state
+        .bus
+        .shutdown_aware_request::<()>(QueryUnsettledTxCount(Some(name)))
+        .await
+    {
+        Ok(count) => Ok(Json(count)),
+        err => {
+            error!("{:?}", err);
+            Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                anyhow!("Error while getting unsettled tx count"),
+            ))
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/unsettled_txs_count",
+    tag = "Node State",
+    responses(
+        (status = OK, body = u64, description = "Returns the number of unsettled transactions")
+    )
+)]
+pub async fn get_unsettled_txs_count(
+    State(mut state): State<RouterState>,
+) -> Result<impl IntoResponse, AppError> {
+    match state
+        .bus
+        .shutdown_aware_request::<()>(QueryUnsettledTxCount(None))
+        .await
+    {
+        Ok(count) => Ok(Json(count)),
+        err => {
+            error!("{:?}", err);
+            Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                anyhow!("Error while getting unsettled tx count"),
+            ))
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
     path = "/unsettled_tx/{blob_tx_hash}",
     params(
         ("blob_tx_hash" = String, Path, description = "Blob tx hash"),
@@ -151,7 +228,7 @@ pub async fn get_unsettled_tx(
 ) -> Result<impl IntoResponse, AppError> {
     match state
         .bus
-        .request(QueryUnsettledTx(TxHash(blob_tx_hash)))
+        .shutdown_aware_request::<()>(QueryUnsettledTx(TxHash(blob_tx_hash)))
         .await
     {
         Ok(tx_context) => Ok(Json(tx_context)),
@@ -177,7 +254,11 @@ pub async fn get_unsettled_tx(
 pub async fn get_block_height(
     State(mut state): State<RouterState>,
 ) -> Result<impl IntoResponse, AppError> {
-    match state.bus.request(QueryBlockHeight {}).await {
+    match state
+        .bus
+        .shutdown_aware_request::<()>(QueryBlockHeight {})
+        .await
+    {
         Ok(block_height) => Ok(Json(block_height)),
         err => {
             error!("{:?}", err);
@@ -196,7 +277,7 @@ impl Clone for RouterState {
         Self {
             bus: RestBusClient::new(
                 Pick::<BusMetrics>::get(&self.bus).clone(),
-                Pick::<tokio::sync::broadcast::Sender<Query<ContractName, Contract>>>::get(
+                Pick::<tokio::sync::broadcast::Sender<Query<ContractName, (BlockHeight, Contract)>>>::get(
                     &self.bus,
                 )
                 .clone(),
@@ -204,6 +285,10 @@ impl Clone for RouterState {
                     tokio::sync::broadcast::Sender<
                         Query<QuerySettledHeight, BlockHeight>,
                     >,
+                >::get(&self.bus)
+                .clone(),
+                Pick::<
+                    tokio::sync::broadcast::Sender<Query<QueryUnsettledTxCount, u64>>,
                 >::get(&self.bus)
                 .clone(),
                 Pick::<tokio::sync::broadcast::Sender<Query<QueryBlockHeight, BlockHeight>>>::get(
@@ -216,6 +301,7 @@ impl Clone for RouterState {
                     >,
                 >::get(&self.bus)
                 .clone(),
+                Pick::<tokio::sync::broadcast::Receiver<ShutdownModule>>::get(&self.bus).resubscribe(),
             ),
         }
     }

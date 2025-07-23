@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use axum::{debug_handler, extract::State, http::StatusCode, response::IntoResponse, Json, Router};
 use client_sdk::contract_indexer::AppError;
 use hyle_model::api::APIStaking;
-use hyle_modules::bus::SharedMessageBus;
+use hyle_modules::{bus::SharedMessageBus, modules::signal::ShutdownModule};
 use staking::state::Staking;
 use tracing::error;
 use utoipa::OpenApi;
@@ -23,6 +23,7 @@ bus_client! {
 struct RestBusClient {
     sender(Query<QueryConsensusInfo, ConsensusInfo>),
     sender(Query<QueryConsensusStakingState, Staking>),
+    receiver(ShutdownModule),
 }
 }
 
@@ -62,7 +63,11 @@ pub async fn api(bus: &SharedMessageBus, ctx: &SharedRunContext) -> Router<()> {
 pub async fn get_consensus_state(
     State(mut state): State<RouterState>,
 ) -> Result<impl IntoResponse, AppError> {
-    match state.bus.request(QueryConsensusInfo {}).await {
+    match state
+        .bus
+        .shutdown_aware_request::<()>(QueryConsensusInfo {})
+        .await
+    {
         Ok(consensus_state) => Ok(Json(consensus_state)),
         Err(err) => {
             error!("{:?}", err);
@@ -87,7 +92,11 @@ pub async fn get_consensus_state(
 pub async fn get_consensus_staking_state(
     State(mut state): State<RouterState>,
 ) -> Result<impl IntoResponse, AppError> {
-    match state.bus.request(QueryConsensusStakingState {}).await {
+    match state
+        .bus
+        .shutdown_aware_request::<()>(QueryConsensusStakingState {})
+        .await
+    {
         Ok(staking) => {
             let api: APIStaking = staking.into();
             Ok(Json(api))
@@ -117,6 +126,7 @@ impl Clone for RouterState {
                     &self.bus,
                 )
                 .clone(),
+                Pick::<tokio::sync::broadcast::Receiver<ShutdownModule>>::get(&self.bus).resubscribe()
             )
         }
     }

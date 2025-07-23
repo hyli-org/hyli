@@ -7,11 +7,15 @@ use serde_with::DurationMilliSeconds;
 use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::Arc, time::Duration};
 use strum_macros::IntoStaticStr;
 
+use crate::indexer::IndexerConf;
+
 #[serde_as]
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Consensus {
     #[serde_as(as = "DurationMilliSeconds")]
     pub slot_duration: Duration,
+    #[serde_as(as = "DurationMilliSeconds")]
+    pub timeout_after: Duration,
     /// Checks during consensus that blocks have legit timestamps
     pub timestamp_checks: TimestampCheck,
     /// Whether the network runs as a single node or with a multi-node consensus.
@@ -128,19 +132,33 @@ pub struct Conf {
     /// Maximum body size for REST requests
     pub rest_server_max_body_size: usize,
 
+    pub run_admin_server: bool,
+    /// Server port for the admin API
+    pub admin_server_port: u16,
+    /// Maximum body size for admin requests
+    pub admin_server_max_body_size: usize,
+
     pub run_tcp_server: bool,
     /// Server port for the TCP API
     pub tcp_server_port: u16,
 
-    /// Whether to run the indexer
+    /// Whether to run the indexer (write to db)
     pub run_indexer: bool,
+    /// Whether to run the explorer (read from db)
+    pub run_explorer: bool,
+
     /// If running the indexer, the postgres address to connect to
     pub database_url: String,
     /// When running only the indexer, the address of the DA server to connect to
     pub da_read_from: String,
+    /// Timeout for DA client requests, in seconds, before it tries to reconnect to stream blocks
+    pub da_timeout_client_secs: u64,
 
     /// Websocket configuration
     pub websocket: NodeWebSocketConfig,
+
+    /// Configuration for the indexer module
+    pub indexer: IndexerConf,
 }
 
 impl Conf {
@@ -168,6 +186,7 @@ impl Conf {
             )
             .set_override_option("data_directory", data_directory)?
             .set_override_option("run_indexer", run_indexer)?
+            .set_override_option("run_explorer", run_indexer)?
             .build()?
             .try_deserialize()?;
         // Mostly for convenience, ignore ourself from the peers list

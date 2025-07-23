@@ -40,6 +40,8 @@ impl ContractAction for UuidTldAction {
     }
 }
 
+impl sdk::FullStateRevert for UuidTld {}
+
 impl ZkContract for UuidTld {
     fn execute(&mut self, calldata: &Calldata) -> RunResult {
         // Not an identity provider
@@ -55,7 +57,7 @@ impl ZkContract for UuidTld {
                 UuidTldAction::Claim => {
                     let id = self.claim_contract(calldata)?;
                     let uuid = Uuid::from_u128(id);
-                    return Ok((format!("claimed {}", uuid).into_bytes(), exec_ctx, vec![]));
+                    return Ok((format!("claimed {uuid}").into_bytes(), exec_ctx, vec![]));
                 }
             }
         }
@@ -189,7 +191,7 @@ mod test {
 
         // Then register it with the same identity
         let register_action = RegisterContractAction {
-            contract_name: format!("{}.test", uuid).into(),
+            contract_name: format!("{uuid}.test").into(),
             verifier: "test".into(),
             program_id: ProgramId(vec![1, 2, 3]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
@@ -202,7 +204,7 @@ mod test {
         let OnchainEffect::RegisterContract(effect) = onchain_effects.first().unwrap() else {
             panic!("Expected RegisterContract effect");
         };
-        assert_eq!(effect.contract_name.0, format!("{}.test", uuid));
+        assert_eq!(effect.contract_name.0, format!("{uuid}.test"));
         assert_eq!(effect.verifier, Verifier("test".into()));
         assert_eq!(effect.program_id, ProgramId(vec![1, 2, 3]));
         assert_eq!(effect.state_commitment, StateCommitment(vec![0, 1, 2, 3]));
@@ -214,7 +216,7 @@ mod test {
         // Try to register with unclaimed UUID
         let unclaimed_uuid = Uuid::from_u128(12345);
         let register_action = RegisterContractAction {
-            contract_name: format!("{}.test", unclaimed_uuid).into(),
+            contract_name: format!("{unclaimed_uuid}.test").into(),
             verifier: "test".into(),
             program_id: ProgramId(vec![1, 2, 3]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),

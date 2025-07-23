@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     fmt::Display,
     ops::{Add, Deref, DerefMut, Sub},
 };
@@ -479,6 +480,22 @@ pub struct ProgramId(pub Vec<u8>);
 #[cfg_attr(feature = "full", derive(Serialize, utoipa::ToSchema))]
 pub struct ProofData(#[cfg_attr(feature = "full", serde(with = "base64_field"))] pub Vec<u8>);
 
+#[derive(Debug, Default, PartialEq, Eq, Clone, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "full", derive(Serialize, utoipa::ToSchema))]
+pub struct ProofMetadata {
+    pub cycles: Option<u64>,
+    pub prover: Option<String>,
+    /// SessionId, TxHash, ... of the proof request on a prover network
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Clone, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "full", derive(Serialize, utoipa::ToSchema))]
+pub struct Proof {
+    pub data: ProofData,
+    pub metadata: ProofMetadata,
+}
+
 #[cfg(feature = "full")]
 impl<'de> Deserialize<'de> for ProofData {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -757,6 +774,32 @@ pub enum TimeoutWindow {
     Timeout(BlockHeight),
 }
 
+impl PartialOrd for TimeoutWindow {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for TimeoutWindow {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (TimeoutWindow::NoTimeout, TimeoutWindow::NoTimeout) => Ordering::Equal,
+            (TimeoutWindow::Timeout(_), TimeoutWindow::NoTimeout) => Ordering::Less,
+            (TimeoutWindow::NoTimeout, TimeoutWindow::Timeout(_)) => Ordering::Greater,
+            (TimeoutWindow::Timeout(a), TimeoutWindow::Timeout(b)) => a.cmp(b),
+        }
+    }
+}
+
+impl Display for TimeoutWindow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            TimeoutWindow::NoTimeout => write!(f, "NoTimeout"),
+            TimeoutWindow::Timeout(height) => write!(f, "Timeout({})", height.0),
+        }
+    }
+}
+
 impl Default for TimeoutWindow {
     fn default() -> Self {
         TimeoutWindow::Timeout(BlockHeight(100))
@@ -809,6 +852,58 @@ impl Hashed<TxHash> for RegisterContractAction {
 }
 
 impl ContractAction for RegisterContractAction {
+    fn as_blob(
+        &self,
+        contract_name: ContractName,
+        caller: Option<BlobIndex>,
+        callees: Option<Vec<BlobIndex>>,
+    ) -> Blob {
+        Blob {
+            contract_name,
+            data: BlobData::from(StructuredBlobData {
+                caller,
+                callees,
+                parameters: self.clone(),
+            }),
+        }
+    }
+}
+
+#[derive(
+    Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
+)]
+pub struct UpdateContractProgramIdAction {
+    pub contract_name: ContractName,
+    pub program_id: ProgramId,
+}
+
+impl ContractAction for UpdateContractProgramIdAction {
+    fn as_blob(
+        &self,
+        contract_name: ContractName,
+        caller: Option<BlobIndex>,
+        callees: Option<Vec<BlobIndex>>,
+    ) -> Blob {
+        Blob {
+            contract_name,
+            data: BlobData::from(StructuredBlobData {
+                caller,
+                callees,
+                parameters: self.clone(),
+            }),
+        }
+    }
+}
+
+#[derive(
+    Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
+)]
+pub struct UpdateContractTimeoutWindowAction {
+    pub contract_name: ContractName,
+    pub timeout_window: TimeoutWindow,
+}
+
+impl ContractAction for UpdateContractTimeoutWindowAction {
     fn as_blob(
         &self,
         contract_name: ContractName,
@@ -926,5 +1021,92 @@ pub mod base64_field {
     {
         let s = String::deserialize(deserializer)?;
         BASE64_STANDARD.decode(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod tests_timeout_order {
+    use super::*;
+
+    #[test]
+    fn test_timeout_vs_timeout() {
+        let a = TimeoutWindow::Timeout(BlockHeight(5));
+        let b = TimeoutWindow::Timeout(BlockHeight(10));
+        assert!(a < b);
+        assert!(b > a);
+        assert_eq!(a.partial_cmp(&b), Some(Ordering::Less));
+        assert_eq!(b.partial_cmp(&a), Some(Ordering::Greater));
+    }
+
+    #[test]
+    fn test_timeout_vs_same_timeout() {
+        let a = TimeoutWindow::Timeout(BlockHeight(7));
+        let b = TimeoutWindow::Timeout(BlockHeight(7));
+        assert_eq!(a, b);
+        assert_eq!(a.cmp(&b), Ordering::Equal);
+        assert_eq!(a.partial_cmp(&b), Some(Ordering::Equal));
+    }
+
+    #[test]
+    fn test_timeout_vs_no_timeout() {
+        let a = TimeoutWindow::Timeout(BlockHeight(15));
+        let b = TimeoutWindow::NoTimeout;
+        assert!(a < b);
+        assert_eq!(a.cmp(&b), Ordering::Less);
+        assert_eq!(a.partial_cmp(&b), Some(Ordering::Less));
+    }
+
+    #[test]
+    fn test_no_timeout_vs_timeout() {
+        let a = TimeoutWindow::NoTimeout;
+        let b = TimeoutWindow::Timeout(BlockHeight(1));
+        assert!(a > b);
+        assert_eq!(a.cmp(&b), Ordering::Greater);
+        assert_eq!(a.partial_cmp(&b), Some(Ordering::Greater));
+    }
+
+    #[test]
+    fn test_no_timeout_vs_no_timeout() {
+        let a = TimeoutWindow::NoTimeout;
+        let b = TimeoutWindow::NoTimeout;
+        assert_eq!(a, b);
+        assert_eq!(a.cmp(&b), Ordering::Equal);
+        assert_eq!(a.partial_cmp(&b), Some(Ordering::Equal));
+    }
+
+    #[test]
+    fn test_min_timeout_is_always_selected() {
+        let timeout = TimeoutWindow::Timeout(BlockHeight(42));
+        let no_timeout = TimeoutWindow::NoTimeout;
+
+        // min(NoTimeout, Timeout(42)) == Timeout(42)
+        assert_eq!(std::cmp::min(no_timeout.clone(), timeout.clone()), timeout);
+
+        // min(Timeout(42), NoTimeout) == Timeout(42)
+        assert_eq!(std::cmp::min(timeout.clone(), no_timeout.clone()), timeout);
+    }
+
+    #[test]
+    fn test_min_among_multiple_timeout_windows() {
+        use TimeoutWindow::{NoTimeout, Timeout};
+
+        let timeouts = [
+            NoTimeout,
+            Timeout(BlockHeight(100)),
+            Timeout(BlockHeight(50)),
+            NoTimeout,
+            Timeout(BlockHeight(200)),
+            Timeout(BlockHeight(10)),
+        ];
+
+        // Utiliser min avec Iterator
+        let actual_min = timeouts
+            .iter()
+            .min()
+            .expect("La liste ne doit pas être vide");
+
+        let expected_min = &Timeout(BlockHeight(10));
+
+        assert_eq!(actual_min, expected_min);
     }
 }

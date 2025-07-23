@@ -7,7 +7,7 @@ use crate::bus::{command_response::Query, BusClientSender};
 use crate::log_error;
 use crate::module_handle_messages;
 use crate::modules::{module_bus_client, Module, SharedBuildApiCtx};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use sdk::*;
 use std::path::PathBuf;
 use tracing::info;
@@ -31,6 +31,9 @@ pub struct QueryBlockHeight {}
 pub struct QuerySettledHeight(pub ContractName);
 
 #[derive(Clone)]
+pub struct QueryUnsettledTxCount(pub Option<ContractName>);
+
+#[derive(Clone)]
 pub struct QueryUnsettledTx(pub TxHash);
 
 module_bus_client! {
@@ -38,8 +41,9 @@ module_bus_client! {
 pub struct NodeStateBusClient {
     sender(NodeStateEvent),
     receiver(DataEvent),
-    receiver(Query<ContractName, Contract>),
+    receiver(Query<ContractName, (BlockHeight, Contract)>),
     receiver(Query<QuerySettledHeight, BlockHeight>),
+    receiver(Query<QueryUnsettledTxCount, u64>),
     receiver(Query<QueryBlockHeight , BlockHeight>),
     receiver(Query<QueryUnsettledTx, UnsettledBlobTransaction>),
 }
@@ -83,20 +87,33 @@ impl Module for NodeStateModule {
 
     async fn run(&mut self) -> Result<()> {
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             command_response<QueryBlockHeight, BlockHeight> _ => {
                 Ok(self.inner.current_height)
             }
-            command_response<ContractName, Contract> cmd => {
-                self.inner.contracts.get(cmd).cloned().context("Contract not found")
+            command_response<ContractName, (BlockHeight, Contract)> cmd => {
+                let block_height = self.inner.current_height;
+                match self.inner.contracts.get(cmd).cloned() {
+                    Some(contract) => Ok((block_height, contract)),
+                    None => Err(anyhow::anyhow!("Contract {} not found", cmd)),
+                }
             }
             command_response<QuerySettledHeight, BlockHeight> cmd => {
                 if !self.inner.contracts.contains_key(&cmd.0) {
-                    return Err(anyhow::anyhow!("Contract not found"));
+                    Err(anyhow::anyhow!("Contract {} not found", cmd.0))
+                } else {
+                    let height = self.inner.unsettled_transactions.get_earliest_unsettled_height(&cmd.0).unwrap_or(self.inner.current_height);
+                    Ok(BlockHeight(height.0 - 1))
                 }
-                let height = self.inner.unsettled_transactions.get_earliest_unsettled_height(&cmd.0).unwrap_or(self.inner.current_height);
-                Ok(BlockHeight(height.0 - 1))
-        }
+            }
+            command_response<QueryUnsettledTxCount, u64> cmd => {
+                let count = if let Some(contract_name) = &cmd.0 {
+                    self.inner.unsettled_transactions.get_tx_order(contract_name).map(|txs| txs.len() as u64).unwrap_or(0)
+                } else {
+                    self.inner.unsettled_transactions.len() as u64
+                };
+                Ok(count)
+            }
             command_response<QueryUnsettledTx, UnsettledBlobTransaction> tx_hash => {
                 match self.inner.unsettled_transactions.get(&tx_hash.0) {
                     Some(tx) => Ok(tx.clone()),
@@ -116,14 +133,16 @@ impl Module for NodeStateModule {
             }
         };
 
-        let _ = log_error!(
+        Ok(())
+    }
+
+    async fn persist(&mut self) -> Result<()> {
+        log_error!(
             Self::save_on_disk::<NodeStateStore>(
                 self.data_directory.join("node_state.bin").as_path(),
                 &self.inner,
             ),
             "Saving node state"
-        );
-
-        Ok(())
+        )
     }
 }

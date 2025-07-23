@@ -1,12 +1,12 @@
 use anyhow::Result;
 use async_stream::try_stream;
 use borsh::{BorshDeserialize, BorshSerialize};
-use futures::Stream;
+use futures::{Stream, StreamExt};
 use hyle_crypto::BlstCrypto;
 use hyle_model::{DataSized, LaneId};
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
-use std::vec;
+use std::{future::Future, vec};
 use tracing::error;
 
 use crate::model::{
@@ -20,7 +20,20 @@ pub use hyle_model::LaneBytesSize;
 pub enum CanBePutOnTop {
     Yes,
     No,
+    AlreadyOnTop,
     Fork,
+}
+
+#[derive(Debug)]
+pub enum EntryOrMissingHash {
+    Entry(LaneEntryMetadata, DataProposal),
+    MissingHash(DataProposalHash),
+}
+
+#[derive(Debug)]
+pub enum MetadataOrMissingHash {
+    Metadata(LaneEntryMetadata, DataProposalHash),
+    MissingHash(DataProposalHash),
 }
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,7 +62,6 @@ pub trait Storage {
         &mut self,
         lane_id: LaneId,
     ) -> Result<Option<(DataProposalHash, (LaneEntryMetadata, DataProposal))>>;
-    fn put(&mut self, lane_id: LaneId, entry: (LaneEntryMetadata, DataProposal)) -> Result<()>;
     fn put_no_verification(
         &mut self,
         lane_id: LaneId,
@@ -151,25 +163,80 @@ pub trait Storage {
         // Add DataProposal to validator's lane
         let data_proposal_hash = data_proposal.hashed();
 
-        let dp_size = data_proposal.estimate_size();
-        let lane_size = self.get_lane_size_tip(lane_id).cloned().unwrap_or_default();
-        let cumul_size = lane_size + dp_size;
+        if self.contains(lane_id, &data_proposal_hash) {
+            anyhow::bail!("DataProposal {} was already in lane", data_proposal_hash);
+        }
 
-        let msg = (data_proposal_hash.clone(), cumul_size);
-        let signatures = vec![crypto.sign(msg)?];
+        let verdict = self.can_be_put_on_top(
+            lane_id,
+            &data_proposal_hash,
+            data_proposal.parent_data_proposal_hash.as_ref(),
+        );
 
-        // FIXME: Investigate if we can directly use put_no_verification
-        self.put(
-            lane_id.clone(),
-            (
-                LaneEntryMetadata {
-                    parent_data_proposal_hash: data_proposal.parent_data_proposal_hash.clone(),
-                    cumul_size,
-                    signatures,
-                },
-                data_proposal,
-            ),
-        )?;
+        let cumul_size = match verdict {
+            CanBePutOnTop::No => {
+                anyhow::bail!(
+                    "Can't store DataProposal {}, as parent is unknown",
+                    data_proposal_hash
+                );
+            }
+            CanBePutOnTop::Fork => {
+                let last_known_hash = self.get_lane_hash_tip(lane_id);
+                anyhow::bail!(
+                    "DataProposal cannot be put in lane because it creates a fork: tip dp hash {:?} while proposed parent_data_proposal_hash: {:?}",
+                    last_known_hash,
+                    data_proposal.parent_data_proposal_hash
+                )
+            }
+            CanBePutOnTop::Yes => {
+                let dp_size = data_proposal.estimate_size();
+                let lane_size = self.get_lane_size_tip(lane_id).cloned().unwrap_or_default();
+                let cumul_size = lane_size + dp_size;
+
+                let msg = (data_proposal_hash.clone(), cumul_size);
+                let signatures = vec![crypto.sign(msg)?];
+
+                self.put_no_verification(
+                    lane_id.clone(),
+                    (
+                        LaneEntryMetadata {
+                            parent_data_proposal_hash: data_proposal
+                                .parent_data_proposal_hash
+                                .clone(),
+                            cumul_size,
+                            signatures,
+                        },
+                        data_proposal,
+                    ),
+                )?;
+                // We optimistically update our lane tip here, we'll potentially clean this later.
+                self.update_lane_tip(lane_id.clone(), data_proposal_hash.clone(), cumul_size);
+                cumul_size
+            }
+            CanBePutOnTop::AlreadyOnTop => {
+                // This can happen if the lane tip is updated (via a commit) before the data proposal is processed.
+                // Store it anyways - this ensures caller end up in a consistent state.
+                // The lane_size already contains the size of the current data proposal, so we don't need to adjust it.
+                let cumul_size = self.get_lane_size_tip(lane_id).cloned().unwrap_or_default();
+                let msg = (data_proposal_hash.clone(), cumul_size);
+                let signatures = vec![crypto.sign(msg)?];
+                self.put_no_verification(
+                    lane_id.clone(),
+                    (
+                        LaneEntryMetadata {
+                            parent_data_proposal_hash: data_proposal
+                                .parent_data_proposal_hash
+                                .clone(),
+                            cumul_size,
+                            signatures,
+                        },
+                        data_proposal,
+                    ),
+                )?;
+                cumul_size
+            }
+        };
+
         Ok((data_proposal_hash, cumul_size))
     }
 
@@ -180,14 +247,14 @@ pub trait Storage {
         lane_id: &LaneId,
         from_data_proposal_hash: Option<DataProposalHash>,
         to_data_proposal_hash: Option<DataProposalHash>,
-    ) -> impl Stream<Item = Result<(LaneEntryMetadata, DataProposal)>>;
+    ) -> impl Stream<Item = Result<EntryOrMissingHash>>;
 
     fn get_entries_metadata_between_hashes(
         &self,
         lane_id: &LaneId,
         from_data_proposal_hash: Option<DataProposalHash>,
         to_data_proposal_hash: Option<DataProposalHash>,
-    ) -> impl Stream<Item = Result<(LaneEntryMetadata, DataProposalHash)>> {
+    ) -> impl Stream<Item = Result<MetadataOrMissingHash>> {
         // If no dp hash is provided, we use the tip of the lane
         let initial_dp_hash: Option<DataProposalHash> =
             to_data_proposal_hash.or(self.get_lane_hash_tip(lane_id).cloned());
@@ -197,7 +264,7 @@ pub trait Storage {
                     let lane_entry = self.get_metadata_by_hash(lane_id, &some_dp_hash)?;
                     match lane_entry {
                         Some(lane_entry) => {
-                            yield (lane_entry.clone(), some_dp_hash);
+                            yield MetadataOrMissingHash::Metadata(lane_entry.clone(), some_dp_hash);
                             if let Some(parent_dp_hash) = lane_entry.parent_data_proposal_hash.clone() {
                                 some_dp_hash = parent_dp_hash;
                             } else {
@@ -205,7 +272,8 @@ pub trait Storage {
                             }
                         }
                         None => {
-                            Err(anyhow::anyhow!("Local lane is incomplete: could not find DP {}", some_dp_hash))?;
+                            yield MetadataOrMissingHash::MissingHash(some_dp_hash.clone());
+                            break;
                         }
                     }
                 }
@@ -228,7 +296,7 @@ pub trait Storage {
         &self,
         lane_id: &LaneId,
         last_cut: Option<Cut>,
-    ) -> impl Stream<Item = Result<(LaneEntryMetadata, DataProposalHash)>> {
+    ) -> impl Stream<Item = Result<MetadataOrMissingHash>> {
         let lane_tip = self.get_lane_hash_tip(lane_id);
 
         let last_committed_dp_hash = match last_cut {
@@ -243,6 +311,36 @@ pub trait Storage {
             last_committed_dp_hash.clone(),
             lane_tip.cloned(),
         )
+    }
+
+    /// Get oldest entry in the lane wrt the last committed cut.
+    fn get_oldest_pending_entry(
+        &self,
+        lane_id: &LaneId,
+        last_cut: Option<Cut>,
+    ) -> impl Future<Output = Result<Option<(LaneEntryMetadata, DataProposalHash)>>> {
+        async move {
+            let mut stream = Box::pin(self.get_pending_entries_in_lane(lane_id, last_cut));
+            let mut last_entry = None;
+
+            while let Some(entry) = stream.next().await {
+                match entry? {
+                    MetadataOrMissingHash::Metadata(metadata, dp_hash) => {
+                        last_entry = Some((metadata, dp_hash));
+                    }
+                    MetadataOrMissingHash::MissingHash(_) => {
+                        // Missing entry, should not happen
+                        tracing::warn!(
+                            "Missing entry in lane {} while trying to get oldest entry",
+                            lane_id
+                        );
+                        return Ok(None);
+                    }
+                }
+            }
+
+            Ok(last_entry)
+        }
     }
 
     /// For unknown DataProposals in the new cut, we need to remove all DataProposals that we have after the previous cut.
@@ -279,15 +377,21 @@ pub trait Storage {
     /// Returns CanBePutOnTop::Yes if the DataProposal can be put in the lane
     /// Returns CanBePutOnTop::False if the DataProposal can't be put in the lane because the parent is unknown
     /// Returns CanBePutOnTop::Fork if the DataProposal creates a fork
+    /// Returns CanBePutOnTop::AlreadyOnTop if the DataProposal is already on top of the lane
     fn can_be_put_on_top(
         &mut self,
         lane_id: &LaneId,
+        data_proposal_hash: &DataProposalHash,
         parent_data_proposal_hash: Option<&DataProposalHash>,
     ) -> CanBePutOnTop {
         // Data proposal parent hash needs to match the lane tip of that validator
         if parent_data_proposal_hash == self.get_lane_hash_tip(lane_id) {
             // LEGIT DATAPROPOSAL
             return CanBePutOnTop::Yes;
+        }
+
+        if Some(data_proposal_hash) == self.get_lane_hash_tip(lane_id) {
+            return CanBePutOnTop::AlreadyOnTop;
         }
 
         if let Some(dp_parent_hash) = parent_data_proposal_hash {
@@ -333,7 +437,7 @@ mod tests {
         };
         let dp_hash = data_proposal.hashed();
         storage
-            .put(lane_id.clone(), (entry.clone(), data_proposal.clone()))
+            .put_no_verification(lane_id.clone(), (entry.clone(), data_proposal.clone()))
             .unwrap();
         assert!(storage.contains(lane_id, &dp_hash));
         assert_eq!(
@@ -363,7 +467,7 @@ mod tests {
         };
         let dp_hash = data_proposal.hashed();
         storage
-            .put(lane_id.clone(), (entry.clone(), data_proposal.clone()))
+            .put_no_verification(lane_id.clone(), (entry.clone(), data_proposal.clone()))
             .unwrap();
         entry.signatures.push(SignedByValidator {
             msg: (dp_hash.clone(), cumul_size),
@@ -442,9 +546,17 @@ mod tests {
         assert_eq!(
             2,
             lane_entry.signatures.len(),
-            "{lane_id2}'s lane entry: {:?}",
-            lane_entry
+            "{lane_id2}'s lane entry: {lane_entry:?}"
         );
+    }
+
+    fn unwrap_entry(entry: &EntryOrMissingHash) -> (LaneEntryMetadata, DataProposal) {
+        match entry {
+            EntryOrMissingHash::Entry(metadata, data_proposal) => {
+                (metadata.clone(), data_proposal.clone())
+            }
+            EntryOrMissingHash::MissingHash(_) => panic!("Expected an entry, got missing hash"),
+        }
     }
 
     #[test_log::test(tokio::test)]
@@ -479,31 +591,30 @@ mod tests {
             .collect()
             .await;
         assert_eq!(2, entries_from_1_to_end.len());
-        dbg!(&dp2);
-        dbg!(&dp3);
-        dbg!(&entries_from_1_to_end);
         assert_eq!(
             dp2,
-            entries_from_1_to_end.last().unwrap().as_ref().unwrap().1
+            unwrap_entry(entries_from_1_to_end.last().unwrap().as_ref().unwrap()).1
         );
         assert_eq!(
             dp3,
-            entries_from_1_to_end.first().unwrap().as_ref().unwrap().1
+            unwrap_entry(entries_from_1_to_end.first().unwrap().as_ref().unwrap()).1
         );
 
         // [start, 2] == [2, 1]
+
         let entries_from_start_to_2: Vec<_> = storage
             .get_entries_between_hashes(lane_id, None, Some(dp2.hashed()))
             .collect()
             .await;
+
         assert_eq!(2, entries_from_start_to_2.len());
         assert_eq!(
             dp1,
-            entries_from_start_to_2.last().unwrap().as_ref().unwrap().1
+            unwrap_entry(entries_from_start_to_2.last().unwrap().as_ref().unwrap()).1
         );
         assert_eq!(
             dp2,
-            entries_from_start_to_2.first().unwrap().as_ref().unwrap().1
+            unwrap_entry(entries_from_start_to_2.first().unwrap().as_ref().unwrap()).1
         );
 
         // ]1, 2] == [2]
@@ -514,7 +625,7 @@ mod tests {
         assert_eq!(1, entries_from_1_to_2.len());
         assert_eq!(
             dp2,
-            entries_from_1_to_2.first().unwrap().as_ref().unwrap().1
+            unwrap_entry(entries_from_1_to_2.first().unwrap().as_ref().unwrap()).1
         );
 
         // ]1, 3] == [3, 2]
@@ -523,10 +634,13 @@ mod tests {
             .collect()
             .await;
         assert_eq!(2, entries_from_1_to_3.len());
-        assert_eq!(dp2, entries_from_1_to_3.last().unwrap().as_ref().unwrap().1);
+        assert_eq!(
+            dp2,
+            unwrap_entry(entries_from_1_to_3.last().unwrap().as_ref().unwrap()).1
+        );
         assert_eq!(
             dp3,
-            entries_from_1_to_3.first().unwrap().as_ref().unwrap().1
+            unwrap_entry(entries_from_1_to_3.first().unwrap().as_ref().unwrap()).1
         );
 
         // ]1, 1[ == []
@@ -535,6 +649,37 @@ mod tests {
             .collect()
             .await;
         assert_eq!(0, entries_from_1_to_1.len());
+    }
+
+    // Test to get oldest pending entry in a lane containing 3 DataProposals
+    #[test_log::test(tokio::test)]
+    async fn test_get_oldest_pending_entry() {
+        let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
+        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let mut storage = setup_storage();
+
+        let dp1 = DataProposal::new(None, vec![]);
+        let dp2 = DataProposal::new(Some(dp1.hashed()), vec![]);
+        let dp3 = DataProposal::new(Some(dp2.hashed()), vec![]);
+
+        storage
+            .store_data_proposal(&crypto, lane_id, dp1.clone())
+            .unwrap();
+        storage
+            .store_data_proposal(&crypto, lane_id, dp2.clone())
+            .unwrap();
+        storage
+            .store_data_proposal(&crypto, lane_id, dp3.clone())
+            .unwrap();
+
+        // Get oldest pending entry
+        let oldest_entry = storage
+            .get_oldest_pending_entry(lane_id, None)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(dp1.hashed(), oldest_entry.1);
     }
 
     #[test_log::test]
@@ -581,8 +726,9 @@ mod tests {
             signatures: vec![],
         };
         storage
-            .put(lane_id.clone(), (entry, data_proposal))
+            .put_no_verification(lane_id.clone(), (entry, data_proposal.clone()))
             .unwrap();
+        storage.update_lane_tip(lane_id.clone(), data_proposal.hashed(), cumul_size);
         let pending: Vec<_> = storage
             .get_pending_entries_in_lane(lane_id, None)
             .collect()
@@ -604,7 +750,7 @@ mod tests {
             signatures: vec![],
         };
         storage
-            .put(lane_id.clone(), (entry, data_proposal))
+            .put_no_verification(lane_id.clone(), (entry, data_proposal))
             .unwrap();
         let latest = storage.get_latest_car(lane_id, &staking, None).unwrap();
         assert!(latest.is_none());

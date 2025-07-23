@@ -419,8 +419,8 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
 
         // Setup random hyllar contract
         let rand = get_current_timestamp_ms() % 100000;
-        let random_hyllar_contract: ContractName = format!("hyllar_{}", rand).into();
-        let random_hydentity_contract: ContractName = format!("hydentity_{}", rand).into();
+        let random_hyllar_contract: ContractName = format!("hyllar_{rand}").into();
+        let random_hydentity_contract: ContractName = format!("hydentity_{rand}").into();
 
         let verifier = match use_test_verifier {
             true => hyle_contract_sdk::Verifier("test".to_string()),
@@ -433,11 +433,8 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
                     contract_name: random_hyllar_contract.clone(),
                     verifier: verifier.clone(),
                     program_id: hyle_contracts::HYLLAR_ID.to_vec().into(),
-                    state_commitment: Hyllar::custom(format!(
-                        "faucet@{}",
-                        random_hydentity_contract
-                    ))
-                    .commit(),
+                    state_commitment: Hyllar::custom(format!("faucet@{random_hydentity_contract}"))
+                        .commit(),
                     ..Default::default()
                 }
                 .as_blob("hyle".into(), None, None),
@@ -461,7 +458,7 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
         let mut tx_ctx = TxExecutorBuilder::new(CanonicalStates {
             hydentity: Hydentity::default(),
             hydentity_name: random_hydentity_contract.clone(),
-            hyllar: Hyllar::custom(format!("faucet@{}", random_hydentity_contract)),
+            hyllar: Hyllar::custom(format!("faucet@{random_hydentity_contract}")),
             hyllar_name: random_hyllar_contract.clone(),
         });
         if use_test_verifier {
