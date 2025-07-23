@@ -1,27 +1,18 @@
 //! Minimal block storage layer for data availability.
 
-mod blocks_fjall;
-mod blocks_memory;
-mod module;
-
 // Pick one of the two implementations
-use blocks_fjall::Blocks;
-//use blocks_memory::Blocks;
+use hyle_modules::modules::data_availability::blocks_fjall::Blocks;
+//use hyle_modules::modules::data_availability::blocks_memory::Blocks;
 
+use hyle_modules::{bus::SharedMessageBus, modules::Module};
 use hyle_modules::{
     log_error, module_bus_client, module_handle_messages,
-    modules::Module,
     utils::da_codec::{
         DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest,
         DataAvailabilityServer,
     },
 };
 use hyle_net::tcp::TcpEvent;
-use rand::seq::SliceRandom;
-use tokio::{
-    task::JoinSet,
-    time::{sleep_until, Instant},
-};
 
 use crate::{
     bus::BusClientSender,
@@ -33,10 +24,37 @@ use crate::{
 };
 use anyhow::{Context, Error, Result};
 use core::str;
+use rand::seq::SliceRandom;
 use std::{collections::BTreeSet, time::Duration};
+use tokio::{
+    task::JoinSet,
+    time::{sleep_until, Instant},
+};
 use tracing::{debug, info, trace, warn};
 
-pub mod codec;
+use crate::model::SharedRunContext;
+
+impl Module for DataAvailability {
+    type Context = SharedRunContext;
+
+    async fn build(bus: SharedMessageBus, ctx: Self::Context) -> anyhow::Result<Self> {
+        let bus = DABusClient::new_from_bus(bus.new_handle()).await;
+
+        Ok(DataAvailability {
+            config: ctx.config.clone(),
+            bus,
+            blocks: Blocks::new(&ctx.config.data_directory.join("data_availability.db"))?,
+            buffered_signed_blocks: BTreeSet::new(),
+            need_catchup: false,
+            catchup_task: None,
+            catchup_height: None,
+        })
+    }
+
+    async fn run(&mut self) -> anyhow::Result<()> {
+        self.start().await
+    }
+}
 
 module_bus_client! {
 #[derive(Debug)]
@@ -477,7 +495,11 @@ impl DataAvailability {
         }
 
         self.catchup_task = Some(tokio::spawn(async move {
-            let timeout_duration = Duration::from_secs(10);
+            let timeout_duration = std::env::var("HYLE_DA_SLEEP_TIMEOUT")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .map(Duration::from_secs)
+                .unwrap_or_else(|| Duration::from_secs(10));
             let mut deadline = Instant::now() + timeout_duration;
 
             loop {
@@ -524,10 +546,10 @@ impl DataAvailability {
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::indexing_slicing)]
-
     use std::time::Duration;
 
-    use crate::data_availability::codec::DataAvailabilityRequest;
+    use super::Blocks;
+    use super::{module_bus_client, DaTcpServer};
     use crate::node_state::NodeState;
     use crate::{
         bus::BusClientSender,
@@ -536,13 +558,12 @@ pub mod tests {
         node_state::module::{NodeStateBusClient, NodeStateEvent},
         utils::{conf::Conf, integration_test::find_available_port},
     };
-    use hyle_modules::log_error;
-    use hyle_modules::utils::da_codec::{DataAvailabilityClient, DataAvailabilityServer};
-
-    use super::codec::DataAvailabilityEvent;
-    use super::Blocks;
-    use super::{module_bus_client, DaTcpServer};
     use anyhow::Result;
+    use hyle_modules::log_error;
+    use hyle_modules::utils::da_codec::{
+        DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest,
+        DataAvailabilityServer,
+    };
     use staking::state::Staking;
 
     /// For use in integration tests
@@ -785,6 +806,7 @@ pub mod tests {
             assert!(heights_received.contains(&i));
         }
     }
+
     #[test_log::test(tokio::test)]
     async fn test_da_catchup() {
         let sender_global_bus = crate::bus::SharedMessageBus::new(

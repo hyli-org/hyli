@@ -100,10 +100,11 @@ impl Module for NodeStateModule {
             }
             command_response<QuerySettledHeight, BlockHeight> cmd => {
                 if !self.inner.contracts.contains_key(&cmd.0) {
-                    return Err(anyhow::anyhow!("Contract {} not found", cmd.0));
+                    Err(anyhow::anyhow!("Contract {} not found", cmd.0))
+                } else {
+                    let height = self.inner.unsettled_transactions.get_earliest_unsettled_height(&cmd.0).unwrap_or(self.inner.current_height);
+                    Ok(BlockHeight(height.0 - 1))
                 }
-                let height = self.inner.unsettled_transactions.get_earliest_unsettled_height(&cmd.0).unwrap_or(self.inner.current_height);
-                Ok(BlockHeight(height.0 - 1))
             }
             command_response<QueryUnsettledTxCount, u64> cmd => {
                 let count = if let Some(contract_name) = &cmd.0 {
