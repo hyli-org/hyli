@@ -12,8 +12,8 @@ rust-version = { workspace = true }
 name = "bonsai-runner"
 required-features = ["bonsai-runner"]
 
-[[bin]]
-name = "boundless-parse"
+# [[bin]]
+# name = "boundless-parse"
 
 [dependencies]
 anyhow = { workspace = true }
