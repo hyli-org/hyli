@@ -86,5 +86,10 @@ async fn main() -> Result<()> {
         "Error running hyle"
     )?;
 
+    #[cfg(feature = "alloc-track")]
+    alloc_track::backtrace_report(|_, _| true)
+        .map(|report| std::fs::write("alloc_report.csv", report.csv()))
+        .context("writing alloc report")?;
+
     Ok(())
 }
