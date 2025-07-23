@@ -232,6 +232,7 @@ impl NodeState {
             updated_program_ids: BTreeMap::new(),
             updated_timeout_windows: BTreeMap::new(),
             transactions_events: BTreeMap::new(),
+            all_transactions_events: vec![],
             dp_parent_hashes: BTreeMap::new(),
             lane_ids: BTreeMap::new(),
         };
@@ -264,6 +265,15 @@ impl NodeState {
                         },
                     ) {
                         Ok(BlobTxHandled::ShouldSettle(tx_hash)) => {
+                            block_under_construction
+                                .transactions_events
+                                .entry(tx_id.1.clone())
+                                .or_default()
+                                .push(TransactionStateEvent::Sequenced);
+                            block_under_construction
+                                .all_transactions_events
+                                .push((tx_id.1.clone(), TransactionStateEvent::Sequenced));
+
                             let mut blob_tx_to_try_and_settle = BTreeSet::new();
                             blob_tx_to_try_and_settle.insert(tx_hash);
                             // In case of a BlobTransaction with only native verifies, we need to trigger the
@@ -293,6 +303,9 @@ impl NodeState {
                                 .entry(tx_id.1.clone())
                                 .or_default()
                                 .push(TransactionStateEvent::Sequenced);
+                            block_under_construction
+                                .all_transactions_events
+                                .push((tx_id.1.clone(), TransactionStateEvent::Sequenced));
                         }
                         Err(e) => {
                             let err = format!("Failed to handle blob transaction: {e:?}");
@@ -929,6 +942,9 @@ impl NodeState {
                     .entry(bth.clone())
                     .or_default()
                     .push(TransactionStateEvent::SettledAsFailed);
+                block_under_construction
+                    .all_transactions_events
+                    .push((bth.clone(), TransactionStateEvent::SettledAsFailed));
 
                 self.metrics.add_failed_transactions(1);
                 info!(tx_height =% block_under_construction.block_height, "⛈️ Settled tx {} as failed", &bth);
@@ -952,6 +968,9 @@ impl NodeState {
             .entry(bth.clone())
             .or_default()
             .push(TransactionStateEvent::Settled);
+        block_under_construction
+            .all_transactions_events
+            .push((bth.clone(), TransactionStateEvent::Settled));
         self.metrics.add_settled_transactions(1);
         self.metrics.add_successful_transactions(1);
         info!(tx_height =% block_under_construction.block_height, "✨ Settled tx {}", &bth);
@@ -1021,6 +1040,9 @@ impl NodeState {
                                 .entry(tx_hash.clone())
                                 .or_default()
                                 .push(TransactionStateEvent::TimedOut);
+                            block_under_construction
+                                .all_transactions_events
+                                .push((tx_hash.clone(), TransactionStateEvent::TimedOut));
                             block_under_construction
                                 .dp_parent_hashes
                                 .insert(tx_hash.clone(), popped_tx.parent_dp_hash);
@@ -1486,6 +1508,9 @@ impl NodeState {
                     .entry(hash.clone())
                     .or_default()
                     .push(TransactionStateEvent::TimedOut);
+                block_under_construction
+                    .all_transactions_events
+                    .push((hash.clone(), TransactionStateEvent::TimedOut));
                 block_under_construction
                     .dp_parent_hashes
                     .insert(hash.clone(), parent_hash);
