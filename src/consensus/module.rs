@@ -1,5 +1,5 @@
 use anyhow::Result;
-use hyle_modules::{bus::SharedMessageBus, modules::Module};
+use hyle_modules::{bus::SharedMessageBus, log_error, modules::Module};
 
 use crate::model::SharedRunContext;
 
@@ -34,7 +34,18 @@ impl Module for Consensus {
         })
     }
 
-    fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
-        self.wait_genesis()
+    async fn run(&mut self) -> Result<()> {
+        self.wait_genesis().await
+    }
+
+    async fn persist(&mut self) -> Result<()> {
+        if let Some(file) = &self.file {
+            _ = log_error!(
+                Self::save_on_disk(file.as_path(), &self.store),
+                "Persisting consensus state"
+            );
+        }
+
+        Ok(())
     }
 }

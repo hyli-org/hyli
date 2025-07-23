@@ -1,6 +1,6 @@
 use std::num::TryFromIntError;
 
-use super::{BlockPagination, IndexerApiState};
+use super::{BlockPagination, ExplorerApiState};
 use api::{
     APITransaction, APITransactionEvents, BlobWithStatus, TransactionStatusDb, TransactionTypeDb,
     TransactionWithBlobs,
@@ -219,32 +219,39 @@ impl From<TransactionDb> for APITransaction {
 )]
 pub async fn get_transactions(
     Query(pagination): Query<BlockPagination>,
-    State(state): State<IndexerApiState>,
+    State(state): State<ExplorerApiState>,
 ) -> Result<Json<Vec<APITransaction>>, StatusCode> {
     let transactions = log_error!(
         match pagination.start_block {
             Some(start_block) => sqlx::query_as::<_, TransactionDb>(
                 r#"
-            SELECT t.*, b.timestamp
-            FROM transactions t
-            LEFT JOIN blocks b ON t.block_hash = b.hash
-            WHERE b.height <= $1 and b.height > $2 AND t.transaction_type = 'blob_transaction'
-            ORDER BY b.height DESC, t.index DESC
-            LIMIT $3
-            "#,
+                SELECT t.*, b.timestamp
+                FROM (
+                    SELECT *
+                    FROM transactions t
+                    WHERE t.transaction_type = 'blob_transaction'
+                        AND t.block_height <= $1 AND t.block_height > $2
+                    ORDER BY t.block_height DESC, t.index DESC
+                    LIMIT $3
+                ) t
+                LEFT JOIN blocks b ON t.block_hash = b.hash
+                "#,
             )
             .bind(start_block)
-            .bind(start_block - pagination.nb_results.unwrap_or(10)) // Fine if this goes negative
+            .bind(start_block - pagination.nb_results.unwrap_or(10))
             .bind(pagination.nb_results.unwrap_or(10)),
             None => sqlx::query_as::<_, TransactionDb>(
                 r#"
-            SELECT t.*, b.timestamp
-            FROM transactions t
-            LEFT JOIN blocks b ON t.block_hash = b.hash
-            WHERE t.transaction_type = 'blob_transaction'
-            ORDER BY b.height DESC, t.index DESC
-            LIMIT $1
-            "#,
+                SELECT t.*, b.timestamp
+                FROM (
+                    SELECT *
+                    FROM transactions t
+                    WHERE t.transaction_type = 'blob_transaction'
+                    ORDER BY t.block_height DESC, t.index DESC
+                    LIMIT $1
+                ) t
+                LEFT JOIN blocks b ON t.block_hash = b.hash
+                "#,
             )
             .bind(pagination.nb_results.unwrap_or(10)),
         }
@@ -272,7 +279,7 @@ pub async fn get_transactions(
 pub async fn get_transactions_by_contract(
     Path(contract_name): Path<String>,
     Query(pagination): Query<BlockPagination>,
-    State(state): State<IndexerApiState>,
+    State(state): State<ExplorerApiState>,
 ) -> Result<Json<Vec<APITransaction>>, StatusCode> {
     let transactions = log_error!(match pagination.start_block {
         Some(start_block) => sqlx::query_as::<_, TransactionDb>(
@@ -326,7 +333,7 @@ pub async fn get_transactions_by_contract(
 )]
 pub async fn get_transactions_by_height(
     Path(height): Path<i64>,
-    State(state): State<IndexerApiState>,
+    State(state): State<ExplorerApiState>,
 ) -> Result<Json<Vec<APITransaction>>, StatusCode> {
     let transactions = log_error!(
         sqlx::query_as::<_, TransactionDb>(
@@ -362,7 +369,7 @@ pub async fn get_transactions_by_height(
 )]
 pub async fn get_transaction_with_hash(
     Path(tx_hash): Path<String>,
-    State(state): State<IndexerApiState>,
+    State(state): State<ExplorerApiState>,
 ) -> Result<Json<APITransaction>, StatusCode> {
     let transaction = log_error!(
         sqlx::query_as::<_, TransactionDb>(
@@ -412,7 +419,7 @@ LIMIT 1;
 )]
 pub async fn get_transaction_events(
     Path(tx_hash): Path<String>,
-    State(state): State<IndexerApiState>,
+    State(state): State<ExplorerApiState>,
 ) -> Result<Json<Vec<APITransactionEvents>>, StatusCode> {
     let rows = log_error!(
         sqlx::query(
@@ -490,7 +497,7 @@ ORDER BY
 )]
 pub async fn get_blob_transactions_by_contract(
     Path(contract_name): Path<String>,
-    State(state): State<IndexerApiState>,
+    State(state): State<ExplorerApiState>,
 ) -> Result<Json<Vec<TransactionWithBlobs>>, StatusCode> {
     let rows = log_error!(sqlx::query(
         r#"

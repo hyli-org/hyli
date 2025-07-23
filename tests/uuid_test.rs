@@ -115,7 +115,7 @@ async fn test_uuid_registration() {
     tx.add_action(
         "uuid".into(),
         RegisterContractAction {
-            contract_name: format!("{}.uuid", claimed_uuid).into(),
+            contract_name: format!("{claimed_uuid}.uuid").into(),
             verifier: "test".into(),
             program_id: ProgramId(vec![1]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
@@ -174,5 +174,5 @@ async fn test_uuid_registration() {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     };
     assert_eq!(contract.verifier, Verifier("test".into()));
-    assert_eq!(contract.state, StateCommitment(vec![0, 1, 2, 3]));
+    assert_eq!(contract.state_commitment, StateCommitment(vec![0, 1, 2, 3]));
 }

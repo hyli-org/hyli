@@ -102,8 +102,29 @@ where
         })
     }
 
-    fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
-        self.start()
+    async fn run(&mut self) -> Result<()> {
+        module_handle_messages! {
+            on_self self,
+            listen<NodeStateEvent> event => {
+                _ = log_error!(
+                    self.handle_node_state_event(event).await,
+                    "Handling node state event"
+                )
+            }
+        };
+
+        Ok(())
+    }
+
+    async fn persist(&mut self) -> Result<()> {
+        if let Err(e) = Self::save_on_disk::<ContractStateStore<State>>(
+            self.file.as_path(),
+            self.store.read().await.deref(),
+        ) {
+            tracing::warn!(cn = %self.contract_name, "Failed to save contract state indexer on disk: {}", e);
+        }
+
+        Ok(())
     }
 }
 
@@ -119,25 +140,6 @@ where
         + 'static,
     Event: std::fmt::Debug + Clone + Send + Sync + 'static,
 {
-    pub async fn start(&mut self) -> Result<(), Error> {
-        module_handle_messages! {
-            on_bus self.bus,
-            listen<NodeStateEvent> event => {
-                _ = log_error!(self.handle_node_state_event(event)
-                    .await,
-                    "Handling node state event")
-            }
-        };
-
-        if let Err(e) = Self::save_on_disk::<ContractStateStore<State>>(
-            self.file.as_path(),
-            self.store.read().await.deref(),
-        ) {
-            tracing::warn!(cn = %self.contract_name, "Failed to save contract state indexer on disk: {}", e);
-        }
-        Ok(())
-    }
-
     /// Note: Each copy of the contract state indexer does the same handle_block on each data event
     /// coming from node state.
     async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<(), Error> {
@@ -236,7 +238,7 @@ where
             &block.timed_out_txs,
             &block,
             |state, tx, index, ctx| state.handle_transaction_timeout(tx, index, ctx),
-            false,
+            true,
         )
         .await?;
 
@@ -244,7 +246,7 @@ where
             &block.failed_txs,
             &block,
             |state, tx, index, ctx| state.handle_transaction_failed(tx, index, ctx),
-            false,
+            true,
         )
         .await?;
 

@@ -3,7 +3,7 @@
 use crate::utils::static_type_map::Pick;
 use anymap::{any::Any, Map};
 use metrics::BusMetrics;
-use std::sync::Arc;
+use std::{any::type_name, sync::Arc};
 use tokio::sync::{broadcast, Mutex};
 
 pub mod command_response;
@@ -150,14 +150,18 @@ where
     {
         if Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).receiver_count() > 0 {
             let mut i = 0;
-            const MAX_ATTEMPTS: usize = 100; // 10s limit, we assume longer would indicate an error
+            const HIGH_NB_OF_ATTEMPTS: usize = 100; // 10s limit, we assume longer would indicate an error
             loop {
                 // We have a potential TOCTOU race here, so use a buffer.
                 if Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).len()
                     >= CHANNEL_CAP_IF_WAITING
                 {
-                    if i >= MAX_ATTEMPTS {
-                        anyhow::bail!("Channel is full, cannot send message");
+                    if i % HIGH_NB_OF_ATTEMPTS == 0 {
+                        tracing::warn!(
+                            "Channel {} is full (client {}), cannot send message, waiting another 10s...",
+                            type_name::<Msg>(),
+                            type_name::<Client>()
+                        );
                     }
                     i += 1;
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;

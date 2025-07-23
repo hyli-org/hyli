@@ -24,7 +24,7 @@ pub fn deflatten_fields(flattened_fields: &[u8]) -> Vec<String> {
 
     for chunk in flattened_fields.chunks(PUBLIC_INPUT_SIZE) {
         let hex_string = hex::encode(chunk);
-        let sanitised_hex = format!("{:0>64}", hex_string); // Pad to 64 characters
+        let sanitised_hex = format!("{hex_string:0>64}"); // Pad to 64 characters
         result.push(sanitised_hex);
     }
 

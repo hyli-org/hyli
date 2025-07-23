@@ -10,9 +10,7 @@
 
 _Hyli is the new proof-powered L1 to build the next generation of apps onchain._
 
-This repository hosts the **work-in-progress Rust client** for the [Hyli](https://hyli.org) chain.
-
-**Current Status**: 🚧 Work in Progress (WIP)
+This repository hosts the **Rust client** for the [Hyli](https://hyli.org) chain.
 
 ---
 
@@ -20,6 +18,7 @@ This repository hosts the **work-in-progress Rust client** for the [Hyli](https:
 
 - 🌐 [Hyli Website](https://www.hyli.org/)
 - 📚 [Hyli Documentation](https://docs.hyli.org)
+- 📨 [Telegram](https://t.me/hyli_org)
 
 ---
 
