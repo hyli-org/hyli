@@ -193,10 +193,6 @@ impl Hashed<TxHash> for VerifiedProofTransaction {
         let mut hasher = Sha3_256::new();
         hasher.update(self.contract_name.0.as_bytes());
         hasher.update(self.proof_hash.0.as_bytes());
-        hasher.update(self.proven_blobs.len().to_le_bytes());
-        for proven_blob in self.proven_blobs.iter() {
-            hasher.update(proven_blob.hashed().0);
-        }
         let hash_bytes = hasher.finalize();
         TxHash(hex::encode(hash_bytes))
     }
@@ -412,7 +408,7 @@ impl BlobsHashes {
 impl std::fmt::Display for BlobsHashes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (BlobIndex(index), BlobHash(hash)) in self.hashes.iter() {
-            write!(f, "[{}]: {}", index, hash)?;
+            write!(f, "[{index}]: {hash}")?;
         }
         Ok(())
     }

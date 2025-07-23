@@ -21,8 +21,7 @@ pub(super) enum TimeoutState {
 }
 
 impl TimeoutState {
-    pub const TIMEOUT_SECS: Duration = Duration::from_secs(5);
-    pub fn schedule_next(&mut self, timestamp: TimestampMs) {
+    pub fn schedule_next(&mut self, timestamp: TimestampMs, duration: Duration) {
         match self {
             TimeoutState::Inactive => {
                 trace!("⏲️ Scheduling timeout");
@@ -35,7 +34,7 @@ impl TimeoutState {
             }
         }
         *self = TimeoutState::Scheduled {
-            timestamp: timestamp + TimeoutState::TIMEOUT_SECS,
+            timestamp: timestamp + duration,
         };
     }
     pub fn certificate_emitted(&mut self) {
@@ -168,10 +167,7 @@ impl Consensus {
         if received_slot > self.bft_round_state.slot || received_view > self.bft_round_state.view {
             debug!(
                 "Timeout Certificate (Slot: {}, view: {}) does not match expected (Slot: {}, view: {})",
-                received_slot,
-                received_view,
-                self.bft_round_state.slot,
-                self.bft_round_state.view,
+                received_slot, received_view, self.bft_round_state.slot, self.bft_round_state.view,
             );
             return Ok(());
         }
@@ -209,10 +205,11 @@ impl Consensus {
 
                 self.broadcast_net_message((timeout, kind).into())?;
 
-                self.bft_round_state
+                self.store
+                    .bft_round_state
                     .timeout
                     .state
-                    .schedule_next(TimestampMsClock::now());
+                    .schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
 
                 Ok(())
             }
@@ -325,7 +322,10 @@ impl Consensus {
             .staking
             .compute_voting_power(&timeout_validators);
 
-        info!("Got {voting_power} voting power with {len} timeout requests for the same view {}. f is {f}", self.store.bft_round_state.view);
+        info!(
+            "Got {voting_power} voting power with {len} timeout requests for the same view {}. f is {f}",
+            self.store.bft_round_state.view
+        );
 
         // Count requests and if f+1 requests, and not already part of it, join the mutiny
         if voting_power > f && !timeout_validators.contains(self.crypto.validator_pubkey()) {
@@ -349,10 +349,11 @@ impl Consensus {
             len += 1;
             voting_power += self.get_own_voting_power();
 
-            self.bft_round_state
+            self.store
+                .bft_round_state
                 .timeout
                 .state
-                .schedule_next(TimestampMsClock::now());
+                .schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
         }
 
         // Create TC if applicable
@@ -362,7 +363,9 @@ impl Consensus {
                 TimeoutState::CertificateEmitted
             )
         {
-            debug!("⏲️ ⏲️ Creating a timeout certificate with {len} timeout requests and {voting_power} voting power");
+            debug!(
+                "⏲️ ⏲️ Creating a timeout certificate with {len} timeout requests and {voting_power} voting power"
+            );
 
             let ticket: Result<_, anyhow::Error> =
                 match &self.bft_round_state.timeout.highest_seen_prepare_qc {
@@ -433,10 +436,11 @@ impl Consensus {
                 };
             let ticket = ticket.context("Creating Timeout Certificate")?;
 
-            self.bft_round_state
+            self.store
+                .bft_round_state
                 .timeout
                 .state
-                .schedule_next(TimestampMsClock::now());
+                .schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
 
             let round_leader = self.next_view_leader()?;
             if &round_leader == self.crypto.validator_pubkey() {

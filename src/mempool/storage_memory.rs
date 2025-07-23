@@ -10,7 +10,7 @@ use hyle_model::{LaneBytesSize, LaneId};
 use tracing::info;
 
 use super::{
-    storage::{CanBePutOnTop, EntryOrMissingHash, LaneEntryMetadata, Storage},
+    storage::{EntryOrMissingHash, LaneEntryMetadata, Storage},
     ValidatorDAG,
 };
 use crate::{
@@ -88,39 +88,6 @@ impl Storage for LanesStorage {
             }
         }
         Ok(None)
-    }
-
-    fn put(&mut self, lane_id: LaneId, entry: (LaneEntryMetadata, DataProposal)) -> Result<()> {
-        let dp_hash = entry.1.hashed();
-        if self.contains(&lane_id, &dp_hash) {
-            bail!("DataProposal {} was already in lane", dp_hash);
-        }
-        match self.can_be_put_on_top(&lane_id, entry.0.parent_data_proposal_hash.as_ref()) {
-            CanBePutOnTop::No => bail!(
-                "Can't store DataProposal {}, as parent is unknown ",
-                dp_hash
-            ),
-            CanBePutOnTop::Yes => {
-                // Add both metadata and data to validator's lane
-                self.by_hash
-                    .entry(lane_id.clone())
-                    .or_default()
-                    .insert(dp_hash.clone(), entry.clone());
-
-                // Validator's lane tip is only updated if DP-chain is respected
-                self.update_lane_tip(lane_id, dp_hash, entry.0.cumul_size);
-
-                Ok(())
-            }
-            CanBePutOnTop::Fork => {
-                let last_known_hash = self.lanes_tip.get(&lane_id);
-                bail!(
-                    "DataProposal cannot be put in lane because it creates a fork: last dp hash {:?} while proposed parent_data_proposal_hash: {:?}",
-                    last_known_hash,
-                    entry.0.parent_data_proposal_hash
-                )
-            }
-        }
     }
 
     fn put_no_verification(

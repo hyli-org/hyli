@@ -8,7 +8,7 @@ use bonsai_sdk::non_blocking::Client;
 use borsh::BorshSerialize;
 use boundless_market::{
     alloy::{
-        primitives::{utils::parse_ether, Bytes, Uint},
+        primitives::{utils::parse_ether, Uint},
         signers::local::PrivateKeySigner,
         transports::http::reqwest::Url,
     },
@@ -18,9 +18,7 @@ use boundless_market::{
     storage::{storage_provider_from_env, StorageProvider},
     Deployment, GuestEnvBuilder,
 };
-use risc0_zkvm::{
-    compute_image_id, default_executor, sha::Digestible, Digest, Receipt, ReceiptClaim,
-};
+use risc0_zkvm::{compute_image_id, default_executor, sha::Digestible, Receipt};
 use tracing::info;
 
 #[allow(dead_code)]
@@ -32,7 +30,12 @@ pub fn as_input_data<T: BorshSerialize>(data: &T) -> Result<Vec<u8>> {
     Ok(input_data)
 }
 
-pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
+pub struct ProofResult {
+    pub receipt: Receipt,
+    pub cycles: Option<u64>,
+}
+
+pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<ProofResult> {
     let chain_id = std::env::var("BOUNDLESS_CHAIN_ID").unwrap_or("11155111".to_string());
     let offchain = std::env::var("BOUNDLESS_OFFCHAIN").unwrap_or_default() == "true";
     let wallet_private_key = std::env::var("BOUNDLESS_WALLET_PRIVATE_KEY").unwrap_or_default();
@@ -99,12 +102,12 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
     // the market unprovable proving requests. If you have a different mechanism to get the expected
     // journal and set a price, you can skip this step.
     let session_info = default_executor().execute(guest_env, elf)?;
-    let mcycles_count = session_info
+    let cycles_count = session_info
         .segments
         .iter()
         .map(|segment| 1 << segment.po2)
-        .sum::<u64>()
-        .div_ceil(1_000_000);
+        .sum::<u64>();
+    let mcycles_count = cycles_count.div_ceil(1_000_000);
     let journal = session_info.journal;
 
     info!(
@@ -215,11 +218,14 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
 
     info!("Receipt verified successfully");
 
-    Ok(receipt)
+    Ok(ProofResult {
+        receipt,
+        cycles: Some(cycles_count),
+    })
 }
 
 #[allow(dead_code)]
-pub async fn run_bonsai(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
+pub async fn run_bonsai(elf: &[u8], input_data: Vec<u8>) -> Result<ProofResult> {
     let client = Client::from_env(risc0_zkvm::VERSION)?;
 
     // Compute the image_id, then upload the ELF with the image_id as its key.
@@ -247,7 +253,7 @@ pub async fn run_bonsai(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
                 res.status,
                 res.state.unwrap_or_default()
             );
-            std::thread::sleep(Duration::from_secs(1));
+            tokio::time::sleep(Duration::from_secs(1)).await;
             continue;
         }
         if res.status == "SUCCEEDED" {
@@ -258,7 +264,10 @@ pub async fn run_bonsai(elf: &[u8], input_data: Vec<u8>) -> Result<Receipt> {
 
             let receipt_buf = client.download(&receipt_url).await?;
             let receipt: Receipt = bincode::deserialize(&receipt_buf)?;
-            return Ok(receipt);
+            return Ok(ProofResult {
+                receipt,
+                cycles: res.stats.map(|s| s.total_cycles),
+            });
         } else {
             bail!(
                 "Workflow exited: {} - | err: {}",

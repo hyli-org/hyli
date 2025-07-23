@@ -51,7 +51,7 @@ impl BusMetrics {
                             })
                             .collect::<Vec<_>>()
                             .join(", ");
-                        format!("{}<{}>", ident, args_str)
+                        format!("{ident}<{args_str}>")
                     } else {
                         ident.to_string()
                     }

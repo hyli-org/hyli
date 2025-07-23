@@ -37,9 +37,9 @@ async fn main() {
     let proof = prover.prove(commitment_metadata, vec![calldata]).await;
 
     if let Err(err) = proof {
-        println!("Error: {:?}", err);
+        println!("Error: {err:?}");
         return;
     }
-    println!("proof size: {:?}", proof.unwrap().0.len());
+    println!("proof size: {:?}", proof.unwrap().data.0.len());
     return;
 }

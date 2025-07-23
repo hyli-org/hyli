@@ -34,11 +34,11 @@ fn main() -> std::io::Result<()> {
 
     let ho =
         hyle_verifiers::noir_utils::parse_noir_output(&proof_data, &vkey_data).map_err(|e| {
-            eprintln!("Error parsing output: {}", e);
+            eprintln!("Error parsing output: {e}");
             std::io::Error::new(std::io::ErrorKind::InvalidData, e)
         })?;
 
-    println!("Parsed output: {:?}", ho);
+    println!("Parsed output: {ho:?}");
 
     Ok(())
 }

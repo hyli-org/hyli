@@ -480,6 +480,22 @@ pub struct ProgramId(pub Vec<u8>);
 #[cfg_attr(feature = "full", derive(Serialize, utoipa::ToSchema))]
 pub struct ProofData(#[cfg_attr(feature = "full", serde(with = "base64_field"))] pub Vec<u8>);
 
+#[derive(Debug, Default, PartialEq, Eq, Clone, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "full", derive(Serialize, utoipa::ToSchema))]
+pub struct ProofMetadata {
+    pub cycles: Option<u64>,
+    pub prover: Option<String>,
+    /// SessionId, TxHash, ... of the proof request on a prover network
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Clone, BorshSerialize, BorshDeserialize)]
+#[cfg_attr(feature = "full", derive(Serialize, utoipa::ToSchema))]
+pub struct Proof {
+    pub data: ProofData,
+    pub metadata: ProofMetadata,
+}
+
 #[cfg(feature = "full")]
 impl<'de> Deserialize<'de> for ProofData {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -775,6 +791,15 @@ impl Ord for TimeoutWindow {
     }
 }
 
+impl Display for TimeoutWindow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self {
+            TimeoutWindow::NoTimeout => write!(f, "NoTimeout"),
+            TimeoutWindow::Timeout(height) => write!(f, "Timeout({})", height.0),
+        }
+    }
+}
+
 impl Default for TimeoutWindow {
     fn default() -> Self {
         TimeoutWindow::Timeout(BlockHeight(100))
@@ -853,6 +878,32 @@ pub struct UpdateContractProgramIdAction {
 }
 
 impl ContractAction for UpdateContractProgramIdAction {
+    fn as_blob(
+        &self,
+        contract_name: ContractName,
+        caller: Option<BlobIndex>,
+        callees: Option<Vec<BlobIndex>>,
+    ) -> Blob {
+        Blob {
+            contract_name,
+            data: BlobData::from(StructuredBlobData {
+                caller,
+                callees,
+                parameters: self.clone(),
+            }),
+        }
+    }
+}
+
+#[derive(
+    Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
+)]
+pub struct UpdateContractTimeoutWindowAction {
+    pub contract_name: ContractName,
+    pub timeout_window: TimeoutWindow,
+}
+
+impl ContractAction for UpdateContractTimeoutWindowAction {
     fn as_blob(
         &self,
         contract_name: ContractName,

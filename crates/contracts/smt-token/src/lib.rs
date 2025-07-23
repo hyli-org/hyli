@@ -285,7 +285,7 @@ impl SmtTokenContract {
         let account = accounts.get_mut(&owner).unwrap();
         // 0-balance is treated as non-existent account
         if account.balance == 0 {
-            return Err(format!("Owner account {} not found", owner));
+            return Err(format!("Owner account {owner} not found"));
         }
         account.update_allowances(spender.clone(), amount);
 
@@ -299,7 +299,7 @@ impl SmtTokenContract {
             .expect("Failed to compute new root");
 
         self.commitment = StateCommitment(Into::<[u8; 32]>::into(new_root).to_vec());
-        Ok(format!("Approved {} to {}", amount, spender))
+        Ok(format!("Approved {amount} to {spender}"))
     }
 }
 

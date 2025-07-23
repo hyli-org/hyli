@@ -179,7 +179,7 @@ mod e2e_consensus {
         amount: u128,
     ) -> Result<Vec<TxHash>> {
         let mut tx_hashes = vec![];
-        let identity = Identity(format!("{}@hydentity", id));
+        let identity = Identity(format!("{id}@hydentity"));
         {
             let mut transaction = ProvableBlobTx::new(identity.clone());
 
@@ -297,7 +297,7 @@ mod e2e_consensus {
         warn!("Starting generating txs");
 
         for i in 0..2 {
-            _ = gen_txs(&mut ctx, &mut tx_ctx, format!("alex{}", i), 100 + i).await?;
+            _ = gen_txs(&mut ctx, &mut tx_ctx, format!("alex{i}"), 100 + i).await?;
         }
 
         // Wait until it's processed.
@@ -341,7 +341,7 @@ mod e2e_consensus {
 
         // Check everything works out.
         for i in 0..3 {
-            let balance = state.balance_of(&format!("alex{}@hydentity", i));
+            let balance = state.balance_of(&format!("alex{i}@hydentity"));
             info!("Checking alex{}@hydentity balance: {:?}", i, balance);
             assert_eq!(balance.unwrap(), ((100 + i) as u128));
         }
@@ -364,7 +364,7 @@ mod e2e_consensus {
         let mut tx_ctx = init_states(&mut ctx).await;
 
         for i in 0..2 {
-            _ = gen_txs(&mut ctx, &mut tx_ctx, format!("alex{}", i), 100 + i).await?;
+            _ = gen_txs(&mut ctx, &mut tx_ctx, format!("alex{i}"), 100 + i).await?;
         }
 
         // Wait until it's processed.
@@ -416,7 +416,7 @@ mod e2e_consensus {
 
         // Check everything works out.
         for i in 0..3 {
-            let balance = state.balance_of(&format!("alex{}@hydentity", i));
+            let balance = state.balance_of(&format!("alex{i}@hydentity"));
             info!("Checking alex{}@hydentity balance: {:?}", i, balance);
             assert_eq!(balance.unwrap(), ((100 + i) as u128));
         }

@@ -27,8 +27,8 @@ impl SmtTokenProvableState {
         self.0
             .store()
             .leaves_map()
-            .iter()
-            .map(|(_, account)| (account.address.clone(), account.clone()))
+            .values()
+            .map(|account| (account.address.clone(), account.clone()))
             .collect()
     }
 
@@ -206,9 +206,9 @@ impl TxExecutorHandler for SmtTokenProvableState {
         let next_commitment: SmtTokenContract =
             borsh::from_slice(&next).map_err(|e| e.to_string())?;
 
-        initial_commitment
-            .steps
-            .insert(0, next_commitment.steps[0].clone());
+        if let Some(step) = next_commitment.steps.into_iter().next() {
+            initial_commitment.steps.insert(0, step);
+        }
 
         borsh::to_vec(&initial_commitment).map_err(|e| e.to_string())
     }
@@ -343,7 +343,7 @@ impl SmtTokenProvableState {
                     .get_account(&sender)?
                     .ok_or(anyhow!("Sender account {} not found", sender))?;
                 if sender == recipient {
-                    Ok(format!("Transferred {} to {}", amount, recipient))
+                    Ok(format!("Transferred {amount} to {recipient}"))
                 } else {
                     let mut recipient_account = self
                         .get_account(&recipient)?
@@ -383,7 +383,7 @@ impl SmtTokenProvableState {
                     .get_account(&owner)?
                     .ok_or(anyhow!("Owner account {} not found", owner))?;
                 if owner == recipient {
-                    Ok(format!("Transferred {} to {}", amount, recipient))
+                    Ok(format!("Transferred {amount} to {recipient}"))
                 } else {
                     let mut recipient_account = self
                         .get_account(&recipient)?
@@ -445,7 +445,7 @@ impl SmtTokenProvableState {
                 if let Err(e) = self.0.update(owner_key, owner_account) {
                     bail!("Failed to update owner account: {e}");
                 }
-                Ok(format!("Approved {} to {}", amount, spender))
+                Ok(format!("Approved {amount} to {spender}"))
             }
         }
     }
@@ -553,7 +553,7 @@ mod tests {
         });
         assert!(ho.is_ok());
         let output = String::from_utf8(ho.unwrap().0).unwrap();
-        assert!(output.contains(&format!("Transferred {} to {}", amount, recipient)));
+        assert!(output.contains(&format!("Transferred {amount} to {recipient}")));
     }
 
     #[test]
@@ -584,9 +584,6 @@ mod tests {
             tx_ctx: None,
             private_input: vec![],
         });
-        assert_eq!(
-            ho.unwrap_err(),
-            format!("Owner account {} not found", owner)
-        );
+        assert_eq!(ho.unwrap_err(), format!("Owner account {owner} not found"));
     }
 }

@@ -10,6 +10,7 @@ use anyhow::{Context, Result};
 use api::APIContract;
 use assertables::assert_ok;
 use client_sdk::{rest_client::NodeApiClient, transaction_builder::ProvableBlobTx};
+use hyle_model::api::APINodeContract;
 use testcontainers_modules::{
     postgres::Postgres,
     testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
@@ -148,6 +149,8 @@ impl E2ECtx {
         // Start indexer
         let mut indexer_conf = conf_maker.build("indexer").await;
         indexer_conf.da_read_from = node_conf.da_public_address.clone();
+        indexer_conf.run_indexer = true;
+        indexer_conf.run_explorer = true;
         let indexer = test_helpers::TestProcess::new("indexer", indexer_conf.clone()).start();
 
         let url = format!("http://localhost:{}/", &indexer_conf.rest_server_port);
@@ -274,6 +277,7 @@ impl E2ECtx {
         // Start indexer
         let mut indexer_conf = conf_maker.build("indexer").await;
         indexer_conf.run_indexer = true;
+        indexer_conf.run_explorer = true;
         indexer_conf.da_read_from = nodes.last().unwrap().conf.da_public_address.clone();
         let indexer = test_helpers::TestProcess::new("indexer", indexer_conf.clone()).start();
 
@@ -442,7 +446,7 @@ impl E2ECtx {
         wait_indexer_height(self.indexer_client(), height).await
     }
 
-    pub async fn get_contract(&self, name: &str) -> Result<Contract> {
+    pub async fn get_contract(&self, name: &str) -> Result<APINodeContract> {
         self.client().get_contract(name.into()).await
     }
 }
