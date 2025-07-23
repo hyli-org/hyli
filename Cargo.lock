@@ -4891,7 +4891,6 @@ dependencies = [
  "bytemuck",
  "hex",
  "hyle-net",
- "risc0-ethereum-contracts",
  "risc0-zkvm",
  "serde",
  "serde_json",

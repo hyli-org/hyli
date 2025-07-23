@@ -18,7 +18,6 @@ tracing = { workspace = true }
 hex = { workspace = true }
 borsh = { workspace = true }
 
-risc0-ethereum-contracts = { version = "2.2" }
 bonsai-sdk = { workspace = true, features = ["non_blocking"] }
 boundless-market = { workspace = true }
 hyle-net = { workspace = true }
