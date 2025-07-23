@@ -3,7 +3,7 @@ use crate::{
     log_debug, log_error, module_bus_client, module_handle_messages,
     modules::Module,
 };
-use anyhow::{anyhow, Error, Result};
+use anyhow::{anyhow, bail, Error, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::contract_indexer::{ContractHandler, ContractStateStore};
 use sdk::*;
@@ -299,6 +299,9 @@ where
                 tracing::info!(cn = %self.contract_name, "📝 Re-register contract '{}' with same state commitment", contract.contract_name);
             } else {
                 let state = State::construct_state(contract, metadata)?;
+                if contract.state_commitment != state.get_state_commitment() {
+                    bail!("Rebuilt contract '{}' state commitment does not match the one in the register effect", contract.contract_name);
+                }
                 tracing::warn!(cn = %self.contract_name, "📝 Contract '{}' re-built initial state", contract.contract_name);
                 self.store.write().await.state = Some(state);
             }
