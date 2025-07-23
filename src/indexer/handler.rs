@@ -199,11 +199,12 @@ impl Indexer {
                             .push_bind(block_timestamp)
                             .push_bind(total_txs);
                     })
+                    .push(" ON CONFLICT (hash) DO NOTHING")
                     .build()
                     .execute(&mut *transaction)
                     .await,
                 "Inserting blocks"
-            )?;
+            );
         }
 
         // Insert transactions into the database with batching
@@ -305,7 +306,7 @@ impl Indexer {
                             )
                         }),
                     "Inserting transactions"
-                )?;
+                );
             }
         }
 
@@ -352,7 +353,7 @@ impl Indexer {
 
                 query_builder.push(" ON CONFLICT DO NOTHING");
 
-                log_error!(
+                let _ = log_error!(
                     query_builder
                         .build()
                         .execute(&mut *transaction)
@@ -365,7 +366,7 @@ impl Indexer {
                             )
                         }),
                     "Inserting blobs"
-                )?;
+                );
             }
 
             // Insert txs_contracts with batching
@@ -405,7 +406,7 @@ impl Indexer {
                             )
                         }),
                     "Inserting txs_contracts"
-                )?;
+                );
             }
         }
 
@@ -456,7 +457,7 @@ impl Indexer {
                             )
                         }),
                     "Inserting proofs"
-                )?;
+                );
             }
         }
 
@@ -498,6 +499,8 @@ impl Indexer {
                         .push_unseparated("::jsonb");
                 });
 
+                query_builder.push(" ON CONFLICT DO NOTHING");
+
                 _ = log_error!(
                     query_builder
                         .build()
@@ -511,7 +514,7 @@ impl Indexer {
                             )
                         }),
                     "Inserting transaction events"
-                )?;
+                );
             }
         }
 
@@ -582,7 +585,7 @@ impl Indexer {
                             )
                         }),
                     "Inserting contracts"
-                )?;
+                );
             }
         }
 
@@ -618,6 +621,8 @@ impl Indexer {
                         .push_bind(state_commitment);
                 });
 
+                query_builder.push(" ON CONFLICT (contract_name, block_hash) DO NOTHING");
+
                 _ = log_error!(
                     query_builder
                         .build()
@@ -631,7 +636,7 @@ impl Indexer {
                             )
                         }),
                     "Inserting contract states"
-                )?;
+                );
             }
         }
 
@@ -692,6 +697,7 @@ impl Indexer {
                         .push_unseparated("::jsonb")
                         .push_bind(settled);
                 });
+                query_builder.push(" ON CONFLICT (proof_parent_dp_hash, proof_tx_hash, blob_parent_dp_hash, blob_tx_hash, blob_index, blob_proof_output_index) DO NOTHING");
 
                 _ = log_error!(
                     query_builder
@@ -706,7 +712,7 @@ impl Indexer {
                             )
                         }),
                     "Inserting blob proof outputs"
-                )?;
+                );
             }
         }
 
@@ -715,7 +721,7 @@ impl Indexer {
                 _ = log_error!(
                     sql_update.execute(&mut *transaction).await,
                     "Executing SQL update"
-                )?;
+                );
             }
         }
 
