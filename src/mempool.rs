@@ -21,7 +21,9 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
 use hyle_contract_sdk::{ContractName, ProgramId, Verifier};
 use hyle_crypto::SharedBlstCrypto;
-use hyle_modules::{log_warn, module_bus_client, utils::static_type_map::Pick};
+use hyle_modules::{
+    bus::BusChannelCapacity, log_warn, module_bus_client, utils::static_type_map::Pick,
+};
 use hyle_net::{logged_task::logged_task, ordered_join_set::OrderedJoinSet};
 use indexmap::IndexSet;
 use metrics::MempoolMetrics;
@@ -78,6 +80,8 @@ impl KnownContracts {
         );
     }
 }
+
+impl BusChannelCapacity for MempoolNetMessage {}
 
 module_bus_client! {
 struct MempoolBusClient {

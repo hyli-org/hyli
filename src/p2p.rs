@@ -10,7 +10,7 @@ use anyhow::{bail, Context, Error, Result};
 use hyle_crypto::{BlstCrypto, SharedBlstCrypto};
 use hyle_model::{BlockHeight, NodeStateEvent, ValidatorPublicKey};
 use hyle_modules::{
-    bus::SharedMessageBus,
+    bus::{BusChannelCapacity, SharedMessageBus},
     log_warn, module_handle_messages,
     modules::{module_bus_client, Module},
 };
@@ -33,6 +33,9 @@ pub mod network;
 pub enum P2PCommand {
     ConnectTo { peer: String },
 }
+
+impl BusChannelCapacity for P2PCommand {}
+
 module_bus_client! {
 struct P2PBusClient {
     sender(MsgWithHeader<MempoolNetMessage>),

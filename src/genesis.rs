@@ -18,7 +18,7 @@ use hyle_contract_sdk::{
 };
 use hyle_crypto::SharedBlstCrypto;
 use hyle_modules::{
-    bus::{BusClientSender, SharedMessageBus},
+    bus::{BusChannelCapacity, BusClientSender, SharedMessageBus},
     bus_client, handle_messages, log_error,
     modules::Module,
     node_state::hyle_contract_definition,
@@ -39,6 +39,8 @@ pub enum GenesisEvent {
     NoGenesis,
     GenesisBlock(SignedBlock),
 }
+
+impl BusChannelCapacity for GenesisEvent {}
 
 bus_client! {
 struct GenesisBusClient {

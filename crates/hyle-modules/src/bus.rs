@@ -9,10 +9,32 @@ use tokio::sync::{broadcast, Mutex};
 pub mod command_response;
 pub mod metrics;
 
-// Arbitrarily "high enough" value. Memory use is around 200Mb when setting this,
-// we can lower it for some rarely used channels if needed.
-pub const CHANNEL_CAPACITY: usize = 100000;
-pub const CHANNEL_CAP_IF_WAITING: usize = CHANNEL_CAPACITY - 10;
+pub const DEFAULT_CAPACITY: usize = 100000;
+pub const LOW_CAPACITY: usize = 10000;
+
+pub trait BusChannelCapacity {
+    const CAPACITY: usize = DEFAULT_CAPACITY;
+    const CAPACITY_IF_WAITING: usize = Self::CAPACITY - 10;
+}
+impl BusChannelCapacity for () {}
+
+// Implement this for a couple types from the model as it's not available there.
+impl BusChannelCapacity for sdk::NodeStateEvent {
+    const CAPACITY: usize = LOW_CAPACITY; // Lowered, this can be big
+}
+impl BusChannelCapacity for sdk::DataEvent {
+    const CAPACITY: usize = LOW_CAPACITY; // Lowered, this can be big
+}
+impl BusChannelCapacity for sdk::MempoolBlockEvent {
+    const CAPACITY: usize = LOW_CAPACITY; // Lowered, this can be big
+}
+impl BusChannelCapacity for sdk::MempoolStatusEvent {
+    const CAPACITY: usize = LOW_CAPACITY; // Lowered, this can be big
+}
+impl BusChannelCapacity for client_sdk::tcp_client::TcpServerMessage {}
+
+#[cfg(test)]
+impl BusChannelCapacity for usize {}
 
 type AnyMap = Map<dyn Any + Send + Sync>;
 
@@ -36,16 +58,20 @@ impl SharedMessageBus {
         }
     }
 
-    async fn receiver<M: Send + Sync + Clone + 'static>(&self) -> broadcast::Receiver<M> {
+    async fn receiver<M: Send + Sync + Clone + BusChannelCapacity + 'static>(
+        &self,
+    ) -> broadcast::Receiver<M> {
         self.sender().await.subscribe()
     }
 
-    async fn sender<M: Send + Sync + Clone + 'static>(&self) -> broadcast::Sender<M> {
+    async fn sender<M: Send + Sync + Clone + BusChannelCapacity + 'static>(
+        &self,
+    ) -> broadcast::Sender<M> {
         self.channels
             .lock()
             .await
             .entry::<broadcast::Sender<M>>()
-            .or_insert_with(|| broadcast::channel(CHANNEL_CAPACITY).0)
+            .or_insert_with(|| broadcast::channel(<M as BusChannelCapacity>::CAPACITY).0)
             .clone()
     }
 }
@@ -54,13 +80,13 @@ pub mod dont_use_this {
     use super::*;
     /// Get a sender for a specific message type.
     /// Intended for use by BusClient implementations only.
-    pub async fn get_sender<M: Send + Sync + Clone + 'static>(
+    pub async fn get_sender<M: Send + Sync + Clone + BusChannelCapacity + 'static>(
         bus: &SharedMessageBus,
     ) -> broadcast::Sender<M> {
         bus.sender::<M>().await
     }
 
-    pub async fn get_receiver<M: Send + Sync + Clone + 'static>(
+    pub async fn get_receiver<M: Send + Sync + Clone + BusChannelCapacity + 'static>(
         bus: &SharedMessageBus,
     ) -> broadcast::Receiver<M> {
         bus.receiver::<M>().await
@@ -123,7 +149,7 @@ macro_rules! bus_client {
 }
 pub use bus_client;
 
-impl<Client, Msg: Clone + 'static> BusClientSender<Msg> for Client
+impl<Client, Msg: Clone + BusChannelCapacity + 'static> BusClientSender<Msg> for Client
 where
     Client: Pick<tokio::sync::broadcast::Sender<Msg>> + Pick<BusMetrics> + 'static,
 {
@@ -131,7 +157,7 @@ where
         if Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).receiver_count() > 0 {
             // We have a potential TOCTOU race here, so use a buffer.
             if Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).len()
-                >= CHANNEL_CAP_IF_WAITING
+                >= <Msg as BusChannelCapacity>::CAPACITY_IF_WAITING
             {
                 anyhow::bail!("Channel is full, cannot send message");
             }
@@ -154,7 +180,7 @@ where
             loop {
                 // We have a potential TOCTOU race here, so use a buffer.
                 if Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).len()
-                    >= CHANNEL_CAP_IF_WAITING
+                    >= <Msg as BusChannelCapacity>::CAPACITY_IF_WAITING
                 {
                     if i % HIGH_NB_OF_ATTEMPTS == 0 {
                         tracing::warn!(
