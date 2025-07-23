@@ -35,6 +35,13 @@ static ALLOC: dhat::Alloc = dhat::Alloc;
 static GLOBAL_ALLOC: alloc_metrics::MetricAlloc<std::alloc::System> =
     alloc_metrics::MetricAlloc::new(std::alloc::System);
 
+#[cfg(feature = "alloc-track")]
+#[global_allocator]
+static GLOBAL_ALLOC: alloc_track::AllocTrack<std::alloc::System> = AllocTrack::new(
+    std::alloc::System,
+    alloc_track::BacktraceMode::Backtrace(100, 1024 * 1024),
+);
+
 // We have some modules that have long-ish tasks, but for now we won't bother giving them
 // their own runtime, so to avoid contention we keep a safe number of worker threads
 #[tokio::main(worker_threads = 6)]
