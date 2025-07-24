@@ -33,6 +33,14 @@ impl BusChannelCapacity for sdk::MempoolStatusEvent {
 }
 impl BusChannelCapacity for client_sdk::tcp_client::TcpServerMessage {}
 
+#[test]
+fn test_bus_channel_capacity() {
+    assert_eq!(
+        <sdk::MempoolStatusEvent as BusChannelCapacity>::CAPACITY_IF_WAITING,
+        LOW_CAPACITY - 10
+    );
+}
+
 #[cfg(test)]
 impl BusChannelCapacity for usize {}
 
