@@ -1145,6 +1145,8 @@ where
                         }
                         let tx = ProofTransaction {
                             contract_name: contract_name.clone(),
+                            program_id: prover.program_id(),
+                            verifier: prover.verifier(),
                             proof: proof.data,
                         };
                         // If we are in nosend mode, we just log the proof and don't send it (for debugging)

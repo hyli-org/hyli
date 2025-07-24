@@ -7,7 +7,7 @@ use crate::{
 };
 
 use client_sdk::tcp_client::TcpServerMessage;
-use hyle_model::{DataProposalHash, LaneBytesSize, LaneId, ProgramId, Verifier};
+use hyle_model::{DataProposalHash, LaneBytesSize, LaneId};
 use hyle_modules::{bus::SharedMessageBus, modules::Module};
 use tracing::warn;
 
@@ -48,21 +48,6 @@ impl Module for Mempool {
                     .as_path(),
             )
             .unwrap_or_default();
-
-        // NB - testnet
-        // Because of a bug, the dataproposal 3fe68d0d7d08581dec2e89291fb34ce77cd591edb47d11ec0f19f7d5b5dd508e
-        // in lane afac1e7cf451ee4659a2b12822acfb54a8aaabb9acd0db917974838ffa7c8da9eb6a856df16a336c772247dc06f2f86e
-        // was double-counted, and the size was updated to a higher value.
-
-        // Register the Hyli contract to be able to handle registrations.
-        #[allow(clippy::expect_used, reason = "not held across await")]
-        attributes
-            .known_contracts
-            .write()
-            .expect("logic issue")
-            .0
-            .entry("hyle".into())
-            .or_insert_with(|| (Verifier("hyle".to_owned()), ProgramId(vec![])));
 
         Ok(Mempool {
             bus,
@@ -117,13 +102,6 @@ impl Module for Mempool {
                         tracing::error!("Error processing block in mempool: {:?}", e);
                     }
                 }
-                for (_, contract, _) in block.registered_contracts.into_values() {
-                    self.handle_contract_registration(contract);
-                }
-                for (contract_name, program_id) in block.updated_program_ids.into_iter() {
-                    self.handle_contract_update(contract_name, program_id);
-                }
-
             }
             command_response<QueryNewCut, Cut> staking => {
                 self.handle_querynewcut(staking)

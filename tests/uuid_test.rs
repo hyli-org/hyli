@@ -16,7 +16,7 @@ use hyle_contract_sdk::{
     Blob, BlobTransaction, Calldata, ContractName, Hashed, HyleOutput, ProgramId, StateCommitment,
     Verifier, ZkContract,
 };
-use hyle_contracts::{HYDENTITY_ELF, UUID_TLD_ELF, UUID_TLD_ID};
+use hyle_contracts::{HYDENTITY_ELF, HYDENTITY_ID, UUID_TLD_ELF, UUID_TLD_ID};
 use hyle_model::{OnchainEffect, RegisterContractAction};
 use uuid_tld::{UuidTld, UuidTldAction};
 
@@ -61,8 +61,11 @@ async fn test_uuid_registration() {
         uuid: UuidTld::default(),
         hydentity,
     })
-    .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
-    .with_prover("uuid".into(), Risc0Prover::new(UUID_TLD_ELF))
+    .with_prover(
+        "hydentity".into(),
+        Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+    )
+    .with_prover("uuid".into(), Risc0Prover::new(UUID_TLD_ELF, UUID_TLD_ID))
     .build();
 
     // First register identity
@@ -93,9 +96,8 @@ async fn test_uuid_registration() {
 
     // Then prove it and send that
     let mut proofs = tx.iter_prove();
-    ctx.send_proof_single(proofs.next().unwrap().await.unwrap())
-        .await
-        .unwrap();
+    let proof_tx = proofs.next().unwrap().await.unwrap();
+    ctx.send_proof_single(proof_tx).await.unwrap();
     ctx.send_proof_single(proofs.next().unwrap().await.unwrap())
         .await
         .unwrap();

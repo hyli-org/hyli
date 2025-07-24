@@ -9,6 +9,7 @@ repository = { workspace = true }
 rust-version = { workspace = true }
 
 [dependencies]
+hyle-model = { workspace = true }
 sdk = { workspace = true, default-features = false, features = ["full-model"] }
 bonsai-runner = { workspace = true, optional = true }
 hyle-net = { workspace = true }

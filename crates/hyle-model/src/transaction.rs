@@ -88,6 +88,8 @@ impl Default for TransactionData {
 )]
 pub struct ProofTransaction {
     pub contract_name: ContractName,
+    pub program_id: ProgramId,
+    pub verifier: Verifier,
     pub proof: ProofData,
 }
 
@@ -97,9 +99,13 @@ impl ProofTransaction {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[derive(
+    Default, Serialize, Deserialize, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
+)]
 pub struct VerifiedProofTransaction {
     pub contract_name: ContractName,
+    pub program_id: ProgramId,
+    pub verifier: Verifier,
     pub proof: Option<ProofData>, // Kept only on the local lane for indexing purposes
     pub proof_hash: ProofDataHash,
     pub proof_size: usize,
@@ -183,6 +189,8 @@ impl Hashed<TxHash> for ProofTransaction {
     fn hashed(&self) -> TxHash {
         let mut hasher = Sha3_256::new();
         hasher.update(self.contract_name.0.as_bytes());
+        hasher.update(self.program_id.0.clone());
+        hasher.update(self.verifier.0.as_bytes());
         hasher.update(self.proof.hashed().0);
         let hash_bytes = hasher.finalize();
         TxHash(hex::encode(hash_bytes))

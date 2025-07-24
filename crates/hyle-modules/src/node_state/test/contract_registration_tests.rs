@@ -202,11 +202,15 @@ async fn test_register_contract_composition() {
 
     check_block_is_ok(&block);
 
-    let proof_tx = new_proof_tx(
+    let mut proof_tx = new_proof_tx(
         &"hyle".into(),
         &make_hyle_output(compositing_register_good.clone(), BlobIndex(1)),
         &compositing_register_good.hashed(),
     );
+    proof_tx.verifier = Verifier("hyle".to_string());
+    proof_tx.program_id = ProgramId(vec![0, 0, 0, 0]);
+    proof_tx.proven_blobs.get_mut(0).unwrap().program_id = ProgramId(vec![]);
+    proof_tx.proven_blobs.get_mut(0).unwrap().verifier = Verifier("test".to_string());
 
     let block = state.craft_block_and_handle(103, vec![proof_tx.into()]);
 
@@ -221,11 +225,15 @@ async fn test_register_contract_composition() {
         "test3@hydentity",
         compositing_register_willfail.blobs.clone(),
     );
-    let proof_tx = new_proof_tx(
+    let mut proof_tx = new_proof_tx(
         &"hyle".into(),
         &make_hyle_output(third_tx.clone(), BlobIndex(1)),
         &third_tx.hashed(),
     );
+    proof_tx.verifier = Verifier("hyle".to_string());
+    proof_tx.program_id = ProgramId(vec![0, 0, 0, 0]);
+    proof_tx.proven_blobs.get_mut(0).unwrap().program_id = ProgramId(vec![]);
+    proof_tx.proven_blobs.get_mut(0).unwrap().verifier = Verifier("test".to_string());
 
     let block = state.craft_block_and_handle(104, vec![third_tx.clone().into()]);
 
@@ -383,7 +391,7 @@ async fn test_register_contract_and_delete_hyle() {
     output
         .onchain_effects
         .push(OnchainEffect::DeleteContract("c1".into()));
-    let delete_self_proof = new_proof_tx(&"c1.hyle".into(), &output, &self_delete_tx.hashed());
+    let delete_self_proof = new_proof_tx(&"c1".into(), &output, &self_delete_tx.hashed());
 
     let mut output =
         make_hyle_output_with_state(delete_sub_tx.clone(), BlobIndex(0), &[4, 5, 6], &[1]);
@@ -822,9 +830,13 @@ async fn test_unknown_contract_and_delete_cleanup() {
     output
         .onchain_effects
         .push(OnchainEffect::DeleteContract("to_delete".into()));
-    let proof_tx = new_proof_tx(&"hyle".into(), &output, &blob_tx1_hash);
-    // Execute the deletion
-    state.craft_block_and_handle(4, vec![proof_tx.into()]);
+    let mut proof_tx = new_proof_tx(&"hyle".into(), &output, &blob_tx1_hash);
+    proof_tx.verifier = Verifier("hyle".to_string());
+    proof_tx.program_id = ProgramId(vec![0, 0, 0, 0]);
+    proof_tx.proven_blobs.get_mut(0).unwrap().program_id = ProgramId(vec![]);
+    proof_tx.proven_blobs.get_mut(0).unwrap().verifier = Verifier("test".to_string());
+
+    let block = state.craft_block_and_handle(4, vec![proof_tx.into()]);
 
     // Verify contract was deleted
     assert!(!state.contracts.contains_key(&"to_delete".into()));

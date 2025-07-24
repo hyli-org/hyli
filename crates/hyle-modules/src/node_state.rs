@@ -316,6 +316,51 @@ impl NodeState {
                     error!("Unverified recursive proof transaction should not be in a block");
                 }
                 TransactionData::VerifiedProof(proof_tx) => {
+                    // Verify that the verifier & program ID are valid
+                    let Some(contract) = self.contracts.get(&proof_tx.contract_name) else {
+                        let err = format!(
+                            "Contract {} not found for verified proof transaction {}",
+                            proof_tx.contract_name, &tx_id
+                        );
+                        block_under_construction
+                            .transactions_events
+                            .entry(proof_tx.hashed())
+                            .or_default()
+                            .push(TransactionStateEvent::Error(err));
+                        continue;
+                    };
+
+                    if contract.verifier != proof_tx.verifier {
+                        let err = format!(
+                            "Verifier mismatch for verified proof transaction {}: expected {:?}, got {:?} on {}",
+                            &tx_id,
+                            contract.verifier.0,
+                            proof_tx.verifier.0,
+                            contract.name
+                        );
+                        block_under_construction
+                            .transactions_events
+                            .entry(proof_tx.hashed())
+                            .or_default()
+                            .push(TransactionStateEvent::Error(err));
+                        continue;
+                    }
+                    if contract.program_id != proof_tx.program_id {
+                        let err = format!(
+                            "Program ID mismatch for verified proof transaction {}: expected {:?}, got {:?} on {}",
+                            &tx_id,
+                            contract.program_id.0,
+                            proof_tx.program_id.0,
+                            contract.name
+                        );
+                        block_under_construction
+                            .transactions_events
+                            .entry(proof_tx.hashed())
+                            .or_default()
+                            .push(TransactionStateEvent::Error(err));
+                        continue;
+                    }
+
                     // First, store the proofs and check if we can settle the transaction
                     // NB: if some of the blob proof outputs are bad, we just ignore those
                     // but we don't actually fail the transaction.
@@ -611,6 +656,8 @@ impl NodeState {
             .blob_proof_outputs
             .push(HandledBlobProofOutput {
                 proof_tx_hash,
+                verifier: blob_proof_data.verifier.clone(),
+                program_id: blob_proof_data.program_id.clone(),
                 blob_tx_hash: unsettled_tx_hash.clone(),
                 blob_index: blob_proof_data.hyle_output.index,
                 blob_proof_output_index: blob.possible_proofs.len() - 1,
@@ -1406,9 +1453,10 @@ impl NodeState {
 
         if proof_metadata.0 != contract.program_id {
             bail!(
-                "Program ID mismatch: {:?}, expected {:?}",
+                "Program ID mismatch: {:?}, expected {:?} on {}",
                 proof_metadata.0,
-                contract.program_id
+                contract.program_id,
+                contract.name
             )
         }
 
@@ -1680,15 +1728,22 @@ pub mod test {
         hyle_output: &HyleOutput,
         blob_tx_hash: &TxHash,
     ) -> VerifiedProofTransaction {
+        let verifier = Verifier("test".to_string());
+        let program_id = ProgramId(vec![]);
         let proof = ProofTransaction {
             contract_name: contract.clone(),
             proof: ProofData(borsh::to_vec(&vec![hyle_output.clone()]).unwrap()),
+            verifier: verifier.clone(),
+            program_id: program_id.clone(),
         };
         VerifiedProofTransaction {
             contract_name: contract.clone(),
+            verifier: proof.verifier.clone(),
+            program_id: proof.program_id.clone(),
             proven_blobs: vec![BlobProofOutput {
                 hyle_output: hyle_output.clone(),
-                program_id: ProgramId(vec![]),
+                program_id: proof.program_id.clone(),
+                verifier: proof.verifier.clone(),
                 blob_tx_hash: blob_tx_hash.clone(),
                 original_proof_hash: proof.proof.hashed(),
             }],

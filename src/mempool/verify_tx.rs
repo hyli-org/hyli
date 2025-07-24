@@ -1,18 +1,13 @@
 use anyhow::{bail, Context, Result};
-use hyle_model::{
-    ContractName, DataProposalHash, DataSized, LaneBytesSize, LaneId, ProgramId,
-    RegisterContractAction, StructuredBlobData, ValidatorPublicKey, Verifier,
-};
+use hyle_model::{DataProposalHash, DataSized, LaneBytesSize, LaneId, ValidatorPublicKey};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use tracing::{debug, trace, warn};
 
 use crate::{
     mempool::{MempoolNetMessage, ProcessedDPEvent},
-    model::{BlobProofOutput, DataProposal, Hashed, Transaction, TransactionData},
+    model::{BlobProofOutput, DataProposal, Hashed, TransactionData},
 };
 
-use super::KnownContracts;
 use super::{
     storage::{CanBePutOnTop, Storage},
     verifiers::{verify_proof, verify_recursive_proof},
@@ -157,11 +152,10 @@ impl super::Mempool {
             }
             DataProposalVerdict::Process => {
                 trace!("Further processing for DataProposal");
-                let kc = self.known_contracts.clone();
                 let lane_id = lane_id.clone();
                 self.inner.processing_dps.spawn_on(
                     async move {
-                        let decision = Self::process_data_proposal(&mut data_proposal, kc);
+                        let decision = Self::process_data_proposal(&mut data_proposal);
                         Ok(ProcessedDPEvent::OnProcessedDataProposal((
                             lane_id,
                             decision,
@@ -322,10 +316,7 @@ impl super::Mempool {
         }
     }
 
-    fn process_data_proposal(
-        data_proposal: &mut DataProposal,
-        known_contracts: Arc<std::sync::RwLock<KnownContracts>>,
-    ) -> DataProposalVerdict {
+    fn process_data_proposal(data_proposal: &mut DataProposal) -> DataProposalVerdict {
         for tx in &data_proposal.txs {
             match &tx.transaction_data {
                 TransactionData::Blob(_) => {
@@ -346,32 +337,13 @@ impl super::Mempool {
                             return DataProposalVerdict::Refuse;
                         }
                     };
-                    // TODO: we could early-reject proofs where the blob
-                    // is not for the correct transaction.
-                    #[allow(clippy::expect_used, reason = "not held across await")]
-                    let (verifier, program_id) = match known_contracts
-                        .read()
-                        .expect("logic error")
-                        .0
-                        .get(&proof_tx.contract_name)
-                        .cloned()
-                    {
-                        Some((verifier, program_id)) => (verifier, program_id),
-                        None => {
-                            match Self::find_contract(data_proposal, tx, &proof_tx.contract_name) {
-                                Some((v, p)) => (v.clone(), p.clone()),
-                                None => {
-                                    warn!("Refusing DataProposal: contract not found");
-                                    return DataProposalVerdict::Refuse;
-                                }
-                            }
-                        }
-                    };
+                    let verifier = &proof_tx.verifier;
+                    let program_id = &proof_tx.program_id;
                     // TODO: figure out how to generalize this
                     let is_recursive = proof_tx.contract_name.0 == "risc0-recursion";
 
                     if is_recursive {
-                        match verify_recursive_proof(proof, &verifier, &program_id) {
+                        match verify_recursive_proof(proof, verifier, program_id) {
                             Ok((local_program_ids, local_hyle_outputs)) => {
                                 let data_matches = local_program_ids
                                     .iter()
@@ -403,7 +375,7 @@ impl super::Mempool {
                             }
                         }
                     } else {
-                        match verify_proof(proof, &verifier, &program_id) {
+                        match verify_proof(proof, verifier, program_id) {
                             Ok(outputs) => {
                                 // TODO: we could check the blob hash here too.
                                 if outputs.len() != proof_tx.proven_blobs.len()
@@ -430,47 +402,6 @@ impl super::Mempool {
         Self::remove_proofs(data_proposal);
 
         DataProposalVerdict::Vote
-    }
-
-    // Find the verifier and program_id for a contract name, optimistically.
-    fn find_contract(
-        data_proposal: &DataProposal,
-        tx: &Transaction,
-        contract_name: &ContractName,
-    ) -> Option<(Verifier, ProgramId)> {
-        // Check if it's in the same data proposal.
-        // (kind of inefficient, but it's mostly to make our tests work)
-        // TODO: improve on this logic, possibly look into other data proposals / lanes.
-        #[allow(
-            clippy::unwrap_used,
-            reason = "we know position will return a valid range"
-        )]
-        data_proposal
-            .txs
-            .get(
-                0..data_proposal
-                    .txs
-                    .iter()
-                    .position(|tx2| std::ptr::eq(tx, tx2))
-                    .unwrap(),
-            )
-            .unwrap()
-            .iter()
-            .find_map(|tx| match &tx.transaction_data {
-                TransactionData::Blob(tx) => tx.blobs.iter().find_map(|blob| {
-                    if blob.contract_name.0 == "hyle" {
-                        if let Ok(tx) = StructuredBlobData::<RegisterContractAction>::try_from(
-                            blob.data.clone(),
-                        ) {
-                            if &tx.parameters.contract_name == contract_name {
-                                return Some((tx.parameters.verifier, tx.parameters.program_id));
-                            }
-                        }
-                    }
-                    None
-                }),
-                _ => None,
-            })
     }
 
     /// Remove proofs from all transactions in the DataProposal
@@ -506,7 +437,7 @@ pub mod test {
         p2p::network::HeaderSigner,
     };
     use hyle_crypto::BlstCrypto;
-    use hyle_model::{DataProposalHash, SignedByValidator};
+    use hyle_model::{ContractName, DataProposalHash, SignedByValidator, Transaction};
 
     #[test_log::test(tokio::test)]
     async fn test_get_verdict() {

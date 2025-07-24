@@ -7,13 +7,12 @@ use anyhow::{bail, Context, Result};
 use client_sdk::tcp_client::TcpServerMessage;
 use futures::StreamExt;
 use std::collections::HashSet;
-use std::sync::Arc;
 use tracing::{debug, trace};
 
 use super::storage::LaneEntryMetadata;
 use super::verifiers::{verify_proof, verify_recursive_proof};
 use super::{api::RestApiMessage, storage::Storage};
-use super::{KnownContracts, MempoolNetMessage, ValidatorDAG};
+use super::{MempoolNetMessage, ValidatorDAG};
 
 impl super::Mempool {
     fn get_last_data_prop_hash_in_own_lane(&self) -> Option<DataProposalHash> {
@@ -368,9 +367,6 @@ impl super::Mempool {
                         blob_tx.blobs.len()
                     );
                 }
-                // TODO: we should check if the registration handler contract exists.
-                // TODO: would be good to not need to clone here.
-                self.handle_hyle_contract_registration(blob_tx);
             }
             TransactionData::Proof(ref proof_tx) => {
                 debug!(
@@ -378,11 +374,10 @@ impl super::Mempool {
                     tx.hashed(),
                     proof_tx.contract_name
                 );
-                let kc = self.known_contracts.clone();
                 self.inner.processing_txs.spawn_on(
                     async move {
-                        let tx = Self::process_proof_tx(kc, tx)
-                            .context("Processing proof tx in blocker")?;
+                        let tx =
+                            Self::process_proof_tx(tx).context("Processing proof tx in blocker")?;
                         Ok(tx)
                     },
                     self.inner.long_tasks_runtime.handle(),
@@ -431,35 +426,33 @@ impl super::Mempool {
         Ok(())
     }
 
-    fn process_proof_tx(
-        known_contracts: Arc<std::sync::RwLock<KnownContracts>>,
-        mut tx: Transaction,
-    ) -> Result<Transaction> {
+    fn process_proof_tx(mut tx: Transaction) -> Result<Transaction> {
         let TransactionData::Proof(proof_transaction) = tx.transaction_data else {
             bail!("Can only process ProofTx");
         };
-        // Verify and extract proof
-        #[allow(clippy::expect_used, reason = "not held across await")]
-        let (verifier, program_id) = known_contracts
-            .read()
-            .expect("logic error")
-            .0
-            .get(&proof_transaction.contract_name)
-            .context("Contract unknown")?
-            .clone();
 
         let is_recursive = proof_transaction.contract_name.0 == "risc0-recursion";
 
         let (hyle_outputs, program_ids) = if is_recursive {
-            let (program_ids, hyle_outputs) =
-                verify_recursive_proof(&proof_transaction.proof, &verifier, &program_id)
-                    .context("verify_rec_proof")?;
+            let (program_ids, hyle_outputs) = verify_recursive_proof(
+                &proof_transaction.proof,
+                &proof_transaction.verifier,
+                &proof_transaction.program_id,
+            )
+            .context("verify_rec_proof")?;
             (hyle_outputs, program_ids)
         } else {
-            let hyle_outputs = verify_proof(&proof_transaction.proof, &verifier, &program_id)
-                .context("verify_proof")?;
+            let hyle_outputs = verify_proof(
+                &proof_transaction.proof,
+                &proof_transaction.verifier,
+                &proof_transaction.program_id,
+            )
+            .context("verify_proof")?;
             let len = hyle_outputs.len();
-            (hyle_outputs, vec![program_id.clone(); len])
+            (
+                hyle_outputs,
+                vec![proof_transaction.program_id.clone(); len],
+            )
         };
 
         let tx_hashes = hyle_outputs
@@ -483,6 +476,8 @@ impl super::Mempool {
             proof_size: proof_transaction.estimate_size(),
             proof: Some(proof_transaction.proof),
             contract_name: proof_transaction.contract_name.clone(),
+            program_id: proof_transaction.program_id.clone(),
+            verifier: proof_transaction.verifier.clone(),
             is_recursive,
             proven_blobs: std::iter::zip(tx_hashes, std::iter::zip(hyle_outputs, program_ids))
                 .map(
@@ -491,6 +486,8 @@ impl super::Mempool {
                         blob_tx_hash: blob_tx_hash.clone(),
                         hyle_output,
                         program_id,
+                        // Should be the same verifier for all blobs in the proof
+                        verifier: proof_transaction.verifier.clone(),
                     },
                 )
                 .collect(),
