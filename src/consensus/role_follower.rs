@@ -356,6 +356,15 @@ impl Consensus {
                         "DataProposal {} from lane {} was already in the last cut, not checking PoDA",
                         data_proposal_hash, lane_id
                     );
+                    if &cut.2 != lane_size {
+                        bail!(
+                            "DataProposal {} from lane {} was already in the last cut but has different size: {} != {}",
+                            data_proposal_hash,
+                            lane_id,
+                            cut.2,
+                            lane_size
+                        );
+                    }
                     continue;
                 }
                 // Ensure we're not going backwards in the cut.

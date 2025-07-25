@@ -1,5 +1,5 @@
 use crate::{
-    bus::{BusClientSender, SharedMessageBus},
+    bus::{BusClientSender, BusMessage, SharedMessageBus},
     log_debug, log_error, module_bus_client, module_handle_messages,
     modules::Module,
 };
@@ -21,15 +21,19 @@ pub struct CSIBusEvent<E> {
     pub event: E,
 }
 
+impl<E: BusMessage> BusMessage for CSIBusEvent<E> {
+    const CAPACITY: usize = E::CAPACITY;
+}
+
 module_bus_client! {
 #[derive(Debug)]
-struct CSIBusClient<E: Clone + Send + Sync + 'static> {
+struct CSIBusClient<E: Clone + Send + Sync + BusMessage + 'static> {
     sender(CSIBusEvent<E>),
     receiver(NodeStateEvent),
 }
 }
 
-pub struct ContractStateIndexer<State, Event: Clone + Send + Sync + 'static = ()> {
+pub struct ContractStateIndexer<State, Event: Clone + Send + Sync + BusMessage + 'static = ()> {
     bus: CSIBusClient<Event>,
     store: Arc<RwLock<ContractStateStore<State>>>,
     contract_name: ContractName,
@@ -52,7 +56,7 @@ where
         + BorshSerialize
         + BorshDeserialize
         + 'static,
-    Event: std::fmt::Debug + Clone + Send + Sync + 'static,
+    Event: std::fmt::Debug + Clone + Send + Sync + BusMessage + 'static,
 {
     type Context = ContractStateIndexerCtx;
 
@@ -138,7 +142,7 @@ where
         + BorshSerialize
         + BorshDeserialize
         + 'static,
-    Event: std::fmt::Debug + Clone + Send + Sync + 'static,
+    Event: std::fmt::Debug + Clone + Send + Sync + BusMessage + 'static,
 {
     /// Note: Each copy of the contract state indexer does the same handle_block on each data event
     /// coming from node state.
