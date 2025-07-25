@@ -37,7 +37,7 @@ static GLOBAL_ALLOC: alloc_metrics::MetricAlloc<std::alloc::System> =
 
 #[cfg(feature = "alloc-track")]
 #[global_allocator]
-static GLOBAL_ALLOC: alloc_track::AllocTrack<std::alloc::System> = AllocTrack::new(
+static GLOBAL_ALLOC: alloc_track::AllocTrack<std::alloc::System> = alloc_track::AllocTrack::new(
     std::alloc::System,
     alloc_track::BacktraceMode::Backtrace(100, 1024 * 1024),
 );
@@ -87,9 +87,11 @@ async fn main() -> Result<()> {
     )?;
 
     #[cfg(feature = "alloc-track")]
-    alloc_track::backtrace_report(|_, _| true)
-        .map(|report| std::fs::write("alloc_report.csv", report.csv()))
-        .context("writing alloc report")?;
+    std::fs::write(
+        "alloc_report.csv",
+        alloc_track::backtrace_report(|_, _| true).csv(),
+    )
+    .context("writing alloc report")?;
 
     Ok(())
 }
