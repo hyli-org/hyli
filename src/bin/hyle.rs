@@ -30,10 +30,25 @@ pub struct Args {
 /// Use dhat to profile memory usage
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-#[cfg(all(feature = "monitoring", not(feature = "dhat")))]
+#[cfg(all(
+    feature = "monitoring",
+    not(feature = "dhat"),
+    not(feature = "alloc-track")
+))]
 #[global_allocator]
 static GLOBAL_ALLOC: alloc_metrics::MetricAlloc<std::alloc::System> =
     alloc_metrics::MetricAlloc::new(std::alloc::System);
+
+#[cfg(all(
+    feature = "alloc-track",
+    not(feature = "dhat"),
+    not(feature = "alloc-track")
+))]
+#[global_allocator]
+static GLOBAL_ALLOC: alloc_track::AllocTrack<std::alloc::System> = alloc_track::AllocTrack::new(
+    std::alloc::System,
+    alloc_track::BacktraceMode::Backtrace(100, 1024 * 1024),
+);
 
 // We have some modules that have long-ish tasks, but for now we won't bother giving them
 // their own runtime, so to avoid contention we keep a safe number of worker threads
@@ -78,6 +93,13 @@ async fn main() -> Result<()> {
         hyle::entrypoint::main_process(config, Some(crypto)).await,
         "Error running hyle"
     )?;
+
+    #[cfg(feature = "alloc-track")]
+    std::fs::write(
+        "alloc_report.csv",
+        alloc_track::backtrace_report(|_, _| true).csv(),
+    )
+    .context("writing alloc report")?;
 
     Ok(())
 }
