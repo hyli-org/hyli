@@ -18,7 +18,7 @@ use hyle_contract_sdk::{
 };
 use hyle_crypto::SharedBlstCrypto;
 use hyle_modules::{
-    bus::{BusMessage, BusClientSender, SharedMessageBus},
+    bus::{BusClientSender, BusMessage, SharedMessageBus},
     bus_client, handle_messages, log_error,
     modules::Module,
     node_state::hyle_contract_definition,

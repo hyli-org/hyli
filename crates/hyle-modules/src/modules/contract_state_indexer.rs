@@ -1,5 +1,5 @@
 use crate::{
-    bus::{BusMessage, BusClientSender, SharedMessageBus},
+    bus::{BusClientSender, BusMessage, SharedMessageBus},
     log_debug, log_error, module_bus_client, module_handle_messages,
     modules::Module,
 };
@@ -33,10 +33,7 @@ struct CSIBusClient<E: Clone + Send + Sync + BusMessage + 'static> {
 }
 }
 
-pub struct ContractStateIndexer<
-    State,
-    Event: Clone + Send + Sync + BusMessage + 'static = (),
-> {
+pub struct ContractStateIndexer<State, Event: Clone + Send + Sync + BusMessage + 'static = ()> {
     bus: CSIBusClient<Event>,
     store: Arc<RwLock<ContractStateStore<State>>>,
     contract_name: ContractName,

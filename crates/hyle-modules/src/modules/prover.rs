@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
-use crate::bus::{BusMessage, BusClientSender, SharedMessageBus};
+use crate::bus::{BusClientSender, BusMessage, SharedMessageBus};
 use crate::modules::signal::shutdown_aware_timeout;
 use crate::modules::SharedBuildApiCtx;
 use crate::{log_error, module_bus_client, module_handle_messages, modules::Module};
