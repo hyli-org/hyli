@@ -316,51 +316,6 @@ impl NodeState {
                     error!("Unverified recursive proof transaction should not be in a block");
                 }
                 TransactionData::VerifiedProof(proof_tx) => {
-                    // // Verify that the verifier & program ID are valid
-                    // let Some(contract) = self.contracts.get(&proof_tx.contract_name) else {
-                    //     let err = format!(
-                    //         "Contract {} not found for verified proof transaction {}",
-                    //         proof_tx.contract_name, &tx_id
-                    //     );
-                    //     block_under_construction
-                    //         .transactions_events
-                    //         .entry(proof_tx.hashed())
-                    //         .or_default()
-                    //         .push(TransactionStateEvent::Error(err));
-                    //     continue;
-                    // };
-
-                    // if contract.verifier != proof_tx.verifier {
-                    //     let err = format!(
-                    //         "Verifier mismatch for verified proof transaction {}: expected {:?}, got {:?} on {}",
-                    //         &tx_id,
-                    //         contract.verifier.0,
-                    //         proof_tx.verifier.0,
-                    //         contract.name
-                    //     );
-                    //     block_under_construction
-                    //         .transactions_events
-                    //         .entry(proof_tx.hashed())
-                    //         .or_default()
-                    //         .push(TransactionStateEvent::Error(err));
-                    //     continue;
-                    // }
-                    // if contract.program_id != proof_tx.program_id {
-                    //     let err = format!(
-                    //         "Program ID mismatch for verified proof transaction {}: expected {:?}, got {:?} on {}",
-                    //         &tx_id,
-                    //         contract.program_id.0,
-                    //         proof_tx.program_id.0,
-                    //         contract.name
-                    //     );
-                    //     block_under_construction
-                    //         .transactions_events
-                    //         .entry(proof_tx.hashed())
-                    //         .or_default()
-                    //         .push(TransactionStateEvent::Error(err));
-                    //     continue;
-                    // }
-
                     // First, store the proofs and check if we can settle the transaction
                     // NB: if some of the blob proof outputs are bad, we just ignore those
                     // but we don't actually fail the transaction.
