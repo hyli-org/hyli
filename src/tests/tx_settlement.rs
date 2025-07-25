@@ -96,6 +96,8 @@ async fn test_full_settlement_flow() -> Result<()> {
     info!("➡️  Sending proof for c1 & c2.hyle");
     let proof_c1 = ProofTransaction {
         contract_name: "c1".into(),
+        verifier: "test".into(),
+        program_id: ProgramId(vec![1, 2, 3]),
         proof: ProofData(
             borsh::to_vec(&vec![make_hyle_output_with_state(
                 tx.clone(),
@@ -108,6 +110,8 @@ async fn test_full_settlement_flow() -> Result<()> {
     };
     let proof_c2 = ProofTransaction {
         contract_name: "c2.hyle".into(),
+        verifier: "test".into(),
+        program_id: ProgramId(vec![1, 2, 3]),
         proof: ProofData(
             borsh::to_vec(&vec![make_hyle_output_with_state(
                 tx.clone(),
@@ -204,10 +208,12 @@ async fn test_tx_settlement_duplicates() -> Result<()> {
     client.send_tx_blob(b1).await.unwrap();
     hyle_node.wait_for_n_blocks(1).await?;
 
+    let program_id = ProgramId(vec![1, 2, 3]);
+
     client
         .register_contract(APIRegisterContract {
             verifier: "test".into(),
-            program_id: ProgramId(vec![1, 2, 3]),
+            program_id: program_id.clone(),
             state_commitment: StateCommitment(vec![7, 7, 7]),
             contract_name: "c2.hyle".into(),
             ..Default::default()
@@ -246,6 +252,8 @@ async fn test_tx_settlement_duplicates() -> Result<()> {
 
     let proof_c1 = ProofTransaction {
         contract_name: "c1".into(),
+        program_id: program_id.clone(),
+        verifier: "test".into(),
         proof: ProofData(
             borsh::to_vec(&vec![make_hyle_output_with_state(
                 tx.clone(),
@@ -258,6 +266,8 @@ async fn test_tx_settlement_duplicates() -> Result<()> {
     };
     let proof_c2 = ProofTransaction {
         contract_name: "c2.hyle".into(),
+        program_id: program_id.clone(),
+        verifier: "test".into(),
         proof: ProofData(
             borsh::to_vec(&vec![make_hyle_output_with_state(
                 tx.clone(),
@@ -292,6 +302,8 @@ async fn test_tx_settlement_duplicates() -> Result<()> {
 
     let proof_c1 = ProofTransaction {
         contract_name: "c1".into(),
+        program_id: program_id.clone(),
+        verifier: "test".into(),
         proof: ProofData(
             borsh::to_vec(&vec![make_hyle_output_with_state(
                 tx.clone(),
@@ -304,6 +316,8 @@ async fn test_tx_settlement_duplicates() -> Result<()> {
     };
     let proof_c2 = ProofTransaction {
         contract_name: "c2.hyle".into(),
+        program_id: program_id.clone(),
+        verifier: "test".into(),
         proof: ProofData(
             borsh::to_vec(&vec![make_hyle_output_with_state(
                 tx.clone(),
@@ -418,6 +432,8 @@ async fn test_contract_upgrade() -> Result<()> {
 
     let proof_update = ProofTransaction {
         contract_name: "c1.hyle".into(),
+        verifier: "test".into(),
+        program_id: ProgramId(vec![1, 2, 3]),
         proof: ProofData(borsh::to_vec(&vec![hyle_output]).unwrap()),
     };
 

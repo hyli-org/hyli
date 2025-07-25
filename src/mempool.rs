@@ -9,17 +9,13 @@ use crate::{
     p2p::network::{
         HeaderSignableData, HeaderSigner, IntoHeaderSignableData, MsgWithHeader, OutboundMessage,
     },
-    utils::{
-        conf::SharedConf,
-        serialize::{arc_rwlock_borsh, BorshableIndexMap},
-    },
+    utils::{conf::SharedConf, serialize::BorshableIndexMap},
 };
 use anyhow::{bail, Context, Result};
 use api::RestApiMessage;
 use block_construction::BlockUnderConstruction;
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
-use hyle_contract_sdk::{ContractName, ProgramId, Verifier};
 use hyle_crypto::SharedBlstCrypto;
 use hyle_modules::{bus::BusMessage, log_warn, module_bus_client, utils::static_type_map::Pick};
 use hyle_net::{logged_task::logged_task, ordered_join_set::OrderedJoinSet};
@@ -32,7 +28,6 @@ use std::{
     fmt::Display,
     ops::{Deref, DerefMut},
     path::PathBuf,
-    sync::Arc,
     time::Duration,
 };
 use storage::{LaneEntryMetadata, Storage};
@@ -43,7 +38,7 @@ use verify_tx::DataProposalVerdict;
 // use storage_memory::LanesStorage;
 use storage_fjall::LanesStorage;
 use strum_macros::IntoStaticStr;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, info, trace};
 
 pub mod api;
 pub mod block_construction;
@@ -60,27 +55,7 @@ pub mod verify_tx;
 #[derive(Debug, Clone)]
 pub struct QueryNewCut(pub Staking);
 
-#[derive(Debug, Default, Clone, BorshSerialize, BorshDeserialize)]
-pub struct KnownContracts(pub HashMap<ContractName, (Verifier, ProgramId)>);
-
-impl KnownContracts {
-    #[inline(always)]
-    fn register_contract(
-        &mut self,
-        contract_name: &ContractName,
-        verifier: &Verifier,
-        program_id: &ProgramId,
-    ) {
-        debug!("🏊📝 Registering contract in mempool {:?}", contract_name);
-        self.0.insert(
-            contract_name.clone(),
-            (verifier.clone(), program_id.clone()),
-        );
-    }
-}
-
 impl BusMessage for MempoolNetMessage {}
-
 module_bus_client! {
 struct MempoolBusClient {
     sender(OutboundMessage),
@@ -133,11 +108,6 @@ pub struct MempoolStore {
     // Common
     last_ccp: Option<CommittedConsensusProposal>,
     staking: Staking,
-    #[borsh(
-        serialize_with = "arc_rwlock_borsh::serialize",
-        deserialize_with = "arc_rwlock_borsh::deserialize"
-    )]
-    known_contracts: Arc<std::sync::RwLock<KnownContracts>>,
 }
 
 pub struct LongTasksRuntime(std::mem::ManuallyDrop<tokio::runtime::Runtime>);
@@ -294,46 +264,6 @@ impl Mempool {
         logged_task(async move { mempool_sync.start().await });
 
         sync_request_sender
-    }
-
-    fn handle_contract_registration(&mut self, effect: RegisterContractEffect) {
-        #[allow(clippy::expect_used, reason = "not held across await")]
-        let mut known_contracts = self.known_contracts.write().expect("logic issue");
-        known_contracts.register_contract(
-            &effect.contract_name,
-            &effect.verifier,
-            &effect.program_id,
-        );
-    }
-
-    fn handle_contract_update(&mut self, contract_name: ContractName, program_id: ProgramId) {
-        #[allow(clippy::expect_used, reason = "not held across await")]
-        let mut known_contracts = self.known_contracts.write().expect("logic issue");
-        if let Some(c) = known_contracts.0.get_mut(&contract_name) {
-            c.1 = program_id;
-        } else {
-            warn!(
-                "Tried to update contract {} that is not registered",
-                contract_name
-            );
-        }
-    }
-
-    // Optimistically parse Hyli tx blobs
-    fn handle_hyle_contract_registration(&mut self, blob_tx: &BlobTransaction) {
-        #[allow(clippy::expect_used, reason = "not held across await")]
-        let mut known_contracts = self.known_contracts.write().expect("logic issue");
-        blob_tx.blobs.iter().for_each(|blob| {
-            if blob.contract_name.0 != "hyle" {
-                return;
-            }
-            if let Ok(tx) =
-                StructuredBlobData::<RegisterContractAction>::try_from(blob.data.clone())
-            {
-                let tx = tx.parameters;
-                known_contracts.register_contract(&tx.contract_name, &tx.verifier, &tx.program_id);
-            }
-        });
     }
 
     /// Creates a cut with local material on QueryNewCut message reception (from consensus)
@@ -681,6 +611,7 @@ pub mod test {
     use core::panic;
     use std::future::Future;
     use std::pin::Pin;
+    use std::sync::Arc;
 
     use super::*;
     use crate::bus::metrics::BusMetrics;

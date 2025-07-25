@@ -232,10 +232,16 @@ impl Genesis {
             genesis_txs.push(
                 VerifiedProofTransaction {
                     contract_name: "risc0-recursion".into(),
+                    program_id: contract_program_ids
+                        .get(&ContractName("risc0-recursion".to_string()))
+                        .expect("Genesis TXes on unregistered contracts")
+                        .clone(),
+                    verifier: hyle_model::verifiers::RISC0_1.into(),
                     proven_blobs: outputs
                         .drain(..)
                         .map(|(contract_name, out)| BlobProofOutput {
                             original_proof_hash: ProofData::default().hashed(),
+                            verifier: hyle_model::verifiers::RISC0_1.into(),
                             program_id: contract_program_ids
                                 .get(&contract_name)
                                 .expect("Genesis TXes on unregistered contracts")

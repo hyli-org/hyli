@@ -423,6 +423,8 @@ impl E2ECtx {
     pub async fn send_proof(
         &self,
         contract_name: ContractName,
+        program_id: ProgramId,
+        verifier: Verifier,
         proof: ProofData,
         verifies: Vec<TxHash>,
     ) -> Result<()> {
@@ -430,6 +432,8 @@ impl E2ECtx {
             self.client()
                 .send_tx_proof(ProofTransaction {
                     contract_name: contract_name.clone(),
+                    program_id,
+                    verifier,
                     proof: proof.clone(),
                 })
                 .await
