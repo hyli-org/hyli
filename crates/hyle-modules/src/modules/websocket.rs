@@ -1,7 +1,7 @@
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
-use crate::bus::{BusClientSender, SharedMessageBus};
+use crate::bus::{BusClientSender, BusMessage, SharedMessageBus};
 use crate::modules::Module;
 use crate::{log_warn, module_bus_client, module_handle_messages};
 use anyhow::{anyhow, Context, Error, Result};
@@ -55,6 +55,10 @@ impl<T> WsTopicMessage<T> {
         }
     }
 }
+
+impl<T> BusMessage for WsInMessage<T> {}
+impl<T> BusMessage for WsBroadcastMessage<T> {}
+impl<T> BusMessage for WsTopicMessage<T> {}
 
 module_bus_client! {
 #[derive(Debug)]
