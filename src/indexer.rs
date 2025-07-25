@@ -118,9 +118,9 @@ impl Indexer {
         module_handle_messages! {
             on_self self,
             delay_shutdown_until {
-                self.dump_store_to_db()
-                    .await
-                    .context("Indexer failed to dump store to DB")?;
+                _ = log_error!(self.dump_store_to_db()
+                    .await,
+                    "Indexer failed to dump store to DB");
                 self.empty_store()
             },
             listen<DataEvent> DataEvent::OrderedSignedBlock(signed_block) => {

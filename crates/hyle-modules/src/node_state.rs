@@ -1297,53 +1297,60 @@ impl NodeState {
             .blob;
 
         // Verify that each side effect has a matching register/delete contract action in this specific blob
-        if let Ok(data) = StructuredBlobData::<RegisterContractAction>::try_from(blob.data.clone())
-        {
-            let Some(eff) = hyle_output.onchain_effects.first() else {
-                bail!(
-                    "Proof for RegisterContractAction blob #{} does not have any onchain effects",
-                    hyle_output.index
-                )
-            };
-            if let OnchainEffect::RegisterContract(effect) = eff {
-                if effect != &data.parameters.into() {
+        #[cfg(test)]
+        let check_effects = true;
+        #[cfg(not(test))]
+        let check_effects = blob.contract_name.0 == "hyle";
+        if check_effects {
+            if let Ok(data) =
+                StructuredBlobData::<RegisterContractAction>::try_from(blob.data.clone())
+            {
+                let Some(eff) = hyle_output.onchain_effects.first() else {
                     bail!(
-                        "Proof for RegisterContractAction blob #{} does not match the onchain effect",
+                        "Proof for RegisterContractAction blob #{} does not have any onchain effects",
+                        hyle_output.index
+                    )
+                };
+                if let OnchainEffect::RegisterContract(effect) = eff {
+                    if effect != &data.parameters.into() {
+                        bail!(
+                            "Proof for RegisterContractAction blob #{} does not match the onchain effect",
+                            hyle_output.index
+                        )
+                    }
+                } else {
+                    bail!(
+                        "Proof for RegisterContractAction blob #{} does not have a register onchain effect",
                         hyle_output.index
                     )
                 }
-            } else {
-                bail!(
-                    "Proof for RegisterContractAction blob #{} does not have a register onchain effect",
-                    hyle_output.index
-                )
-            }
-        } else if let Ok(data) =
-            StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone())
-        {
-            let Some(eff) = hyle_output.onchain_effects.first() else {
-                bail!(
-                    "Proof for DeleteContractAction blob #{} does not have any onchain effects",
-                    hyle_output.index
-                )
-            };
-            if let OnchainEffect::DeleteContract(effect) = eff {
-                if effect != &data.parameters.contract_name {
+            } else if let Ok(data) =
+                StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone())
+            {
+                let Some(eff) = hyle_output.onchain_effects.first() else {
                     bail!(
-                        "Proof for DeleteContractAction blob #{} does not match the onchain effect",
+                        "Proof for DeleteContractAction blob #{} does not have any onchain effects",
+                        hyle_output.index
+                    )
+                };
+                if let OnchainEffect::DeleteContract(effect) = eff {
+                    if effect != &data.parameters.contract_name {
+                        bail!(
+                            "Proof for DeleteContractAction blob #{} does not match the onchain effect",
+                            hyle_output.index
+                        )
+                    }
+                } else {
+                    bail!(
+                        "Proof for DeleteContractAction blob #{} does not have a delete onchain effect",
                         hyle_output.index
                     )
                 }
-            } else {
-                bail!(
-                    "Proof for DeleteContractAction blob #{} does not have a delete onchain effect",
-                    hyle_output.index
-                )
+            } else if let Ok(_data) =
+                StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
+            {
+                // FIXME: add checks?
             }
-        } else if let Ok(_data) =
-            StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
-        {
-            // FIXME: add checks?
         }
 
         Ok(())
