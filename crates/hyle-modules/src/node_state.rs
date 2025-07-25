@@ -316,50 +316,50 @@ impl NodeState {
                     error!("Unverified recursive proof transaction should not be in a block");
                 }
                 TransactionData::VerifiedProof(proof_tx) => {
-                    // Verify that the verifier & program ID are valid
-                    let Some(contract) = self.contracts.get(&proof_tx.contract_name) else {
-                        let err = format!(
-                            "Contract {} not found for verified proof transaction {}",
-                            proof_tx.contract_name, &tx_id
-                        );
-                        block_under_construction
-                            .transactions_events
-                            .entry(proof_tx.hashed())
-                            .or_default()
-                            .push(TransactionStateEvent::Error(err));
-                        continue;
-                    };
+                    // // Verify that the verifier & program ID are valid
+                    // let Some(contract) = self.contracts.get(&proof_tx.contract_name) else {
+                    //     let err = format!(
+                    //         "Contract {} not found for verified proof transaction {}",
+                    //         proof_tx.contract_name, &tx_id
+                    //     );
+                    //     block_under_construction
+                    //         .transactions_events
+                    //         .entry(proof_tx.hashed())
+                    //         .or_default()
+                    //         .push(TransactionStateEvent::Error(err));
+                    //     continue;
+                    // };
 
-                    if contract.verifier != proof_tx.verifier {
-                        let err = format!(
-                            "Verifier mismatch for verified proof transaction {}: expected {:?}, got {:?} on {}",
-                            &tx_id,
-                            contract.verifier.0,
-                            proof_tx.verifier.0,
-                            contract.name
-                        );
-                        block_under_construction
-                            .transactions_events
-                            .entry(proof_tx.hashed())
-                            .or_default()
-                            .push(TransactionStateEvent::Error(err));
-                        continue;
-                    }
-                    if contract.program_id != proof_tx.program_id {
-                        let err = format!(
-                            "Program ID mismatch for verified proof transaction {}: expected {:?}, got {:?} on {}",
-                            &tx_id,
-                            contract.program_id.0,
-                            proof_tx.program_id.0,
-                            contract.name
-                        );
-                        block_under_construction
-                            .transactions_events
-                            .entry(proof_tx.hashed())
-                            .or_default()
-                            .push(TransactionStateEvent::Error(err));
-                        continue;
-                    }
+                    // if contract.verifier != proof_tx.verifier {
+                    //     let err = format!(
+                    //         "Verifier mismatch for verified proof transaction {}: expected {:?}, got {:?} on {}",
+                    //         &tx_id,
+                    //         contract.verifier.0,
+                    //         proof_tx.verifier.0,
+                    //         contract.name
+                    //     );
+                    //     block_under_construction
+                    //         .transactions_events
+                    //         .entry(proof_tx.hashed())
+                    //         .or_default()
+                    //         .push(TransactionStateEvent::Error(err));
+                    //     continue;
+                    // }
+                    // if contract.program_id != proof_tx.program_id {
+                    //     let err = format!(
+                    //         "Program ID mismatch for verified proof transaction {}: expected {:?}, got {:?} on {}",
+                    //         &tx_id,
+                    //         contract.program_id.0,
+                    //         proof_tx.program_id.0,
+                    //         contract.name
+                    //     );
+                    //     block_under_construction
+                    //         .transactions_events
+                    //         .entry(proof_tx.hashed())
+                    //         .or_default()
+                    //         .push(TransactionStateEvent::Error(err));
+                    //     continue;
+                    // }
 
                     // First, store the proofs and check if we can settle the transaction
                     // NB: if some of the blob proof outputs are bad, we just ignore those
@@ -539,7 +539,11 @@ impl NodeState {
                             BlobIndex(index),
                             UnsettledBlobMetadata {
                                 blob: blob.clone(),
-                                possible_proofs: vec![(verifier.into(), hyle_output)],
+                                possible_proofs: vec![(
+                                    verifier.into(),
+                                    hyle_output,
+                                    verifier.into(),
+                                )],
                             },
                         ));
                     }
@@ -648,6 +652,7 @@ impl NodeState {
         blob.possible_proofs.push((
             blob_proof_data.program_id.clone(),
             blob_proof_data.hyle_output.clone(),
+            blob_proof_data.verifier.clone(),
         ));
 
         let unsettled_tx_hash = unsettled_tx.hash.clone();
@@ -1217,7 +1222,8 @@ impl NodeState {
             tracing::debug!("Txs to nuke: {:?}", txs_to_nuke);
 
             // For the first blob of each tx to nuke, we need to create a fake verified proof that has a hyle_output success at false
-            let mut updates: BTreeMap<TxHash, Vec<(ProgramId, HyleOutput)>> = BTreeMap::new();
+            let mut updates: BTreeMap<TxHash, Vec<(ProgramId, HyleOutput, Verifier)>> =
+                BTreeMap::new();
 
             for (tx_hash, hyle_outputs) in txs_to_nuke.iter() {
                 if let Some(unsettled_blob_tx) = self.unsettled_transactions.get(tx_hash) {
@@ -1232,10 +1238,11 @@ impl NodeState {
                                     hyle_output.initial_state = contract.state.clone();
                                     hyle_output.next_state = contract.state.clone();
                                 }
-                                updates
-                                    .entry(tx_hash.clone())
-                                    .or_default()
-                                    .push((contract.program_id.clone(), hyle_output.clone()));
+                                updates.entry(tx_hash.clone()).or_default().push((
+                                    contract.program_id.clone(),
+                                    hyle_output,
+                                    contract.verifier.clone(),
+                                ));
                             } else {
                                 tracing::error!("Contract {} not found", contract_name);
                             }
@@ -1256,15 +1263,17 @@ impl NodeState {
 
             for (tx_hash, hyle_outputs) in updates {
                 if let Some(unsettled_blob_tx) = self.unsettled_transactions.get_mut(&tx_hash) {
-                    for (program_id, hyle_output) in hyle_outputs {
+                    for (program_id, hyle_output, verifier) in hyle_outputs {
                         if let Some(blob_metadata) =
                             unsettled_blob_tx.blobs.get_mut(&hyle_output.index)
                         {
                             // This is a hack to force the settlement as failed of the TXs to nuke.
                             forced_txs.insert(tx_hash.clone());
-                            blob_metadata
-                                .possible_proofs
-                                .push((program_id, hyle_output.clone()));
+                            blob_metadata.possible_proofs.push((
+                                program_id,
+                                hyle_output.clone(),
+                                verifier.clone(),
+                            ));
                             block_under_construction
                                 .transactions_events
                                 .entry(tx_hash.clone())
@@ -1431,7 +1440,7 @@ impl NodeState {
         contracts: &HashMap<ContractName, Contract>,
         contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
         contract_name: &ContractName,
-        proof_metadata: &(ProgramId, HyleOutput),
+        proof_metadata: &(ProgramId, HyleOutput, Verifier),
         current_blob: &UnsettledBlobMetadata,
     ) -> Result<()> {
         validate_state_commitment_size(&proof_metadata.1.next_state)?;
@@ -1456,6 +1465,15 @@ impl NodeState {
                 "Program ID mismatch: {:?}, expected {:?} on {}",
                 proof_metadata.0,
                 contract.program_id,
+                contract.name
+            )
+        }
+
+        if proof_metadata.2 != contract.verifier {
+            bail!(
+                "Verifier mismatch: {:?}, expected {:?} on {}",
+                proof_metadata.2,
+                contract.verifier,
                 contract.name
             )
         }
