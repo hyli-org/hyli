@@ -136,7 +136,7 @@ struct ModuleStarter {
 pub mod signal {
     use std::any::TypeId;
 
-    use crate::{bus::BusChannelCapacity, utils::static_type_map::Pick};
+    use crate::{bus::BusMessage, utils::static_type_map::Pick};
 
     #[derive(Clone, Debug)]
     pub struct PersistModule {}
@@ -151,9 +151,9 @@ pub mod signal {
         pub module: String,
     }
 
-    impl BusChannelCapacity for PersistModule {}
-    impl BusChannelCapacity for ShutdownModule {}
-    impl BusChannelCapacity for ShutdownCompleted {}
+    impl BusMessage for PersistModule {}
+    impl BusMessage for ShutdownModule {}
+    impl BusMessage for ShutdownCompleted {}
 
     /// Execute a future, cancelling it if a shutdown signal is received.
     pub async fn shutdown_aware<M: 'static, F>(

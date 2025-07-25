@@ -22,7 +22,7 @@ use client_sdk::tcp_client::TcpServerMessage;
 use hyle_contract_sdk::{ContractName, ProgramId, Verifier};
 use hyle_crypto::SharedBlstCrypto;
 use hyle_modules::{
-    bus::BusChannelCapacity, log_warn, module_bus_client, utils::static_type_map::Pick,
+    bus::BusMessage, log_warn, module_bus_client, utils::static_type_map::Pick,
 };
 use hyle_net::{logged_task::logged_task, ordered_join_set::OrderedJoinSet};
 use indexmap::IndexSet;
@@ -81,7 +81,7 @@ impl KnownContracts {
     }
 }
 
-impl BusChannelCapacity for MempoolNetMessage {}
+impl BusMessage for MempoolNetMessage {}
 
 module_bus_client! {
 struct MempoolBusClient {

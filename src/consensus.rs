@@ -20,7 +20,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use hyle_crypto::BlstCrypto;
 use hyle_crypto::SharedBlstCrypto;
 use hyle_model::utils::TimestampMs;
-use hyle_modules::bus::BusChannelCapacity;
+use hyle_modules::bus::BusMessage;
 use hyle_modules::{log_error, module_bus_client, module_handle_messages, modules::Module};
 use hyle_net::clock::TimestampMsClock;
 use metrics::ConsensusMetrics;
@@ -76,9 +76,9 @@ pub struct QueryConsensusInfo {}
 #[derive(Clone)]
 pub struct QueryConsensusStakingState {}
 
-impl BusChannelCapacity for ConsensusEvent {}
-impl BusChannelCapacity for ConsensusCommand {}
-impl BusChannelCapacity for ConsensusNetMessage {}
+impl BusMessage for ConsensusEvent {}
+impl BusMessage for ConsensusCommand {}
+impl BusMessage for ConsensusNetMessage {}
 
 module_bus_client! {
 struct ConsensusBusClient {

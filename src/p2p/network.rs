@@ -5,7 +5,7 @@ use anyhow::Context;
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyle_crypto::BlstCrypto;
 use hyle_model::{BlockHeight, SignedByValidator};
-use hyle_modules::bus::BusChannelCapacity;
+use hyle_modules::bus::BusMessage;
 use hyle_net::clock::TimestampMsClock;
 use hyle_net::tcp::P2PTcpMessage;
 use serde::{Deserialize, Serialize};
@@ -130,7 +130,7 @@ pub struct MsgWithHeader<T: IntoHeaderSignableData> {
     pub msg: T,
 }
 
-impl<T: BusChannelCapacity + IntoHeaderSignableData> BusChannelCapacity for MsgWithHeader<T> {
+impl<T: BusMessage + IntoHeaderSignableData> BusMessage for MsgWithHeader<T> {
     const CAPACITY: usize = T::CAPACITY;
 }
 
@@ -180,6 +180,6 @@ impl HeaderSigner for BlstCrypto {
     }
 }
 
-impl BusChannelCapacity for OutboundMessage {}
-impl BusChannelCapacity for NetMessage {}
-impl BusChannelCapacity for PeerEvent {}
+impl BusMessage for OutboundMessage {}
+impl BusMessage for NetMessage {}
+impl BusMessage for PeerEvent {}

@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
-use crate::bus::{BusChannelCapacity, BusClientSender, SharedMessageBus};
+use crate::bus::{BusMessage, BusClientSender, SharedMessageBus};
 use crate::modules::signal::shutdown_aware_timeout;
 use crate::modules::SharedBuildApiCtx;
 use crate::{log_error, module_bus_client, module_handle_messages, modules::Module};
@@ -100,7 +100,7 @@ pub enum AutoProverEvent<Contract> {
     SuccessTx(TxHash, Contract),
 }
 
-impl<Contract> BusChannelCapacity for AutoProverEvent<Contract> {
+impl<Contract> BusMessage for AutoProverEvent<Contract> {
     const CAPACITY: usize = crate::bus::LOW_CAPACITY;
 }
 

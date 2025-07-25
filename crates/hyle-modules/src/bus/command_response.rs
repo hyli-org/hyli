@@ -7,8 +7,8 @@ use opentelemetry::InstrumentationScope;
 use opentelemetry::KeyValue;
 use tokio::sync::Mutex;
 
-use crate::bus::BusChannelCapacity;
 use crate::bus::BusClientSender;
+use crate::bus::BusMessage;
 use crate::modules::signal::shutdown_aware_timeout;
 use crate::utils::profiling::LatencyMetricSink;
 use crate::utils::static_type_map::Pick;
@@ -29,7 +29,7 @@ impl<Type, Answer> Query<Type, Answer> {
     }
 }
 
-impl<Type, Answer> BusChannelCapacity for Query<Type, Answer> {}
+impl<Type, Answer> BusMessage for Query<Type, Answer> {}
 
 #[derive(Debug)]
 pub struct InnerQuery<Type, Answer> {

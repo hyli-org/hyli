@@ -4,7 +4,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use hyle_contract_sdk::TxHash;
 use hyle_model::{api::APIRegisterContract, RegisterContractAction, StructuredBlobData};
 use hyle_modules::{
-    bus::{BusChannelCapacity, SharedMessageBus},
+    bus::{BusMessage, SharedMessageBus},
     modules::SharedBuildApiCtx,
     node_state::contract_registration::validate_contract_registration_metadata,
 };
@@ -24,7 +24,7 @@ pub enum RestApiMessage {
     NewTx(Transaction),
 }
 
-impl BusChannelCapacity for RestApiMessage {}
+impl BusMessage for RestApiMessage {}
 
 bus_client! {
 struct RestBusClient {
