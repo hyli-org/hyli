@@ -683,6 +683,11 @@ impl From<&Vec<u8>> for ProgramId {
         ProgramId(v.clone())
     }
 }
+impl<const N: usize> From<&[u8; N]> for ProgramId {
+    fn from(v: &[u8; N]) -> Self {
+        ProgramId(v.to_vec())
+    }
+}
 impl From<&[u8]> for ProgramId {
     fn from(v: &[u8]) -> Self {
         ProgramId(v.to_vec().clone())

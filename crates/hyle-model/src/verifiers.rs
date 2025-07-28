@@ -37,6 +37,16 @@ impl TryFrom<&Verifier> for NativeVerifiers {
     }
 }
 
+impl From<NativeVerifiers> for Verifier {
+    fn from(value: NativeVerifiers) -> Self {
+        match value {
+            NativeVerifiers::Blst => Self("blst".into()),
+            NativeVerifiers::Sha3_256 => Self("sha3_256".into()),
+            NativeVerifiers::Secp256k1 => Self("secp256k1".into()),
+        }
+    }
+}
+
 /// Format of the BlobData for native contract "blst"
 #[derive(Debug, borsh::BorshSerialize, borsh::BorshDeserialize)]
 pub struct BlstSignatureBlob {

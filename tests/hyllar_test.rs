@@ -18,7 +18,7 @@ mod e2e_hyllar {
         Hydentity,
     };
     use hyle_contract_sdk::{Blob, Calldata, ContractName, HyleOutput};
-    use hyle_contracts::{HYDENTITY_ELF, HYLLAR_ELF};
+    use hyle_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
     use hyllar::{client::tx_executor_handler::transfer, erc20::ERC20, Hyllar, FAUCET_ID};
 
     use super::*;
@@ -43,8 +43,11 @@ mod e2e_hyllar {
             .await?;
         let mut executor = TxExecutorBuilder::new(States { hydentity, hyllar })
             // Replace prover binaries for non-reproducible mode.
-            .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
-            .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF))
+            .with_prover(
+                "hydentity".into(),
+                Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+            )
+            .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
             .build();
 
         info!("➡️  Sending blob to register bob identity");

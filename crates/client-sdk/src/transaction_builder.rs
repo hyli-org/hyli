@@ -108,6 +108,8 @@ impl ProofTxBuilder {
                 proof.map(|proof| ProofTransaction {
                     proof: proof.data,
                     contract_name: runner.contract_name.clone(),
+                    verifier: prover.verifier(),
+                    program_id: prover.program_id(),
                 })
             }
         })

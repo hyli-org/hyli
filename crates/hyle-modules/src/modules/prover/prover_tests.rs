@@ -163,6 +163,7 @@ async fn get_txs(api_client: &Arc<NodeApiMockClient>) -> Vec<Transaction> {
                     BlobProofOutput {
                         hyle_output,
                         program_id: ProgramId(vec![]),
+                        verifier: "test".into(),
                         blob_tx_hash,
                         original_proof_hash: t.proof.hashed(),
                     }
@@ -170,6 +171,8 @@ async fn get_txs(api_client: &Arc<NodeApiMockClient>) -> Vec<Transaction> {
                 .collect();
             VerifiedProofTransaction {
                 contract_name: t.contract_name.clone(),
+                program_id: t.program_id.clone(),
+                verifier: t.verifier.clone(),
                 proven_blobs,
                 proof_hash: t.proof.hashed(),
                 proof_size: t.estimate_size(),

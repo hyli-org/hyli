@@ -318,6 +318,7 @@ mod test {
                 proven_blobs: vec![BlobProofOutput {
                     original_proof_hash: proof.hashed(),
                     program_id: ProgramId(vec![3, 2, 1]),
+                    verifier: "test".into(),
                     blob_tx_hash: blob_transaction.hashed(),
                     hyle_output: HyleOutput {
                         version: 1,
@@ -337,6 +338,8 @@ mod test {
                 }],
                 is_recursive: false,
                 proof: Some(proof),
+                verifier: "test".into(),
+                program_id: ProgramId(vec![3, 2, 1]),
             }),
         }
     }

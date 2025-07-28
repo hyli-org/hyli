@@ -25,7 +25,7 @@ dependencies = [
  "memmap2",
  "object 0.35.0",
  "rustc-demangle",
- "smallvec",
+ "smallvec 1.15.1",
 ]
 
 [[package]]
@@ -83,6 +83,16 @@ checksum = "662c4b124f24704a2979dd8bb6a2971639bfc0c71f1cd87699fd79ca040cff8a"
 dependencies = [
  "derive_more 0.99.20",
  "spin",
+]
+
+[[package]]
+name = "alloc-track"
+version = "0.4.0"
+source = "git+https://github.com/hyli-org/alloc-track#54f8c3d489865ee36f3643e43332f358e627e18a"
+dependencies = [
+ "backtrace",
+ "chashmap",
+ "lazy_static",
 ]
 
 [[package]]
@@ -443,7 +453,7 @@ dependencies = [
  "futures-utils-wasm",
  "http 1.3.1",
  "lru 0.13.0",
- "parking_lot",
+ "parking_lot 0.12.4",
  "pin-project",
  "reqwest",
  "serde",
@@ -683,7 +693,7 @@ dependencies = [
  "derive_more 2.0.1",
  "futures",
  "futures-utils-wasm",
- "parking_lot",
+ "parking_lot 0.12.4",
  "serde",
  "serde_json",
  "thiserror 2.0.12",
@@ -721,7 +731,7 @@ dependencies = [
  "derive_more 2.0.1",
  "nybbles",
  "serde",
- "smallvec",
+ "smallvec 1.15.1",
  "tracing",
 ]
 
@@ -1962,7 +1972,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
- "smallvec",
+ "smallvec 1.15.1",
  "tokio",
  "tower 0.5.2",
  "url",
@@ -2634,6 +2644,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
+name = "chashmap"
+version = "2.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff41a3c2c1e39921b9003de14bf0439c7b63a9039637c291e1a64925d8ddfa45"
+dependencies = [
+ "owning_ref",
+ "parking_lot 0.4.8",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3030,7 +3050,7 @@ dependencies = [
  "bitflags 2.9.1",
  "crossterm_winapi",
  "mio",
- "parking_lot",
+ "parking_lot 0.12.4",
  "rustix 0.38.44",
  "signal-hook",
  "signal-hook-mio",
@@ -3048,7 +3068,7 @@ dependencies = [
  "derive_more 2.0.1",
  "document-features",
  "mio",
- "parking_lot",
+ "parking_lot 0.12.4",
  "rustix 1.0.8",
  "signal-hook",
  "signal-hook-mio",
@@ -3166,7 +3186,7 @@ dependencies = [
  "hashbrown 0.14.5",
  "lock_api",
  "once_cell",
- "parking_lot_core",
+ "parking_lot_core 0.9.11",
 ]
 
 [[package]]
@@ -3429,7 +3449,7 @@ dependencies = [
  "backtrace",
  "lazy_static",
  "mintex",
- "parking_lot",
+ "parking_lot 0.12.4",
  "rustc-hash 1.1.0",
  "serde",
  "serde_json",
@@ -4152,6 +4172,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "42703706b716c37f96a77aea830392ad231f44c9e9a67872fa5548707e11b11c"
 
 [[package]]
+name = "fuchsia-cprng"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06f77d526c1a601b7c4cdd98f54b5eaabffc14d5f2f0296febdc7f357c6d3ba"
+
+[[package]]
 name = "funty"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4207,7 +4233,7 @@ checksum = "1d930c203dd0b6ff06e0201a4a2fe9149b43c684fd4420555b26d21b1a02956f"
 dependencies = [
  "futures-core",
  "lock_api",
- "parking_lot",
+ "parking_lot 0.12.4",
 ]
 
 [[package]]
@@ -4465,11 +4491,11 @@ dependencies = [
  "getrandom 0.3.3",
  "no-std-compat",
  "nonzero_ext",
- "parking_lot",
+ "parking_lot 0.12.4",
  "portable-atomic",
  "quanta",
  "rand 0.9.2",
- "smallvec",
+ "smallvec 1.15.1",
  "spinning_top",
  "web-time",
 ]
@@ -4804,6 +4830,7 @@ name = "hyle"
 version = "0.13.0-rc.4"
 dependencies = [
  "alloc-metrics",
+ "alloc-track",
  "anyhow",
  "assert-json-diff",
  "assert_cmd",
@@ -4909,6 +4936,7 @@ dependencies = [
  "borsh",
  "hyle-bonsai-runner",
  "hyle-contract-sdk",
+ "hyle-model",
  "hyle-net",
  "risc0-zkvm",
  "serde",
@@ -5286,7 +5314,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "smallvec",
+ "smallvec 1.15.1",
  "tokio",
  "want",
 ]
@@ -5471,7 +5499,7 @@ dependencies = [
  "icu_normalizer_data",
  "icu_properties",
  "icu_provider",
- "smallvec",
+ "smallvec 1.15.1",
  "zerovec",
 ]
 
@@ -5533,7 +5561,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "686f825264d630750a544639377bae737628043f20d38bbc029e8f29ea968a7e"
 dependencies = [
  "idna_adapter",
- "smallvec",
+ "smallvec 1.15.1",
  "utf8_iter",
 ]
 
@@ -6234,6 +6262,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "maybe-uninit"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60302e4db3a61da70c0cb7991976248362f30319e88850c487b9b95bbf059e00"
+
+[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6524,7 +6558,7 @@ dependencies = [
  "num-iter",
  "num-traits",
  "rand 0.8.5",
- "smallvec",
+ "smallvec 1.15.1",
  "zeroize",
 ]
 
@@ -6688,7 +6722,7 @@ dependencies = [
  "proptest",
  "ruint",
  "serde",
- "smallvec",
+ "smallvec 1.15.1",
 ]
 
 [[package]]
@@ -6840,6 +6874,15 @@ name = "overload"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
+
+[[package]]
+name = "owning_ref"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdf84f41639e037b484f93433aa3897863b561ed65c6e59c7073d7c561710f37"
+dependencies = [
+ "stable_deref_trait",
+]
 
 [[package]]
 name = "p256"
@@ -7157,12 +7200,34 @@ checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
 
 [[package]]
 name = "parking_lot"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "149d8f5b97f3c1133e3cfcd8886449959e856b557ff281e292b733d7c69e005e"
+dependencies = [
+ "owning_ref",
+ "parking_lot_core 0.2.14",
+]
+
+[[package]]
+name = "parking_lot"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "70d58bf43669b5795d1576d0641cfb6fbb2057bf629506267a92807158584a13"
 dependencies = [
  "lock_api",
- "parking_lot_core",
+ "parking_lot_core 0.9.11",
+]
+
+[[package]]
+name = "parking_lot_core"
+version = "0.2.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4db1a8ccf734a7bce794cc19b3df06ed87ab2f3907036b693c68f56b4d4537fa"
+dependencies = [
+ "libc",
+ "rand 0.4.6",
+ "smallvec 0.6.14",
+ "winapi",
 ]
 
 [[package]]
@@ -7174,7 +7239,7 @@ dependencies = [
  "cfg-if 1.0.1",
  "libc",
  "redox_syscall 0.5.15",
- "smallvec",
+ "smallvec 1.15.1",
  "windows-targets 0.52.6",
 ]
 
@@ -7637,7 +7702,7 @@ dependencies = [
  "fnv",
  "lazy_static",
  "memchr",
- "parking_lot",
+ "parking_lot 0.12.4",
  "protobuf",
  "thiserror 1.0.69",
 ]
@@ -7702,7 +7767,7 @@ dependencies = [
  "cfg-if 1.0.1",
  "itertools 0.10.5",
  "once_cell",
- "parking_lot",
+ "parking_lot 0.12.4",
 ]
 
 [[package]]
@@ -7814,6 +7879,19 @@ checksum = "dc33ff2d4973d518d823d61aa239014831e521c75da58e3df4840d3f47749d09"
 
 [[package]]
 name = "rand"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "552840b97013b1a26992c11eac34bdd778e464601a4c2054b5f0bff7c6761293"
+dependencies = [
+ "fuchsia-cprng",
+ "libc",
+ "rand_core 0.3.1",
+ "rdrand",
+ "winapi",
+]
+
+[[package]]
+name = "rand"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
@@ -7854,6 +7932,21 @@ dependencies = [
  "ppv-lite86",
  "rand_core 0.9.3",
 ]
+
+[[package]]
+name = "rand_core"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a6fdeb83b075e8266dcc8762c22776f6877a63111121f5f8c7411e5be7eed4b"
+dependencies = [
+ "rand_core 0.4.2",
+]
+
+[[package]]
+name = "rand_core"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c33a3c44ca05fa6f1807d8e6743f3824e8509beca625669633be0acbdf509dc"
 
 [[package]]
 name = "rand_core"
@@ -7977,6 +8070,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f87cc11a0140b4b0da0ffc889885760c61b13672d80a908920b2c0df078fa14"
 dependencies = [
  "rayon",
+]
+
+[[package]]
+name = "rdrand"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "678054eb77286b51581ba43620cc911abf02758c91f93f479767aed0f90458b2"
+dependencies = [
+ "rand_core 0.3.1",
 ]
 
 [[package]]
@@ -8394,7 +8496,7 @@ dependencies = [
  "risc0-sys",
  "risc0-zkp",
  "serde",
- "smallvec",
+ "smallvec 1.15.1",
  "tracing",
 ]
 
@@ -8506,7 +8608,7 @@ dependencies = [
  "hex-literal",
  "metal",
  "ndarray",
- "parking_lot",
+ "parking_lot 0.12.4",
  "paste",
  "rand 0.8.5",
  "rand_core 0.6.4",
@@ -9347,7 +9449,7 @@ dependencies = [
  "futures",
  "log",
  "once_cell",
- "parking_lot",
+ "parking_lot 0.12.4",
  "scc",
  "serial_test_derive",
 ]
@@ -9533,6 +9635,15 @@ name = "slab"
 version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04dc19736151f35336d325007ac991178d504a119863a2fcb3758cdb5e52c50d"
+
+[[package]]
+name = "smallvec"
+version = "0.6.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b97fcaeba89edba30f044a10c6a3cc39df9c3f17d7cd829dd1446cab35f890e0"
+dependencies = [
+ "maybe-uninit",
+]
 
 [[package]]
 name = "smallvec"
@@ -10129,7 +10240,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "smallvec",
+ "smallvec 1.15.1",
  "thiserror 2.0.12",
  "tokio",
  "tokio-stream",
@@ -10210,7 +10321,7 @@ dependencies = [
  "serde",
  "sha1",
  "sha2",
- "smallvec",
+ "smallvec 1.15.1",
  "sqlx-core",
  "stringprep",
  "thiserror 2.0.12",
@@ -10248,7 +10359,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "smallvec",
+ "smallvec 1.15.1",
  "sqlx-core",
  "stringprep",
  "thiserror 2.0.12",
@@ -10316,7 +10427,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf776ba3fa74f83bf4b63c3dcbbf82173db2632ed8452cb2d891d33f459de70f"
 dependencies = [
  "new_debug_unreachable",
- "parking_lot",
+ "parking_lot 0.12.4",
  "phf_shared",
  "precomputed-hash",
 ]
@@ -10748,7 +10859,7 @@ dependencies = [
  "io-uring",
  "libc",
  "mio",
- "parking_lot",
+ "parking_lot 0.12.4",
  "pin-project-lite",
  "signal-hook-registry",
  "slab",
@@ -11117,7 +11228,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee40835db14ddd1e3ba414292272eddde9dad04d3d4b65509656414d1c42592f"
 dependencies = [
  "ansi_term",
- "smallvec",
+ "smallvec 1.15.1",
  "thiserror 1.0.69",
  "tracing",
  "tracing-subscriber 0.3.19",
@@ -11166,7 +11277,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sharded-slab",
- "smallvec",
+ "smallvec 1.15.1",
  "thread_local",
  "tracing",
  "tracing-core",
@@ -11729,7 +11840,7 @@ checksum = "d8d49b5d6c64e8558d9b1b065014426f35c18de636895d24893dbbd329743446"
 dependencies = [
  "futures",
  "js-sys",
- "parking_lot",
+ "parking_lot 0.12.4",
  "pin-utils",
  "slab",
  "wasm-bindgen",

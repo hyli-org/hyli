@@ -49,6 +49,10 @@ pub trait ClientSdkProver<T: BorshSerialize + Send> {
         calldatas: T,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>>;
     fn info(&self) -> ProverInfo;
+    fn program_id(&self) -> ProgramId;
+
+    // investigate dedundacy between info().zkvm
+    fn verifier(&self) -> Verifier;
 }
 
 #[cfg(feature = "risc0")]
@@ -61,10 +65,11 @@ pub mod risc0 {
 
     pub struct Risc0Prover<'a> {
         binary: &'a [u8],
+        program_id: [u8; 32],
     }
     impl<'a> Risc0Prover<'a> {
-        pub fn new(binary: &'a [u8]) -> Self {
-            Self { binary }
+        pub fn new(binary: &'a [u8], program_id: [u8; 32]) -> Self {
+            Self { binary, program_id }
         }
         pub async fn prove<T: BorshSerialize>(
             &self,
@@ -144,6 +149,13 @@ pub mod risc0 {
                 version: risc0_zkvm::VERSION.to_string(),
             }
         }
+        fn verifier(&self) -> Verifier {
+            hyle_model::verifiers::RISC0_1.into()
+        }
+
+        fn program_id(&self) -> ProgramId {
+            ProgramId(self.program_id.into())
+        }
     }
 }
 
@@ -196,10 +208,6 @@ pub mod sp1 {
                     }
                 }
             }
-        }
-
-        pub fn program_id(&self) -> Result<sdk::ProgramId> {
-            Ok(sdk::ProgramId(serde_json::to_vec(&self.pk.vk)?))
         }
 
         pub async fn prove<T: BorshSerialize>(
@@ -282,6 +290,13 @@ pub mod sp1 {
                 version: sp1_sdk::SP1_CIRCUIT_VERSION.to_string(),
             }
         }
+        fn verifier(&self) -> Verifier {
+            hyle_model::verifiers::SP1_4.into()
+        }
+
+        fn program_id(&self) -> ProgramId {
+            ProgramId(serde_json::to_vec(&self.pk.vk).expect("Failed to serialize SP1 Proving Key"))
+        }
     }
 }
 
@@ -339,6 +354,14 @@ pub mod test {
                 version: "1.0.0".to_string(),
             }
         }
+
+        fn program_id(&self) -> ProgramId {
+            ProgramId(vec![])
+        }
+
+        fn verifier(&self) -> Verifier {
+            "test".into()
+        }
     }
 
     pub struct MockProver {}
@@ -367,6 +390,14 @@ pub mod test {
                 zkvm: "mock".to_string(),
                 version: "1.0.0".to_string(),
             }
+        }
+
+        fn program_id(&self) -> ProgramId {
+            ProgramId("MockProver".as_bytes().to_vec())
+        }
+
+        fn verifier(&self) -> Verifier {
+            "mock".into()
         }
     }
 
@@ -398,6 +429,14 @@ pub mod test {
                 zkvm: "mock".to_string(),
                 version: "1.0.0".to_string(),
             }
+        }
+
+        fn program_id(&self) -> ProgramId {
+            ProgramId("MockProver".as_bytes().to_vec())
+        }
+
+        fn verifier(&self) -> Verifier {
+            "mock".into()
         }
     }
 

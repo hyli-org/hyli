@@ -223,6 +223,7 @@ utoipa = { workspace = true, features = ["axum_extras"] }
 utoipa-axum = { workspace = true }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 toml = { workspace = true }
+alloc-track = { git = "https://github.com/hyli-org/alloc-track", optional = true }
 
 # We force zip version here as later version is not compatible with utoipa-swagger-ui
 zip = "=3.0.0"
@@ -277,6 +278,7 @@ keyring = ["hyle-crypto/keyring"]
 
 dhat = ["dep:dhat"]
 monitoring = ["dep:alloc-metrics"]
+alloc-track = ["dep:alloc-track"]
 
 # Activate this feature to recompile contracts locally (mostly useful for iterating on tests)
 nonreproducible = ["hyle-contracts/nonreproducible"]
@@ -294,7 +296,7 @@ strip = "none"
 
 [profile.ci]
 inherits = "dev"
-incremental = false
+incremental = false # Turn incremental off to lower artefact size
 
 # Optimize the following crates for development builds so tests are faster
 [profile.dev.package.risc0-binfmt]

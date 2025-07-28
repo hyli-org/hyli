@@ -50,7 +50,7 @@ impl Hydentity {
         contract_name: ContractName,
         builder: &mut TxExecutorBuilder<S>,
     ) {
-        builder.init_with(contract_name, Risc0Prover::new(HYDENTITY_ELF));
+        builder.init_with(contract_name, Risc0Prover::new(HYDENTITY_ELF, PROGRAM_ID));
     }
 }
 

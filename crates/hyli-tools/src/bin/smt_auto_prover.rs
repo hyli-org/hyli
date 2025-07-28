@@ -73,6 +73,7 @@ async fn main() -> Result<()> {
             data_directory: config.data_directory.clone(),
             prover: Arc::new(Risc0Prover::new(
                 smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF,
+                smt_token::client::tx_executor_handler::metadata::PROGRAM_ID,
             )),
             contract_name: config.contract_name.clone().into(),
             node: node_client.clone(),

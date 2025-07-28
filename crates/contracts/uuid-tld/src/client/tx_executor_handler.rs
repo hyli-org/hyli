@@ -1,4 +1,4 @@
-use crate::UuidTld;
+use crate::{client::tx_executor_handler::metadata::PROGRAM_ID, UuidTld};
 use client_sdk::{
     helpers::risc0::Risc0Prover,
     transaction_builder::{
@@ -22,7 +22,10 @@ impl UuidTld {
         contract_name: ContractName,
         builder: &mut TxExecutorBuilder<S>,
     ) {
-        builder.init_with(contract_name, Risc0Prover::new(metadata::UUID_TLD_ELF));
+        builder.init_with(
+            contract_name,
+            Risc0Prover::new(metadata::UUID_TLD_ELF, PROGRAM_ID),
+        );
     }
 }
 

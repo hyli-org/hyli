@@ -12,7 +12,7 @@ use hydentity::{
     Hydentity,
 };
 use hyle::genesis::States;
-use hyle_contracts::{HYDENTITY_ELF, HYLLAR_ELF, STAKING_ELF};
+use hyle_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID, STAKING_ELF, STAKING_ID};
 use hyle_model::{api::APIRegisterContract, ContractName, Identity, ProgramId, StateCommitment};
 use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
 use staking::{
@@ -46,9 +46,12 @@ async fn faucet_and_delegate(
 
     let mut tx_ctx = TxExecutorBuilder::new(states)
         // Replace prover binaries for non-reproducible mode.
-        .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
-        .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF))
-        .with_prover("staking".into(), Risc0Prover::new(STAKING_ELF))
+        .with_prover(
+            "hydentity".into(),
+            Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+        )
+        .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
+        .with_prover("staking".into(), Risc0Prover::new(STAKING_ELF, STAKING_ID))
         .build();
 
     let node_info = client.get_node_info().await?;
