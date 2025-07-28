@@ -554,8 +554,7 @@ impl Genesis {
         register_hyle_contract(
             &mut register_tx,
             hyle_contract.name.clone(),
-            hyle_contract.name.0.clone().into(),
-            hyle_contract.program_id.clone(),
+            hyle_contract.verifiers.clone(),
             hyle_contract.state.clone(),
             Some(hyle_contract.timeout_window),
             None,
@@ -565,8 +564,7 @@ impl Genesis {
         register_hyle_contract(
             &mut register_tx,
             "blst".into(),
-            "blst".into(),
-            NativeVerifiers::Blst.into(),
+            BTreeMap::from([(NativeVerifiers::Blst.into(), ProgramId(vec![0, 0, 0, 0]))]),
             StateCommitment::default(),
             Some(TimeoutWindow::NoTimeout),
             None,
@@ -576,8 +574,10 @@ impl Genesis {
         register_hyle_contract(
             &mut register_tx,
             "sha3_256".into(),
-            "sha3_256".into(),
-            NativeVerifiers::Sha3_256.into(),
+            BTreeMap::from([(
+                NativeVerifiers::Sha3_256.into(),
+                ProgramId(vec![0, 0, 0, 0]),
+            )]),
             StateCommitment::default(),
             Some(TimeoutWindow::NoTimeout),
             None,
@@ -587,8 +587,10 @@ impl Genesis {
         register_hyle_contract(
             &mut register_tx,
             "secp256k1".into(),
-            "secp256k1".into(),
-            NativeVerifiers::Secp256k1.into(),
+            BTreeMap::from([(
+                NativeVerifiers::Secp256k1.into(),
+                ProgramId(vec![0, 0, 0, 0]),
+            )]),
             StateCommitment::default(),
             Some(TimeoutWindow::NoTimeout),
             None,
@@ -598,8 +600,10 @@ impl Genesis {
         register_hyle_contract(
             &mut register_tx,
             "staking".into(),
-            hyle_model::verifiers::RISC0_1.into(),
-            staking_program_id.clone().into(),
+            BTreeMap::from([(
+                hyle_model::verifiers::RISC0_1.into(),
+                staking_program_id.clone().into(),
+            )]),
             ctx.staking.commit(),
             None,
             None,
@@ -609,8 +613,10 @@ impl Genesis {
         register_hyle_contract(
             &mut register_tx,
             "hyllar".into(),
-            hyle_model::verifiers::RISC0_1.into(),
-            hyllar_program_id.clone().into(),
+            BTreeMap::from([(
+                hyle_model::verifiers::RISC0_1.into(),
+                hyllar_program_id.clone().into(),
+            )]),
             ctx.hyllar.commit(),
             None,
             None,
@@ -624,8 +630,10 @@ impl Genesis {
             register_hyle_contract(
                 &mut register_tx,
                 token.into(),
-                hyle_model::verifiers::RISC0_1.into(),
-                smt_token_program_id.clone().into(),
+                BTreeMap::from([(
+                    hyle_model::verifiers::RISC0_1.into(),
+                    smt_token_program_id.clone().into(),
+                )]),
                 StateCommitment(Into::<[u8; 32]>::into(root).to_vec()),
                 None,
                 None,
@@ -636,8 +644,10 @@ impl Genesis {
         register_hyle_contract(
             &mut register_tx,
             "hydentity".into(),
-            hyle_model::verifiers::RISC0_1.into(),
-            hydentity_program_id.clone().into(),
+            BTreeMap::from([(
+                hyle_model::verifiers::RISC0_1.into(),
+                hydentity_program_id.clone().into(),
+            )]),
             ctx.hydentity.commit(),
             None,
             None,
@@ -647,8 +657,10 @@ impl Genesis {
         register_hyle_contract(
             &mut register_tx,
             "risc0-recursion".into(),
-            hyle_model::verifiers::RISC0_1.into(),
-            hyle_contracts::RISC0_RECURSION_ID.to_vec().into(),
+            BTreeMap::from([(
+                hyle_model::verifiers::RISC0_1.into(),
+                hyle_contracts::RISC0_RECURSION_ID.to_vec().into(),
+            )]),
             StateCommitment::default(),
             None,
             None,

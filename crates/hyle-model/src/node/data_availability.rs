@@ -17,9 +17,8 @@ pub enum DataEvent {
 )]
 pub struct Contract {
     pub name: ContractName,
-    pub program_id: ProgramId,
     pub state: StateCommitment,
-    pub verifier: Verifier,
+    pub verifiers: BTreeMap<Verifier, ProgramId>,
     pub timeout_window: TimeoutWindow,
 }
 

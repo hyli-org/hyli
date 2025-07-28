@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use super::{ExplorerApiState, TxHashDb};
 use api::{APIContract, APIContractState};
 use axum::{
@@ -5,6 +7,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
+use serde_json::Value;
 
 use crate::model::*;
 use hyle_modules::log_error;
@@ -12,9 +15,8 @@ use hyle_modules::log_error;
 #[derive(sqlx::FromRow, Debug)]
 pub struct ContractDb {
     // Struct for the contracts table
-    pub tx_hash: TxHashDb,   // Corresponds to the registration transaction hash
-    pub verifier: String,    // Verifier of the contract
-    pub program_id: Vec<u8>, // Program ID
+    pub tx_hash: TxHashDb, // Corresponds to the registration transaction hash
+    pub verifiers: Value,  // Verifiers of the contract
     pub state_commitment: Vec<u8>, // state commitment of the contract
     pub timeout_window: TimeoutWindowDb, // state commitment of the contract
     pub contract_name: String, // Contract name
@@ -27,10 +29,30 @@ pub struct ContractDb {
 
 impl From<ContractDb> for APIContract {
     fn from(val: ContractDb) -> Self {
+        let verifiers = if let Value::Object(map) = val.verifiers {
+            map.into_iter()
+                .filter_map(|(k, v)| {
+                    if let Value::String(s) = v {
+                        // Decode hex string to bytes
+                        if let Ok(bytes) = hex::decode(&s) {
+                            let (verifier, program_id) = (Verifier(k), ProgramId(bytes));
+                            Some((verifier, program_id))
+                        } else {
+                            tracing::error!("Failed to decode ProgramId hex string: {}", s);
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            BTreeMap::new()
+        };
+
         APIContract {
             tx_hash: val.tx_hash.0,
-            verifier: val.verifier,
-            program_id: val.program_id,
+            verifiers,
             state_commitment: val.state_commitment,
             contract_name: val.contract_name,
             total_tx: val.total_tx,
@@ -72,17 +94,27 @@ pub async fn list_contracts(
         sqlx::query_as::<_, ContractDb>(
             r#"
 SELECT
-    c.*,
+    c.tx_hash,
+    c.parent_dp_hash,
+    c.timeout_window,
+    c.state_commitment,
+    c.contract_name,
+    COALESCE(
+        JSONB_OBJECT_AGG(cv.verifier, cv.program_id) FILTER (WHERE cv.verifier IS NOT NULL),
+        '{}'::jsonb
+    ) AS verifiers,
     COUNT(tx_c.*) AS total_tx,
     COUNT(t.*) FILTER (WHERE t.transaction_status = 'sequenced') AS unsettled_tx,
     min(t.block_height) FILTER (WHERE t.transaction_status = 'sequenced') as earliest_unsettled
 FROM contracts AS c
+LEFT JOIN contract_verifiers AS cv
+    ON cv.contract_name = c.contract_name
 LEFT JOIN txs_contracts as tx_c
     on tx_c.contract_name = c.contract_name
 LEFT JOIN transactions AS t
     ON t.parent_dp_hash = tx_c.parent_dp_hash
     AND t.tx_hash       = tx_c.tx_hash
-GROUP BY c.contract_name
+GROUP BY c.tx_hash, c.parent_dp_hash, c.timeout_window, c.state_commitment, c.contract_name
 "#
         )
         .fetch_all(&state.db)
@@ -114,7 +146,15 @@ pub async fn get_contract(
         sqlx::query_as::<_, ContractDb>(
             r#"
         SELECT
-          c.*,
+          c.tx_hash,
+          c.parent_dp_hash,
+          c.timeout_window,
+          c.state_commitment,
+          c.contract_name,
+          COALESCE(
+              JSONB_OBJECT_AGG(cv.verifier, cv.program_id) FILTER (WHERE cv.verifier IS NOT NULL),
+              '{}'::jsonb
+          ) AS verifiers,
           COUNT(t.*)                             			          AS total_tx,
           COUNT(t.*)
             FILTER (WHERE t.transaction_status = 'sequenced')   AS unsettled_tx,
@@ -131,13 +171,15 @@ pub async fn get_contract(
               )
           ) AS earliest_unsettled
         FROM contracts AS c
+        LEFT JOIN contract_verifiers AS cv
+          ON cv.contract_name = c.contract_name
         left join txs_contracts as tx_c
           on tx_c.contract_name = c.contract_name
         LEFT JOIN transactions AS t
           ON t.parent_dp_hash = tx_c.parent_dp_hash
          AND t.tx_hash       = tx_c.tx_hash
         WHERE c.contract_name = $1
-        GROUP BY c.contract_name;
+        GROUP BY c.tx_hash, c.parent_dp_hash, c.timeout_window, c.state_commitment, c.contract_name;
         "#
         )
         .bind(contract_name)

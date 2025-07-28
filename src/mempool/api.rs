@@ -94,8 +94,7 @@ pub async fn send_blob_transaction(
             validate_contract_registration_metadata(
                 &"hyle".into(),
                 &parameters.contract_name,
-                &parameters.verifier,
-                &parameters.program_id,
+                &parameters.verifiers,
                 &parameters.state_commitment,
             )
             .map_err(|err| AppError(StatusCode::BAD_REQUEST, anyhow!(err)))?;
@@ -152,8 +151,7 @@ pub async fn register_contract(
     validate_contract_registration_metadata(
         &owner,
         &payload.contract_name,
-        &payload.verifier,
-        &payload.program_id,
+        &payload.verifiers,
         &payload.state_commitment,
     )
     .map_err(|err| AppError(StatusCode::BAD_REQUEST, anyhow!(err)))?;

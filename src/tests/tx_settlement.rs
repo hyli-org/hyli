@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use client_sdk::rest_client::{IndexerApiHttpClient, NodeApiClient, NodeApiHttpClient};
 use hyle_model::{
     api::APIRegisterContract, BlobTransaction, ContractAction, ContractName, Hashed, OnchainEffect,
@@ -27,8 +29,7 @@ fn make_register_blob_action(
     BlobTransaction::new(
         "hyle@hyle",
         vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![1, 2, 3]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![1, 2, 3]))]),
             state_commitment,
             contract_name,
             ..Default::default()
@@ -68,8 +69,7 @@ async fn test_full_settlement_flow() -> Result<()> {
     client.send_tx_blob(b1).await.unwrap();
     client
         .register_contract(APIRegisterContract {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![1, 2, 3]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![1, 2, 3]))]),
             state_commitment: StateCommitment(vec![7, 7, 7]),
             contract_name: "c2.hyle".into(),
             ..Default::default()
@@ -212,8 +212,7 @@ async fn test_tx_settlement_duplicates() -> Result<()> {
 
     client
         .register_contract(APIRegisterContract {
-            verifier: "test".into(),
-            program_id: program_id.clone(),
+            verifiers: BTreeMap::from([("test".into(), program_id.clone())]),
             state_commitment: StateCommitment(vec![7, 7, 7]),
             contract_name: "c2.hyle".into(),
             ..Default::default()
@@ -400,14 +399,16 @@ async fn test_contract_upgrade() -> Result<()> {
     hyle_node.wait_for_settled_tx(b1_hashed).await?;
 
     let contract = client.get_contract("c1.hyle".into()).await?;
-    assert_eq!(contract.program_id, ProgramId(vec![1, 2, 3]));
+    assert_eq!(
+        contract.verifiers,
+        BTreeMap::from([("test".into(), ProgramId(vec![1, 2, 3]))])
+    );
 
     // Send contract update transaction
     let b2 = BlobTransaction::new(
         "toto@c1.hyle",
         vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![7, 7, 7]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![7, 7, 7]))]),
             state_commitment: StateCommitment(vec![3, 3, 3]),
             contract_name: "c1.hyle".into(),
             ..Default::default()
@@ -422,8 +423,7 @@ async fn test_contract_upgrade() -> Result<()> {
     hyle_output
         .onchain_effects
         .push(OnchainEffect::RegisterContract(RegisterContractEffect {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![7, 7, 7]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![7, 7, 7]))]),
             // The state commitment is ignored during the update phase.
             state_commitment: StateCommitment(vec![3, 3, 3]),
             contract_name: "c1.hyle".into(),
@@ -448,7 +448,10 @@ async fn test_contract_upgrade() -> Result<()> {
 
     let contract = client.get_contract("c1.hyle".into()).await?;
     // Check program ID has changed.
-    assert_eq!(contract.program_id, ProgramId(vec![7, 7, 7]));
+    assert_eq!(
+        contract.verifiers,
+        BTreeMap::from([("test".into(), ProgramId(vec![7, 7, 7]))])
+    );
     // We use the next_state, not the state_commitment of the update effect.
     assert_eq!(contract.state_commitment.0, vec![8, 8, 8]);
 

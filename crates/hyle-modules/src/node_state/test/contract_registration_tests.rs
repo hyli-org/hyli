@@ -21,8 +21,7 @@ pub fn make_register_tx(
     BlobTransaction::new(
         sender,
         vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name: name,
             ..Default::default()
@@ -130,8 +129,7 @@ async fn test_register_contract_proof_mismatch() {
     output
         .onchain_effects
         .push(OnchainEffect::RegisterContract(RegisterContractEffect {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
             state_commitment: StateCommitment(vec![9, 9, 9, 9]), // Different state_commitment than in the blob action
             contract_name: "sub.test.hyle".into(),
             timeout_window: None,
@@ -169,8 +167,7 @@ async fn test_register_contract_composition() {
         "test@hydentity",
         vec![
             RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
+                verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
                 state_commitment: StateCommitment(vec![0, 1, 2, 3]),
                 contract_name: "c1".into(),
                 ..Default::default()
@@ -346,8 +343,7 @@ async fn test_register_contract_and_delete_hyle() {
     output
         .onchain_effects
         .push(OnchainEffect::RegisterContract(RegisterContractEffect {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name: "sub.c2.hyle".into(),
             timeout_window: None,
@@ -629,8 +625,7 @@ async fn test_hyle_sub_delete() {
     output
         .onchain_effects
         .push(OnchainEffect::RegisterContract(RegisterContractEffect {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name: "sub.c2.hyle".into(),
             timeout_window: None,
@@ -692,8 +687,7 @@ async fn test_register_update_delete_combinations_hyle() {
     output
         .onchain_effects
         .push(OnchainEffect::RegisterContract(RegisterContractEffect {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name: "c.hyle".into(),
             timeout_window: None,
@@ -866,8 +860,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
     // Upgrade the contract with a custom timeout
     {
         let action = RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name: c1.clone(),
             timeout_window: Some(TimeoutWindow::Timeout(custom_timeout)),
@@ -900,8 +893,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
     // Upgrade the contract again with a None timeout
     {
         let action = RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
             state_commitment: StateCommitment(vec![4, 5, 6]),
             contract_name: c1.clone(),
             timeout_window: None,
@@ -934,8 +926,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
     let another_custom_timeout = BlockHeight(200);
     {
         let action = RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
             state_commitment: StateCommitment(vec![4, 5, 6]),
             contract_name: c1.clone(),
             timeout_window: Some(TimeoutWindow::Timeout(another_custom_timeout)),
@@ -1058,9 +1049,8 @@ async fn domino_settlement_after_contract_delete() {
         ContractName::new("wallet"),
         Contract {
             name: ContractName::new("wallet"),
-            program_id: ProgramId(vec![]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
             state: StateCommitment(vec![0, 1, 2, 3]),
-            verifier: Verifier("test".into()),
             timeout_window: TimeoutWindow::Timeout(BlockHeight(100)),
         },
     );

@@ -192,8 +192,7 @@ mod test {
         // Then register it with the same identity
         let register_action = RegisterContractAction {
             contract_name: format!("{uuid}.test").into(),
-            verifier: "test".into(),
-            program_id: ProgramId(vec![1, 2, 3]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![1, 2, 3]))]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             ..Default::default()
         };
@@ -205,8 +204,10 @@ mod test {
             panic!("Expected RegisterContract effect");
         };
         assert_eq!(effect.contract_name.0, format!("{uuid}.test"));
-        assert_eq!(effect.verifier, Verifier("test".into()));
-        assert_eq!(effect.program_id, ProgramId(vec![1, 2, 3]));
+        assert_eq!(
+            effect.verifiers.get(&Verifier("test".into())).unwrap(),
+            &ProgramId(vec![1, 2, 3])
+        );
         assert_eq!(effect.state_commitment, StateCommitment(vec![0, 1, 2, 3]));
 
         // Try to register with a different identity
@@ -217,8 +218,7 @@ mod test {
         let unclaimed_uuid = Uuid::from_u128(12345);
         let register_action = RegisterContractAction {
             contract_name: format!("{unclaimed_uuid}.test").into(),
-            verifier: "test".into(),
-            program_id: ProgramId(vec![1, 2, 3]),
+            verifiers: BTreeMap::from([(Verifier("test".into()), ProgramId(vec![1, 2, 3]))]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             ..Default::default()
         };

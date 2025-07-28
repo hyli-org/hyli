@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
 use std::time::Duration;
@@ -58,8 +59,7 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
                 vec![BlobTransaction::new(
                     "test@hyle",
                     vec![RegisterContractAction {
-                        verifier: "test-slow".into(),
-                        program_id: ProgramId(vec![]),
+                        verifiers: BTreeMap::from([("test-slow".into(), ProgramId(vec![]))]),
                         state_commitment: StateCommitment(vec![0, 1, 2, 3]),
                         contract_name: contract_name.clone(),
                         ..Default::default()

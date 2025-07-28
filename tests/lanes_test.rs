@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::collections::BTreeMap;
+
 use anyhow::Result;
 use client_sdk::{
     helpers::risc0::Risc0Prover,
@@ -145,8 +147,7 @@ async fn scenario_lane_manager_outside_consensus(mut ctx: E2ECtx, delegate: bool
 
     let tx_hash = lane_mgr_client
         .register_contract(APIRegisterContract {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![1, 2, 3]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![1, 2, 3]))]),
             state_commitment: StateCommitment(vec![1, 2, 3]),
             contract_name: ContractName::new("test"),
             ..Default::default()
@@ -171,8 +172,8 @@ async fn scenario_lane_manager_outside_consensus(mut ctx: E2ECtx, delegate: bool
             .get_indexer_contract(&ContractName::new("test"))
             .await
             .unwrap()
-            .program_id,
-        vec![1, 2, 3]
+            .verifiers,
+        BTreeMap::from([("test".into(), vec![1, 2, 3].into())])
     );
 
     Ok(())

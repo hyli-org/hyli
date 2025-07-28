@@ -1,4 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+use std::collections::BTreeMap;
+
 use client_sdk::{
     contract_states,
     helpers::risc0::Risc0Prover,
@@ -118,8 +120,7 @@ async fn test_uuid_registration() {
         "uuid".into(),
         RegisterContractAction {
             contract_name: format!("{claimed_uuid}.uuid").into(),
-            verifier: "test".into(),
-            program_id: ProgramId(vec![1]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![1]))]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             ..Default::default()
         },
@@ -175,6 +176,9 @@ async fn test_uuid_registration() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     };
-    assert_eq!(contract.verifier, Verifier("test".into()));
+    assert_eq!(
+        contract.verifiers,
+        BTreeMap::from([("test".into(), ProgramId(vec![1]))])
+    );
     assert_eq!(contract.state_commitment, StateCommitment(vec![0, 1, 2, 3]));
 }

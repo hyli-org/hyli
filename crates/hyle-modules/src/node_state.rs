@@ -11,6 +11,7 @@ use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
 use sdk::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::vec;
 use timeouts::Timeouts;
 use tracing::{debug, error, info, trace};
 
@@ -170,9 +171,8 @@ pub struct NodeStateStore {
 pub fn hyle_contract_definition() -> Contract {
     Contract {
         name: "hyle".into(),
-        program_id: ProgramId(vec![0, 0, 0, 0]),
         state: StateCommitment::default(),
-        verifier: Verifier("hyle".to_owned()),
+        verifiers: BTreeMap::from([(Verifier("hyle".to_owned()), ProgramId(vec![0, 0, 0, 0]))]),
         timeout_window: TimeoutWindow::NoTimeout,
     }
 }
@@ -473,11 +473,15 @@ impl NodeState {
             .enumerate()
             .filter_map(|(index, blob)| {
                 tracing::trace!("Handling blob - {:?}", blob);
-                if let Some(Ok(verifier)) = self
-                    .contracts
-                    .get(&blob.contract_name)
-                    .map(|b| TryInto::<NativeVerifiers>::try_into(&b.verifier))
-                {
+                if let Some(Ok(verifier)) = self.contracts.get(&blob.contract_name).map(|b| {
+                    // Only try the first verifier
+                    TryInto::<NativeVerifiers>::try_into(
+                        b.verifiers
+                            .keys()
+                            .next()
+                            .expect("There should be at least one verifier"),
+                    )
+                }) {
                     let hyle_output = hyle_verifiers::native::verify(
                         blob_tx_hash.clone(),
                         BlobIndex(index),
@@ -1120,9 +1124,8 @@ impl NodeState {
                                 bth.clone(),
                                 RegisterContractEffect {
                                     contract_name: contract_name.clone(),
-                                    program_id: contract.program_id.clone(),
+                                    verifiers: contract.verifiers.clone(),
                                     state_commitment: contract.state.clone(),
-                                    verifier: contract.verifier.clone(),
                                     timeout_window: Some(contract.timeout_window.clone()),
                                 },
                                 metadata.unwrap_or_default(),
@@ -1149,15 +1152,17 @@ impl NodeState {
                             .insert(contract.name.clone(), contract.state.clone());
                     }
                     if fields.program_id {
-                        debug!(
-                            "✍️  Modify '{}' program_id to {}",
-                            &contract_name,
-                            hex::encode(&contract.program_id.0)
-                        );
-
+                        for (verifier, program_id) in contract.verifiers.iter() {
+                            debug!(
+                                "✍️  Modify '{}' program_id for verifier {} to {}",
+                                &contract_name,
+                                verifier,
+                                hex::encode(&program_id.0)
+                            );
+                        }
                         block_under_construction
                             .updated_program_ids
-                            .insert(contract.name.clone(), contract.program_id);
+                            .insert(contract.name.clone(), contract.verifiers);
                     }
                     if fields.timeout_window {
                         debug!(
@@ -1193,10 +1198,17 @@ impl NodeState {
                                     hyle_output.initial_state = contract.state.clone();
                                     hyle_output.next_state = contract.state.clone();
                                 }
+                                let (verifier, program_id) = contract
+                                    .verifiers
+                                    .iter()
+                                    .next()
+                                    .expect(
+                                    "No verifier found before nuking Tx. This should not happen",
+                                );
                                 updates.entry(tx_hash.clone()).or_default().push((
-                                    contract.program_id.clone(),
+                                    program_id.clone(),
                                     hyle_output,
-                                    contract.verifier.clone(),
+                                    verifier.clone(),
                                 ));
                             } else {
                                 tracing::error!("Contract {} not found", contract_name);
@@ -1358,7 +1370,7 @@ impl NodeState {
                     )
                 }
             } else if let Ok(_data) =
-                StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
+                StructuredBlobData::<UpdateContractProgramIdsAction>::try_from(blob.data.clone())
             {
                 // FIXME: add checks?
             }
@@ -1414,23 +1426,26 @@ impl NodeState {
                 contract.state
             )
         }
-
-        if proof_metadata.0 != contract.program_id {
-            bail!(
-                "Program ID mismatch: {:?}, expected {:?} on {}",
-                proof_metadata.0,
-                contract.program_id,
-                contract.name
-            )
-        }
-
-        if proof_metadata.2 != contract.verifier {
-            bail!(
-                "Verifier mismatch: {:?}, expected {:?} on {}",
-                proof_metadata.2,
-                contract.verifier,
-                contract.name
-            )
+        // Retrieve the expected program_id for the given verifier from the contract
+        match contract.verifiers.get(&proof_metadata.2) {
+            Some(expected_program_id) => {
+                if proof_metadata.0 != *expected_program_id {
+                    bail!(
+                        "Program ID mismatch: {:?}, expected {:?} for verifier {:?} on {}",
+                        proof_metadata.0,
+                        expected_program_id,
+                        proof_metadata.2,
+                        contract.name
+                    )
+                }
+            }
+            None => {
+                bail!(
+                    "Verifier mismatch: verifier {:?} not found in contract {}",
+                    proof_metadata.2,
+                    contract.name
+                )
+            }
         }
 
         for state_read in &proof_metadata.1.state_reads {
@@ -1450,8 +1465,7 @@ impl NodeState {
                     validate_contract_registration_metadata(
                         &contract.name,
                         &effect.contract_name,
-                        &effect.verifier,
-                        &effect.program_id,
+                        &effect.verifiers,
                         &effect.state_commitment,
                     )?;
 
@@ -1464,9 +1478,8 @@ impl NodeState {
                         (
                             ContractStatus::Updated(Contract {
                                 name: effect.contract_name.clone(),
-                                program_id: effect.program_id.clone(),
                                 state: effect.state_commitment.clone(),
-                                verifier: effect.verifier.clone(),
+                                verifiers: effect.verifiers.clone(),
                                 timeout_window: effect
                                     .timeout_window
                                     .clone()
@@ -1645,8 +1658,7 @@ pub mod test {
         BlobTransaction::new(
             "hyle@hyle",
             vec![RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
+                verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
                 state_commitment: StateCommitment(vec![0, 1, 2, 3]),
                 contract_name: name,
                 ..Default::default()
@@ -1660,8 +1672,7 @@ pub mod test {
     ) -> BlobTransaction {
         let list = [
             vec![RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
+                verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
                 state_commitment: StateCommitment(vec![0, 1, 2, 3]),
                 contract_name: name,
                 ..Default::default()
@@ -1676,8 +1687,7 @@ pub mod test {
 
     pub fn make_register_contract_effect(contract_name: ContractName) -> RegisterContractEffect {
         RegisterContractEffect {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name,
             timeout_window: None,
@@ -1688,8 +1698,7 @@ pub mod test {
         contract_name: ContractName,
     ) -> RegisterContractEffect {
         RegisterContractEffect {
-            verifier: Verifier("sha3_256".to_string()),
-            program_id: ProgramId(vec![]),
+            verifiers: BTreeMap::from([("sha3_256".into(), ProgramId(vec![]))]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name,
             timeout_window: None,
@@ -1870,9 +1879,8 @@ pub mod test {
                 tx.contract_name.clone(),
                 Contract {
                     name: tx.contract_name.clone(),
-                    program_id: tx.program_id.clone(),
                     state: tx.state_commitment.clone(),
-                    verifier: tx.verifier.clone(),
+                    verifiers: tx.verifiers.clone(),
                     timeout_window: tx.timeout_window.clone().unwrap_or_default(),
                 },
             );

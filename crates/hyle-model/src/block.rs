@@ -32,7 +32,7 @@ pub struct Block {
         BTreeMap<ContractName, (TxHash, RegisterContractEffect, Option<Vec<u8>>)>,
     pub deleted_contracts: BTreeMap<ContractName, TxHash>,
     pub updated_states: BTreeMap<ContractName, StateCommitment>,
-    pub updated_program_ids: BTreeMap<ContractName, ProgramId>,
+    pub updated_program_ids: BTreeMap<ContractName, BTreeMap<Verifier, ProgramId>>,
     pub updated_timeout_windows: BTreeMap<ContractName, TimeoutWindow>,
     pub transactions_events: BTreeMap<TxHash, Vec<TransactionStateEvent>>,
 }

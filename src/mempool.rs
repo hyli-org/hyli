@@ -1055,8 +1055,7 @@ pub mod test {
         BlobTransaction::new(
             "hyle@hyle",
             vec![RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
+                verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
                 state_commitment: StateCommitment(vec![0, 1, 2, 3]),
                 contract_name: name,
                 ..Default::default()

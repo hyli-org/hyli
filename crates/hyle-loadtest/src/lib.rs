@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
@@ -137,8 +138,10 @@ pub async fn setup(hyllar: Hyllar, url: String, verifier: String) -> Result<()> 
         Identity::new("hyle@hyle"),
         vec![RegisterContractAction {
             contract_name: "hyllar_test".into(),
-            verifier: verifier.into(),
-            program_id: hyle_contracts::HYLLAR_ID.to_vec().into(),
+            verifiers: BTreeMap::from([(
+                verifier.into(),
+                hyle_contracts::HYLLAR_ID.to_vec().into(),
+            )]),
             state_commitment: hyllar.commit(),
             ..Default::default()
         }
@@ -431,8 +434,10 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
             vec![
                 RegisterContractAction {
                     contract_name: random_hyllar_contract.clone(),
-                    verifier: verifier.clone(),
-                    program_id: hyle_contracts::HYLLAR_ID.to_vec().into(),
+                    verifiers: BTreeMap::from([(
+                        verifier.clone(),
+                        hyle_contracts::HYLLAR_ID.to_vec().into(),
+                    )]),
                     state_commitment: Hyllar::custom(format!("faucet@{random_hydentity_contract}"))
                         .commit(),
                     ..Default::default()
@@ -440,8 +445,10 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
                 .as_blob("hyle".into(), None, None),
                 RegisterContractAction {
                     contract_name: random_hydentity_contract.clone(),
-                    verifier: verifier.clone(),
-                    program_id: hyle_contracts::HYDENTITY_ID.to_vec().into(),
+                    verifiers: BTreeMap::from([(
+                        verifier.clone(),
+                        hyle_contracts::HYDENTITY_ID.to_vec().into(),
+                    )]),
                     state_commitment: Hydentity::default().commit(),
                     ..Default::default()
                 }
@@ -640,8 +647,7 @@ pub async fn send_massive_blob(users: u32, url: String) -> Result<()> {
         Identity::new("hyle@hyle"),
         vec![RegisterContractAction {
             contract_name: "massive_blob_test".into(),
-            verifier: "test".into(),
-            program_id: hyle_contracts::HYLLAR_ID.to_vec().into(),
+            verifiers: BTreeMap::from([("test".into(), hyle_contracts::HYLLAR_ID.to_vec().into())]),
             state_commitment: StateCommitment(vec![1]),
             timeout_window: Some(TimeoutWindow::Timeout(hyle_contract_sdk::BlockHeight(2))),
             ..Default::default()

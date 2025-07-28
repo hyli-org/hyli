@@ -330,6 +330,7 @@ mod tests {
     use crate::bus::SharedMessageBus;
     use crate::node_state::metrics::NodeStateMetrics;
     use crate::node_state::{NodeState, NodeStateStore};
+    use std::collections::BTreeMap;
     use std::sync::Arc;
 
     #[derive(Clone, Debug, Default, BorshSerialize, BorshDeserialize)]
@@ -409,8 +410,7 @@ mod tests {
         let rce = RegisterContractEffect {
             contract_name: indexer.contract_name.clone(),
             state_commitment,
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
             ..Default::default()
         };
         indexer.handle_register_contract(&rce, &None).await.unwrap();

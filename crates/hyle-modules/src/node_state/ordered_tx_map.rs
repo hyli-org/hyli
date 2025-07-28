@@ -315,9 +315,8 @@ mod tests {
             BlobIndex(1),
             UnsettledBlobMetadata {
                 blob: RegisterContractAction {
-                    verifier: "test".into(),
                     contract_name: contract2.clone(),
-                    program_id: ProgramId(vec![1, 2, 3]),
+                    verifiers: BTreeMap::from([("test".into(), ProgramId(vec![1, 2, 3]))]),
                     state_commitment: StateCommitment(vec![0, 1, 2, 3]),
                     ..Default::default()
                 }

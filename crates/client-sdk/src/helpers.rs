@@ -1,4 +1,4 @@
-use std::pin::Pin;
+use std::{collections::BTreeMap, pin::Pin};
 
 use anyhow::Result;
 use borsh::BorshSerialize;
@@ -12,8 +12,7 @@ use crate::transaction_builder::ProvableBlobTx;
 pub fn register_hyle_contract(
     builder: &mut ProvableBlobTx,
     new_contract_name: ContractName,
-    verifier: Verifier,
-    program_id: ProgramId,
+    verifiers: BTreeMap<Verifier, ProgramId>,
     state_commitment: StateCommitment,
     timeout_window: Option<TimeoutWindow>,
     constructor_metadata: Option<Vec<u8>>,
@@ -22,8 +21,7 @@ pub fn register_hyle_contract(
         "hyle".into(),
         RegisterContractAction {
             contract_name: new_contract_name,
-            verifier,
-            program_id,
+            verifiers,
             state_commitment,
             timeout_window,
             constructor_metadata,

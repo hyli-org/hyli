@@ -38,8 +38,7 @@ pub struct ProofStat {
 
 #[derive(Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct APIRegisterContract {
-    pub verifier: Verifier,
-    pub program_id: ProgramId,
+    pub verifiers: BTreeMap<Verifier, ProgramId>,
     pub state_commitment: StateCommitment,
     pub contract_name: ContractName,
     pub timeout_window: Option<u64>,
@@ -196,26 +195,23 @@ pub struct BlobWithStatus {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, ToSchema)]
 pub struct APIContract {
     // Struct for the contracts table
-    pub tx_hash: TxHash,  // Corresponds to the registration transaction hash
-    pub verifier: String, // Verifier of the contract
-    #[serde_as(as = "serde_with::hex::Hex")]
-    pub program_id: Vec<u8>, // Program ID
+    pub tx_hash: TxHash, // Corresponds to the registration transaction hash
+    pub verifiers: BTreeMap<Verifier, ProgramId>, // Verifiers of the contract
     #[serde_as(as = "serde_with::hex::Hex")]
     pub state_commitment: Vec<u8>, // State commitment of the contract
     pub contract_name: String, // Contract name
-    pub total_tx: u64,    // Total number of transactions associated with the contract
+    pub total_tx: u64,   // Total number of transactions associated with the contract
     pub unsettled_tx: u64, // Total number of unsettled transactions
     pub earliest_unsettled: Option<BlockHeight>, // Earliest unsettled transaction block height
 }
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct APINodeContract {
-    pub contract_name: ContractName,       // Name of the contract
-    pub state_block_height: BlockHeight,   // Block height where the state is captured
-    pub state_commitment: StateCommitment, // The contract state stored in JSON format
-    pub program_id: ProgramId,             // Program ID of the contract
-    pub verifier: Verifier,                // Verifier of the contract
-    pub timeout_window: Option<u64>,       // Timeout window for the contract
+    pub contract_name: ContractName,              // Name of the contract
+    pub state_block_height: BlockHeight,          // Block height where the state is captured
+    pub state_commitment: StateCommitment,        // The contract state stored in JSON format
+    pub verifiers: BTreeMap<Verifier, ProgramId>, // Verifiers of the contract
+    pub timeout_window: Option<u64>,              // Timeout window for the contract
 }
 
 impl<'de> Deserialize<'de> for APINodeContract {
@@ -231,8 +227,7 @@ impl<'de> Deserialize<'de> for APINodeContract {
                 contract_name: ContractName,
                 state_block_height: BlockHeight,
                 state_commitment: StateCommitment,
-                program_id: ProgramId,
-                verifier: Verifier,
+                verifiers: BTreeMap<Verifier, ProgramId>,
                 timeout_window: Option<u64>,
             },
         }
@@ -242,8 +237,7 @@ impl<'de> Deserialize<'de> for APINodeContract {
                 contract_name: c.name,
                 state_block_height: BlockHeight(0),
                 state_commitment: c.state,
-                program_id: c.program_id,
-                verifier: c.verifier,
+                verifiers: c.verifiers,
                 timeout_window: match c.timeout_window {
                     TimeoutWindow::Timeout(timeout) => Some(timeout.0),
                     TimeoutWindow::NoTimeout => None,
@@ -253,15 +247,13 @@ impl<'de> Deserialize<'de> for APINodeContract {
                 contract_name,
                 state_block_height,
                 state_commitment,
-                program_id,
-                verifier,
+                verifiers,
                 timeout_window,
             } => Ok(APINodeContract {
                 contract_name,
                 state_block_height,
                 state_commitment,
-                program_id,
-                verifier,
+                verifiers,
                 timeout_window,
             }),
         }
@@ -273,9 +265,8 @@ fn test_deserialize_api_node_contract() {
     // Test old format
     let old_json = serde_json::to_value(&crate::Contract {
         name: ContractName("my_contract".to_string()),
-        program_id: ProgramId(vec![4, 5, 6]),
         state: StateCommitment(vec![1, 2, 3]),
-        verifier: Verifier("verifier1".to_string()),
+        verifiers: BTreeMap::from([(Verifier("verifier1".to_string()), ProgramId(vec![4, 5, 6]))]),
         timeout_window: TimeoutWindow::Timeout(BlockHeight(32)),
     })
     .unwrap();
@@ -283,16 +274,23 @@ fn test_deserialize_api_node_contract() {
     assert_eq!(old_contract.contract_name.0, "my_contract");
     assert_eq!(old_contract.state_block_height.0, 0); // Default value
     assert_eq!(old_contract.state_commitment.0, vec![1, 2, 3]);
-    assert_eq!(old_contract.program_id.0, vec![4, 5, 6]);
-    assert_eq!(old_contract.verifier.0, "verifier1");
+    assert_eq!(
+        old_contract
+            .verifiers
+            .get(&Verifier("verifier1".to_string()))
+            .unwrap(),
+        &ProgramId(vec![4, 5, 6])
+    );
     assert_eq!(old_contract.timeout_window, Some(32));
     // Test new format
     let new_json = serde_json::to_value(&APINodeContract {
         contract_name: ContractName("new_contract".to_string()),
         state_block_height: BlockHeight(42),
         state_commitment: StateCommitment(vec![7, 8, 9]),
-        program_id: ProgramId(vec![10, 11, 12]),
-        verifier: Verifier("verifier2".to_string()),
+        verifiers: BTreeMap::from([(
+            Verifier("verifier2".to_string()),
+            ProgramId(vec![10, 11, 12]),
+        )]),
         timeout_window: Some(123),
     })
     .unwrap();
@@ -300,8 +298,13 @@ fn test_deserialize_api_node_contract() {
     assert_eq!(new_contract.contract_name.0, "new_contract");
     assert_eq!(new_contract.state_block_height.0, 42);
     assert_eq!(new_contract.state_commitment.0, vec![7, 8, 9]);
-    assert_eq!(new_contract.program_id.0, vec![10, 11, 12]);
-    assert_eq!(new_contract.verifier.0, "verifier2");
+    assert_eq!(
+        new_contract
+            .verifiers
+            .get(&Verifier("verifier2".to_string()))
+            .unwrap(),
+        &ProgramId(vec![10, 11, 12])
+    );
     assert_eq!(new_contract.timeout_window, Some(123));
 }
 

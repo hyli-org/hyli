@@ -1,7 +1,7 @@
 #![warn(unused_crate_dependencies)]
 
-use std::fmt::Write;
 use std::io::Read;
+use std::{collections::BTreeMap, fmt::Write};
 
 use anyhow::{bail, Context, Error};
 use hyle_model::{HyleOutput, ProgramId, ProofData, Verifier};
@@ -30,14 +30,20 @@ pub fn verify(
 }
 
 #[allow(unused_variables)]
-pub fn validate_program_id(verifier: &Verifier, program_id: &ProgramId) -> Result<(), Error> {
-    match verifier.0.as_str() {
-        #[cfg(feature = "risc0")]
-        hyle_model::verifiers::RISC0_1 => risc0_1::validate_program_id(program_id),
-        #[cfg(feature = "sp1")]
-        hyle_model::verifiers::SP1_4 => sp1_4::validate_program_id(program_id),
-        _ => Ok(()),
+pub fn validate_program_ids(verifier: &BTreeMap<Verifier, ProgramId>) -> Result<(), Error> {
+    if verifier.is_empty() {
+        bail!("No verifiers provided");
     }
+    for (verifier, program_id) in verifier.iter() {
+        match verifier.0.as_str() {
+            #[cfg(feature = "risc0")]
+            hyle_model::verifiers::RISC0_1 => risc0_1::validate_program_id(program_id)?,
+            #[cfg(feature = "sp1")]
+            hyle_model::verifiers::SP1_4 => sp1_4::validate_program_id(program_id)?,
+            _ => continue,
+        };
+    }
+    Ok(())
 }
 
 #[cfg(feature = "risc0")]

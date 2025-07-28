@@ -75,13 +75,21 @@ CREATE TABLE blob_proof_outputs (
 CREATE TABLE contracts (
     tx_hash TEXT NOT NULL,
     parent_dp_hash TEXT NOT NULL,
-    verifier TEXT NOT NULL,
-    program_id BYTEA NOT NULL,
     timeout_window BIGINT,
     state_commitment BYTEA NOT NULL,
     contract_name TEXT PRIMARY KEY NOT NULL,
     FOREIGN KEY (parent_dp_hash, tx_hash) REFERENCES transactions(parent_dp_hash, tx_hash) ON DELETE CASCADE
 );
+
+CREATE TABLE contract_verifiers (
+    contract_name TEXT NOT NULL,
+    verifier TEXT NOT NULL,
+    program_id TEXT NOT NULL,
+    PRIMARY KEY (contract_name, verifier)
+);
+
+CREATE INDEX idx_contract_verifiers_contract ON contract_verifiers(contract_name);
+CREATE INDEX idx_contract_verifiers_verifier ON contract_verifiers(verifier);
 
 CREATE TABLE contract_state (
     contract_name TEXT NOT NULL,                                          -- Name of the contract
