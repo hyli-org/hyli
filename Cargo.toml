@@ -38,7 +38,7 @@ version = "0.13.0-rc.4"
 edition = "2021"
 homepage = "https://hyli.org/"
 repository = "https://github.com/hyli-org/hyli/"
-rust-version = "1.84"
+rust-version = "1.88"
 license-file = "LICENSE"
 
 [workspace.dependencies]
