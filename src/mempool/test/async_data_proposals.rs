@@ -38,7 +38,7 @@ async fn test_mempool_isnt_blocked_by_proof_verification() {
 
 async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
     let mut node_modules = NodeIntegrationCtxBuilder::new().await;
-    node_modules.conf.consensus.slot_duration = Duration::from_millis(200);
+    node_modules.conf.consensus.slot_duration = Duration::from_millis(400);
 
     let mut node_modules = node_modules
         .skip::<Genesis>()
