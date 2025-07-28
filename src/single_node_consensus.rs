@@ -146,6 +146,8 @@ impl SingleNodeConsensus {
             tracing::trace!("Genesis block done");
         }
 
+        self.store.last_timestamp = TimestampMsClock::now();
+
         let mut interval = tokio::time::interval(std::cmp::min(
             self.config.consensus.slot_duration,
             Duration::from_millis(250),
