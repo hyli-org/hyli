@@ -1,7 +1,7 @@
 
 # 🧪 Hylab — Build, Test & Deploy ZK Apps on Hyli
 
-> The easiest way to build on Hyli.
+> The easiest way to build ZK apps.
 > Powered by Risc0 & SP1. Designed for zk developers.
 
 ---
