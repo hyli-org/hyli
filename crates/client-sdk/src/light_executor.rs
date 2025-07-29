@@ -8,9 +8,8 @@ pub struct LightExecutorOutput {
 }
 
 /// Defines convenience methods for handling light contract execution with minimal overhead.
-pub trait LightContractExecutor<'tx, 'extra_data> {
+pub trait LightContractExecutor<'tx> {
     type Scratchpad;
-    type ExtraData;
 
     /// Prepares for executing a transaction, returning any data necessary to revert/commit changes.
     fn prepare_for_tx(
@@ -18,7 +17,6 @@ pub trait LightContractExecutor<'tx, 'extra_data> {
         tx: &'tx BlobTransaction,
         index: BlobIndex,
         tx_ctx: Option<&'tx TxContext>,
-        extra_data: Self::ExtraData,
     ) -> Result<Self::Scratchpad>;
 
     /// Handles the execution of a transaction, returning the output of the execution.
@@ -27,7 +25,6 @@ pub trait LightContractExecutor<'tx, 'extra_data> {
         tx: &'tx BlobTransaction,
         index: BlobIndex,
         tx_ctx: Option<&'tx TxContext>,
-        extra_data: Self::ExtraData,
     ) -> Result<LightExecutorOutput>;
 
     /// Should be called after a transaction fails, allowing the executor to revert side effects.
