@@ -27,16 +27,14 @@ impl Default for LightSmtExecutor {
     }
 }
 
-impl LightContractExecutor<'_, '_> for LightSmtExecutor {
+impl LightContractExecutor<'_> for LightSmtExecutor {
     type Scratchpad = ();
-    type ExtraData = ();
 
     fn prepare_for_tx(
         &mut self,
         _tx: &BlobTransaction,
         _index: BlobIndex,
         _tx_ctx: Option<&TxContext>,
-        _extra_data: Self::ExtraData,
     ) -> Result<Self::Scratchpad> {
         Ok(())
     }
@@ -46,7 +44,6 @@ impl LightContractExecutor<'_, '_> for LightSmtExecutor {
         tx: &BlobTransaction,
         index: BlobIndex,
         _tx_ctx: Option<&TxContext>,
-        _extra_data: Self::ExtraData,
     ) -> Result<LightExecutorOutput> {
         let Some(parsed_blob) = parse_structured_blob_from_tx::<SmtTokenAction>(tx, index) else {
             return Err(anyhow!("Failed to parse structured blob from transaction"));
