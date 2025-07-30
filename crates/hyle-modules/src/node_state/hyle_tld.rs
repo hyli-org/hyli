@@ -102,7 +102,7 @@ fn handle_delete_blob(
         );
         Ok(())
     } else {
-        bail!("Contract {} is already registered", delete.contract_name.0);
+        bail!("Contract {} does not exist", delete.contract_name.0);
     }
 }
 
@@ -187,17 +187,18 @@ fn handle_update_timeout_window_blob(
 /// Validates hyle contract blobs by ensuring actions are authorized and properly signed
 ///
 /// This function ensures that:
-/// 1. Only authorized identities (HYLI_TLD_ID) can perform UpdateContractProgramIdAction,
-///    DeleteContractAction and UpdateContractTimeoutWindowAction actions
+/// 1. Only authorized identities (HYLI_TLD_ID) can perform DeleteContractAction, UpdateContractProgramIdAction and UpdateContractTimeoutWindowAction actions
 /// 2. Any other unsupported action is rejected
-pub fn validate_hyle_contract_blobs(tx: &BlobTransaction) -> Result<(), String> {
+pub fn validate_hyle_contract_blobs(
+    contracts: &HashMap<ContractName, Contract>,
+    tx: &BlobTransaction,
+) -> Result<(), String> {
     // Collect NukeTxAction blobs and secp256k1 blobs
     for blob in tx.blobs.iter() {
         if blob.contract_name.0 == "hyle" {
             // Check identity authorization for privileged actions
             if StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
                 .is_ok()
-                || StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone()).is_ok()
                 || StructuredBlobData::<UpdateContractTimeoutWindowAction>::try_from(
                     blob.data.clone(),
                 )
@@ -209,10 +210,59 @@ pub fn validate_hyle_contract_blobs(tx: &BlobTransaction) -> Result<(), String> 
                         tx.identity.0
                     ));
                 }
-            } else if StructuredBlobData::<RegisterContractAction>::try_from(blob.data.clone())
-                .is_ok()
+            } else if let Ok(deletion_blob) =
+                StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone())
             {
-                // Do nothing
+                if tx.identity.0 != HYLI_TLD_ID {
+                    return Err(format!(
+                        "Unauthorized action for 'hyle' TLD from identity: {}",
+                        tx.identity.0
+                    ));
+                }
+                if let Some(last_blob) = tx
+                    .blobs
+                    .iter()
+                    .rev()
+                    .find(|b| b.contract_name == deletion_blob.parameters.contract_name)
+                {
+                    if last_blob.data != blob.data {
+                        return Err(format!(
+                            "Deletion blobs do not match for contract {}",
+                            deletion_blob.parameters.contract_name.0
+                        ));
+                    }
+                } else {
+                    return Err(format!(
+                        "Could not find a deletion blob for contract {} that is being deleted",
+                        deletion_blob.parameters.contract_name.0
+                    ));
+                }
+            } else if let Ok(registration_blob) =
+                StructuredBlobData::<RegisterContractAction>::try_from(blob.data.clone())
+            {
+                if contracts.contains_key(&registration_blob.parameters.contract_name) {
+                    return Err(format!(
+                        "Contract {} is already registered, cannot register again",
+                        registration_blob.parameters.contract_name.0
+                    ));
+                }
+                if let Some(first_blob) = tx
+                    .blobs
+                    .iter()
+                    .find(|b| b.contract_name == registration_blob.parameters.contract_name)
+                {
+                    if first_blob.data != blob.data {
+                        return Err(format!(
+                            "Registration blobs do not match for contract {}",
+                            registration_blob.parameters.contract_name.0
+                        ));
+                    }
+                } else {
+                    return Err(format!(
+                            "Could not find a registration blob for contract {} that is being registered",
+                            registration_blob.parameters.contract_name.0
+                        ));
+                }
             } else {
                 return Err(format!(
                     "Unsupported permissioned action on hyle contract: {blob:?}"

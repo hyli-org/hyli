@@ -6,7 +6,7 @@ use sha3::Digest;
 
 pub(crate) fn verify_native_impl(
     blob: &Blob,
-    verifier: NativeVerifiers,
+    verifier: &NativeVerifiers,
 ) -> anyhow::Result<(Identity, bool)> {
     match verifier {
         NativeVerifiers::Blst => {

@@ -3,10 +3,10 @@ use sdk::{ContractName, ProgramId, StateCommitment, Verifier};
 
 use hyle_verifiers::validate_program_id;
 
-/// Check that the new contract name is:
+/// Check that the contract name is:
 /// - a valid subdomain of the owner contract name.
 /// - the exact same domain (for updating the contract).
-pub fn validate_contract_name_registration(
+pub fn validate_contract_name_tld(
     owner: &ContractName,
     new_contract_name: &ContractName,
 ) -> Result<()> {
@@ -64,7 +64,7 @@ pub fn validate_contract_registration_metadata(
     program_id: &ProgramId,
     state_commitment: &StateCommitment,
 ) -> Result<()> {
-    validate_contract_name_registration(owner, new_contract_name)?;
+    validate_contract_name_tld(owner, new_contract_name)?;
     validate_program_id(verifier, program_id)?;
     validate_state_commitment_size(state_commitment)?;
     Ok(())
@@ -76,97 +76,95 @@ mod test {
 
     use crate::node_state::contract_registration::validate_state_commitment_size;
 
-    use super::validate_contract_name_registration;
+    use super::validate_contract_name_tld;
 
     #[test]
     fn test_validate_contract_registration_valid_subdomain() {
         let owner = "example".into();
         let new_contract = "sub.example".into();
-        assert!(validate_contract_name_registration(&owner, &new_contract).is_ok());
+        assert!(validate_contract_name_tld(&owner, &new_contract).is_ok());
     }
 
     #[test]
     fn test_validate_contract_registration_invalid_subdomain() {
         let owner = "example".into();
         let new_contract = "another.tld".into();
-        assert!(validate_contract_name_registration(&owner, &new_contract).is_err());
+        assert!(validate_contract_name_tld(&owner, &new_contract).is_err());
     }
 
     #[test]
     fn test_validate_contract_registration_invalid_format() {
         let owner = "example".into();
         let new_contract = "invalidname".into();
-        assert!(validate_contract_name_registration(&owner, &new_contract).is_err());
+        assert!(validate_contract_name_tld(&owner, &new_contract).is_err());
     }
 
     #[test]
     fn test_validate_contract_registration_self_registration() {
         let owner = "example".into();
         let new_contract = "example".into();
-        assert!(validate_contract_name_registration(&owner, &new_contract).is_ok());
+        assert!(validate_contract_name_tld(&owner, &new_contract).is_ok());
     }
 
     #[test]
     fn test_validate_contract_registration_hyle_tld() {
-        assert!(validate_contract_name_registration(&"hyle".into(), &"newtld".into()).is_ok());
-        assert!(validate_contract_name_registration(&"hyle".into(), &"".into()).is_err());
-        assert!(validate_contract_name_registration(&"hyle".into(), &".".into()).is_err());
-        assert!(validate_contract_name_registration(&"hyle".into(), &"hyle".into()).is_ok());
+        assert!(validate_contract_name_tld(&"hyle".into(), &"newtld".into()).is_ok());
+        assert!(validate_contract_name_tld(&"hyle".into(), &"".into()).is_err());
+        assert!(validate_contract_name_tld(&"hyle".into(), &".".into()).is_err());
+        assert!(validate_contract_name_tld(&"hyle".into(), &"hyle".into()).is_ok());
     }
 
     #[test]
     fn test_validate_contract_registration_hyle_with_subdomains() {
         let owner = "hyle".into();
         let new_contract = "sub.sub.hyle".into();
-        assert!(validate_contract_name_registration(&owner, &new_contract).is_err());
+        assert!(validate_contract_name_tld(&owner, &new_contract).is_err());
     }
 
     #[test]
     fn test_validate_contract_registration_empty_strings() {
-        assert!(validate_contract_name_registration(&"".into(), &"".into()).is_err());
-        assert!(validate_contract_name_registration(&"".into(), &".".into()).is_err());
-        assert!(validate_contract_name_registration(&"a".into(), &"".into()).is_err());
-        assert!(validate_contract_name_registration(&"".into(), &"a".into()).is_err());
-        assert!(validate_contract_name_registration(&"a".into(), &".".into()).is_err());
-        assert!(validate_contract_name_registration(&"".into(), &"a.".into()).is_err());
+        assert!(validate_contract_name_tld(&"".into(), &"".into()).is_err());
+        assert!(validate_contract_name_tld(&"".into(), &".".into()).is_err());
+        assert!(validate_contract_name_tld(&"a".into(), &"".into()).is_err());
+        assert!(validate_contract_name_tld(&"".into(), &"a".into()).is_err());
+        assert!(validate_contract_name_tld(&"a".into(), &".".into()).is_err());
+        assert!(validate_contract_name_tld(&"".into(), &"a.".into()).is_err());
     }
 
     #[test]
     fn test_validate_contract_registration_multiple_periods() {
         let owner = "example".into();
         let new_contract = "sub.sub.example".into();
-        assert!(validate_contract_name_registration(&owner, &new_contract).is_err());
+        assert!(validate_contract_name_tld(&owner, &new_contract).is_err());
 
         let invalid_contract = "sub..example".into();
-        assert!(validate_contract_name_registration(&owner, &invalid_contract).is_err());
+        assert!(validate_contract_name_tld(&owner, &invalid_contract).is_err());
 
         let invalid_ending_period = "example.".into();
-        assert!(validate_contract_name_registration(&owner, &invalid_ending_period).is_err());
+        assert!(validate_contract_name_tld(&owner, &invalid_ending_period).is_err());
     }
 
     #[test]
     fn test_validate_contract_registration_case_sensitivity() {
         let owner = "Example".into();
         let new_contract = "sub.example".into();
-        assert!(validate_contract_name_registration(&owner, &new_contract).is_err());
+        assert!(validate_contract_name_tld(&owner, &new_contract).is_err());
     }
 
     #[test]
     fn test_validate_contract_registration_numeric_names() {
         let owner = "123".into();
         let new_contract = "456.123".into();
-        assert!(validate_contract_name_registration(&owner, &new_contract).is_ok());
+        assert!(validate_contract_name_tld(&owner, &new_contract).is_ok());
 
         let invalid_contract = "123.456".into();
-        assert!(validate_contract_name_registration(&owner, &invalid_contract).is_err());
+        assert!(validate_contract_name_tld(&owner, &invalid_contract).is_err());
     }
 
     #[test]
     fn test_validate_contract_registration_smiley() {
-        assert!(validate_contract_name_registration(&"hyle".into(), &"🥷".into()).is_ok());
-        assert!(
-            validate_contract_name_registration(&"hyle".into(), &"💅🏻💅🏼💅🏽💅🏾💅🏿💅".into()).is_ok()
-        );
+        assert!(validate_contract_name_tld(&"hyle".into(), &"🥷".into()).is_ok());
+        assert!(validate_contract_name_tld(&"hyle".into(), &"💅🏻💅🏼💅🏽💅🏾💅🏿💅".into()).is_ok());
     }
 
     #[test]

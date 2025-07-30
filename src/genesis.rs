@@ -21,7 +21,6 @@ use hyle_modules::{
     bus::{BusClientSender, BusMessage, SharedMessageBus},
     bus_client, handle_messages, log_error,
     modules::Module,
-    node_state::hyle_contract_definition,
 };
 use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
 use serde::{Deserialize, Serialize};
@@ -193,7 +192,7 @@ impl Genesis {
             .generate_register_txs(peer_pubkey, &mut tx_executor)
             .await?;
 
-        let faucet_txs = self
+        let faucet_txs: Vec<ProofTxBuilder> = self
             .generate_faucet_txs(peer_pubkey, &mut tx_executor, genesis_stake)
             .await?;
 
@@ -548,19 +547,6 @@ impl Genesis {
         );
 
         let mut register_tx = ProvableBlobTx::new("hyle@hyle".into());
-
-        let hyle_contract = hyle_contract_definition();
-
-        register_hyle_contract(
-            &mut register_tx,
-            hyle_contract.name.clone(),
-            hyle_contract.name.0.clone().into(),
-            hyle_contract.program_id.clone(),
-            hyle_contract.state.clone(),
-            Some(hyle_contract.timeout_window),
-            None,
-        )
-        .expect("register hyle");
 
         register_hyle_contract(
             &mut register_tx,

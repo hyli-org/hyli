@@ -19,16 +19,19 @@ use rand::{rngs::StdRng, SeedableRng};
 use crate::fixtures::{test_helpers::wait_height, turmoil::TurmoilCtx};
 
 pub fn make_register_contract_tx(name: ContractName) -> BlobTransaction {
+    let register_contract_action = RegisterContractAction {
+        verifier: "test".into(),
+        program_id: ProgramId(vec![]),
+        state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+        contract_name: name.clone(),
+        ..Default::default()
+    };
     BlobTransaction::new(
         "hyle@hyle",
-        vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
-            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-            contract_name: name,
-            ..Default::default()
-        }
-        .as_blob("hyle".into(), None, None)],
+        vec![
+            register_contract_action.as_blob("hyle".into(), None, None),
+            register_contract_action.as_blob(name, None, None),
+        ],
     )
 }
 

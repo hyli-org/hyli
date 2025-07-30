@@ -25,9 +25,9 @@ impl TxExecutorHandler for NativeVerifierHandler {
             calldata.index,
             &blobs,
             match blob.contract_name.0.as_str() {
-                "blst" => NativeVerifiers::Blst,
-                "sha3_256" => NativeVerifiers::Sha3_256,
-                "secp256k1" => NativeVerifiers::Secp256k1,
+                "blst" => &NativeVerifiers::Blst,
+                "sha3_256" => &NativeVerifiers::Sha3_256,
+                "secp256k1" => &NativeVerifiers::Secp256k1,
                 _ => anyhow::bail!("Unknown native verifier: {}", blob.contract_name),
             },
         ))
