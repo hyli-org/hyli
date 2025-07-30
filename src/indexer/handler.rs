@@ -11,7 +11,7 @@ use hyle_net::clock::TimestampMsClock;
 use sqlx::Postgres;
 use sqlx::QueryBuilder;
 use sqlx::Row;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::DerefMut;
 use std::sync::Arc;
 use tracing::{debug, info, trace};
@@ -61,8 +61,7 @@ pub struct TxEventStore {
 pub struct TxContractStore {
     pub tx_hash: TxHashDb,
     pub parent_data_proposal_hash: DataProposalHashDb,
-    pub verifier: String,
-    pub program_id: Vec<u8>,
+    pub verifiers: BTreeMap<String, Vec<u8>>,
     pub timeout_window: Option<TimeoutWindowDb>,
     pub state_commitment: Vec<u8>,
     pub contract_name: String,
@@ -533,18 +532,17 @@ impl Indexer {
 
             for (batch_idx, chunk) in chunks.iter().enumerate() {
                 let mut query_builder = QueryBuilder::<Postgres>::new(
-                    "INSERT INTO contracts (tx_hash, parent_dp_hash, verifier, program_id, timeout_window, state_commitment, contract_name) ",
+                    "INSERT INTO contracts (tx_hash, parent_dp_hash, timeout_window, state_commitment, contract_name) ",
                 );
 
                 query_builder.push_values(chunk.iter(), |mut b, s| {
                     let TxContractStore {
                         tx_hash,
                         parent_data_proposal_hash,
-                        verifier,
-                        program_id,
                         timeout_window,
                         state_commitment,
                         contract_name,
+                        ..
                     } = s;
 
                     info!(
@@ -554,8 +552,6 @@ impl Indexer {
 
                     b.push_bind(tx_hash)
                         .push_bind(parent_data_proposal_hash)
-                        .push_bind(verifier)
-                        .push_bind(program_id)
                         .push_bind(timeout_window)
                         .push_bind(state_commitment)
                         .push_bind(contract_name);
@@ -564,8 +560,6 @@ impl Indexer {
                 query_builder.push(" ON CONFLICT (contract_name) DO UPDATE SET ");
                 query_builder.push("tx_hash = EXCLUDED.tx_hash, ");
                 query_builder.push("parent_dp_hash = EXCLUDED.parent_dp_hash, ");
-                query_builder.push("verifier = EXCLUDED.verifier, ");
-                query_builder.push("program_id = EXCLUDED.program_id, ");
                 query_builder.push("timeout_window = EXCLUDED.timeout_window, ");
                 query_builder.push("state_commitment = EXCLUDED.state_commitment ");
 
@@ -582,6 +576,44 @@ impl Indexer {
                             )
                         }),
                     "Inserting contracts"
+                )?;
+            }
+
+            for (batch_idx, chunk) in chunks.iter().enumerate() {
+                let mut query_builder = QueryBuilder::<Postgres>::new(
+                    "INSERT INTO contract_verifiers (contract_name, verifier, program_id) ",
+                );
+
+                query_builder.push_values(chunk.iter(), |mut b, s| {
+                    let TxContractStore {
+                        contract_name,
+                        verifiers,
+                        ..
+                    } = s;
+
+                    for (verifier, program_id) in verifiers.iter() {
+                        b.push_bind(contract_name.clone())
+                            .push_bind(verifier)
+                            .push_bind(hex::encode(program_id));
+                    }
+                });
+
+                query_builder.push(" ON CONFLICT (contract_name, verifier) DO UPDATE SET ");
+                query_builder.push("program_id = EXCLUDED.program_id");
+
+                _ = log_error!(
+                    query_builder
+                        .build()
+                        .execute(&mut *transaction)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Inserting contract verifiers batch {} of {}",
+                                batch_idx + 1,
+                                chunks.len()
+                            )
+                        }),
+                    "Inserting contract verifiers"
                 )?;
             }
         }
@@ -1180,8 +1212,6 @@ impl Indexer {
 
         // After TXes as it refers to those (for now)
         for (tx_hash, contract, _) in block.registered_contracts.values() {
-            let verifier = &contract.verifier.0;
-            let program_id = &contract.program_id.0;
             let state_commitment = &contract.state_commitment.0;
             let contract_name = &contract.contract_name.0;
             let tx_parent_dp_hash: DataProposalHashDb = block
@@ -1206,8 +1236,11 @@ impl Indexer {
                 TxContractStore {
                     tx_hash: tx_hash.clone(),
                     parent_data_proposal_hash: tx_parent_dp_hash.clone(),
-                    verifier: verifier.clone(),
-                    program_id: program_id.clone(),
+                    verifiers: contract
+                        .verifiers
+                        .iter()
+                        .map(|(k, v)| (k.0.clone(), v.0.clone()))
+                        .collect::<BTreeMap<_, _>>(),
                     timeout_window: contract.timeout_window.clone().map(|tw| tw.into()),
                     state_commitment: state_commitment.clone(),
                     contract_name: contract_name.clone(),
@@ -1253,17 +1286,23 @@ impl Indexer {
         }
 
         // Handling updated contract program ids
-        for (contract_name, program_id) in block.updated_program_ids {
+        for (contract_name, verifiers) in block.updated_program_ids {
             let contract_name = contract_name.0;
-            let program_id = program_id.0;
 
-            self.handler_store.sql_updates.push(
-                sqlx::query::<Postgres>(
-                    "UPDATE contracts SET program_id = $1 WHERE contract_name = $2",
-                )
-                .bind(program_id)
-                .bind(contract_name),
-            );
+            // Use UPSERT to update or insert verifiers
+            for (verifier, program_id) in verifiers {
+                self.handler_store.sql_updates.push(
+                    sqlx::query::<Postgres>(
+                        "INSERT INTO contract_verifiers (contract_name, verifier, program_id) 
+                         VALUES ($1, $2, $3)
+                         ON CONFLICT (contract_name, verifier) 
+                         DO UPDATE SET program_id = EXCLUDED.program_id",
+                    )
+                    .bind(contract_name.clone())
+                    .bind(verifier.0)
+                    .bind(hex::encode(program_id.0)),
+                );
+            }
         }
 
         // Handling updated contract program ids

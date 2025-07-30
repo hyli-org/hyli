@@ -2,6 +2,7 @@
 #![allow(clippy::indexing_slicing)]
 
 use std::{
+    collections::BTreeMap,
     net::{Ipv4Addr, TcpListener},
     time::Duration,
 };
@@ -377,8 +378,7 @@ impl E2ECtx {
         Contract: E2EContract,
     {
         let blobs = vec![RegisterContractAction {
-            verifier: Contract::verifier(),
-            program_id: Contract::program_id(),
+            verifiers: BTreeMap::from([(Contract::verifier(), Contract::program_id())]),
             state_commitment: Contract::state_commitment(),
             contract_name: name.into(),
             ..Default::default()

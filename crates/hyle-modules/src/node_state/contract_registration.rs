@@ -1,7 +1,9 @@
+use std::collections::BTreeMap;
+
 use anyhow::{bail, Result};
 use sdk::{ContractName, ProgramId, StateCommitment, Verifier};
 
-use hyle_verifiers::validate_program_id;
+use hyle_verifiers::validate_program_ids;
 
 /// Check that the new contract name is:
 /// - a valid subdomain of the owner contract name.
@@ -60,12 +62,11 @@ pub fn validate_state_commitment_size(state_commitment: &StateCommitment) -> Res
 pub fn validate_contract_registration_metadata(
     owner: &ContractName,
     new_contract_name: &ContractName,
-    verifier: &Verifier,
-    program_id: &ProgramId,
+    verifiers: &BTreeMap<Verifier, ProgramId>,
     state_commitment: &StateCommitment,
 ) -> Result<()> {
     validate_contract_name_registration(owner, new_contract_name)?;
-    validate_program_id(verifier, program_id)?;
+    validate_program_ids(verifiers)?;
     validate_state_commitment_size(state_commitment)?;
     Ok(())
 }

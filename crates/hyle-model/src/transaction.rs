@@ -342,8 +342,7 @@ impl From<APIRegisterContract> for BlobTransaction {
         BlobTransaction::new(
             "hyle@hyle",
             vec![RegisterContractAction {
-                verifier: payload.verifier,
-                program_id: payload.program_id,
+                verifiers: payload.verifiers,
                 state_commitment: payload.state_commitment,
                 contract_name: payload.contract_name,
                 timeout_window: match payload.timeout_window {

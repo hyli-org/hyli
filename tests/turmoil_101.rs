@@ -15,6 +15,7 @@ use hyle_model::{
 use hyle_modules::log_error;
 use hyle_net::net::Sim;
 use rand::{rngs::StdRng, SeedableRng};
+use std::collections::BTreeMap;
 
 use crate::fixtures::{test_helpers::wait_height, turmoil::TurmoilCtx};
 
@@ -22,8 +23,7 @@ pub fn make_register_contract_tx(name: ContractName) -> BlobTransaction {
     BlobTransaction::new(
         "hyle@hyle",
         vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name: name,
             ..Default::default()

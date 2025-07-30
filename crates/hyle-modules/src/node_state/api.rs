@@ -85,8 +85,7 @@ pub async fn get_contract(
             contract_name: name_clone,
             state_block_height: block_height,
             state_commitment: contract.state,
-            program_id: contract.program_id,
-            verifier: contract.verifier,
+            verifiers: contract.verifiers,
             timeout_window: match contract.timeout_window {
                 TimeoutWindow::NoTimeout => None,
                 TimeoutWindow::Timeout(window) => Some(window.0),

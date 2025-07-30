@@ -1244,8 +1244,7 @@ async fn test_tx_with_hyle_blob_should_have_specific_timeout_after_block445_000(
     let tx1 = BlobTransaction::new(
         "hyle@hyle",
         vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
+            verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name: ContractName::new("a1"),
             ..Default::default()
@@ -1260,8 +1259,7 @@ async fn test_tx_with_hyle_blob_should_have_specific_timeout_after_block445_000(
         vec![
             new_blob("a1"),
             RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
+                verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
                 state_commitment: StateCommitment(vec![0, 1, 2, 3]),
                 contract_name: ContractName::new("c1"),
                 ..Default::default()
@@ -1277,8 +1275,7 @@ async fn test_tx_with_hyle_blob_should_have_specific_timeout_after_block445_000(
         vec![
             new_blob("a1"),
             RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
+                verifiers: BTreeMap::from([("test".into(), ProgramId(vec![]))]),
                 state_commitment: StateCommitment(vec![0, 1, 2, 3]),
                 contract_name: ContractName::new("c2"),
                 ..Default::default()
@@ -1618,8 +1615,10 @@ async fn test_nuke_transaction_forces_target_to_fail() {
 
     let mut state = new_node_state().await;
     let mut register_secp256k1 = make_register_contract_effect("secp256k1".into());
-    register_secp256k1.program_id = NativeVerifiers::Secp256k1.into();
-    register_secp256k1.verifier = Verifier("secp256k1".to_string());
+    register_secp256k1.verifiers = BTreeMap::from([(
+        Verifier("secp256k1".to_string()),
+        NativeVerifiers::Secp256k1.into(),
+    )]);
     state.handle_register_contract_effect(&register_secp256k1);
 
     // Register contract_a and secp256k1 contracts

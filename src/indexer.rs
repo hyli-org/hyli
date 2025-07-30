@@ -195,7 +195,7 @@ mod test {
         APIBlob, APIBlock, APIContract, APITransaction, APITransactionEvents, TransactionStatusDb,
     };
     use serde_json::json;
-    use std::future::IntoFuture;
+    use std::{collections::BTreeMap, future::IntoFuture};
     use utils::TimestampMs;
 
     use crate::{
@@ -250,8 +250,7 @@ mod test {
         BlobTransaction::new(
             "hyle@hyle",
             vec![RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![3, 2, 1]),
+                verifiers: BTreeMap::from([("test".into(), ProgramId(vec![3, 2, 1]))]),
                 state_commitment,
                 contract_name,
                 ..Default::default()

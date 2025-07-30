@@ -28,7 +28,7 @@ pub fn handle_blob_for_hyle_tld(
     {
         handle_delete_blob(contracts, contract_changes, &reg.parameters)?;
     } else if let Ok(reg) =
-        StructuredBlobData::<UpdateContractProgramIdAction>::try_from(current_blob.data.clone())
+        StructuredBlobData::<UpdateContractProgramIdsAction>::try_from(current_blob.data.clone())
     {
         handle_update_program_id_blob(contracts, contract_changes, &reg.parameters)?;
     } else if let Ok(reg) =
@@ -52,8 +52,7 @@ fn handle_register_blob(
     validate_contract_registration_metadata(
         &"hyle".into(),
         &reg.contract_name,
-        &reg.verifier,
-        &reg.program_id,
+        &reg.verifiers,
         &reg.state_commitment,
     )?;
 
@@ -69,9 +68,8 @@ fn handle_register_blob(
         (
             ContractStatus::Updated(Contract {
                 name: reg.contract_name.clone(),
-                program_id: reg.program_id.clone(),
                 state: reg.state_commitment.clone(),
-                verifier: reg.verifier.clone(),
+                verifiers: reg.verifiers.clone(),
                 timeout_window: reg.timeout_window.clone().unwrap_or_default(),
             }),
             ModifiedContractFields::all(),
@@ -112,7 +110,7 @@ fn handle_delete_blob(
 fn handle_update_program_id_blob(
     contracts: &HashMap<ContractName, Contract>,
     contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
-    update: &UpdateContractProgramIdAction,
+    update: &UpdateContractProgramIdsAction,
 ) -> Result<()> {
     // For now, Hyli is allowed to delete all contracts but itself
     if update.contract_name.0 == "hyle" {
@@ -127,7 +125,7 @@ fn handle_update_program_id_blob(
         .entry(update.contract_name.clone())
         .and_modify(|c| {
             if let ContractStatus::Updated(ref mut contract) = c.0 {
-                contract.program_id = update.program_id.clone();
+                contract.verifiers.append(&mut update.verifiers.clone());
             }
             c.1.program_id = true;
             c.2.push(new_update.clone());
@@ -135,7 +133,7 @@ fn handle_update_program_id_blob(
         .or_insert_with(|| {
             (
                 ContractStatus::Updated(Contract {
-                    program_id: update.program_id.clone(),
+                    verifiers: update.verifiers.clone(),
                     ..contract
                 }),
                 ModifiedContractFields {
@@ -200,7 +198,7 @@ pub fn validate_hyle_contract_blobs(tx: &BlobTransaction) -> Result<(), String> 
     for (index, blob) in tx.blobs.iter().enumerate() {
         if blob.contract_name.0 == "hyle" {
             // Check identity authorization for privileged actions
-            if StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
+            if StructuredBlobData::<UpdateContractProgramIdsAction>::try_from(blob.data.clone())
                 .is_ok()
                 || StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone()).is_ok()
                 || StructuredBlobData::<UpdateContractTimeoutWindowAction>::try_from(

@@ -1,5 +1,6 @@
 use std::{
     cmp::Ordering,
+    collections::BTreeMap,
     fmt::Display,
     ops::{Add, Deref, DerefMut, Sub},
 };
@@ -455,6 +456,8 @@ pub struct ContractName(pub String);
     Eq,
     PartialEq,
     Hash,
+    Ord,
+    PartialOrd,
     BorshSerialize,
     BorshDeserialize,
 )]
@@ -818,10 +821,7 @@ impl Default for TimeoutWindow {
 /// Used as a blob action to register a contract.
 pub struct RegisterContractAction {
     /// Verifier to use for transactions sent to this new contract.
-    pub verifier: Verifier,
-    /// Other verifier data, such as a Risc0 program ID or noir public key.
-    /// Transactions sent to this contract will have to match this program ID.
-    pub program_id: ProgramId,
+    pub verifiers: BTreeMap<Verifier, ProgramId>,
     /// Initial state commitment of the contract to register.
     pub state_commitment: StateCommitment,
     /// Name of the contract to register.
@@ -840,8 +840,10 @@ impl Hashed<TxHash> for RegisterContractAction {
         use sha3::{Digest, Sha3_256};
 
         let mut hasher = Sha3_256::new();
-        hasher.update(self.verifier.0.clone());
-        hasher.update(self.program_id.0.clone());
+        for (verifier, program_id) in &self.verifiers {
+            hasher.update(verifier.0.clone());
+            hasher.update(program_id.0.clone());
+        }
         hasher.update(self.state_commitment.0.clone());
         hasher.update(self.contract_name.0.clone());
         if let Some(timeout_window) = &self.timeout_window {
@@ -877,12 +879,12 @@ impl ContractAction for RegisterContractAction {
 #[derive(
     Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
 )]
-pub struct UpdateContractProgramIdAction {
+pub struct UpdateContractProgramIdsAction {
     pub contract_name: ContractName,
-    pub program_id: ProgramId,
+    pub verifiers: BTreeMap<Verifier, ProgramId>,
 }
 
-impl ContractAction for UpdateContractProgramIdAction {
+impl ContractAction for UpdateContractProgramIdsAction {
     fn as_blob(
         &self,
         contract_name: ContractName,
@@ -960,11 +962,10 @@ impl ContractAction for DeleteContractAction {
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct RegisterContractEffect {
-    /// Verifier to use for transactions sent to this new contract.
-    pub verifier: Verifier,
-    /// Other verifier data, such as a Risc0 program ID or noir public key.
-    /// Transactions sent to this contract will have to match this program ID.
-    pub program_id: ProgramId,
+    /// List of (verifier, program_id) pairs that can be used for transactions sent to this contract.
+    /// A contract can have multiple verifier-program_id pairs, allowing validation of transactions with different verifiers or programs.
+    /// Transactions sent to this contract must match one of the (verifier, program_id) pairs listed here.
+    pub verifiers: BTreeMap<Verifier, ProgramId>,
     /// Initial state commitment of the contract to register.
     pub state_commitment: StateCommitment,
     /// Name of the contract to register.
@@ -977,8 +978,7 @@ pub struct RegisterContractEffect {
 impl From<RegisterContractAction> for RegisterContractEffect {
     fn from(action: RegisterContractAction) -> Self {
         RegisterContractEffect {
-            verifier: action.verifier,
-            program_id: action.program_id,
+            verifiers: action.verifiers,
             state_commitment: action.state_commitment,
             contract_name: action.contract_name,
             timeout_window: action.timeout_window,
@@ -992,8 +992,10 @@ impl Hashed<TxHash> for RegisterContractEffect {
         use sha3::{Digest, Sha3_256};
 
         let mut hasher = Sha3_256::new();
-        hasher.update(self.verifier.0.clone());
-        hasher.update(self.program_id.0.clone());
+        for (verifier, program_id) in &self.verifiers {
+            hasher.update(verifier.0.clone());
+            hasher.update(program_id.0.clone());
+        }
         hasher.update(self.state_commitment.0.clone());
         hasher.update(self.contract_name.0.clone());
         if let Some(timeout_window) = &self.timeout_window {
