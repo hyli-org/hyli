@@ -1,14 +1,13 @@
-
-# 🧪 Hylab — Build, Test & Deploy ZK Apps on Hyli
+# 🧪 Hylix — Build, Test & Deploy ZK Apps on Hyli
 
 > The easiest way to build ZK apps.
 > Powered by Risc0 & SP1. Designed for zk developers.
 
 ---
 
-## ✨ Why Hylab?
+## ✨ Why Hylix?
 
-Hylab is a modern developer toolbox and CLI (`hyl`) to build zkApps on [Hyli](https://hyli.org), a privacy-preserving, proof-first blockchain leveraging SP1, Risc0 or Noir. Whether you're prototyping or going to production, Hylab gives you the smoothest path from idea to zk-rollout.
+Hylix is a modern developer toolbox and CLI (`hyl`) to build zkApps on [Hyli](https://hyli.org), a privacy-preserving, proof-first blockchain leveraging SP1, Risc0 or Noir. Whether you're prototyping or going to production, Hylab gives you the smoothest path from idea to zk-rollout.
 
 **Main benefits:**
 
@@ -31,10 +30,10 @@ cargo install hyl
 Then run:
 
 ```bash
-hyl init my-zkapp
+hyl new my-zkapp
 cd my-zkapp
 hyl build
-hyl net
+hyl chain
 hyl test
 ```
 
@@ -44,7 +43,7 @@ That’s it — you’re building on Hyli.
 
 ## 🧰 CLI Reference
 
-### `hyl init [PROJECT]`
+### `hyl new [PROJECT]`
 
 Scaffold a new Hyli zkApp project.
 
@@ -54,7 +53,7 @@ Scaffold a new Hyli zkApp project.
 * Noir & Cairo coming soon
 
 ```bash
-hyl init my-zkapp
+hyl new my-zkapp
 ```
 
 ---
@@ -87,16 +86,17 @@ Run your zkApp’s **end-to-end tests** in a fully orchestrated local Hyli envir
 hyl test
 ```
 
-This command automatically spins up a local devnet (`hyl net`), compiles your contracts, deploys them, runs the server and then runs your tests.
+Execute unit & e2e tests, see [Testing](Testing.md) page for more.
 
 #### Key Features
 
+* ✅ Runs contract unit tests
 * 🧪 Supports full E2E workflows (from proving to verification)
 * ⚙️ Fully integrated with `cargo test` or custom test runners
 
-#### What happens under the hood:
+#### What happens under the hood for e2e tests:
 
-1. Starts `hyl net` if not already running
+1. Starts `hyl chain` if not already running
 2. Compiles your project (`hyl build`)
 3. Runs your application backend `hyl run`
 4. Runs tests defined in `tests/` using `cargo test`
@@ -116,7 +116,7 @@ hyl test --keep-alive
 
 ---
 
-### `hyl net`
+### `hyl chain`
 
 Launch a local devnet with:
 
@@ -128,13 +128,13 @@ Launch a local devnet with:
 * Pre-funded test accounts
 
 ```bash
-hyl net
+hyl chain
 ```
 
 Want a fresh state?
 
 ```bash
-hyl net --reset
+hyl chain --reset
 ```
 
 ---
@@ -202,10 +202,13 @@ hyl upload
 
 ## 🧠 Under the Hood
 
-Hylab builds on top of:
+Hylix builds on top of:
 
 * **SP1/Risc0 zkVM** for fast, verifiable compute
+* CairoM for client side verifiable compute
+* Noir for client side privacy (soon)
 * **Rust** for native speed and tooling compatibility
+* **Bun** and **vite** for frontend application
 
 Coming soon:
 
@@ -217,7 +220,7 @@ Coming soon:
 
 ## 🧪 Try It Out
 
-We’re just getting started. If you're testing Hylab early:
+We’re just getting started. If you're testing Hylix early:
 
 * Open issues or ideas [here](https://github.com/hyli-org/hyli/issues)
 * Share feedback with the Hyli team
@@ -231,6 +234,7 @@ We’re just getting started. If you're testing Hylab early:
 * [ ] Cairo experiments
 * [ ] Plugin system for custom commands
 * [ ] zkApp deployment templates
+- [ ] Test proc-macro for isolated e2e testing
 
 ---
 
