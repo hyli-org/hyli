@@ -481,9 +481,13 @@ impl DataAvailability {
             .map(|block| block.height() + 1)
             .unwrap_or(BlockHeight(0));
 
-        let mut client = DataAvailabilityClient::connect("block_catcher".to_string(), ip)
-            .await
-            .context("Error occurred setting up the DA listener")?;
+        let mut client = DataAvailabilityClient::connect_with_opts(
+            "block_catcher".to_string(),
+            Some(self.config.da_max_frame_length),
+            ip,
+        )
+        .await
+        .context("Error occurred setting up the DA listener")?;
 
         client.send(DataAvailabilityRequest(start)).await?;
 
