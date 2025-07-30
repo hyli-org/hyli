@@ -56,6 +56,21 @@ Scaffold a new Hyli zkApp project.
 hyl new my-zkapp
 ```
 
+#### 🧱 Project Structure
+
+A Hylix zkApp project is made of three main components:
+
+* 📜 **contracts/**: ZK program written in Rust (using SP1 or Risc0 SDK)
+* 🧠 **server/**: Your zkApp’s backend, runs locally with `hyl run`
+  * By default includes:
+    * 📝 Register contract at startup
+    * ✅ Proof auto-generation
+    * 📇 Contract-specific indexing
+    * 🧩 Optional custom logic & APIs
+* 🎨 **front/**: Frontend interface powered by **Bun** and **Vite**
+
+Each part is optional — you can build CLI-only zkApps, headless backends, or full dApps.
+
 ---
 
 ### `hyl build`
@@ -233,7 +248,6 @@ We’re just getting started. If you're testing Hylix early:
 * [ ] Noir support
 * [ ] Cairo experiments
 * [ ] Plugin system for custom commands
-* [ ] zkApp deployment templates
 - [ ] Test proc-macro for isolated e2e testing
 
 ---
