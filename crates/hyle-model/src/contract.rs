@@ -560,6 +560,8 @@ impl Hashed<ProofDataHash> for ProofData {
 pub enum OnchainEffect {
     RegisterContract(RegisterContractEffect),
     DeleteContract(ContractName),
+    UpdateContractProgramId(ContractName, ProgramId),
+    UpdateTimeoutWindow(ContractName, TimeoutWindow),
 }
 
 /// This struct has to be the zkvm committed output. It will be used by

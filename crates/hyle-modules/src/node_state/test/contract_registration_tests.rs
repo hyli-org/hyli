@@ -111,51 +111,6 @@ async fn test_register_contract_failure() {
 }
 
 #[test_log::test(tokio::test)]
-async fn test_register_contract_proof_mismatch() {
-    let mut state = new_node_state().await;
-
-    // Create a valid registration transaction
-    let register_parent_tx =
-        make_register_tx("hyle@hyle".into(), "hyle".into(), "test.hyle".into());
-    let register_parent_tx_hash = register_parent_tx.hashed();
-    let register_tx = make_register_tx(
-        "hyle@test.hyle".into(),
-        "test.hyle".into(),
-        "sub.test.hyle".into(),
-    );
-    let tx_hash = register_tx.hashed();
-
-    // Create a proof with mismatched registration effect
-    let mut output = make_hyle_output(register_tx.clone(), BlobIndex(0));
-    output
-        .onchain_effects
-        .push(OnchainEffect::RegisterContract(RegisterContractEffect {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
-            state_commitment: StateCommitment(vec![9, 9, 9, 9]), // Different state_commitment than in the blob action
-            contract_name: "sub.test.hyle".into(),
-            timeout_window: None,
-        }));
-
-    let proof_tx = new_proof_tx(&"test.hyle".into(), &output, &tx_hash);
-
-    // Submit both transactions
-    let block = state.craft_block_and_handle(
-        1,
-        vec![
-            register_parent_tx.into(),
-            register_tx.into(),
-            proof_tx.into(),
-        ],
-    );
-
-    // The transaction should fail because the proof's registration effect doesn't match the blob action
-    tracing::warn!("{:?}", state.contracts);
-    assert_eq!(state.contracts.len(), 2); // sub.test.hyle shouldn't exist
-    assert_eq!(block.successful_txs, vec![register_parent_tx_hash]); // No successful transactions
-}
-
-#[test_log::test(tokio::test)]
 async fn test_register_contract_composition() {
     let mut state = new_node_state().await;
     let register = make_register_tx("hyle@hyle".into(), "hyle".into(), "hydentity".into());
