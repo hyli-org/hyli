@@ -252,6 +252,7 @@ pub fn make_delete_tx_with_hyli(tld: ContractName, contract_name: ContractName) 
             }
             .as_blob(HYLI_WALLET.into()),
             DeleteContractAction { contract_name }.as_blob(tld, None, None),
+            // NativeVerifiers::DeleteContract(tld.clone()).as_blob(tld, None, None),
         ],
     )
 }
@@ -1023,16 +1024,18 @@ async fn domino_settlement_after_contract_delete() {
     let b = ContractName::new("b");
     let register_a = make_register_contract_tx(a.clone());
     let register_b = make_register_contract_tx(b.clone());
-    state.craft_block_and_handle(
+    let block1 = state.craft_block_and_handle(
         1,
         vec![register_a.clone().into(), register_b.clone().into()],
     );
+    tracing::error!("block1: {:#?}", block1);
 
     // Send a transaction to B
     let identity_b = Identity::new("user@b");
     let tx_b = BlobTransaction::new(identity_b.clone(), vec![new_blob("b")]);
     let tx_b_id = tx_b.hashed();
-    state.craft_block_and_handle(2, vec![tx_b.clone().into()]);
+    let block2 = state.craft_block_and_handle(2, vec![tx_b.clone().into()]);
+    tracing::error!("block2: {:#?}", block2);
 
     // Delete B via hyle (as a tx)
     let delete_b = make_delete_tx_with_hyli(ContractName::new("hyle"), b.clone());
@@ -1043,29 +1046,35 @@ async fn domino_settlement_after_contract_delete() {
         &hyle_output_wallet,
         &delete_b.hashed(),
     );
-    state.craft_block_and_handle(3, vec![delete_b.clone().into(), proof_wallet.into()]);
+    let block3 =
+        state.craft_block_and_handle(3, vec![delete_b.clone().into(), proof_wallet.into()]);
+    tracing::error!("block3: {:#?}", block3);
 
     // Send a transaction with blobs for both B and A
     let identity_ab = Identity::new("user@a");
     let tx_ab = BlobTransaction::new(identity_ab.clone(), vec![new_blob("b"), new_blob("a")]);
     let tx_ab_id = tx_ab.hashed();
-    state.craft_block_and_handle(4, vec![tx_ab.clone().into()]);
+    let block4 = state.craft_block_and_handle(4, vec![tx_ab.clone().into()]);
+    tracing::error!("block4: {:#?}", block4);
 
     // Send another transaction for just A
     let identity_a = Identity::new("user@a");
     let tx_a = BlobTransaction::new(identity_a.clone(), vec![new_blob("a")]);
     let tx_a_id = tx_a.hashed();
-    state.craft_block_and_handle(5, vec![tx_a.clone().into()]);
+    let block5 = state.craft_block_and_handle(5, vec![tx_a.clone().into()]);
+    tracing::error!("block5: {:#?}", block5);
 
     // Send proof to make it ready to settle
     let hyle_output_a = make_hyle_output(tx_a.clone(), BlobIndex(0));
     let proof_a = new_proof_tx(&a, &hyle_output_a, &tx_a_id);
     let block_a = state.craft_block_and_handle(6, vec![proof_a.into()]);
+    tracing::error!("block6: {:#?}", block_a);
 
     // Now send the proof for the first transaction (to B)
     let hyle_output_b = make_hyle_output(tx_b.clone(), BlobIndex(0));
     let proof_b = new_proof_tx(&b, &hyle_output_b, &tx_b_id);
     let block_b = state.craft_block_and_handle(7, vec![proof_b.into()]);
+    tracing::error!("block7: {:#?}", block_b);
     // This should domino through and settle the tx_ab and tx_a if not already settled
     assert!(block_b.successful_txs.contains(&tx_a_id));
 }

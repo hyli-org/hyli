@@ -18,16 +18,26 @@ pub fn register_hyle_contract(
     timeout_window: Option<TimeoutWindow>,
     constructor_metadata: Option<Vec<u8>>,
 ) -> anyhow::Result<()> {
+    let register_contract_action = RegisterContractAction {
+        contract_name: new_contract_name.clone(),
+        verifier,
+        program_id,
+        state_commitment,
+        timeout_window,
+        constructor_metadata,
+    };
+
     builder.add_action(
         "hyle".into(),
-        RegisterContractAction {
-            contract_name: new_contract_name,
-            verifier,
-            program_id,
-            state_commitment,
-            timeout_window,
-            constructor_metadata,
-        },
+        register_contract_action.clone(),
+        None,
+        None,
+        None,
+    )?;
+
+    builder.add_action(
+        new_contract_name,
+        register_contract_action,
         None,
         None,
         None,

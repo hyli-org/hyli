@@ -6,14 +6,16 @@ pub const RISC0_1: &str = "risc0-1";
 pub const NOIR: &str = "noir";
 pub const SP1_4: &str = "sp1-4";
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub enum NativeVerifiers {
     Blst,
     Sha3_256,
     Secp256k1,
+    RegisterContract,
 }
 
-pub const NATIVE_VERIFIERS_CONTRACT_LIST: &[&str] = &["blst", "sha3_256", "secp256k1"];
+pub const NATIVE_VERIFIERS_CONTRACT_LIST: &[&str] =
+    &["blst", "sha3_256", "secp256k1", "register_contract"];
 
 impl From<NativeVerifiers> for ProgramId {
     fn from(value: NativeVerifiers) -> Self {
@@ -21,6 +23,7 @@ impl From<NativeVerifiers> for ProgramId {
             NativeVerifiers::Blst => ProgramId("blst".as_bytes().to_vec()),
             NativeVerifiers::Sha3_256 => ProgramId("sha3_256".as_bytes().to_vec()),
             NativeVerifiers::Secp256k1 => ProgramId("secp256k1".as_bytes().to_vec()),
+            NativeVerifiers::RegisterContract => ProgramId("register_contract".as_bytes().to_vec()),
         }
     }
 }
@@ -32,6 +35,7 @@ impl TryFrom<&Verifier> for NativeVerifiers {
             "blst" => Ok(Self::Blst),
             "sha3_256" => Ok(Self::Sha3_256),
             "secp256k1" => Ok(Self::Secp256k1),
+            "register_contract" => Ok(Self::RegisterContract),
             _ => Err(format!("Unknown native verifier: {value}")),
         }
     }
@@ -43,6 +47,7 @@ impl From<NativeVerifiers> for Verifier {
             NativeVerifiers::Blst => Self("blst".into()),
             NativeVerifiers::Sha3_256 => Self("sha3_256".into()),
             NativeVerifiers::Secp256k1 => Self("secp256k1".into()),
+            NativeVerifiers::RegisterContract => Self("register_contract".into()),
         }
     }
 }

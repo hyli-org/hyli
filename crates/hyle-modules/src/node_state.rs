@@ -450,25 +450,6 @@ impl NodeState {
             );
         }
 
-        // For now, reject blob Tx with blobs for unknown contracts.
-        if tx
-            .blobs
-            .iter()
-            .any(|blob| !self.contracts.contains_key(&blob.contract_name))
-        {
-            let contracts = tx
-                .blobs
-                .iter()
-                .filter(|blob| !self.contracts.contains_key(&blob.contract_name))
-                .map(|blob| blob.contract_name.0.clone())
-                .collect::<Vec<_>>()
-                .join(", ");
-            bail!(
-                "Blob Transaction contains blobs for unknown contracts: {}",
-                contracts
-            );
-        }
-
         let blobs: BTreeMap<BlobIndex, UnsettledBlobMetadata> = tx
             .blobs
             .iter()
@@ -484,7 +465,7 @@ impl NodeState {
                         blob_tx_hash.clone(),
                         BlobIndex(index),
                         &tx.blobs,
-                        verifier,
+                        &verifier,
                     );
                     tracing::trace!("Native verifier in blob tx - {:?}", hyle_output);
                     // Verifier contracts won't be updated
@@ -497,15 +478,38 @@ impl NodeState {
                             UnsettledBlobMetadata {
                                 blob: blob.clone(),
                                 possible_proofs: vec![(
-                                    verifier.into(),
+                                    verifier.clone().into(),
                                     hyle_output,
-                                    verifier.into(),
+                                    verifier.clone().into(),
                                 )],
                             },
                         ));
                     }
                 } else if blob.contract_name.0 == "hyle" {
                     // 'hyle' is a special case -> See settlement logic.
+                } else if !self.contracts.contains_key(&blob.contract_name) {
+                    // Contract is unknown but registering
+                    let hyle_output = hyle_verifiers::native::verify(
+                        blob_tx_hash.clone(),
+                        BlobIndex(index),
+                        &tx.blobs,
+                        &NativeVerifiers::RegisterContract,
+                    );
+                    tracing::trace!(
+                        "Native verifier for RegisterContract in blob tx - success: {:?}",
+                        hyle_output.success
+                    );
+                    return Some((
+                        BlobIndex(index),
+                        UnsettledBlobMetadata {
+                            blob: blob.clone(),
+                            possible_proofs: vec![(
+                                NativeVerifiers::RegisterContract.into(),
+                                hyle_output,
+                                NativeVerifiers::RegisterContract.into(),
+                            )],
+                        },
+                    ));
                 } else {
                     should_try_and_settle = false;
                 }
@@ -711,13 +715,13 @@ impl NodeState {
         *lane_id = unsettled_tx.tx_context.lane_id.clone();
 
         // Sanity check: if some of the blob contracts are not registered, we can't proceed
-        if !unsettled_tx.blobs.values().all(|blob_metadata| {
-            tracing::trace!("Checking contract: {:?}", blob_metadata.blob.contract_name);
-            self.contracts
-                .contains_key(&blob_metadata.blob.contract_name)
-        }) {
-            bail!("Cannot settle TX: some blob contracts are not registered");
-        }
+        // if !unsettled_tx.blobs.values().all(|blob_metadata| {
+        //     tracing::trace!("Checking contract: {:?}", blob_metadata.blob.contract_name);
+        //     self.contracts
+        //         .contains_key(&blob_metadata.blob.contract_name)
+        // }) {
+        //     bail!("Cannot settle TX: some blob contracts are not registered");
+        // }
 
         let updated_contracts = BTreeMap::new();
 
@@ -1058,7 +1062,7 @@ impl NodeState {
                         .cloned()
                     {
                         if let Some(popped_tx) = self.unsettled_transactions.remove(&tx_hash) {
-                            info!("⏳ Timeout tx {} (from contract deletion)", &tx_hash);
+                            info!(tx_height =% block_under_construction.block_height, "⏳ Timeout tx {} (from contract deletion)", &tx_hash);
 
                             potentially_blocked_contracts
                                 .extend(OrderedTxMap::get_contracts_blocked_by_tx(&popped_tx));
@@ -1343,40 +1347,45 @@ impl NodeState {
             contract.name,
             contract.state
         );
-        if proof_metadata.1.initial_state != contract.state {
-            bail!(
-                "Initial state mismatch: {:?}, expected {:?}",
-                proof_metadata.1.initial_state,
-                contract.state
-            )
-        }
 
-        if proof_metadata.0 != contract.program_id {
-            bail!(
-                "Program ID mismatch: {:?}, expected {:?} on {}",
-                proof_metadata.0,
-                contract.program_id,
-                contract.name
-            )
-        }
-
-        if proof_metadata.2 != contract.verifier {
-            bail!(
-                "Verifier mismatch: {:?}, expected {:?} on {}",
-                proof_metadata.2,
-                contract.verifier,
-                contract.name
-            )
-        }
-
-        for state_read in &proof_metadata.1.state_reads {
-            let other_contract = Self::get_contract(contracts, contract_changes, &state_read.0)?;
-            if state_read.1 != other_contract.state {
+        if proof_metadata.2 != NativeVerifiers::RegisterContract.into() {
+            if proof_metadata.1.initial_state != contract.state {
                 bail!(
-                    "State read {:?} does not match other contract state {:?}",
-                    state_read,
-                    other_contract.state
+                    "Initial state mismatch: {:?}, expected {:?}",
+                    proof_metadata.1.initial_state,
+                    contract.state
                 )
+            }
+
+            if proof_metadata.0 != contract.program_id {
+                tracing::error!("contract_changes: {:?}", contract_changes);
+                bail!(
+                    "Program ID mismatch: {:?}, expected {:?} on {}",
+                    proof_metadata.0,
+                    contract.program_id,
+                    contract.name
+                )
+            }
+
+            if proof_metadata.2 != contract.verifier {
+                bail!(
+                    "Verifier mismatch: {:?}, expected {:?} on {}",
+                    proof_metadata.2,
+                    contract.verifier,
+                    contract.name
+                )
+            }
+
+            for state_read in &proof_metadata.1.state_reads {
+                let other_contract =
+                    Self::get_contract(contracts, contract_changes, &state_read.0)?;
+                if state_read.1 != other_contract.state {
+                    bail!(
+                        "State read {:?} does not match other contract state {:?}",
+                        state_read,
+                        other_contract.state
+                    )
+                }
             }
         }
 

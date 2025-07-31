@@ -24,17 +24,18 @@ fn make_register_blob_action(
     contract_name: ContractName,
     state_commitment: StateCommitment,
 ) -> BlobTransaction {
-    BlobTransaction::new(
-        "hyle@hyle",
-        vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![1, 2, 3]),
-            state_commitment,
-            contract_name,
-            ..Default::default()
-        }
-        .as_blob("hyle".into(), None, None)],
-    )
+    let register_contract_action = RegisterContractAction {
+        verifier: "test".into(),
+        program_id: ProgramId(vec![1, 2, 3]),
+        state_commitment,
+        contract_name: contract_name.clone(),
+        ..Default::default()
+    };
+    let hyle_blob = register_contract_action.as_blob("hyle".into(), None, None);
+
+    let register_contract_blob = register_contract_action.as_blob(contract_name, None, None);
+
+    BlobTransaction::new("hyle@hyle", vec![hyle_blob, register_contract_blob])
 }
 
 #[test_log::test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
