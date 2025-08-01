@@ -24,7 +24,7 @@ Hylix is a modern developer toolbox and CLI (`hyl`) to build vApps on [Hyli](htt
 Install the CLI:
 
 ```bash
-cargo install hyl
+cargo install hylix
 ```
 
 Then run:
