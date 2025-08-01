@@ -3,8 +3,8 @@ use crate::node_state::{
     ModifiedContractData, ModifiedContractFields, NodeState, NukeTxAction,
 };
 use anyhow::{bail, Result};
+use sdk::secp256k1::CheckSecp256k1;
 use sdk::*;
-use sdk::{secp256k1::CheckSecp256k1, verifiers::NativeVerifiers};
 use std::collections::{BTreeMap, HashMap};
 
 use super::SideEffect;
@@ -71,7 +71,7 @@ fn handle_register_blob(
                 name: reg.contract_name.clone(),
                 program_id: reg.program_id.clone(),
                 state: reg.state_commitment.clone(),
-                verifier: NativeVerifiers::RegisterContract.into(),
+                verifier: reg.verifier.clone(),
                 timeout_window: reg.timeout_window.clone().unwrap_or_default(),
             }),
             ModifiedContractFields::all(),

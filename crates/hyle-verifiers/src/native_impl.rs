@@ -7,13 +7,7 @@ use sha3::Digest;
 pub(crate) fn verify_native_impl(
     blob: &Blob,
     verifier: &NativeVerifiers,
-) -> anyhow::Result<(
-    Identity,
-    StateCommitment,
-    StateCommitment,
-    bool,
-    Vec<OnchainEffect>,
-)> {
+) -> anyhow::Result<(Identity, bool)> {
     match verifier {
         NativeVerifiers::Blst => {
             let blob = borsh::from_slice::<BlstSignatureBlob>(&blob.data.0)?;
@@ -27,13 +21,7 @@ pub(crate) fn verify_native_impl(
                     validator: hyle_model::ValidatorPublicKey(blob.public_key),
                 },
             };
-            Ok((
-                blob.identity,
-                StateCommitment::default(),
-                StateCommitment::default(),
-                BlstCrypto::verify(&msg)?,
-                vec![],
-            ))
+            Ok((blob.identity, BlstCrypto::verify(&msg)?))
         }
         NativeVerifiers::Sha3_256 => {
             let blob = borsh::from_slice::<ShaBlob>(&blob.data.0)?;
@@ -42,13 +30,7 @@ pub(crate) fn verify_native_impl(
             hasher.update(blob.data);
             let res = hasher.finalize().to_vec();
 
-            Ok((
-                blob.identity,
-                StateCommitment::default(),
-                StateCommitment::default(),
-                res == blob.sha,
-                vec![],
-            ))
+            Ok((blob.identity, res == blob.sha))
         }
         NativeVerifiers::Secp256k1 => {
             let blob = borsh::from_slice::<Secp256k1Blob>(&blob.data.0)?;
@@ -68,30 +50,7 @@ pub(crate) fn verify_native_impl(
             let secp = Secp256k1::new();
             let success = secp.verify_ecdsa(message, &signature, &public_key).is_ok();
 
-            Ok((
-                blob.identity,
-                StateCommitment::default(),
-                StateCommitment::default(),
-                success,
-                vec![],
-            ))
-        }
-        NativeVerifiers::RegisterContract => {
-            let blob =
-                borsh::from_slice::<StructuredBlobData<RegisterContractAction>>(&blob.data.0)?;
-            Ok((
-                "hyle@hyle".into(),
-                blob.parameters.state_commitment.clone(),
-                blob.parameters.state_commitment.clone(),
-                true,
-                vec![OnchainEffect::RegisterContract(RegisterContractEffect {
-                    verifier: blob.parameters.verifier,
-                    program_id: blob.parameters.program_id,
-                    state_commitment: blob.parameters.state_commitment,
-                    contract_name: blob.parameters.contract_name,
-                    timeout_window: blob.parameters.timeout_window,
-                })],
-            ))
+            Ok((blob.identity, success))
         }
     }
 }

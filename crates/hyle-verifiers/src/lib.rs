@@ -270,20 +270,13 @@ pub mod native {
         let blob = blobs.get(index.0).expect("Invalid blob index");
         let blobs: IndexedBlobs = blobs.iter().cloned().into();
 
-        let (identity, initial_state, next_state, success, onchain_effects) =
-            match crate::native_impl::verify_native_impl(blob, verifier) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::trace!("Native blob verification failed: {:?}", e);
-                    (
-                        Identity::default(),
-                        StateCommitment::default(),
-                        StateCommitment::default(),
-                        false,
-                        vec![],
-                    )
-                }
-            };
+        let (identity, success) = match crate::native_impl::verify_native_impl(blob, verifier) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::trace!("Native blob verification failed: {:?}", e);
+                (Identity::default(), false)
+            }
+        };
 
         if success {
             tracing::debug!("✅ Native blob verified on {tx_hash}:{index}");
@@ -294,8 +287,8 @@ pub mod native {
 
         HyleOutput {
             version: 1,
-            initial_state,
-            next_state,
+            initial_state: StateCommitment::default(),
+            next_state: StateCommitment::default(),
             identity,
             index,
             tx_blob_count: blobs.len(),
@@ -304,7 +297,7 @@ pub mod native {
             tx_hash,
             tx_ctx: None,
             state_reads: vec![],
-            onchain_effects,
+            onchain_effects: vec![],
             program_outputs: vec![],
         }
     }
