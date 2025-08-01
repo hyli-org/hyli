@@ -124,9 +124,9 @@ impl Indexer {
                 self.empty_store()
             },
             listen<DataEvent> DataEvent::OrderedSignedBlock(signed_block) => {
-                let block = self.node_state.handle_signed_block(&signed_block)
+                let ns_result = self.node_state.new_handle_signed_block(&signed_block)
                     .context("Failed to handle block in node state")?;
-                _ = log_error!(self.handle_node_state_block(block)
+                _ = log_error!(self.handle_node_state_result(signed_block, ns_result)
                     .await,
                     "Indexer handling node state event");
             }

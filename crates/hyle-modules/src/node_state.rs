@@ -14,6 +14,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use timeouts::Timeouts;
 use tracing::{debug, error, info, trace};
 
+use crate::log_error;
+
 mod api;
 pub mod contract_registration;
 mod hyle_tld;
@@ -187,7 +189,68 @@ impl Default for NodeStateStore {
     }
 }
 
+pub enum ContractUpdate {
+    Register(Option<Vec<u8>>),
+    UpdateState,
+    UpdateProgramId,
+    UpdateTimeoutWindow,
+    Delete,
+}
+
+pub struct NodeStateResult {
+    pub registered_contracts:
+        BTreeMap<ContractName, (TxId, RegisterContractEffect, Option<Vec<u8>>)>,
+    pub deleted_contracts: BTreeMap<ContractName, TxHash>,
+    pub updated_states: BTreeMap<ContractName, StateCommitment>,
+    pub updated_program_ids: BTreeMap<ContractName, ProgramId>,
+    pub updated_timeout_windows: BTreeMap<ContractName, TimeoutWindow>,
+
+    pub all_transactions_events: Vec<(TxId, TransactionStateEvent)>,
+}
+
 impl NodeState {
+    pub fn new_handle_signed_block(
+        &mut self,
+        signed_block: &SignedBlock,
+    ) -> Result<NodeStateResult> {
+        let Block {
+            all_transactions_events,
+            deleted_contracts,
+            registered_contracts,
+            updated_states,
+            updated_program_ids,
+            updated_timeout_windows,
+            dp_parent_hashes,
+            ..
+        } = self.handle_signed_block(signed_block)?;
+
+        let registered_contracts = registered_contracts
+            .into_iter()
+            .map(|(contract_name, (tx_hash, effect, metadata))| {
+                let dp_hash = log_error!(
+                    dp_parent_hashes.get(&tx_hash).context(format!(
+                        "No parent data proposal hash present for registered contract tx {}",
+                        tx_hash
+                    )),
+                    "Failed to get parent DP hash for registered contract tx {}"
+                )
+                .cloned()
+                .unwrap_or_default();
+                let tx_id = TxId(dp_hash, tx_hash);
+                (contract_name, (tx_id, effect, metadata.map(|m| m.to_vec())))
+            })
+            .collect::<BTreeMap<_, _>>();
+
+        Ok(NodeStateResult {
+            all_transactions_events,
+            registered_contracts,
+            deleted_contracts,
+            updated_states,
+            updated_program_ids,
+            updated_timeout_windows,
+        })
+    }
+
     pub fn handle_signed_block(&mut self, signed_block: &SignedBlock) -> Result<Block> {
         let next_block = self.current_height + 1 == signed_block.height();
         let initial_block = self.current_height.0 == 0 && signed_block.height().0 == 0;
@@ -272,7 +335,7 @@ impl NodeState {
                                 .push(TransactionStateEvent::Sequenced);
                             block_under_construction
                                 .all_transactions_events
-                                .push((tx_id.1.clone(), TransactionStateEvent::Sequenced));
+                                .push((tx_id.clone(), TransactionStateEvent::Sequenced));
 
                             let mut blob_tx_to_try_and_settle = BTreeSet::new();
                             blob_tx_to_try_and_settle.insert(tx_hash);
@@ -305,7 +368,7 @@ impl NodeState {
                                 .push(TransactionStateEvent::Sequenced);
                             block_under_construction
                                 .all_transactions_events
-                                .push((tx_id.1.clone(), TransactionStateEvent::Sequenced));
+                                .push((tx_id.clone(), TransactionStateEvent::Sequenced));
                         }
                         Err(e) => {
                             let err = format!("Failed to handle blob transaction: {e:?}");
@@ -659,6 +722,8 @@ impl NodeState {
                 .entry(bth.clone())
                 .or_default();
 
+            let btxid = TxId(dp_parent_hash.clone(), bth.clone());
+
             let lane_id = block_under_construction
                 .lane_ids
                 .entry(bth.clone())
@@ -672,7 +737,7 @@ impl NodeState {
                     // Settle the TX and add any new TXs to try and settle next.
                     let mut txs = self.on_settled_blob_tx(
                         block_under_construction,
-                        bth,
+                        btxid,
                         settled_tx,
                         settlement_result,
                     );
@@ -923,7 +988,7 @@ impl NodeState {
     fn on_settled_blob_tx(
         &mut self,
         block_under_construction: &mut Block,
-        bth: TxHash,
+        btxid: TxId,
         settled_tx: UnsettledBlobTransaction,
         settlement_result: SettlementResult,
     ) -> BTreeSet<TxHash> {
@@ -939,17 +1004,17 @@ impl NodeState {
                 // If it's a failed settlement, mark it so and move on.
                 block_under_construction
                     .transactions_events
-                    .entry(bth.clone())
+                    .entry(btxid.1.clone())
                     .or_default()
                     .push(TransactionStateEvent::SettledAsFailed);
                 block_under_construction
                     .all_transactions_events
-                    .push((bth.clone(), TransactionStateEvent::SettledAsFailed));
+                    .push((btxid.clone(), TransactionStateEvent::SettledAsFailed));
 
                 self.metrics.add_failed_transactions(1);
-                info!(tx_height =% block_under_construction.block_height, "⛈️ Settled tx {} as failed", &bth);
+                info!(tx_height =% block_under_construction.block_height, "⛈️ Settled tx {} as failed", &btxid);
 
-                block_under_construction.failed_txs.push(bth);
+                block_under_construction.failed_txs.push(btxid.1);
                 return next_txs_to_try_and_settle;
             }
             SettlementStatus::NotReadyToSettle | SettlementStatus::Unknown => {
@@ -965,15 +1030,15 @@ impl NodeState {
         // Otherwise process the side effects.
         block_under_construction
             .transactions_events
-            .entry(bth.clone())
+            .entry(btxid.1.clone())
             .or_default()
             .push(TransactionStateEvent::Settled);
         block_under_construction
             .all_transactions_events
-            .push((bth.clone(), TransactionStateEvent::Settled));
+            .push((btxid.clone(), TransactionStateEvent::Settled));
         self.metrics.add_settled_transactions(1);
         self.metrics.add_successful_transactions(1);
-        info!(tx_height =% block_under_construction.block_height, "✨ Settled tx {}", &bth);
+        info!(tx_height =% block_under_construction.block_height, "✨ Settled tx {}", &btxid);
 
         let mut txs_to_nuke = BTreeMap::<TxHash, Vec<HyleOutput>>::new();
 
@@ -982,7 +1047,7 @@ impl NodeState {
         // - take note of staking actions
         for (blob_index, blob_metadata) in settled_tx.blobs {
             block_under_construction.verified_blobs.push((
-                bth.clone(),
+                btxid.1.clone(),
                 blob_index,
                 settlement_result
                     .blob_proof_output_indices
@@ -1035,6 +1100,8 @@ impl NodeState {
 
                             potentially_blocked_contracts
                                 .extend(OrderedTxMap::get_contracts_blocked_by_tx(&popped_tx));
+
+                            let tx_id = TxId(popped_tx.parent_dp_hash.clone(), tx_hash.clone());
                             block_under_construction
                                 .transactions_events
                                 .entry(tx_hash.clone())
@@ -1042,7 +1109,7 @@ impl NodeState {
                                 .push(TransactionStateEvent::TimedOut);
                             block_under_construction
                                 .all_transactions_events
-                                .push((tx_hash.clone(), TransactionStateEvent::TimedOut));
+                                .push((tx_id.clone(), TransactionStateEvent::TimedOut));
                             block_under_construction
                                 .dp_parent_hashes
                                 .insert(tx_hash.clone(), popped_tx.parent_dp_hash);
@@ -1066,7 +1133,7 @@ impl NodeState {
 
                     block_under_construction
                         .deleted_contracts
-                        .insert(contract_name, bth.clone());
+                        .insert(contract_name, btxid.1.clone());
 
                     continue;
                 }
@@ -1087,13 +1154,13 @@ impl NodeState {
                             tracing::warn!(
                                 "No register effect found for contract {} in TX {}",
                                 contract_name,
-                                bth
+                                btxid
                             );
                         }
                         block_under_construction.registered_contracts.insert(
                             contract_name.clone(),
                             (
-                                bth.clone(),
+                                btxid.1.clone(),
                                 RegisterContractEffect {
                                     contract_name: contract_name.clone(),
                                     program_id: contract.program_id.clone(),
@@ -1207,7 +1274,7 @@ impl NodeState {
                                 .or_default()
                                 .push(TransactionStateEvent::NewProof {
                                     blob_index: hyle_output.index,
-                                    proof_tx_hash: bth.clone(),
+                                    proof_tx_hash: btxid.1.clone(),
                                     program_output: hyle_output.program_outputs.clone(),
                                 });
                         }
@@ -1222,7 +1289,7 @@ impl NodeState {
         }
 
         // Keep track of settled txs
-        block_under_construction.successful_txs.push(bth);
+        block_under_construction.successful_txs.push(btxid.1);
 
         next_txs_to_try_and_settle
     }
@@ -1502,6 +1569,7 @@ impl NodeState {
                 self.metrics.add_triggered_timeouts();
                 let hash = tx.hash.clone();
                 let parent_hash = tx.parent_dp_hash.clone();
+                let tx_id = TxId(parent_hash.clone(), hash.clone());
                 let lane_id = tx.tx_context.lane_id.clone();
                 block_under_construction
                     .transactions_events
@@ -1510,7 +1578,7 @@ impl NodeState {
                     .push(TransactionStateEvent::TimedOut);
                 block_under_construction
                     .all_transactions_events
-                    .push((hash.clone(), TransactionStateEvent::TimedOut));
+                    .push((tx_id, TransactionStateEvent::TimedOut));
                 block_under_construction
                     .dp_parent_hashes
                     .insert(hash.clone(), parent_hash);
