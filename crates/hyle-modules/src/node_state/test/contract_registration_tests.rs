@@ -18,17 +18,18 @@ pub fn make_register_tx(
     tld: ContractName,
     name: ContractName,
 ) -> BlobTransaction {
-    BlobTransaction::new(
-        sender,
-        vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
-            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-            contract_name: name,
-            ..Default::default()
-        }
-        .as_blob(tld, None, None)],
-    )
+    let register_contract_action = RegisterContractAction {
+        verifier: "test".into(),
+        program_id: ProgramId(vec![]),
+        state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+        contract_name: name.clone(),
+        ..Default::default()
+    };
+    let tld_blob = register_contract_action.as_blob(tld, None, None);
+
+    let register_contract_blob = register_contract_action.as_blob(name, None, None);
+
+    BlobTransaction::new(sender, vec![tld_blob, register_contract_blob])
 }
 
 pub fn make_register_hyli_wallet_identity_tx() -> BlobTransaction {
@@ -80,6 +81,96 @@ async fn test_register_contract_failure() {
             data: BlobData(vec![0, 1, 2, 3]),
         }],
     );
+    // "hyle" blob alone should not be able to register
+    let mut register_6 = BlobTransaction::new(
+        "hyle@hyle",
+        vec![RegisterContractAction {
+            verifier: "test".into(),
+            program_id: ProgramId(vec![]),
+            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+            contract_name: "register_6".into(),
+            ..Default::default()
+        }
+        .as_blob("hyle".into(), None, None)],
+    );
+    // if the "hyle" blob is not here, should not be able to register
+    let mut register_7 = BlobTransaction::new(
+        "hyle@hyle",
+        vec![RegisterContractAction {
+            verifier: "test".into(),
+            program_id: ProgramId(vec![]),
+            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+            contract_name: "register_7".into(),
+            ..Default::default()
+        }
+        .as_blob("register_7".into(), None, None)],
+    );
+    // action in the hyle blob should be the same as the one in the deployed contract
+    let mut register_8 = BlobTransaction::new(
+        "hyle@hyle",
+        vec![
+            RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: "register_8".into(),
+                ..Default::default()
+            }
+            .as_blob("hyle".into(), None, None),
+            RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: "not_the_same_name".into(),
+                ..Default::default()
+            }
+            .as_blob("not_the_same_name".into(), None, None),
+        ],
+    );
+    // action should be deployed for the correct contract
+    let mut register_9 = BlobTransaction::new(
+        "hyle@hyle",
+        vec![
+            RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: "register_9".into(),
+                ..Default::default()
+            }
+            .as_blob("hyle".into(), None, None),
+            RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: "register_9".into(),
+                ..Default::default()
+            }
+            .as_blob("different_name".into(), None, None),
+        ],
+    );
+    // action should be deployed for the correct contract
+    let mut register_10 = BlobTransaction::new(
+        "hyle@hyle",
+        vec![
+            RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: "register_10".into(),
+                ..Default::default()
+            }
+            .as_blob("hyle".into(), None, None),
+            RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: "different_name".into(),
+                ..Default::default()
+            }
+            .as_blob("register_10".into(), None, None),
+        ],
+    );
     let register_good = make_register_tx("hyle@hyle".into(), "hyle".into(), "c1.hyle".into());
 
     let signed_block = craft_signed_block(
@@ -90,6 +181,11 @@ async fn test_register_contract_failure() {
             register_3.clone().into(),
             register_4.clone().into(),
             register_5.clone().into(),
+            register_6.clone().into(),
+            register_7.clone().into(),
+            register_8.clone().into(),
+            register_9.clone().into(),
+            register_10.clone().into(),
             register_good.clone().into(),
         ],
     );
@@ -106,6 +202,11 @@ async fn test_register_contract_failure() {
             register_3.hashed(),
             register_4.hashed(),
             register_5.hashed(),
+            register_6.hashed(),
+            register_7.hashed(),
+            register_8.hashed(),
+            register_9.hashed(),
+            register_10.hashed(),
         ]
     );
 }
@@ -238,7 +339,16 @@ pub fn make_delete_tx(
 ) -> BlobTransaction {
     BlobTransaction::new(
         sender,
-        vec![DeleteContractAction { contract_name }.as_blob(tld, None, None)],
+        vec![
+            DeleteContractAction {
+                contract_name: contract_name.clone(),
+            }
+            .as_blob(tld, None, None),
+            Blob {
+                contract_name,
+                data: BlobData::default(),
+            },
+        ],
     )
 }
 
@@ -251,8 +361,14 @@ pub fn make_delete_tx_with_hyli(tld: ContractName, contract_name: ContractName) 
                 account: HYLI_TLD_ID.to_string(),
             }
             .as_blob(HYLI_WALLET.into()),
-            DeleteContractAction { contract_name }.as_blob(tld, None, None),
-            // NativeVerifiers::DeleteContract(tld.clone()).as_blob(tld, None, None),
+            DeleteContractAction {
+                contract_name: contract_name.clone(),
+            }
+            .as_blob(tld, None, None),
+            Blob {
+                contract_name,
+                data: BlobData::default(),
+            },
         ],
     )
 }
@@ -704,10 +820,15 @@ async fn test_register_update_delete_combinations_hyle() {
     }
 
     // Test all combinations
+    info!("➡️ First combination: register only");
     test_combination(None, &[&register_tx], 3, 1).await;
+    info!("➡️ Second combination: delete only");
     test_combination(None, &[&delete_tx], 2, 0).await;
+    info!("➡️ Third combination: register - delete");
     test_combination(Some(&[&delete_tx_proof]), &[&register_tx, &delete_tx], 2, 2).await;
+    info!("➡️ Fourth combination: register - update");
     test_combination(Some(&[&proof_update]), &[&register_tx, &update_tx], 3, 2).await;
+    info!("➡️ Fifth combination: register - update - delete");
     test_combination(
         Some(&[&proof_update, &delete_tx_proof]),
         &[&register_tx, &update_tx, &delete_tx],
@@ -715,6 +836,7 @@ async fn test_register_update_delete_combinations_hyle() {
         3,
     )
     .await;
+    info!("➡️ Sixth combination: register - delete_self");
     test_combination(
         Some(&[&proof_update, &proof_delete]),
         &[&register_tx, &update_tx, &delete_self_tx],
@@ -1024,18 +1146,16 @@ async fn domino_settlement_after_contract_delete() {
     let b = ContractName::new("b");
     let register_a = make_register_contract_tx(a.clone());
     let register_b = make_register_contract_tx(b.clone());
-    let block1 = state.craft_block_and_handle(
+    state.craft_block_and_handle(
         1,
         vec![register_a.clone().into(), register_b.clone().into()],
     );
-    tracing::error!("block1: {:#?}", block1);
 
     // Send a transaction to B
     let identity_b = Identity::new("user@b");
     let tx_b = BlobTransaction::new(identity_b.clone(), vec![new_blob("b")]);
     let tx_b_id = tx_b.hashed();
-    let block2 = state.craft_block_and_handle(2, vec![tx_b.clone().into()]);
-    tracing::error!("block2: {:#?}", block2);
+    state.craft_block_and_handle(2, vec![tx_b.clone().into()]);
 
     // Delete B via hyle (as a tx)
     let delete_b = make_delete_tx_with_hyli(ContractName::new("hyle"), b.clone());
@@ -1046,35 +1166,29 @@ async fn domino_settlement_after_contract_delete() {
         &hyle_output_wallet,
         &delete_b.hashed(),
     );
-    let block3 =
-        state.craft_block_and_handle(3, vec![delete_b.clone().into(), proof_wallet.into()]);
-    tracing::error!("block3: {:#?}", block3);
+    state.craft_block_and_handle(3, vec![delete_b.clone().into(), proof_wallet.into()]);
 
     // Send a transaction with blobs for both B and A
     let identity_ab = Identity::new("user@a");
     let tx_ab = BlobTransaction::new(identity_ab.clone(), vec![new_blob("b"), new_blob("a")]);
     let tx_ab_id = tx_ab.hashed();
-    let block4 = state.craft_block_and_handle(4, vec![tx_ab.clone().into()]);
-    tracing::error!("block4: {:#?}", block4);
+    state.craft_block_and_handle(4, vec![tx_ab.clone().into()]);
 
     // Send another transaction for just A
     let identity_a = Identity::new("user@a");
     let tx_a = BlobTransaction::new(identity_a.clone(), vec![new_blob("a")]);
     let tx_a_id = tx_a.hashed();
-    let block5 = state.craft_block_and_handle(5, vec![tx_a.clone().into()]);
-    tracing::error!("block5: {:#?}", block5);
+    state.craft_block_and_handle(5, vec![tx_a.clone().into()]);
 
     // Send proof to make it ready to settle
     let hyle_output_a = make_hyle_output(tx_a.clone(), BlobIndex(0));
     let proof_a = new_proof_tx(&a, &hyle_output_a, &tx_a_id);
     let block_a = state.craft_block_and_handle(6, vec![proof_a.into()]);
-    tracing::error!("block6: {:#?}", block_a);
 
     // Now send the proof for the first transaction (to B)
     let hyle_output_b = make_hyle_output(tx_b.clone(), BlobIndex(0));
     let proof_b = new_proof_tx(&b, &hyle_output_b, &tx_b_id);
     let block_b = state.craft_block_and_handle(7, vec![proof_b.into()]);
-    tracing::error!("block7: {:#?}", block_b);
     // This should domino through and settle the tx_ab and tx_a if not already settled
     assert!(block_b.successful_txs.contains(&tx_a_id));
 }

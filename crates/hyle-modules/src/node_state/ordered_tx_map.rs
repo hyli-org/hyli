@@ -307,7 +307,7 @@ mod tests {
                     state_commitment: StateCommitment(vec![0, 1, 2, 3]),
                     ..Default::default()
                 }
-                .as_blob(contract1.clone(), None, None),
+                .as_blob(contract2.clone(), None, None),
                 possible_proofs: vec![],
             },
         );

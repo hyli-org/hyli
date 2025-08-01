@@ -450,22 +450,19 @@ impl NodeState {
             );
         }
 
-        // For now, reject blob Tx composed of only blobs for unknown contracts.
-        if tx
+        // For now, reject blob Tx composed of blobs for unknown contracts that do not register.
+        let contracts = tx
             .blobs
             .iter()
-            .all(|blob| !self.contracts.contains_key(&blob.contract_name))
-        {
-            let contracts = tx
-                .blobs
-                .iter()
-                .map(|blob| blob.contract_name.0.clone())
-                .collect::<Vec<_>>()
-                .join(", ");
-            bail!(
-                "Blob Transaction contains blobs for unknown contracts: {}",
-                contracts
-            );
+            .filter(|blob| {
+                !self.contracts.contains_key(&blob.contract_name)
+                    && borsh::from_slice::<StructuredBlobData<RegisterContractAction>>(&blob.data.0)
+                        .is_err()
+            })
+            .map(|b| b.contract_name.0.clone())
+            .collect::<Vec<_>>();
+        if !contracts.is_empty() {
+            bail!("Blob Transaction contains at least one non-registering blobs for unknown contracts: {}", contracts.join(", "));
         }
 
         let blobs: BTreeMap<BlobIndex, UnsettledBlobMetadata> = tx
@@ -575,6 +572,9 @@ impl NodeState {
             unsettled_tx.hash.clone(),
             unsettled_tx.tx_context.lane_id.clone(),
         );
+
+        // TODO: add diverse verifications ? (without the inital state checks!).
+        // TODO: success to false is valid outcome and can be settled.
 
         Self::verify_hyle_output(unsettled_tx, &blob_proof_data.hyle_output)?;
 
@@ -818,10 +818,25 @@ impl NodeState {
         let contract_name = &current_blob.blob.contract_name;
         blob_proof_output_indices.push(0);
 
+        // Special case for contract deletion
+        if let Some((ContractStatus::Deleted, _, _)) = contract_changes.get(contract_name) {
+            tracing::trace!("Deletion Settlement - OK blob");
+            return Self::settle_blobs_recursively(
+                contracts,
+                settlement_status.clone(),
+                contract_changes,
+                blob_iter.clone(),
+                blob_proof_output_indices.clone(),
+                events,
+            );
+        }
+
         // Special case for contract registration
         if !contracts.contains_key(contract_name) {
             if !contract_changes.contains_key(contract_name) {
-                let msg = format!("Trying to settle a blob for the unregistered contract {contract_name:?}. Add a 'hyle' blob to register it.");
+                let msg = format!(
+                    "Trying to settle a blob for the unregistered contract {contract_name:?}."
+                );
                 debug!("{msg}");
                 events.push(TransactionStateEvent::SettleEvent(msg));
                 return SettlementResult {
@@ -976,6 +991,13 @@ impl NodeState {
         if remaining_settlement.settlement_status == SettlementStatus::SettleAsFailed {
             return remaining_settlement;
         }
+
+        tracing::error!("current_blob: {:?}", current_blob);
+        tracing::error!("contract_name: {:?}", contract_name);
+        tracing::error!(
+            "current_blob.possible_proofs: {:?}",
+            current_blob.possible_proofs
+        );
 
         // If we end up here, the TX isn't ready yet.
         SettlementResult {
@@ -1394,7 +1416,6 @@ impl NodeState {
         }
 
         if proof_metadata.0 != contract.program_id {
-            tracing::error!("contract_changes: {:?}", contract_changes);
             bail!(
                 "Program ID mismatch: {:?}, expected {:?} on {}",
                 proof_metadata.0,
@@ -1667,34 +1688,34 @@ pub mod test {
     }
 
     pub fn make_register_contract_tx(name: ContractName) -> BlobTransaction {
-        BlobTransaction::new(
-            "hyle@hyle",
-            vec![RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                contract_name: name,
-                ..Default::default()
-            }
-            .as_blob("hyle".into(), None, None)],
-        )
+        let register_contract_action = RegisterContractAction {
+            verifier: "test".into(),
+            program_id: ProgramId(vec![]),
+            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+            contract_name: name.clone(),
+            ..Default::default()
+        };
+        let hyle_blob = register_contract_action.as_blob("hyle".into(), None, None);
+
+        let register_contract_blob = register_contract_action.as_blob(name, None, None);
+
+        BlobTransaction::new("hyle@hyle", vec![hyle_blob, register_contract_blob])
     }
     pub fn make_register_contract_tx_with_actions(
         name: ContractName,
         blobs: Vec<Blob>,
     ) -> BlobTransaction {
-        let list = [
-            vec![RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                contract_name: name,
-                ..Default::default()
-            }
-            .as_blob("hyle".into(), None, None)],
-            blobs,
-        ]
-        .concat();
+        let register_contract_action = RegisterContractAction {
+            verifier: "test".into(),
+            program_id: ProgramId(vec![]),
+            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+            contract_name: name.clone(),
+            ..Default::default()
+        };
+        let hyle_blob = register_contract_action.as_blob("hyle".into(), None, None);
+
+        let register_contract_blob = register_contract_action.as_blob(name, None, None);
+        let list = [vec![hyle_blob, register_contract_blob], blobs].concat();
 
         BlobTransaction::new("hyle@hyle", list)
     }
