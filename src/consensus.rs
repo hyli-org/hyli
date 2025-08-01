@@ -836,9 +836,7 @@ pub mod test {
         bus::{dont_use_this::get_receiver, metrics::BusMetrics, SharedMessageBus},
         model::DataProposalHash,
         p2p::network::NetMessage,
-        tests::autobahn_testing::{
-            broadcast, build_tuple, send, simple_commit_round, AutobahnBusClient, AutobahnTestCtx,
-        },
+        tests::autobahn_testing::{broadcast, send, simple_commit_round, AutobahnBusClient},
         utils::conf::Conf,
     };
     use assertables::assert_contains;
@@ -852,10 +850,13 @@ pub mod test {
         pub consensus: Consensus,
         pub name: String,
     }
+
+    #[macro_export]
     macro_rules! build_nodes {
         ($count:tt) => {{
             async {
-                let cryptos: Vec<BlstCrypto> = AutobahnTestCtx::generate_cryptos($count);
+                let cryptos: Vec<BlstCrypto> =
+                    $crate::tests::autobahn_testing::AutobahnTestCtx::generate_cryptos($count);
 
                 let mut nodes = vec![];
 
@@ -871,10 +872,11 @@ pub mod test {
                     nodes.push(node);
                 }
 
-                build_tuple!(nodes.remove(0), $count)
+                $crate::tests::autobahn_testing::build_tuple!(nodes.remove(0), $count)
             }
         }};
     }
+    pub use build_nodes;
 
     impl ConsensusTestCtx {
         pub async fn build_consensus(
@@ -897,7 +899,7 @@ pub mod test {
             }
         }
 
-        async fn new(name: &str, crypto: BlstCrypto) -> Self {
+        pub async fn new(name: &str, crypto: BlstCrypto) -> Self {
             let shared_bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
             let out_receiver = get_receiver::<OutboundMessage>(&shared_bus).await;
             let event_receiver = get_receiver::<ConsensusEvent>(&shared_bus).await;
@@ -1003,7 +1005,7 @@ pub mod test {
             info!("🎉 Trusted validator added: {}", pubkey);
         }
 
-        async fn new_node(name: &str) -> Self {
+        pub async fn new_node(name: &str) -> Self {
             let crypto = BlstCrypto::new(name).unwrap();
             Self::new(name, crypto.clone()).await
         }
