@@ -1,13 +1,13 @@
-# 🧪 Hylix — Build, Test & Deploy ZK Apps on Hyli
+# 🧪 Hylix — Build, Test & Deploy vApps on Hyli
 
-> The easiest way to build ZK apps.
-> Powered by Risc0 & SP1. Designed for zk developers.
+> The easiest way to build vApps.
+> Powered by Risc0 & SP1. Designed for developers.
 
 ---
 
 ## ✨ Why Hylix?
 
-Hylix is a modern developer toolbox and CLI (`hyl`) to build zkApps on [Hyli](https://hyli.org), a privacy-preserving, proof-first blockchain leveraging SP1, Risc0 or Noir. Whether you're prototyping or going to production, Hylab gives you the smoothest path from idea to zk-rollout.
+Hylix is a modern developer toolbox and CLI (`hyl`) to build vApps on [Hyli](https://hyli.org), a privacy-preserving, proof-first blockchain leveraging SP1, Risc0 or Noir. Whether you're prototyping or going to production, Hylab gives you the smoothest path from idea to zk-rollout.
 
 **Main benefits:**
 
@@ -30,11 +30,11 @@ cargo install hyl
 Then run:
 
 ```bash
-hyl new my-zkapp
-cd my-zkapp
-hyl build
-hyl chain
-hyl test
+hy new my-vapp
+cd my-vapp
+hy build
+hy devnet
+hy test
 ```
 
 That’s it — you’re building on Hyli.
@@ -43,62 +43,62 @@ That’s it — you’re building on Hyli.
 
 ## 🧰 CLI Reference
 
-### `hyl new [PROJECT]`
+### `hy new [PROJECT]`
 
-Scaffold a new Hyli zkApp project.
+Scaffold a new Hyli vApp project.
 
 * Ask to choose SP1 or Risc0 as backend
-* Clones the default zkApp template
+* Clones the default vApp template
 * (soon) Try to validate & setup your local dev environment (Rust, risc0, sp1 toolchains...)
 * Noir & Cairo coming soon
 
 ```bash
-hyl new my-zkapp
+hy new my-vapp
 ```
 
 #### 🧱 Project Structure
 
-A Hylix zkApp project is made of three main components:
+A Hylix vApp project is made of three main components:
 
 * 📜 **contracts/**: ZK program written in Rust (using SP1 or Risc0 SDK)
-* 🧠 **server/**: Your zkApp’s backend, runs locally with `hyl run`
+* 🧠 **server/**: Your vApp’s backend, runs locally with `hy run`
   * By default includes:
     * 📝 Register contract at startup
     * ✅ Proof auto-generation
     * 📇 Contract-specific indexing
     * 🧩 Optional custom logic & APIs
-* 🎨 **front/**: Frontend interface powered by **Bun** and **Vite**
+* 🎨 **front/**: Frontend interface powered by **Bun** and **Vite** (optional)
 
-Each part is optional — you can build CLI-only zkApps, headless backends, or full dApps.
+Each part is optional — you can build CLI-only vApps, headless backends, or full dApps.
 
 ---
 
-### `hyl build`
+### `hy build`
 
 Build the project.
 
 ```bash
-hyl build
+hy build
 ```
 
 ---
 
-### `hyl clean`
+### `hy clean`
 
 Clean the project build artifacts.
 
 ```bash
-hyl clean
+hy clean
 ```
 
 ---
 
-### `hyl test`
+### `hy test`
 
-Run your zkApp’s **end-to-end tests** in a fully orchestrated local Hyli environment.
+Run your vApp’s **end-to-end tests** in a fully orchestrated local Hyli environment.
 
 ```bash
-hyl test
+hy test
 ```
 
 Execute unit & e2e tests, see [Testing](Testing.md) page for more.
@@ -111,27 +111,27 @@ Execute unit & e2e tests, see [Testing](Testing.md) page for more.
 
 #### What happens under the hood for e2e tests:
 
-1. Starts `hyl chain` if not already running
-2. Compiles your project (`hyl build`)
-3. Runs your application backend `hyl run`
+1. Starts `hy devnet` if not already running
+2. Compiles your project (`hy build`)
+3. Runs your application backend `hy run`
 4. Runs tests defined in `tests/` using `cargo test`
 5. Shuts down the devnet & backend after completion (unless `--keep-alive` is set)
 
 #### Example:
 
 ```bash
-hyl test
+hy test
 ```
 
 Want to keep the devnet alive after tests?
 
 ```bash
-hyl test --keep-alive
+hy test --keep-alive
 ```
 
 ---
 
-### `hyl chain`
+### `hy devnet`
 
 Launch a local devnet with:
 
@@ -143,27 +143,42 @@ Launch a local devnet with:
 * Pre-funded test accounts
 
 ```bash
-hyl chain
+hy devnet
+```
+
+Want to pause the network ?
+
+```bash 
+hy devnet stop 
+hy devnet start
 ```
 
 Want a fresh state?
 
 ```bash
-hyl chain --reset
+hy devnet --reset
+```
+
+#### Soon
+
+Want to fork a running network ?
+
+```bash 
+hy devnet fork [ENDPOINT]
 ```
 
 ---
 
-### `hyl run`
+### `hy run`
 
 Start your backend service locally or on testnet.
 The app backend **registers your contract**, **runs a local auto-prover**, and launches core modules like the **contract indexer**. You can customize the backend in the `server/` folder.
 
 ```bash
-hyl run
+hy run
 ```
 
-By default, `hyl run` operates in local dev mode.
+By default, `hy run` operates in local dev mode.
 
 #### Options
 
@@ -172,7 +187,7 @@ By default, `hyl run` operates in local dev mode.
 
 #### What it does (under the hood):
 
-* ✅ Registers your zk contract on-chain
+* ✅ Registers your vApp contract on-chain
 * 🔁 Starts a local auto-prover (generates and posts proofs when needed)
 * 📇 Launches a contract indexer to track state transitions
 * 🛠️ Wires everything together for a ready-to-use dev backend
@@ -180,7 +195,7 @@ By default, `hyl run` operates in local dev mode.
 #### Testnet mode (soon):
 
 ```bash
-hyl run --testnet
+hy run --testnet
 ```
 
 This will:
@@ -198,7 +213,7 @@ Upload your compiled ELF to the **Hyli Prover Network**, allowing proofs to be g
 This is especially useful on testnet where you want to avoid setting up local proving infrastructure.
 
 ```bash
-hyl upload
+hy upload
 ```
 
 **What it does:**
@@ -223,13 +238,13 @@ Hylix builds on top of:
 * CairoM for client side verifiable compute
 * Noir for client side privacy (soon)
 * **Rust** for native speed and tooling compatibility
-* **Bun** and **vite** for frontend application
+* **Bun**, **vite**, vue3 & tailwind for frontend application
 
 Coming soon:
 
 * 🧑‍🎨 Noir Integration (Q4 2025)
 * 🌀 Cairo Exploration
-* 📦 Custom Prover Uploads via `hyl upload`
+* 📦 Custom Prover Uploads via `hy upload`
 
 ---
 
@@ -246,6 +261,7 @@ We’re just getting started. If you're testing Hylix early:
 ## 🛤️ Whishlist
 
 * [ ] Noir support
+- [ ] Tool auto-upgrade
 * [ ] Cairo experiments
 * [ ] Plugin system for custom commands
 - [ ] Test proc-macro for isolated e2e testing

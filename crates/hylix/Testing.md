@@ -1,6 +1,6 @@
 # 🧪 Testing with Hylix
 
-> Write, run, and automate tests for your zkApp with confidence.
+> Write, run, and automate tests for your vApp with confidence.
 
 ---
 
@@ -11,7 +11,7 @@ Hylix supports different layers of testing depending on what you want to validat
 | Type           | Description                                                   | Tooling used        |
 | -------------- | ------------------------------------------------------------- | ------------------- |
 | **Unit tests** | Test logic in isolation (e.g. zk program functions)           | `cargo test`        |
-| **E2E tests**  | Test your full zkApp with a local chain, provers, and backend | `hyl test` + devnet |
+| **E2E tests**  | Test your full vApp with a local chain, provers, and backend | `hy test` + devnet |
 
 ---
 
@@ -76,14 +76,14 @@ You can use
 To run **all tests** in an orchestrated environment:
 
 ```bash
-hyl test
+hy test
 ```
 
 What this does:
 
 1. Compiles the project
-2. Launches a devnet with `hyl chain`
-3. Run your contract backend via `hyl run`
+2. Launches a devnet with `hy devnet`
+3. Run your contract backend via `hy run`
 4. Runs your test suite
 5. Tears down the setup (unless `--keep-alive` is passed)
 
@@ -94,7 +94,7 @@ What this does:
 Keep your devnet alive between test runs for faster iterations:
 
 ```bash
-hyl test --keep-alive
+hy test --keep-alive
 ```
 
 ---
