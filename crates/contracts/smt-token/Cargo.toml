@@ -6,7 +6,7 @@ version = { workspace = true }
 edition = { workspace = true }
 homepage = { workspace = true }
 repository = { workspace = true }
-rust-version = "1.81"
+rust-version = "1.85"
 
 [[bin]]
 name = "smt-token"
