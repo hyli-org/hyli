@@ -37,7 +37,7 @@ hy devnet
 hy test
 ```
 
-That’s it — you’re building on Hyli.
+That’s it, you’re building on Hyli.
 
 ---
 
@@ -48,9 +48,9 @@ That’s it — you’re building on Hyli.
 Scaffold a new Hyli vApp project.
 
 * Ask to choose SP1 or Risc0 as backend
-* Clones the default vApp template
+* Clone the default vApp template
 * (soon) Try to validate & setup your local dev environment (Rust, risc0, sp1 toolchains...)
-* Noir & Cairo coming soon
+* Noir & Cairo support coming soon
 
 ```bash
 hy new my-vapp
@@ -101,7 +101,7 @@ Run your vApp’s **end-to-end tests** in a fully orchestrated local Hyli enviro
 hy test
 ```
 
-Execute unit & e2e tests, see [Testing](Testing.md) page for more.
+Execute unit & E2E tests, see [Testing](Testing.md) page for more.
 
 #### Key Features
 
@@ -185,14 +185,14 @@ By default, `hy run` operates in local dev mode.
 * `--testnet`: Register and interact with contracts on the public Hyli testnet.
 * `--watch`: Automatically rebuild and re-register on file changes (coming soon)
 
-#### What it does (under the hood):
+#### What it does (under the hood)
 
 * ✅ Registers your vApp contract on-chain
 * 🔁 Starts a local auto-prover (generates and posts proofs when needed)
 * 📇 Launches a contract indexer to track state transitions
 * 🛠️ Wires everything together for a ready-to-use dev backend
 
-#### Testnet mode (soon):
+#### Testnet mode (soon)
 
 ```bash
 hy run --testnet
@@ -203,12 +203,11 @@ This will:
 * Start the backend connected to the testnet
 * Ask to upload your contract on the prover network
 
-
 ---
 
-## 📡 Upload to the Prover Network (Soon)
+## 📡 Upload to a Prover Network (soon)
 
-Upload your compiled ELF to the **Hyli Prover Network**, allowing proofs to be generated off-chain by a prover network.
+Upload your compiled ELF to a prover network for proof generation.
 
 This is especially useful on testnet where you want to avoid setting up local proving infrastructure.
 
@@ -242,7 +241,7 @@ Hylix builds on top of:
 
 Coming soon:
 
-* 🧑‍🎨 Noir Integration (Q4 2025)
+* 🧑‍🎨 Noir Integration
 * 🌀 Cairo Exploration
 * 📦 Custom Prover Uploads via `hy upload`
 
@@ -254,11 +253,11 @@ We’re just getting started. If you're testing Hylix early:
 
 * Open issues or ideas [here](https://github.com/hyli-org/hyli/issues)
 * Share feedback with the Hyli team
-* Ping us with questions!
+* [Ping us](https://t.me/hyli_org) with questions!
 
 ---
 
-## 🛤️ Whishlist
+## 🛤️ Wishlist
 
 * [ ] Noir support
 - [ ] Tool auto-upgrade
@@ -268,8 +267,4 @@ We’re just getting started. If you're testing Hylix early:
 
 ---
 
-## ❤️ Built with Love by the Hyli Team
-
----
-
-
+## ❤️ Built with love by the Hyli Team
