@@ -133,6 +133,17 @@ impl Hashed<HyleOutputHash> for HyleOutput {
         self.onchain_effects.iter().for_each(|c| match c {
             OnchainEffect::RegisterContract(c) => hasher.update(contract::Hashed::hashed(c).0),
             OnchainEffect::DeleteContract(cn) => hasher.update(cn.0.as_bytes()),
+            OnchainEffect::UpdateContractProgramId(cn, pid) => {
+                hasher.update(cn.0.as_bytes());
+                hasher.update(pid.0.clone());
+            }
+            OnchainEffect::UpdateTimeoutWindow(cn, timeout_window) => {
+                hasher.update(cn.0.as_bytes());
+                match timeout_window {
+                    TimeoutWindow::NoTimeout => hasher.update(0u8.to_le_bytes()),
+                    TimeoutWindow::Timeout(bh) => hasher.update(bh.0.to_le_bytes()),
+                }
+            }
         });
         hasher.update(&self.program_outputs);
         HyleOutputHash(hasher.finalize().to_vec())

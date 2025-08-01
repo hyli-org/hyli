@@ -3,7 +3,7 @@ use crate::{
     log_debug, log_error, module_bus_client, module_handle_messages,
     modules::Module,
 };
-use anyhow::{anyhow, bail, Error, Result};
+use anyhow::{anyhow, bail, Context, Error, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::contract_indexer::{ContractHandler, ContractStateStore};
 use sdk::*;
@@ -236,7 +236,8 @@ where
             |state, tx, index, ctx| state.handle_transaction_sequenced(tx, index, ctx),
             false,
         )
-        .await?;
+        .await
+        .context("handling sequenced tx")?;
 
         self.handle_txs(
             &block.timed_out_txs,
@@ -244,7 +245,8 @@ where
             |state, tx, index, ctx| state.handle_transaction_timeout(tx, index, ctx),
             true,
         )
-        .await?;
+        .await
+        .context("handling timed out tx")?;
 
         self.handle_txs(
             &block.failed_txs,
@@ -252,7 +254,8 @@ where
             |state, tx, index, ctx| state.handle_transaction_failed(tx, index, ctx),
             true,
         )
-        .await?;
+        .await
+        .context("handling failed tx")?;
 
         self.handle_txs(
             &block.successful_txs,
@@ -260,7 +263,8 @@ where
             |state, tx, index, ctx| state.handle_transaction_success(tx, index, ctx),
             true,
         )
-        .await?;
+        .await
+        .context("handling successful tx")?;
 
         Ok(())
     }
@@ -312,7 +316,7 @@ where
             }
         } else {
             let state = State::construct_state(contract, metadata)?;
-            tracing::info!(cn = %self.contract_name, "📝 Registered suppored contract '{}'", contract.contract_name);
+            tracing::info!(cn = %self.contract_name, "📝 Registered supported contract '{}'", contract.contract_name);
             store.state = Some(state);
         }
         Ok(())
