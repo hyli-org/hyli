@@ -125,7 +125,7 @@ impl GuestEnv for SP1Env {
 ///
 /// # Type Parameters
 ///
-/// * `State` - The type of the state that must implement the `ZkProgram` and `BorshDeserialize` traits.
+/// * `Z` - The type of the contract that must implement the `ZkContract` and `BorshDeserialize` traits.
 ///
 /// # Returns
 ///
