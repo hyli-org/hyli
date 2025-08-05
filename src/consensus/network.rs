@@ -415,7 +415,7 @@ pub enum Ticket {
     CommitQC(CommitQC),
     TimeoutQC(TimeoutQC, TCKind),
     /// Technical value used internally that should never be used to start a slot
-    ForcedCommitQc,
+    ForcedCommitQc(View),
 }
 
 pub type PrepareQC = QuorumCertificate<PrepareVoteMarker>;

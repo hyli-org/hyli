@@ -529,7 +529,7 @@ impl Consensus {
                     );
                 }
             }
-            // If we don't have a CP, we don't care about the passer PQC yet and we'll potentially fail later
+            // If we don't have a CP, we don't care about the passed PQC yet and we'll potentially fail later
         }
 
         tracing::debug!(
@@ -555,7 +555,7 @@ impl Consensus {
                 if self.current_proposal_changes_voting_power() {
                     bail!(
                         "Timeout Certificate slot {} view {} is for the next slot, and current proposal changes voting power",
-                        tc_slot + 1,
+                        tc_slot,
                         tc_view
                     );
                 }
@@ -588,21 +588,7 @@ impl Consensus {
                 // and it matches our know prepare for this slot, so try and commit that one then the TC.
 
                 // Fake our view so we fast-forward properly.
-                self.advance_round(Ticket::ForcedCommitQc)?;
-
-                // Have to fixup our view
-                self.bft_round_state.view = tc_view + 1;
-                let round_leader = self.round_leader()?;
-                if round_leader == *self.crypto.validator_pubkey() {
-                    self.bft_round_state.state_tag = StateTag::Leader;
-                    debug!("👑 I'm the new leader! 👑")
-                } else {
-                    self.bft_round_state.state_tag = StateTag::Follower;
-                    self.store.bft_round_state.timeout.state.schedule_next(
-                        TimestampMsClock::now(),
-                        self.config.consensus.timeout_after,
-                    );
-                }
+                self.advance_round(Ticket::ForcedCommitQc(tc_view + 1))?;
 
                 info!(
                     "🔀 Fast forwarded to slot {} view 0",
