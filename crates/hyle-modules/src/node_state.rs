@@ -61,6 +61,17 @@ enum ContractStatus {
     Updated(Contract),
 }
 
+/// Represents the result of processing a proof
+#[derive(Debug)]
+enum ProofProcessingResult {
+    /// The proof was processed successfully
+    Success,
+    /// The proof failed validation but we should try other proofs
+    RetryableError(String),
+    /// The proof failed with a fatal error - should settle as failed immediately
+    FatalError(String),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SettlementStatus {
     // When starting to settle a BlobTx, we need to have a "Unknown" status that will be updated when a tx is flagged as failed, or as not ready to settle.
@@ -832,52 +843,72 @@ impl NodeState {
 
             // TODO: ideally make this CoW
             let mut current_contracts = contract_changes.clone();
-            if let Err(msg) = Self::process_proof(
+            let proof_result = Self::process_proof(
                 contracts,
                 &mut current_contracts,
                 contract_name,
                 proof_metadata,
                 current_blob,
-            ) {
-                // Not a valid proof, log it and try the next one.
-                let msg = format!(
-                    "Could not settle blob proof output #{i} for contract '{contract_name}': {msg}"
-                );
-                debug!("{msg}");
-                events.push(TransactionStateEvent::SettleEvent(msg));
-                continue;
-            }
-            if !proof_metadata.1.success {
-                // We have a valid proof of failure, we short-circuit.
-                let msg = format!(
-                    "Proven failure for blob {} - {:?}",
-                    i,
-                    String::from_utf8(proof_metadata.1.program_outputs.clone())
-                );
-                debug!("{msg}");
-                events.push(TransactionStateEvent::SettleEvent(msg));
-                return SettlementResult {
-                    settlement_status: SettlementStatus::SettleAsFailed,
-                    contract_changes,
-                    blob_proof_output_indices,
-                };
-            }
-
-            tracing::trace!("Settlement - OK blob");
-            let settlement_result = Self::settle_blobs_recursively(
-                contracts,
-                settlement_status.clone(),
-                current_contracts,
-                blob_iter.clone(),
-                blob_proof_output_indices.clone(),
-                events,
             );
-            // If this proof settles, early return, otherwise try the next one (with continue for explicitness)
-            match settlement_result.settlement_status {
-                SettlementStatus::SettleAsSuccess | SettlementStatus::SettleAsFailed => {
-                    return settlement_result;
+
+            match proof_result {
+                ProofProcessingResult::Success => {
+                    // Proof processed successfully, continue with recursion
+                    if !proof_metadata.1.success {
+                        // We have a valid proof of failure, we short-circuit.
+                        let msg = format!(
+                            "Proven failure for blob {} - {:?}",
+                            i,
+                            String::from_utf8(proof_metadata.1.program_outputs.clone())
+                        );
+                        debug!("{msg}");
+                        events.push(TransactionStateEvent::SettleEvent(msg));
+                        return SettlementResult {
+                            settlement_status: SettlementStatus::SettleAsFailed,
+                            contract_changes,
+                            blob_proof_output_indices,
+                        };
+                    }
+
+                    tracing::trace!("Settlement - OK blob");
+                    let settlement_result = Self::settle_blobs_recursively(
+                        contracts,
+                        settlement_status.clone(),
+                        current_contracts,
+                        blob_iter.clone(),
+                        blob_proof_output_indices.clone(),
+                        events,
+                    );
+                    // If this proof settles, early return, otherwise try the next one (with continue for explicitness)
+                    match settlement_result.settlement_status {
+                        SettlementStatus::SettleAsSuccess | SettlementStatus::SettleAsFailed => {
+                            return settlement_result;
+                        }
+                        SettlementStatus::NotReadyToSettle | SettlementStatus::Unknown => continue,
+                    }
                 }
-                SettlementStatus::NotReadyToSettle | SettlementStatus::Unknown => continue,
+                ProofProcessingResult::RetryableError(msg) => {
+                    // Not a valid proof, log it and try the next one.
+                    let msg = format!(
+                        "Could not settle blob proof output #{i} for contract '{contract_name}': {msg}"
+                    );
+                    debug!("{msg}");
+                    events.push(TransactionStateEvent::SettleEvent(msg));
+                    continue;
+                }
+                ProofProcessingResult::FatalError(msg) => {
+                    // Fatal error - settle as failed immediately
+                    let msg = format!(
+                        "Fatal error processing blob proof output #{i} for contract '{contract_name}': {msg}"
+                    );
+                    debug!("{msg}");
+                    events.push(TransactionStateEvent::SettleEvent(msg));
+                    return SettlementResult {
+                        settlement_status: SettlementStatus::SettleAsFailed,
+                        contract_changes,
+                        blob_proof_output_indices,
+                    };
+                }
             }
         }
 
@@ -1284,10 +1315,15 @@ impl NodeState {
         contract_name: &ContractName,
         proof_metadata: &(ProgramId, HyleOutput, Verifier),
         current_blob: &UnsettledBlobMetadata,
-    ) -> Result<()> {
-        validate_state_commitment_size(&proof_metadata.1.next_state)?;
+    ) -> ProofProcessingResult {
+        if let Err(e) = validate_state_commitment_size(&proof_metadata.1.next_state) {
+            return ProofProcessingResult::RetryableError(e.to_string());
+        }
 
-        let contract = Self::get_contract(contracts, contract_changes, contract_name)?.clone();
+        let contract = match Self::get_contract(contracts, contract_changes, contract_name) {
+            Ok(contract) => contract.clone(),
+            Err(e) => return ProofProcessingResult::RetryableError(e.to_string()),
+        };
 
         tracing::trace!(
             "Processing proof for contract {} with state {:?}",
@@ -1295,56 +1331,62 @@ impl NodeState {
             contract.state
         );
         if proof_metadata.1.initial_state != contract.state {
-            bail!(
+            return ProofProcessingResult::RetryableError(format!(
                 "Initial state mismatch: {:?}, expected {:?}",
-                proof_metadata.1.initial_state,
-                contract.state
-            )
+                proof_metadata.1.initial_state, contract.state
+            ));
         }
 
         if proof_metadata.0 != contract.program_id {
-            bail!(
+            return ProofProcessingResult::RetryableError(format!(
                 "Program ID mismatch: {:?}, expected {:?} on {}",
-                proof_metadata.0,
-                contract.program_id,
-                contract.name
-            )
+                proof_metadata.0, contract.program_id, contract.name
+            ));
         }
 
         if proof_metadata.2 != contract.verifier {
-            bail!(
+            return ProofProcessingResult::RetryableError(format!(
                 "Verifier mismatch: {:?}, expected {:?} on {}",
-                proof_metadata.2,
-                contract.verifier,
-                contract.name
-            )
+                proof_metadata.2, contract.verifier, contract.name
+            ));
         }
 
         for state_read in &proof_metadata.1.state_reads {
-            let other_contract = Self::get_contract(contracts, contract_changes, &state_read.0)?;
+            let other_contract =
+                match Self::get_contract(contracts, contract_changes, &state_read.0) {
+                    Ok(contract) => contract,
+                    Err(e) => return ProofProcessingResult::RetryableError(e.to_string()),
+                };
             if state_read.1 != other_contract.state {
-                bail!(
+                return ProofProcessingResult::RetryableError(format!(
                     "State read {:?} does not match other contract state {:?}",
-                    state_read,
-                    other_contract.state
-                )
+                    state_read, other_contract.state
+                ));
             }
         }
 
         for effect in &proof_metadata.1.onchain_effects {
             match effect {
                 OnchainEffect::RegisterContract(effect) => {
-                    validate_contract_registration_metadata(
+                    // Validation of contract registration metadata should cause immediate failure
+                    if let Err(e) = validate_contract_registration_metadata(
                         &contract.name,
                         &effect.contract_name,
                         &effect.verifier,
                         &effect.program_id,
                         &effect.state_commitment,
-                    )?;
+                    ) {
+                        return ProofProcessingResult::FatalError(format!(
+                            "Contract registration validation failed: {e}"
+                        ));
+                    }
 
-                    let metadata = StructuredBlobData::<RegisterContractAction>::try_from(
+                    let metadata = match StructuredBlobData::<RegisterContractAction>::try_from(
                         current_blob.blob.data.clone(),
-                    )?;
+                    ) {
+                        Ok(metadata) => metadata,
+                        Err(e) => return ProofProcessingResult::FatalError(e.to_string()),
+                    };
 
                     contract_changes.insert(
                         effect.contract_name.clone(),
@@ -1367,8 +1409,12 @@ impl NodeState {
                     );
                 }
                 OnchainEffect::DeleteContract(cn) => {
-                    // TODO - check the contract exists ?
-                    validate_contract_name_registration(&contract.name, cn)?;
+                    // Contract name validation for deletion should also cause immediate failure
+                    if let Err(e) = validate_contract_name_registration(&contract.name, cn) {
+                        return ProofProcessingResult::FatalError(format!(
+                            "Contract deletion validation failed: {e}"
+                        ));
+                    }
                     contract_changes
                         .entry(cn.clone())
                         .and_modify(|c| {
@@ -1411,7 +1457,7 @@ impl NodeState {
                 )
             });
 
-        Ok(())
+        ProofProcessingResult::Success
     }
 
     /// Clear timeouts for transactions that have timed out.
