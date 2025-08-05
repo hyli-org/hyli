@@ -4885,7 +4885,7 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite 0.26.2",
  "tokio-util",
- "toml 0.8.23",
+ "toml 0.9.2",
  "tracing",
  "utoipa",
  "utoipa-axum",
