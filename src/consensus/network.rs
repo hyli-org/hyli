@@ -51,6 +51,34 @@ pub enum TimeoutKind {
     PrepareQC((PrepareQC, ConsensusProposal)),
 }
 
+impl TimeoutKind {
+    pub fn is_aggregatable_with(&self, other: &Self) -> bool {
+        match self {
+            TimeoutKind::NilProposal(SignedByValidator {
+                msg: (slot, view, parent_hash, _),
+                ..
+            }) => {
+                if let TimeoutKind::NilProposal(SignedByValidator {
+                    msg: (other_slot, other_view, other_parent_hash, _),
+                    ..
+                }) = other
+                {
+                    slot == other_slot && view == other_view && parent_hash == other_parent_hash
+                } else {
+                    false
+                }
+            }
+            TimeoutKind::PrepareQC((_, cp)) => {
+                if let TimeoutKind::PrepareQC((_, other_cp)) = other {
+                    cp.hashed() == other_cp.hashed()
+                } else {
+                    false
+                }
+            }
+        }
+    }
+}
+
 #[derive(
     Debug,
     Serialize,
