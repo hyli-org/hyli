@@ -77,71 +77,59 @@ impl TimeoutRoleState {
 
 impl Consensus {
     pub(super) fn verify_tc(
-        &mut self,
-        received_timeout_certificate: &TimeoutQC,
-        received_proposal_qc: &TCKind,
-        received_slot: Slot,
-        received_view: View,
+        &self,
+        tc_qc: &TimeoutQC,
+        tc_kind: &TCKind,
+        tc_slot: Slot,
+        tc_view: View,
+        tc_consensus_proposal: ConsensusProposalHash,
     ) -> Result<()> {
         info!(
             "Verifying TC for {}/{}, kind: {:?}",
-            received_slot, received_view, received_proposal_qc
+            tc_slot, tc_view, tc_kind
         );
 
         // Two options
-        match received_proposal_qc {
+        match tc_kind {
             TCKind::NilProposal => {
                 // If this is a Nil timout certificate, then we should be receiving  2f+1 signatures of a full timeout message with nil proposal
                 self.verify_quorum_certificate(
                     (
-                        received_slot,
-                        received_view,
-                        self.bft_round_state.parent_hash.clone(),
+                        tc_slot,
+                        tc_view,
+                        tc_consensus_proposal,
                         ConsensusTimeoutMarker,
                     ),
-                    received_timeout_certificate,
+                    tc_qc,
                 )
                 .context(format!(
-                    "Verifying Nil timeout certificate for (slot: {}, view: {})",
-                    self.bft_round_state.slot, self.bft_round_state.view
+                    "Verifying Nil timeout certificate for (slot: {tc_slot}, view: {tc_view})"
                 ))?;
             }
             TCKind::PrepareQC((qc, cp)) => {
                 // This is a PQC timout certificate, check the 'limited' signature
                 self.verify_quorum_certificate(
                     (
-                        received_slot,
-                        received_view,
-                        self.bft_round_state.parent_hash.clone(),
+                        tc_slot,
+                        tc_view,
+                        tc_consensus_proposal,
                         ConsensusTimeoutMarker,
                     ),
-                    received_timeout_certificate,
+                    tc_qc,
                 )
                 .context(format!(
-                    "Verifying timeout certificate with prepare QC for (slot: {}, view: {})",
-                    self.bft_round_state.slot, self.bft_round_state.view
+                    "Verifying timeout certificate with prepare QC for (slot: {tc_slot}, view: {tc_view})",
                 ))?;
-                if cp.slot != received_slot {
+                if cp.slot != tc_slot {
                     bail!(
                         "Received timeout certificate with prepare QC for slot {}, but timeout is for slot {}",
                         cp.slot,
-                        received_slot
+                        tc_slot
                     );
                 }
                 // Then check the prepare quorum certificate
                 self.verify_quorum_certificate((cp.hashed(), PrepareVoteMarker), qc)
                     .context("Verifying PrepareQC")?;
-                // Update prepare QC & local CP
-                if self
-                    .store
-                    .bft_round_state
-                    .timeout
-                    .update_highest_seen_prepare_qc(received_slot, qc.clone())
-                {
-                    // Update our consensus proposal
-                    self.bft_round_state.current_proposal = cp.clone();
-                    debug!("Highest seen PrepareQC updated");
-                }
             }
         }
         Ok(())
@@ -149,47 +137,25 @@ impl Consensus {
 
     pub(super) fn on_timeout_certificate(
         &mut self,
-        received_timeout_certificate: &TimeoutQC,
-        received_proposal_qc: &TCKind,
+        received_timeout_certificate: TimeoutQC,
+        received_proposal_qc: TCKind,
         received_slot: Slot,
         received_view: View,
     ) -> Result<()> {
-        if received_slot < self.bft_round_state.slot
-            || received_slot == self.bft_round_state.slot
-                && received_view < self.bft_round_state.view
-        {
-            debug!(
-                "🌘 Ignoring timeout certificate for slot {} view {}, am at {} {}",
-                received_slot, received_view, self.bft_round_state.slot, self.bft_round_state.view
-            );
-            return Ok(());
-        }
-        // It's fine skip views when processing TCs, but not slots.
-        if received_slot > self.bft_round_state.slot {
-            debug!(
-                "Timeout Certificate (Slot: {}, view: {}) does not match expected (Slot: {})",
-                received_slot, received_view, self.bft_round_state.slot,
-            );
-            return Ok(());
-        }
-
-        self.verify_tc(
-            received_timeout_certificate,
-            received_proposal_qc,
-            received_slot,
-            received_view,
-        )?;
-
         // This TC is for our current slot and view, so we can leave Joining mode
         let is_next_view_leader = &self.next_view_leader()? != self.crypto.validator_pubkey();
         if is_next_view_leader && matches!(self.bft_round_state.state_tag, StateTag::Joining) {
             self.bft_round_state.state_tag = StateTag::Leader;
         }
 
-        self.advance_round(Ticket::TimeoutQC(
-            received_timeout_certificate.clone(),
-            received_proposal_qc.clone(),
-        ))
+        self.verify_and_process_tc_ticket(
+            received_timeout_certificate,
+            &received_proposal_qc,
+            received_slot,
+            received_view,
+            None,
+        )?;
+        Ok(())
     }
 
     pub(super) fn on_timeout_tick(&mut self) -> Result<()> {
@@ -600,6 +566,166 @@ mod tests {
             from: node3, to: [node2, node1, node4],
             message_matches: ConsensusNetMessage::Timeout(..)
         };
+
+        assert_eq!(node1.consensus.bft_round_state.view, 2);
+        assert_eq!(node2.consensus.bft_round_state.view, 2);
+        assert_eq!(node3.consensus.bft_round_state.view, 2);
+        assert_eq!(node4.consensus.bft_round_state.view, 2);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_timeout_multi_view_only_see_tc() {
+        // Same as test_timeout_multi_view, but node 4 will not see timeouts, just the TC.
+        let (mut node1, mut node2, mut node3, mut node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        assert_eq!(node1.consensus.bft_round_state.view, 0);
+        assert_eq!(node2.consensus.bft_round_state.view, 0);
+        assert_eq!(node3.consensus.bft_round_state.view, 0);
+        assert_eq!(node4.consensus.bft_round_state.view, 0);
+
+        ConsensusTestCtx::timeout(&mut [&mut node1, &mut node2, &mut node3]).await;
+
+        // Skip node 4
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node1, to: [node2, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node2, to: [node1, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node3, to: [node2, node1],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+
+        node1.assert_broadcast("TC").await;
+        // Node 2 won't TC as it's next leader
+        //node2.assert_broadcast("TC").await;
+        node3.assert_broadcast("TC").await;
+
+        assert_eq!(node1.consensus.bft_round_state.view, 1);
+        assert_eq!(node2.consensus.bft_round_state.view, 1);
+        assert_eq!(node3.consensus.bft_round_state.view, 1);
+        assert_eq!(node4.consensus.bft_round_state.view, 0);
+
+        ConsensusTestCtx::timeout(&mut [&mut node1, &mut node2, &mut node3]).await;
+
+        // Skip node 4
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node1, to: [node2, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node2, to: [node1, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node3, to: [node2, node1],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+
+        // Node 4 will only see the TC
+        broadcast! {
+            description: "Follower - TimeoutTC",
+            from: node1, to: [node2, node3, node4],
+            message_matches: ConsensusNetMessage::TimeoutCertificate(..)
+        };
+
+        assert_eq!(node1.consensus.bft_round_state.view, 2);
+        assert_eq!(node2.consensus.bft_round_state.view, 2);
+        assert_eq!(node3.consensus.bft_round_state.view, 2);
+        assert_eq!(node4.consensus.bft_round_state.view, 2);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_timeout_multi_view_only_see_new_prepare() {
+        // Same as test_timeout_multi_view, but node 4 will not see timeouts, just the TC as part of the next prepare.
+        let (mut node1, mut node2, mut node3, mut node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        assert_eq!(node1.consensus.bft_round_state.view, 0);
+        assert_eq!(node2.consensus.bft_round_state.view, 0);
+        assert_eq!(node3.consensus.bft_round_state.view, 0);
+        assert_eq!(node4.consensus.bft_round_state.view, 0);
+
+        ConsensusTestCtx::timeout(&mut [&mut node1, &mut node2, &mut node3]).await;
+
+        // Skip node 4
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node1, to: [node2, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node2, to: [node1, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node3, to: [node2, node1],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+
+        node1.assert_broadcast("TC").await;
+        // Node 2 won't TC as it's next leader
+        //node2.assert_broadcast("TC").await;
+        node3.assert_broadcast("TC").await;
+
+        assert_eq!(node1.consensus.bft_round_state.view, 1);
+        assert_eq!(node2.consensus.bft_round_state.view, 1);
+        assert_eq!(node3.consensus.bft_round_state.view, 1);
+        assert_eq!(node4.consensus.bft_round_state.view, 0);
+
+        ConsensusTestCtx::timeout(&mut [&mut node1, &mut node2, &mut node3]).await;
+
+        // Skip node 4
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node1, to: [node2, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node2, to: [node1, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node3, to: [node2, node1],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+
+        node1.assert_broadcast("TC").await;
+        node2.assert_broadcast("TC").await;
+        // Node 3 won't TC as it's next leader
+        //node3.assert_broadcast("TC").await;
+
+        node3.start_round().await;
+
+        broadcast! {
+            description: "New prepare",
+            from: node3, to: [node1, node2, node4],
+            message_matches: ConsensusNetMessage::Prepare(..)
+        };
+
+        // And it catches up
 
         assert_eq!(node1.consensus.bft_round_state.view, 2);
         assert_eq!(node2.consensus.bft_round_state.view, 2);

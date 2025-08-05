@@ -480,8 +480,8 @@ impl Consensus {
                 self.metrics,
                 "on_timeout_certificate",
                 self.on_timeout_certificate(
-                    &certificate_of_timeout,
-                    &certificate_of_proposal,
+                    certificate_of_timeout,
+                    certificate_of_proposal,
                     slot,
                     view,
                 )

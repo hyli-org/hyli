@@ -778,7 +778,7 @@ async fn consensus_missed_prepare() {
         message_matches: ConsensusNetMessage::Timeout(..)
     };
 
-    // node 3 should join the mutiny
+    // node 4 should join the mutiny
     broadcast! {
         description: "Follower - Timeout",
         from: node4.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx],
