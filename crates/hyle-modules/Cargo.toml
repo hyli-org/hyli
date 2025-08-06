@@ -14,11 +14,14 @@ client-sdk = { workspace = true, features = ["rest", "indexer"] }
 hyle-net = { workspace = true }
 hyle-verifiers = { workspace = true }
 
+config = { workspace = true, default-features = false, features = ["toml"] }
 sha3 = { workspace = true }
 anyhow = { workspace = true }
 borsh = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_with = { workspace = true, features = ["hex"] }
+strum_macros = { workspace = true }
 tracing = { workspace = true }
 assertables = { workspace = true }
 anymap = { workspace = true }
@@ -34,6 +37,9 @@ tracing-subscriber = { workspace = true, features = [
 paste = { workspace = true }
 hex = { workspace = true }
 fjall = { workspace = true }
+
+# GCS
+google-cloud-storage = { workspace = true }
 
 tokio = { workspace = true, features = ["full", "tracing"] }
 tokio-util = { workspace = true }

@@ -11,6 +11,7 @@ use api::APIContract;
 use assertables::assert_ok;
 use client_sdk::{rest_client::NodeApiClient, transaction_builder::ProvableBlobTx};
 use hyle_model::api::APINodeContract;
+use hyle_modules::utils::conf::{Conf, P2pMode, TimestampCheck};
 use testcontainers_modules::{
     postgres::Postgres,
     testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
@@ -20,7 +21,6 @@ use tracing::info;
 use hyle::{
     model::*,
     rest::client::{IndexerApiHttpClient, NodeApiHttpClient},
-    utils::conf::{Conf, P2pMode, TimestampCheck},
 };
 use hyle_contract_sdk::{
     BlobIndex, ContractName, HyleOutput, Identity, ProgramId, StateCommitment, TxHash, Verifier,

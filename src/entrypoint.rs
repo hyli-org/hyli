@@ -6,7 +6,6 @@ use crate::{
     data_availability::DataAvailability,
     explorer::Explorer,
     genesis::Genesis,
-    google_cloud_storage_client::GoogleCloudStorageClient,
     indexer::Indexer,
     mempool::Mempool,
     model::{api::NodeInfo, SharedRunContext},
@@ -15,10 +14,7 @@ use crate::{
     rest::{ApiDoc, RestApi, RestApiRunContext},
     single_node_consensus::SingleNodeConsensus,
     tcp_server::TcpServer,
-    utils::{
-        conf::{self, P2pMode},
-        modules::ModulesHandler,
-    },
+    utils::modules::ModulesHandler,
 };
 use anyhow::{bail, Context, Result};
 use axum::Router;
@@ -30,11 +26,13 @@ use hyle_modules::{
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::DAListenerConf,
+        gcs_uploader::{GcsUploader, GcsUploaderCtx},
         signed_da_listener::SignedDAListener,
         websocket::WebSocketModule,
         BuildApiContextInner,
     },
     node_state::module::NodeStateCtx,
+    utils::conf::{self, P2pMode},
 };
 use hyllar::Hyllar;
 use prometheus::Registry;
@@ -256,9 +254,12 @@ async fn common_main(
     let mut handler = ModulesHandler::new(&bus).await;
 
     if config.run_indexer {
-        if config.indexer.persist_proofs {
+        if config.gcs.save_proofs || config.gcs.save_blocks {
             handler
-                .build_module::<GoogleCloudStorageClient>(config.clone())
+                .build_module::<GcsUploader>(GcsUploaderCtx {
+                    gcs_config: config.gcs.clone(),
+                    data_directory: config.data_directory.clone(),
+                })
                 .await?;
         }
 

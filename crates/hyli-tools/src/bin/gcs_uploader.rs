@@ -1,16 +1,19 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use clap::{Parser, command};
+use clap::{command, Parser};
 
 use hyle_contract_sdk::BlockHeight;
 use hyle_modules::{
-    bus::{SharedMessageBus, metrics::BusMetrics},
-    modules::{ModulesHandler, da_listener::DAListenerConf, signed_da_listener::SignedDAListener},
-    utils::logger::setup_tracing,
+    bus::{metrics::BusMetrics, SharedMessageBus},
+    modules::{
+        da_listener::DAListenerConf,
+        gcs_uploader::{GcsUploader, GcsUploaderCtx},
+        signed_da_listener::SignedDAListener,
+        ModulesHandler,
+    },
+    utils::{conf::Conf, logger::setup_tracing},
 };
-use hyli_tools::gcs_block_uploader::GcsBlockUploaderCtx;
-use hyli_tools::gcs_block_uploader::{Conf, GcsBlockUploader};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -19,12 +22,12 @@ pub struct Args {
     pub config_file: Vec<String>,
 }
 
-pub type SharedConf = Arc<Conf>;
+pub type SharedConf = Arc<GcsUploaderCtx>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let config = Conf::new(args.config_file).context("reading config file")?;
+    let config = Conf::new(args.config_file, None, None).context("reading config file")?;
 
     setup_tracing(&config.log_format, "gcs block uploader".to_string())?;
 
@@ -47,7 +50,10 @@ async fn main() -> Result<()> {
         .await?;
 
     handler
-        .build_module::<GcsBlockUploader>(GcsBlockUploaderCtx { config })
+        .build_module::<GcsUploader>(GcsUploaderCtx {
+            gcs_config: config.gcs.clone(),
+            data_directory: config.data_directory.clone(),
+        })
         .await?;
 
     tracing::info!("Starting modules");

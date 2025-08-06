@@ -1,5 +1,4 @@
 use crate::explorer::api::*;
-use crate::google_cloud_storage_client::GCSRequest;
 use crate::model::*;
 use crate::node_state::module::NodeStateEvent;
 use anyhow::{bail, Context, Error, Result};
@@ -7,6 +6,7 @@ use chrono::{DateTime, Utc};
 use hyle_contract_sdk::TxHash;
 use hyle_model::api::{TransactionStatusDb, TransactionTypeDb};
 use hyle_model::utils::TimestampMs;
+use hyle_modules::modules::gcs_uploader::GCSRequest;
 use hyle_modules::{log_error, log_warn};
 use hyle_net::clock::TimestampMsClock;
 use sqlx::Postgres;

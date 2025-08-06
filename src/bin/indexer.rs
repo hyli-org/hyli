@@ -1,10 +1,13 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use hyle::{
-    entrypoint::RunPg,
-    utils::conf::{self, P2pMode},
+use hyle::entrypoint::RunPg;
+use hyle_modules::{
+    log_error,
+    utils::{
+        conf::{self, P2pMode},
+        logger::setup_tracing,
+    },
 };
-use hyle_modules::{log_error, utils::logger::setup_tracing};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]

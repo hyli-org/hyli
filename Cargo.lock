@@ -4846,7 +4846,6 @@ dependencies = [
  "dhat",
  "fjall",
  "futures",
- "google-cloud-storage",
  "hex",
  "hyle-amm",
  "hyle-client-sdk",
@@ -4874,7 +4873,6 @@ dependencies = [
  "seq-macro",
  "serde",
  "serde_json",
- "serde_with",
  "sha3",
  "signal-child",
  "sqlx",
@@ -5081,8 +5079,10 @@ dependencies = [
  "assertables",
  "axum 0.8.4",
  "borsh",
+ "config",
  "fjall",
  "futures",
+ "google-cloud-storage",
  "hex",
  "hyle-client-sdk",
  "hyle-contract-sdk",
@@ -5099,8 +5099,10 @@ dependencies = [
  "secp256k1 0.31.1",
  "serde",
  "serde_json",
+ "serde_with",
  "sha2",
  "sha3",
+ "strum_macros 0.27.2",
  "syn 2.0.104",
  "tempfile",
  "test-log",
@@ -5238,8 +5240,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyli_tools"
-version = "0.1.0"
+name = "hyli-tools"
+version = "0.13.0-rc.4"
 dependencies = [
  "anyhow",
  "axum 0.8.4",
@@ -5249,7 +5251,6 @@ dependencies = [
  "config",
  "crossterm 0.29.0",
  "dashmap",
- "google-cloud-storage",
  "hyle-client-sdk",
  "hyle-contract-sdk",
  "hyle-model",

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::{Parser, command};
+use clap::{command, Parser};
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyle_model::DataEvent;
 use serde::{Deserialize, Serialize};
@@ -8,11 +8,11 @@ use std::path::PathBuf;
 
 use hyle_contract_sdk::BlockHeight;
 use hyle_modules::module_handle_messages;
-use hyle_modules::modules::{Module, module_bus_client};
+use hyle_modules::modules::{module_bus_client, Module};
 use hyle_modules::{
-    bus::{SharedMessageBus, metrics::BusMetrics},
-    modules::{ModulesHandler, da_listener::DAListenerConf, signed_da_listener::SignedDAListener},
-    node_state::{NodeState, metrics::NodeStateMetrics},
+    bus::{metrics::BusMetrics, SharedMessageBus},
+    modules::{da_listener::DAListenerConf, signed_da_listener::SignedDAListener, ModulesHandler},
+    node_state::{metrics::NodeStateMetrics, NodeState},
     utils::logger::setup_tracing,
 };
 

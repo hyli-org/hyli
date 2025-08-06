@@ -2,26 +2,25 @@
 
 mod handler;
 
-use crate::google_cloud_storage_client::GCSRequest;
 use std::ops::Deref;
 
 use crate::explorer::api::{DataProposalHashDb, TxHashDb};
 use crate::explorer::WsExplorerBlobTx;
 use crate::node_state::module::NodeStateEvent;
-use crate::utils::conf::Conf;
-use crate::{model::*, utils::conf::SharedConf};
 use anyhow::{Context, Result};
 use handler::IndexerHandlerStore;
 use hyle_model::utils::TimestampMs;
+use hyle_model::*;
 use hyle_modules::bus::BusClientSender;
+use hyle_modules::modules::gcs_uploader::GCSRequest;
 use hyle_modules::node_state::module::NodeStateModule;
 use hyle_modules::node_state::{NodeState, NodeStateStore};
+use hyle_modules::utils::conf::{Conf, SharedConf};
 use hyle_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
     modules::{module_bus_client, Module, SharedBuildApiCtx},
 };
-use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::{postgres::PgPoolOptions, PgPool, Pool, Postgres};
 
@@ -42,12 +41,6 @@ pub struct Indexer {
     node_state: NodeState,
     handler_store: IndexerHandlerStore,
     conf: Conf,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct IndexerConf {
-    query_buffer_size: usize,
-    pub persist_proofs: bool,
 }
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/indexer/migrations");
@@ -196,6 +189,7 @@ mod test {
     use hyle_model::api::{
         APIBlob, APIBlock, APIContract, APITransaction, APITransactionEvents, TransactionStatusDb,
     };
+    use hyle_modules::utils::conf::IndexerConf;
     use serde_json::json;
     use std::future::IntoFuture;
     use utils::TimestampMs;

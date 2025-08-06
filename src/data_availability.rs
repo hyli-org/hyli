@@ -4,6 +4,7 @@
 use hyle_modules::modules::data_availability::blocks_fjall::Blocks;
 //use hyle_modules::modules::data_availability::blocks_memory::Blocks;
 
+use hyle_modules::utils::conf::SharedConf;
 use hyle_modules::{bus::SharedMessageBus, modules::Module};
 use hyle_modules::{
     log_error, module_bus_client, module_handle_messages,
@@ -20,7 +21,6 @@ use crate::{
     genesis::GenesisEvent,
     model::*,
     p2p::network::{OutboundMessage, PeerEvent},
-    utils::conf::SharedConf,
 };
 use anyhow::{Context, Error, Result};
 use core::str;
@@ -560,10 +560,11 @@ pub mod tests {
         consensus::CommittedConsensusProposal,
         model::*,
         node_state::module::{NodeStateBusClient, NodeStateEvent},
-        utils::{conf::Conf, integration_test::find_available_port},
+        utils::integration_test::find_available_port,
     };
     use anyhow::Result;
     use hyle_modules::log_error;
+    use hyle_modules::utils::conf::Conf;
     use hyle_modules::utils::da_codec::{
         DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest,
         DataAvailabilityServer,

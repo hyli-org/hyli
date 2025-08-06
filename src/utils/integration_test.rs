@@ -12,6 +12,7 @@ use hyle_model::api::NodeInfo;
 use hyle_model::TxHash;
 use hyle_modules::modules::{BuildApiContextInner, ModulesHandler};
 use hyle_modules::node_state::module::NodeStateCtx;
+use hyle_modules::utils::conf::Conf;
 use tracing::info;
 
 use crate::bus::metrics::BusMetrics;
@@ -28,7 +29,6 @@ use crate::p2p::P2P;
 use crate::rest::{RestApi, RestApiRunContext};
 use crate::single_node_consensus::SingleNodeConsensus;
 use crate::tcp_server::TcpServer;
-use crate::utils::conf::Conf;
 use hyle_crypto::BlstCrypto;
 
 use hyle_modules::{module_bus_client, module_handle_messages, modules::Module};

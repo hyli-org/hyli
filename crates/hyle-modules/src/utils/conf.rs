@@ -1,14 +1,11 @@
+use crate::modules::websocket::WebSocketConfig;
 use anyhow::{Context, Result};
 use config::{Config, Environment, File};
-use hyle_modules::modules::websocket::WebSocketConfig;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use serde_with::DurationMilliSeconds;
 use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::Arc, time::Duration};
 use strum_macros::IntoStaticStr;
-
-use crate::google_cloud_storage_client::GCSConf;
-use crate::indexer::IndexerConf;
 
 #[serde_as]
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -87,6 +84,22 @@ pub struct NodeWebSocketConfig {
     pub events: Vec<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct GCSConf {
+    // GCS uploader options
+    pub gcs_bucket: String,
+    pub gcs_prefix: String,
+
+    pub save_proofs: bool,
+    pub save_blocks: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct IndexerConf {
+    pub query_buffer_size: usize,
+    pub persist_proofs: bool,
+}
+
 impl From<NodeWebSocketConfig> for WebSocketConfig {
     fn from(config: NodeWebSocketConfig) -> Self {
         Self {
@@ -161,7 +174,7 @@ pub struct Conf {
     /// Configuration for the indexer module
     pub indexer: IndexerConf,
 
-    /// Google Cloud Storage Client configuration
+    /// GCSUploader configuration
     pub gcs: GCSConf,
 }
 

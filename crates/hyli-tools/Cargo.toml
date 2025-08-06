@@ -1,7 +1,11 @@
 [package]
-name = "hyli_tools"
-version = "0.1.0"
-edition = "2024"
+name = "hyli-tools"
+license-file = { workspace = true }
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
 
 [[bin]]
 name = "block_dbg"
@@ -49,9 +53,6 @@ prometheus = { workspace = true }
 # Feature UI
 ratatui = { workspace = true, features = ["crossterm"], optional = true }
 crossterm = { workspace = true, optional = true }
-
-# GCS
-google-cloud-storage = { workspace = true }
 
 # Health check
 ureq = { workspace = true, features = ["json"] }

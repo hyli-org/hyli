@@ -22,6 +22,7 @@ mod e2e_consensus {
         HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID, STAKING_ELF, STAKING_ID,
     };
     use hyle_model::{ContractName, StateCommitment, TxHash};
+    use hyle_modules::utils::conf::TimestampCheck;
     use hyllar::client::tx_executor_handler::transfer;
     use hyllar::erc20::ERC20;
     use hyllar::{Hyllar, FAUCET_ID};
@@ -359,12 +360,9 @@ mod e2e_consensus {
 
     #[test_log::test(tokio::test)]
     async fn can_restart_multi_node_after_txs() -> Result<()> {
-        let mut ctx = E2ECtx::new_multi_with_indexer_and_timestamp_checks(
-            4,
-            500,
-            hyle::utils::conf::TimestampCheck::Monotonic,
-        )
-        .await?;
+        let mut ctx =
+            E2ECtx::new_multi_with_indexer_and_timestamp_checks(4, 500, TimestampCheck::Monotonic)
+                .await?;
 
         _ = ctx.wait_indexer_height(1).await;
 

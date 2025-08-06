@@ -2,7 +2,7 @@
 
 pub mod api;
 
-use crate::{model::*, utils::conf::SharedConf};
+use crate::model::*;
 use anyhow::{Context, Result};
 use api::*;
 use axum::extract::ws::Message;
@@ -22,6 +22,7 @@ use hyle_model::api::{
 use hyle_model::utils::TimestampMs;
 use hyle_modules::bus::BusMessage;
 use hyle_modules::log_error;
+use hyle_modules::utils::conf::SharedConf;
 use hyle_modules::{
     bus::SharedMessageBus,
     module_handle_messages,

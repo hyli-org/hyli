@@ -83,6 +83,11 @@ events = ["node_state", "new_block", "new_tx"]
 query_buffer_size = 100
 persist_proofs = true
 
-[gcs.proof]
-bucket = "testnet_proofs"
-prefix = "local"
+[gcs]
+# GCS bucket info
+gcs_bucket = "testnet_proofs"
+gcs_prefix = "local"
+
+# GCS uploader options
+save_proofs = false
+save_blocks = false

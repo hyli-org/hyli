@@ -7,8 +7,9 @@ use std::time::Duration;
 
 use anyhow::Context;
 use client_sdk::rest_client::NodeApiHttpClient;
-use hyle::{entrypoint::main_process, utils::conf::Conf};
+use hyle::entrypoint::main_process;
 use hyle_crypto::BlstCrypto;
+use hyle_modules::utils::conf::Conf;
 use hyle_net::net::Sim;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tempfile::TempDir;

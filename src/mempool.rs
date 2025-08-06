@@ -9,7 +9,7 @@ use crate::{
     p2p::network::{
         HeaderSignableData, HeaderSigner, IntoHeaderSignableData, MsgWithHeader, OutboundMessage,
     },
-    utils::{conf::SharedConf, serialize::BorshableIndexMap},
+    utils::serialize::BorshableIndexMap,
 };
 use anyhow::{bail, Context, Result};
 use api::RestApiMessage;
@@ -17,6 +17,7 @@ use block_construction::BlockUnderConstruction;
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
 use hyle_crypto::SharedBlstCrypto;
+use hyle_modules::utils::conf::SharedConf;
 use hyle_modules::{bus::BusMessage, log_warn, module_bus_client, utils::static_type_map::Pick};
 use hyle_net::{logged_task::logged_task, ordered_join_set::OrderedJoinSet};
 use indexmap::IndexSet;

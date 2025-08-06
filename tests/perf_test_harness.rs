@@ -6,7 +6,7 @@ use fixtures::{
     ctx::E2ECtx,
     test_helpers::{self, ConfMaker},
 };
-use hyle::utils::conf::Conf;
+use hyle_modules::utils::conf::Conf;
 
 mod fixtures;
 

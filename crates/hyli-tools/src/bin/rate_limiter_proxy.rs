@@ -1,25 +1,25 @@
 use anyhow::Context;
 use axum::{
-    Router,
     body::Body,
     extract::{Request, State},
     http::{StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{get, post},
+    Router,
 };
 use chrono::{Local, NaiveDate};
 use clap::Parser;
-use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
 use hyle_modules::{modules::rest::handle_panic, utils::logger::setup_tracing};
 use hyper::body::Incoming;
 use hyper_util::{
-    client::legacy::{Client, connect::HttpConnector},
+    client::legacy::{connect::HttpConnector, Client},
     rt::TokioExecutor,
 };
 use opentelemetry::{
-    InstrumentationScope, KeyValue,
     metrics::{Counter, Gauge},
+    InstrumentationScope, KeyValue,
 };
 use prometheus::{Encoder, Registry, TextEncoder};
 use serde::{Deserialize, Serialize};

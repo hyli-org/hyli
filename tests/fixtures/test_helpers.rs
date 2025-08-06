@@ -5,13 +5,10 @@ use client_sdk::{
     transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutor},
 };
 
-use hyle::{
-    model::BlobTransaction,
-    rest::client::NodeApiHttpClient,
-    utils::conf::{Conf, NodeWebSocketConfig, P2pConf, P2pMode},
-};
+use hyle::{model::BlobTransaction, rest::client::NodeApiHttpClient};
 use hyle_crypto::BlstCrypto;
 use hyle_model::TxHash;
+use hyle_modules::utils::conf::{Conf, NodeWebSocketConfig, P2pConf, P2pMode};
 use signal_child::signal;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -71,7 +68,7 @@ impl Default for ConfMaker {
         let mut default = Conf::new(vec![], None, None).unwrap();
 
         default.log_format = "node".to_string(); // Activate node name in logs for convenience in tests.
-        default.p2p.mode = hyle::utils::conf::P2pMode::FullValidator;
+        default.p2p.mode = P2pMode::FullValidator;
         default.consensus.solo = false;
         default.genesis.stakers = {
             let mut stakers = std::collections::HashMap::new();
