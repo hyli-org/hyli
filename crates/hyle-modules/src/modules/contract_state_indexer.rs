@@ -1,9 +1,9 @@
 use crate::{
-    bus::{BusClientSender, SharedMessageBus},
+    bus::{BusClientSender, BusMessage, SharedMessageBus},
     log_debug, log_error, module_bus_client, module_handle_messages,
     modules::Module,
 };
-use anyhow::{anyhow, Error, Result};
+use anyhow::{anyhow, bail, Error, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::contract_indexer::{ContractHandler, ContractStateStore};
 use sdk::*;
@@ -21,15 +21,19 @@ pub struct CSIBusEvent<E> {
     pub event: E,
 }
 
+impl<E: BusMessage> BusMessage for CSIBusEvent<E> {
+    const CAPACITY: usize = E::CAPACITY;
+}
+
 module_bus_client! {
 #[derive(Debug)]
-struct CSIBusClient<E: Clone + Send + Sync + 'static> {
+struct CSIBusClient<E: Clone + Send + Sync + BusMessage + 'static> {
     sender(CSIBusEvent<E>),
     receiver(NodeStateEvent),
 }
 }
 
-pub struct ContractStateIndexer<State, Event: Clone + Send + Sync + 'static = ()> {
+pub struct ContractStateIndexer<State, Event: Clone + Send + Sync + BusMessage + 'static = ()> {
     bus: CSIBusClient<Event>,
     store: Arc<RwLock<ContractStateStore<State>>>,
     contract_name: ContractName,
@@ -52,7 +56,7 @@ where
         + BorshSerialize
         + BorshDeserialize
         + 'static,
-    Event: std::fmt::Debug + Clone + Send + Sync + 'static,
+    Event: std::fmt::Debug + Clone + Send + Sync + BusMessage + 'static,
 {
     type Context = ContractStateIndexerCtx;
 
@@ -138,7 +142,7 @@ where
         + BorshSerialize
         + BorshDeserialize
         + 'static,
-    Event: std::fmt::Debug + Clone + Send + Sync + 'static,
+    Event: std::fmt::Debug + Clone + Send + Sync + BusMessage + 'static,
 {
     /// Note: Each copy of the contract state indexer does the same handle_block on each data event
     /// coming from node state.
@@ -293,9 +297,24 @@ where
         contract: &RegisterContractEffect,
         metadata: &Option<Vec<u8>>,
     ) -> Result<()> {
-        let state = State::construct_state(contract, metadata)?;
-        tracing::info!(cn = %self.contract_name, "📝 Registered suppored contract '{}'", contract.contract_name);
-        self.store.write().await.state = Some(state);
+        let mut store = self.store.write().await;
+        if let Some(state) = store.state.as_ref() {
+            tracing::warn!(cn = %self.contract_name, "⚠️  Got re-register contract '{}'", contract.contract_name);
+            if state.get_state_commitment() == contract.state_commitment {
+                tracing::info!(cn = %self.contract_name, "📝 Re-register contract '{}' with same state commitment", contract.contract_name);
+            } else {
+                let state = State::construct_state(contract, metadata)?;
+                if contract.state_commitment != state.get_state_commitment() {
+                    bail!("Rebuilt contract '{}' state commitment does not match the one in the register effect", contract.contract_name);
+                }
+                tracing::warn!(cn = %self.contract_name, "📝 Contract '{}' re-built initial state", contract.contract_name);
+                store.state = Some(state);
+            }
+        } else {
+            let state = State::construct_state(contract, metadata)?;
+            tracing::info!(cn = %self.contract_name, "📝 Registered suppored contract '{}'", contract.contract_name);
+            store.state = Some(state);
+        }
         Ok(())
     }
 }

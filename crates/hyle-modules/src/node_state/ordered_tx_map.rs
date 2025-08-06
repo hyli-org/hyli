@@ -15,10 +15,6 @@ impl OrderedTxMap {
         self.map.get(hash)
     }
 
-    pub fn get_mut(&mut self, hash: &TxHash) -> Option<&mut UnsettledBlobTransaction> {
-        self.map.get_mut(hash)
-    }
-
     /// Returns true if the tx is the next to settle for all the contracts it contains
     pub fn is_next_to_settle(&self, tx_hash: &TxHash) -> bool {
         if let Some(unsettled_blob_tx) = self.map.get(tx_hash) {

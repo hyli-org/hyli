@@ -1,4 +1,5 @@
 use client_sdk::helpers::risc0::Risc0Prover;
+use hyle_hyllar::client::tx_executor_handler::metadata::PROGRAM_ID;
 use hyle_hyllar::erc20::ERC20;
 use hyle_hyllar::{
     client::tx_executor_handler::metadata::HYLLAR_ELF, Hyllar, HyllarAction, FAUCET_ID,
@@ -33,7 +34,7 @@ async fn main() {
         private_input: vec![],
     };
 
-    let prover = Risc0Prover::new(HYLLAR_ELF);
+    let prover = Risc0Prover::new(HYLLAR_ELF, PROGRAM_ID);
     let proof = prover.prove(commitment_metadata, vec![calldata]).await;
 
     if let Err(err) = proof {

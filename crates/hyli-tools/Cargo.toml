@@ -14,10 +14,6 @@ path = "src/bin/smt_auto_prover.rs"
 required-features = ["risc0"]
 
 [[bin]]
-name = "nuke_tx"
-path = "src/bin/nuke_tx.rs"
-
-[[bin]]
 name = "health_check"
 path = "src/bin/health_check.rs"
 
@@ -34,15 +30,13 @@ hyle-model = { workspace = true }
 smt-token = { workspace = true, features = ["client"] }
 
 anyhow = { workspace = true }
-clap = { workspace = true }
+clap = { workspace = true, features = ["std"] }
 config = { workspace = true, features = ["toml"] }
 serde = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 tracing-subscriber = { workspace = true }
-secp256k1 = { workspace = true, features = ["global-context"] }
 sha2 = { workspace = true }
-hex = { workspace = true }
 borsh = { workspace = true }
 serde_json = { workspace = true }
 
@@ -66,9 +60,9 @@ ureq = { workspace = true, features = ["json"] }
 axum = { workspace = true, optional = true }
 tower_governor = { workspace = true, optional = true }
 tower-http = { workspace = true, features = [
-    "trace",
-    "cors",
-    "catch-panic",
+  "trace",
+  "cors",
+  "catch-panic",
 ], optional = true }
 hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }
@@ -79,13 +73,13 @@ chrono = { workspace = true, features = ["clock"], optional = true }
 [features]
 risc0 = ["client-sdk/risc0"]
 rate-proxy = [
-    "dep:axum",
-    "dep:tower_governor",
-    "dep:tower-http",
-    "dep:hyper",
-    "dep:hyper-util",
-    "dep:dashmap",
-    "dep:chrono",
+  "dep:axum",
+  "dep:tower_governor",
+  "dep:tower-http",
+  "dep:hyper",
+  "dep:hyper-util",
+  "dep:dashmap",
+  "dep:chrono",
 ]
 
 default = ["ui", "rate-proxy"]

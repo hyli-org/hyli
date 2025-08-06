@@ -18,7 +18,7 @@ use hyle_contract_sdk::{
 };
 use hyle_crypto::SharedBlstCrypto;
 use hyle_modules::{
-    bus::{BusClientSender, SharedMessageBus},
+    bus::{BusClientSender, BusMessage, SharedMessageBus},
     bus_client, handle_messages, log_error,
     modules::Module,
     node_state::hyle_contract_definition,
@@ -39,6 +39,8 @@ pub enum GenesisEvent {
     NoGenesis,
     GenesisBlock(SignedBlock),
 }
+
+impl BusMessage for GenesisEvent {}
 
 bus_client! {
 struct GenesisBusClient {
@@ -230,10 +232,16 @@ impl Genesis {
             genesis_txs.push(
                 VerifiedProofTransaction {
                     contract_name: "risc0-recursion".into(),
+                    program_id: contract_program_ids
+                        .get(&ContractName("risc0-recursion".to_string()))
+                        .expect("Genesis TXes on unregistered contracts")
+                        .clone(),
+                    verifier: hyle_model::verifiers::RISC0_1.into(),
                     proven_blobs: outputs
                         .drain(..)
                         .map(|(contract_name, out)| BlobProofOutput {
                             original_proof_hash: ProofData::default().hashed(),
+                            verifier: hyle_model::verifiers::RISC0_1.into(),
                             program_id: contract_program_ids
                                 .get(&contract_name)
                                 .expect("Genesis TXes on unregistered contracts")

@@ -80,7 +80,10 @@ impl super::Mempool {
                     ))?;
 
                     match entry_or_missing {
-                        EntryOrMissingHash::Entry(_, dp) => dps.insert(0, dp),
+                        EntryOrMissingHash::Entry(_, mut dp) => {
+                            dp.remove_proofs();
+                            dps.push(dp);
+                        }
                         EntryOrMissingHash::MissingHash(hash) => {
                             debug!(
                                 "Data proposal {} not available locally for lane {}",
@@ -91,6 +94,8 @@ impl super::Mempool {
                         }
                     }
                 }
+                // Reverse to maintain the correct order (most recent first)
+                dps.reverse();
 
                 (dps, missing_hash)
             };

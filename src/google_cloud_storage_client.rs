@@ -3,7 +3,9 @@
 use anyhow::{Context, Result};
 use google_cloud_storage::client::Client;
 use hyle_modules::{
-    bus::SharedMessageBus, log_error, module_bus_client, module_handle_messages, modules::Module,
+    bus::{BusMessage, SharedMessageBus},
+    log_error, module_bus_client, module_handle_messages,
+    modules::Module,
 };
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -18,6 +20,7 @@ pub enum GCSRequest {
         parent_data_proposal_hash: hyle_model::DataProposalHash,
     },
 }
+impl BusMessage for GCSRequest {}
 
 module_bus_client! {
 struct GoogleCloudStorageBusClient {

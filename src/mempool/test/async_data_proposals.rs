@@ -38,7 +38,7 @@ async fn test_mempool_isnt_blocked_by_proof_verification() {
 
 async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
     let mut node_modules = NodeIntegrationCtxBuilder::new().await;
-    node_modules.conf.consensus.slot_duration = Duration::from_millis(200);
+    node_modules.conf.consensus.slot_duration = Duration::from_millis(400);
 
     let mut node_modules = node_modules
         .skip::<Genesis>()
@@ -120,6 +120,8 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
         node_client.send(RestApiMessage::NewTx(
             ProofTransaction {
                 contract_name: contract_name.clone(),
+                verifier: "test-slow".into(),
+                program_id: ProgramId(vec![]),
                 proof: proof.clone(),
             }
             .into(),
@@ -185,12 +187,15 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
         txs.push(
             VerifiedProofTransaction {
                 contract_name: contract_name.clone(),
+                verifier: "test-slow".into(),
+                program_id: ProgramId(vec![]),
                 proof: Some(proof.clone()),
                 proof_hash: proof_hash.clone(),
                 proven_blobs: vec![BlobProofOutput {
                     original_proof_hash: proof_hash.clone(),
                     blob_tx_hash: blob_tx_hash.clone(),
                     program_id: ProgramId(vec![]),
+                    verifier: "test-slow".into(),
                     hyle_output: HyleOutput::default(),
                 }],
                 is_recursive: false,

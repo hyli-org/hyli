@@ -130,6 +130,8 @@ macro_rules! simple_commit_round {
         let round_consensus_proposal;
         let round_ticket;
         let view: u64;
+        use $crate::tests::autobahn_testing::broadcast;
+        use $crate::tests::autobahn_testing::send;
         broadcast! {
             description: "Leader - Prepare",
             from: $leader, to: [$($follower),+$(,$joining)?],
@@ -2141,6 +2143,7 @@ async fn autobahn_commit_byzantine_across_views_attempts() {
             assert_eq!(tcp, &initial_cp);
         }
     };
+    // TODO: check that proposing something different will fail?
 }
 
 #[test_log::test(tokio::test)]

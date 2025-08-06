@@ -442,8 +442,8 @@ impl BlockDbg {
                             KeyCode::Down | KeyCode::Char('j') => {
                                 match ui_state.focused_panel {
                                     FocusPanel::BlockList => {
-                                        let display_blocks: Vec<_> = ui_state.blocks.iter().filter(|(_, tx_count)| *tx_count > 0).collect();
-                                        if ui_state.selected + 1 < display_blocks.len() {
+                                        let display_blocks = ui_state.blocks.iter().filter(|(_, tx_count)| *tx_count > 0).count();
+                                        if ui_state.selected + 1 < display_blocks {
                                             ui_state.selected += 1;
                                         }
                                     }

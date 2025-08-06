@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
-use crate::bus::{BusClientSender, SharedMessageBus};
+use crate::bus::{BusClientSender, BusMessage, SharedMessageBus};
 use crate::modules::signal::shutdown_aware_timeout;
 use crate::modules::SharedBuildApiCtx;
 use crate::{log_error, module_bus_client, module_handle_messages, modules::Module};
@@ -60,7 +60,7 @@ pub struct AutoProverStore<Contract> {
     unsettled_txs: Vec<(BlobTransaction, TxContext, TxId)>,
     // These are the transactions that are currently being proved
     proving_txs: Vec<(BlobTransaction, TxContext, TxId)>,
-    state_history: BTreeMap<TxHash, Contract>,
+    state_history: BTreeMap<TxHash, (Contract, bool)>,
     tx_chain: Vec<TxHash>,
     buffered_blobs: Vec<(Vec<BlobIndex>, BlobTransaction, TxContext)>,
     buffered_blocks_count: u32,
@@ -98,6 +98,10 @@ pub enum AutoProverEvent<Contract> {
     /// Event sent when a blob is executed as success
     /// proof will be generated & sent to the node
     SuccessTx(TxHash, Contract),
+}
+
+impl<Contract> BusMessage for AutoProverEvent<Contract> {
+    const CAPACITY: usize = crate::bus::LOW_CAPACITY;
 }
 
 impl<Contract> Module for AutoProver<Contract>
@@ -420,7 +424,9 @@ where
 
                 if let Some(last_tx_hash) = last_tx_hash {
                     self.store.tx_chain = vec![last_tx_hash.clone()];
-                    self.store.state_history.insert(last_tx_hash, contract);
+                    self.store
+                        .state_history
+                        .insert(last_tx_hash, (contract, true));
                 }
 
                 // Now any remaining TX is to be buffered and handled on the next block
@@ -634,7 +640,7 @@ where
                 .first()
                 .and_then(|first| self.store.state_history.get(first))
             {
-                if prover_state.get_state_commitment() != *contract {
+                if prover_state.0.get_state_commitment() != *contract {
                     error!(
                         cn =% self.ctx.contract_name,
                         block_height =% block.block_height,
@@ -826,14 +832,23 @@ where
             );
             let found = self.store.state_history.remove(tx);
             self.store.tx_chain.retain(|h| h != tx);
-            if found.is_some() {
-                *replay_from = Some(std::cmp::min(replay_from.unwrap_or(pos), pos));
-                self.clear_state_history_after_failed(pos)?;
+            if let Some((_, success)) = found {
+                if success {
+                    *replay_from = Some(std::cmp::min(replay_from.unwrap_or(pos), pos));
+                    self.clear_state_history_after_failed(pos)?;
+                } else {
+                    debug!(
+                        cn =% self.ctx.contract_name,
+                        tx_hash =% tx,
+                        "🔀 Tx {} already executed as failed, nothing to re-execute",
+                        tx
+                    );
+                }
             } else {
                 debug!(
                     cn =% self.ctx.contract_name,
                     tx_hash =% tx,
-                    "🔀 No state history found for tx {}, nothing to revert",
+                    "🔀 No state history found for tx {}, nothing to re-execute",
                     tx
                 );
             }
@@ -890,7 +905,7 @@ where
                     "Found previous state from tx {:?}",
                     prev_tx
                 );
-                return Some(contract);
+                return Some(contract.0);
             } else {
                 error!(
                     cn =% self.ctx.contract_name,
@@ -1066,7 +1081,9 @@ where
                     .send(AutoProverEvent::FailedTx(tx_hash.clone(), e))?;
                 // Must exist - we failed above otherwise.
                 let initial_contract = self.get_state_of_prev_tx(&tx_hash).unwrap();
-                self.store.state_history.insert(tx_hash, initial_contract);
+                self.store
+                    .state_history
+                    .insert(tx_hash, (initial_contract, false));
             } else {
                 debug!(
                     cn =% self.ctx.contract_name,
@@ -1079,7 +1096,7 @@ where
                     tx_hash.clone(),
                     contract.clone(),
                 ))?;*/
-                self.store.state_history.insert(tx_hash, contract);
+                self.store.state_history.insert(tx_hash, (contract, true));
             }
         }
 
@@ -1128,6 +1145,8 @@ where
                         }
                         let tx = ProofTransaction {
                             contract_name: contract_name.clone(),
+                            program_id: prover.program_id(),
+                            verifier: prover.verifier(),
                             proof: proof.data,
                         };
                         // If we are in nosend mode, we just log the proof and don't send it (for debugging)

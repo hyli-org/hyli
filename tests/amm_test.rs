@@ -25,7 +25,7 @@ mod e2e_amm {
         Hydentity,
     };
     use hyle_contract_sdk::{Blob, Calldata, ContractName, HyleOutput};
-    use hyle_contracts::{AMM_ELF, HYDENTITY_ELF, HYLLAR_ELF};
+    use hyle_contracts::{AMM_ELF, AMM_ID, HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
     use hyllar::{
         client::tx_executor_handler::{approve, transfer},
         erc20::ERC20,
@@ -121,10 +121,13 @@ mod e2e_amm {
             amm: Amm::default(),
         })
         // Replace prover binaries for non-reproducible mode.
-        .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
-        .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF))
-        .with_prover("hyllar2".into(), Risc0Prover::new(HYLLAR_ELF))
-        .with_prover("amm".into(), Risc0Prover::new(AMM_ELF))
+        .with_prover(
+            "hydentity".into(),
+            Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+        )
+        .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
+        .with_prover("hyllar2".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
+        .with_prover("amm".into(), Risc0Prover::new(AMM_ELF, AMM_ID))
         .build();
 
         let hyllar_initial_total_amount: u128 = executor
@@ -429,6 +432,8 @@ mod e2e_amm {
         info!("➡️  Sending recursive proof for hydentity, amm, hyllar and hyllar2");
         ctx.send_proof(
             "risc0-recursion".into(),
+            hyle_model::ProgramId(hyle_contracts::RISC0_RECURSION_ID.to_vec()),
+            hyle_model::verifiers::RISC0_1.into(),
             ProofData(recursive_proof),
             vec![
                 blob_tx_hash.clone(),

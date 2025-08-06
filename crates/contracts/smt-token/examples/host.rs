@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use client_sdk::helpers::risc0::Risc0Prover;
 use hyle_smt_token::{
     account::{Account, AccountSMT},
-    client::tx_executor_handler::metadata::SMT_TOKEN_ELF,
+    client::tx_executor_handler::metadata::{PROGRAM_ID, SMT_TOKEN_ELF},
     SmtTokenAction, SmtTokenContract,
 };
 use sdk::{
@@ -64,7 +64,7 @@ async fn main() {
         private_input: vec![],
     };
 
-    let prover = Risc0Prover::new(SMT_TOKEN_ELF);
+    let prover = Risc0Prover::new(SMT_TOKEN_ELF, PROGRAM_ID);
 
     let proof = prover.prove(commitment_metadata, vec![calldata]).await;
 

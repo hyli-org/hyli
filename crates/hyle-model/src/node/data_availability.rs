@@ -59,7 +59,7 @@ pub struct UnsettledBlobTransaction {
 pub struct UnsettledBlobMetadata {
     pub blob: Blob,
     // Each time we receive a proof, we add it to this list
-    pub possible_proofs: Vec<(ProgramId, HyleOutput)>,
+    pub possible_proofs: Vec<(ProgramId, HyleOutput, Verifier)>,
 }
 
 #[derive(
@@ -78,6 +78,8 @@ pub struct HandledBlobProofOutput {
     pub blob_tx_hash: TxHash,
     pub blob_index: BlobIndex,
     pub contract_name: ContractName,
+    pub verifier: Verifier,
+    pub program_id: ProgramId,
     pub hyle_output: HyleOutput,
     pub blob_proof_output_index: usize,
 }
@@ -95,6 +97,8 @@ pub struct BlobProofOutput {
     pub hyle_output: HyleOutput,
     /// Program ID used to verify the proof.
     pub program_id: ProgramId,
+    /// verifier used to verify the proof.
+    pub verifier: Verifier,
 }
 
 pub struct BlobProofOutputHash(pub Vec<u8>);

@@ -96,9 +96,33 @@ HYLE_CONSENSUS__SLOT_DURATION=100
 
 ```bash
 # Build the dependency image, this is a cache layer for faster iteration builds
-docker build . -t hyle-dep -f Dockerfile.dependencies
+docker build -f Dockerfile.dependencies -t hyle-dep .
 # Build the node image
-docker build . -t hyle
+docker build -t hyle .
+```
+
+### Build Locally on MacOS (Apple Silicon)
+
+##### 🧰 Requirements for buildx users
+If you are building for an architecture different than your host machine (e.g., building arm64 on an amd64 host), make sure to set up your environment accordingly:
+
+```bash
+# 1. Enable Docker BuildKit (recommended)
+export DOCKER_BUILDKIT=1
+
+# 2. Create and use a buildx builder (only needed once)
+docker buildx create --use --name hyle-builder
+docker buildx inspect --bootstrap
+
+# 3. Install QEMU for cross-platform builds
+docker run --privileged --rm tonistiigi/binfmt --install all
+```
+
+```bash
+# Build the dependency image, this is a cache layer for faster iteration builds
+docker buildx build --platform linux/arm64 -f Dockerfile.dependencies -t hyle-dep .
+# Build the node image
+docker buildx build --platform linux/arm64 -t hyle .
 ```
 
 ### Run Locally with Docker
@@ -107,6 +131,7 @@ docker build . -t hyle
 docker run -v ./db:/hyle/data -e HYLE_RUN_INDEXER=false -p 4321:4321 -p 1234:1234 hyle
 ```
 
+> 🛠️ **Note**: If you build on MacOS (Apple Silicon), add `--platform linux/arm64` to run script.
 > 🛠️ **Note**: If you encounter permission issues with the `/hyle/data` volume, add the `--privileged` flag.
 
 ---

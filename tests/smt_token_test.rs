@@ -18,7 +18,7 @@ mod e2e_smt_token {
         Hydentity,
     };
     use hyle_contract_sdk::{Blob, Calldata, ContractName, HyleOutput};
-    use hyle_contracts::{HYDENTITY_ELF, SMT_TOKEN_ELF};
+    use hyle_contracts::{HYDENTITY_ELF, HYDENTITY_ID, SMT_TOKEN_ELF, SMT_TOKEN_ID};
     use smt_token::{client::tx_executor_handler::SmtTokenProvableState, FAUCET_ID};
 
     use super::*;
@@ -46,8 +46,14 @@ mod e2e_smt_token {
 
         let mut executor = TxExecutorBuilder::new(States { hydentity, oranj })
             // Replace prover binaries for non-reproducible mode.
-            .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
-            .with_prover("oranj".into(), Risc0Prover::new(SMT_TOKEN_ELF))
+            .with_prover(
+                "hydentity".into(),
+                Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+            )
+            .with_prover(
+                "oranj".into(),
+                Risc0Prover::new(SMT_TOKEN_ELF, SMT_TOKEN_ID),
+            )
             .build();
 
         info!("➡️  Sending blob to register bob identity");

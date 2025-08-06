@@ -164,35 +164,37 @@ impl Indexer {
             let mut query_builder = QueryBuilder::<Postgres>::new(
                 "INSERT INTO blocks (hash, parent_hash, height, timestamp, total_txs) ",
             );
-            query_builder
-                .push_values(self.handler_store.blocks.drain(..), |mut b, block| {
-                    let block_hash = block.hash.clone();
-                    let block_height = log_error!(
-                        i64::try_from(block.block_height.0).map_err(|_| anyhow::anyhow!(
-                            "Block height is too large to fit into an i64"
-                        )),
-                        "Converting block height into i64"
-                    )
-                    .unwrap_or_default();
-                    let total_txs = block.txs.len() as i64;
+            _ = log_error!(
+                query_builder
+                    .push_values(self.handler_store.blocks.drain(..), |mut b, block| {
+                        let block_hash = block.hash.clone();
+                        let block_height = log_error!(
+                            i64::try_from(block.block_height.0).map_err(|_| anyhow::anyhow!(
+                                "Block height is too large to fit into an i64"
+                            )),
+                            "Converting block height into i64"
+                        )
+                        .unwrap_or_default();
+                        let total_txs = block.txs.len() as i64;
 
-                    let block_timestamp = into_utc_date_time(&block.block_timestamp)
-                        .context("Block's timestamp is incorrect")
-                        .unwrap_or_else(|_| {
-                            // If the timestamp is incorrect, we can use the current time as a fallback.
-                            Utc::now()
-                        });
+                        let block_timestamp = into_utc_date_time(&block.block_timestamp)
+                            .context("Block's timestamp is incorrect")
+                            .unwrap_or_else(|_| {
+                                // If the timestamp is incorrect, we can use the current time as a fallback.
+                                Utc::now()
+                            });
 
-                    b.push_bind(block_hash)
-                        .push_bind(block.parent_hash.clone())
-                        .push_bind(block_height)
-                        .push_bind(block_timestamp)
-                        .push_bind(total_txs);
-                })
-                .build()
-                .execute(&mut *transaction)
-                .await
-                .context("Inserting blocks")?;
+                        b.push_bind(block_hash)
+                            .push_bind(block.parent_hash.clone())
+                            .push_bind(block_height)
+                            .push_bind(block_timestamp)
+                            .push_bind(total_txs);
+                    })
+                    .build()
+                    .execute(&mut *transaction)
+                    .await,
+                "Inserting blocks"
+            )?;
         }
 
         // Insert transactions into the database with batching
@@ -281,17 +283,20 @@ impl Indexer {
                     end",
                 );
 
-                query_builder
-                    .build()
-                    .execute(&mut *transaction)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Inserting transactions batch {} of {}",
-                            batch_idx + 1,
-                            chunks.len()
-                        )
-                    })?;
+                _ = log_error!(
+                    query_builder
+                        .build()
+                        .execute(&mut *transaction)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Inserting transactions batch {} of {}",
+                                batch_idx + 1,
+                                chunks.len()
+                            )
+                        }),
+                    "Inserting transactions"
+                )?;
             }
         }
 
@@ -338,17 +343,20 @@ impl Indexer {
 
                 query_builder.push(" ON CONFLICT DO NOTHING");
 
-                query_builder
-                    .build()
-                    .execute(&mut *transaction)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Inserting blobs batch {} of {}",
-                            batch_idx + 1,
-                            chunks.len()
-                        )
-                    })?;
+                log_error!(
+                    query_builder
+                        .build()
+                        .execute(&mut *transaction)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Inserting blobs batch {} of {}",
+                                batch_idx + 1,
+                                chunks.len()
+                            )
+                        }),
+                    "Inserting blobs"
+                )?;
             }
 
             // Insert txs_contracts with batching
@@ -375,17 +383,20 @@ impl Indexer {
                 });
 
                 query_builder.push(" ON CONFLICT DO NOTHING");
-                query_builder
-                    .build()
-                    .execute(&mut *transaction)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Inserting txs_contracts batch {} of {}",
-                            batch_idx + 1,
-                            tx_contracts_chunks.len()
-                        )
-                    })?;
+                _ = log_error!(
+                    query_builder
+                        .build()
+                        .execute(&mut *transaction)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Inserting txs_contracts batch {} of {}",
+                                batch_idx + 1,
+                                tx_contracts_chunks.len()
+                            )
+                        }),
+                    "Inserting txs_contracts"
+                )?;
             }
         }
 
@@ -427,17 +438,20 @@ impl Indexer {
                         .push_unseparated("::jsonb");
                 });
 
-                query_builder
-                    .build()
-                    .execute(&mut *transaction)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Inserting transaction events batch {} of {}",
-                            batch_idx + 1,
-                            chunks.len()
-                        )
-                    })?;
+                _ = log_error!(
+                    query_builder
+                        .build()
+                        .execute(&mut *transaction)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Inserting transaction events batch {} of {}",
+                                batch_idx + 1,
+                                chunks.len()
+                            )
+                        }),
+                    "Inserting transaction events"
+                )?;
             }
         }
 
@@ -495,17 +509,20 @@ impl Indexer {
                 query_builder.push("timeout_window = EXCLUDED.timeout_window, ");
                 query_builder.push("state_commitment = EXCLUDED.state_commitment ");
 
-                query_builder
-                    .build()
-                    .execute(&mut *transaction)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Inserting contracts batch {} of {}",
-                            batch_idx + 1,
-                            chunks.len()
-                        )
-                    })?;
+                _ = log_error!(
+                    query_builder
+                        .build()
+                        .execute(&mut *transaction)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Inserting contracts batch {} of {}",
+                                batch_idx + 1,
+                                chunks.len()
+                            )
+                        }),
+                    "Inserting contracts"
+                )?;
             }
         }
 
@@ -541,17 +558,20 @@ impl Indexer {
                         .push_bind(state_commitment);
                 });
 
-                query_builder
-                    .build()
-                    .execute(&mut *transaction)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Inserting contract states batch {} of {}",
-                            batch_idx + 1,
-                            chunks.len()
-                        )
-                    })?;
+                _ = log_error!(
+                    query_builder
+                        .build()
+                        .execute(&mut *transaction)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Inserting contract states batch {} of {}",
+                                batch_idx + 1,
+                                chunks.len()
+                            )
+                        }),
+                    "Inserting contract states"
+                )?;
             }
         }
 
@@ -613,26 +633,29 @@ impl Indexer {
                         .push_bind(settled);
                 });
 
-                query_builder
-                    .build()
-                    .execute(&mut *transaction)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Inserting blob proof outputs batch {} of {}",
-                            batch_idx + 1,
-                            chunks.len()
-                        )
-                    })?;
+                _ = log_error!(
+                    query_builder
+                        .build()
+                        .execute(&mut *transaction)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "Inserting blob proof outputs batch {} of {}",
+                                batch_idx + 1,
+                                chunks.len()
+                            )
+                        }),
+                    "Inserting blob proof outputs"
+                )?;
             }
         }
 
         if !self.handler_store.sql_updates.is_empty() {
             for sql_update in self.handler_store.sql_updates.drain(..) {
-                sql_update
-                    .execute(&mut *transaction)
-                    .await
-                    .context("Executing SQL update")?;
+                _ = log_error!(
+                    sql_update.execute(&mut *transaction).await,
+                    "Executing SQL update"
+                )?;
             }
         }
 

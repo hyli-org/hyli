@@ -120,9 +120,9 @@ impl Indexer {
         module_handle_messages! {
             on_self self,
             delay_shutdown_until {
-                self.dump_store_to_db()
-                    .await
-                    .context("Indexer failed to dump store to DB")?;
+                _ = log_error!(self.dump_store_to_db()
+                    .await,
+                    "Indexer failed to dump store to DB");
                 self.empty_store()
             },
             listen<DataEvent> DataEvent::OrderedSignedBlock(signed_block) => {
@@ -321,6 +321,7 @@ mod test {
                 proven_blobs: vec![BlobProofOutput {
                     original_proof_hash: proof.hashed(),
                     program_id: ProgramId(vec![3, 2, 1]),
+                    verifier: "test".into(),
                     blob_tx_hash: blob_transaction.hashed(),
                     hyle_output: HyleOutput {
                         version: 1,
@@ -340,6 +341,8 @@ mod test {
                 }],
                 is_recursive: false,
                 proof: Some(proof),
+                verifier: "test".into(),
+                program_id: ProgramId(vec![3, 2, 1]),
             }),
         }
     }

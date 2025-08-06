@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memory Allocation Analyzer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f4f4f9;
+        }
+
+        h1 {
+            margin-top: 20px;
+        }
+
+        #upload-container {
+            margin: 20px;
+        }
+
+        #file-input {
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        #search-container {
+            margin: 20px;
+        }
+
+        #search-input {
+            padding: 10px;
+            width: 300px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 90%;
+            margin: 20px;
+            background-color: #fff;
+        }
+
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+        }
+
+        tr:hover {
+            background-color: #f1f1f1;
+        }
+
+        .backtrace {
+            display: none;
+            white-space: pre-wrap;
+            background-color: #f9f9f9;
+            padding: 10px;
+            border: 1px solid #ddd;
+        }
+
+        .expand-btn {
+            cursor: pointer;
+            color: #007bff;
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <h1>Memory Allocation Analyzer</h1>
+
+    <div id="upload-container">
+        <input type="file" id="file-input" accept=".csv">
+    </div>
+
+    <div id="calltree-controls" style="margin: 20px;">
+        <label>Call Tree by:
+            <select id="calltree-metric">
+                <option value="total_used">Total Used</option>
+                <option value="allocated">Allocated</option>
+            </select>
+        </label>
+        <label style="margin-left: 20px;">
+            <input type="checkbox" checked="true" id="calltree-invert"> Invert stack (leaf at top)
+        </label>
+    </div>
+    <div id="calltree-view" style="width:90%; margin-bottom:40px;"></div>
+
+        <div id="search-container">
+        <input type="text" id="search-input" placeholder="Search backtrace...">
+    </div>
+
+    <table id="data-table">
+        <thead>
+            <tr>
+                <th data-column="allocated">Total Allocated</th>
+                <th data-column="allocations">Allocation Count</th>
+                <th data-column="avg_allocation">Avg Allocation Size</th>
+                <th data-column="freed">Freed</th>
+                <th data-column="total_used">Total Used</th>
+                <th>Backtrace Summary</th>
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Rows will be dynamically added here -->
+        </tbody>
+    </table>
+
+    <style>
+        .calltree-node {
+            font-family: monospace;
+            margin-left: 16px;
+            cursor: pointer;
+            user-select: none;
+        }
+        .calltree-leaf {
+            margin-left: 32px;
+        }
+        .calltree-toggle {
+            font-weight: bold;
+            margin-right: 4px;
+            color: #007bff;
+        }
+        .calltree-metric {
+            color: #333;
+            margin-left: 8px;
+        }
+    </style>
+
+    <script>
+        document.getElementById('calltree-metric').addEventListener('change', () => renderCallTree(tableData));
+        document.getElementById('calltree-invert').addEventListener('change', () => renderCallTree(tableData));
+        
+        // --- Call Tree View ---
+        function buildCallTree(data, metric, invert) {
+            // Each node: { name, value, count, children: Map }
+            const root = { name: '(root)', value: 0, count: 0, children: new Map() };
+            data.forEach(row => {
+                let frames = (row.backtrace || '').split('\n').map(f => f.trim()).filter(Boolean);
+                // Strip numeric prefix from each frame (e.g., '3: my_func' -> 'my_func')
+                frames = frames.map(f => f.replace(/^\d+:\s*/, ''));
+                if (invert) frames = frames.reverse();
+                let node = root;
+                const v = parseFloat(row[metric]) || 0;
+                // When inverted, aggregate at every frame; else, only at leaf
+                frames.forEach((frame, idx) => {
+                    if (!node.children.has(frame)) {
+                        node.children.set(frame, { name: frame, value: 0, count: 0, children: new Map() });
+                    }
+                    node = node.children.get(frame);
+                    if (invert) {
+                        node.value += v;
+                        node.count += 1;
+                    } else if (idx === frames.length - 1) {
+                        node.value += v;
+                        node.count += 1;
+                    }
+                });
+            });
+            // Recursively sum values up the tree (not needed for invert, but keep for non-invert)
+            if (!invert) {
+                function sumUp(node) {
+                    node.children.forEach(child => {
+                        sumUp(child);
+                        node.value += child.value;
+                        node.count += child.count;
+                    });
+                }
+                sumUp(root);
+            }
+            return root;
+        }
+
+        // --- Call Tree Expand/Collapse State ---
+        // Keep expandedPaths persistent across renders
+        if (!window.__calltree_expandedPaths) {
+            window.__calltree_expandedPaths = new Set();
+        }
+        const expandedPaths = window.__calltree_expandedPaths;
+
+        function getNodePath(node, parentPath) {
+            return parentPath ? parentPath + ' > ' + node.name : node.name;
+        }
+
+        function expandSingleChildChain(node, path) {
+            expandedPaths.add(path);
+            while (node.children.size === 1) {
+                const onlyChild = Array.from(node.children.values())[0];
+                path = getNodePath(onlyChild, path);
+                expandedPaths.add(path);
+                node = onlyChild;
+            }
+        }
+
+        function collapseChain(node, path) {
+            expandedPaths.delete(path);
+            node.children.forEach(child => collapseChain(child, getNodePath(child, path)));
+        }
+
+        function renderCallTree(data) {
+            const metric = document.getElementById('calltree-metric').value;
+            const invert = document.getElementById('calltree-invert').checked;
+            const container = document.getElementById('calltree-view');
+            container.innerHTML = '';
+            if (!data || !data.length) {
+                container.textContent = 'No data loaded.';
+                return;
+            }
+            const tree = buildCallTree(data, metric, invert);
+            const rootValue = tree.value || 1; // avoid division by zero
+
+            function renderNode(node, depth = 0, parentPath = '', parentValue = rootValue) {
+                if (node.value === 0) return null;
+                if (node.name === '(root)') {
+                    // Sort children descending by value
+                    const sortedChildren = Array.from(node.children.values()).sort((a, b) => b.value - a.value);
+                    sortedChildren.forEach(child => {
+                        const childDiv = renderNode(child, 0, '', tree.value);
+                        if (childDiv) container.appendChild(childDiv);
+                    });
+                    return null;
+                }
+                const path = getNodePath(node, parentPath);
+                let expanded = expandedPaths.has(path);
+                // Start collapsed, but auto-expand down single-child chain at first render
+                if (depth === 0 && node.children.size === 1 && !expandedPaths.has(path)) {
+                    expandSingleChildChain(node, path);
+                    expanded = true;
+                }
+                const div = document.createElement('div');
+                div.className = node.children.size ? 'calltree-node' : 'calltree-leaf';
+                const toggle = document.createElement('span');
+                if (node.children.size) {
+                    toggle.textContent = expanded ? '▼' : '▶';
+                    toggle.className = 'calltree-toggle';
+                    toggle.onclick = e => {
+                        if (expanded) {
+                            collapseChain(node, path);
+                        } else {
+                            expandSingleChildChain(node, path);
+                        }
+                        renderCallTree(tableData);
+                        e.stopPropagation();
+                    };
+                    div.appendChild(toggle);
+                } else {
+                    div.appendChild(document.createTextNode('   '));
+                }
+                // Node text (clickable to expand/collapse)
+                const nameSpan = document.createElement('span');
+                nameSpan.textContent = node.name;
+                nameSpan.style.cursor = node.children.size ? 'pointer' : 'default';
+                if (node.children.size) {
+                    nameSpan.onclick = e => {
+                        if (expanded) {
+                            collapseChain(node, path);
+                        } else {
+                            expandSingleChildChain(node, path);
+                        }
+                        renderCallTree(tableData);
+                        e.stopPropagation();
+                    };
+                }
+                div.appendChild(nameSpan);
+                const metricSpan = document.createElement('span');
+                metricSpan.className = 'calltree-metric';
+                // Show percentage: for inverted, relative to parent; else, relative to root
+                let percent;
+                if (invert && parentValue > 0) {
+                    percent = ((node.value / parentValue) * 100).toFixed(1);
+                } else {
+                    percent = ((node.value / rootValue) * 100).toFixed(1);
+                }
+                metricSpan.textContent = `(${formatBytes(node.value)} in ${node.count} leaf${node.count !== 1 ? 's' : ''}, ${percent}% of ${invert ? 'parent' : 'root'})`;
+                div.appendChild(metricSpan);
+                let childrenDiv = document.createElement('div');
+                childrenDiv.style.display = expanded ? '' : 'none';
+                // Sort children descending by value
+                const sortedChildren = Array.from(node.children.values()).sort((a, b) => b.value - a.value);
+                sortedChildren.forEach(child => {
+                    const childDiv = renderNode(child, depth + 1, path, node.value);
+                    if (childDiv) childrenDiv.appendChild(childDiv);
+                });
+                div.appendChild(childrenDiv);
+                return div;
+            }
+            // Sort root's children descending by value
+            const sortedRootChildren = Array.from(tree.children.values()).sort((a, b) => b.value - a.value);
+            sortedRootChildren.forEach(child => {
+                const nodeDiv = renderNode(child, 0, '', tree.value);
+                if (nodeDiv) container.appendChild(nodeDiv);
+            });
+        }
+
+
+        document.getElementById('file-input').addEventListener('change', handleFileUpload);
+        document.getElementById('search-input').addEventListener('input', handleSearch);
+
+        let tableData = [];
+        let currentSort = { column: null, asc: true };
+
+        // Robust CSV parser for quoted multiline fields
+        function parseCSV(text) {
+            const rows = [];
+            let row = [];
+            let field = '';
+            let inQuotes = false;
+            let i = 0;
+            while (i < text.length) {
+                const char = text[i];
+                if (inQuotes) {
+                    if (char === '"') {
+                        if (text[i + 1] === '"') {
+                            field += '"';
+                            i++;
+                        } else {
+                            inQuotes = false;
+                        }
+                    } else {
+                        field += char;
+                    }
+                } else {
+                    if (char === '"') {
+                        inQuotes = true;
+                    } else if (char === ',') {
+                        row.push(field);
+                        field = '';
+                    } else if (char === '\n' || char === '\r') {
+                        if (char === '\r' && text[i + 1] === '\n') i++;
+                        row.push(field);
+                        field = '';
+                        if (row.length > 1 || row[0].trim() !== '') rows.push(row);
+                        row = [];
+                    } else {
+                        field += char;
+                    }
+                }
+                i++;
+            }
+            // Add last row if not empty
+            if (field.length > 0 || row.length > 0) {
+                row.push(field);
+                if (row.length > 1 || row[0].trim() !== '') rows.push(row);
+            }
+            if (rows.length === 0) return [];
+            const headers = rows[0];
+            return rows.slice(1).map(r => {
+                const entry = {};
+                headers.forEach((h, idx) => {
+                    let val = (r[idx] || '').trim();
+                    // Normalize backtrace: replace literal \n with real newlines
+                    if (h.trim() === 'backtrace') {
+                        val = val.replace(/\\n/g, '\n');
+                    }
+                    entry[h.trim()] = val;
+                });
+                return entry;
+            });
+        }
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const csvData = e.target.result;
+                    tableData = parseCSV(csvData);
+                    renderTable(tableData);
+                    renderCallTree(tableData);
+                };
+                reader.readAsText(file);
+            }
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === '' || isNaN(bytes)) return bytes;
+            const num = parseFloat(bytes);
+            if (num < 1024) return num + ' B';
+            if (num < 1024 * 1024) return (num / 1024).toFixed(2) + ' KB';
+            if (num < 1024 * 1024 * 1024) return (num / (1024 * 1024)).toFixed(2) + ' MB';
+            return (num / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+        }
+
+        function renderTable(data) {
+            const tbody = document.getElementById('data-table').querySelector('tbody');
+            tbody.innerHTML = '';
+            data.forEach(row => {
+                const tr = document.createElement('tr');
+                // Render columns in the same order as the table header
+                // allocated, allocations, avg_allocation, freed, total_used
+                const columns = [
+                    { key: 'allocated', format: true },
+                    { key: 'allocations', format: false },
+                    { key: 'avg_allocation', format: true },
+                    { key: 'freed', format: true },
+                    { key: 'total_used', format: true }
+                ];
+                columns.forEach(col => {
+                    const td = document.createElement('td');
+                    td.textContent = col.format ? formatBytes(row[col.key]) : row[col.key];
+                    tr.appendChild(td);
+                });
+                const summaryTd = document.createElement('td');
+                const backtraceLines = (row.backtrace || '').split('\n');
+                const backtraceSummary = backtraceLines.slice(0, 2).join(' | ');
+                summaryTd.innerHTML = `<span class="expand-btn">${backtraceSummary}</span>`;
+                const backtraceDiv = document.createElement('div');
+                backtraceDiv.className = 'backtrace';
+                backtraceDiv.textContent = backtraceLines.join('\n');
+                summaryTd.appendChild(backtraceDiv);
+                summaryTd.querySelector('.expand-btn').addEventListener('click', () => {
+                    backtraceDiv.style.display = backtraceDiv.style.display === 'block' ? 'none' : 'block';
+                });
+                tr.appendChild(summaryTd);
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Sorting
+        document.querySelectorAll('#data-table th[data-column]').forEach(th => {
+            th.addEventListener('click', function() {
+                const col = th.getAttribute('data-column');
+                if (currentSort.column === col) {
+                    currentSort.asc = !currentSort.asc;
+                } else {
+                    currentSort.column = col;
+                    currentSort.asc = true;
+                }
+                tableData.sort((a, b) => {
+                    let v1 = a[col], v2 = b[col];
+                    // Numeric sort if possible
+                    if (!isNaN(parseFloat(v1)) && !isNaN(parseFloat(v2))) {
+                        v1 = parseFloat(v1); v2 = parseFloat(v2);
+                        return currentSort.asc ? v1 - v2 : v2 - v1;
+                    } else {
+                        return currentSort.asc ? String(v1).localeCompare(String(v2)) : String(v2).localeCompare(String(v1));
+                    }
+                });
+                renderTable(tableData);
+            });
+        });
+
+        function handleSearch(event) {
+            const searchTerm = event.target.value.toLowerCase();
+            const filtered = tableData.filter(row => (row.backtrace || '').toLowerCase().includes(searchTerm));
+            renderTable(filtered);
+        }
+    </script>
+</body>
+</html>

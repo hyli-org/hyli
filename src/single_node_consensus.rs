@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::bus::command_response::{CmdRespClient, Query};
 use crate::bus::BusClientSender;
@@ -11,6 +12,7 @@ use crate::utils::conf::SharedConf;
 use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyle_crypto::SharedBlstCrypto;
+use hyle_model::utils::TimestampMs;
 use hyle_modules::bus::SharedMessageBus;
 use hyle_modules::modules::module_bus_client;
 use hyle_modules::modules::Module;
@@ -35,6 +37,7 @@ struct SingleNodeConsensusStore {
     last_consensus_proposal_hash: ConsensusProposalHash,
     last_slot: u64,
     last_cut: Cut,
+    last_timestamp: TimestampMs,
 }
 
 pub struct SingleNodeConsensus {
@@ -143,7 +146,12 @@ impl SingleNodeConsensus {
             tracing::trace!("Genesis block done");
         }
 
-        let mut interval = tokio::time::interval(self.config.consensus.slot_duration);
+        self.store.last_timestamp = TimestampMsClock::now();
+
+        let mut interval = tokio::time::interval(std::cmp::min(
+            self.config.consensus.slot_duration,
+            Duration::from_millis(250),
+        ));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         interval.tick().await; // First tick is immediate
 
@@ -173,13 +181,20 @@ impl SingleNodeConsensus {
             .await
         {
             Ok(cut) => {
+                if cut == self.store.last_cut
+                    && TimestampMsClock::now()
+                        < self.store.last_timestamp.clone() + self.config.consensus.slot_duration
+                {
+                    debug!("No new cut, skipping commit");
+                    return Ok(());
+                }
                 self.store.last_cut = cut.clone();
             }
             Err(err) => {
-                // In case of an error, we reuse the last cut to avoid being considered byzantine
-                tracing::error!("Error while requesting new cut: {:?}", err);
+                tracing::warn!("Error while requesting new cut: {:?}", err);
             }
         };
+
         let new_slot = self.store.last_slot + 1;
         let consensus_proposal = ConsensusProposal {
             slot: new_slot,
@@ -189,6 +204,7 @@ impl SingleNodeConsensus {
             parent_hash: std::mem::take(&mut self.store.last_consensus_proposal_hash),
         };
 
+        self.store.last_timestamp = consensus_proposal.timestamp.clone();
         self.store.last_consensus_proposal_hash = consensus_proposal.hashed();
 
         let certificate = self

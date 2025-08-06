@@ -20,6 +20,7 @@ use hyle_model::api::{
     BlobWithStatus, TransactionStatusDb, TransactionTypeDb, TransactionWithBlobs,
 };
 use hyle_model::utils::TimestampMs;
+use hyle_modules::bus::BusMessage;
 use hyle_modules::log_error;
 use hyle_modules::{
     bus::SharedMessageBus,
@@ -43,6 +44,8 @@ struct ExplorerBusClient {
     receiver(WsExplorerBlobTx),
 }
 }
+
+impl BusMessage for WsExplorerBlobTx {}
 
 #[derive(Debug, Clone)]
 pub struct WsExplorerBlobTx {
