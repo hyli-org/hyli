@@ -10997,6 +10997,7 @@ dependencies = [
  "serde_spanned 1.0.0",
  "toml_datetime 0.7.0",
  "toml_parser",
+ "toml_writer",
  "winnow 0.7.12",
 ]
 
@@ -11057,6 +11058,12 @@ name = "toml_write"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
+
+[[package]]
+name = "toml_writer"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fcc842091f2def52017664b53082ecbbeb5c7731092bad69d2c63050401dfd64"
 
 [[package]]
 name = "tonic"

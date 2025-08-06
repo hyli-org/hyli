@@ -222,7 +222,7 @@ alloc-metrics = { workspace = true, optional = true }
 utoipa = { workspace = true, features = ["axum_extras"] }
 utoipa-axum = { workspace = true }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
-toml = { workspace = true }
+toml = { workspace = true, features = ["display"] }
 alloc-track = { git = "https://github.com/hyli-org/alloc-track", optional = true }
 
 # We force zip version here as later version is not compatible with utoipa-swagger-ui
