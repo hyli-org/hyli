@@ -6,7 +6,8 @@ use fixtures::{
     ctx::E2ECtx,
     test_helpers::{self, ConfMaker},
 };
-use hyle::utils::conf::Conf;
+use hyle::utils::conf::{Conf, TimestampCheck};
+use tracing::{info, warn};
 
 mod fixtures;
 
@@ -26,6 +27,45 @@ async fn setup_4_nodes() -> Result<()> {
     }
 }
 
+// #[ignore = "This is intended to easily start a few nodes locally for devs"]
+#[test_log::test(tokio::test)]
+async fn setup_4_nodes_catchup() -> Result<()> {
+    let mut ctx = E2ECtx::new_multi_with_indexer(4, 1000).await?;
+
+    // To use this harness, comment out the 'ignore' above and run something like:
+    // RUST_LOG=perf_test_harness=warn,error cargo test --release --test perf_test_harness -- --nocapture
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    ctx.stop_node(3).await?;
+    ctx.get_instructions_for(3);
+
+    let mut conf = ctx.nodes.get(3).expect("Node 3 should exist").conf.clone();
+
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    conf.run_fast_catchup = true;
+    conf.fast_catchup_from = format!(
+        "http://localhost:{}",
+        ctx.nodes
+            .first()
+            .expect("Node 0 should exist")
+            .conf
+            .admin_server_port
+    );
+    conf.consensus.timestamp_checks = TimestampCheck::Monotonic;
+
+    let process = test_helpers::TestProcess::new("hyle", conf);
+
+    tracing::warn!(
+        "🚀 Start the last node in catchup mode with the following command:\nhyle=$(pwd)/target/release/hyle && (cd {} && RUST_LOG=info \"$hyle\")",
+        process.dir.path().display()
+    );
+
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+}
+
 #[ignore = "This is intended to easily start a few nodes locally for devs"]
 #[test_log::test(tokio::test)]
 async fn custom_setup() -> Result<()> {
@@ -37,7 +77,7 @@ async fn custom_setup() -> Result<()> {
     let count = 4;
     let mut nodes = {
         let mut nodes = Vec::new();
-        let mut confs = Vec::new();
+        let mut confs: Vec<Conf> = Vec::new();
 
         let default_conf = Conf::new(vec![], None, None).unwrap();
 
@@ -62,7 +102,20 @@ async fn custom_setup() -> Result<()> {
             confs.push(node_conf);
         }
 
+        let admin_port = confs
+            .iter()
+            .find(|n| n.id == "node-4")
+            .unwrap()
+            .admin_server_port;
+
         for node_conf in confs.iter_mut() {
+            info!("Creating node with config: {}", node_conf.id);
+            if node_conf.id == "node-1" {
+                warn!("Node-1 is configured to run fast catchup from node-4 at port {admin_port}");
+                node_conf.run_fast_catchup = true;
+                node_conf.fast_catchup_from = format!("http://localhost:{admin_port}");
+            }
+
             node_conf.p2p.peers = peers.clone();
             node_conf.genesis.stakers = genesis_stakers.clone();
             let node = test_helpers::TestProcess::new("hyle", node_conf.clone());

@@ -1,23 +1,20 @@
 //! Public API for interacting with the node.
 
 use crate::{
-    bus::{
-        command_response::CmdRespClient, metrics::BusMetrics, BusClientSender, SharedMessageBus,
-    },
+    bus::{command_response::CmdRespClient, BusClientSender, SharedMessageBus},
     log_error, module_bus_client, module_handle_messages,
-    modules::{signal::ShutdownModule, Module},
-    node_state::{module::QueryNodeState, NodeStateStore},
+    modules::Module,
 };
 use anyhow::{anyhow, Context, Result};
 pub use axum::Router;
 use axum::{
     body::Bytes,
-    extract::{DefaultBodyLimit, Path, Query, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use sdk::*;
+use sdk::{base64_field::Engine, *};
 use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 use tower_http::catch_panic::CatchPanicLayer;
@@ -28,13 +25,26 @@ pub use client_sdk::rest_client as client;
 
 use super::{
     rest::request_logger,
-    signal::{self, PersistModule},
+    signal::{self},
 };
+
+#[derive(Clone)]
+pub struct QueryNodeStateStore;
+
+#[derive(Clone)]
+pub struct QueryNodeStateStoreResponse(pub Vec<u8>);
+
+#[derive(Clone)]
+pub struct QueryConsensusCatchupStore;
+
+#[derive(Clone)]
+pub struct QueryConsensusCatchupStoreResponse(pub Vec<u8>);
 
 module_bus_client! {
     struct AdminBusClient {
         sender(signal::PersistModule),
-        sender(crate::bus::command_response::Query<QueryNodeState, NodeStateStore>),
+        sender(crate::bus::command_response::Query<QueryNodeStateStore, QueryNodeStateStoreResponse>),
+        sender(crate::bus::command_response::Query<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse>),
     }
 }
 
@@ -75,7 +85,7 @@ impl Module for AdminApi {
             Router::new()
                 .route("/v1/admin/persist", post(persist))
                 .route("/v1/admin/download/{file}", get(download))
-                .route("/v1/admin/inspect", post(inspect))
+                .route("/v1/admin/catchup", get(catchup))
                 .with_state(RouterState {
                     bus: AdminBusClient::new_from_bus(bus.new_handle()).await,
                     data_directory: ctx.data_directory,
@@ -163,33 +173,47 @@ pub async fn download(
     }
 }
 
-struct JsonState {
-    module_name: String,
+#[derive(borsh::BorshSerialize, borsh::BorshDeserialize, Clone)]
+pub struct CatchupStoreResponse {
+    pub node_state_store: Vec<u8>,
+    pub consensus_store: Vec<u8>,
 }
 
-pub async fn inspect(
-    State(mut state): State<RouterState>,
-    // Query(json_state): Query<JsonState>,
-) -> Result<impl IntoResponse, AppError> {
-    tracing::info!("Inspecting modules state");
-    // match json_state.module_name.as_str() {
-    // "node_state" => {
-    let res: NodeStateStore = state
-        .bus
-        .shutdown_aware_request::<()>(QueryNodeState {})
-        .await?;
-    let response = serde_json::to_string(&res).context("Serializing modules")?;
+pub async fn catchup(State(mut state): State<RouterState>) -> Result<impl IntoResponse, AppError> {
+    tracing::info!("Getting catchup states from all modules");
+
+    let node_state = log_error!(
+        state
+            .bus
+            .shutdown_aware_request::<()>(QueryNodeStateStore {})
+            .await,
+        "Getting node state store"
+    )
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?
+    .0;
+
+    let consensus_state = log_error!(
+        state
+            .bus
+            .shutdown_aware_request::<()>(QueryConsensusCatchupStore {})
+            .await,
+        "Getting consensus catchup store"
+    )
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?
+    .0;
+
+    let catchup_response = CatchupStoreResponse {
+        node_state_store: node_state,
+        consensus_store: consensus_state,
+    };
+
+    let response = borsh::to_vec(&catchup_response).context("Serializing modules")?;
+    let base64_response = base64_field::BASE64_STANDARD.encode(&response);
     Ok(Response::builder()
         .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(response)
+        .header(header::CONTENT_TYPE, "application/text")
+        .body(base64_response)
         .unwrap())
-    // }
-    // _ => Err(AppError::from(anyhow::anyhow!(
-    // "Module {} not found",
-    // json_state.module_name
-    // ))),
-    // }
 }
 
 pub struct RouterState {
@@ -251,25 +275,6 @@ impl Clone for RouterState {
             bus: self.bus.clone(),
             data_directory: self.data_directory.clone(),
         }
-    }
-}
-
-impl Clone for AdminBusClient {
-    fn clone(&self) -> AdminBusClient {
-        use crate::utils::static_type_map::Pick;
-
-        AdminBusClient::new(
-            Pick::<BusMetrics>::get(self).clone(),
-            Pick::<tokio::sync::broadcast::Sender<PersistModule>>::get(self).clone(),
-            Pick::<
-                tokio::sync::broadcast::Sender<
-                    crate::bus::command_response::Query<QueryNodeState, NodeStateStore>,
-                >,
-            >::get(self)
-            .clone(),
-            Pick::<tokio::sync::broadcast::Receiver<ShutdownModule>>::get(self).resubscribe(),
-            Pick::<tokio::sync::broadcast::Receiver<PersistModule>>::get(self).resubscribe(),
-        )
     }
 }
 

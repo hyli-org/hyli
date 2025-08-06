@@ -15,6 +15,9 @@ use hyle_crypto::SharedBlstCrypto;
 use hyle_model::utils::TimestampMs;
 use hyle_modules::bus::command_response::Query;
 use hyle_modules::bus::SharedMessageBus;
+use hyle_modules::modules::admin::{
+    QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse,
+};
 use hyle_modules::modules::module_bus_client;
 use hyle_modules::modules::Module;
 use hyle_modules::{log_error, module_handle_messages};
@@ -27,6 +30,7 @@ struct SingleNodeConsensusBusClient {
     sender(ConsensusEvent),
     sender(Query<QueryNewCut, Cut>),
     receiver(Query<QueryConsensusInfo, ConsensusInfo>),
+    receiver(Query<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse>),
     receiver(GenesisEvent),
 }
 }
@@ -165,6 +169,9 @@ impl SingleNodeConsensus {
                 let last_timestamp = TimestampMsClock::now();
                 let validators = vec![];
                 Ok(ConsensusInfo { slot, view, round_leader, last_timestamp, validators })
+            },
+            command_response<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse> _ => {
+                Ok(QueryConsensusCatchupStoreResponse(vec![]))
             },
             _ = interval.tick() => {
                 self.handle_new_slot_tick().await?;

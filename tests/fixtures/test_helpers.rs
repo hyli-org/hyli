@@ -8,7 +8,7 @@ use client_sdk::{
 use hyle::{
     model::BlobTransaction,
     rest::client::NodeApiHttpClient,
-    utils::conf::{Conf, NodeWebSocketConfig, P2pConf, P2pMode},
+    utils::conf::{Conf, NodeWebSocketConfig, P2pConf, P2pMode, TimestampCheck},
 };
 use hyle_crypto::BlstCrypto;
 use hyle_model::TxHash;
@@ -83,6 +83,8 @@ impl Default for ConfMaker {
 
         default.run_indexer = false; // disable indexer by default to avoid needed PG
         default.run_explorer = false; // disable indexer by default to avoid needed PG
+
+        default.consensus.timestamp_checks = TimestampCheck::Monotonic;
 
         info!("Default conf: {:?}", default);
 

@@ -21,6 +21,9 @@ use hyle_crypto::BlstCrypto;
 use hyle_crypto::SharedBlstCrypto;
 use hyle_model::utils::TimestampMs;
 use hyle_modules::bus::BusMessage;
+use hyle_modules::modules::admin::{
+    QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse,
+};
 use hyle_modules::{log_error, module_bus_client, module_handle_messages, modules::Module};
 use hyle_net::clock::TimestampMsClock;
 use metrics::ConsensusMetrics;
@@ -93,6 +96,7 @@ receiver(NodeStateEvent),
 receiver(MsgWithHeader<ConsensusNetMessage>),
 receiver(Query<QueryConsensusInfo, ConsensusInfo>),
 receiver(Query<QueryConsensusStakingState, Staking>),
+receiver(Query<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse>),
 }
 }
 
@@ -797,12 +801,33 @@ impl Consensus {
             command_response<QueryConsensusStakingState, Staking> _ => {
                 Ok(self.bft_round_state.staking.clone())
             }
+            command_response<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse> _ => {
+                self.serialize_bft_round_state()
+            }
             _ = timeout_ticker.tick() => {
                 log_error!(self.bus.send(ConsensusCommand::TimeoutTick), "Cannot send message over channel")?;
             }
         };
 
         Ok(())
+    }
+
+    fn serialize_bft_round_state(&self) -> Result<QueryConsensusCatchupStoreResponse> {
+        let store_copy = ConsensusStore {
+            bft_round_state: BFTRoundState {
+                staking: self.bft_round_state.staking.clone(),
+                slot: self.bft_round_state.slot,
+                view: self.bft_round_state.view,
+                parent_hash: self.bft_round_state.parent_hash.clone(),
+                parent_timestamp: self.bft_round_state.parent_timestamp.clone(),
+                parent_cut: self.bft_round_state.parent_cut.clone(),
+                current_proposal: self.bft_round_state.current_proposal.clone(),
+                ..Default::default()
+            },
+            validator_candidates: self.validator_candidates.clone(),
+        };
+        let res = borsh::to_vec(&store_copy).context("Failed to serialize BFT round state")?;
+        Ok(QueryConsensusCatchupStoreResponse(res))
     }
 
     fn sign_net_message(

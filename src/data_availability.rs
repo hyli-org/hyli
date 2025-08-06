@@ -114,6 +114,15 @@ impl DataAvailability {
         let mut catchup_task_checker_ticker =
             tokio::time::interval(std::time::Duration::from_millis(5000));
 
+        let single_node = self.config.consensus.solo;
+        let mut catchup_tick = async || {
+            if single_node {
+                std::future::pending::<()>().await;
+            } else {
+                catchup_task_checker_ticker.tick().await;
+            }
+        };
+
         module_handle_messages! {
             on_self self,
             listen<MempoolBlockEvent> evt => {
@@ -146,7 +155,7 @@ impl DataAvailability {
                 }
             }
 
-            _ = catchup_task_checker_ticker.tick() => {
+            _ = catchup_tick() => {
                 // Check if we need to revive the catchup task.
                 if self.need_catchup && self.catchup_task.as_ref().is_none_or(|t| t.is_finished()) {
                     let random_peer = peers

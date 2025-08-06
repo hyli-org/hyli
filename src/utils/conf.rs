@@ -112,6 +112,10 @@ pub struct Conf {
     /// Peer-to-peer layer configuration
     pub p2p: P2pConf,
 
+    // FastCatchup option, from the admin API of a running node.
+    pub run_fast_catchup: bool,
+    pub fast_catchup_from: String,
+
     // Validator options
     /// Consensus configuration
     pub consensus: Consensus,
