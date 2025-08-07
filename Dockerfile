@@ -22,7 +22,6 @@ COPY --from=builder /usr/src/hyle/target/release/indexer            ./
 COPY --from=builder /usr/src/hyle/target/release/hyle-loadtest      ./
 COPY --from=builder /usr/src/hyle/target/release/gcs_uploader       ./
 COPY --from=builder /usr/src/hyle/target/release/smt_auto_prover    ./
-COPY --from=builder /usr/src/hyle/target/release/nuke_tx            ./
 COPY --from=builder /usr/src/hyle/target/release/health_check       ./
 COPY --from=builder /usr/src/hyle/target/release/rate_limiter_proxy ./
 
