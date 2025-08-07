@@ -29,6 +29,7 @@ use hyle_modules::{
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::DAListenerConf,
+        gcs_uploader::{GcsUploader, GcsUploaderCtx},
         signed_da_listener::SignedDAListener,
         websocket::WebSocketModule,
         BuildApiContextInner,
@@ -255,6 +256,15 @@ async fn common_main(
     let mut handler = ModulesHandler::new(&bus).await;
 
     if config.run_indexer {
+        if config.gcs.save_proofs || config.gcs.save_blocks {
+            handler
+                .build_module::<GcsUploader>(GcsUploaderCtx {
+                    gcs_config: config.gcs.clone(),
+                    data_directory: config.data_directory.clone(),
+                })
+                .await?;
+        }
+
         handler
             .build_module::<ContractStateIndexer<Hyllar>>(ContractStateIndexerCtx {
                 contract_name: "hyllar".into(),

@@ -35,6 +35,7 @@ use smt_token::{
 };
 use std::collections::HashMap;
 use std::fs;
+use std::future::Future;
 use std::io::Write;
 use std::io::{self};
 use std::time::Duration;
