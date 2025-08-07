@@ -24,17 +24,16 @@ use axum::Router;
 use client_sdk::rest_client::{NodeAdminApiClient, NodeApiHttpClient};
 use hydentity::Hydentity;
 use hyle_crypto::SharedBlstCrypto;
-use hyle_model::base64_field::{self, Engine};
 use hyle_modules::{
     log_error,
     modules::{
-        admin::{AdminApi, AdminApiRunContext, CatchupStoreResponse},
+        admin::{AdminApi, AdminApiRunContext},
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::DAListenerConf,
         signed_da_listener::SignedDAListener,
         websocket::WebSocketModule,
-        BuildApiContextInner, Module,
+        BuildApiContextInner,
     },
     node_state::module::NodeStateCtx,
 };
@@ -259,35 +258,33 @@ async fn common_main(
 
     // Before we start the modules, let's fast load from a running node if we are catching up.
     if config.run_fast_catchup {
-        let catchup_from = config.fast_catchup_from.clone();
-        info!("Catching up from {}", catchup_from);
-        let client = NodeApiHttpClient::new(catchup_from.clone())?;
+        // Check states exist and skip catchup if so
+        if !config.data_directory.join("consensus.bin").exists()
+            || !config.data_directory.join("node_state.bin").exists()
+        {
+            let catchup_from = config.fast_catchup_from.clone();
+            info!("Catching up from {}", catchup_from);
+            let client = NodeApiHttpClient::new(catchup_from.clone())?;
 
-        let catchup_response = client
-            .get_catchup_store()
-            .await
-            .context("Getting catchup data")?;
+            let catchup_response = client
+                .get_catchup_store()
+                .await
+                .context("Getting catchup data")?;
 
-        let base64_response = base64_field::BASE64_STANDARD
-            .decode(catchup_response)
-            .context("Decoding catchup data")?;
+            _ = log_error!(
+                File::create(config.data_directory.join("consensus.bin"))
+                    .and_then(|mut file| file.write_all(&catchup_response.consensus_store))
+                    .context("Writing node state catchup store to disk"),
+                "Saving node state store"
+            );
 
-        let decoded: CatchupStoreResponse =
-            borsh::from_slice(&base64_response).context("Deserializing catchup data")?;
-
-        _ = log_error!(
-            File::create(config.data_directory.join("consensus.bin"))
-                .and_then(|mut file| file.write_all(&decoded.consensus_store))
-                .context("Writing node state catchup store to disk"),
-            "Saving node state store"
-        );
-
-        _ = log_error!(
-            File::create(config.data_directory.join("node_state.bin"))
-                .and_then(|mut file| file.write_all(&decoded.node_state_store))
-                .context("Writing consenus catchup store to disk"),
-            "Saving consensus store"
-        );
+            _ = log_error!(
+                File::create(config.data_directory.join("node_state.bin"))
+                    .and_then(|mut file| file.write_all(&catchup_response.node_state_store))
+                    .context("Writing consenus catchup store to disk"),
+                "Saving consensus store"
+            );
+        }
     }
 
     let mut handler = ModulesHandler::new(&bus).await;

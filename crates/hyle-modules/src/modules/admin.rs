@@ -13,8 +13,9 @@ use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
+    Json,
 };
-use sdk::{base64_field::Engine, *};
+use sdk::{admin::CatchupStoreResponse, *};
 use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 use tower_http::catch_panic::CatchPanicLayer;
@@ -173,12 +174,6 @@ pub async fn download(
     }
 }
 
-#[derive(borsh::BorshSerialize, borsh::BorshDeserialize, Clone)]
-pub struct CatchupStoreResponse {
-    pub node_state_store: Vec<u8>,
-    pub consensus_store: Vec<u8>,
-}
-
 pub async fn catchup(State(mut state): State<RouterState>) -> Result<impl IntoResponse, AppError> {
     tracing::info!("Getting catchup states from all modules");
 
@@ -207,13 +202,7 @@ pub async fn catchup(State(mut state): State<RouterState>) -> Result<impl IntoRe
         consensus_store: consensus_state,
     };
 
-    let response = borsh::to_vec(&catchup_response).context("Serializing modules")?;
-    let base64_response = base64_field::BASE64_STANDARD.encode(&response);
-    Ok(Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/text")
-        .body(base64_response)
-        .unwrap())
+    Ok(Json(catchup_response))
 }
 
 pub struct RouterState {

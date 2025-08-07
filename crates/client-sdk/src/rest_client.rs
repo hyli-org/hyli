@@ -8,6 +8,7 @@ use std::{
 use anyhow::{Context, Result};
 use hyle_net::http::HttpClient;
 use sdk::{
+    admin::CatchupStoreResponse,
     api::{
         APIBlob, APIBlock, APIContract, APINodeContract, APIRegisterContract, APIStaking,
         APITransaction, NodeInfo, TransactionWithBlobs,
@@ -201,7 +202,9 @@ pub trait NodeApiClient {
 }
 
 pub trait NodeAdminApiClient {
-    fn get_catchup_store(&self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>>;
+    fn get_catchup_store(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<CatchupStoreResponse>> + Send + '_>>;
 }
 
 impl NodeApiHttpClient {
@@ -341,9 +344,11 @@ impl NodeApiClient for NodeApiHttpClient {
 }
 
 impl NodeAdminApiClient for NodeApiHttpClient {
-    fn get_catchup_store(&self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
+    fn get_catchup_store(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<CatchupStoreResponse>> + Send + '_>> {
         Box::pin(async move {
-            self.get_str("v1/admin/catchup")
+            self.get("v1/admin/catchup")
                 .await
                 .context("getting catchup store to initialize the node".to_string())
         })
