@@ -52,7 +52,7 @@ async fn setup_4_nodes_catchup() -> Result<()> {
             .conf
             .admin_server_port
     );
-    conf.consensus.timestamp_checks = TimestampCheck::Monotonic;
+    // conf.consensus.timestamp_checks = TimestampCheck::Monotonic;
 
     let process = test_helpers::TestProcess::new("hyle", conf);
 

@@ -408,7 +408,9 @@ impl Consensus {
 
     fn verify_timestamp(
         &self,
-        ConsensusProposal { timestamp, .. }: &ConsensusProposal,
+        ConsensusProposal {
+            timestamp, slot, ..
+        }: &ConsensusProposal,
     ) -> Result<()> {
         let previous_timestamp = self.bft_round_state.parent_timestamp.clone();
 
@@ -449,8 +451,9 @@ impl Consensus {
 
                 if &next_max_timestamp < timestamp {
                     bail!(
-                        "Timestamp {} too late (should be < {}, exceeded by {} ms)",
+                        "Timestamp {} (slot: {}) too late (should be < {}, exceeded by {} ms)",
                         timestamp,
+                        slot,
                         next_max_timestamp,
                         (timestamp.clone() - next_max_timestamp.clone()).as_millis()
                     );

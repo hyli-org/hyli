@@ -115,8 +115,9 @@ impl DataAvailability {
             tokio::time::interval(std::time::Duration::from_millis(5000));
 
         let single_node = self.config.consensus.solo;
+        let fast_catchup = self.config.run_fast_catchup;
         let mut catchup_tick = async || {
-            if single_node {
+            if single_node || fast_catchup {
                 std::future::pending::<()>().await;
             } else {
                 catchup_task_checker_ticker.tick().await;
@@ -144,7 +145,7 @@ impl DataAvailability {
                 }
             }
             listen<PeerEvent> msg => {
-                if !self.need_catchup || self.catchup_task.as_ref().is_some_and(|t| !t.is_finished()) {
+                if fast_catchup || !self.need_catchup || self.catchup_task.as_ref().is_some_and(|t| !t.is_finished()) {
                     continue;
                 }
                 match msg {
