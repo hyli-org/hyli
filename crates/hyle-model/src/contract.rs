@@ -1009,7 +1009,7 @@ impl Hashed<TxHash> for RegisterContractEffect {
 
 #[cfg(feature = "full")]
 pub mod base64_field {
-    pub use base64::prelude::*;
+    use base64::prelude::*;
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
