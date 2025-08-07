@@ -729,7 +729,7 @@ async fn consensus_missed_prepare() {
     let register_tx = make_register_contract_tx(ContractName::new("test1"));
 
     disseminate! {
-        txs: [register_tx.clone()],
+        txs: [register_tx],
         owner: node1.mempool_ctx,
         voters: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx]
     };
@@ -744,6 +744,7 @@ async fn consensus_missed_prepare() {
         followers: [node2.consensus_ctx, node3.consensus_ctx, node4.consensus_ctx]
     };
 
+    let register_tx = make_register_contract_tx(ContractName::new("test1"));
     disseminate! {
         txs: [register_tx],
         owner: node2.mempool_ctx,
