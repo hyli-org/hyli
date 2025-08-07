@@ -20,8 +20,6 @@ anyhow = { workspace = true }
 borsh = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_with = { workspace = true, features = ["hex"] }
-strum_macros = { workspace = true }
 tracing = { workspace = true }
 assertables = { workspace = true }
 anymap = { workspace = true }
