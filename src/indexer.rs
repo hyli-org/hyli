@@ -244,18 +244,17 @@ mod test {
         contract_name: ContractName,
         state_commitment: StateCommitment,
     ) -> BlobTransaction {
-        let register_contract_action = RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![3, 2, 1]),
-            state_commitment,
-            contract_name: contract_name.clone(),
-            ..Default::default()
-        };
-        let hyle_blob = register_contract_action.as_blob("hyle".into(), None, None);
-
-        let register_contract_blob = register_contract_action.as_blob(contract_name, None, None);
-
-        BlobTransaction::new("hyle@hyle", vec![hyle_blob, register_contract_blob])
+        BlobTransaction::new(
+            "hyle@hyle",
+            vec![RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![3, 2, 1]),
+                state_commitment,
+                contract_name: contract_name.clone(),
+                ..Default::default()
+            }
+            .as_blob("hyle".into())],
+        )
     }
 
     pub fn new_delete_tx(tld: ContractName, contract_name: ContractName) -> BlobTransaction {
@@ -270,11 +269,11 @@ mod test {
                 DeleteContractAction {
                     contract_name: contract_name.clone(),
                 }
-                .as_blob(tld, None, None),
-                DeleteContractAction {
-                    contract_name: contract_name.clone(),
-                }
-                .as_blob(contract_name, None, None),
+                .as_blob(tld),
+                Blob {
+                    contract_name,
+                    data: BlobData(vec![]),
+                },
             ],
         )
     }
@@ -753,14 +752,14 @@ mod test {
         assert_json_include!(
             actual: blob_transactions_response.json::<serde_json::Value>(),
             expected: json!([
-                {
-                    "blobs": [{
-                        "contract_name": "c2",
-                        "data": hex::encode(register_tx_2.blobs.get(1).map(|b| b.data.0.clone()).unwrap_or_default()), // Blob de registering
-                        "proof_outputs": []
-                    }],
-                    "tx_hash": register_tx_2.hashed().to_string(),
-                },
+                // {
+                //     "blobs": [{
+                //         "contract_name": "c2",
+                //         "data": hex::encode(register_tx_2.blobs.get(1).map(|b| b.data.0.clone()).unwrap_or_default()), // Blob de registering
+                //         "proof_outputs": []
+                //     }],
+                //     "tx_hash": register_tx_2.hashed().to_string(),
+                // },
                 {
                     "blobs": [{
                         "contract_name": "c2",

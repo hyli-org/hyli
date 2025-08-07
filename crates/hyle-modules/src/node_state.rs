@@ -56,11 +56,14 @@ impl ModifiedContractFields {
 // and keep track of which fields changed and the list of side effects we processed.
 type ModifiedContractData = (ContractStatus, ModifiedContractFields, Vec<SideEffect>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 enum ContractStatus {
+    WaitingDeletion,
     Deleted,
     UnknownState,
     Updated(Contract),
+    // We expect the next blob to be a blob containing the constructor metadata
+    RegisterWithConstructor(Contract),
 }
 
 /// Represents the result of processing a proof
@@ -433,19 +436,12 @@ impl NodeState {
             );
         }
 
-        // For now, reject blob Tx composed of blobs for unknown contracts that do not register.
-        let contracts = tx
-            .blobs
-            .iter()
-            .filter(|blob| {
-                !self.contracts.contains_key(&blob.contract_name)
-                    && borsh::from_slice::<StructuredBlobData<RegisterContractAction>>(&blob.data.0)
-                        .is_err()
-            })
-            .map(|b| b.contract_name.0.clone())
-            .collect::<Vec<_>>();
-        if !contracts.is_empty() {
-            bail!("Blob Transaction contains at least one non-registering blobs for unknown contracts: {}", contracts.join(", "));
+        // For now, reject blob Tx if the first contract is unknown
+        if !self.contracts.contains_key(&tx.blobs[0].contract_name) {
+            bail!(
+                "Blob Transaction's first contract {} is unknown",
+                tx.blobs[0].contract_name
+            );
         }
 
         let blobs: BTreeMap<BlobIndex, UnsettledBlobMetadata> = tx
@@ -775,6 +771,38 @@ impl NodeState {
     ) -> SettlementResult {
         // Recursion end-case: we succesfully settled all prior blobs, so success.
         let Some(current_blob) = blob_iter.next() else {
+            // Sanity checks
+            for (contract_name, (contract_status, _, _)) in contract_changes.iter() {
+                tracing::trace!(
+                    "sanity check - contract {contract_name:?} is in state {contract_status:?}"
+                );
+                // Sanity check: a contract state cannot be in RegisterWithConstructor as it would mean the constructor blob has not been sent
+                if let ContractStatus::RegisterWithConstructor(_) = contract_status {
+                    let msg = format!(
+                            "Contract '{contract_name}' is in RegisterWithConstructor state at settlement end; constructor blob missing.",
+                        );
+                    debug!("{msg}");
+                    events.push(TransactionStateEvent::SettleEvent(msg));
+                    return SettlementResult {
+                        settlement_status: SettlementStatus::SettleAsFailed,
+                        contract_changes,
+                        blob_proof_output_indices,
+                    };
+                }
+                // Sanity check: a contract state cannot be in WaitingDeletion as it would mean the deletion blob has not been sent
+                if let ContractStatus::WaitingDeletion = contract_status {
+                    let msg = format!(
+                            "Contract '{contract_name}' is in WaitingDeletion state at settlement end; deletion blob missing.",
+                        );
+                    debug!("{msg}");
+                    events.push(TransactionStateEvent::SettleEvent(msg));
+                    return SettlementResult {
+                        settlement_status: SettlementStatus::SettleAsFailed,
+                        contract_changes,
+                        blob_proof_output_indices,
+                    };
+                }
+            }
             tracing::trace!("Settlement - Done");
             if settlement_status == SettlementStatus::Unknown {
                 // All blobs have been processed, if settlement status is still idle, this means:
@@ -790,7 +818,11 @@ impl NodeState {
         };
 
         let contract_name = &current_blob.blob.contract_name;
+
         blob_proof_output_indices.push(0);
+
+        // TODO: this part is actually equivalent to on-chain execution. ("hyle" contract + Register/Update/Delete part)
+        // This need to be written in a more clear/readable way; that includes NativeVerifier execution
 
         // Super special case - the hyle contract has "synthetic proofs".
         // We need to check the current state of 'current_contracts' to check validity,
@@ -827,76 +859,24 @@ impl NodeState {
             };
         }
 
-        // Special case for contract registration
-        if !contracts.contains_key(contract_name) {
-            if !contract_changes.contains_key(contract_name) {
-                let msg = format!(
-                    "Trying to settle a blob for the unregistered contract {contract_name:?}."
-                );
-                debug!("{msg}");
-                events.push(TransactionStateEvent::SettleEvent(msg));
-                return SettlementResult {
-                    settlement_status: SettlementStatus::SettleAsFailed,
-                    contract_changes,
-                    blob_proof_output_indices,
-                };
-            }
-            let _ = match borsh::from_slice::<StructuredBlobData<RegisterContractAction>>(
-                &current_blob.blob.data.0,
-            ) {
-                Ok(blob) => blob,
-                Err(err) => {
-                    let msg =
-                        format!("Failed to deserialize RegisterContractAction from blob: {err:?}");
-                    debug!("{msg}");
-                    events.push(TransactionStateEvent::SettleEvent(msg));
-                    return SettlementResult {
-                        settlement_status: SettlementStatus::SettleAsFailed,
-                        contract_changes,
-                        blob_proof_output_indices,
-                    };
-                }
-            };
+        tracing::trace!(
+            "settling blob on contract {contract_name:?} is in state {:?}",
+            contract_changes
+                .get_mut(contract_name)
+                .map(|(status, _, _)| status)
+        );
+        if let Some((current_status, _, se)) = contract_changes.get_mut(contract_name) {
+            // Special case for contract registration
+            // Two case scenario:
+            // 1. The contract is created with metadata, so we expect the next blob to be a constructor blob.
+            // 2. The contract is created without metadata, so we expect the next blob to be a regular blob.
+            // Here we handle case 1.
+            if let ContractStatus::RegisterWithConstructor(created_contract) = current_status {
+                // current_blob is considered as constructor blob. It does not need to be proven.
+                *current_status = ContractStatus::Updated(created_contract.clone());
+                se.push(SideEffect::Register(Some(current_blob.blob.data.0.clone())));
 
-            tracing::trace!("Registration Settlement - OK blob");
-            return Self::settle_blobs_recursively(
-                contracts,
-                settlement_status.clone(),
-                contract_changes,
-                blob_iter.clone(),
-                blob_proof_output_indices.clone(),
-                events,
-            );
-        }
-
-        // Special case for contract deletion
-        if let Some((ContractStatus::Deleted, _, _)) = contract_changes.get(contract_name) {
-            tracing::trace!("Deletion Settlement - OK blob");
-            return Self::settle_blobs_recursively(
-                contracts,
-                settlement_status.clone(),
-                contract_changes,
-                blob_iter.clone(),
-                blob_proof_output_indices.clone(),
-                events,
-            );
-        }
-
-        // Special case for contract update
-        if let Some((_, mc_fields, _)) = contract_changes.get(contract_name) {
-            // Check if ProgramId or TimeoutWindow have been updated
-            if (mc_fields.program_id
-                && borsh::from_slice::<StructuredBlobData<UpdateContractProgramIdAction>>(
-                    &current_blob.blob.data.0,
-                )
-                .is_ok())
-                || (mc_fields.timeout_window
-                    && borsh::from_slice::<StructuredBlobData<UpdateContractTimeoutWindowAction>>(
-                        &current_blob.blob.data.0,
-                    )
-                    .is_ok())
-            {
-                tracing::trace!("Update Settlement - OK blob");
+                tracing::trace!("Registration Settlement - OK blob");
                 return Self::settle_blobs_recursively(
                     contracts,
                     settlement_status.clone(),
@@ -905,6 +885,46 @@ impl NodeState {
                     blob_proof_output_indices.clone(),
                     events,
                 );
+            }
+            // Special case for contract deletion from TLD
+            if current_status == &mut ContractStatus::WaitingDeletion {
+                if !current_blob.blob.data.0.is_empty() {
+                    // Empty blob is not a valid deletion
+                    let msg =
+                    format!("Trying to settle a blob for the deleted contract {contract_name:?} with non-empty data.");
+                    debug!("{msg}");
+                    events.push(TransactionStateEvent::SettleEvent(msg));
+                    return SettlementResult {
+                        settlement_status: SettlementStatus::SettleAsFailed,
+                        contract_changes,
+                        blob_proof_output_indices,
+                    };
+                }
+
+                *current_status = ContractStatus::Deleted;
+                se.push(SideEffect::Delete);
+
+                tracing::trace!("Deletion Settlement - OK blob");
+                return Self::settle_blobs_recursively(
+                    contracts,
+                    settlement_status.clone(),
+                    contract_changes,
+                    blob_iter.clone(),
+                    blob_proof_output_indices.clone(),
+                    events,
+                );
+            }
+            // Special case for contract deletion
+            if current_status == &mut ContractStatus::Deleted {
+                let msg =
+                    format!("Trying to settle a blob for a deleted contract {contract_name:?}");
+                debug!("{msg}");
+                events.push(TransactionStateEvent::SettleEvent(msg));
+                return SettlementResult {
+                    settlement_status: SettlementStatus::SettleAsFailed,
+                    contract_changes,
+                    blob_proof_output_indices,
+                };
             }
         }
 
@@ -921,7 +941,6 @@ impl NodeState {
                 &mut current_contracts,
                 contract_name,
                 proof_metadata,
-                current_blob,
             );
 
             match proof_result {
@@ -1093,6 +1112,16 @@ impl NodeState {
                 ContractStatus::UnknownState => {
                     unreachable!(
                         "Contract status should not be UnknownState when trying to settle a blob tx"
+                    );
+                }
+                ContractStatus::RegisterWithConstructor(..) => {
+                    unreachable!(
+                        "Contract status should not be CreatedWithMetadata when trying to settle a blob tx"
+                    );
+                }
+                ContractStatus::WaitingDeletion => {
+                    unreachable!(
+                        "Contract status should not be WaitingDeletion when trying to settle a blob tx"
                     );
                 }
                 ContractStatus::Deleted => {
@@ -1287,7 +1316,10 @@ impl NodeState {
             .get(contract_name)
             .and_then(|(contract_status, ..)| match contract_status {
                 ContractStatus::Updated(contract) => Some(contract),
-                ContractStatus::Deleted | ContractStatus::UnknownState => None,
+                ContractStatus::RegisterWithConstructor(contract) => Some(contract),
+                ContractStatus::Deleted
+                | ContractStatus::WaitingDeletion
+                | ContractStatus::UnknownState => None,
             })
             .or_else(|| contracts.get(contract_name))
             .ok_or_else(|| {
@@ -1306,7 +1338,6 @@ impl NodeState {
         contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
         contract_name: &ContractName,
         proof_metadata: &(ProgramId, HyleOutput, Verifier),
-        current_blob: &UnsettledBlobMetadata,
     ) -> ProofProcessingResult {
         if let Err(e) = validate_state_commitment_size(&proof_metadata.1.next_state) {
             return ProofProcessingResult::Invalid(e.to_string());
@@ -1368,6 +1399,38 @@ impl NodeState {
 
         for effect in &proof_metadata.1.onchain_effects {
             match effect {
+                OnchainEffect::RegisterContractWithConstructor(effect) => {
+                    // Validation of contract registration metadata should cause immediate failure
+                    if let Err(e) = validate_contract_registration_metadata(
+                        &contract.name,
+                        &effect.contract_name,
+                        &effect.verifier,
+                        &effect.program_id,
+                        &effect.state_commitment,
+                    ) {
+                        return ProofProcessingResult::ProvenFailure(format!(
+                            "Contract registration validation failed: {e}"
+                        ));
+                    }
+
+                    contract_changes.insert(
+                        effect.contract_name.clone(),
+                        (
+                            ContractStatus::RegisterWithConstructor(Contract {
+                                name: effect.contract_name.clone(),
+                                program_id: effect.program_id.clone(),
+                                state: effect.state_commitment.clone(),
+                                verifier: effect.verifier.clone(),
+                                timeout_window: effect
+                                    .timeout_window
+                                    .clone()
+                                    .unwrap_or(contract.timeout_window.clone()),
+                            }),
+                            ModifiedContractFields::all(),
+                            vec![],
+                        ),
+                    );
+                }
                 OnchainEffect::RegisterContract(effect) => {
                     // Validation of contract registration metadata should cause immediate failure
                     if let Err(e) = validate_contract_registration_metadata(
@@ -1396,7 +1459,7 @@ impl NodeState {
                                     .unwrap_or(contract.timeout_window.clone()),
                             }),
                             ModifiedContractFields::all(),
-                            vec![SideEffect::Register(Some(current_blob.blob.data.0.clone()))],
+                            vec![SideEffect::Register(None)],
                         ),
                     );
                 }
@@ -1410,12 +1473,12 @@ impl NodeState {
                     contract_changes
                         .entry(cn.clone())
                         .and_modify(|c| {
-                            c.0 = ContractStatus::Deleted;
+                            c.0 = ContractStatus::WaitingDeletion;
                             c.2.push(SideEffect::Delete);
                         })
                         .or_insert_with(|| {
                             (
-                                ContractStatus::Deleted,
+                                ContractStatus::WaitingDeletion,
                                 ModifiedContractFields::all(),
                                 vec![SideEffect::Delete],
                             )
@@ -1632,11 +1695,12 @@ pub mod test {
             program_id: ProgramId(vec![]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name: name.clone(),
+            constructor_metadata: Some(vec![1]),
             ..Default::default()
         };
-        let hyle_blob = register_contract_action.as_blob("hyle".into(), None, None);
+        let hyle_blob = register_contract_action.as_blob("hyle".into());
 
-        let register_contract_blob = register_contract_action.as_blob(name, None, None);
+        let register_contract_blob = register_contract_action.as_blob(name);
 
         BlobTransaction::new("hyle@hyle", vec![hyle_blob, register_contract_blob])
     }
@@ -1649,11 +1713,12 @@ pub mod test {
             program_id: ProgramId(vec![]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name: name.clone(),
+            constructor_metadata: Some(vec![1]),
             ..Default::default()
         };
-        let hyle_blob = register_contract_action.as_blob("hyle".into(), None, None);
+        let hyle_blob = register_contract_action.as_blob("hyle".into());
 
-        let register_contract_blob = register_contract_action.as_blob(name, None, None);
+        let register_contract_blob = register_contract_action.as_blob(name);
         let list = [vec![hyle_blob, register_contract_blob], blobs].concat();
 
         BlobTransaction::new("hyle@hyle", list)

@@ -51,6 +51,22 @@ impl ProvableBlobTx {
         Ok(self.runners.last_mut().unwrap())
     }
 
+    pub fn add_blob(
+        &mut self,
+        blob: Blob,
+        private_input: Option<Vec<u8>>,
+    ) -> Result<&'_ mut ContractRunner> {
+        let runner = ContractRunner::new(
+            blob.contract_name.clone(),
+            self.identity.clone(),
+            BlobIndex(self.blobs.len()),
+            private_input,
+        )?;
+        self.runners.push(runner);
+        self.blobs.push(blob);
+        Ok(self.runners.last_mut().unwrap())
+    }
+
     pub fn add_context(&mut self, tx_context: TxContext) {
         self.tx_context = Some(tx_context);
     }
@@ -142,6 +158,12 @@ where
 pub struct TxExecutor<S: StateUpdater> {
     states: S,
     provers: BTreeMap<ContractName, Arc<dyn ClientSdkProver<Vec<Calldata>> + Sync + Send>>,
+}
+
+impl<S: StateUpdater> TxExecutor<S> {
+    pub fn get_state(&self, contract_name: &ContractName) -> Result<Box<dyn Any>> {
+        self.states.get(contract_name)
+    }
 }
 
 impl<S: StateUpdater> Deref for TxExecutor<S> {

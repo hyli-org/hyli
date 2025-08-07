@@ -376,18 +376,17 @@ impl E2ECtx {
     where
         Contract: E2EContract,
     {
-        let register_contract_action = RegisterContractAction {
-            verifier: Contract::verifier(),
-            program_id: Contract::program_id(),
-            state_commitment: Contract::state_commitment(),
-            contract_name: name.into(),
-            ..Default::default()
-        };
-        let hyle_blob = register_contract_action.as_blob("hyle".into(), None, None);
-
-        let register_contract_blob = register_contract_action.as_blob(name.into(), None, None);
-
-        let tx = BlobTransaction::new(sender.clone(), vec![hyle_blob, register_contract_blob]);
+        let tx = BlobTransaction::new(
+            sender.clone(),
+            vec![RegisterContractAction {
+                verifier: Contract::verifier(),
+                program_id: Contract::program_id(),
+                state_commitment: Contract::state_commitment(),
+                contract_name: name.into(),
+                ..Default::default()
+            }
+            .as_blob("hyle".into())],
+        );
 
         assert_ok!(self.client().send_tx_blob(tx).await);
 

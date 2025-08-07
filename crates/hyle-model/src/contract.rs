@@ -558,10 +558,42 @@ impl Hashed<ProofDataHash> for ProofData {
 /// Enum for various side-effects blobs can have on the chain.
 /// This is implemented as an enum for easier forward compatibility.
 pub enum OnchainEffect {
+    /// RegisterContractWithConstructor means that we expect the next blob from the contract to be a placeholder containing the constructor_metadata
+    RegisterContractWithConstructor(RegisterContractEffect),
+    /// RegisterContract means that we expect the contract's next blob to be a real blob that will get proven
     RegisterContract(RegisterContractEffect),
     DeleteContract(ContractName),
     UpdateContractProgramId(ContractName, ProgramId),
     UpdateTimeoutWindow(ContractName, TimeoutWindow),
+}
+
+pub struct OnchainEffectHash(pub Vec<u8>);
+
+#[cfg(feature = "full")]
+impl Hashed<OnchainEffectHash> for OnchainEffect {
+    fn hashed(&self) -> OnchainEffectHash {
+        use sha3::{Digest, Sha3_256};
+        let mut hasher = Sha3_256::new();
+        match self {
+            OnchainEffect::RegisterContractWithConstructor(c) => {
+                hasher.update(c.hashed().0.as_bytes())
+            }
+            OnchainEffect::RegisterContract(c) => hasher.update(c.hashed().0.as_bytes()),
+            OnchainEffect::DeleteContract(cn) => hasher.update(cn.0.as_bytes()),
+            OnchainEffect::UpdateContractProgramId(cn, pid) => {
+                hasher.update(cn.0.as_bytes());
+                hasher.update(pid.0.clone());
+            }
+            OnchainEffect::UpdateTimeoutWindow(cn, timeout_window) => {
+                hasher.update(cn.0.as_bytes());
+                match timeout_window {
+                    TimeoutWindow::NoTimeout => hasher.update(0u8.to_le_bytes()),
+                    TimeoutWindow::Timeout(bh) => hasher.update(bh.0.to_le_bytes()),
+                }
+            }
+        };
+        OnchainEffectHash(hasher.finalize().to_vec())
+    }
 }
 
 /// This struct has to be the zkvm committed output. It will be used by
@@ -858,20 +890,22 @@ impl Hashed<TxHash> for RegisterContractAction {
     }
 }
 
+impl RegisterContractAction {
+    pub fn as_blob(&self, contract_name: ContractName) -> Blob {
+        <Self as ContractAction>::as_blob(self, contract_name, None, None)
+    }
+}
+
 impl ContractAction for RegisterContractAction {
     fn as_blob(
         &self,
         contract_name: ContractName,
-        caller: Option<BlobIndex>,
-        callees: Option<Vec<BlobIndex>>,
+        _caller: Option<BlobIndex>,
+        _callees: Option<Vec<BlobIndex>>,
     ) -> Blob {
         Blob {
             contract_name,
-            data: BlobData::from(StructuredBlobData {
-                caller,
-                callees,
-                parameters: self.clone(),
-            }),
+            data: BlobData(borsh::to_vec(self).expect("failed to encode RegisterContractAction")),
         }
     }
 }
@@ -884,20 +918,24 @@ pub struct UpdateContractProgramIdAction {
     pub program_id: ProgramId,
 }
 
+impl UpdateContractProgramIdAction {
+    pub fn as_blob(&self, contract_name: ContractName) -> Blob {
+        <Self as ContractAction>::as_blob(self, contract_name, None, None)
+    }
+}
+
 impl ContractAction for UpdateContractProgramIdAction {
     fn as_blob(
         &self,
         contract_name: ContractName,
-        caller: Option<BlobIndex>,
-        callees: Option<Vec<BlobIndex>>,
+        _caller: Option<BlobIndex>,
+        _callees: Option<Vec<BlobIndex>>,
     ) -> Blob {
         Blob {
             contract_name,
-            data: BlobData::from(StructuredBlobData {
-                caller,
-                callees,
-                parameters: self.clone(),
-            }),
+            data: BlobData(
+                borsh::to_vec(self).expect("failed to encode UpdateContractProgramIdAction"),
+            ),
         }
     }
 }
@@ -910,20 +948,24 @@ pub struct UpdateContractTimeoutWindowAction {
     pub timeout_window: TimeoutWindow,
 }
 
+impl UpdateContractTimeoutWindowAction {
+    pub fn as_blob(&self, contract_name: ContractName) -> Blob {
+        <Self as ContractAction>::as_blob(self, contract_name, None, None)
+    }
+}
+
 impl ContractAction for UpdateContractTimeoutWindowAction {
     fn as_blob(
         &self,
         contract_name: ContractName,
-        caller: Option<BlobIndex>,
-        callees: Option<Vec<BlobIndex>>,
+        _caller: Option<BlobIndex>,
+        _callees: Option<Vec<BlobIndex>>,
     ) -> Blob {
         Blob {
             contract_name,
-            data: BlobData::from(StructuredBlobData {
-                caller,
-                callees,
-                parameters: self.clone(),
-            }),
+            data: BlobData(
+                borsh::to_vec(self).expect("failed to encode UpdateContractTimeoutWindowAction"),
+            ),
         }
     }
 }
@@ -936,20 +978,22 @@ pub struct DeleteContractAction {
     pub contract_name: ContractName,
 }
 
+impl DeleteContractAction {
+    pub fn as_blob(&self, contract_name: ContractName) -> Blob {
+        <Self as ContractAction>::as_blob(self, contract_name, None, None)
+    }
+}
+
 impl ContractAction for DeleteContractAction {
     fn as_blob(
         &self,
         contract_name: ContractName,
-        caller: Option<BlobIndex>,
-        callees: Option<Vec<BlobIndex>>,
+        _caller: Option<BlobIndex>,
+        _callees: Option<Vec<BlobIndex>>,
     ) -> Blob {
         Blob {
             contract_name,
-            data: BlobData::from(StructuredBlobData {
-                caller,
-                callees,
-                parameters: self.clone(),
-            }),
+            data: BlobData(borsh::to_vec(self).expect("failed to encode DeleteContractAction")),
         }
     }
 }

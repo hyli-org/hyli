@@ -1061,7 +1061,7 @@ pub mod test {
                 contract_name: name,
                 ..Default::default()
             }
-            .as_blob("hyle".into(), None, None)],
+            .as_blob("hyle".into())],
         )
         .into()
     }

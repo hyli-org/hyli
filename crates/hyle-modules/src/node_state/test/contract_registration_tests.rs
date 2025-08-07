@@ -13,7 +13,7 @@ use crate::node_state::hyle_tld::HYLI_TLD_ID;
 
 use super::*;
 
-pub fn make_register_tx(
+pub fn make_register_tx_with_constructor(
     sender: Identity,
     tld: ContractName,
     name: ContractName,
@@ -23,11 +23,12 @@ pub fn make_register_tx(
         program_id: ProgramId(vec![]),
         state_commitment: StateCommitment(vec![0, 1, 2, 3]),
         contract_name: name.clone(),
+        constructor_metadata: Some(vec![1]),
         ..Default::default()
     };
-    let tld_blob = register_contract_action.as_blob(tld, None, None);
+    let tld_blob = register_contract_action.as_blob(tld);
 
-    let register_contract_blob = register_contract_action.as_blob(name, None, None);
+    let register_contract_blob = register_contract_action.as_blob(name);
 
     BlobTransaction::new(sender, vec![tld_blob, register_contract_blob])
 }
@@ -46,7 +47,7 @@ pub fn make_update_tx_with_registration(
             contract_name: name,
             ..Default::default()
         }
-        .as_blob(tld, None, None)],
+        .as_blob(tld)],
     )
 }
 
@@ -60,9 +61,12 @@ pub fn make_register_hyli_wallet_identity_tx() -> BlobTransaction {
 async fn test_register_contract_simple_hyle() {
     let mut state = new_node_state().await;
 
-    let register_c1 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c1".into());
-    let register_c2 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
-    let register_c3 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c3".into());
+    let register_c1 =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "c1".into());
+    let register_c2 =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
+    let register_c3 =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "c3".into());
 
     state.craft_block_and_handle(1, vec![register_c1.clone().into()]);
 
@@ -88,10 +92,17 @@ async fn test_register_contract_simple_hyle() {
 async fn test_register_contract_failure() {
     let mut state = new_node_state().await;
 
-    let register_1 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c1.hyle.lol".into());
-    let register_2 = make_register_tx("other@hyle".into(), "hyle".into(), "c2.hyle.hyle".into());
-    let register_3 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c3.other".into());
-    let register_4 = make_register_tx("hyle@hyle".into(), "hyle".into(), ".hyle".into());
+    let register_1 =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "c1.hyle.lol".into());
+    let register_2 = make_register_tx_with_constructor(
+        "other@hyle".into(),
+        "hyle".into(),
+        "c2.hyle.hyle".into(),
+    );
+    let register_3 =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "c3.other".into());
+    let register_4 =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), ".hyle".into());
     let register_5 = BlobTransaction::new(
         "hyle@hyle",
         vec![Blob {
@@ -99,7 +110,7 @@ async fn test_register_contract_failure() {
             data: BlobData(vec![0, 1, 2, 3]),
         }],
     );
-    // "hyle" blob alone should not be able to register
+    // "hyle" blob alone should not be able to register with metadata
     let mut register_6 = BlobTransaction::new(
         "hyle@hyle",
         vec![RegisterContractAction {
@@ -107,9 +118,10 @@ async fn test_register_contract_failure() {
             program_id: ProgramId(vec![]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name: "register_6".into(),
+            constructor_metadata: Some(vec![1]),
             ..Default::default()
         }
-        .as_blob("hyle".into(), None, None)],
+        .as_blob("hyle".into())],
     );
     // if the "hyle" blob is not here, should not be able to register
     let mut register_7 = BlobTransaction::new(
@@ -121,75 +133,10 @@ async fn test_register_contract_failure() {
             contract_name: "register_7".into(),
             ..Default::default()
         }
-        .as_blob("register_7".into(), None, None)],
+        .as_blob("register_7".into())],
     );
-    // action in the hyle blob should be the same as the one in the deployed contract
-    let mut register_8 = BlobTransaction::new(
-        "hyle@hyle",
-        vec![
-            RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                contract_name: "register_8".into(),
-                ..Default::default()
-            }
-            .as_blob("hyle".into(), None, None),
-            RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                contract_name: "not_the_same_name".into(),
-                ..Default::default()
-            }
-            .as_blob("not_the_same_name".into(), None, None),
-        ],
-    );
-    // action should be deployed for the correct contract
-    let mut register_9 = BlobTransaction::new(
-        "hyle@hyle",
-        vec![
-            RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                contract_name: "register_9".into(),
-                ..Default::default()
-            }
-            .as_blob("hyle".into(), None, None),
-            RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                contract_name: "register_9".into(),
-                ..Default::default()
-            }
-            .as_blob("different_name".into(), None, None),
-        ],
-    );
-    // action should be deployed for the correct contract
-    let mut register_10 = BlobTransaction::new(
-        "hyle@hyle",
-        vec![
-            RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                contract_name: "register_10".into(),
-                ..Default::default()
-            }
-            .as_blob("hyle".into(), None, None),
-            RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                contract_name: "different_name".into(),
-                ..Default::default()
-            }
-            .as_blob("register_10".into(), None, None),
-        ],
-    );
-    let register_good = make_register_tx("hyle@hyle".into(), "hyle".into(), "c1.hyle".into());
+    let register_good =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "c1.hyle".into());
 
     let signed_block = craft_signed_block(
         1,
@@ -201,9 +148,6 @@ async fn test_register_contract_failure() {
             register_5.clone().into(),
             register_6.clone().into(),
             register_7.clone().into(),
-            register_8.clone().into(),
-            register_9.clone().into(),
-            register_10.clone().into(),
             register_good.clone().into(),
         ],
     );
@@ -222,9 +166,6 @@ async fn test_register_contract_failure() {
             register_5.hashed(),
             register_6.hashed(),
             register_7.hashed(),
-            register_8.hashed(),
-            register_9.hashed(),
-            register_10.hashed(),
         ]
     );
 }
@@ -232,7 +173,8 @@ async fn test_register_contract_failure() {
 #[test_log::test(tokio::test)]
 async fn test_register_contract_composition() {
     let mut state = new_node_state().await;
-    let register = make_register_tx("hyle@hyle".into(), "hyle".into(), "hydentity".into());
+    let register =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "hydentity".into());
     let block = state.craft_block_and_handle(1, vec![register.clone().into()]);
 
     check_block_is_ok(&block);
@@ -247,17 +189,14 @@ async fn test_register_contract_composition() {
                 program_id: ProgramId(vec![]),
                 state_commitment: StateCommitment(vec![0, 1, 2, 3]),
                 contract_name: "c1".into(),
+                constructor_metadata: Some("constructor_metadata".as_bytes().to_vec()),
                 ..Default::default()
             }
-            .as_blob("hyle".into(), None, None),
-            RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+            .as_blob("hyle".into()),
+            Blob {
                 contract_name: "c1".into(),
-                ..Default::default()
-            }
-            .as_blob("c1".into(), None, None),
+                data: BlobData("constructor_metadata".as_bytes().to_vec()),
+            },
             Blob {
                 contract_name: "hydentity".into(),
                 data: BlobData(vec![0, 1, 2, 3]),
@@ -369,10 +308,10 @@ pub fn make_delete_tx(
             DeleteContractAction {
                 contract_name: contract_name.clone(),
             }
-            .as_blob(tld, None, None),
+            .as_blob(tld),
             Blob {
                 contract_name,
-                data: BlobData::default(),
+                data: BlobData(vec![]),
             },
         ],
     )
@@ -390,11 +329,11 @@ pub fn make_delete_tx_with_hyli(tld: ContractName, contract_name: ContractName) 
             DeleteContractAction {
                 contract_name: contract_name.clone(),
             }
-            .as_blob(tld, None, None),
-            DeleteContractAction {
-                contract_name: contract_name.clone(),
-            }
-            .as_blob(contract_name, None, None),
+            .as_blob(tld),
+            Blob {
+                contract_name,
+                data: BlobData(vec![]),
+            },
         ],
     )
 }
@@ -416,7 +355,7 @@ pub fn make_update_timeout_window_tx_with_hyli(
                 contract_name,
                 timeout_window,
             }
-            .as_blob(tld, None, None),
+            .as_blob(tld),
         ],
     )
 }
@@ -438,7 +377,7 @@ pub fn make_update_program_id_tx_with_hyli(
                 contract_name,
                 program_id,
             }
-            .as_blob(tld, None, None),
+            .as_blob(tld),
         ],
     )
 }
@@ -446,17 +385,20 @@ pub fn make_update_program_id_tx_with_hyli(
 async fn test_register_contract_and_delete_hyle() {
     let mut state = new_node_state().await;
 
-    let register_wallet = make_register_tx("hyle@hyle".into(), "hyle".into(), "wallet".into());
+    let register_wallet =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "wallet".into());
     let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
 
     let mut output = make_hyle_output(register_hyli_at_wallet.clone(), BlobIndex(0));
     let register_hyli_at_wallet_proof =
         new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
 
-    let register_c1 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c1".into());
-    let register_c2 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
+    let register_c1 =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "c1".into());
+    let register_c2 =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
     // This technically doesn't matter as it's actually the proof that does the work
-    let register_sub_c2 = make_register_tx(
+    let register_sub_c2 = make_register_tx_with_constructor(
         "toto@c2.hyle".into(),
         "c2.hyle".into(),
         "sub.c2.hyle".into(),
@@ -465,13 +407,15 @@ async fn test_register_contract_and_delete_hyle() {
     let mut output = make_hyle_output(register_sub_c2.clone(), BlobIndex(0));
     output
         .onchain_effects
-        .push(OnchainEffect::RegisterContract(RegisterContractEffect {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
-            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-            contract_name: "sub.c2.hyle".into(),
-            timeout_window: None,
-        }));
+        .push(OnchainEffect::RegisterContractWithConstructor(
+            RegisterContractEffect {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: "sub.c2.hyle".into(),
+                timeout_window: None,
+            },
+        ));
     let sub_c2_proof = new_proof_tx(&"c2.hyle".into(), &output, &register_sub_c2.hashed());
 
     let block = state.craft_block_and_handle(
@@ -546,14 +490,16 @@ async fn test_register_contract_and_delete_hyle() {
 #[test_log::test(tokio::test)]
 async fn test_hyle_contract_update_timeout_window() {
     let mut state = new_node_state().await;
-    let register_wallet = make_register_tx("hyle@hyle".into(), "hyle".into(), "wallet".into());
+    let register_wallet =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "wallet".into());
     let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
 
     let mut output = make_hyle_output(register_hyli_at_wallet.clone(), BlobIndex(0));
     let register_hyli_at_wallet_proof =
         new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
 
-    let register_contract = make_register_tx("hyle@hyle".into(), "hyle".into(), "contract".into());
+    let register_contract =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "contract".into());
 
     state.craft_block_and_handle(
         1,
@@ -612,16 +558,18 @@ async fn test_hyle_contract_update_timeout_window() {
 async fn test_hyle_sub_delete() {
     let mut state = new_node_state().await;
 
-    let register_wallet = make_register_tx("hyle@hyle".into(), "hyle".into(), "wallet".into());
+    let register_wallet =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "wallet".into());
     let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
 
     let mut output = make_hyle_output(register_hyli_at_wallet.clone(), BlobIndex(0));
     let register_hyli_at_wallet_proof =
         new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
 
-    let register_c2 = make_register_tx("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
+    let register_c2 =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "c2.hyle".into());
     // This technically doesn't matter as it's actually the proof that does the work
-    let register_sub_c2 = make_register_tx(
+    let register_sub_c2 = make_register_tx_with_constructor(
         "toto@c2.hyle".into(),
         "c2.hyle".into(),
         "sub.c2.hyle".into(),
@@ -630,13 +578,15 @@ async fn test_hyle_sub_delete() {
     let mut output = make_hyle_output(register_sub_c2.clone(), BlobIndex(0));
     output
         .onchain_effects
-        .push(OnchainEffect::RegisterContract(RegisterContractEffect {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
-            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-            contract_name: "sub.c2.hyle".into(),
-            timeout_window: None,
-        }));
+        .push(OnchainEffect::RegisterContractWithConstructor(
+            RegisterContractEffect {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: "sub.c2.hyle".into(),
+                timeout_window: None,
+            },
+        ));
     let sub_c2_proof = new_proof_tx(&"c2.hyle".into(), &output, &register_sub_c2.hashed());
 
     state.craft_block_and_handle(
@@ -685,7 +635,8 @@ async fn test_hyle_sub_delete() {
 
 #[test_log::test(tokio::test)]
 async fn test_register_update_delete_combinations_hyle() {
-    let register_tx = make_register_tx("hyle@hyle".into(), "hyle".into(), "c.hyle".into());
+    let register_tx =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "c.hyle".into());
     let delete_tx = make_delete_tx_with_hyli("hyle".into(), "c.hyle".into());
     let delete_self_tx = make_delete_tx("hyle@c.hyle".into(), "c.hyle".into(), "c.hyle".into());
     let update_tx =
@@ -721,7 +672,8 @@ async fn test_register_update_delete_combinations_hyle() {
     ) {
         let mut state = new_node_state().await;
 
-        let register_wallet = make_register_tx("hyle@hyle".into(), "hyle".into(), "wallet".into());
+        let register_wallet =
+            make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "wallet".into());
         let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
 
         let mut output = make_hyle_output(register_hyli_at_wallet.clone(), BlobIndex(0));
@@ -795,7 +747,8 @@ async fn test_unknown_contract_and_delete_cleanup() {
     assert_eq!(block.failed_txs, vec![unknown_contract_tx.hashed()]);
 
     // 2. Register a contract
-    let register_tx = make_register_tx("hyle@hyle".into(), "hyle".into(), "to_delete".into());
+    let register_tx =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "to_delete".into());
     state.craft_block_and_handle(2, vec![register_tx.clone().into()]);
 
     // 3. Submit blob transactions for the contract but don't settle them
@@ -884,7 +837,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
         };
         let upgrade_with_timeout = BlobTransaction::new(
             Identity::new("test@c1"),
-            vec![action.clone().as_blob("c1".into(), None, None)],
+            vec![action.clone().as_blob("c1".into())],
         );
 
         let upgrade_with_timeout_hash = upgrade_with_timeout.hashed();
@@ -918,7 +871,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
         };
         let upgrade_with_none = BlobTransaction::new(
             Identity::new("test@c1"),
-            vec![action.clone().as_blob("c1".into(), None, None)],
+            vec![action.clone().as_blob("c1".into())],
         );
 
         let upgrade_with_none_hash = upgrade_with_none.hashed();
@@ -952,7 +905,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
         };
         let upgrade_with_another_timeout = BlobTransaction::new(
             Identity::new("test@c1"),
-            vec![action.clone().as_blob("c1".into(), None, None)],
+            vec![action.clone().as_blob("c1".into())],
         );
 
         let upgrade_with_another_timeout_hash = upgrade_with_another_timeout.hashed();
@@ -1002,7 +955,8 @@ async fn test_pending_tx_then_contract_upgrade_and_settlement_order() {
     // 1. Register contract via hyle
     let mut state = new_node_state().await;
     let contract_name = ContractName::new("foo");
-    let register_1 = make_register_tx("hyle@hyle".into(), "hyle".into(), contract_name.clone());
+    let register_1 =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), contract_name.clone());
     state.craft_block_and_handle(1, vec![register_1.clone().into()]);
     assert!(state.contracts.contains_key(&contract_name));
 
@@ -1019,7 +973,8 @@ async fn test_pending_tx_then_contract_upgrade_and_settlement_order() {
     assert!(state.unsettled_transactions.get(&tx2_hash).is_some());
 
     // 3. Register the same contract again via hyle (TX3)
-    let register_2 = make_register_tx("hyle@hyle".into(), "hyle".into(), contract_name.clone());
+    let register_2 =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), contract_name.clone());
     let register_2_hash = register_2.hashed();
     let block3 = state.craft_block_and_handle(3, vec![register_2.clone().into()]);
 
@@ -1130,7 +1085,8 @@ async fn test_multiple_delete_attempts_helper(tld_name: &str, contract_name: &st
     let mut state = new_node_state().await;
 
     // Register wallet and hyli identity
-    let register_wallet = make_register_tx("hyle@hyle".into(), "hyle".into(), "wallet".into());
+    let register_wallet =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "wallet".into());
     let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
     let mut output = make_hyle_output(register_hyli_at_wallet.clone(), BlobIndex(0));
     let register_hyli_at_wallet_proof =
@@ -1138,7 +1094,7 @@ async fn test_multiple_delete_attempts_helper(tld_name: &str, contract_name: &st
 
     // Register wrong_tld
     let register_wrong_tld =
-        make_register_tx("hyle@hyle".into(), "hyle".into(), "wrong_tld".into());
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "wrong_tld".into());
 
     let mut initial_txs = vec![
         register_wallet.into(),
@@ -1150,11 +1106,11 @@ async fn test_multiple_delete_attempts_helper(tld_name: &str, contract_name: &st
     // Register custom TLD if it's not "hyle"
     if tld_name != "hyle" {
         let register_custom_tld =
-            make_register_tx("hyle@hyle".into(), "hyle".into(), tld_name.into());
+            make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), tld_name.into());
         initial_txs.push(register_custom_tld.into());
 
         // Register the test contract under the custom TLD
-        let register_test_contract = make_register_tx(
+        let register_test_contract = make_register_tx_with_constructor(
             format!("user@{tld_name}").into(),
             tld_name.into(),
             contract_name.into(),
@@ -1162,21 +1118,26 @@ async fn test_multiple_delete_attempts_helper(tld_name: &str, contract_name: &st
         let mut output = make_hyle_output(register_test_contract.clone(), BlobIndex(0));
         output
             .onchain_effects
-            .push(OnchainEffect::RegisterContract(RegisterContractEffect {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                contract_name: contract_name.into(),
-                timeout_window: None,
-            }));
+            .push(OnchainEffect::RegisterContractWithConstructor(
+                RegisterContractEffect {
+                    verifier: "test".into(),
+                    program_id: ProgramId(vec![]),
+                    state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                    contract_name: contract_name.into(),
+                    timeout_window: None,
+                },
+            ));
         let register_test_contract_proof =
             new_proof_tx(&tld_name.into(), &output, &register_test_contract.hashed());
         initial_txs.push(register_test_contract.into());
         initial_txs.push(register_test_contract_proof.into());
     } else {
         // For "hyle" TLD, just register the contract directly
-        let register_test_contract =
-            make_register_tx("hyle@hyle".into(), "hyle".into(), contract_name.into());
+        let register_test_contract = make_register_tx_with_constructor(
+            "hyle@hyle".into(),
+            "hyle".into(),
+            contract_name.into(),
+        );
         initial_txs.push(register_test_contract.into());
     }
 
@@ -1207,10 +1168,10 @@ async fn test_multiple_delete_attempts_helper(tld_name: &str, contract_name: &st
             DeleteContractAction {
                 contract_name: contract_name.into(),
             }
-            .as_blob(tld_name.into(), None, None),
+            .as_blob(tld_name.into()),
             Blob {
                 contract_name: contract_name.into(),
-                data: BlobData::default(),
+                data: BlobData(vec![]),
             },
         ],
     );
@@ -1227,10 +1188,10 @@ async fn test_multiple_delete_attempts_helper(tld_name: &str, contract_name: &st
             DeleteContractAction {
                 contract_name: contract_name.into(),
             }
-            .as_blob(tld_name.into(), None, None),
+            .as_blob(tld_name.into()),
             Blob {
                 contract_name: contract_name.into(),
-                data: BlobData::default(),
+                data: BlobData(vec![]),
             },
         ],
     );
@@ -1247,11 +1208,11 @@ async fn test_multiple_delete_attempts_helper(tld_name: &str, contract_name: &st
             DeleteContractAction {
                 contract_name: contract_name.into(),
             }
-            .as_blob("wrong_tld".into(), None, None),
-            DeleteContractAction {
+            .as_blob("wrong_tld".into()),
+            Blob {
                 contract_name: contract_name.into(),
-            }
-            .as_blob(contract_name.into(), None, None),
+                data: BlobData(vec![]),
+            },
         ],
     );
 
@@ -1267,7 +1228,7 @@ async fn test_multiple_delete_attempts_helper(tld_name: &str, contract_name: &st
             DeleteContractAction {
                 contract_name: contract_name.into(),
             }
-            .as_blob(tld_name.into(), None, None),
+            .as_blob(tld_name.into()),
         ],
     );
 
@@ -1283,11 +1244,11 @@ async fn test_multiple_delete_attempts_helper(tld_name: &str, contract_name: &st
             DeleteContractAction {
                 contract_name: contract_name.into(),
             }
-            .as_blob(tld_name.into(), None, None),
-            DeleteContractAction {
+            .as_blob(tld_name.into()),
+            Blob {
                 contract_name: contract_name.into(),
-            }
-            .as_blob(contract_name.into(), None, None),
+                data: BlobData(vec![]),
+            },
         ],
     );
 
@@ -1304,6 +1265,7 @@ async fn test_multiple_delete_attempts_helper(tld_name: &str, contract_name: &st
     );
 
     if tld_name == "hyle" {
+        info!("➡️ Hyle tld attempt, attempt5 is supposed to delete contract");
         let mut output = make_hyle_output_bis(deletion_attempt5.clone(), BlobIndex(0));
         let delete_success_wallet_proof =
             new_proof_tx(&"wallet".into(), &output, &deletion_attempt5.hashed());
@@ -1324,18 +1286,18 @@ async fn test_multiple_delete_attempts_helper(tld_name: &str, contract_name: &st
             &[
                 deletion_attempt1.hashed(),
                 deletion_attempt2.hashed(),
-                deletion_attempt4.hashed(),
                 deletion_attempt3.hashed(),
+                deletion_attempt4.hashed(),
             ],
             &[deletion_attempt5.hashed()],
             3,
         )
         .await;
     } else {
-        info!("➡️ First scenario, attempt4 is supposed to delete contract");
+        info!("➡️ Curstom tld attempt, attempt5 is supposed to delete contract");
         // Adding proofs for attempt4
         let mut wallet_output = make_hyle_output_bis(deletion_attempt4.clone(), BlobIndex(0));
-        let delete_wallet_proof = new_proof_tx(
+        let attempt4_wallet_proof = new_proof_tx(
             &"wallet".into(),
             &wallet_output,
             &deletion_attempt4.hashed(),
@@ -1345,30 +1307,12 @@ async fn test_multiple_delete_attempts_helper(tld_name: &str, contract_name: &st
         tld_output
             .onchain_effects
             .push(OnchainEffect::DeleteContract(contract_name.into()));
-        let delete_tld_proof =
+        let attempt4_tld_proof =
             new_proof_tx(&tld_name.into(), &tld_output, &deletion_attempt4.hashed());
 
-        test_scenario(
-            state.clone(),
-            &[
-                deletion_attempt3.clone().into(),
-                deletion_attempt4.clone().into(),
-            ],
-            &[
-                delete_wallet_proof.into(),
-                delete_tld_proof.into(),
-                attempt3_wrong_tld_proof.clone().into(),
-            ],
-            &[deletion_attempt3.hashed()],
-            &[deletion_attempt4.hashed()],
-            4,
-        )
-        .await;
-
-        info!("➡️ Second scenario, attempt5 is supposed to delete contract");
         // Adding proof for attempt5
         let mut wallet_output = make_hyle_output_bis(deletion_attempt5.clone(), BlobIndex(0));
-        let delete_success_wallet_proof = new_proof_tx(
+        let attempt5_wallet_proof = new_proof_tx(
             &"wallet".into(),
             &wallet_output,
             &deletion_attempt5.hashed(),
@@ -1378,11 +1322,11 @@ async fn test_multiple_delete_attempts_helper(tld_name: &str, contract_name: &st
         tld_output
             .onchain_effects
             .push(OnchainEffect::DeleteContract(contract_name.into()));
-        let delete_tld_proof =
+        let attempt5_tld_proof =
             new_proof_tx(&tld_name.into(), &tld_output, &deletion_attempt5.hashed());
 
         let mut contract_output = make_hyle_output_bis(deletion_attempt5.clone(), BlobIndex(2));
-        let delete_contract_proof = new_proof_tx(
+        let attempt5_contract_proof = new_proof_tx(
             &contract_name.into(),
             &contract_output,
             &deletion_attempt5.hashed(),
@@ -1392,15 +1336,18 @@ async fn test_multiple_delete_attempts_helper(tld_name: &str, contract_name: &st
             state.clone(),
             &[
                 deletion_attempt3.clone().into(),
+                deletion_attempt4.clone().into(),
                 deletion_attempt5.clone().into(),
             ],
             &[
-                delete_success_wallet_proof.into(),
-                delete_tld_proof.into(),
-                delete_contract_proof.into(),
-                attempt3_wrong_tld_proof.into(),
+                attempt3_wrong_tld_proof.clone().into(),
+                attempt4_wallet_proof.into(),
+                attempt4_tld_proof.into(),
+                attempt5_wallet_proof.into(),
+                attempt5_tld_proof.into(),
+                attempt5_contract_proof.into(),
             ],
-            &[deletion_attempt3.hashed()],
+            &[deletion_attempt3.hashed(), deletion_attempt4.hashed()],
             &[deletion_attempt5.hashed()],
             4,
         )
@@ -1423,15 +1370,19 @@ async fn test_multiple_update_attempts_helper(tld_name: &str, contract_name: &st
     let mut state = new_node_state().await;
 
     // Register wallet and hyli identity
-    let register_wallet = make_register_tx("hyle@hyle".into(), "hyle".into(), "wallet".into());
+    let register_wallet =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "wallet".into());
     let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
     let mut output = make_hyle_output(register_hyli_at_wallet.clone(), BlobIndex(0));
     let register_hyli_at_wallet_proof =
         new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
 
     // Register wrong_tld
-    let register_wrong_tld =
-        make_register_tx("hyle@hyle".into(), "hyle".into(), "wrong_tld".into());
+    let register_wrong_tld = make_register_tx_with_constructor(
+        "hyle@hyle".into(),
+        "hyle".into(),
+        "wrong_tld.hyle".into(),
+    );
 
     let mut initial_txs = vec![
         register_wallet.into(),
@@ -1443,11 +1394,11 @@ async fn test_multiple_update_attempts_helper(tld_name: &str, contract_name: &st
     // Register custom TLD if it's not "hyle"
     if tld_name != "hyle" {
         let register_custom_tld =
-            make_register_tx("hyle@hyle".into(), "hyle".into(), tld_name.into());
+            make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), tld_name.into());
         initial_txs.push(register_custom_tld.into());
 
         // Register the test contract under the custom TLD
-        let register_test_contract = make_register_tx(
+        let register_test_contract = make_register_tx_with_constructor(
             format!("user@{tld_name}").into(),
             tld_name.into(),
             contract_name.into(),
@@ -1455,21 +1406,26 @@ async fn test_multiple_update_attempts_helper(tld_name: &str, contract_name: &st
         let mut output = make_hyle_output(register_test_contract.clone(), BlobIndex(0));
         output
             .onchain_effects
-            .push(OnchainEffect::RegisterContract(RegisterContractEffect {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                contract_name: contract_name.into(),
-                timeout_window: None,
-            }));
+            .push(OnchainEffect::RegisterContractWithConstructor(
+                RegisterContractEffect {
+                    verifier: "test".into(),
+                    program_id: ProgramId(vec![]),
+                    state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                    contract_name: contract_name.into(),
+                    timeout_window: None,
+                },
+            ));
         let register_test_contract_proof =
             new_proof_tx(&tld_name.into(), &output, &register_test_contract.hashed());
         initial_txs.push(register_test_contract.into());
         initial_txs.push(register_test_contract_proof.into());
     } else {
         // For "hyle" TLD, just register the contract directly
-        let register_test_contract =
-            make_register_tx("hyle@hyle".into(), "hyle".into(), contract_name.into());
+        let register_test_contract = make_register_tx_with_constructor(
+            "hyle@hyle".into(),
+            "hyle".into(),
+            contract_name.into(),
+        );
         initial_txs.push(register_test_contract.into());
     }
 
@@ -1486,12 +1442,12 @@ async fn test_multiple_update_attempts_helper(tld_name: &str, contract_name: &st
                 contract_name: contract_name.into(),
                 program_id: ProgramId(vec![]),
             }
-            .as_blob(tld_name.into(), None, None),
+            .as_blob(tld_name.into()),
             UpdateContractProgramIdAction {
                 contract_name: contract_name.into(),
                 program_id: ProgramId(vec![]),
             }
-            .as_blob(contract_name.into(), None, None),
+            .as_blob(contract_name.into()),
         ],
     );
 
@@ -1508,12 +1464,12 @@ async fn test_multiple_update_attempts_helper(tld_name: &str, contract_name: &st
                 contract_name: contract_name.into(),
                 program_id: ProgramId(vec![]),
             }
-            .as_blob("wrong_tld".into(), None, None),
+            .as_blob("wrong_tld.hyle".into()),
             UpdateContractProgramIdAction {
                 contract_name: contract_name.into(),
                 program_id: ProgramId(vec![]),
             }
-            .as_blob(contract_name.into(), None, None),
+            .as_blob(contract_name.into()),
         ],
     );
 
@@ -1530,55 +1486,6 @@ async fn test_multiple_update_attempts_helper(tld_name: &str, contract_name: &st
         &"wrong_tld".into(),
         &wrong_tld_output,
         &update_program_id_wrong_tld.hashed(),
-    );
-
-    // UpdateProgramId only via TLD (no contract blob)
-    let update_program_id_tld_only = BlobTransaction::new(
-        HYLI_TLD_ID.to_string(),
-        vec![
-            HydentityAction::VerifyIdentity {
-                nonce: 0,
-                account: HYLI_TLD_ID.to_string(),
-            }
-            .as_blob(HYLI_WALLET.into()),
-            UpdateContractProgramIdAction {
-                contract_name: contract_name.into(),
-                program_id: ProgramId(vec![]),
-            }
-            .as_blob(tld_name.into(), None, None),
-        ],
-    );
-
-    // Successful UpdateProgramId via TLD with contract blob
-    let update_program_id_success = BlobTransaction::new(
-        HYLI_TLD_ID.to_string(),
-        vec![
-            HydentityAction::VerifyIdentity {
-                nonce: 0,
-                account: HYLI_TLD_ID.to_string(),
-            }
-            .as_blob(HYLI_WALLET.into()),
-            UpdateContractProgramIdAction {
-                contract_name: contract_name.into(),
-                program_id: ProgramId(vec![]),
-            }
-            .as_blob(tld_name.into(), None, None),
-            UpdateContractProgramIdAction {
-                contract_name: contract_name.into(),
-                program_id: ProgramId(vec![]),
-            }
-            .as_blob(contract_name.into(), None, None),
-        ],
-    );
-
-    // UpdateProgramId only via contract with side effect
-    let update_program_id_contract_side_effect = BlobTransaction::new(
-        format!("user@{contract_name}"),
-        vec![UpdateContractProgramIdAction {
-            contract_name: contract_name.into(),
-            program_id: ProgramId(vec![]),
-        }
-        .as_blob(contract_name.into(), None, None)],
     );
 
     // Build transaction vectors based on TLD
@@ -1602,24 +1509,51 @@ async fn test_multiple_update_attempts_helper(tld_name: &str, contract_name: &st
                     contract_name: contract_name.into(),
                     program_id: ProgramId(vec![]),
                 }
-                .as_blob(tld_name.into(), None, None),
+                .as_blob(tld_name.into()),
                 UpdateContractProgramIdAction {
                     contract_name: contract_name.into(),
                     program_id: ProgramId(vec![]),
                 }
-                .as_blob(contract_name.into(), None, None),
+                .as_blob(contract_name.into()),
             ],
         );
-        failing_txs.insert(0, update_program_id_wrong_identity.clone().into());
-        expected_failed_txs.insert(0, update_program_id_wrong_identity.hashed());
+        failing_txs.push(update_program_id_wrong_identity.clone().into());
+        expected_failed_txs.push(update_program_id_wrong_identity.hashed());
     }
 
     let mut all_txs = failing_txs.clone();
+
+    // UpdateProgramId only via hyle TLD (no contract blob)
+    let update_program_id_tld_only = BlobTransaction::new(
+        HYLI_TLD_ID.to_string(),
+        vec![
+            HydentityAction::VerifyIdentity {
+                nonce: 0,
+                account: HYLI_TLD_ID.to_string(),
+            }
+            .as_blob(HYLI_WALLET.into()),
+            UpdateContractProgramIdAction {
+                contract_name: contract_name.into(),
+                program_id: ProgramId(vec![]),
+            }
+            .as_blob("hyle".into()),
+        ],
+    );
+
+    // UpdateProgramId only via contract with side effect
+    let update_program_id_contract_side_effect = BlobTransaction::new(
+        format!("user@{contract_name}"),
+        vec![UpdateContractProgramIdAction {
+            contract_name: contract_name.into(),
+            program_id: ProgramId(vec![]),
+        }
+        .as_blob(contract_name.into())],
+    );
+
     all_txs.extend(vec![
         // These will succeed:
-        update_program_id_tld_only.clone().into(), // 0fce5d79ca8918cffdd5d63a12f7b4bad36408761c56a913c8bcd29d1f544b47
-        update_program_id_success.clone().into(), // 4f089c07198d4894872ad3c678db1b4c19a8a122871d417e7c31554f02a62c07
-        update_program_id_contract_side_effect.clone().into(), // b56c72203c9735a42f54ce2264cb557c4e7e0b85b511fbf5c61934f5e988ed38
+        update_program_id_tld_only.clone().into(),
+        update_program_id_contract_side_effect.clone().into(),
     ]);
 
     let block = state.craft_block_and_handle(2, all_txs);
@@ -1635,53 +1569,6 @@ async fn test_multiple_update_attempts_helper(tld_name: &str, contract_name: &st
         &"wallet".into(),
         &wallet_output,
         &update_program_id_tld_only.hashed(),
-    );
-
-    let mut tld_output = make_hyle_output_bis(update_program_id_tld_only.clone(), BlobIndex(1));
-    tld_output
-        .onchain_effects
-        .push(OnchainEffect::UpdateContractProgramId(
-            contract_name.into(),
-            ProgramId(vec![]),
-        ));
-    let update_tld_only_tld_proof = new_proof_tx(
-        &tld_name.into(),
-        &tld_output,
-        &update_program_id_tld_only.hashed(),
-    );
-
-    // Add proofs for update_program_id_success
-    let mut success_wallet_output =
-        make_hyle_output_ter(update_program_id_success.clone(), BlobIndex(0));
-    let update_success_wallet_proof = new_proof_tx(
-        &"wallet".into(),
-        &success_wallet_output,
-        &update_program_id_success.hashed(),
-    );
-
-    let mut success_tld_output =
-        make_hyle_output_bis(update_program_id_success.clone(), BlobIndex(1));
-    success_tld_output
-        .onchain_effects
-        .push(OnchainEffect::UpdateContractProgramId(
-            contract_name.into(),
-            ProgramId(vec![]),
-        ));
-    let update_success_tld_proof = new_proof_tx(
-        &tld_name.into(),
-        &success_tld_output,
-        &update_program_id_success.hashed(),
-    );
-
-    let mut success_contract_output = if tld_name == "hyle" {
-        make_hyle_output_ter(update_program_id_success.clone(), BlobIndex(2))
-    } else {
-        make_hyle_output_bis(update_program_id_success.clone(), BlobIndex(2))
-    };
-    let update_success_contract_proof = new_proof_tx(
-        &contract_name.into(),
-        &success_contract_output,
-        &update_program_id_success.hashed(),
     );
 
     // Add proofs for update_program_id_contract_side_effect
@@ -1704,11 +1591,6 @@ async fn test_multiple_update_attempts_helper(tld_name: &str, contract_name: &st
         vec![
             // update_program_id_tld_only
             update_tld_only_wallet_proof.into(),
-            update_tld_only_tld_proof.into(),
-            // update_program_id_success
-            update_success_wallet_proof.into(),
-            update_success_tld_proof.into(),
-            update_success_contract_proof.into(),
             // update_program_id_contract_side_effect
             update_contract_side_effect_proof.into(),
         ],
@@ -1721,9 +1603,6 @@ async fn test_multiple_update_attempts_helper(tld_name: &str, contract_name: &st
     assert!(block_proofs
         .successful_txs
         .contains(&update_program_id_contract_side_effect.hashed()));
-    assert!(block_proofs
-        .successful_txs
-        .contains(&update_program_id_success.hashed()));
 }
 
 #[test_log::test(tokio::test)]

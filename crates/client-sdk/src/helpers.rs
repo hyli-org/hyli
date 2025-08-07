@@ -24,7 +24,7 @@ pub fn register_hyle_contract(
         program_id,
         state_commitment,
         timeout_window,
-        constructor_metadata,
+        constructor_metadata: constructor_metadata.clone(),
     };
 
     builder.add_action(
@@ -35,13 +35,15 @@ pub fn register_hyle_contract(
         None,
     )?;
 
-    builder.add_action(
-        new_contract_name,
-        register_contract_action,
-        None,
-        None,
-        None,
-    )?;
+    if let Some(constructor_metadata) = constructor_metadata {
+        builder.add_blob(
+            sdk::Blob {
+                contract_name: new_contract_name,
+                data: sdk::BlobData(constructor_metadata),
+            },
+            None,
+        )?;
+    }
     Ok(())
 }
 

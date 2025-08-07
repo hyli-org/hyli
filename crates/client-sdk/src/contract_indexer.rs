@@ -1,7 +1,7 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use std::{collections::BTreeMap, str, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::debug;
+use tracing::{debug, error};
 
 use axum::{
     http::StatusCode,
@@ -53,7 +53,7 @@ where
     ) -> Result<Option<Event>> {
         let Blob {
             contract_name,
-            data,
+            data: _,
         } = tx.blobs.get(index.0).context("Failed to get blob")?;
 
         let calldata = Calldata {
@@ -69,15 +69,11 @@ where
         let hyle_output = match self.handle(&calldata) {
             Ok(ho) => ho,
             Err(e) => {
-                if borsh::from_slice::<StructuredBlobData<RegisterContractAction>>(&data.0).is_ok()
-                {
-                    return Ok(None);
-                } else {
-                    bail!(
-                        "Failed to handle blob {index} for contract {contract_name}: {}",
-                        e
-                    )
-                }
+                error!(
+                    "Failed to handle blob {index} for contract {contract_name}: {}",
+                    e
+                );
+                return Ok(None);
             }
         };
 

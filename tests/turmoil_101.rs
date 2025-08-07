@@ -9,8 +9,7 @@ use std::time::Duration;
 use client_sdk::rest_client::NodeApiClient;
 use fixtures::turmoil::TurmoilHost;
 use hyle_model::{
-    BlobTransaction, ContractAction, ContractName, ProgramId, RegisterContractAction,
-    StateCommitment,
+    BlobTransaction, ContractName, ProgramId, RegisterContractAction, StateCommitment,
 };
 use hyle_modules::log_error;
 use hyle_net::net::Sim;
@@ -24,13 +23,14 @@ pub fn make_register_contract_tx(name: ContractName) -> BlobTransaction {
         program_id: ProgramId(vec![]),
         state_commitment: StateCommitment(vec![0, 1, 2, 3]),
         contract_name: name.clone(),
+        constructor_metadata: Some(vec![1]),
         ..Default::default()
     };
     BlobTransaction::new(
         "hyle@hyle",
         vec![
-            register_contract_action.as_blob("hyle".into(), None, None),
-            register_contract_action.as_blob(name, None, None),
+            register_contract_action.as_blob("hyle".into()),
+            register_contract_action.as_blob(name),
         ],
     )
 }

@@ -12,9 +12,8 @@ use client_sdk::{contract_states, transaction_builder};
 use hydentity::client::tx_executor_handler::{register_identity, verify_identity};
 use hydentity::Hydentity;
 use hyle_contract_sdk::{
-    Blob, BlobData, BlobTransaction, Calldata, ContractAction, ContractName, Hashed, HyleOutput,
-    Identity, RegisterContractAction, StateCommitment, TimeoutWindow, Transaction, TxHash,
-    ZkContract,
+    Blob, BlobData, BlobTransaction, Calldata, ContractName, Hashed, HyleOutput, Identity,
+    RegisterContractAction, StateCommitment, TimeoutWindow, Transaction, TxHash, ZkContract,
 };
 use hyle_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
 use hyllar::client::tx_executor_handler::transfer;
@@ -142,7 +141,7 @@ pub async fn setup(hyllar: Hyllar, url: String, verifier: String) -> Result<()> 
             state_commitment: hyllar.commit(),
             ..Default::default()
         }
-        .as_blob("hyle".into(), None, None)],
+        .as_blob("hyle".into())],
     );
 
     let mut client = TcpApiClient::connect("loadtest_client".to_string(), url)
@@ -437,7 +436,7 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
                         .commit(),
                     ..Default::default()
                 }
-                .as_blob("hyle".into(), None, None),
+                .as_blob("hyle".into()),
                 RegisterContractAction {
                     contract_name: random_hydentity_contract.clone(),
                     verifier: verifier.clone(),
@@ -445,7 +444,7 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
                     state_commitment: Hydentity::default().commit(),
                     ..Default::default()
                 }
-                .as_blob("hyle".into(), None, None),
+                .as_blob("hyle".into()),
             ],
         );
 
@@ -646,7 +645,7 @@ pub async fn send_massive_blob(users: u32, url: String) -> Result<()> {
             timeout_window: Some(TimeoutWindow::Timeout(hyle_contract_sdk::BlockHeight(2))),
             ..Default::default()
         }
-        .as_blob("hyle".into(), None, None)],
+        .as_blob("hyle".into())],
     );
 
     let mut client = TcpApiClient::connect("loadtest_client".to_string(), url.clone())

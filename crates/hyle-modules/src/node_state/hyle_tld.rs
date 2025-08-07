@@ -17,23 +17,18 @@ pub fn handle_blob_for_hyle_tld(
 ) -> Result<()> {
     // TODO: check the identity of the caller here.
 
-    // TODO: support unstructured blobs as well ?
-    if let Ok(reg) =
-        StructuredBlobData::<RegisterContractAction>::try_from(current_blob.data.clone())
+    if let Ok(reg) = borsh::from_slice::<RegisterContractAction>(&current_blob.data.0) {
+        handle_register_blob(contracts, contract_changes, &reg)?;
+    } else if let Ok(del) = borsh::from_slice::<DeleteContractAction>(&current_blob.data.0) {
+        handle_delete_blob(contracts, contract_changes, &del)?;
+    } else if let Ok(updt) =
+        borsh::from_slice::<UpdateContractProgramIdAction>(&current_blob.data.0)
     {
-        handle_register_blob(contracts, contract_changes, &reg.parameters)?;
-    } else if let Ok(reg) =
-        StructuredBlobData::<DeleteContractAction>::try_from(current_blob.data.clone())
+        handle_update_program_id_blob(contracts, contract_changes, &updt)?;
+    } else if let Ok(updt) =
+        borsh::from_slice::<UpdateContractTimeoutWindowAction>(&current_blob.data.0)
     {
-        handle_delete_blob(contracts, contract_changes, &reg.parameters)?;
-    } else if let Ok(reg) =
-        StructuredBlobData::<UpdateContractProgramIdAction>::try_from(current_blob.data.clone())
-    {
-        handle_update_program_id_blob(contracts, contract_changes, &reg.parameters)?;
-    } else if let Ok(reg) =
-        StructuredBlobData::<UpdateContractTimeoutWindowAction>::try_from(current_blob.data.clone())
-    {
-        handle_update_timeout_window_blob(contracts, contract_changes, &reg.parameters)?;
+        handle_update_timeout_window_blob(contracts, contract_changes, &updt)?;
     } else {
         bail!("Invalid blob data for TLD");
     }
@@ -61,8 +56,18 @@ fn handle_register_blob(
         bail!("Contract {} is already registered", reg.contract_name.0);
     }
 
-    contract_changes.insert(
-        reg.contract_name.clone(),
+    let (contract_status, side_effects) = if reg.constructor_metadata.is_some() {
+        (
+            ContractStatus::RegisterWithConstructor(Contract {
+                name: reg.contract_name.clone(),
+                program_id: reg.program_id.clone(),
+                state: reg.state_commitment.clone(),
+                verifier: reg.verifier.clone(),
+                timeout_window: reg.timeout_window.clone().unwrap_or_default(),
+            }),
+            vec![],
+        )
+    } else {
         (
             ContractStatus::Updated(Contract {
                 name: reg.contract_name.clone(),
@@ -71,10 +76,18 @@ fn handle_register_blob(
                 verifier: reg.verifier.clone(),
                 timeout_window: reg.timeout_window.clone().unwrap_or_default(),
             }),
-            ModifiedContractFields::all(),
             vec![SideEffect::Register(reg.constructor_metadata.clone())],
-        ),
-    );
+        )
+    };
+
+    contract_changes
+        .entry(reg.contract_name.clone())
+        .and_modify(|c| {
+            c.0 = contract_status.clone();
+            c.1 = ModifiedContractFields::all();
+            c.2.extend(side_effects.clone());
+        })
+        .or_insert_with(|| (contract_status, ModifiedContractFields::all(), side_effects));
     Ok(())
 }
 
@@ -92,14 +105,19 @@ fn handle_delete_blob(
     if contracts.contains_key(&delete.contract_name)
         || contract_changes.contains_key(&delete.contract_name)
     {
-        contract_changes.insert(
-            delete.contract_name.clone(),
-            (
-                ContractStatus::Deleted,
-                ModifiedContractFields::all(),
-                vec![SideEffect::Delete],
-            ),
-        );
+        contract_changes
+            .entry(delete.contract_name.clone())
+            .and_modify(|c| {
+                c.0 = ContractStatus::WaitingDeletion;
+                c.1 = ModifiedContractFields::all();
+            })
+            .or_insert_with(|| {
+                (
+                    ContractStatus::WaitingDeletion,
+                    ModifiedContractFields::all(),
+                    vec![],
+                )
+            });
         Ok(())
     } else {
         bail!("Contract {} does not exist", delete.contract_name.0);
@@ -119,7 +137,6 @@ fn handle_update_program_id_blob(
     let contract =
         NodeState::get_contract(contracts, contract_changes, &update.contract_name)?.clone();
 
-    let new_update = SideEffect::UpdateProgramId;
     contract_changes
         .entry(update.contract_name.clone())
         .and_modify(|c| {
@@ -127,7 +144,7 @@ fn handle_update_program_id_blob(
                 contract.program_id = update.program_id.clone();
             }
             c.1.program_id = true;
-            c.2.push(new_update.clone());
+            c.2.push(SideEffect::UpdateProgramId);
         })
         .or_insert_with(|| {
             (
@@ -139,7 +156,7 @@ fn handle_update_program_id_blob(
                     program_id: true,
                     ..ModifiedContractFields::default()
                 },
-                vec![new_update],
+                vec![SideEffect::UpdateProgramId],
             )
         });
     Ok(())
@@ -197,71 +214,24 @@ pub fn validate_hyle_contract_blobs(
     for blob in tx.blobs.iter() {
         if blob.contract_name.0 == "hyle" {
             // Check identity authorization for privileged actions
-            if StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
-                .is_ok()
-                || StructuredBlobData::<UpdateContractTimeoutWindowAction>::try_from(
-                    blob.data.clone(),
-                )
-                .is_ok()
+            if borsh::from_slice::<DeleteContractAction>(&blob.data.0).is_ok()
+                || borsh::from_slice::<UpdateContractProgramIdAction>(&blob.data.0).is_ok()
+                || borsh::from_slice::<UpdateContractTimeoutWindowAction>(&blob.data.0).is_ok()
             {
                 if tx.identity.0 != HYLI_TLD_ID {
                     return Err(format!(
                         "Unauthorized action for 'hyle' TLD from identity: {}",
                         tx.identity.0
-                    ));
-                }
-            } else if let Ok(deletion_blob) =
-                StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone())
-            {
-                if tx.identity.0 != HYLI_TLD_ID {
-                    return Err(format!(
-                        "Unauthorized action for 'hyle' TLD from identity: {}",
-                        tx.identity.0
-                    ));
-                }
-                if let Some(last_blob) = tx
-                    .blobs
-                    .iter()
-                    .rev()
-                    .find(|b| b.contract_name == deletion_blob.parameters.contract_name)
-                {
-                    if last_blob.data != blob.data {
-                        return Err(format!(
-                            "Deletion blobs do not match for contract {}",
-                            deletion_blob.parameters.contract_name.0
-                        ));
-                    }
-                } else {
-                    return Err(format!(
-                        "Could not find a deletion blob for contract {} that is being deleted",
-                        deletion_blob.parameters.contract_name.0
                     ));
                 }
             } else if let Ok(registration_blob) =
-                StructuredBlobData::<RegisterContractAction>::try_from(blob.data.clone())
+                borsh::from_slice::<RegisterContractAction>(&blob.data.0)
             {
-                if contracts.contains_key(&registration_blob.parameters.contract_name) {
+                if contracts.contains_key(&registration_blob.contract_name) {
                     return Err(format!(
                         "Contract {} is already registered, cannot register again",
-                        registration_blob.parameters.contract_name.0
+                        registration_blob.contract_name.0
                     ));
-                }
-                if let Some(first_blob) = tx
-                    .blobs
-                    .iter()
-                    .find(|b| b.contract_name == registration_blob.parameters.contract_name)
-                {
-                    if first_blob.data != blob.data {
-                        return Err(format!(
-                            "Registration blobs do not match for contract {}",
-                            registration_blob.parameters.contract_name.0
-                        ));
-                    }
-                } else {
-                    return Err(format!(
-                            "Could not find a registration blob for contract {} that is being registered",
-                            registration_blob.parameters.contract_name.0
-                        ));
                 }
             } else {
                 return Err(format!(

@@ -1,5 +1,5 @@
 use crate::{identity_provider::IdentityVerification, AccountInfo, Hydentity, HydentityAction};
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use client_sdk::contract_indexer::{
     axum::Router,
     utoipa::openapi::OpenApi,
@@ -16,10 +16,7 @@ use client_sdk::contract_indexer::{
     utoipa::{self, ToSchema},
     AppError,
 };
-use sdk::{
-    info, Blob, BlobIndex, BlobTransaction, Identity, RegisterContractAction, StructuredBlobData,
-    TxContext,
-};
+use sdk::{error, info, Blob, BlobIndex, BlobTransaction, Identity, TxContext};
 use serde::Serialize;
 
 use client_sdk::contract_indexer::axum;
@@ -48,12 +45,9 @@ impl ContractHandler for Hydentity {
         let action: HydentityAction = match borsh::from_slice(&data.0) {
             Ok(act) => act,
             Err(e) => {
-                if borsh::from_slice::<StructuredBlobData<RegisterContractAction>>(&data.0).is_ok()
-                {
-                    return Ok(None);
-                } else {
-                    bail!("Failed to deserialize HydentityAction: {}", e);
-                }
+                error!("Failed to deserialize action as ab Hydentity action: {}", e);
+                // Could not process the action, but it should not fail the execution
+                return Ok(None);
             }
         };
         match action {

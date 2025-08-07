@@ -4,7 +4,7 @@ use assertables::assert_err;
 use sdk::hyle_model_utils::TimestampMs;
 
 use crate::node_state::test::contract_registration_tests::{
-    make_register_hyli_wallet_identity_tx, make_register_tx,
+    make_register_hyli_wallet_identity_tx, make_register_tx_with_constructor,
 };
 use ::secp256k1::{ecdsa::Signature, rand, Message, PublicKey, Secp256k1, SecretKey};
 use sha2::Digest;
@@ -1714,7 +1714,7 @@ async fn test_invalid_onchain_effect_causes_immediate_failure() {
         timeout_window: None,
         constructor_metadata: None,
     }
-    .as_blob("parent.hyle".into(), None, None);
+    .as_blob("parent.hyle".into());
 
     let blob_tx = BlobTransaction::new(identity.clone(), vec![invalid_blob]);
     let blob_tx_hash = blob_tx.hashed();
@@ -1736,13 +1736,15 @@ async fn test_invalid_onchain_effect_causes_immediate_failure() {
     // Add the invalid RegisterContract effect that violates subdomain rules
     hyle_output
         .onchain_effects
-        .push(OnchainEffect::RegisterContract(RegisterContractEffect {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![4, 5, 6]),
-            state_commitment: StateCommitment(vec![7, 8, 9]),
-            contract_name: "invalid.other".into(), // Invalid subdomain
-            timeout_window: None,
-        }));
+        .push(OnchainEffect::RegisterContractWithConstructor(
+            RegisterContractEffect {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![4, 5, 6]),
+                state_commitment: StateCommitment(vec![7, 8, 9]),
+                contract_name: "invalid.other".into(), // Invalid subdomain
+                timeout_window: None,
+            },
+        ));
 
     let proof_tx = new_proof_tx(&parent_contract_name, &hyle_output, &blob_tx_hash);
 

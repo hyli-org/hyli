@@ -70,6 +70,10 @@ impl OrderedTxMap {
 
     pub fn get_contracts_blocked_by_tx(tx: &UnsettledBlobTransaction) -> HashSet<ContractName> {
         // Collect into a hashset for unicity
+        // NB: The HashSet will give an unordered collection of contract names
+        // This is fine for our use case, as we only care about the presence of the contract names
+        // and not their order.
+        // The tx settlement order is guaranteed by the settlement logic
         let mut contract_names = HashSet::new();
         for blob in tx.blobs.values() {
             contract_names.insert(blob.blob.contract_name.clone());
@@ -303,7 +307,7 @@ mod tests {
                     state_commitment: StateCommitment(vec![0, 1, 2, 3]),
                     ..Default::default()
                 }
-                .as_blob(contract2.clone(), None, None),
+                .as_blob(contract2.clone()),
                 possible_proofs: vec![],
             },
         );

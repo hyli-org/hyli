@@ -339,7 +339,7 @@ impl BlobTransaction {
 
 impl From<APIRegisterContract> for BlobTransaction {
     fn from(payload: APIRegisterContract) -> Self {
-        let register_contract_action = RegisterContractAction {
+        let mut blobs = vec![RegisterContractAction {
             verifier: payload.verifier,
             program_id: payload.program_id,
             state_commitment: payload.state_commitment,
@@ -349,14 +349,18 @@ impl From<APIRegisterContract> for BlobTransaction {
                 Some(timeout) => Some(TimeoutWindow::Timeout(BlockHeight(timeout))),
                 None => None,
             },
-            constructor_metadata: payload.constructor_metadata,
-        };
-        let hyle_blob = register_contract_action.as_blob("hyle".into(), None, None);
+            constructor_metadata: payload.constructor_metadata.clone(),
+        }
+        .as_blob("hyle".into())];
 
-        let register_contract_blob =
-            register_contract_action.as_blob(payload.contract_name, None, None);
+        if let Some(constructor_metadata) = &payload.constructor_metadata {
+            blobs.push(Blob {
+                contract_name: payload.contract_name,
+                data: BlobData(constructor_metadata.clone()),
+            });
+        }
 
-        BlobTransaction::new("hyle@hyle", vec![hyle_blob, register_contract_blob])
+        BlobTransaction::new("hyle@hyle", blobs)
     }
 }
 
