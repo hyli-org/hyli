@@ -14,7 +14,6 @@ use hydentity::{
 use hyle::genesis::States;
 use hyle_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID, STAKING_ELF, STAKING_ID};
 use hyle_model::{api::APIRegisterContract, ContractName, Identity, ProgramId, StateCommitment};
-use hyle_modules::utils::conf::P2pMode;
 use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
 use staking::{
     client::tx_executor_handler::{delegate, deposit_for_fees, stake},
@@ -132,7 +131,7 @@ async fn faucet_and_delegate(
 
 async fn scenario_lane_manager_outside_consensus(mut ctx: E2ECtx, delegate: bool) -> Result<()> {
     let mut conf = ctx.make_conf("lane_mgr").await;
-    conf.p2p.mode = P2pMode::LaneManager;
+    conf.p2p.mode = hyle::utils::conf::P2pMode::LaneManager;
 
     ctx.add_node_with_conf(conf).await?;
     let lane_mgr_client = ctx.client_by_id("lane_mgr-1");

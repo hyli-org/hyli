@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 
-use crate::{model::*, p2p::network::PeerEvent};
+use crate::{model::*, p2p::network::PeerEvent, utils::conf::SharedConf};
 use anyhow::{Error, Result};
 use client_sdk::{
     contract_states,
@@ -17,7 +17,6 @@ use hyle_contract_sdk::{
     Blob, Calldata, ContractName, Identity, ProgramId, StateCommitment, ZkContract,
 };
 use hyle_crypto::SharedBlstCrypto;
-use hyle_modules::utils::conf::SharedConf;
 use hyle_modules::{
     bus::{BusClientSender, BusMessage, SharedMessageBus},
     bus_client, handle_messages, log_error,
@@ -717,10 +716,10 @@ impl Genesis {
 #[cfg(test)]
 mod tests {
     use assertables::assert_matches;
-    use hyle_modules::utils::conf::Conf;
 
     use super::*;
     use crate::bus::{BusClientReceiver, SharedMessageBus};
+    use crate::utils::conf::Conf;
     use hyle_crypto::BlstCrypto;
     use std::sync::Arc;
 

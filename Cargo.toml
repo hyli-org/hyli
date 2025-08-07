@@ -115,8 +115,8 @@ sp1-sdk = { version = "5.0.8", default-features = false }
 sp1-zkvm = { version = "5.1.1", default-features = false }
 sparse-merkle-tree = { version = "0.6.1", default-features = false }
 sqlx = { version = "0.8.6" }
-strum = { version = "0.27.1", default-features = false }
-strum_macros = { version = "0.27.1" }
+strum = { version = "0.27.1" }
+strum_macros = { version = "0.27.1", default-features = false }
 syn = { version = "2.0.104" }
 tempfile = { version = "3.20.0", default-features = false }
 test-log = { version = "0.2.18", default-features = false }
@@ -189,6 +189,7 @@ chrono = { workspace = true, features = ["std", "serde"] }
 hex = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+serde_with = { workspace = true, features = ["hex"] }
 sha3 = { workspace = true }
 strum_macros = { workspace = true }
 tracing = { workspace = true }

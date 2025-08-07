@@ -7,15 +7,15 @@ use std::ops::Deref;
 use crate::explorer::api::{DataProposalHashDb, TxHashDb};
 use crate::explorer::WsExplorerBlobTx;
 use crate::node_state::module::NodeStateEvent;
+use crate::utils::conf::Conf;
+use crate::{model::*, utils::conf::SharedConf};
 use anyhow::{Context, Result};
 use handler::IndexerHandlerStore;
 use hyle_model::utils::TimestampMs;
-use hyle_model::*;
 use hyle_modules::bus::BusClientSender;
 use hyle_modules::modules::gcs_uploader::GCSRequest;
 use hyle_modules::node_state::module::NodeStateModule;
 use hyle_modules::node_state::{NodeState, NodeStateStore};
-use hyle_modules::utils::conf::{Conf, SharedConf};
 use hyle_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
@@ -189,7 +189,6 @@ mod test {
     use hyle_model::api::{
         APIBlob, APIBlock, APIContract, APITransaction, APITransactionEvents, TransactionStatusDb,
     };
-    use hyle_modules::utils::conf::IndexerConf;
     use serde_json::json;
     use std::future::IntoFuture;
     use utils::TimestampMs;
@@ -202,6 +201,7 @@ mod test {
             VerifiedProofTransaction,
         },
         node_state::{metrics::NodeStateMetrics, NodeState, NodeStateStore},
+        utils::conf::IndexerConf,
     };
 
     use super::*;

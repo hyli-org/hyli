@@ -4,12 +4,11 @@ use anyhow::Result;
 use google_cloud_storage::client::{Client, ClientConfig};
 use google_cloud_storage::http::objects::upload::{Media, UploadObjectRequest, UploadType};
 use sdk::{DataEvent, DataProposalHash, TxHash};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::bus::{BusMessage, SharedMessageBus};
 use crate::modules::Module;
-use crate::utils::conf::GCSConf;
 use crate::{log_error, module_bus_client, module_handle_messages};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +28,16 @@ module_bus_client! {
         receiver(DataEvent),
         receiver(GCSRequest),
     }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct GCSConf {
+    // GCS uploader options
+    pub gcs_bucket: String,
+    pub gcs_prefix: String,
+
+    pub save_proofs: bool,
+    pub save_blocks: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -1,6 +1,5 @@
 use anyhow::{bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
-use hyle_modules::utils::conf::TimestampCheck;
 use std::collections::BTreeMap;
 use tracing::{debug, info, trace, warn};
 
@@ -10,6 +9,7 @@ use crate::{
     consensus::StateTag,
     model::{Hashed, Signed, ValidatorPublicKey},
     p2p::P2PCommand,
+    utils::conf::TimestampCheck,
 };
 use hyle_crypto::BlstCrypto;
 use hyle_model::{

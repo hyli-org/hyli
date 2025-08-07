@@ -14,7 +14,10 @@ use crate::{
     rest::{ApiDoc, RestApi, RestApiRunContext},
     single_node_consensus::SingleNodeConsensus,
     tcp_server::TcpServer,
-    utils::modules::ModulesHandler,
+    utils::{
+        conf::{self, P2pMode},
+        modules::ModulesHandler,
+    },
 };
 use anyhow::{bail, Context, Result};
 use axum::Router;
@@ -32,7 +35,6 @@ use hyle_modules::{
         BuildApiContextInner,
     },
     node_state::module::NodeStateCtx,
-    utils::conf::{self, P2pMode},
 };
 use hyllar::Hyllar;
 use prometheus::Registry;

@@ -1,6 +1,7 @@
-use crate::modules::websocket::WebSocketConfig;
 use anyhow::{Context, Result};
 use config::{Config, Environment, File};
+use hyle_modules::modules::gcs_uploader::GCSConf;
+use hyle_modules::modules::websocket::WebSocketConfig;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use serde_with::DurationMilliSeconds;
@@ -82,16 +83,6 @@ pub struct NodeWebSocketConfig {
     pub peer_check_interval: u64,
     /// List of events to stream on the websocket
     pub events: Vec<String>,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct GCSConf {
-    // GCS uploader options
-    pub gcs_bucket: String,
-    pub gcs_prefix: String,
-
-    pub save_proofs: bool,
-    pub save_blocks: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

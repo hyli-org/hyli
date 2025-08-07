@@ -4,13 +4,11 @@ use std::collections::HashSet;
 
 use crate::{
     bus::BusClientSender, consensus::ConsensusNetMessage, mempool::MempoolNetMessage,
-    model::SharedRunContext,
+    model::SharedRunContext, utils::conf::SharedConf,
 };
-
 use anyhow::{bail, Context, Error, Result};
 use hyle_crypto::{BlstCrypto, SharedBlstCrypto};
 use hyle_model::{BlockHeight, NodeStateEvent, ValidatorPublicKey};
-use hyle_modules::utils::conf::SharedConf;
 use hyle_modules::{
     bus::{BusMessage, SharedMessageBus},
     log_warn, module_handle_messages,

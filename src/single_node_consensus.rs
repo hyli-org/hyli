@@ -8,6 +8,7 @@ use crate::consensus::{CommittedConsensusProposal, ConsensusEvent, QueryConsensu
 use crate::genesis::GenesisEvent;
 use crate::mempool::QueryNewCut;
 use crate::model::*;
+use crate::utils::conf::SharedConf;
 use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyle_crypto::SharedBlstCrypto;
@@ -15,7 +16,6 @@ use hyle_model::utils::TimestampMs;
 use hyle_modules::bus::SharedMessageBus;
 use hyle_modules::modules::module_bus_client;
 use hyle_modules::modules::Module;
-use hyle_modules::utils::conf::SharedConf;
 use hyle_modules::{log_error, module_handle_messages};
 use hyle_net::clock::TimestampMsClock;
 use staking::state::Staking;
@@ -231,12 +231,12 @@ mod tests {
     use crate::bus::dont_use_this::get_receiver;
     use crate::bus::metrics::BusMetrics;
     use crate::bus::{bus_client, SharedMessageBus};
+    use crate::utils::conf::Conf;
     use anyhow::Result;
     use hyle_crypto::BlstCrypto;
     use hyle_modules::bus::dont_use_this::get_sender;
     use hyle_modules::handle_messages;
     use hyle_modules::modules::signal::ShutdownModule;
-    use hyle_modules::utils::conf::Conf;
     use std::sync::Arc;
     use tokio::sync::broadcast::{Receiver, Sender};
 

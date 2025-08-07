@@ -4873,6 +4873,7 @@ dependencies = [
  "seq-macro",
  "serde",
  "serde_json",
+ "serde_with",
  "sha3",
  "signal-child",
  "sqlx",

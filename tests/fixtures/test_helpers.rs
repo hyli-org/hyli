@@ -5,10 +5,13 @@ use client_sdk::{
     transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutor},
 };
 
-use hyle::{model::BlobTransaction, rest::client::NodeApiHttpClient};
+use hyle::{
+    model::BlobTransaction,
+    rest::client::NodeApiHttpClient,
+    utils::conf::{Conf, NodeWebSocketConfig, P2pConf, P2pMode},
+};
 use hyle_crypto::BlstCrypto;
 use hyle_model::TxHash;
-use hyle_modules::utils::conf::{Conf, NodeWebSocketConfig, P2pConf, P2pMode};
 use signal_child::signal;
 use std::time::Duration;
 use tempfile::TempDir;

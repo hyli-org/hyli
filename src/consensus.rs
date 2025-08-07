@@ -13,6 +13,7 @@ use crate::{
         network::{MsgWithHeader, OutboundMessage},
         P2PCommand,
     },
+    utils::conf::SharedConf,
 };
 use anyhow::{anyhow, bail, Context, Error, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -20,7 +21,6 @@ use hyle_crypto::BlstCrypto;
 use hyle_crypto::SharedBlstCrypto;
 use hyle_model::utils::TimestampMs;
 use hyle_modules::bus::BusMessage;
-use hyle_modules::utils::conf::SharedConf;
 use hyle_modules::{log_error, module_bus_client, module_handle_messages, modules::Module};
 use hyle_net::clock::TimestampMsClock;
 use metrics::ConsensusMetrics;
@@ -834,7 +834,6 @@ pub mod test {
         node_state::{
             metrics::NodeStateMetrics, module::NodeStateModule, NodeState, NodeStateStore,
         },
-        utils::conf::Conf,
     };
     use std::{future::Future, pin::Pin, sync::Arc};
     use tracing::warn;
@@ -845,6 +844,7 @@ pub mod test {
         model::DataProposalHash,
         p2p::network::NetMessage,
         tests::autobahn_testing::*,
+        utils::conf::Conf,
     };
     use assertables::assert_contains;
     use tokio::sync::broadcast::Receiver;
