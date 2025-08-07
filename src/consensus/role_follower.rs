@@ -235,8 +235,8 @@ impl Consensus {
             .bft_round_state
             .current_proposal
             .as_ref()
-            .map(|current| current.hashed() == proposal_hash_hint)
-            .unwrap_or(false)
+            .map(|current| current.hashed() != proposal_hash_hint)
+            .unwrap_or(true)
         {
             warn!(
                 proposal_hash = %proposal_hash_hint,
