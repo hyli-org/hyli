@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::{command, Parser};
+use clap::{Parser, command};
 use client_sdk::{
     contract_indexer::utoipa::OpenApi, helpers::test::TxExecutorTestProver,
     rest_client::test::NodeApiMockClient,
@@ -8,7 +8,7 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     execute, terminal,
 };
-use hyle_contract_sdk::{api::NodeInfo, Block, NodeStateEvent, TransactionData, TxId};
+use hyle_contract_sdk::{Block, NodeStateEvent, TransactionData, TxId, api::NodeInfo};
 use hyle_contract_sdk::{BlockHeight, SignedBlock};
 use hyle_model::DataEvent;
 use hyle_modules::modules::{
@@ -17,12 +17,12 @@ use hyle_modules::modules::{
     signed_da_listener::SignedDAListener,
 };
 use hyle_modules::{
-    bus::{metrics::BusMetrics, SharedMessageBus},
+    bus::{SharedMessageBus, metrics::BusMetrics},
     module_bus_client, module_handle_messages,
     modules::{
+        BuildApiContextInner, Module, ModulesHandler,
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         rest::{ApiDoc, RestApi, RestApiRunContext, Router},
-        BuildApiContextInner, Module, ModulesHandler,
     },
     node_state::NodeState,
 };
@@ -31,7 +31,7 @@ use ratatui::{
     widgets::{Block as TuiBlock, *},
 };
 use smt_token::{
-    account::AccountSMT, client::tx_executor_handler::SmtTokenProvableState, SmtTokenContract,
+    SmtTokenContract, account::AccountSMT, client::tx_executor_handler::SmtTokenProvableState,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -45,9 +45,9 @@ use std::{
 };
 use tokio::time::MissedTickBehavior;
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Layer;
-use tracing_subscriber::{layer::SubscriberExt, EnvFilter};
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -354,8 +354,8 @@ impl BlockDbg {
             focused_panel: FocusPanel::BlockList,
         };
 
-        use ratatui::backend::CrosstermBackend;
         use ratatui::Terminal;
+        use ratatui::backend::CrosstermBackend;
 
         terminal::enable_raw_mode()?;
         execute!(io::stdout(), terminal::EnterAlternateScreen)?;

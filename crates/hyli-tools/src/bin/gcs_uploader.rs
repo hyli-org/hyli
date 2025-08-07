@@ -1,16 +1,16 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
-use clap::{command, Parser};
+use clap::{Parser, command};
 
 use hyle_contract_sdk::BlockHeight;
 use hyle_modules::{
-    bus::{metrics::BusMetrics, SharedMessageBus},
+    bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
+        ModulesHandler,
         da_listener::DAListenerConf,
         gcs_uploader::{GCSConf, GcsUploader, GcsUploaderCtx},
         signed_da_listener::SignedDAListener,
-        ModulesHandler,
     },
     utils::logger::setup_tracing,
 };

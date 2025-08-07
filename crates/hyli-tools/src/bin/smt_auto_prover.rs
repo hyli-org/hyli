@@ -1,20 +1,20 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
-use clap::{command, Parser};
+use clap::{Parser, command};
 
 use client_sdk::{
     contract_indexer::utoipa::OpenApi, helpers::risc0::Risc0Prover, rest_client::NodeApiHttpClient,
 };
 use hyle_contract_sdk::api::NodeInfo;
 use hyle_modules::{
-    bus::{metrics::BusMetrics, SharedMessageBus},
+    bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
+        BuildApiContextInner, ModulesHandler,
         admin::{AdminApi, AdminApiRunContext},
         da_listener::{DAListener, DAListenerConf},
         prover::{AutoProver, AutoProverCtx},
         rest::{ApiDoc, RestApi, RestApiRunContext, Router},
-        BuildApiContextInner, ModulesHandler,
     },
     utils::logger::setup_tracing,
 };
