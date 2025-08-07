@@ -478,7 +478,7 @@ mod tests {
 
         indexer
             .handle_txs(
-                &[tx_id.1.clone()],
+                std::slice::from_ref(&tx_id.1),
                 &Block {
                     lane_ids: vec![(tx_id.1.clone(), LaneId::default())]
                         .into_iter()
