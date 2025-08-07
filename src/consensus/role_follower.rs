@@ -161,8 +161,8 @@ impl Consensus {
         self.verify_timestamp(&consensus_proposal)?;
 
         // At this point we are OK with this new consensus proposal, update locally and vote.
-        self.bft_round_state.current_proposal = consensus_proposal.clone();
-        let cp_hash = self.bft_round_state.current_proposal.hashed();
+        self.bft_round_state.current_proposal = Some(consensus_proposal.clone());
+        let cp_hash = consensus_proposal.hashed();
 
         self.follower_state().buffered_prepares.push((
             sender.clone(),
@@ -230,7 +230,14 @@ impl Consensus {
             }
         }
 
-        if proposal_hash_hint != self.bft_round_state.current_proposal.hashed() {
+        if self
+            .store
+            .bft_round_state
+            .current_proposal
+            .as_ref()
+            .map(|current| current.hashed() == proposal_hash_hint)
+            .unwrap_or(false)
+        {
             warn!(
                 proposal_hash = %proposal_hash_hint,
                 sender = %sender,
@@ -259,7 +266,7 @@ impl Consensus {
                 proposal_hash = %proposal_hash_hint,
                 sender = %sender,
                 "📤 Slot {} Confirm message validated. Sending ConfirmAck to leader",
-                self.bft_round_state.current_proposal.slot
+                self.bft_round_state.slot
             );
             self.send_net_message(
                 self.round_leader()?,
@@ -281,17 +288,31 @@ impl Consensus {
     ) -> Result<()> {
         // Unless joining, ignore commit messages for the wrong slot.
         if !matches!(self.bft_round_state.state_tag, StateTag::Joining)
-            && self.bft_round_state.current_proposal.slot != self.bft_round_state.slot
+            && self
+                .bft_round_state
+                .current_proposal
+                .as_ref()
+                .map(|cp| cp.slot != self.bft_round_state.slot)
+                .unwrap_or(true)
         {
             return Ok(());
         }
         match self.bft_round_state.state_tag {
             StateTag::Follower => {
-                if self.bft_round_state.current_proposal.hashed() != proposal_hash_hint {
+                if self
+                    .bft_round_state
+                    .current_proposal
+                    .as_ref()
+                    .map(|cp| cp.hashed() != proposal_hash_hint)
+                    .unwrap_or(true)
+                {
                     warn!(
                         "Received Commit for proposal {:?} but expected {:?}. Ignoring.",
                         proposal_hash_hint,
-                        self.bft_round_state.current_proposal.hashed()
+                        self.bft_round_state
+                            .current_proposal
+                            .as_ref()
+                            .map(|cp| cp.hashed())
                     );
                     return Ok(());
                 }
@@ -480,11 +501,15 @@ impl Consensus {
     fn current_proposal_changes_voting_power(&self) -> bool {
         self.bft_round_state
             .current_proposal
-            .staking_actions
-            .iter()
-            .filter(|sa| matches!(sa, ConsensusStakingAction::Bond { .. }))
-            .count()
-            > 0
+            .as_ref()
+            .map(|cp| {
+                cp.staking_actions
+                    .iter()
+                    .filter(|sa| matches!(sa, ConsensusStakingAction::Bond { .. }))
+                    .count()
+                    > 0
+            })
+            .unwrap_or(false)
     }
 
     pub(super) fn verify_and_process_tc_ticket(
@@ -533,20 +558,18 @@ impl Consensus {
         }
 
         tracing::debug!(
-            "Slot info service: TC for slot {} view {}, bft round state slot {} {}, current proposal slot {}",
+            "Slot info service: TC for slot {} view {}, bft round state slot {} {}, current proposal slot {:?}",
             tc_slot,
             tc_view,
             self.bft_round_state.slot,
             self.bft_round_state.view,
-            self.bft_round_state.current_proposal.slot
+            self.bft_round_state.current_proposal.as_ref().map(|cp| cp.slot),
         );
 
         // Special-case: if ticket for next slot && correct parent hash, fast forward
         // (This is needed as we don't currently resend commit messages)
         if let Some(consensus_proposal) = consensus_proposal {
-            if is_next_slot_and_current_proposal_is_present
-                && consensus_proposal.parent_hash == self.bft_round_state.current_proposal.hashed()
-            {
+            if is_next_slot_and_current_proposal_is_present {
                 // If this TC looks to be correct for the next slot, try to commit our current prepare.
                 // Try to commit our current prepare & fast-forward.
 
@@ -614,7 +637,7 @@ impl Consensus {
                 .update_highest_seen_prepare_qc(tc_slot, qc.clone())
             {
                 // Update our consensus proposal
-                self.bft_round_state.current_proposal = cp.clone();
+                self.bft_round_state.current_proposal = Some(cp.clone());
                 debug!("Highest seen PrepareQC updated");
             }
         }
@@ -649,6 +672,7 @@ impl Consensus {
     ) -> Result<()> {
         // We are joining consensus, try to sync our state.
         let Some((_, potential_proposal, _, _)) = self
+            .store
             .bft_round_state
             .follower
             .buffered_prepares
@@ -677,18 +701,18 @@ impl Consensus {
             return Ok(());
         }
 
-        self.bft_round_state.current_proposal = potential_proposal.clone();
+        self.store.bft_round_state.current_proposal = Some(potential_proposal.clone());
 
         info!(
             "📦 Commit message received for slot {}, trying to synchronize.",
-            self.bft_round_state.current_proposal.slot
+            potential_proposal.slot
         );
 
         // Try to commit the proposal
         self.verify_commit_quorum_certificate_against_current_proposal(&commit_quorum_certificate)
             .context("On Commit when joining")?;
 
-        self.bft_round_state.slot = self.bft_round_state.current_proposal.slot;
+        self.bft_round_state.slot = potential_proposal.slot;
         self.bft_round_state.view = 0; // TODO
         self.bft_round_state.state_tag = StateTag::Follower;
 
@@ -711,7 +735,7 @@ impl Consensus {
             .bft_round_state
             .follower
             .buffered_prepares
-            .next_prepare(self.bft_round_state.current_proposal.hashed())
+            .next_prepare(self.bft_round_state.parent_hash.clone())
             .is_none()
     }
 
@@ -738,7 +762,15 @@ impl Consensus {
         }
 
         // Check if we have a missing DP up to our current known DP (this assumes we're not on a fork)
-        let current_dp_hash = self.bft_round_state.current_proposal.hashed();
+        let current_dp_hash = self
+            .bft_round_state
+            .current_proposal
+            .as_ref()
+            .map(|cp| cp.hashed())
+            .unwrap_or_else(|| {
+                // If we don't have a current proposal, we assume we're at the parent hash.
+                self.bft_round_state.parent_hash.clone()
+            });
         // TODO: we should switch back to joining if we try to catch up on too many prepares.
         while let Some(prep) = self
             .follower_state()
@@ -1013,7 +1045,7 @@ mod tests {
         let mut consensus =
             ConsensusTestCtx::build_consensus(&bus, BlstCrypto::new("test-node").unwrap()).await;
 
-        consensus.bft_round_state.current_proposal = current_proposal;
+        consensus.bft_round_state.current_proposal = Some(current_proposal);
 
         // Add the buffered prepare to the state
         consensus.follower_state().buffered_prepares.push((

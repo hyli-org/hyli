@@ -245,7 +245,7 @@ impl Consensus {
                     .update_highest_seen_prepare_qc(*received_slot, qc.clone())
                 {
                     // Update our consensus proposal
-                    self.bft_round_state.current_proposal = cp.clone();
+                    self.bft_round_state.current_proposal = Some(cp.clone());
                     debug!("Highest seen PrepareQC updated");
                 }
             } else {
@@ -386,10 +386,21 @@ impl Consensus {
                 ConsensusTimeoutMarker,
             );
             let tqc_kind = match &self.bft_round_state.timeout.highest_seen_prepare_qc {
-                Some((s, qc)) if s == received_slot => {
+                Some((s, qc))
+                    if s == received_slot
+                        && self
+                            .bft_round_state
+                            .current_proposal
+                            .as_ref()
+                            .map(|cp| cp.slot == *s)
+                            .unwrap_or(false) =>
+                {
                     // We have a prepare QC for this round, so let's send that.
-                    // TODO: check current proposal matches QC.
-                    TCKind::PrepareQC((qc.clone(), self.bft_round_state.current_proposal.clone()))
+                    #[allow(clippy::unwrap_used, reason = "must exist because of above")]
+                    TCKind::PrepareQC((
+                        qc.clone(),
+                        self.bft_round_state.current_proposal.clone().unwrap(),
+                    ))
                 }
                 _ => {
                     // Simple case - we will aggregate a 'nil' certificate. We need 2f+1 NIL signed messages
@@ -467,13 +478,22 @@ impl Consensus {
         );
         Ok(
             match &self.bft_round_state.timeout.highest_seen_prepare_qc {
-                Some((s, qc)) if s == &self.bft_round_state.slot => {
+                Some((s, qc))
+                    if s == &self.bft_round_state.slot
+                        && self
+                            .bft_round_state
+                            .current_proposal
+                            .as_ref()
+                            .map(|cp| cp.slot == *s)
+                            .unwrap_or(false) =>
+                {
                     // If we have a PrepareQC for this slot (any view), use it
+                    #[allow(clippy::unwrap_used, reason = "must exist because of above")]
                     (
                         signed_timeout_metadata,
                         TimeoutKind::PrepareQC((
                             qc.clone(),
-                            self.bft_round_state.current_proposal.clone(),
+                            self.bft_round_state.current_proposal.clone().unwrap(),
                         )),
                     )
                 }
