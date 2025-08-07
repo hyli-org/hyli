@@ -67,9 +67,9 @@ enum ProofProcessingResult {
     /// The proof was processed successfully
     Success,
     /// The proof failed validation but we should try other proofs
-    RetryableError(String),
+    Invalid(String),
     /// The proof failed with a fatal error - should settle as failed immediately
-    FatalError(String),
+    ProvenFailure(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -853,23 +853,6 @@ impl NodeState {
 
             match proof_result {
                 ProofProcessingResult::Success => {
-                    // Proof processed successfully, continue with recursion
-                    if !proof_metadata.1.success {
-                        // We have a valid proof of failure, we short-circuit.
-                        let msg = format!(
-                            "Proven failure for blob {} - {:?}",
-                            i,
-                            String::from_utf8(proof_metadata.1.program_outputs.clone())
-                        );
-                        debug!("{msg}");
-                        events.push(TransactionStateEvent::SettleEvent(msg));
-                        return SettlementResult {
-                            settlement_status: SettlementStatus::SettleAsFailed,
-                            contract_changes,
-                            blob_proof_output_indices,
-                        };
-                    }
-
                     tracing::trace!("Settlement - OK blob");
                     let settlement_result = Self::settle_blobs_recursively(
                         contracts,
@@ -887,7 +870,7 @@ impl NodeState {
                         SettlementStatus::NotReadyToSettle | SettlementStatus::Unknown => continue,
                     }
                 }
-                ProofProcessingResult::RetryableError(msg) => {
+                ProofProcessingResult::Invalid(msg) => {
                     // Not a valid proof, log it and try the next one.
                     let msg = format!(
                         "Could not settle blob proof output #{i} for contract '{contract_name}': {msg}"
@@ -896,7 +879,7 @@ impl NodeState {
                     events.push(TransactionStateEvent::SettleEvent(msg));
                     continue;
                 }
-                ProofProcessingResult::FatalError(msg) => {
+                ProofProcessingResult::ProvenFailure(msg) => {
                     // Fatal error - settle as failed immediately
                     let msg = format!(
                         "Fatal error processing blob proof output #{i} for contract '{contract_name}': {msg}"
@@ -1317,12 +1300,12 @@ impl NodeState {
         current_blob: &UnsettledBlobMetadata,
     ) -> ProofProcessingResult {
         if let Err(e) = validate_state_commitment_size(&proof_metadata.1.next_state) {
-            return ProofProcessingResult::RetryableError(e.to_string());
+            return ProofProcessingResult::Invalid(e.to_string());
         }
 
         let contract = match Self::get_contract(contracts, contract_changes, contract_name) {
             Ok(contract) => contract.clone(),
-            Err(e) => return ProofProcessingResult::RetryableError(e.to_string()),
+            Err(e) => return ProofProcessingResult::Invalid(e.to_string()),
         };
 
         tracing::trace!(
@@ -1331,23 +1314,31 @@ impl NodeState {
             contract.state
         );
         if proof_metadata.1.initial_state != contract.state {
-            return ProofProcessingResult::RetryableError(format!(
+            return ProofProcessingResult::Invalid(format!(
                 "Initial state mismatch: {:?}, expected {:?}",
                 proof_metadata.1.initial_state, contract.state
             ));
         }
 
         if proof_metadata.0 != contract.program_id {
-            return ProofProcessingResult::RetryableError(format!(
+            return ProofProcessingResult::Invalid(format!(
                 "Program ID mismatch: {:?}, expected {:?} on {}",
                 proof_metadata.0, contract.program_id, contract.name
             ));
         }
 
         if proof_metadata.2 != contract.verifier {
-            return ProofProcessingResult::RetryableError(format!(
+            return ProofProcessingResult::Invalid(format!(
                 "Verifier mismatch: {:?}, expected {:?} on {}",
                 proof_metadata.2, contract.verifier, contract.name
+            ));
+        }
+
+        // Proof processed successfully, continue with recursion
+        if !proof_metadata.1.success {
+            return ProofProcessingResult::ProvenFailure(format!(
+                "Execution failed: {:?}",
+                String::from_utf8(proof_metadata.1.program_outputs.clone())
             ));
         }
 
@@ -1355,10 +1346,10 @@ impl NodeState {
             let other_contract =
                 match Self::get_contract(contracts, contract_changes, &state_read.0) {
                     Ok(contract) => contract,
-                    Err(e) => return ProofProcessingResult::RetryableError(e.to_string()),
+                    Err(e) => return ProofProcessingResult::Invalid(e.to_string()),
                 };
             if state_read.1 != other_contract.state {
-                return ProofProcessingResult::RetryableError(format!(
+                return ProofProcessingResult::Invalid(format!(
                     "State read {:?} does not match other contract state {:?}",
                     state_read, other_contract.state
                 ));
@@ -1376,7 +1367,7 @@ impl NodeState {
                         &effect.program_id,
                         &effect.state_commitment,
                     ) {
-                        return ProofProcessingResult::FatalError(format!(
+                        return ProofProcessingResult::ProvenFailure(format!(
                             "Contract registration validation failed: {e}"
                         ));
                     }
@@ -1385,7 +1376,7 @@ impl NodeState {
                         current_blob.blob.data.clone(),
                     ) {
                         Ok(metadata) => metadata,
-                        Err(e) => return ProofProcessingResult::FatalError(e.to_string()),
+                        Err(e) => return ProofProcessingResult::ProvenFailure(e.to_string()),
                     };
 
                     contract_changes.insert(
@@ -1411,7 +1402,7 @@ impl NodeState {
                 OnchainEffect::DeleteContract(cn) => {
                     // Contract name validation for deletion should also cause immediate failure
                     if let Err(e) = validate_contract_name_registration(&contract.name, cn) {
-                        return ProofProcessingResult::FatalError(format!(
+                        return ProofProcessingResult::ProvenFailure(format!(
                             "Contract deletion validation failed: {e}"
                         ));
                     }
