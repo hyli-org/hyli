@@ -187,7 +187,6 @@ impl Consensus {
             .wrapping_sub(1)
             % self.bft_round_state.staking.bonded().len();
 
-        // Get the next leader based on the random index
         Ok(self
             .bft_round_state
             .staking
@@ -217,9 +216,13 @@ impl Consensus {
 
         match ticket {
             // We finished the round with a committed proposal for the slot
-            Ticket::CommitQC(_) | Ticket::ForcedCommitQc => {
+            Ticket::CommitQC(..) | Ticket::ForcedCommitQc(..) => {
                 self.bft_round_state.slot += 1;
-                self.bft_round_state.view = 0;
+                self.bft_round_state.view = match ticket {
+                    Ticket::CommitQC(..) => 0,
+                    Ticket::ForcedCommitQc(view) => view,
+                    _ => unreachable!(),
+                };
                 self.bft_round_state.parent_hash = self.bft_round_state.current_proposal.hashed();
                 self.bft_round_state.parent_timestamp =
                     self.bft_round_state.current_proposal.timestamp.clone();
@@ -228,7 +231,7 @@ impl Consensus {
                 // Store the last commited QC to avoid issues when parsing Commit messages before Prepare
                 self.bft_round_state.follower.buffered_quorum_certificate = match ticket {
                     Ticket::CommitQC(qc) => Some(qc),
-                    Ticket::ForcedCommitQc => None,
+                    Ticket::ForcedCommitQc(..) => None,
                     _ => unreachable!(),
                 };
                 for action in
@@ -480,8 +483,8 @@ impl Consensus {
                 self.metrics,
                 "on_timeout_certificate",
                 self.on_timeout_certificate(
-                    &certificate_of_timeout,
-                    &certificate_of_proposal,
+                    certificate_of_timeout,
+                    certificate_of_proposal,
                     slot,
                     view,
                 )
@@ -509,7 +512,7 @@ impl Consensus {
         // Decide what to do at the beginning of the next round
         if self.is_round_leader()
             && self.has_no_buffered_children()
-            && !matches!(ticket, Ticket::ForcedCommitQc)
+            && !matches!(ticket, Ticket::ForcedCommitQc(..))
         {
             // Setup our ticket for the next round
             // Send Prepare message to all validators
