@@ -146,7 +146,7 @@ mod tests {
         fees.deposit_for_fees(validator.clone(), 200);
         fees.pay_for_dadi(validator.clone(), cumul_size1).unwrap();
         fees.pay_for_dadi(validator.clone(), cumul_size2).unwrap();
-        let result = fees.distribute(&[validator.clone()]);
+        let result = fees.distribute(std::slice::from_ref(&validator));
         assert!(result.is_err());
     }
 }

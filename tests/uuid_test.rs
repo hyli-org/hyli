@@ -161,7 +161,7 @@ async fn test_uuid_registration() {
     )
     .expect("Must validate proof");
 
-    assert_eq!(outputs, &[expected_output.clone()]);
+    assert_eq!(outputs, std::slice::from_ref(&expected_output));
 
     let contract = loop {
         if let Ok(c) = ctx

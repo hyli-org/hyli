@@ -162,12 +162,11 @@ impl NodeStateCheck {
             listen<DataEvent> event => {
                 let DataEvent::OrderedSignedBlock(block) = event;
                 let proc = node_state.handle_signed_block(&block)?;
-                if let Some(max) = self.read_to {
-                    if proc.block_height >= max {
+                if let Some(max) = self.read_to
+                    && proc.block_height >= max {
                         tracing::info!("Reached read_to block height: {}", max);
                         break;
                     }
-                }
             }
         };
         let mut hasher = Sha256::new();

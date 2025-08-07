@@ -263,7 +263,7 @@ pub mod test {
 
         // Store a DP, process the commit message for the cut containing it.
         let register_tx = make_register_contract_tx(ContractName::new("test1"));
-        let dp_orig = ctx.create_data_proposal(None, &[register_tx.clone()]);
+        let dp_orig = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
         ctx.process_new_data_proposal(dp_orig.clone())?;
         let cumul_size = LaneBytesSize(dp_orig.estimate_size() as u64);
         let dp_hash = dp_orig.hashed();
@@ -302,19 +302,21 @@ pub mod test {
 
         // Store a DP, process the commit message for the cut containing it.
         let register_tx = make_register_contract_tx(ContractName::new("test1"));
-        let dp_orig = ctx.create_data_proposal(None, &[register_tx.clone()]);
+        let dp_orig = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
         ctx.process_new_data_proposal(dp_orig.clone())?;
         let cumul_size = LaneBytesSize(dp_orig.estimate_size() as u64);
         let dp_hash = dp_orig.hashed();
 
         let register_tx2 = make_register_contract_tx(ContractName::new("test2"));
-        let dp_orig2 = ctx.create_data_proposal(Some(dp_hash.clone()), &[register_tx2.clone()]);
+        let dp_orig2 =
+            ctx.create_data_proposal(Some(dp_hash.clone()), std::slice::from_ref(&register_tx2));
         ctx.process_new_data_proposal(dp_orig2.clone())?;
         let cumul_size = LaneBytesSize(cumul_size.0 + dp_orig2.estimate_size() as u64);
         let dp_hash2 = dp_orig2.hashed();
 
         let register_tx3 = make_register_contract_tx(ContractName::new("test3"));
-        let dp_orig3 = ctx.create_data_proposal(Some(dp_hash2.clone()), &[register_tx3.clone()]);
+        let dp_orig3 =
+            ctx.create_data_proposal(Some(dp_hash2.clone()), std::slice::from_ref(&register_tx3));
         ctx.process_new_data_proposal(dp_orig3.clone())?;
         let cumul_size = LaneBytesSize(cumul_size.0 + dp_orig3.estimate_size() as u64);
         let dp_hash3 = dp_orig3.hashed();

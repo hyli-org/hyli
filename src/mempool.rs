@@ -1104,7 +1104,7 @@ pub mod test {
 
         // Store the DP locally.
         let register_tx = make_register_contract_tx(ContractName::new("test1"));
-        let data_proposal = ctx.create_data_proposal(None, &[register_tx.clone()]);
+        let data_proposal = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
         ctx.process_new_data_proposal(data_proposal.clone())?;
 
         // Since mempool is alone, no broadcast
@@ -1162,11 +1162,13 @@ pub mod test {
 
         // Store the DP locally.
         let register_tx = make_register_contract_tx(ContractName::new("test1"));
-        let data_proposal = ctx.create_data_proposal(None, &[register_tx.clone()]);
+        let data_proposal = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
         ctx.process_new_data_proposal(data_proposal.clone())?;
 
-        let data_proposal2 =
-            ctx.create_data_proposal(Some(data_proposal.hashed()), &[register_tx.clone()]);
+        let data_proposal2 = ctx.create_data_proposal(
+            Some(data_proposal.hashed()),
+            std::slice::from_ref(&register_tx),
+        );
         ctx.process_new_data_proposal(data_proposal2.clone())?;
 
         // Since mempool is alone, no broadcast
@@ -1250,7 +1252,7 @@ pub mod test {
 
         // Create a DP and simulate we requested it.
         let register_tx = make_register_contract_tx(ContractName::new("test1"));
-        let data_proposal = ctx.create_data_proposal(None, &[register_tx.clone()]);
+        let data_proposal = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
         let cumul_size = LaneBytesSize(data_proposal.estimate_size() as u64);
 
         // Add new validator
