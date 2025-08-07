@@ -79,9 +79,9 @@ enum ProofProcessingResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SettlementStatus {
-    // When starting to settle a BlobTx, we need to have a "Unknown" status that will be updated when a tx is flagged as failed, or as not ready to settle.
-    // At the end of the settlement recursion, if status is still Unknown, then the tx is settled as success.
-    Unknown,
+    // When starting to settle a BlobTx, we need to have a "TryToSettle" status that will be updated when a tx is flagged as failed, or as not ready to settle.
+    // At the end of the settlement recursion, if status is still TryToSettle, then the tx is settled as success.
+    TryingToSettle,
     SettleAsSuccess,
     SettleAsFailed,
     // This status is used to flag a tx not ready to settle.
@@ -713,7 +713,7 @@ impl NodeState {
         } else {
             Self::settle_blobs_recursively(
                 &self.contracts,
-                SettlementStatus::Unknown,
+                SettlementStatus::TryingToSettle,
                 updated_contracts,
                 unsettled_tx.blobs.values(),
                 vec![],
@@ -740,7 +740,7 @@ impl NodeState {
                 // If some blobs are still sequenced behind others, we can only settle this TX as failed.
                 // (failed TX won't change the state, so we can settle it right away).
             }
-            SettlementStatus::Unknown => {
+            SettlementStatus::TryingToSettle => {
                 unreachable!(
                     "Settlement status should not be Idle when trying to settle a blob tx"
                 );
@@ -804,7 +804,7 @@ impl NodeState {
                 }
             }
             tracing::trace!("Settlement - Done");
-            if settlement_status == SettlementStatus::Unknown {
+            if settlement_status == SettlementStatus::TryingToSettle {
                 // All blobs have been processed, if settlement status is still idle, this means:
                 // - no blobs are proven to be failing
                 // - no blobs are proven to be not ready for settlement
@@ -926,6 +926,21 @@ impl NodeState {
                     blob_proof_output_indices,
                 };
             }
+        } else if !contracts.contains_key(contract_name) {
+            // Now processing a blob for a contract that is not registered yet
+            // if all previous blobs have been proven (i.e. setttlement status still at TryingToSettle)
+            // and none of them generate an OnChainEffect, Tx should fail
+            if settlement_status == SettlementStatus::TryingToSettle {
+                let msg =
+                    format!("Trying to settle a blob for an unknown and unregistered contract {contract_name:?}");
+                debug!("{msg}");
+                events.push(TransactionStateEvent::SettleEvent(msg));
+                return SettlementResult {
+                    settlement_status: SettlementStatus::SettleAsFailed,
+                    contract_changes,
+                    blob_proof_output_indices,
+                };
+            }
         }
 
         // Regular case: go through each proof for this blob. If they settle, carry on recursively.
@@ -959,7 +974,9 @@ impl NodeState {
                         SettlementStatus::SettleAsSuccess | SettlementStatus::SettleAsFailed => {
                             return settlement_result;
                         }
-                        SettlementStatus::NotReadyToSettle | SettlementStatus::Unknown => continue,
+                        SettlementStatus::NotReadyToSettle | SettlementStatus::TryingToSettle => {
+                            continue
+                        }
                     }
                 }
                 ProofProcessingResult::Invalid(msg) => {
@@ -1055,9 +1072,9 @@ impl NodeState {
                 block_under_construction.failed_txs.push(bth);
                 return next_txs_to_try_and_settle;
             }
-            SettlementStatus::NotReadyToSettle | SettlementStatus::Unknown => {
+            SettlementStatus::NotReadyToSettle | SettlementStatus::TryingToSettle => {
                 unreachable!(
-                        "Settlement status should not be NotReadyToSettle nor Idle when trying to settle a blob tx"
+                        "Settlement status should not be NotReadyToSettle nor TryingToSettle when trying to settle a blob tx"
                     );
             }
             SettlementStatus::SettleAsSuccess => {
@@ -1485,9 +1502,10 @@ impl NodeState {
                         });
                 }
                 OnchainEffect::UpdateContractProgramId(cn, program_id) => {
-                    if let Err(e) = validate_contract_name_tld(&contract.name, cn) {
+                    // Only hyle and the contract itself can update its programId
+                    if contract_name != &"hyle".into() && cn != contract_name {
                         return ProofProcessingResult::ProvenFailure(format!(
-                            "Contract update programId validation failed: {e}"
+                            "Forbidden programId update: contract {contract_name} trying to upgrade {cn}"
                         ));
                     }
                     contract_changes
@@ -1515,9 +1533,10 @@ impl NodeState {
                         });
                 }
                 OnchainEffect::UpdateTimeoutWindow(cn, timeout_window) => {
-                    if let Err(e) = validate_contract_name_tld(&contract.name, cn) {
+                    // Only hyle and the contract itself can update its TimeoutWindow
+                    if contract_name != &"hyle".into() && cn != contract_name {
                         return ProofProcessingResult::ProvenFailure(format!(
-                            "Contract update timeout window validation failed: {e}"
+                            "Forbidden TimeoutWindow update: contract {contract_name} trying to upgrade {cn}"
                         ));
                     }
                     contract_changes

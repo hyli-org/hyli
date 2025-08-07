@@ -277,6 +277,54 @@ async fn test_register_contract_composition() {
     assert_eq!(state.contracts.len(), 3);
 }
 
+#[test_log::test(tokio::test)]
+async fn test_registration_from_contract_without_onchain_effect_do_not_block_settlement() {
+    let mut state = new_node_state().await;
+
+    // 1. Send tx to register c1
+    let register_c1 =
+        make_register_tx_with_constructor("hyle@hyle".into(), "hyle".into(), "c1".into());
+    state.craft_block_and_handle(1, vec![register_c1.clone().into()]);
+
+    // Verify that c1 is registered
+    assert!(state.contracts.contains_key(&"c1".into()));
+
+    // 2. Send a second transaction on c1 and c2 (c2 does not exist yet)
+    let tx_c1_c2 = BlobTransaction::new(
+        "user@c1",
+        vec![
+            Blob {
+                contract_name: "c1".into(),
+                data: BlobData(vec![1, 2, 3]),
+            },
+            Blob {
+                contract_name: "c2".into(),
+                data: BlobData(vec![4, 5, 6]),
+            },
+        ],
+    );
+    let tx_c1_c2_hash = tx_c1_c2.hashed();
+
+    let block2 = state.craft_block_and_handle(2, vec![tx_c1_c2.clone().into()]);
+
+    // 3. Check second tx is still sequenced
+    assert!(!block2.failed_txs.contains(&tx_c1_c2_hash));
+    assert!(!block2.successful_txs.contains(&tx_c1_c2_hash));
+    assert!(state.unsettled_transactions.get(&tx_c1_c2_hash).is_some());
+
+    // 4. Send proof_transaction on c1 blob without OnChaineffect::RegisterContract
+    let mut output = make_hyle_output(tx_c1_c2.clone(), BlobIndex(0));
+    // Pas d'OnchainEffect ajouté volontairement
+    let proof_tx_c1 = new_proof_tx(&"c1".into(), &output, &tx_c1_c2_hash);
+
+    let block3 = state.craft_block_and_handle(3, vec![proof_tx_c1.into()]);
+
+    // 5. Assert transaction 2 settled as failed
+    assert!(block3.failed_txs.contains(&tx_c1_c2_hash));
+    assert!(!block3.successful_txs.contains(&tx_c1_c2_hash));
+    assert!(state.unsettled_transactions.get(&tx_c1_c2_hash).is_none());
+}
+
 fn check_block_is_ok(block: &Block) {
     let dp_hashes: Vec<TxHash> = block.dp_parent_hashes.clone().into_keys().collect();
 
