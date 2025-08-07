@@ -1718,7 +1718,10 @@ pub mod test {
 
         assert_eq!(cp.slot, 2);
         assert_eq!(cp_view, 1);
-        assert!(matches!(ticket, Ticket::TimeoutQC(_, TCKind::NilProposal)));
+        assert!(matches!(
+            ticket,
+            Ticket::TimeoutQC(_, TCKind::NilProposal(..))
+        ));
 
         assert_eq!(
             node1.consensus.bft_round_state.current_proposal.timestamp,
