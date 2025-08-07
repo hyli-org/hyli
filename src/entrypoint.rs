@@ -284,6 +284,11 @@ async fn common_main(
                     .context("Writing consenus catchup store to disk"),
                 "Saving consensus store"
             );
+        } else {
+            info!(
+                "Skipping fast catchup, consensus.bin and node_state.bin already exist in {}",
+                config.data_directory.display()
+            );
         }
     }
 

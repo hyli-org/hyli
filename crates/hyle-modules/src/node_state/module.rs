@@ -51,9 +51,6 @@ pub struct NodeStateBusClient {
 }
 }
 
-#[derive(Clone)]
-pub struct QueryNodeState {}
-
 pub struct NodeStateCtx {
     pub node_id: String,
     pub data_directory: PathBuf,
