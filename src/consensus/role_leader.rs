@@ -63,7 +63,13 @@ impl Consensus {
 
         // If we already have a consensusproposal for this slot, then we voted on it,
         // and so we must repropose it (in case a commit was reached somewhere)
-        if self.bft_round_state.current_proposal.slot == self.bft_round_state.slot {
+        if self
+            .bft_round_state
+            .current_proposal
+            .as_ref()
+            .map(|cp| cp.slot == self.bft_round_state.slot)
+            .unwrap_or(false)
+        {
             debug!("♻️ Starting new view with the same ConsensusProposal as previous views")
         } else {
             // Creates ConsensusProposal
@@ -199,38 +205,41 @@ impl Consensus {
             }
 
             // Start Consensus with following cut
-            self.bft_round_state.current_proposal = ConsensusProposal {
+            self.bft_round_state.current_proposal = Some(ConsensusProposal {
                 slot: self.bft_round_state.slot,
                 cut,
                 staking_actions,
                 timestamp: current_timestamp,
                 parent_hash: self.bft_round_state.parent_hash.clone(),
-            };
+            });
         }
         self.bft_round_state.leader.step = Step::PrepareVote;
 
-        let prepare = (
-            self.crypto.validator_pubkey().clone(),
-            self.bft_round_state.current_proposal.clone(),
-            ticket.clone(),
-            self.bft_round_state.view,
-        );
-        self.follower_state().buffered_prepares.push(prepare);
+        #[allow(clippy::unwrap_used, reason = "must exist because we just set it")]
+        {
+            let prepare = (
+                self.crypto.validator_pubkey().clone(),
+                self.bft_round_state.current_proposal.clone().unwrap(),
+                ticket.clone(),
+                self.bft_round_state.view,
+            );
+            self.follower_state().buffered_prepares.push(prepare);
 
-        self.metrics.start_new_round(self.bft_round_state.slot);
+            self.metrics.start_new_round(self.bft_round_state.slot);
 
-        // Verifies that to-be-built block is large enough (?)
+            // Verifies that to-be-built block is large enough (?)
 
-        // Broadcasts Prepare message to all validators
-        debug!(
-            proposal_hash = %self.bft_round_state.current_proposal.hashed(),
-            "🌐 Slot {} started. Broadcasting Prepare message", self.bft_round_state.slot,
-        );
-        self.broadcast_net_message(ConsensusNetMessage::Prepare(
-            self.bft_round_state.current_proposal.clone(),
-            ticket,
-            self.bft_round_state.view,
-        ))?;
+            // Broadcasts Prepare message to all validators
+            debug!(
+                proposal_hash = %self.bft_round_state.current_proposal.as_ref().unwrap().hashed(),
+                "🌐 Slot {} started. Broadcasting Prepare message", self.bft_round_state.slot,
+            );
+            self.broadcast_net_message(ConsensusNetMessage::Prepare(
+                self.bft_round_state.current_proposal.clone().unwrap(),
+                ticket,
+                self.bft_round_state.view,
+            ))?;
+        }
 
         Ok(())
     }
@@ -258,9 +267,13 @@ impl Consensus {
             return Ok(());
         }
 
+        let Some(current_proposal) = self.store.bft_round_state.current_proposal.as_ref() else {
+            bail!("PrepareVote received while no current proposal is set");
+        };
+
         // Verify that the PrepareVote is for the correct proposal.
         // This also checks slot/view as those are part of the hash.
-        if prepare_vote.msg.0 != self.bft_round_state.current_proposal.hashed() {
+        if prepare_vote.msg.0 != current_proposal.hashed() {
             bail!("PrepareVote has not received valid consensus proposal hash");
         }
 
@@ -303,7 +316,7 @@ impl Consensus {
             let aggregates: &Vec<&PrepareVote> =
                 &self.bft_round_state.leader.prepare_votes.iter().collect();
 
-            let proposal_hash_hint = self.bft_round_state.current_proposal.hashed();
+            let proposal_hash_hint = current_proposal.hashed();
             // Aggregates them into a *Prepare* Quorum Certificate
             let prepvote_signed_aggregation = self
                 .crypto
@@ -350,13 +363,17 @@ impl Consensus {
             return Ok(());
         }
 
+        let Some(current_proposal) = self.store.bft_round_state.current_proposal.as_ref() else {
+            bail!("PrepareVote received while no current proposal is set");
+        };
+
         // Verify that the ConfirmAck is for the correct proposal
-        if confirm_ack.msg.0 != self.bft_round_state.current_proposal.hashed() {
+        if confirm_ack.msg.0 != current_proposal.hashed() {
             debug!(
                 sender = %confirm_ack.signature.validator,
                 "Got {} expected {}",
                 confirm_ack.msg.0,
-                self.bft_round_state.current_proposal.hashed()
+                current_proposal.hashed()
             );
             bail!("ConfirmAck got invalid consensus proposal hash");
         }
@@ -406,13 +423,9 @@ impl Consensus {
                 &self.bft_round_state.leader.confirm_ack.iter().collect();
 
             // Aggregates them into a *Commit* Quorum Certificate
-            let commit_signed_aggregation = self.crypto.sign_aggregate(
-                (
-                    self.bft_round_state.current_proposal.hashed(),
-                    ConfirmAckMarker,
-                ),
-                aggregates,
-            )?;
+            let commit_signed_aggregation = self
+                .crypto
+                .sign_aggregate((current_proposal.hashed(), ConfirmAckMarker), aggregates)?;
 
             // Buffers the *Commit* Quorum Certificate
             let commit_quorum_certificate =
