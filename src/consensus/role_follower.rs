@@ -627,14 +627,16 @@ impl Consensus {
                 tc_view
             );
 
-            // This TC is for our current slot and view, so we can leave Joining mode
-            let is_next_view_leader = &self.next_view_leader()? != self.crypto.validator_pubkey();
-            if is_next_view_leader && matches!(self.bft_round_state.state_tag, StateTag::Joining) {
-                self.bft_round_state.state_tag = StateTag::Leader;
-            }
             // Fake our view so we fast-forward properly.
             self.bft_round_state.view = tc_view;
             self.advance_round(Ticket::TimeoutQC(timeout_qc, tc_kind_data.clone()))?;
+
+            // This TC is for our current slot and view, so we can leave Joining mode
+            if self.round_leader()? == *self.crypto.validator_pubkey()
+                && matches!(self.bft_round_state.state_tag, StateTag::Joining)
+            {
+                self.bft_round_state.state_tag = StateTag::Leader;
+            }
         }
 
         Ok(TicketVerifyAndProcess::Processed)

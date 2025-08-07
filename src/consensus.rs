@@ -187,7 +187,6 @@ impl Consensus {
             .wrapping_sub(1)
             % self.bft_round_state.staking.bonded().len();
 
-        // Get the next leader based on the random index
         Ok(self
             .bft_round_state
             .staking
