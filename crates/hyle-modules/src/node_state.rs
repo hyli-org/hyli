@@ -889,7 +889,7 @@ impl NodeState {
             // Special case for contract deletion from TLD
             if current_status == &mut ContractStatus::WaitingDeletion {
                 if !current_blob.blob.data.0.is_empty() {
-                    // Empty blob is not a valid deletion
+                    // Non-empty blob is not a valid deletion
                     let msg =
                     format!("Trying to settle a blob for the deleted contract {contract_name:?} with non-empty data.");
                     debug!("{msg}");
