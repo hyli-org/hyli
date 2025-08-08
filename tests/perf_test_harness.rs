@@ -102,20 +102,7 @@ async fn custom_setup() -> Result<()> {
             confs.push(node_conf);
         }
 
-        let admin_port = confs
-            .iter()
-            .find(|n| n.id == "node-4")
-            .unwrap()
-            .admin_server_port;
-
         for node_conf in confs.iter_mut() {
-            info!("Creating node with config: {}", node_conf.id);
-            if node_conf.id == "node-1" {
-                warn!("Node-1 is configured to run fast catchup from node-4 at port {admin_port}");
-                node_conf.run_fast_catchup = true;
-                node_conf.fast_catchup_from = format!("http://localhost:{admin_port}");
-            }
-
             node_conf.p2p.peers = peers.clone();
             node_conf.genesis.stakers = genesis_stakers.clone();
             let node = test_helpers::TestProcess::new("hyle", node_conf.clone());
