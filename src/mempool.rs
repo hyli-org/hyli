@@ -272,11 +272,12 @@ impl Mempool {
     /// Creates a cut with local material on QueryNewCut message reception (from consensus)
     fn handle_querynewcut(&mut self, staking: &mut QueryNewCut) -> Result<Cut> {
         self.metrics.query_new_cut(staking);
+        let emptyvec = vec![];
         let previous_cut = self
             .last_ccp
             .as_ref()
-            .map(|ccp| ccp.consensus_proposal.cut.clone())
-            .unwrap_or_default();
+            .map(|ccp| &ccp.consensus_proposal.cut)
+            .unwrap_or(&emptyvec);
 
         // For each lane, we get the last CAR and put it in the cut
         let mut cut: Cut = vec![];

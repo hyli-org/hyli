@@ -96,14 +96,14 @@ pub trait Storage {
         let bonded_validators = staking.bonded();
         // We start from the tip of the lane, and go backup until we find a DP with enough signatures
         if let Some(tip_dp_hash) = self.get_lane_hash_tip(lane_id) {
+            if let Some((_, hash, cumul_size, poda)) = previous_committed_car {
+                if tip_dp_hash == hash {
+                    // Latest car has already been committed
+                    return Ok(Some((hash.clone(), *cumul_size, poda.clone())));
+                }
+            }
             let mut dp_hash = tip_dp_hash.clone();
             while let Some(le) = self.get_metadata_by_hash(lane_id, &dp_hash)? {
-                if let Some((_, hash, _, poda)) = previous_committed_car {
-                    if &dp_hash == hash {
-                        // Latest car has already been committed
-                        return Ok(Some((hash.clone(), le.cumul_size, poda.clone())));
-                    }
-                }
                 // Filter signatures on DataProposal to only keep the ones from the current validators
                 let filtered_signatures: Vec<SignedByValidator<(DataProposalHash, LaneBytesSize)>> =
                     le.signatures
