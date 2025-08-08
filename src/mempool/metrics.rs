@@ -77,7 +77,7 @@ impl MempoolMetrics {
             1,
             &[KeyValue::new(
                 "nb_validators",
-                nc.0.bonded().len().to_string(),
+                nc.staking.bonded().len().to_string(),
             )],
         )
     }

@@ -73,16 +73,54 @@ impl Consensus {
                 self.bft_round_state.staking
             );
 
+            // Determine if we need a full cut (if we don't have the last known cut)
+            let need_full_cut = self.bft_round_state.parent_cut.is_empty();
+            let query = QueryNewCut {
+                staking: self.bft_round_state.staking.clone(),
+                full: need_full_cut,
+            };
+
             let cut = match tokio::time::timeout(
                 self.config.consensus.slot_duration,
-                self.bus.shutdown_aware_request::<Self>(QueryNewCut(
-                    self.bft_round_state.staking.clone(),
-                )),
+                self.bus.shutdown_aware_request::<Self>(query),
             )
             .await
             .context("Timeout while querying Mempool")
             {
-                Ok(Ok(cut)) => {
+                Ok(Ok(mut cut)) => {
+                    // If we requested a diff, reconstruct the full cut by merging with parent_cut
+                    if !need_full_cut {
+                        let mut full_cut = self.bft_round_state.parent_cut.clone();
+                        // Replace or add lanes from cut into full_cut
+                        for (lane_id, dp_hash, cumul_size, poda) in cut.iter() {
+                            if let Some(entry) =
+                                full_cut.iter_mut().find(|(id, _, _, _)| id == lane_id)
+                            {
+                                if entry.2 < *cumul_size {
+                                    // Update the entry if the new cumul_size is larger (aka it's a newer entry)
+                                    *entry = (
+                                        lane_id.clone(),
+                                        dp_hash.clone(),
+                                        *cumul_size,
+                                        poda.clone(),
+                                    );
+                                } else {
+                                    debug!(
+                                        "Ignoring stale entry for lane {}: {:?}",
+                                        lane_id, entry
+                                    );
+                                }
+                            } else {
+                                full_cut.push((
+                                    lane_id.clone(),
+                                    dp_hash.clone(),
+                                    *cumul_size,
+                                    poda.clone(),
+                                ));
+                            }
+                        }
+                        cut = full_cut;
+                    }
                     // If the cut is the same as before (and we didn't time out), then check if we should delay.
                     if may_delay
                         .as_ref()

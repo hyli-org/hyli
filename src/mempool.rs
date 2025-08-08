@@ -168,7 +168,10 @@ impl DerefMut for Mempool {
 }
 
 #[derive(Debug, Clone)]
-pub struct QueryNewCut(pub Staking);
+pub struct QueryNewCut {
+    pub staking: Staking,
+    pub full: bool,
+}
 
 module_bus_client! {
 struct MempoolBusClient {
@@ -270,6 +273,7 @@ impl Mempool {
     }
 
     /// Creates a cut with local material on QueryNewCut message reception (from consensus)
+    // TODO: would be more optimal to only push updated lanes if needed (consensus may have the last cut)
     fn handle_querynewcut(&mut self, staking: &mut QueryNewCut) -> Result<Cut> {
         self.metrics.query_new_cut(staking);
         let emptyvec = vec![];
@@ -279,19 +283,34 @@ impl Mempool {
             .map(|ccp| &ccp.consensus_proposal.cut)
             .unwrap_or(&emptyvec);
 
-        // For each lane, we get the last CAR and put it in the cut
         let mut cut: Cut = vec![];
         for lane_id in self.lanes.get_lane_ids() {
             let previous_entry = previous_cut
                 .iter()
                 .find(|(lane_id_, _, _, _)| lane_id_ == lane_id);
-            if let Some((dp_hash, cumul_size, poda)) =
+            let latest_car =
                 self.lanes
-                    .get_latest_car(lane_id, &staking.0, previous_entry)?
-            {
-                cut.push((lane_id.clone(), dp_hash, cumul_size, poda));
-            } else if let Some(lane) = previous_entry {
-                cut.push(lane.clone());
+                    .get_latest_car(lane_id, &staking.staking, previous_entry)?;
+            if staking.full {
+                // Always push latest if present
+                if let Some((dp_hash, cumul_size, poda)) = latest_car {
+                    cut.push((lane_id.clone(), dp_hash, cumul_size, poda));
+                }
+            } else {
+                match (previous_entry, latest_car) {
+                    (Some((_, prev_hash, _, _)), Some((dp_hash, cumul_size, poda))) => {
+                        // Only push if changed
+                        if &dp_hash != prev_hash {
+                            cut.push((lane_id.clone(), dp_hash, cumul_size, poda));
+                        }
+                    }
+                    (None, Some((dp_hash, cumul_size, poda))) => {
+                        // New lane, push
+                        cut.push((lane_id.clone(), dp_hash, cumul_size, poda));
+                    }
+                    // If latest_car is None, do not push anything for this lane
+                    _ => {}
+                }
             }
         }
         Ok(cut)
