@@ -2285,3 +2285,69 @@ async fn autobahn_commit_prepare_qc_across_multiple_views() {
         }
     };
 }
+
+#[test_log::test(tokio::test)]
+async fn follower_commits_cut_then_mempool_sends_stale_lane() {
+    let (mut node1, mut node2) = build_nodes!(2).await;
+
+    // Node1 is leader, node2 is follower
+    let register_tx = make_register_contract_tx(ContractName::new("test1"));
+    let dp = node1.mempool_ctx.create_data_proposal(None, &[register_tx]);
+    node1
+        .mempool_ctx
+        .process_new_data_proposal(dp.clone())
+        .unwrap();
+    node1.mempool_ctx.timer_tick().await.unwrap();
+
+    let register_tx2 = make_register_contract_tx(ContractName::new("test2"));
+    let dp2 = node1
+        .mempool_ctx
+        .create_data_proposal(Some(dp.hashed()), &[register_tx2]);
+    node1
+        .mempool_ctx
+        .process_new_data_proposal(dp2.clone())
+        .unwrap();
+    node1.mempool_ctx.timer_tick().await.unwrap();
+
+    // Disseminate to node2
+    broadcast! {
+        description: "Disseminate Tx",
+        from: node1.mempool_ctx, to: [node2.mempool_ctx],
+        message_matches: MempoolNetMessage::DataProposal(_, _)
+    };
+    node2.mempool_ctx.handle_processed_data_proposals().await;
+    send! {
+        description: "Disseminated Tx Vote",
+        from: [node2.mempool_ctx], to: node1.mempool_ctx,
+        message_matches: MempoolNetMessage::DataVote(..)
+    };
+
+    // Node1 starts round and commits cut
+    node1
+        .start_round_with_cut_from_mempool(TimestampMs(1000))
+        .await;
+
+    simple_commit_round! {
+        leader: node1.consensus_ctx,
+        followers: [node2.consensus_ctx]
+    };
+
+    let register_tx2 = make_register_contract_tx(ContractName::new("test2"));
+    let dp2 = node2
+        .mempool_ctx
+        .create_data_proposal(None, &[register_tx2]);
+    node2
+        .mempool_ctx
+        .process_new_data_proposal(dp2.clone())
+        .unwrap();
+    node2.mempool_ctx.timer_tick().await.unwrap();
+
+    node2
+        .start_round_with_cut_from_mempool(TimestampMs(2000))
+        .await;
+
+    simple_commit_round! {
+        leader: node2.consensus_ctx,
+        followers: [node1.consensus_ctx]
+    };
+}

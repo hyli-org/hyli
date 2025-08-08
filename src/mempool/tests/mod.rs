@@ -115,7 +115,10 @@ impl MempoolTestCtx {
 
     pub fn gen_cut(&mut self, staking: &Staking) -> Cut {
         self.mempool
-            .handle_querynewcut(&mut QueryNewCut(staking.clone()))
+            .handle_querynewcut(&mut QueryNewCut {
+                staking: staking.clone(),
+                full: true,
+            })
             .unwrap()
     }
 
@@ -882,7 +885,10 @@ async fn test_get_latest_car_and_new_cut() {
 
     let cut = ctx
         .mempool
-        .handle_querynewcut(&mut QueryNewCut(staking))
+        .handle_querynewcut(&mut QueryNewCut {
+            staking: staking.clone(),
+            full: true,
+        })
         .unwrap();
     assert_eq!(0, cut.len());
 }
