@@ -30,20 +30,6 @@ fn sign_data(secret_key: &SecretKey, expected_data: &[u8]) -> ([u8; 32], [u8; 64
 }
 
 #[test_log::test(tokio::test)]
-async fn print_node_state_store() {
-    // print working directory
-    println!("Current working directory: {:?}", std::env::current_dir());
-    let path: PathBuf = "./../../data_local/node0/node_state.bin".into();
-    let state: NodeStateStore = NodeStateModule::load_from_disk::<NodeStateStore>(&path)
-        .expect("Failed to load node state store");
-
-    // writes to file the debug view of the state
-    let debug_view = format!("{:#?}", state);
-    let debug_path = PathBuf::from("./../../data_local/node0/node_state_debug.txt");
-    std::fs::write(&debug_path, debug_view).expect("Failed to write node state debug view to file");
-}
-
-#[test_log::test(tokio::test)]
 async fn happy_path_with_tx_context() {
     let mut state = new_node_state().await;
     let c1 = ContractName::new("c1");
