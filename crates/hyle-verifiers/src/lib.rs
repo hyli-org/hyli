@@ -11,7 +11,7 @@ use rand::Rng;
 use sp1_sdk::{ProverClient, SP1ProofWithPublicValues, SP1VerifyingKey};
 use tracing::debug;
 
-mod native_impl;
+pub mod native_impl;
 pub mod noir_utils;
 
 pub fn verify(
