@@ -13,6 +13,7 @@ use anyhow::{Context, Result};
 use handler::IndexerHandlerStore;
 use hyle_model::utils::TimestampMs;
 use hyle_modules::bus::BusClientSender;
+use hyle_modules::modules::gcs_uploader::GCSRequest;
 use hyle_modules::node_state::module::NodeStateModule;
 use hyle_modules::node_state::{NodeState, NodeStateStore};
 use hyle_modules::{
@@ -20,7 +21,6 @@ use hyle_modules::{
     log_error, module_handle_messages,
     modules::{module_bus_client, Module, SharedBuildApiCtx},
 };
-use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use sqlx::{postgres::PgPoolOptions, PgPool, Pool, Postgres};
 
@@ -29,23 +29,18 @@ module_bus_client! {
 struct IndexerBusClient {
     sender(WsExplorerBlobTx),
     sender(NodeStateEvent),
+    sender(GCSRequest),
     receiver(DataEvent),
     receiver(MempoolStatusEvent),
 }
 }
 
-#[derive(Debug)]
 pub struct Indexer {
     bus: IndexerBusClient,
     db: PgPool,
     node_state: NodeState,
     handler_store: IndexerHandlerStore,
     conf: Conf,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct IndexerConf {
-    query_buffer_size: usize,
 }
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/indexer/migrations");
@@ -206,6 +201,7 @@ mod test {
             VerifiedProofTransaction,
         },
         node_state::{metrics::NodeStateMetrics, NodeState, NodeStateStore},
+        utils::conf::IndexerConf,
     };
 
     use super::*;
@@ -227,6 +223,7 @@ mod test {
         let conf = Conf {
             indexer: IndexerConf {
                 query_buffer_size: 100,
+                persist_proofs: false,
             },
             ..Conf::default()
         };

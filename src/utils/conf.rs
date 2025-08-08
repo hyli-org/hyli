@@ -1,13 +1,12 @@
 use anyhow::{Context, Result};
 use config::{Config, Environment, File};
+use hyle_modules::modules::gcs_uploader::GCSConf;
 use hyle_modules::modules::websocket::WebSocketConfig;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use serde_with::DurationMilliSeconds;
 use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::Arc, time::Duration};
 use strum_macros::IntoStaticStr;
-
-use crate::indexer::IndexerConf;
 
 #[serde_as]
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -84,6 +83,12 @@ pub struct NodeWebSocketConfig {
     pub peer_check_interval: u64,
     /// List of events to stream on the websocket
     pub events: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct IndexerConf {
+    pub query_buffer_size: usize,
+    pub persist_proofs: bool,
 }
 
 impl From<NodeWebSocketConfig> for WebSocketConfig {
@@ -165,6 +170,9 @@ pub struct Conf {
 
     /// Configuration for the indexer module
     pub indexer: IndexerConf,
+
+    /// GCSUploader configuration
+    pub gcs: GCSConf,
 }
 
 impl Conf {

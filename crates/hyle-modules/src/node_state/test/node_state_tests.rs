@@ -1785,3 +1785,103 @@ async fn test_failure_proof_must_wait_for_previous_blobs() {
         .iter()
         .any(|e| matches!(e, TransactionStateEvent::SettledAsFailed)));
 }
+
+#[test_log::test(tokio::test)]
+async fn test_invalid_onchain_effect_causes_immediate_failure() {
+    let mut state = new_node_state().await;
+
+    // Register parent contract first
+    let parent_contract_name = ContractName::new("parent.hyle");
+    let register_parent = make_register_contract_effect(parent_contract_name.clone());
+    state.handle_register_contract_effect(&register_parent);
+
+    let identity = Identity::new("test@parent.hyle");
+
+    // Create a blob with a RegisterContractAction that will produce an invalid OnchainEffect
+    let invalid_blob = RegisterContractAction {
+        verifier: "test".into(),
+        program_id: ProgramId(vec![4, 5, 6]),
+        state_commitment: StateCommitment(vec![7, 8, 9]),
+        // This will be invalid: trying to register "invalid.other"
+        // but sender is "@parent.hyle" - not a valid subdomain
+        contract_name: "invalid.other".into(),
+        timeout_window: None,
+        constructor_metadata: None,
+    }
+    .as_blob("parent.hyle".into(), None, None);
+
+    let blob_tx = BlobTransaction::new(identity.clone(), vec![invalid_blob]);
+    let blob_tx_hash = blob_tx.hashed();
+
+    // Submit the blob transaction
+    let ctx = bogus_tx_context();
+    state
+        .handle_blob_tx(DataProposalHash::default(), &blob_tx, ctx.clone())
+        .unwrap();
+
+    // Create a HyleOutput with the invalid RegisterContract effect
+    let mut hyle_output = make_hyle_output_with_state(
+        blob_tx.clone(),
+        BlobIndex(0),
+        &[0, 1, 2, 3], // parent contract's current state
+        &[10, 11, 12], // next state
+    );
+
+    // Add the invalid RegisterContract effect that violates subdomain rules
+    hyle_output
+        .onchain_effects
+        .push(OnchainEffect::RegisterContract(RegisterContractEffect {
+            verifier: "test".into(),
+            program_id: ProgramId(vec![4, 5, 6]),
+            state_commitment: StateCommitment(vec![7, 8, 9]),
+            contract_name: "invalid.other".into(), // Invalid subdomain
+            timeout_window: None,
+        }));
+
+    let proof_tx = new_proof_tx(&parent_contract_name, &hyle_output, &blob_tx_hash);
+
+    // Submit the proof and expect the transaction to fail immediately
+    let block = state.craft_block_and_handle(1, vec![proof_tx.into()]);
+
+    // The transaction should fail due to invalid OnchainEffect
+    assert_eq!(
+        block.successful_txs.len(),
+        0,
+        "Transaction should not succeed"
+    );
+    assert_eq!(block.failed_txs.len(), 1, "Transaction should fail");
+    assert_eq!(block.failed_txs[0], blob_tx_hash);
+
+    // Verify the invalid contract was not registered
+    assert!(
+        !state
+            .contracts
+            .contains_key(&ContractName::new("invalid.other")),
+        "Invalid contract should not have been registered"
+    );
+
+    // Verify the parent contract's state didn't change (failed transactions don't change state)
+    let parent_contract = state.contracts.get(&parent_contract_name).unwrap();
+    assert_eq!(parent_contract.state, StateCommitment(vec![0, 1, 2, 3])); // Original state unchanged
+
+    // Verify the transaction was removed from unsettled
+    assert_eq!(state.unsettled_transactions.len(), 0);
+
+    // Verify we have the correct events indicating settlement failure
+    let events = &block.transactions_events[&blob_tx_hash];
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, TransactionStateEvent::SettledAsFailed)));
+
+    // Check that we have a SettleEvent with the validation error message
+    assert!(
+        events.iter().any(|e| {
+            if let TransactionStateEvent::SettleEvent(msg) = e {
+                msg.contains("Contract registration validation failed")
+            } else {
+                false
+            }
+        }),
+        "Should have a SettleEvent with validation error message"
+    );
+}
