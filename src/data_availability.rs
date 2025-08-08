@@ -142,12 +142,12 @@ impl DataAvailability {
                     let _= log_error!(self.handle_signed_block(signed_block, &mut server).await.context("Handling genesis block"), "Handling GenesisBlock Event");
                 } else {
                     // TODO: I think this is technically a data race with p2p ?
-                    self.need_catchup = true;
+                    self.need_catchup = catchup_blocks;
                     // This also triggers when restarting from serialized state, which seems fine.
                 }
             }
             listen<PeerEvent> msg => {
-                if !catchup_blocks || !self.need_catchup || self.catchup_task.as_ref().is_some_and(|t| !t.is_finished()) {
+                if !self.need_catchup || self.catchup_task.as_ref().is_some_and(|t| !t.is_finished()) {
                     continue;
                 }
                 match msg {
