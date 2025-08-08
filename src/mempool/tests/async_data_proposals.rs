@@ -12,7 +12,7 @@ use crate::bus::{bus_client, BusClientReceiver, BusClientSender};
 use crate::consensus::ConsensusEvent;
 use crate::genesis::{Genesis, GenesisEvent};
 use crate::mempool::api::RestApiMessage;
-use crate::mempool::test::NodeStateEvent;
+use crate::mempool::tests::NodeStateEvent;
 use crate::mempool::{MempoolNetMessage, QueryNewCut};
 use crate::model::*;
 use crate::p2p::network::{HeaderSigner, MsgWithHeader};

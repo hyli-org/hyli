@@ -510,7 +510,7 @@ pub mod test {
     use anyhow::Result;
     use hyle_crypto::BlstCrypto;
 
-    use crate::mempool::test::*;
+    use crate::mempool::tests::*;
 
     #[test_log::test(tokio::test)]
     async fn test_single_mempool_receiving_new_txs() -> Result<()> {

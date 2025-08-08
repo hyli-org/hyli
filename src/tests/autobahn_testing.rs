@@ -276,7 +276,7 @@ use crate::bus::metrics::BusMetrics;
 use crate::bus::{bus_client, SharedMessageBus};
 use crate::consensus::test::ConsensusTestCtx;
 use crate::consensus::{ConsensusEvent, ConsensusNetMessage, TCKind, Ticket, TimeoutKind};
-use crate::mempool::test::{make_register_contract_tx, MempoolTestCtx};
+use crate::mempool::tests::{make_register_contract_tx, MempoolTestCtx};
 use crate::mempool::{MempoolNetMessage, QueryNewCut, ValidatorDAG};
 use crate::model::*;
 use crate::node_state::module::NodeStateEvent;

@@ -431,7 +431,7 @@ pub mod test {
     use super::*;
     use crate::{
         mempool::{
-            test::{make_register_contract_tx, MempoolTestCtx},
+            tests::{make_register_contract_tx, MempoolTestCtx},
             MempoolNetMessage,
         },
         p2p::network::HeaderSigner,
