@@ -254,7 +254,7 @@ pub mod test {
     use crate::mempool::MempoolNetMessage;
     use crate::tests::autobahn_testing::assert_chanmsg_matches;
 
-    use super::super::test::*;
+    use super::super::tests::*;
     use super::*;
 
     #[test_log::test(tokio::test)]
