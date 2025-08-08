@@ -7,7 +7,6 @@ use fixtures::{
     test_helpers::{self, ConfMaker},
 };
 use hyle::utils::conf::Conf;
-use tracing::{info, warn};
 
 mod fixtures;
 

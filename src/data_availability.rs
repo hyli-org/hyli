@@ -116,8 +116,7 @@ impl DataAvailability {
 
         let single_node = self.config.consensus.solo;
         let fast_catchup = self.config.run_fast_catchup;
-        let catchup_blocks =
-            !fast_catchup || (fast_catchup && self.config.fast_catchup_load_past_blocks);
+        let catchup_blocks = !fast_catchup || self.config.fast_catchup_load_past_blocks;
         let mut catchup_tick = async || {
             if single_node || !catchup_blocks {
                 std::future::pending::<()>().await;
