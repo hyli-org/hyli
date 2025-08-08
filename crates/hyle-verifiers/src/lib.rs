@@ -264,14 +264,14 @@ pub mod native {
         tx_hash: TxHash,
         index: BlobIndex,
         blobs: &[Blob],
-        verifier: NativeVerifiers,
+        verifier: &NativeVerifiers,
     ) -> HyleOutput {
         #[allow(clippy::expect_used, reason = "Logic error in the code")]
         let blob = blobs.get(index.0).expect("Invalid blob index");
         let blobs: IndexedBlobs = blobs.iter().cloned().into();
 
         let (identity, success) = match crate::native_impl::verify_native_impl(blob, verifier) {
-            Ok((identity, success)) => (identity, success),
+            Ok(v) => v,
             Err(e) => {
                 tracing::trace!("Native blob verification failed: {:?}", e);
                 (Identity::default(), false)
@@ -279,9 +279,10 @@ pub mod native {
         };
 
         if success {
-            tracing::info!("✅ Native blob verified on {tx_hash}:{index}");
+            tracing::debug!("✅ Native blob verified on {tx_hash}:{index}");
         } else {
-            tracing::info!("❌ Native blob verification failed on {tx_hash}:{index}.");
+            tracing::debug!("❌ Native blob verification failed on {tx_hash}:{index}.");
+            tracing::error!("Native blob verification failed: {verifier:?}");
         }
 
         HyleOutput {

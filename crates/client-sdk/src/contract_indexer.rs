@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use std::{collections::BTreeMap, str, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::debug;
+use tracing::{debug, error};
 
 use axum::{
     http::StatusCode,
@@ -66,7 +66,17 @@ where
             private_input: vec![],
         };
 
-        let hyle_output = self.handle(&calldata)?;
+        let hyle_output = match self.handle(&calldata) {
+            Ok(ho) => ho,
+            Err(e) => {
+                error!(
+                    "Failed to handle blob {index} for contract {contract_name}: {}",
+                    e
+                );
+                return Ok(None);
+            }
+        };
+
         let program_outputs = str::from_utf8(&hyle_output.program_outputs).unwrap_or("no output");
 
         info!("🚀 Executed {contract_name}: {}", program_outputs);
