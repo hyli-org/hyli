@@ -116,8 +116,10 @@ impl DataAvailability {
 
         let single_node = self.config.consensus.solo;
         let fast_catchup = self.config.run_fast_catchup;
+        let catchup_blocks =
+            !fast_catchup || (fast_catchup && self.config.fast_catchup_load_past_blocks);
         let mut catchup_tick = async || {
-            if single_node || fast_catchup {
+            if single_node || !catchup_blocks {
                 std::future::pending::<()>().await;
             } else {
                 catchup_task_checker_ticker.tick().await;
@@ -145,7 +147,7 @@ impl DataAvailability {
                 }
             }
             listen<PeerEvent> msg => {
-                if fast_catchup || !self.need_catchup || self.catchup_task.as_ref().is_some_and(|t| !t.is_finished()) {
+                if !catchup_blocks || !self.need_catchup || self.catchup_task.as_ref().is_some_and(|t| !t.is_finished()) {
                     continue;
                 }
                 match msg {

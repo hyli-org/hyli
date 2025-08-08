@@ -15,8 +15,10 @@ use axum::{
     routing::{get, post},
     Json,
 };
-use sdk::{admin::CatchupStoreResponse, *};
-use std::path::PathBuf;
+use hyle_net::http::HttpClient;
+use sdk::*;
+use serde::{Deserialize, Serialize};
+use std::{future::Future, path::PathBuf, pin::Pin};
 use tokio_util::sync::CancellationToken;
 use tower_http::catch_panic::CatchPanicLayer;
 use tracing::info;
@@ -171,6 +173,40 @@ pub async fn download(
             StatusCode::INTERNAL_SERVER_ERROR,
             anyhow!("Failed to read file"),
         )),
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct CatchupStoreResponse {
+    #[serde(with = "base64_field")]
+    pub node_state_store: Vec<u8>,
+    #[serde(with = "base64_field")]
+    pub consensus_store: Vec<u8>,
+}
+
+pub struct NodeAdminApiClient {
+    client: HttpClient,
+}
+
+impl NodeAdminApiClient {
+    pub fn new(uri: String) -> anyhow::Result<Self> {
+        let client = HttpClient {
+            url: uri.parse().context("Invalid URI for NodeAdminApiClient")?,
+            api_key: None,
+            retry: None,
+        };
+        Ok(Self { client })
+    }
+
+    pub fn get_catchup_store(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<CatchupStoreResponse>> + Send + '_>> {
+        Box::pin(async move {
+            self.client
+                .get("v1/admin/catchup")
+                .await
+                .context("getting catchup store to initialize the node".to_string())
+        })
     }
 }
 

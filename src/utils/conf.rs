@@ -114,6 +114,8 @@ pub struct Conf {
 
     // FastCatchup option, from the admin API of a running node.
     pub run_fast_catchup: bool,
+    pub fast_catchup_override: bool,
+    pub fast_catchup_load_past_blocks: bool,
     pub fast_catchup_from: String,
 
     // Validator options

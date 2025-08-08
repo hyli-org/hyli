@@ -5,7 +5,10 @@ log_format = "full"
 # Directory name to store node state.
 data_directory = "data_node"
 
+# Fast Cachup mode
 run_fast_catchup = false
+fast_catchup_override = true
+fast_catchup_load_past_blocks = false
 fast_catchup_from = "127.0.0.1:43222"
 
 # Data availability module, which streams historical & new blocks.

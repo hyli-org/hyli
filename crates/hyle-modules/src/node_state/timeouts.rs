@@ -2,9 +2,8 @@ use std::collections::HashMap;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::{BlockHeight, TxHash};
-use serde::Serialize;
 
-#[derive(Default, Debug, Clone, BorshSerialize, BorshDeserialize, Serialize)]
+#[derive(Default, Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct Timeouts {
     by_block: HashMap<BlockHeight, Vec<TxHash>>,
 }

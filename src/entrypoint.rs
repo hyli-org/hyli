@@ -21,13 +21,12 @@ use crate::{
 };
 use anyhow::{bail, Context, Result};
 use axum::Router;
-use client_sdk::rest_client::{NodeAdminApiClient, NodeApiHttpClient};
 use hydentity::Hydentity;
 use hyle_crypto::SharedBlstCrypto;
 use hyle_modules::{
     log_error,
     modules::{
-        admin::{AdminApi, AdminApiRunContext},
+        admin::{AdminApi, AdminApiRunContext, NodeAdminApiClient},
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::DAListenerConf,
@@ -259,12 +258,13 @@ async fn common_main(
     // Before we start the modules, let's fast load from a running node if we are catching up.
     if config.run_fast_catchup {
         // Check states exist and skip catchup if so
-        if !config.data_directory.join("consensus.bin").exists()
+        if config.fast_catchup_override
+            || !config.data_directory.join("consensus.bin").exists()
             || !config.data_directory.join("node_state.bin").exists()
         {
             let catchup_from = config.fast_catchup_from.clone();
             info!("Catching up from {}", catchup_from);
-            let client = NodeApiHttpClient::new(catchup_from.clone())?;
+            let client = NodeAdminApiClient::new(catchup_from.clone())?;
 
             let catchup_response = client
                 .get_catchup_store()
@@ -274,15 +274,15 @@ async fn common_main(
             _ = log_error!(
                 File::create(config.data_directory.join("consensus.bin"))
                     .and_then(|mut file| file.write_all(&catchup_response.consensus_store))
-                    .context("Writing node state catchup store to disk"),
-                "Saving node state store"
+                    .context("Writing consensus catchup store to disk"),
+                "Saving consensus store"
             );
 
             _ = log_error!(
                 File::create(config.data_directory.join("node_state.bin"))
                     .and_then(|mut file| file.write_all(&catchup_response.node_state_store))
-                    .context("Writing consenus catchup store to disk"),
-                "Saving consensus store"
+                    .context("Writing node state catchup store to disk"),
+                "Saving node state store"
             );
         } else {
             info!(

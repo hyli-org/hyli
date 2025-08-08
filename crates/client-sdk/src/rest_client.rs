@@ -8,7 +8,6 @@ use std::{
 use anyhow::{Context, Result};
 use hyle_net::http::HttpClient;
 use sdk::{
-    admin::CatchupStoreResponse,
     api::{
         APIBlob, APIBlock, APIContract, APINodeContract, APIRegisterContract, APIStaking,
         APITransaction, NodeInfo, TransactionWithBlobs,
@@ -201,12 +200,6 @@ pub trait NodeApiClient {
     ) -> Pin<Box<dyn Future<Output = Result<UnsettledBlobTransaction>> + Send + '_>>;
 }
 
-pub trait NodeAdminApiClient {
-    fn get_catchup_store(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<CatchupStoreResponse>> + Send + '_>>;
-}
-
 impl NodeApiHttpClient {
     pub fn new(url: String) -> Result<Self> {
         Ok(NodeApiHttpClient {
@@ -339,18 +332,6 @@ impl NodeApiClient for NodeApiHttpClient {
                 .context(format!(
                     "getting earliest unsettled height for contract {contract_name}"
                 ))
-        })
-    }
-}
-
-impl NodeAdminApiClient for NodeApiHttpClient {
-    fn get_catchup_store(
-        &self,
-    ) -> Pin<Box<dyn Future<Output = Result<CatchupStoreResponse>> + Send + '_>> {
-        Box::pin(async move {
-            self.get("v1/admin/catchup")
-                .await
-                .context("getting catchup store to initialize the node".to_string())
         })
     }
 }

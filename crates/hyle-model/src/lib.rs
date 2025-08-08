@@ -16,8 +16,6 @@ pub use node::*;
 pub use transaction::*;
 
 #[cfg(feature = "full")]
-pub mod admin;
-#[cfg(feature = "full")]
 pub mod api;
 
 mod contract;
