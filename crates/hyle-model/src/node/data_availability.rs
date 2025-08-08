@@ -13,7 +13,16 @@ pub enum DataEvent {
 }
 
 #[derive(
-    Default, Debug, Clone, Serialize, Deserialize, ToSchema, BorshSerialize, BorshDeserialize,
+    Default,
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    ToSchema,
+    BorshSerialize,
+    BorshDeserialize,
+    Eq,
+    PartialEq,
 )]
 pub struct Contract {
     pub name: ContractName,
@@ -130,10 +139,9 @@ impl Hashed<HyleOutputHash> for HyleOutput {
         }
         hasher.update([self.success as u8]);
         hasher.update(self.onchain_effects.len().to_le_bytes());
-        self.onchain_effects.iter().for_each(|c| match c {
-            OnchainEffect::RegisterContract(c) => hasher.update(contract::Hashed::hashed(c).0),
-            OnchainEffect::DeleteContract(cn) => hasher.update(cn.0.as_bytes()),
-        });
+        self.onchain_effects
+            .iter()
+            .for_each(|c| hasher.update(c.hashed().0));
         hasher.update(&self.program_outputs);
         HyleOutputHash(hasher.finalize().to_vec())
     }

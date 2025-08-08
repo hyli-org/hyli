@@ -448,7 +448,7 @@ pub fn make_register_contract_tx(name: ContractName) -> Transaction {
             contract_name: name,
             ..Default::default()
         }
-        .as_blob("hyle".into(), None, None)],
+        .as_blob("hyle".into())],
     )
     .into()
 }

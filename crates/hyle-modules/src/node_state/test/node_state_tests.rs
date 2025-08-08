@@ -9,9 +9,7 @@ use crate::{
     modules::Module,
     node_state::{
         module::NodeStateModule,
-        test::contract_registration_tests::{
-            make_register_hyli_wallet_identity_tx, make_register_tx,
-        },
+        test::contract_registration_tests::make_register_hyli_wallet_identity_tx,
     },
 };
 use ::secp256k1::{ecdsa::Signature, rand, Message, PublicKey, Secp256k1, SecretKey};
@@ -1257,78 +1255,6 @@ async fn test_tx_reset_timeout_on_tx_settlement() {
     );
 }
 
-#[test_log::test(tokio::test)]
-async fn test_tx_with_hyle_blob_should_have_specific_timeout_after_block445_000() {
-    let hyle_timeout_window = TimeoutWindow::NoTimeout;
-
-    let mut state = new_node_state().await;
-
-    let tx1 = BlobTransaction::new(
-        "hyle@hyle",
-        vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
-            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-            contract_name: ContractName::new("a1"),
-            ..Default::default()
-        }
-        .as_blob("hyle".into(), None, None)],
-    );
-
-    let tx1_hash = tx1.hashed();
-
-    let tx2 = BlobTransaction::new(
-        "hyle@hyle",
-        vec![
-            new_blob("a1"),
-            RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                contract_name: ContractName::new("c1"),
-                ..Default::default()
-            }
-            .as_blob("hyle".into(), None, None),
-        ],
-    );
-
-    let tx2_hash = tx2.hashed();
-
-    let tx3 = BlobTransaction::new(
-        "hyle@hyle",
-        vec![
-            new_blob("a1"),
-            RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                contract_name: ContractName::new("c2"),
-                ..Default::default()
-            }
-            .as_blob("hyle".into(), None, None),
-        ],
-    );
-
-    let tx3_hash = tx3.hashed();
-
-    let block = state.craft_block_and_handle(445_001, vec![tx1.into(), tx2.into()]);
-
-    // Assert no timeout
-    assert_eq!(block.timed_out_txs, vec![]);
-
-    // Current Time out behaviour
-    let block = state.craft_block_and_handle(445_001 + 5, vec![]);
-
-    assert_eq!(block.timed_out_txs, vec![]);
-    let block = state.craft_block_and_handle(445_001 + 100, vec![]);
-    assert_eq!(block.timed_out_txs, vec![tx2_hash.clone()]);
-
-    let block = state.craft_block_and_handle(446_001, vec![]);
-    assert_eq!(block.timed_out_txs, vec![]);
-
-    assert!(state.unsettled_transactions.get(&tx2_hash).is_none());
-}
-
 // Check hyle-modules/src/node_state.rs l127 for the timeout window value
 #[test_log::test(tokio::test)]
 async fn test_tx_with_hyle_blob_should_have_specific_timeout() {
@@ -1808,7 +1734,7 @@ async fn test_invalid_onchain_effect_causes_immediate_failure() {
         timeout_window: None,
         constructor_metadata: None,
     }
-    .as_blob("parent.hyle".into(), None, None);
+    .as_blob("parent.hyle".into());
 
     let blob_tx = BlobTransaction::new(identity.clone(), vec![invalid_blob]);
     let blob_tx_hash = blob_tx.hashed();
@@ -1830,13 +1756,15 @@ async fn test_invalid_onchain_effect_causes_immediate_failure() {
     // Add the invalid RegisterContract effect that violates subdomain rules
     hyle_output
         .onchain_effects
-        .push(OnchainEffect::RegisterContract(RegisterContractEffect {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![4, 5, 6]),
-            state_commitment: StateCommitment(vec![7, 8, 9]),
-            contract_name: "invalid.other".into(), // Invalid subdomain
-            timeout_window: None,
-        }));
+        .push(OnchainEffect::RegisterContractWithConstructor(
+            RegisterContractEffect {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![4, 5, 6]),
+                state_commitment: StateCommitment(vec![7, 8, 9]),
+                contract_name: "invalid.other".into(), // Invalid subdomain
+                timeout_window: None,
+            },
+        ));
 
     let proof_tx = new_proof_tx(&parent_contract_name, &hyle_output, &blob_tx_hash);
 
