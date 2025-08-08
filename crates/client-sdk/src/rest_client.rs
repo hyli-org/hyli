@@ -335,6 +335,7 @@ impl NodeApiClient for NodeApiHttpClient {
         })
     }
 }
+
 impl Deref for NodeApiHttpClient {
     type Target = HttpClient;
 

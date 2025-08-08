@@ -24,8 +24,9 @@ use axum::Router;
 use hydentity::Hydentity;
 use hyle_crypto::SharedBlstCrypto;
 use hyle_modules::{
+    log_error,
     modules::{
-        admin::{AdminApi, AdminApiRunContext},
+        admin::{AdminApi, AdminApiRunContext, NodeAdminApiClient},
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::DAListenerConf,
@@ -40,6 +41,8 @@ use hyllar::Hyllar;
 use prometheus::Registry;
 use smt_token::account::AccountSMT;
 use std::{
+    fs::File,
+    io::Write,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -252,6 +255,43 @@ async fn common_main(
         router: Mutex::new(Some(Router::new())),
         openapi: Mutex::new(ApiDoc::openapi()),
     });
+
+    // Before we start the modules, let's fast load from a running node if we are catching up.
+    if config.run_fast_catchup {
+        // Check states exist and skip catchup if so
+        if config.fast_catchup_override
+            || !config.data_directory.join("consensus.bin").exists()
+            || !config.data_directory.join("node_state.bin").exists()
+        {
+            let catchup_from = config.fast_catchup_from.clone();
+            info!("Catching up from {}", catchup_from);
+            let client = NodeAdminApiClient::new(catchup_from.clone())?;
+
+            let catchup_response = client
+                .get_catchup_store()
+                .await
+                .context("Getting catchup data")?;
+
+            _ = log_error!(
+                File::create(config.data_directory.join("consensus.bin"))
+                    .and_then(|mut file| file.write_all(&catchup_response.consensus_store))
+                    .context("Writing consensus catchup store to disk"),
+                "Saving consensus store"
+            );
+
+            _ = log_error!(
+                File::create(config.data_directory.join("node_state.bin"))
+                    .and_then(|mut file| file.write_all(&catchup_response.node_state_store))
+                    .context("Writing node state catchup store to disk"),
+                "Saving node state store"
+            );
+        } else {
+            info!(
+                "Skipping fast catchup, consensus.bin and node_state.bin already exist in {}",
+                config.data_directory.display()
+            );
+        }
+    }
 
     let mut handler = ModulesHandler::new(&bus).await;
 

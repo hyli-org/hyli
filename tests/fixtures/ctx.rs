@@ -39,7 +39,7 @@ pub trait E2EContract {
 
 pub struct E2ECtx {
     pg: Option<ContainerAsync<Postgres>>,
-    nodes: Vec<test_helpers::TestProcess>,
+    pub nodes: Vec<test_helpers::TestProcess>,
     clients: Vec<NodeApiHttpClient>,
     client_index: usize,
     indexer_client: Option<IndexerApiHttpClient>,
