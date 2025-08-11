@@ -2288,6 +2288,13 @@ async fn autobahn_commit_prepare_qc_across_multiple_views() {
 
 #[test_log::test(tokio::test)]
 async fn follower_commits_cut_then_mempool_sends_stale_lane() {
+    // This test checks the following case:
+    // - Node1 gets a 2 DPs on its lane
+    // - Node2 hears of the first DP only
+    // - Node1, as leader, commits the 2 dps
+    // - Node2 gets a DP on its lane.
+    // - Node2, as leader, commits the new DP and re-uses the 2nd DP from node1 that it doesn't know
+    // (this last bit is where the code used to fail, as we would take our local DP1).
     let (mut node1, mut node2) = build_nodes!(2).await;
 
     // Node1 is leader, node2 is follower
@@ -2300,12 +2307,12 @@ async fn follower_commits_cut_then_mempool_sends_stale_lane() {
     node1.mempool_ctx.timer_tick().await.unwrap();
 
     let register_tx2 = make_register_contract_tx(ContractName::new("test2"));
-    let dp2 = node1
+    let dp1b = node1
         .mempool_ctx
         .create_data_proposal(Some(dp.hashed()), &[register_tx2]);
     node1
         .mempool_ctx
-        .process_new_data_proposal(dp2.clone())
+        .process_new_data_proposal(dp1b.clone())
         .unwrap();
     node1.mempool_ctx.timer_tick().await.unwrap();
 
@@ -2346,8 +2353,21 @@ async fn follower_commits_cut_then_mempool_sends_stale_lane() {
         .start_round_with_cut_from_mempool(TimestampMs(2000))
         .await;
 
-    simple_commit_round! {
+    let (cp, _, _) = simple_commit_round! {
         leader: node2.consensus_ctx,
         followers: [node1.consensus_ctx]
     };
+
+    assert_eq!(
+        CutDisplay(&cp.cut).to_string(),
+        format!(
+            "{}:{}({} B), {}:{}({} B),",
+            LaneId(node1.consensus_ctx.validator_pubkey()),
+            dp1b.hashed(),
+            dp.estimate_size() + dp1b.estimate_size(),
+            LaneId(node2.consensus_ctx.validator_pubkey()),
+            dp2.hashed(),
+            dp2.estimate_size(),
+        )
+    );
 }
