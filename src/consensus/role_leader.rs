@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use crate::{
     bus::command_response::CmdRespClient,
-    consensus::*,
+    consensus::{role_follower::follower_state, *},
     mempool::QueryNewCut,
     model::{Hashed, ValidatorPublicKey},
 };
@@ -63,13 +63,7 @@ impl Consensus {
 
         // If we already have a consensusproposal for this slot, then we voted on it,
         // and so we must repropose it (in case a commit was reached somewhere)
-        if self
-            .bft_round_state
-            .current_proposal
-            .as_ref()
-            .map(|cp| cp.slot == self.bft_round_state.slot)
-            .unwrap_or(false)
-        {
+        if current_proposal!(self).is_some_and(|cp| cp.slot == self.bft_round_state.slot) {
             debug!("♻️ Starting new view with the same ConsensusProposal as previous views")
         } else {
             // Creates ConsensusProposal
@@ -223,7 +217,7 @@ impl Consensus {
                 ticket.clone(),
                 self.bft_round_state.view,
             );
-            self.follower_state().buffered_prepares.push(prepare);
+            follower_state!(self).buffered_prepares.push(prepare);
 
             self.metrics.start_new_round(self.bft_round_state.slot);
 

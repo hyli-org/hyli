@@ -1,6 +1,8 @@
 use anyhow::Result;
 use tracing::debug;
 
+use crate::consensus::role_follower::follower_state;
+
 use super::{role_follower::Prepare, *};
 use hyle_model::{ConsensusProposalHash, ValidatorPublicKey};
 
@@ -16,7 +18,7 @@ impl Consensus {
         debug!(
             proposal_hash = %proposal_hash,
             "Got sync request from {}", sender);
-        if let Some(prepare) = self.follower_state().buffered_prepares.get(&proposal_hash) {
+        if let Some(prepare) = follower_state!(self).buffered_prepares.get(&proposal_hash) {
             debug!(
                 proposal_hash = %proposal_hash,
                 "Sending prepare to {}", sender);

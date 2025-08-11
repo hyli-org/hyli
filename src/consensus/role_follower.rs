@@ -24,6 +24,14 @@ pub(super) struct FollowerState {
     pub(super) buffered_prepares: BufferedPrepares, // History of seen prepares & buffer of future prepares
 }
 
+macro_rules! follower_state {
+    ($self:expr) => {
+        &mut $self.store.bft_round_state.follower
+    };
+}
+
+pub(crate) use follower_state;
+
 pub(super) enum TicketVerifyAndProcess {
     NotProcessed,
     Processed,
@@ -61,7 +69,7 @@ impl Consensus {
                 );
                 self.bft_round_state.state_tag = StateTag::Follower;
             } else {
-                self.follower_state().buffered_prepares.push((
+                follower_state!(self).buffered_prepares.push((
                     sender.clone(),
                     consensus_proposal,
                     ticket,
@@ -164,7 +172,7 @@ impl Consensus {
         self.bft_round_state.current_proposal = Some(consensus_proposal.clone());
         let cp_hash = consensus_proposal.hashed();
 
-        self.follower_state().buffered_prepares.push((
+        follower_state!(self).buffered_prepares.push((
             sender.clone(),
             consensus_proposal,
             ticket,
@@ -172,8 +180,7 @@ impl Consensus {
         ));
 
         // If we already have the next Prepare, fast-forward
-        if let Some(prepare) = self
-            .follower_state()
+        if let Some(prepare) = follower_state!(self)
             .buffered_prepares
             .next_prepare(cp_hash.clone())
         {
@@ -230,14 +237,7 @@ impl Consensus {
             }
         }
 
-        if self
-            .store
-            .bft_round_state
-            .current_proposal
-            .as_ref()
-            .map(|current| current.hashed() != proposal_hash_hint)
-            .unwrap_or(true)
-        {
+        if current_proposal!(self).is_none_or(|current| current.hashed() != proposal_hash_hint) {
             warn!(
                 proposal_hash = %proposal_hash_hint,
                 sender = %sender,
@@ -499,17 +499,13 @@ impl Consensus {
     }
 
     fn current_proposal_changes_voting_power(&self) -> bool {
-        self.bft_round_state
-            .current_proposal
-            .as_ref()
-            .map(|cp| {
-                cp.staking_actions
-                    .iter()
-                    .filter(|sa| matches!(sa, ConsensusStakingAction::Bond { .. }))
-                    .count()
-                    > 0
-            })
-            .unwrap_or(false)
+        current_proposal!(self).is_some_and(|cp| {
+            cp.staking_actions
+                .iter()
+                .filter(|sa| matches!(sa, ConsensusStakingAction::Bond { .. }))
+                .count()
+                > 0
+        })
     }
 
     pub(super) fn verify_and_process_tc_ticket(
@@ -611,7 +607,7 @@ impl Consensus {
                 // and it matches our know prepare for this slot, so try and commit that one then the TC.
 
                 // Fake our view so we fast-forward properly.
-                self.advance_round(Ticket::ForcedCommitQc(tc_view + 1))?;
+                self.advance_round(Ticket::ForcedCommitQC(tc_view + 1))?;
 
                 info!(
                     "🔀 Fast forwarded to slot {} view 0",
@@ -725,11 +721,6 @@ impl Consensus {
         Ok(())
     }
 
-    #[inline]
-    pub(super) fn follower_state(&mut self) -> &mut FollowerState {
-        &mut self.store.bft_round_state.follower
-    }
-
     pub(super) fn has_no_buffered_children(&self) -> bool {
         self.store
             .bft_round_state
@@ -750,30 +741,25 @@ impl Consensus {
         let mut missing_dp_hash = consensus_proposal.parent_hash.clone();
 
         // Buffer this prepare if we don't know one.
-        if !self
-            .follower_state()
+        if !follower_state!(self)
             .buffered_prepares
             .contains(&consensus_proposal.hashed())
         {
             let prepare_message = (sender.clone(), consensus_proposal, ticket, view);
-            self.follower_state()
+            follower_state!(self)
                 .buffered_prepares
                 .push(prepare_message);
         }
 
         // Check if we have a missing DP up to our current known DP (this assumes we're not on a fork)
-        let current_dp_hash = self
-            .bft_round_state
-            .current_proposal
-            .as_ref()
+        let current_dp_hash = current_proposal!(self)
             .map(|cp| cp.hashed())
             .unwrap_or_else(|| {
                 // If we don't have a current proposal, we assume we're at the parent hash.
                 self.bft_round_state.parent_hash.clone()
             });
         // TODO: we should switch back to joining if we try to catch up on too many prepares.
-        while let Some(prep) = self
-            .follower_state()
+        while let Some(prep) = follower_state!(self)
             .buffered_prepares
             .get(&missing_dp_hash)
         {
@@ -1048,7 +1034,7 @@ mod tests {
         consensus.bft_round_state.current_proposal = Some(current_proposal);
 
         // Add the buffered prepare to the state
-        consensus.follower_state().buffered_prepares.push((
+        follower_state!(consensus).buffered_prepares.push((
             ValidatorPublicKey::default(),
             buffered_prepare,
             Ticket::Genesis,
@@ -1085,7 +1071,7 @@ mod tests {
         }
 
         // Add the buffered prepare to the state
-        consensus.follower_state().buffered_prepares.push((
+        follower_state!(consensus).buffered_prepares.push((
             ValidatorPublicKey::default(),
             missing_prepare2.clone(),
             Ticket::Genesis,

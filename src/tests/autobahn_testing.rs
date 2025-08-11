@@ -1928,6 +1928,7 @@ async fn autobahn_commit_different_views_for_f() {
     node1
         .start_round_with_cut_from_mempool(TimestampMs(2000))
         .await;
+
     simple_commit_round! {
         leader: node1.consensus_ctx,
         followers: [node2.consensus_ctx, node3.consensus_ctx]

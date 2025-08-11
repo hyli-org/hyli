@@ -178,6 +178,14 @@ macro_rules! with_metric {
     };
 }
 
+// Convenience macros for shorter lines, as macros to avoid borrow-checker issues from methods.
+macro_rules! current_proposal {
+    ($self:ident) => {
+        $self.store.bft_round_state.current_proposal.as_ref()
+    };
+}
+pub(crate) use current_proposal;
+
 impl Consensus {
     fn round_leader(&self) -> Result<ValidatorPublicKey> {
         // Find out who the next leader will be.
@@ -216,7 +224,7 @@ impl Consensus {
 
         match ticket {
             // We finished the round with a committed proposal for the slot
-            Ticket::CommitQC(..) | Ticket::ForcedCommitQc(..) => {
+            Ticket::CommitQC(..) | Ticket::ForcedCommitQC(..) => {
                 let committed_proposal = self.bft_round_state.current_proposal.take().context(
                     "Cannot finish round without a current proposal. This should not happen.",
                 )?;
@@ -224,7 +232,7 @@ impl Consensus {
                 self.bft_round_state.slot += 1;
                 self.bft_round_state.view = match ticket {
                     Ticket::CommitQC(..) => 0,
-                    Ticket::ForcedCommitQc(view) => view,
+                    Ticket::ForcedCommitQC(view) => view,
                     _ => unreachable!(),
                 };
                 self.bft_round_state.parent_hash = committed_proposal.hashed();
@@ -234,7 +242,7 @@ impl Consensus {
                 // Store the last commited QC to avoid issues when parsing Commit messages before Prepare
                 self.bft_round_state.follower.buffered_quorum_certificate = match ticket {
                     Ticket::CommitQC(qc) => Some(qc),
-                    Ticket::ForcedCommitQc(..) => None,
+                    Ticket::ForcedCommitQC(..) => None,
                     _ => unreachable!(),
                 };
                 for action in committed_proposal.staking_actions {
@@ -303,13 +311,9 @@ impl Consensus {
     }
 
     fn current_slot_prepare_is_present(&self) -> bool {
-        self.bft_round_state
-            .current_proposal
-            .as_ref()
-            .is_some_and(|p| {
-                p.slot == self.bft_round_state.slot
-                    && p.parent_hash == self.bft_round_state.parent_hash
-            })
+        current_proposal!(self).is_some_and(|p| {
+            p.slot == self.bft_round_state.slot && p.parent_hash == self.bft_round_state.parent_hash
+        })
     }
 
     /// Verify that quorum certificate includes only validators that are part of the consensus
@@ -515,9 +519,10 @@ impl Consensus {
         self.apply_ticket(ticket.clone())?;
 
         // Decide what to do at the beginning of the next round
+        // (Skip this if we are catching up, i.e. this is a regular commit and we have buffered children)
         if self.is_round_leader()
-            && self.has_no_buffered_children()
-            && !matches!(ticket, Ticket::ForcedCommitQc(..))
+            && !matches!(ticket, Ticket::ForcedCommitQC(..))
+            && (matches!(ticket, Ticket::TimeoutQC(..)) || self.has_no_buffered_children())
         {
             // Setup our ticket for the next round
             // Send Prepare message to all validators
@@ -547,10 +552,7 @@ impl Consensus {
         &self,
         commit_quorum_certificate: &CommitQC,
     ) -> Result<()> {
-        let current_proposal = self
-            .bft_round_state
-            .current_proposal
-            .as_ref()
+        let current_proposal = current_proposal!(self)
             .context("Cannot verify commit quorum certificate without a current proposal")?;
         // Check that this is a QC for ConfirmAck for the expected proposal.
         // This also checks slot/view as those are part of the hash.
@@ -565,10 +567,7 @@ impl Consensus {
     fn emit_commit_event(&mut self, commit_quorum_certificate: &CommitQC) -> Result<()> {
         self.metrics.commit();
 
-        let current_proposal = self
-            .bft_round_state
-            .current_proposal
-            .as_ref()
+        let current_proposal = current_proposal!(self)
             .context("Cannot emit commit event without a current proposal")?;
 
         self.bus
@@ -854,7 +853,7 @@ pub mod test {
         tests::autobahn_testing::*,
         utils::conf::Conf,
     };
-    use assertables::assert_contains;
+    use assertables::{assert_contains, assert_none};
     use tokio::sync::broadcast::Receiver;
     use utils::TimestampMs;
 
@@ -1130,17 +1129,23 @@ pub mod test {
         }
 
         pub async fn start_round(&mut self) {
-            self.consensus
-                .start_round(TimestampMsClock::now(), Some(TimestampMs(0)))
-                .await
-                .expect("Failed to start slot");
+            log_error!(
+                self.consensus
+                    .start_round(TimestampMsClock::now(), Some(TimestampMs(0)))
+                    .await,
+                "start-round"
+            )
+            .expect("Failed to start slot");
         }
 
         pub async fn start_round_at(&mut self, current_timestamp: TimestampMs) {
-            self.consensus
-                .start_round(current_timestamp, Some(TimestampMs(0)))
-                .await
-                .expect("Failed to start slot");
+            log_error!(
+                self.consensus
+                    .start_round(current_timestamp, Some(TimestampMs(0)))
+                    .await,
+                "start-round"
+            )
+            .expect("Failed to start slot");
         }
 
         pub(crate) fn assert_broadcast(
@@ -1640,37 +1645,9 @@ pub mod test {
 
         node2.start_round_at(TimestampMs(3000)).await;
 
-        // Other nodes still reflect the older value
-        assert_eq!(
-            node1
-                .consensus
-                .bft_round_state
-                .current_proposal
-                .as_ref()
-                .unwrap()
-                .timestamp,
-            TimestampMs(1000)
-        );
-        assert_eq!(
-            node3
-                .consensus
-                .bft_round_state
-                .current_proposal
-                .as_ref()
-                .unwrap()
-                .timestamp,
-            TimestampMs(1000)
-        );
-        assert_eq!(
-            node4
-                .consensus
-                .bft_round_state
-                .current_proposal
-                .as_ref()
-                .unwrap()
-                .timestamp,
-            TimestampMs(1000)
-        );
+        assert_none!(node1.consensus.bft_round_state.current_proposal);
+        assert_none!(node3.consensus.bft_round_state.current_proposal);
+        assert_none!(node4.consensus.bft_round_state.current_proposal);
 
         broadcast! {
             description: "Leader Node2 second round",
@@ -1732,36 +1709,9 @@ pub mod test {
 
         node2.start_round_at(TimestampMs(3000)).await;
 
-        assert_eq!(
-            node1
-                .consensus
-                .bft_round_state
-                .current_proposal
-                .as_ref()
-                .unwrap()
-                .timestamp,
-            TimestampMs(1000)
-        );
-        assert_eq!(
-            node3
-                .consensus
-                .bft_round_state
-                .current_proposal
-                .as_ref()
-                .unwrap()
-                .timestamp,
-            TimestampMs(1000)
-        );
-        assert_eq!(
-            node4
-                .consensus
-                .bft_round_state
-                .current_proposal
-                .as_ref()
-                .unwrap()
-                .timestamp,
-            TimestampMs(1000)
-        );
+        assert_none!(node1.consensus.bft_round_state.current_proposal);
+        assert_none!(node3.consensus.bft_round_state.current_proposal);
+        assert_none!(node4.consensus.bft_round_state.current_proposal);
 
         // Broadcasted prepare is ignored
         node2.assert_broadcast("Lost prepare").await;
@@ -1784,33 +1734,15 @@ pub mod test {
         ));
 
         assert_eq!(
-            node1
-                .consensus
-                .bft_round_state
-                .current_proposal
-                .as_ref()
-                .unwrap()
-                .timestamp,
+            node1.consensus.bft_round_state.parent_timestamp,
             TimestampMs(8000)
         );
         assert_eq!(
-            node2
-                .consensus
-                .bft_round_state
-                .current_proposal
-                .as_ref()
-                .unwrap()
-                .timestamp,
+            node2.consensus.bft_round_state.parent_timestamp,
             TimestampMs(8000)
         );
         assert_eq!(
-            node4
-                .consensus
-                .bft_round_state
-                .current_proposal
-                .as_ref()
-                .unwrap()
-                .timestamp,
+            node4.consensus.bft_round_state.parent_timestamp,
             TimestampMs(8000)
         );
 
