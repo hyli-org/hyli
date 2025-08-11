@@ -85,7 +85,7 @@ enum BlobProcessingResult {
     Success,
     /// The blob failed with a fatal error - should settle as failed immediately
     ProvenFailure(String),
-    /// The blob cannot be executed with onchain
+    /// The blob cannot be executed on-chain.
     NotApplicable,
 }
 
@@ -805,7 +805,7 @@ impl NodeState {
             &settlement_status,
         ) {
             BlobProcessingResult::NotApplicable => {
-                // This blob can't be executed onchain. Continue with normal processing
+                // This isn't a blob that needs onchain execution. Continue with normal processing
             }
             BlobProcessingResult::Success => {
                 tracing::trace!("OnChainExecution Settlement - OK");
