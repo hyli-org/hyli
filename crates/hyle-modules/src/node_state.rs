@@ -1261,8 +1261,10 @@ impl NodeState {
                 let (identity, success) = match verify_native_impl(&current_blob.blob, &verifier) {
                     Ok(v) => v,
                     Err(e) => {
-                        tracing::trace!("Native blob verification failed: {:?}", e);
-                        (Identity::default(), false)
+                        return BlobProcessingResult::ProvenFailure(format!(
+                            "Native blob verification failed: {:?}",
+                            e
+                        ));
                     }
                 };
 
@@ -1340,8 +1342,7 @@ impl NodeState {
             // if all previous blobs have been proven (i.e. setttlement status still at TryingToSettle)
             // and none of them generate an OnChainEffect, Tx should fail
             if settlement_status == &SettlementStatus::TryingToSettle {
-                return BlobProcessingResult::ProvenFailure(
-                format!("Trying to settle a blob for an unknown and unregistered contract {contract_name:?}"));
+                return BlobProcessingResult::ProvenFailure(format!("Trying to settle a blob for an unknown and unregistered contract {contract_name:?}"));
             }
         }
 
