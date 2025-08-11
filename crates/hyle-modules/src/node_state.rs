@@ -436,9 +436,9 @@ impl NodeState {
 
         let (blob_tx_hash, blobs_hash) = (tx.hashed(), tx.blobs_hash());
 
-        // Reject blob Tx with blobs for the 'hyle' contract if:
-        // - the identity is not the TLD itself for a DeleteContractAction
-        // No need to wait settlement, as this is a static check.
+        // Reject blob Tx with blobs for the 'hyle' contract if
+        // the identity is not the TLD itself for
+        // DeleteContractAction, UpdateContractProgramIdAction and UpdateContractTimeoutWindowAction actions
         if let Err(validation_error) = validate_hyle_contract_blobs(&self.contracts, tx) {
             bail!(
                 "Blob Transaction contains invalid blobs for 'hyle' contract: {}",
@@ -471,20 +471,18 @@ impl NodeState {
             .collect();
 
         // If we're behind other pending transactions, we can't settle yet.
-        let should_try_and_settle =
-            match self.unsettled_transactions.add(UnsettledBlobTransaction {
+        let Some(should_try_and_settle) =
+            self.unsettled_transactions.add(UnsettledBlobTransaction {
                 identity: tx.identity.clone(),
                 parent_dp_hash,
                 hash: tx_hash.clone(),
                 tx_context,
                 blobs_hash,
                 blobs,
-            }) {
-                Some(should_settle) => should_settle,
-                None => {
-                    return Ok(BlobTxHandled::Duplicate);
-                }
-            };
+            })
+        else {
+            return Ok(BlobTxHandled::Duplicate);
+        };
 
         if self.unsettled_transactions.is_next_to_settle(&blob_tx_hash) {
             let block_height = self.current_height;
