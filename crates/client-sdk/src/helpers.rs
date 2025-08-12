@@ -175,7 +175,7 @@ pub mod risc0 {
 pub mod sp1 {
     use sdk::ProofMetadata;
     use sp1_sdk::{
-        network::builder::NetworkProverBuilder, EnvProver, NetworkProver, ProverClient,
+        network::builder::NetworkProverBuilder, NetworkProver, ProverClient,
         SP1ProvingKey, SP1Stdin,
     };
 
@@ -187,7 +187,7 @@ pub mod sp1 {
     }
 
     enum ProverType {
-        Local(EnvProver),
+        Local(ProverClient),
         Network(Box<NetworkProver>),
     }
 
@@ -422,7 +422,7 @@ pub mod test {
             Box::pin(async move {
                 let mut proofs = Vec::new();
                 for call in calldata {
-                    let hyle_output = test::execute(commitment_metadata.clone(), call)?;
+                    let hyle_output = execute(commitment_metadata.clone(), call)?;
                     proofs.push(hyle_output);
                 }
                 Ok(Proof {
