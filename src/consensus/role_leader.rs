@@ -209,31 +209,32 @@ impl Consensus {
         }
         self.bft_round_state.leader.step = Step::PrepareVote;
 
-        #[allow(clippy::unwrap_used, reason = "must exist because we just set it")]
-        {
-            let prepare = (
-                self.crypto.validator_pubkey().clone(),
-                self.bft_round_state.current_proposal.clone().unwrap(),
-                ticket.clone(),
-                self.bft_round_state.view,
-            );
-            follower_state!(self).buffered_prepares.push(prepare);
+        let Some(consensus_proposal) = self.bft_round_state.current_proposal.as_ref() else {
+            unreachable!("At this point, must exist - we reuse the old one or set it above");
+        };
 
-            self.metrics.start_new_round(self.bft_round_state.slot);
+        let prepare = (
+            self.crypto.validator_pubkey().clone(),
+            consensus_proposal.clone(),
+            ticket.clone(),
+            self.bft_round_state.view,
+        );
+        follower_state!(self).buffered_prepares.push(prepare);
 
-            // Verifies that to-be-built block is large enough (?)
+        self.metrics.start_new_round(self.bft_round_state.slot);
 
-            // Broadcasts Prepare message to all validators
-            debug!(
-                proposal_hash = %self.bft_round_state.current_proposal.as_ref().unwrap().hashed(),
-                "🌐 Slot {} started. Broadcasting Prepare message", self.bft_round_state.slot,
-            );
-            self.broadcast_net_message(ConsensusNetMessage::Prepare(
-                self.bft_round_state.current_proposal.clone().unwrap(),
-                ticket,
-                self.bft_round_state.view,
-            ))?;
-        }
+        // TODO: Verifies that to-be-built block is large enough (?)
+
+        // Broadcasts Prepare message to all validators
+        debug!(
+            proposal_hash = %consensus_proposal.hashed(),
+            "🌐 Slot {} started. Broadcasting Prepare message", self.bft_round_state.slot,
+        );
+        self.broadcast_net_message(ConsensusNetMessage::Prepare(
+            consensus_proposal.clone(),
+            ticket,
+            self.bft_round_state.view,
+        ))?;
 
         Ok(())
     }
