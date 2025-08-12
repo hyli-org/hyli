@@ -134,8 +134,8 @@ ureq = { version = "3.0.11", default-features = false }
 utoipa = { version = "5.4.0" }
 utoipa-axum = { version = "0.2.0" }
 utoipa-swagger-ui = { version = "9.0.2" }
-uuid = { version = "1.17.0", default-features = false }
-whoami = { version = "1.5.2", default-features = false }
+uuid = { version = "1.18.0", default-features = false }
+whoami = { version = "1.6.1", default-features = false }
 
 [package]
 name = "hyle"
