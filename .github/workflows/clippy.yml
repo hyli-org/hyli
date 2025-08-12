@@ -15,7 +15,7 @@ jobs:
     if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # For keyring dependencies
       - run: sudo apt install libdbus-1-dev pkg-config
       - uses: actions-rs/toolchain@v1
