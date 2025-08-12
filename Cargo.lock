@@ -2790,7 +2790,7 @@ checksum = "5b1eb4fb07bc7f012422df02766c7bd5971effb894f573865642f06fa3265440"
 dependencies = [
  "pathdiff",
  "serde",
- "toml 0.9.2",
+ "toml 0.9.5",
  "winnow 0.7.12",
 ]
 
@@ -4885,7 +4885,7 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite 0.26.2",
  "tokio-util",
- "toml 0.9.2",
+ "toml 0.9.5",
  "tracing",
  "utoipa",
  "utoipa-axum",
@@ -10990,9 +10990,9 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.9.2"
+version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed0aee96c12fa71097902e0bb061a5e1ebd766a6636bb605ba401c45c1650eac"
+checksum = "75129e1dc5000bfbaa9fee9d1b21f974f9fbad9daec557a521ee6e080825f6e8"
 dependencies = [
  "serde",
  "serde_spanned 1.0.0",
@@ -11047,9 +11047,9 @@ dependencies = [
 
 [[package]]
 name = "toml_parser"
-version = "1.0.1"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97200572db069e74c512a14117b296ba0a80a30123fbbb5aa1f4a348f639ca30"
+checksum = "b551886f449aa90d4fe2bdaa9f4a2577ad2dde302c61ecf262d80b116db95c10"
 dependencies = [
  "winnow 0.7.12",
 ]
