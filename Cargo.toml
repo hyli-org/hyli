@@ -75,7 +75,7 @@ boundless-market = { version = "0.10.0", default-features = false }
 bytemuck = { version = "1.23.1", default-features = false }
 bytes = { version = "1.10.0", default-features = false }
 chrono = { version = "0.4", default-features = false }
-clap = { version = "4.5.41", default-features = false, features = ["derive"] }
+clap = { version = "4.5.44", default-features = false, features = ["derive"] }
 config = { version = "0.15.13", default-features = false }
 crossterm = { version = "0.29.0" }
 dashmap = { version = "6.1.0", default-features = false }
@@ -121,9 +121,9 @@ syn = { version = "2.0.104" }
 tempfile = { version = "3.20.0", default-features = false }
 test-log = { version = "0.2.18", default-features = false }
 testcontainers-modules = { version = "0.12.1", default-features = false }
-tokio = { version = "1.46.1" }
+tokio = { version = "1.47.1" }
 tokio-util = { version = "0.7.16" }
-toml = { version = "0.9.2", default-features = false }
+toml = { version = "0.9.5", default-features = false }
 tower-http = { version = "0.6.5", default-features = false }
 tower-service = { version = "0.3.3", default-features = false }
 tower_governor = { version = "0.7" }
