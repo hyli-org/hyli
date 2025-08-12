@@ -209,7 +209,7 @@ impl Consensus {
         }
         self.bft_round_state.leader.step = Step::PrepareVote;
 
-        let Some(consensus_proposal) = self.bft_round_state.current_proposal.as_ref() else {
+        let Some(consensus_proposal) = self.store.bft_round_state.current_proposal.as_ref() else {
             unreachable!("At this point, must exist - we reuse the old one or set it above");
         };
 
