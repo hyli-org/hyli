@@ -273,7 +273,6 @@ impl Mempool {
     }
 
     /// Creates a cut with local material on QueryNewCut message reception (from consensus)
-    // TODO: would be more optimal to only push updated lanes if needed (consensus may have the last cut)
     fn handle_querynewcut(&mut self, staking: &mut QueryNewCut) -> Result<Cut> {
         self.metrics.query_new_cut(staking);
         let emptyvec = vec![];
