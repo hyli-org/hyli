@@ -153,10 +153,7 @@ impl Module for NodeStateCheck {
 
 impl NodeStateCheck {
     pub async fn start(&mut self) -> Result<()> {
-        let mut node_state = NodeState {
-            metrics: NodeStateMetrics::global("node_state_check".to_string(), "node_state_check"),
-            store: Default::default(),
-        };
+        let mut node_state = NodeState::create("node_state_check".to_string(), "node_state_check");
         module_handle_messages! {
             on_self self,
             listen<DataEvent> event => {

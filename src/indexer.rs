@@ -459,10 +459,7 @@ mod test {
             proof_tx_4,
         ];
 
-        let mut node_state = NodeState {
-            store: NodeStateStore::default(),
-            metrics: NodeStateMetrics::global("test".to_string(), "test"),
-        };
+        let mut node_state = NodeState::create("test".to_string(), "test");
 
         // Handling a block containing txs
 
@@ -852,10 +849,7 @@ mod test {
         MIGRATOR.run(&db).await.unwrap();
         let (indexer, _) = new_indexer(db).await;
 
-        let mut node_state = NodeState {
-            store: NodeStateStore::default(),
-            metrics: NodeStateMetrics::global("test".to_string(), "test"),
-        };
+        let mut node_state = NodeState::create("test".to_string(), "test");
 
         let register_wallet = new_register_tx("wallet".into(), StateCommitment(vec![]));
         let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();

@@ -336,13 +336,17 @@ async fn test_tx_settlement_duplicates() -> Result<()> {
     client.send_tx_proof(proof_c1.clone()).await.unwrap();
     client.send_tx_proof(proof_c2.clone()).await.unwrap();
 
-    info!("➡️  Sending blobs for c1 & c2.hyle - 3rd time");
+    info!(
+        "➡️  Sending blobs for c1 & c2.hyle - 3rd time (hash: {})",
+        tx.hashed()
+    );
 
     // Re submit the same blob tx after it was settled - should be accepted
 
     let tx_hashed = tx.hashed();
     client.send_tx_blob(tx).await.unwrap();
-    hyle_node.wait_for_n_blocks(1).await?;
+    // Need to make sure a DP happens or the second batch or proofs will be forgotten about.
+    hyle_node.wait_for_n_blocks(2).await?;
 
     let contract = client.get_contract("c1".into()).await?;
     assert_eq!(contract.state_commitment.0, vec![4, 5, 6]);
