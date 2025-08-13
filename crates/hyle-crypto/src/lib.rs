@@ -54,7 +54,6 @@ struct Aggregates {
 }
 
 const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
-pub const SIG_SIZE: usize = 48;
 
 impl BlstCrypto {
     #[cfg(not(test))]
