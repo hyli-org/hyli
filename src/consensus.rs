@@ -806,7 +806,14 @@ impl Consensus {
                 Ok(self.bft_round_state.staking.clone())
             }
             command_response<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse> _ => {
-                self.serialize_bft_round_state()
+                if !matches!(self.bft_round_state.state_tag, StateTag::Joining) {
+                    self.serialize_bft_round_state()
+                } else {
+                    Err(anyhow::anyhow!(
+                        "Cannot serialize BFT round state in state {:?}",
+                        self.bft_round_state.state_tag
+                    ))
+                }
             }
             _ = timeout_ticker.tick() => {
                 log_error!(self.bus.send(ConsensusCommand::TimeoutTick), "Cannot send message over channel")?;

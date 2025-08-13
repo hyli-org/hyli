@@ -140,6 +140,10 @@ impl Blocks {
         }
     }
 
+    pub fn highest(&self) -> BlockHeight {
+        self.last().map_or(BlockHeight(0), |b| b.height())
+    }
+
     pub fn last_block_hash(&self) -> Option<ConsensusProposalHash> {
         self.last().map(|b| b.hashed())
     }

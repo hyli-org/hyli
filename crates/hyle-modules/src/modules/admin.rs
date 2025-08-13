@@ -213,6 +213,9 @@ impl NodeAdminApiClient {
 pub async fn catchup(State(mut state): State<RouterState>) -> Result<impl IntoResponse, AppError> {
     tracing::info!("Getting catchup states from all modules");
 
+    // Since node state is based on consensus, we first ask this state
+    // to be sure its height will be <= consensus height.
+
     let node_state = log_error!(
         state
             .bus

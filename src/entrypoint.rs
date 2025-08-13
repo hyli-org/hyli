@@ -263,6 +263,8 @@ async fn common_main(
             || !config.data_directory.join("consensus.bin").exists()
             || !config.data_directory.join("node_state.bin").exists()
         {
+            // TODO: Make fast_cachup_from a list of nodes to catchup from.
+            // Fallback to next node in the list if the first one fails.
             let catchup_from = config.fast_catchup_from.clone();
             info!("Catching up from {}", catchup_from);
             let client = NodeAdminApiClient::new(catchup_from.clone())?;
@@ -291,6 +293,12 @@ async fn common_main(
                 config.data_directory.display()
             );
         }
+
+        // wait a few seconds to generate a delay between the caughtup and the start of the modules
+        info!(
+            "TO REMOVE: Waiting a few seconds before starting modules to let the catchup complete"
+        );
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     }
 
     let mut handler = ModulesHandler::new(&bus).await;
