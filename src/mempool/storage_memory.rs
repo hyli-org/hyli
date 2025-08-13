@@ -131,7 +131,12 @@ impl Storage for LanesStorage {
                 .signatures
                 .binary_search_by(|probe| probe.signature.cmp(&msg.signature))
             {
-                Ok(_) => {}
+                Ok(_) => {
+                    tracing::trace!(
+                        "Received duplicate DataVote message for {dph} from {}",
+                        msg.signature.validator
+                    );
+                }
                 Err(pos) => metadata.signatures.insert(pos, msg),
             }
         }

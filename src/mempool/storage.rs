@@ -7,7 +7,7 @@ use hyle_model::{DataSized, LaneId};
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
 use std::{future::Future, vec};
-use tracing::error;
+use tracing::{error, trace};
 
 use crate::model::{
     Cut, DataProposal, DataProposalHash, Hashed, PoDA, SignedByValidator, ValidatorPublicKey,
@@ -94,63 +94,69 @@ pub trait Storage {
         previous_committed_car: Option<&(LaneId, DataProposalHash, LaneBytesSize, PoDA)>,
     ) -> Result<Option<(DataProposalHash, LaneBytesSize, PoDA)>> {
         let bonded_validators = staking.bonded();
-        // We start from the tip of the lane, and go backup until we find a DP with enough signatures
-        if let Some(tip_dp_hash) = self.get_lane_hash_tip(lane_id) {
-            let mut dp_hash = tip_dp_hash.clone();
-            while let Some(le) = self.get_metadata_by_hash(lane_id, &dp_hash)? {
-                if let Some((_, hash, _, poda)) = previous_committed_car {
-                    if &dp_hash == hash {
-                        // Latest car has already been committed
-                        return Ok(Some((hash.clone(), le.cumul_size, poda.clone())));
-                    }
+
+        // Start from tip; bail early if lane is empty.
+        let mut current = match self.get_lane_hash_tip(lane_id) {
+            Some(h) => h.clone(),
+            None => return Ok(None),
+        };
+
+        trace!("Getting latest CAR for lane {lane_id} with tip {current}");
+
+        loop {
+            // We stop once the currently examined DP is the one from the committed cut.
+            if let Some((_, prev_hash, prev_size, prev_poda)) = previous_committed_car {
+                if current == *prev_hash {
+                    trace!("Found matching previous committed CAR: {prev_hash}");
+                    return Ok(Some((prev_hash.clone(), *prev_size, prev_poda.clone())));
                 }
-                // Filter signatures on DataProposal to only keep the ones from the current validators
-                let filtered_signatures: Vec<SignedByValidator<(DataProposalHash, LaneBytesSize)>> =
-                    le.signatures
-                        .iter()
-                        .filter(|signed_msg| {
-                            bonded_validators.contains(&signed_msg.signature.validator)
-                        })
-                        .cloned()
-                        .collect();
+            }
 
-                // Collect all filtered validators that signed the DataProposal
-                let filtered_validators: Vec<ValidatorPublicKey> = filtered_signatures
-                    .iter()
-                    .map(|s| s.signature.validator.clone())
-                    .collect();
+            // This DP is on top of the current cut, does it have a CAR or should we fetch its parent?
+            let Some(le) = self.get_metadata_by_hash(lane_id, &current)? else {
+                return Ok(None);
+            };
 
-                // Compute their voting power to check if the DataProposal received enough votes
-                let voting_power = staking.compute_voting_power(filtered_validators.as_slice());
-                let f = staking.compute_f();
-                if voting_power < f + 1 {
-                    // Check if previous DataProposals received enough votes
-                    if let Some(parent_dp_hash) = le.parent_data_proposal_hash.clone() {
-                        dp_hash = parent_dp_hash;
-                        continue;
+            let filtered: Vec<&SignedByValidator<(DataProposalHash, LaneBytesSize)>> = le
+                .signatures
+                .iter()
+                .filter(|s| bonded_validators.contains(&s.signature.validator))
+                .collect();
+
+            // Compute voting power from the filtered validator set.
+            let filtered_validators: Vec<ValidatorPublicKey> = filtered
+                .iter()
+                .map(|s| s.signature.validator.clone())
+                .collect();
+
+            // TODO: take by reference to avoid cloning above
+            let voting_power = staking.compute_voting_power(&filtered_validators);
+            let f = staking.compute_f();
+
+            trace!("Checking for sufficient voting power: {voting_power} > {f} ?");
+
+            // Enough votes: aggregate into PoDA and return.
+            if voting_power > f {
+                match BlstCrypto::aggregate((current.clone(), le.cumul_size), &filtered) {
+                    Ok(poda) => {
+                        return Ok(Some((current, le.cumul_size, poda.signature)));
                     }
-                    return Ok(None);
-                }
-
-                // Aggregate the signatures in a PoDA
-                let poda = match BlstCrypto::aggregate(
-                    (dp_hash.clone(), le.cumul_size),
-                    &filtered_signatures.iter().collect::<Vec<_>>(),
-                ) {
-                    Ok(poda) => poda,
                     Err(e) => {
-                        error!(
-                        "Could not aggregate signatures for validator {} and data proposal hash {}: {}",
-                        lane_id, dp_hash, e
-                    );
-                        break;
+                        error!("Could not aggregate signatures for lane {lane_id} and DP {current}: {e}");
+                        return Ok(None);
                     }
-                };
-                return Ok(Some((dp_hash.clone(), le.cumul_size, poda.signature)));
+                }
+            }
+
+            trace!("Not enough votes: moving to parent DP if available");
+
+            // Not enough votes: move on to the parent if any, otherwise no CAR.
+            if let Some(parent) = le.parent_data_proposal_hash {
+                current = parent.clone();
+            } else {
+                return Ok(None);
             }
         }
-
-        Ok(None)
     }
 
     /// Signs the data proposal before creating a new LaneEntry and puting it in the lane
@@ -412,8 +418,9 @@ mod tests {
 
     use super::*;
     use crate::mempool::storage_memory::LanesStorage;
+    use assertables::assert_none;
     use futures::StreamExt;
-    use hyle_model::{DataSized, Signature, Transaction, ValidatorSignature};
+    use hyle_model::{DataSized, Identity, Signature, Transaction, ValidatorSignature};
     use staking::state::Staking;
 
     fn setup_storage() -> LanesStorage {
@@ -736,23 +743,120 @@ mod tests {
         assert_eq!(1, pending.len());
     }
 
+    /// Add a bonded validator with a specified stake and delegators, using public methods for setup.
+    fn add_bonded_validator_for_test(
+        staking: &mut Staking,
+        validator: ValidatorPublicKey,
+        stake: u128,
+        delegators: Vec<Identity>,
+    ) {
+        for delegator in &delegators {
+            // Ignore error if already staked (for test setup)
+            let _ = staking.stake(delegator.clone(), stake);
+            // Ignore error if already delegated (for test setup)
+            let _ = staking.delegate_to(delegator.clone(), validator.clone());
+        }
+        // Try to bond the validator (ignore error if already bonded)
+        let _ = staking.bond(validator);
+    }
+
     #[test_log::test(tokio::test)]
     async fn test_get_latest_car() {
-        let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
-        let staking = Staking::new();
-        let data_proposal = DataProposal::new(None, vec![]);
-        let cumul_size: LaneBytesSize = LaneBytesSize(data_proposal.estimate_size() as u64);
-        let entry = LaneEntryMetadata {
-            parent_data_proposal_hash: None,
-            cumul_size,
-            signatures: vec![],
+
+        let crypto1: BlstCrypto = BlstCrypto::new("1").unwrap();
+        let crypto2: BlstCrypto = BlstCrypto::new("2").unwrap();
+        let mut staking = Staking::new();
+        // Validator 2 is enough for PoDA, not 1 alone though.
+        add_bonded_validator_for_test(
+            &mut staking,
+            crypto1.validator_pubkey().clone(),
+            200,
+            vec![Identity::new("john.hamm")],
+        );
+        add_bonded_validator_for_test(
+            &mut staking,
+            crypto2.validator_pubkey().clone(),
+            1000,
+            vec![Identity::new("jane.doe")],
+        );
+        let lane_id = &LaneId(crypto1.validator_pubkey().clone());
+
+        // Helper lambdas so the repeated examples below are shorter.
+        let add_signatures = |storage: &mut LanesStorage,
+                              crypto: &BlstCrypto,
+                              lane_id: &LaneId,
+                              dp: &DataProposal| {
+            let sig = crypto
+                .sign((dp.hashed(), LaneBytesSize(dp.estimate_size() as u64)))
+                .unwrap();
+            storage
+                .add_signatures(lane_id, &dp.hashed(), std::iter::once(sig))
+                .unwrap()
         };
+        let assert_latest_car_eq = |storage: &LanesStorage,
+                                    lane_id: &LaneId,
+                                    staking: &Staking,
+                                    cut: Option<&DataProposalHash>,
+                                    dp: &DataProposal| {
+            let cut = cut.map(|cut| {
+                (
+                    lane_id.clone(),
+                    cut.clone(),
+                    LaneBytesSize(0),
+                    PoDA::default(),
+                )
+            });
+            assert_eq!(
+                storage
+                    .get_latest_car(lane_id, staking, cut.as_ref())
+                    .unwrap()
+                    .unwrap()
+                    .0,
+                dp.hashed()
+            );
+        };
+
+        ////////////////////////////
+        // Case 1: No CAR (no votes)
+        let dp1 = DataProposal::new(None, vec![]);
         storage
-            .put_no_verification(lane_id.clone(), (entry, data_proposal))
+            .store_data_proposal(&crypto1, lane_id, dp1.clone()) // signs it too.
             .unwrap();
-        let latest = storage.get_latest_car(lane_id, &staking, None).unwrap();
-        assert!(latest.is_none());
+        assert_none!(storage.get_latest_car(lane_id, &staking, None).unwrap());
+
+        ////////////////////////////
+        // Case 2: CAR
+        // Sign it for PoDA
+        add_signatures(&mut storage, &crypto2, lane_id, &dp1);
+        assert_latest_car_eq(&mut storage, lane_id, &staking, None, &dp1);
+
+        ////////////////////////////
+        // Case 3: no CAR, parent is CAR
+        let dp2 = DataProposal::new(Some(dp1.hashed()), vec![]);
+        storage
+            .store_data_proposal(&crypto1, lane_id, dp2.clone()) // signs it too.
+            .unwrap();
+        // Car is still dp1
+        assert_latest_car_eq(&mut storage, lane_id, &staking, None, &dp1);
+        let dp3 = DataProposal::new(Some(dp2.hashed()), vec![]);
+        storage
+            .store_data_proposal(&crypto1, lane_id, dp3.clone()) // signs it too.
+            .unwrap();
+        // Car is still dp1
+        assert_latest_car_eq(&mut storage, lane_id, &staking, None, &dp1);
+
+        ////////////////////////////
+        // Case 4: we don't have the car for a dp but it's part of the Cut
+        assert_latest_car_eq(&mut storage, lane_id, &staking, Some(&dp2.hashed()), &dp2);
+        assert_latest_car_eq(&mut storage, lane_id, &staking, Some(&dp3.hashed()), &dp3);
+
+        ////////////////////////////
+        // Case 5: we have a CAR on top of the cut.
+        add_signatures(&mut storage, &crypto2, lane_id, &dp2);
+        assert_latest_car_eq(&mut storage, lane_id, &staking, None, &dp2);
+        assert_latest_car_eq(&mut storage, lane_id, &staking, Some(&dp1.hashed()), &dp2);
+        assert_latest_car_eq(&mut storage, lane_id, &staking, Some(&dp2.hashed()), &dp2);
+        assert_latest_car_eq(&mut storage, lane_id, &staking, Some(&dp3.hashed()), &dp3);
     }
 }
