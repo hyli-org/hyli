@@ -126,9 +126,11 @@ enum BlobTxHandled {
     Ok,
 }
 
+#[derive(Debug)]
 enum TxEvent<'a> {
     DuplicateBlobTransaction(&'a TxId),
     SequencedBlobTransaction(&'a TxId, &'a BlobTransaction),
+    SequencedProofTransaction(&'a TxId, &'a VerifiedProofTransaction),
     Settled(&'a TxId, &'a UnsettledBlobTransaction),
     SettledAsFailed(&'a TxId),
     TimedOut(&'a TxId),
@@ -147,10 +149,163 @@ enum TxEvent<'a> {
     ContractTimeoutWindowUpdated(&'a TxId, &'a ContractName, &'a TimeoutWindow),
 }
 
+pub trait NodeStateCallback: std::any::Any {
+    fn on_event(&mut self, event: &TxEvent);
+}
+
+pub struct BlockNodeStateCallback {
+    block_under_construction: Block,
+}
+
+impl BlockNodeStateCallback {
+    pub fn new() -> Self {
+        BlockNodeStateCallback {
+            block_under_construction: Block::default(),
+        }
+    }
+
+    pub fn from_signed(signed_block: &SignedBlock) -> Self {
+        BlockNodeStateCallback {
+            block_under_construction: Block {
+                block_height: signed_block.height(),
+                ..Default::default()
+            },
+        }
+    }
+
+    pub fn get_block(&mut self) -> Block {
+        std::mem::take(&mut self.block_under_construction)
+    }
+}
+
+impl NodeStateCallback for BlockNodeStateCallback {
+    fn on_event(&mut self, event: &TxEvent) {
+        match event {
+            &TxEvent::DuplicateBlobTransaction(tx_id) => {
+                self.block_under_construction
+                    .dropped_duplicate_txs
+                    .push(tx_id.clone());
+                self.block_under_construction
+                    .dp_parent_hashes
+                    .insert(tx_id.1.clone(), tx_id.0.clone());
+            }
+            &TxEvent::SequencedBlobTransaction(tx_id, blob_tx) => {
+                self.block_under_construction
+                    .txs
+                    .push((tx_id.clone(), blob_tx.clone().into()));
+                self.block_under_construction
+                    .dp_parent_hashes
+                    .insert(tx_id.1.clone(), tx_id.0.clone());
+            }
+            &TxEvent::SequencedProofTransaction(tx_id, proof_tx) => {
+                self.block_under_construction
+                    .txs
+                    .push((tx_id.clone(), proof_tx.clone().into()));
+                self.block_under_construction
+                    .dp_parent_hashes
+                    .insert(tx_id.1.clone(), tx_id.0.clone());
+            }
+            &TxEvent::Settled(tx_id, unsettled_tx) => {
+                self.block_under_construction
+                    .successful_txs
+                    .push(tx_id.1.clone());
+                self.block_under_construction
+                    .dp_parent_hashes
+                    .insert(tx_id.1.clone(), tx_id.0.clone());
+                self.block_under_construction
+                    .lane_ids
+                    .insert(tx_id.1.clone(), unsettled_tx.tx_context.lane_id.clone());
+                self.block_under_construction
+                    .transactions_events
+                    .entry(tx_id.1.clone())
+                    .or_default()
+                    .push(TransactionStateEvent::Settled);
+            }
+            &TxEvent::SettledAsFailed(tx_id) => {
+                self.block_under_construction
+                    .failed_txs
+                    .push(tx_id.1.clone());
+                self.block_under_construction
+                    .dp_parent_hashes
+                    .insert(tx_id.1.clone(), tx_id.0.clone());
+                self.block_under_construction
+                    .transactions_events
+                    .entry(tx_id.1.clone())
+                    .or_default()
+                    .push(TransactionStateEvent::SettledAsFailed);
+            }
+            &TxEvent::TimedOut(tx_id) => {
+                self.block_under_construction
+                    .timed_out_txs
+                    .push(tx_id.1.clone());
+                self.block_under_construction
+                    .dp_parent_hashes
+                    .insert(tx_id.1.clone(), tx_id.0.clone());
+                self.block_under_construction
+                    .transactions_events
+                    .entry(tx_id.1.clone())
+                    .or_default()
+                    .push(TransactionStateEvent::TimedOut);
+            }
+            &TxEvent::TxError(tx_id, err) => {
+                self.block_under_construction
+                    .transactions_events
+                    .entry(tx_id.1.clone())
+                    .or_default()
+                    .push(TransactionStateEvent::Error(err.to_string()));
+            }
+            &TxEvent::NewProof(tx_id, tx_hash, ref unsettled_tx, proof_output) => {
+                self.block_under_construction
+                    .transactions_events
+                    .entry(tx_id.1.clone())
+                    .or_default()
+                    .push(TransactionStateEvent::NewProof {
+                        blob_index: proof_output.hyle_output.index,
+                        proof_tx_hash: tx_hash.clone(),
+                        program_output: proof_output.hyle_output.program_outputs.clone(),
+                    });
+            }
+            &TxEvent::BlobSettled(tx_id, unsettled_blob_metadata, blob_index, size) => {
+                self.block_under_construction.verified_blobs.push((
+                    tx_id.1.clone(),
+                    blob_index,
+                    Some(size),
+                ));
+            }
+            &TxEvent::ContractDeleted(tx_id, contract_name) => {
+                self.block_under_construction
+                    .deleted_contracts
+                    .insert(contract_name.clone(), tx_id.1.clone());
+            }
+            &TxEvent::ContractRegistered(tx_id, contract_name) => {
+                self.block_under_construction.registered_contracts.insert(
+                    contract_name.clone(),
+                    (tx_id.1.clone(), RegisterContractEffect::default(), None),
+                );
+            }
+            &TxEvent::ContractStateUpdated(tx_id, contract_name, state_commitment) => {
+                self.block_under_construction
+                    .updated_states
+                    .insert(contract_name.clone(), state_commitment.clone());
+            }
+            &TxEvent::ContractProgramIdUpdated(tx_id, contract_name, program_id) => {
+                self.block_under_construction
+                    .updated_program_ids
+                    .insert(contract_name.clone(), program_id.clone());
+            }
+            &TxEvent::ContractTimeoutWindowUpdated(tx_id, contract_name, timeout_window) => {
+                self.block_under_construction
+                    .updated_timeout_windows
+                    .insert(contract_name.clone(), timeout_window.clone());
+            }
+        };
+    }
+}
+
 pub struct NodeState {
     pub metrics: NodeStateMetrics,
     pub store: NodeStateStore,
-    pub callback: Box<dyn for<'a> Fn(&'a TxEvent) + Send + Sync>,
+    pub callback: Box<dyn NodeStateCallback + Send + Sync>,
 }
 
 impl std::fmt::Debug for NodeState {
@@ -165,7 +320,7 @@ impl Clone for NodeState {
         NodeState {
             metrics: self.metrics.clone(),
             store: self.store.clone(),
-            callback: Box::new(|_| {}),
+            callback: Box::new(BlockNodeStateCallback::new()),
         }
     }
 }
@@ -175,7 +330,7 @@ impl NodeState {
         NodeState {
             metrics: NodeStateMetrics::global(node_id, module_name),
             store: NodeStateStore::default(),
-            callback: Box::new(|_| {}),
+            callback: Box::new(BlockNodeStateCallback::new()),
         }
     }
 }
@@ -234,7 +389,7 @@ impl Default for NodeStateStore {
 }
 
 impl NodeState {
-    pub fn handle_signed_block(&mut self, signed_block: &SignedBlock) -> Result<()> {
+    pub fn process_signed_block(&mut self, signed_block: &SignedBlock) -> Result<()> {
         let next_block = self.current_height + 1 == signed_block.height();
         let initial_block = self.current_height.0 == 0 && signed_block.height().0 == 0;
         if !next_block && !initial_block {
@@ -281,10 +436,11 @@ impl NodeState {
                                 "Blob transaction: {:?} is already in the unsettled map, ignoring.",
                                 tx_id
                             );
-                            (self.callback)(&TxEvent::DuplicateBlobTransaction(&tx_id));
+                            self.callback
+                                .on_event(&TxEvent::DuplicateBlobTransaction(&tx_id));
                         }
                         Ok(BlobTxHandled::Ok) => {
-                            (self.callback)(&TxEvent::SequencedBlobTransaction(
+                            self.callback.on_event(&TxEvent::SequencedBlobTransaction(
                                 &tx_id,
                                 blob_transaction,
                             ));
@@ -292,7 +448,7 @@ impl NodeState {
                         Err(e) => {
                             let err = format!("Failed to handle blob transaction: {e:?}");
                             error!(tx_hash = %tx_id.1, "{err}");
-                            (self.callback)(&TxEvent::TxError(&tx_id, &err));
+                            self.callback.on_event(&TxEvent::TxError(&tx_id, &err));
                         }
                     }
                 }
@@ -300,6 +456,8 @@ impl NodeState {
                     error!("Unverified recursive proof transaction should not be in a block");
                 }
                 TransactionData::VerifiedProof(proof_tx) => {
+                    self.callback
+                        .on_event(&TxEvent::SequencedProofTransaction(&tx_id, proof_tx));
                     // First, store the proofs and check if we can settle the transaction
                     // NB: if some of the blob proof outputs are bad, we just ignore those
                     // but we don't actually fail the transaction.
@@ -329,14 +487,14 @@ impl NodeState {
                                     ) {
                                         // TODO: this is pretty inefficient
                                         let tx_id: &TxId = &TxId(tx.parent_dp_hash.clone(), tx.hash.clone());
-                                        (self.callback)(&TxEvent::TxError(
+                                        self.callback.on_event(&TxEvent::TxError(
                                             tx_id,
                                             &err,
                                         ));
                                     }
                                     // Also note the error on the proof transaction
                                     // Open question: should this be a different type from blob tx errors?
-                                    (self.callback)(&TxEvent::TxError(
+                                    self.callback.on_event(&TxEvent::TxError(
                                         &tx_id,
                                         &err,
                                     ));
@@ -381,6 +539,18 @@ impl NodeState {
         debug!("Done handling signed block: {:?}", signed_block.height());
 
         Ok(())
+    }
+
+    pub fn handle_signed_block(&mut self, signed_block: &SignedBlock) -> Result<Block> {
+        self.callback = Box::new(BlockNodeStateCallback::from_signed(signed_block));
+        self.process_signed_block(signed_block)?;
+        let boxed: Box<dyn NodeStateCallback + Send + Sync + 'static> =
+            std::mem::replace(&mut self.callback, Box::new(BlockNodeStateCallback::new()));
+        let mut bb: Box<dyn std::any::Any> = boxed;
+        Ok(bb
+            .downcast_mut::<BlockNodeStateCallback>()
+            .unwrap()
+            .get_block())
     }
 
     fn get_tx_timeout_window<'a, T: IntoIterator<Item = &'a Blob>>(
@@ -511,7 +681,7 @@ impl NodeState {
             unsettled_tx.hash.clone(),
         );
 
-        (self.callback)(&TxEvent::NewProof(
+        self.callback.on_event(&TxEvent::NewProof(
             &tx_id,
             &proof_tx_hash, // TODO: ID?
             unsettled_tx,
@@ -706,7 +876,7 @@ impl NodeState {
         mut contract_changes: BTreeMap<ContractName, ModifiedContractData>,
         mut blob_iter: impl Iterator<Item = &'a UnsettledBlobMetadata> + Clone,
         mut blob_proof_output_indices: Vec<usize>,
-        callback: &mut Box<dyn for<'b> Fn(&'b TxEvent) + Send + Sync>,
+        callback: &mut Box<dyn NodeStateCallback + Send + Sync>,
     ) -> SettlementResult {
         // Recursion end-case: we succesfully settled all prior blobs, so success.
         let Some(current_blob) = blob_iter.next() else {
@@ -788,7 +958,7 @@ impl NodeState {
                 // Fatal error - settle as failed immediately
                 let msg = format!("On-chain execution failed: {msg}");
                 debug!("{msg}");
-                callback(&TxEvent::TxError(
+                callback.on_event(&TxEvent::TxError(
                     &TxId(
                         unsettled_tx.parent_dp_hash.clone(),
                         unsettled_tx.hash.clone(),
@@ -921,7 +1091,7 @@ impl NodeState {
         match settlement_result.settlement_status {
             SettlementStatus::SettleAsFailed => {
                 // If it's a failed settlement, mark it so and move on.
-                (self.callback)(&TxEvent::SettledAsFailed(&TxId(
+                self.callback.on_event(&TxEvent::SettledAsFailed(&TxId(
                     settled_tx.parent_dp_hash.clone(),
                     bth.clone(),
                 )));
@@ -952,7 +1122,7 @@ impl NodeState {
         .entry(bth.clone())
         .or_default()
         .push(TransactionStateEvent::Settled);*/
-        (self.callback)(&TxEvent::Settled(
+        self.callback.on_event(&TxEvent::Settled(
             &TxId(settled_tx.parent_dp_hash.clone(), bth.clone()),
             &settled_tx,
         ));
@@ -964,7 +1134,7 @@ impl NodeState {
         // - keep track of which blob proof output we used to settle the TX for each blob.
         // - take note of staking actions
         for (blob_index, blob_metadata) in settled_tx.blobs {
-            (self.callback)(&TxEvent::BlobSettled(
+            self.callback.on_event(&TxEvent::BlobSettled(
                 &TxId(settled_tx.parent_dp_hash.clone(), bth.clone()),
                 &blob_metadata,
                 blob_index,
@@ -1036,7 +1206,7 @@ impl NodeState {
 
                             potentially_blocked_contracts
                                 .extend(OrderedTxMap::get_contracts_blocked_by_tx(&popped_tx));
-                            (self.callback)(&TxEvent::TimedOut(&TxId(
+                            self.callback.on_event(&TxEvent::TimedOut(&TxId(
                                 popped_tx.parent_dp_hash.clone(),
                                 tx_hash.clone(),
                             )));
@@ -1062,7 +1232,7 @@ impl NodeState {
                         }
                     }
 
-                    (self.callback)(&TxEvent::ContractDeleted(
+                    self.callback.on_event(&TxEvent::ContractDeleted(
                         &TxId(settled_tx.parent_dp_hash.clone(), bth.clone()),
                         &contract_name,
                     ));
@@ -1098,7 +1268,7 @@ impl NodeState {
                                 bth
                             );
                         }
-                        (self.callback)(&TxEvent::ContractRegistered(
+                        self.callback.on_event(&TxEvent::ContractRegistered(
                             &TxId(settled_tx.parent_dp_hash.clone(), bth.clone()),
                             &contract_name,
                         ));
@@ -1134,7 +1304,7 @@ impl NodeState {
                             hex::encode(&contract.state.0)
                         );
 
-                        (self.callback)(&TxEvent::ContractStateUpdated(
+                        self.callback.on_event(&TxEvent::ContractStateUpdated(
                             &TxId(settled_tx.parent_dp_hash.clone(), bth.clone()),
                             &contract_name,
                             &contract.state,
@@ -1147,7 +1317,7 @@ impl NodeState {
                             hex::encode(&contract.program_id.0)
                         );
 
-                        (self.callback)(&TxEvent::ContractProgramIdUpdated(
+                        self.callback.on_event(&TxEvent::ContractProgramIdUpdated(
                             &TxId(settled_tx.parent_dp_hash.clone(), bth.clone()),
                             &contract_name,
                             &contract.program_id,
@@ -1159,11 +1329,12 @@ impl NodeState {
                             &contract_name, &contract.timeout_window
                         );
 
-                        (self.callback)(&TxEvent::ContractTimeoutWindowUpdated(
-                            &TxId(settled_tx.parent_dp_hash.clone(), bth.clone()),
-                            &contract_name,
-                            &contract.timeout_window,
-                        ));
+                        self.callback
+                            .on_event(&TxEvent::ContractTimeoutWindowUpdated(
+                                &TxId(settled_tx.parent_dp_hash.clone(), bth.clone()),
+                                &contract_name,
+                                &contract.timeout_window,
+                            ));
                     }
                 }
             }
@@ -1619,7 +1790,7 @@ impl NodeState {
                 let hash = tx.hash.clone();
                 let parent_hash = tx.parent_dp_hash.clone();
                 let lane_id = tx.tx_context.lane_id.clone();
-                (self.callback)(&TxEvent::TimedOut(&TxId(
+                self.callback.on_event(&TxEvent::TimedOut(&TxId(
                     tx.parent_dp_hash.clone(),
                     tx.hash.clone(),
                 )));
@@ -1673,9 +1844,7 @@ pub mod test {
         NodeState {
             metrics: NodeStateMetrics::global("test".to_string(), "test"),
             store: NodeStateStore::default(),
-            callback: Box::new(|event| {
-                // Handle events in tests
-            }),
+            callback: Box::new(BlockNodeStateCallback::new()),
         }
     }
 

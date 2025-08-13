@@ -8,6 +8,7 @@ use crate::module_handle_messages;
 use crate::modules::admin::{QueryNodeStateStore, QueryNodeStateStoreResponse};
 use crate::modules::files::NODE_STATE_BIN;
 use crate::modules::{module_bus_client, Module, SharedBuildApiCtx};
+use crate::node_state::BlockNodeStateCallback;
 use crate::{log_error, log_warn};
 use anyhow::Result;
 use sdk::*;
@@ -78,7 +79,11 @@ impl Module for NodeStateModule {
             info!("📝 Loaded contract state for {}", name);
         }
 
-        let node_state = NodeState { store, metrics };
+        let node_state = NodeState {
+            store,
+            metrics,
+            callback: Box::new(BlockNodeStateCallback::new()),
+        };
         let bus = NodeStateBusClient::new_from_bus(bus.new_handle()).await;
 
         Ok(Self {
