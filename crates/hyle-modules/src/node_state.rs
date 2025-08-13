@@ -5,6 +5,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use contract_registration::validate_contract_registration_metadata;
 use contract_registration::{validate_contract_name_tld, validate_state_commitment_size};
 use hyle_tld::validate_hyle_contract_blobs;
+use hyle_verifiers::native_impl::verify_native_impl;
 use metrics::NodeStateMetrics;
 use ordered_tx_map::OrderedTxMap;
 use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
@@ -75,6 +76,17 @@ enum ProofProcessingResult {
     Invalid(String),
     /// The proof failed with a fatal error - should settle as failed immediately
     ProvenFailure(String),
+}
+
+/// Represents the result of on-chain processing of a blob
+#[derive(Debug)]
+enum BlobProcessingResult {
+    /// The blob was processed successfully
+    Success,
+    /// The blob failed with a fatal error - should settle as failed immediately
+    ProvenFailure(String),
+    /// The blob cannot be executed on-chain.
+    NotApplicable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -424,11 +436,9 @@ impl NodeState {
 
         let (blob_tx_hash, blobs_hash) = (tx.hashed(), tx.blobs_hash());
 
-        let mut should_try_and_settle = true;
-
-        // Reject blob Tx with blobs for the 'hyle' contract if:
-        // - the identity is not the TLD itself for a DeleteContractAction
-        // No need to wait settlement, as this is a static check.
+        // Reject blob Tx with blobs for the 'hyle' contract if
+        // the identity is not the TLD itself for
+        // DeleteContractAction, UpdateContractProgramIdAction and UpdateContractTimeoutWindowAction actions
         if let Err(validation_error) = validate_hyle_contract_blobs(&self.contracts, tx) {
             bail!(
                 "Blob Transaction contains invalid blobs for 'hyle' contract: {}",
@@ -448,68 +458,31 @@ impl NodeState {
             .blobs
             .iter()
             .enumerate()
-            .filter_map(|(index, blob)| {
+            .map(|(index, blob)| {
                 tracing::trace!("Handling blob - {:?}", blob);
-                if let Some(Ok(verifier)) = self
-                    .contracts
-                    .get(&blob.contract_name)
-                    .map(|b| TryInto::<NativeVerifiers>::try_into(&b.verifier))
-                {
-                    let hyle_output = hyle_verifiers::native::verify(
-                        blob_tx_hash.clone(),
-                        BlobIndex(index),
-                        &tx.blobs,
-                        &verifier,
-                    );
-                    tracing::trace!("Native verifier in blob tx - {:?}", hyle_output);
-                    // Verifier contracts won't be updated
-                    // FIXME: When we need stateful native contracts
-                    if hyle_output.success {
-                        return None;
-                    } else {
-                        return Some((
-                            BlobIndex(index),
-                            UnsettledBlobMetadata {
-                                blob: blob.clone(),
-                                possible_proofs: vec![(
-                                    verifier.into(),
-                                    hyle_output,
-                                    verifier.into(),
-                                )],
-                            },
-                        ));
-                    }
-                } else if blob.contract_name.0 == "hyle" {
-                    // 'hyle' is a special case -> See settlement logic.
-                } else if !self.contracts.contains_key(&blob.contract_name) {
-                    // Contract registration special case -> See settlement logic
-                } else {
-                    should_try_and_settle = false;
-                }
-                Some((
+                (
                     BlobIndex(index),
                     UnsettledBlobMetadata {
                         blob: blob.clone(),
                         possible_proofs: vec![],
                     },
-                ))
+                )
             })
             .collect();
 
         // If we're behind other pending transactions, we can't settle yet.
-        match self.unsettled_transactions.add(UnsettledBlobTransaction {
-            identity: tx.identity.clone(),
-            parent_dp_hash,
-            hash: tx_hash.clone(),
-            tx_context,
-            blobs_hash,
-            blobs,
-        }) {
-            Some(should_settle) => should_try_and_settle = should_settle && should_try_and_settle,
-            None => {
-                return Ok(BlobTxHandled::Duplicate);
-            }
-        }
+        let Some(should_try_and_settle) =
+            self.unsettled_transactions.add(UnsettledBlobTransaction {
+                identity: tx.identity.clone(),
+                parent_dp_hash,
+                hash: tx_hash.clone(),
+                tx_context,
+                blobs_hash,
+                blobs,
+            })
+        else {
+            return Ok(BlobTxHandled::Duplicate);
+        };
 
         if self.unsettled_transactions.is_next_to_settle(&blob_tx_hash) {
             let block_height = self.current_height;
@@ -712,6 +685,7 @@ impl NodeState {
             }
         } else {
             Self::settle_blobs_recursively(
+                unsettled_tx,
                 &self.contracts,
                 SettlementStatus::TryingToSettle,
                 updated_contracts,
@@ -762,6 +736,7 @@ impl NodeState {
     }
 
     fn settle_blobs_recursively<'a>(
+        unsettled_tx: &UnsettledBlobTransaction,
         contracts: &HashMap<ContractName, Contract>,
         mut settlement_status: SettlementStatus,
         mut contract_changes: BTreeMap<ContractName, ModifiedContractData>,
@@ -819,129 +794,43 @@ impl NodeState {
 
         let contract_name = &current_blob.blob.contract_name;
 
+        // Execute blob that needs onchain execution
+        match Self::process_blob_on_chain_execution(
+            unsettled_tx,
+            contracts,
+            &mut contract_changes,
+            current_blob,
+            &settlement_status,
+        ) {
+            BlobProcessingResult::NotApplicable => {
+                // This isn't a blob that needs onchain execution. Continue with normal processing
+            }
+            BlobProcessingResult::Success => {
+                tracing::trace!("OnChainExecution Settlement - OK");
+                return Self::settle_blobs_recursively(
+                    unsettled_tx,
+                    contracts,
+                    settlement_status.clone(),
+                    contract_changes,
+                    blob_iter.clone(),
+                    blob_proof_output_indices.clone(),
+                    events,
+                );
+            }
+            BlobProcessingResult::ProvenFailure(msg) => {
+                // Fatal error - settle as failed immediately
+                let msg = format!("On-chain execution failed: {msg}");
+                debug!("{msg}");
+                events.push(TransactionStateEvent::SettleEvent(msg));
+                return SettlementResult {
+                    settlement_status: SettlementStatus::SettleAsFailed,
+                    contract_changes,
+                    blob_proof_output_indices,
+                };
+            }
+        };
+
         blob_proof_output_indices.push(0);
-
-        // TODO: this part is actually equivalent to on-chain execution. ("hyle" contract + Register/Update/Delete part)
-        // This need to be written in a more clear/readable way; that includes NativeVerifier execution
-
-        // Super special case - the hyle contract has "synthetic proofs".
-        // We need to check the current state of 'current_contracts' to check validity,
-        // so we really can't do this before we've settled the earlier blobs.
-        if contract_name.0 == "hyle" {
-            tracing::trace!("Settlement - processing for Hyle");
-            return match handle_blob_for_hyle_tld(
-                contracts,
-                &mut contract_changes,
-                &current_blob.blob,
-            ) {
-                Ok(()) => {
-                    tracing::trace!("Settlement - OK side effect");
-                    Self::settle_blobs_recursively(
-                        contracts,
-                        settlement_status,
-                        contract_changes,
-                        blob_iter.clone(),
-                        blob_proof_output_indices.clone(),
-                        events,
-                    )
-                }
-                Err(err) => {
-                    // We have a valid proof of failure, we short-circuit.
-                    let msg = format!("Could not settle blob proof output for 'hyle': {err:?}");
-                    debug!("{msg}");
-                    events.push(TransactionStateEvent::SettleEvent(msg));
-                    SettlementResult {
-                        settlement_status: SettlementStatus::SettleAsFailed,
-                        contract_changes,
-                        blob_proof_output_indices,
-                    }
-                }
-            };
-        }
-
-        tracing::trace!(
-            "settling blob on contract {contract_name:?} is in state {:?}",
-            contract_changes
-                .get_mut(contract_name)
-                .map(|(status, _, _)| status)
-        );
-        if let Some((current_status, _, se)) = contract_changes.get_mut(contract_name) {
-            // Special case for contract registration
-            // Two case scenario:
-            // 1. The contract is created with metadata, so we expect the next blob to be a constructor blob.
-            // 2. The contract is created without metadata, so we expect the next blob to be a regular blob.
-            // Here we handle case 1.
-            if let ContractStatus::RegisterWithConstructor(created_contract) = current_status {
-                // current_blob is considered as constructor blob. It does not need to be proven.
-                *current_status = ContractStatus::Updated(created_contract.clone());
-                se.push(SideEffect::Register(Some(current_blob.blob.data.0.clone())));
-
-                tracing::trace!("Registration Settlement - OK blob");
-                return Self::settle_blobs_recursively(
-                    contracts,
-                    settlement_status.clone(),
-                    contract_changes,
-                    blob_iter.clone(),
-                    blob_proof_output_indices.clone(),
-                    events,
-                );
-            }
-            // Special case for contract deletion from TLD
-            if current_status == &mut ContractStatus::WaitingDeletion {
-                if !current_blob.blob.data.0.is_empty() {
-                    // Non-empty blob is not a valid deletion
-                    let msg =
-                    format!("Trying to settle a blob for the deleted contract {contract_name:?} with non-empty data.");
-                    debug!("{msg}");
-                    events.push(TransactionStateEvent::SettleEvent(msg));
-                    return SettlementResult {
-                        settlement_status: SettlementStatus::SettleAsFailed,
-                        contract_changes,
-                        blob_proof_output_indices,
-                    };
-                }
-
-                *current_status = ContractStatus::Deleted;
-                se.push(SideEffect::Delete);
-
-                tracing::trace!("Deletion Settlement - OK blob");
-                return Self::settle_blobs_recursively(
-                    contracts,
-                    settlement_status.clone(),
-                    contract_changes,
-                    blob_iter.clone(),
-                    blob_proof_output_indices.clone(),
-                    events,
-                );
-            }
-            // Special case for contract deletion
-            if current_status == &mut ContractStatus::Deleted {
-                let msg =
-                    format!("Trying to settle a blob for a deleted contract {contract_name:?}");
-                debug!("{msg}");
-                events.push(TransactionStateEvent::SettleEvent(msg));
-                return SettlementResult {
-                    settlement_status: SettlementStatus::SettleAsFailed,
-                    contract_changes,
-                    blob_proof_output_indices,
-                };
-            }
-        } else if !contracts.contains_key(contract_name) {
-            // Now processing a blob for a contract that is not registered yet
-            // if all previous blobs have been proven (i.e. setttlement status still at TryingToSettle)
-            // and none of them generate an OnChainEffect, Tx should fail
-            if settlement_status == SettlementStatus::TryingToSettle {
-                let msg =
-                    format!("Trying to settle a blob for an unknown and unregistered contract {contract_name:?}");
-                debug!("{msg}");
-                events.push(TransactionStateEvent::SettleEvent(msg));
-                return SettlementResult {
-                    settlement_status: SettlementStatus::SettleAsFailed,
-                    contract_changes,
-                    blob_proof_output_indices,
-                };
-            }
-        }
 
         // Regular case: go through each proof for this blob. If they settle, carry on recursively.
         for (i, proof_metadata) in current_blob.possible_proofs.iter().enumerate() {
@@ -962,6 +851,7 @@ impl NodeState {
                 ProofProcessingResult::Success => {
                     tracing::trace!("Settlement - OK blob");
                     let settlement_result = Self::settle_blobs_recursively(
+                        unsettled_tx,
                         contracts,
                         settlement_status.clone(),
                         current_contracts,
@@ -1018,8 +908,9 @@ impl NodeState {
             ));
 
         let remaining_settlement = Self::settle_blobs_recursively(
+            unsettled_tx,
             contracts,
-            settlement_status,
+            SettlementStatus::NotReadyToSettle,
             contract_changes.clone(),
             blob_iter,
             blob_proof_output_indices.clone(),
@@ -1033,7 +924,7 @@ impl NodeState {
 
         // If we end up here, the TX isn't ready yet.
         SettlementResult {
-            settlement_status: SettlementStatus::NotReadyToSettle,
+            settlement_status: remaining_settlement.settlement_status,
             contract_changes,
             blob_proof_output_indices,
         }
@@ -1345,6 +1236,116 @@ impl NodeState {
                 ))
             })?;
         Ok(contract)
+    }
+
+    // Called when trying to execute on-chain a blob
+    fn process_blob_on_chain_execution(
+        unsettled_tx: &UnsettledBlobTransaction,
+        contracts: &HashMap<ContractName, Contract>,
+        contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
+        current_blob: &UnsettledBlobMetadata,
+        settlement_status: &SettlementStatus,
+    ) -> BlobProcessingResult {
+        let contract_name = &current_blob.blob.contract_name;
+
+        // Handle native verifiers
+        if let Some(contract) = contracts.get(contract_name) {
+            if let Ok(verifier) = TryInto::<NativeVerifiers>::try_into(&contract.verifier) {
+                tracing::trace!(
+                    "Processing native verifier blob for contract {}",
+                    contract_name
+                );
+
+                let (identity, success) = match verify_native_impl(&current_blob.blob, &verifier) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return BlobProcessingResult::ProvenFailure(format!(
+                            "Native blob verification failed: {:?}",
+                            e
+                        ));
+                    }
+                };
+
+                // Identity verification
+                if unsettled_tx.identity != identity {
+                    return BlobProcessingResult::ProvenFailure(format!(
+                        "NativeVerifier identity '{}' does not correspond to BlobTx identity '{}'.",
+                        identity, unsettled_tx.identity,
+                    ));
+                }
+
+                if !success {
+                    return BlobProcessingResult::ProvenFailure(
+                        "Native verifier execution failed".to_string(),
+                    );
+                }
+
+                tracing::trace!("NativeVerifier Settlement - OK blob");
+                // Native verifiers don't change state, so we return success without updating contract_changes
+                return BlobProcessingResult::Success;
+            }
+        }
+
+        // Handle special contract operations for the "hyle" contract
+        // We need to check the current state of 'current_contracts' to check validity,
+        // so we really can't do this before we've settled the earlier blobs.
+        if contract_name.0 == "hyle" {
+            tracing::trace!("Settlement - processing for Hyle");
+            return match handle_blob_for_hyle_tld(contracts, contract_changes, &current_blob.blob) {
+                Ok(()) => BlobProcessingResult::Success,
+                Err(err) => {
+                    // We have a valid proof of failure, we short-circuit.
+                    BlobProcessingResult::ProvenFailure(format!(
+                        "Could not settle blob proof output for 'hyle': {err:?}"
+                    ))
+                }
+            };
+        }
+
+        if let Some((current_status, _, se)) = contract_changes.get_mut(contract_name) {
+            // Special case for contract registration
+            // Two case scenario:
+            // 1. The contract is created with metadata, so we expect the next blob to be a constructor blob.
+            // 2. The contract is created without metadata, so we expect the next blob to be a regular blob.
+            // Here we handle case 1.
+            if let ContractStatus::RegisterWithConstructor(created_contract) = current_status {
+                // current_blob is considered as constructor blob. It does not need to be proven.
+                *current_status = ContractStatus::Updated(created_contract.clone());
+                se.push(SideEffect::Register(Some(current_blob.blob.data.0.clone())));
+
+                tracing::trace!("Registration Settlement - OK blob");
+                return BlobProcessingResult::Success;
+            }
+            // Special case for contract deletion from TLD
+            if current_status == &mut ContractStatus::WaitingDeletion {
+                if !current_blob.blob.data.0.is_empty() {
+                    // Non-empty blob is not a valid deletion
+                    return BlobProcessingResult::ProvenFailure(format!("Trying to settle a blob for the deleted contract {contract_name:?} with non-empty data."));
+                }
+
+                *current_status = ContractStatus::Deleted;
+                se.push(SideEffect::Delete);
+
+                tracing::trace!("Deletion Settlement - OK blob");
+                return BlobProcessingResult::Success;
+            }
+            // Special case for contract deletion
+            if current_status == &mut ContractStatus::Deleted {
+                return BlobProcessingResult::ProvenFailure(format!(
+                    "Trying to settle a blob for a deleted contract {contract_name:?}"
+                ));
+            }
+        } else if !contracts.contains_key(contract_name) {
+            // Now processing a blob for a contract that is not registered yet
+            // if all previous blobs have been proven (i.e. setttlement status still at TryingToSettle)
+            // and none of them generate an OnChainEffect, Tx should fail
+            if settlement_status == &SettlementStatus::TryingToSettle {
+                return BlobProcessingResult::ProvenFailure(format!("Trying to settle a blob for an unknown and unregistered contract {contract_name:?}"));
+            }
+        }
+
+        // Default case: no special processing needed
+        BlobProcessingResult::NotApplicable
     }
 
     // Called when trying to actually settle a blob TX - processes a proof for settlement.
