@@ -9,7 +9,10 @@ use tracing::{debug, error, info, trace, warn};
 use crate::{
     bus::{BusClientSender, SharedMessageBus},
     modules::{data_availability::blocks_fjall::Blocks, module_bus_client, Module},
-    node_state::{metrics::NodeStateMetrics, module::NodeStateEvent, NodeState, NodeStateStore},
+    node_state::{
+        metrics::NodeStateMetrics, module::NodeStateEvent, BlockNodeStateCallback, NodeState,
+        NodeStateStore,
+    },
     utils::da_codec::{DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest},
 };
 use crate::{log_error, module_handle_messages};
@@ -52,6 +55,7 @@ impl Module for DAListener {
         let node_state = NodeState {
             store: node_state_store,
             metrics: NodeStateMetrics::global("da_listener".to_string(), "da_listener"),
+            callback: Box::new(BlockNodeStateCallback::new()),
         };
 
         // Annoying edge case: on startup this will be 0, but we do want to process block 0.
