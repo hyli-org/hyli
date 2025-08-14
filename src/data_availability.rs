@@ -303,7 +303,7 @@ impl DaCatchupper {
                             std::cmp::max(old_last_processed_height, last_processed_height);
                         DaCatchupStatus::Catchup {
                             task: self
-                                .start_task(last_processed_height, None, sender.clone())
+                                .start_task(max_height, None, sender.clone())
                                 .await
                                 .context("Restarting catchup task")?,
                             last_processed_height: max_height,
