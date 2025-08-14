@@ -4,9 +4,10 @@ use super::metrics::NodeStateMetrics;
 use super::{NodeState, NodeStateStore};
 use crate::bus::SharedMessageBus;
 use crate::bus::{command_response::Query, BusClientSender};
-use crate::log_error;
 use crate::module_handle_messages;
+use crate::modules::admin::{QueryNodeStateStore, QueryNodeStateStoreResponse};
 use crate::modules::{module_bus_client, Module, SharedBuildApiCtx};
+use crate::{log_error, log_warn};
 use anyhow::Result;
 use sdk::*;
 use std::path::PathBuf;
@@ -46,6 +47,7 @@ pub struct NodeStateBusClient {
     receiver(Query<QueryUnsettledTxCount, u64>),
     receiver(Query<QueryBlockHeight , BlockHeight>),
     receiver(Query<QueryUnsettledTx, UnsettledBlobTransaction>),
+    receiver(Query<QueryNodeStateStore, QueryNodeStateStoreResponse>),
 }
 }
 
@@ -120,14 +122,18 @@ impl Module for NodeStateModule {
                     None => Err(anyhow::anyhow!("Transaction not found")),
                 }
             }
+            command_response<QueryNodeStateStore, QueryNodeStateStoreResponse> _ => {
+                serialize_node_state_store(&self.inner.store)
+            }
             listen<DataEvent> block => {
                 match block {
                     DataEvent::OrderedSignedBlock(block) => {
                         // TODO: If we are in a broken state, this will likely kill the node every time.
-                        let node_state_block = self.inner.handle_signed_block(&block)?;
-                        _ = log_error!(self
-                            .bus
-                            .send(NodeStateEvent::NewBlock(Box::new(node_state_block))), "Sending DataEvent while processing SignedBlock");
+                        if let Ok(node_state_block) = log_warn!(self.inner.handle_signed_block(&block), "handling signed block in NodeStateModule") {
+                            _ = log_error!(self
+                                .bus
+                                .send(NodeStateEvent::NewBlock(Box::new(node_state_block))), "Sending DataEvent while processing SignedBlock");
+                        }
                     }
                 }
             }
@@ -145,4 +151,11 @@ impl Module for NodeStateModule {
             "Saving node state"
         )
     }
+}
+
+fn serialize_node_state_store(
+    store: &NodeStateStore,
+) -> anyhow::Result<QueryNodeStateStoreResponse> {
+    let bytes = borsh::to_vec(store)?;
+    Ok(QueryNodeStateStoreResponse(bytes))
 }
