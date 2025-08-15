@@ -98,18 +98,18 @@ impl Drop for RunPg {
 }
 
 fn mask_postgres_uri(uri: &str) -> String {
-    // On cherche le prefix postgres://user:pass@...
+    // Look for the postgres://user:pass@... prefix
     if let Some(start) = uri.find("://") {
         if let Some(at) = uri[start + 3..].find('@') {
             let creds_part = &uri[start + 3..start + 3 + at];
             if let Some(colon) = creds_part.find(':') {
                 let user = &creds_part[..colon];
-                let rest = &uri[start + 3 + at..]; // tout après @
+                let rest = &uri[start + 3 + at..]; // everything after @
                 return format!("postgres://{}:{}{}", user, "*****", rest);
             }
         }
     }
-    uri.to_string() // fallback : renvoyer tel quel si pas reconnu
+    uri.to_string() // fallback: return as-is if not recognized
 }
 
 pub fn welcome_message(conf: &conf::Conf) {
