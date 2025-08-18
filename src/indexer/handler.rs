@@ -19,13 +19,14 @@ use tracing::{debug, info, trace};
 
 use super::Indexer;
 
+const MAX_SQL_PARAMS: usize = 65000; // PostgreSQL parameter limit with security margin
+
 fn calculate_optimal_batch_size(params_per_item: usize) -> usize {
-    let max_params: usize = 65000; // Security margin
     if params_per_item == 0 {
         return 1;
     }
 
-    let optimal_size = max_params / params_per_item;
+    let optimal_size = MAX_SQL_PARAMS / params_per_item;
     // Assert there is at least 1 elem per batch
     std::cmp::max(1, optimal_size)
 }
