@@ -808,7 +808,7 @@ impl Consensus {
                 Ok(self.bft_round_state.staking.clone())
             }
             _ = timeout_ticker.tick() => {
-                log_error!(self.bus.send(ConsensusCommand::TimeoutTick), "Cannot send message over channel")?;
+                _ = log_error!(self.bus.send(ConsensusCommand::TimeoutTick), "Cannot send message over channel");
             }
         };
 
@@ -1757,11 +1757,6 @@ pub mod test {
         node2.handle_msg_err(&prepare_msg).await;
         node4.handle_msg_err(&prepare_msg).await;
     }
-
-    // TODO:
-    // - fake Prepare
-    // - Wrong leader
-    // - Cut is valid
 
     #[test_log::test(tokio::test)]
     async fn test_candidacy() {

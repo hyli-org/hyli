@@ -172,11 +172,10 @@ impl Consensus {
 
                 self.broadcast_net_message((timeout, kind).into())?;
 
-                self.store
-                    .bft_round_state
-                    .timeout
-                    .state
-                    .schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
+                self.store.bft_round_state.timeout.state.schedule_next(
+                    TimestampMsClock::now(),
+                    self.config.consensus.timeout_after / 2,
+                );
 
                 Ok(())
             }
@@ -870,6 +869,38 @@ mod tests {
         assert_eq!(cp.slot, 1);
         assert_eq!(cp_view, 1);
         assert_eq!(cp.parent_hash, ConsensusProposalHash("genesis".into()));
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_timeout_rebroadcast() {
+        let (mut node1, _node2, mut node3, mut node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        ConsensusTestCtx::timeout(&mut [&mut node3]).await;
+
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node3, to: [],
+            message_matches: ConsensusNetMessage::Timeout((signed_slot_view, _)) => {
+                assert_eq!(signed_slot_view.msg.0, 1);
+                assert_eq!(signed_slot_view.msg.1, 0);
+            }
+        };
+
+        ConsensusTestCtx::timeout(&mut [&mut node3]).await;
+
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node3, to: [],
+            message_matches: ConsensusNetMessage::Timeout((signed_slot_view, _)) => {
+                assert_eq!(signed_slot_view.msg.0, 1);
+                assert_eq!(signed_slot_view.msg.1, 0);
+            }
+        };
     }
 
     #[test_log::test(tokio::test)]
