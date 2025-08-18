@@ -33,6 +33,62 @@ struct CSIBusClient<E: Clone + Send + Sync + BusMessage + 'static> {
 }
 }
 
+// This macro is used to generate a composite module of contract state indexers. Each field of the struct is a separate contract state indexer module.
+#[macro_export]
+macro_rules! compose_csi_module {
+    (struct $composite_struct_name:ident { $($name:ident: $state:ty, $event:ty),* $(,)? }) => {
+        pub struct $composite_struct_name {
+            $(
+                 pub $name: $crate::modules::contract_state_indexer::ContractStateIndexer<$state, $event>,
+            )*
+        }
+
+        impl $composite_struct_name {
+            pub async fn handle_processed_block(&mut self, block: &hyle_model::Block) -> Result<()> {
+                $(
+                    _ = $crate::log_error!(self.$name.handle_processed_block(block).await, "Handling block for {}", stringify!($name));
+                )*
+                Ok(())
+            }
+            pub fn new($($name: $crate::modules::contract_state_indexer::ContractStateIndexer<$state, $event>),*) -> Self {
+                Self {
+                    $(
+                         $name,
+                    )*
+                }
+            }
+        }
+        impl $crate::modules::Module for $composite_struct_name {
+            type Context = (std::path::PathBuf, $crate::modules::SharedBuildApiCtx);
+            async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
+                Ok(Self {
+                    $(
+                         $name: $crate::modules::contract_state_indexer::ContractStateIndexer::<$state, $event>::build(
+                             bus.new_handle(),
+                             $crate::modules::contract_state_indexer::ContractStateIndexerCtx {
+                                 data_directory: ctx.0.clone(),
+                                 contract_name: hyle_model::ContractName::from(stringify!($name)),
+                                 api: ctx.1.clone(),
+                             }
+                         ).await?,
+                    )*
+                })
+            }
+            async fn run(&mut self) -> Result<()> {
+                Ok(())
+            }
+            async fn persist(&mut self) -> Result<()> {
+                $(
+                     self.$name.persist().await?;
+                )*
+                Ok(())
+            }
+        }
+    };
+}
+
+pub use compose_csi_module;
+
 pub struct ContractStateIndexer<State, Event: Clone + Send + Sync + BusMessage + 'static = ()> {
     bus: CSIBusClient<Event>,
     store: Arc<RwLock<ContractStateStore<State>>>,
@@ -40,6 +96,7 @@ pub struct ContractStateIndexer<State, Event: Clone + Send + Sync + BusMessage +
     file: PathBuf,
 }
 
+#[derive(Clone)]
 pub struct ContractStateIndexerCtx {
     pub data_directory: PathBuf,
     pub contract_name: ContractName,
@@ -148,7 +205,7 @@ where
     /// coming from node state.
     async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<(), Error> {
         let NodeStateEvent::NewBlock(block) = event;
-        self.handle_processed_block(*block).await?;
+        self.handle_processed_block(&*block).await?;
 
         Ok(())
     }
@@ -211,7 +268,7 @@ where
         &tx.0 .1
     }
 
-    async fn handle_processed_block(&mut self, block: Block) -> Result<()> {
+    pub async fn handle_processed_block(&mut self, block: &Block) -> Result<()> {
         for (_, contract, metadata) in block.registered_contracts.values() {
             if self.contract_name == contract.contract_name {
                 self.handle_register_contract(contract, metadata).await?;

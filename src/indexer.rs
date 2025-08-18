@@ -13,6 +13,7 @@ use anyhow::{Context, Result};
 use handler::IndexerHandlerStore;
 use hyle_model::utils::TimestampMs;
 use hyle_modules::bus::BusClientSender;
+use hyle_modules::compose_csi_module;
 use hyle_modules::modules::gcs_uploader::GCSRequest;
 use hyle_modules::node_state::module::NodeStateModule;
 use hyle_modules::node_state::{NodeState, NodeStateStore};
@@ -35,10 +36,22 @@ struct IndexerBusClient {
 }
 }
 
+compose_csi_module! {
+    struct CSIs {
+        hyllar: hyllar::Hyllar, (),
+        hyllar2: hyllar::Hyllar, (),
+        hydentity: hydentity::Hydentity, (),
+        oranj: smt_token::account::AccountSMT, (),
+        oxygen: smt_token::account::AccountSMT, (),
+        vitamin: smt_token::account::AccountSMT, (),
+    }
+}
+
 pub struct Indexer {
     bus: IndexerBusClient,
     db: PgPool,
     node_state: NodeState,
+    csis: CSIs,
     handler_store: IndexerHandlerStore,
     conf: Conf,
 }
@@ -48,8 +61,8 @@ pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/indexer/mig
 impl Module for Indexer {
     type Context = (SharedConf, SharedBuildApiCtx);
 
-    async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let bus = IndexerBusClient::new_from_bus(bus.new_handle()).await;
+    async fn build(shared_bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
+        let bus = IndexerBusClient::new_from_bus(shared_bus.new_handle()).await;
 
         let pool = PgPoolOptions::new()
             .max_connections(20)
@@ -74,6 +87,11 @@ impl Module for Indexer {
             bus,
             db: pool,
             node_state,
+            csis: CSIs::build(
+                shared_bus.new_handle(),
+                (conf.data_directory.clone(), ctx.1.clone()),
+            )
+            .await?,
             handler_store: IndexerHandlerStore::default(),
             conf,
         };
@@ -86,6 +104,8 @@ impl Module for Indexer {
     }
 
     async fn persist(&mut self) -> Result<()> {
+        _ = log_error!(self.csis.persist().await, "Persisting CSIs state");
+
         NodeStateModule::save_on_disk(
             &self.conf.data_directory.join("indexer_node_state.bin"),
             &self.node_state.store,
@@ -119,7 +139,8 @@ impl Indexer {
                 self.empty_store()
             },
             listen<DataEvent> DataEvent::OrderedSignedBlock(signed_block) => {
-                let block = self.node_state.handle_signed_block(&signed_block)
+                let block = self.node_state.handle_signed_block(&signed_block)?;
+                self.csis.handle_processed_block(&block).await
                     .context("Failed to handle block in node state")?;
                 _ = log_error!(self.handle_node_state_block(block)
                     .await,
@@ -232,7 +253,12 @@ mod test {
                 bus: IndexerBusClient::new_from_bus(bus.new_handle()).await,
                 db: pool.clone(),
                 node_state: NodeState::create("indexer".to_string(), "indexer"),
-
+                csis: CSIs::build(
+                    bus.new_handle(),
+                    (conf.data_directory.clone(), SharedBuildApiCtx::default()),
+                )
+                .await
+                .expect("Failed to build CSIs"),
                 handler_store: IndexerHandlerStore::default(),
                 conf,
             },

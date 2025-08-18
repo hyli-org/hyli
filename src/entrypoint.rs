@@ -21,13 +21,11 @@ use crate::{
 };
 use anyhow::{bail, Context, Result};
 use axum::Router;
-use hydentity::Hydentity;
 use hyle_crypto::SharedBlstCrypto;
 use hyle_modules::{
     modules::{
         admin::{AdminApi, AdminApiRunContext},
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
-        contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::DAListenerConf,
         gcs_uploader::{GcsUploader, GcsUploaderCtx},
         signed_da_listener::SignedDAListener,
@@ -36,9 +34,7 @@ use hyle_modules::{
     },
     node_state::module::NodeStateCtx,
 };
-use hyllar::Hyllar;
 use prometheus::Registry;
-use smt_token::account::AccountSMT;
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -265,48 +261,6 @@ async fn common_main(
                 .await?;
         }
 
-        handler
-            .build_module::<ContractStateIndexer<Hyllar>>(ContractStateIndexerCtx {
-                contract_name: "hyllar".into(),
-                data_directory: config.data_directory.clone(),
-                api: build_api_ctx.clone(),
-            })
-            .await?;
-        handler
-            .build_module::<ContractStateIndexer<Hyllar>>(ContractStateIndexerCtx {
-                contract_name: "hyllar2".into(),
-                data_directory: config.data_directory.clone(),
-                api: build_api_ctx.clone(),
-            })
-            .await?;
-        handler
-            .build_module::<ContractStateIndexer<Hydentity>>(ContractStateIndexerCtx {
-                contract_name: "hydentity".into(),
-                data_directory: config.data_directory.clone(),
-                api: build_api_ctx.clone(),
-            })
-            .await?;
-        handler
-            .build_module::<ContractStateIndexer<AccountSMT>>(ContractStateIndexerCtx {
-                contract_name: "oranj".into(),
-                data_directory: config.data_directory.clone(),
-                api: build_api_ctx.clone(),
-            })
-            .await?;
-        handler
-            .build_module::<ContractStateIndexer<AccountSMT>>(ContractStateIndexerCtx {
-                contract_name: "oxygen".into(),
-                data_directory: config.data_directory.clone(),
-                api: build_api_ctx.clone(),
-            })
-            .await?;
-        handler
-            .build_module::<ContractStateIndexer<AccountSMT>>(ContractStateIndexerCtx {
-                contract_name: "vitamin".into(),
-                data_directory: config.data_directory.clone(),
-                api: build_api_ctx.clone(),
-            })
-            .await?;
         handler
             .build_module::<Indexer>((config.clone(), build_api_ctx.clone()))
             .await?;
