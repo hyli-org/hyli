@@ -873,7 +873,7 @@ mod tests {
 
     #[test_log::test(tokio::test)]
     async fn test_timeout_rebroadcast() {
-        let (mut node1, _node2, mut node3, mut node4): (
+        let (_node1, _node2, mut node3, _node4): (
             ConsensusTestCtx,
             ConsensusTestCtx,
             ConsensusTestCtx,
