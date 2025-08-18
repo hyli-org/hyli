@@ -21,14 +21,11 @@ use crate::{
 };
 use anyhow::{bail, Context, Result};
 use axum::Router;
-use hydentity::Hydentity;
 use hyle_crypto::SharedBlstCrypto;
 use hyle_modules::{
-    compose_csi_module,
     modules::{
         admin::{AdminApi, AdminApiRunContext},
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
-        contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::DAListenerConf,
         gcs_uploader::{GcsUploader, GcsUploaderCtx},
         signed_da_listener::SignedDAListener,
@@ -37,9 +34,7 @@ use hyle_modules::{
     },
     node_state::module::NodeStateCtx,
 };
-use hyllar::Hyllar;
 use prometheus::Registry;
-use smt_token::account::AccountSMT;
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -265,21 +260,6 @@ async fn common_main(
                 })
                 .await?;
         }
-
-        compose_csi_module! {
-            struct CSIs {
-                hyllar: Hyllar, (),
-                hyllar2: Hyllar, (),
-                hydentity: Hydentity, (),
-                oranj: AccountSMT, (),
-                oxygen: AccountSMT, (),
-                vitamin: AccountSMT, (),
-            }
-        }
-
-        handler
-            .build_module::<CSIs>((config.data_directory.clone(), build_api_ctx.clone()))
-            .await?;
 
         handler
             .build_module::<Indexer>((config.clone(), build_api_ctx.clone()))
