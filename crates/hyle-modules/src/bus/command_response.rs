@@ -242,7 +242,7 @@ macro_rules! handle_messages {
         let [<branch_ $index>] = [opentelemetry::KeyValue::new("branch", stringify!($fut2))];
         $crate::handle_messages! {
             $(processed $bind = $fut $(, if $cond)? => $handle,)*
-            processed $bind2 = $fut2 $(if $cond2)? => {
+            processed $bind2 = $fut2 $(, if $cond2)? => {
                 let _latency = $crate::utils::profiling::LatencyTimer::new(&$metrics, &[<branch_ $index>]);
                 $handler
             },
