@@ -33,6 +33,46 @@ struct CSIBusClient<E: Clone + Send + Sync + BusMessage + 'static> {
 }
 }
 
+// This macro is used to generate a composite module of contract state indexers. Each field of the struct is a separate contract state indexer module.
+#[macro_export]
+macro_rules! compose_csi_module {
+    (struct $composite_struct_name:ident { $($name:ident: $state:ty, $event:ty),* $(,)? }) => {
+        pub struct $composite_struct_name {
+            $(
+                 pub $name: ContractStateIndexer<$state, $event>,
+            )*
+        }
+        impl $crate::modules::Module for $composite_struct_name {
+            type Context = (PathBuf, hyle_modules::modules::SharedBuildApiCtx);
+            async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
+                Ok(Self {
+                    $(
+                         $name: ContractStateIndexer::<$state, $event>::build(
+                             bus.new_handle(),
+                             ContractStateIndexerCtx {
+                                 data_directory: ctx.0.clone(),
+                                 contract_name: hyle_model::ContractName::from(stringify!($name)),
+                                 api: ctx.1.clone(),
+                             }
+                         ).await?,
+                    )*
+                })
+            }
+            async fn run(&mut self) -> Result<()> {
+                Ok(())
+            }
+            async fn persist(&mut self) -> Result<()> {
+                $(
+                     self.$name.persist().await?;
+                )*
+                Ok(())
+            }
+        }
+    };
+}
+
+pub use compose_csi_module;
+
 pub struct ContractStateIndexer<State, Event: Clone + Send + Sync + BusMessage + 'static = ()> {
     bus: CSIBusClient<Event>,
     store: Arc<RwLock<ContractStateStore<State>>>,
@@ -40,6 +80,7 @@ pub struct ContractStateIndexer<State, Event: Clone + Send + Sync + BusMessage +
     file: PathBuf,
 }
 
+#[derive(Clone)]
 pub struct ContractStateIndexerCtx {
     pub data_directory: PathBuf,
     pub contract_name: ContractName,
