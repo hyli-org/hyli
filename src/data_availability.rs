@@ -46,9 +46,12 @@ impl Module for DataAvailability {
             None
         } else {
             Some(DaCatchupPolicy {
-                floor: ctx
-                    .node_state_override
-                    .map(|node_state| node_state.current_height + 1),
+                floor: if ctx.config.run_fast_catchup {
+                    ctx.node_state_override
+                        .map(|node_state| node_state.current_height + 1)
+                } else {
+                    None
+                },
                 backfill: ctx.config.fast_catchup_backfill,
             })
         };
@@ -111,7 +114,7 @@ struct DaCatchupPolicy {
 #[derive(Debug, Default)]
 struct DaCatchupper {
     policy: Option<DaCatchupPolicy>,
-    status: Option<(tokio::task::JoinHandle<()>, BlockHeight)>,
+    status: Option<(tokio::task::JoinHandle<anyhow::Result<()>>, BlockHeight)>,
     pub peers: Vec<String>,
     pub stop_height: Option<BlockHeight>,
     da_max_frame_length: usize,
@@ -147,7 +150,7 @@ impl DaCatchupper {
         self.peers.choose(&mut rand::thread_rng()).cloned()
     }
 
-    pub async fn init_catchup(
+    pub fn init_catchup(
         &mut self,
         from_height: BlockHeight,
         sender: &tokio::sync::mpsc::Sender<SignedBlock>,
@@ -161,11 +164,11 @@ impl DaCatchupper {
             start_height = *floor;
         }
 
-        self.catchup_from(start_height, sender).await
+        self.catchup_from(start_height, sender)
     }
 
     /// Start catchup workflow based on the current policy
-    pub async fn catchup_from(
+    pub fn catchup_from(
         &mut self,
         from_height: BlockHeight,
         sender: &tokio::sync::mpsc::Sender<SignedBlock>,
@@ -196,9 +199,7 @@ impl DaCatchupper {
         );
 
         self.status = Some((
-            Self::start_task(peer, self.da_max_frame_length, from_height, sender.clone())
-                .await
-                .context("Starting catchup task")?,
+            Self::start_task(peer, self.da_max_frame_length, from_height, sender.clone()),
             from_height,
         ));
 
@@ -206,7 +207,7 @@ impl DaCatchupper {
     }
 
     /// Try transition the catchup state based on the current status and policy.    
-    pub async fn manage_catchup(
+    pub fn manage_catchup(
         &mut self,
         processed_height: BlockHeight,
         sender: &tokio::sync::mpsc::Sender<SignedBlock>,
@@ -233,7 +234,7 @@ impl DaCatchupper {
                     policy.floor
                 );
 
-                self.catchup_from(BlockHeight(0), sender).await?;
+                self.catchup_from(BlockHeight(0), sender)?;
             } else {
                 trace!("Catchup is already done");
             }
@@ -257,9 +258,7 @@ impl DaCatchupper {
             );
             let from = processed_height.max(*old_height);
 
-            let new_task = Self::start_task(peer, self.da_max_frame_length, from, sender.clone())
-                .await
-                .context("Restarting catchup task")?;
+            let new_task = Self::start_task(peer, self.da_max_frame_length, from, sender.clone());
             *task = new_task;
             *old_height = from;
         } else {
@@ -273,28 +272,30 @@ impl DaCatchupper {
         Ok(())
     }
 
-    async fn start_task(
+    fn start_task(
         peer: String,
         da_max_frame_length: usize,
         start_height: BlockHeight,
         sender: tokio::sync::mpsc::Sender<SignedBlock>,
-    ) -> anyhow::Result<JoinHandle<()>> {
+    ) -> JoinHandle<anyhow::Result<()>> {
         info!(
             "Starting catchup from height {} on peer {}",
             start_height, peer
         );
 
-        let mut client = DataAvailabilityClient::connect_with_opts(
-            "catchupper".to_string(),
-            Some(da_max_frame_length),
-            peer,
-        )
-        .await
-        .context("Error occurred setting up the DA listener")?;
+        tokio::spawn(async move {
+            let mut client = log_error!(
+                DataAvailabilityClient::connect_with_opts(
+                    "catchupper".to_string(),
+                    Some(da_max_frame_length),
+                    peer,
+                )
+                .await,
+                "Error occurred setting up the DA listener"
+            )?;
 
-        client.send(DataAvailabilityRequest(start_height)).await?;
+            client.send(DataAvailabilityRequest(start_height)).await?;
 
-        Ok(tokio::spawn(async move {
             let timeout_duration = std::env::var("HYLE_DA_SLEEP_TIMEOUT")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
@@ -337,7 +338,8 @@ impl DaCatchupper {
                     }
                 }
             }
-        }))
+            Ok(())
+        })
     }
 }
 
@@ -388,7 +390,7 @@ impl DataAvailability {
                         self.catchupper.init_catchup(
                             self.blocks.highest(),
                             &catchup_block_sender,
-                        ).await,
+                        ),
                         "Init catchup on new peer"
                     );
                 }
@@ -401,19 +403,19 @@ impl DataAvailability {
                     self.catchupper.init_catchup(
                         self.blocks.highest(),
                         &catchup_block_sender,
-                    ).await,
+                    ),
                     "Init catchup on new peer"
                 );
             }
 
             _ = catchup_task_checker_ticker.tick()/*, if self.catchupper.need_to_tick()*/ => {
                 let highest_block = self.blocks.highest();
-                _ = log_error!(self.catchupper.manage_catchup(highest_block, &catchup_block_sender).await, "Catchup transition after tick");
+                _ = log_error!(self.catchupper.manage_catchup(highest_block, &catchup_block_sender), "Catchup transition after tick");
             }
 
             Some(streamed_block) = catchup_block_receiver.recv() => {
                 if let Some(height) = self.handle_signed_block(streamed_block, &mut server).await {
-                    _ = log_error!(self.catchupper.manage_catchup(height, &catchup_block_sender).await, "Catchup transition after streamed block");
+                    _ = log_error!(self.catchupper.manage_catchup(height, &catchup_block_sender), "Catchup transition after streamed block");
                 }
             }
 
@@ -495,7 +497,7 @@ impl DataAvailability {
                     signed_block.height()
                 );
                 if let Some(height) = self.handle_signed_block(signed_block, tcp_server).await {
-                    self.catchupper.manage_catchup(height, sender).await?;
+                    self.catchupper.manage_catchup(height, sender)?;
                 }
             }
             MempoolBlockEvent::StartedBuildingBlocks(height) => {
@@ -729,6 +731,7 @@ pub mod tests {
 
     use super::Blocks;
     use super::{module_bus_client, DaTcpServer};
+    use crate::data_availability::DaCatchupPolicy;
     use crate::node_state::NodeState;
     use crate::{
         bus::BusClientSender,
@@ -995,6 +998,11 @@ pub mod tests {
             crate::bus::metrics::BusMetrics::global("global".to_string()),
         );
         let mut da_receiver = DataAvailabilityTestCtx::new(receiver_global_bus).await;
+        da_receiver.da.catchupper.policy = Some(DaCatchupPolicy {
+            floor: None,
+            backfill: false,
+        });
+        da_receiver.da.catchupper.da_max_frame_length = da_sender.da.config.da_max_frame_length;
 
         // Push some blocks to the sender
         let mut block = SignedBlock::default();
@@ -1029,11 +1037,8 @@ pub mod tests {
             .catchupper
             .peers
             .push(da_sender_address.clone());
-        _ = da_receiver
-            .da
-            .catchupper
-            .init_catchup(BlockHeight(0), &tx)
-            .await;
+
+        _ = da_receiver.da.catchupper.catchup_from(BlockHeight(0), &tx);
 
         // Waiting a bit to push the block ten in the middle of all other 1..9 blocks
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -1114,8 +1119,7 @@ pub mod tests {
         da_receiver
             .da
             .catchupper
-            .init_catchup(BlockHeight(0), &tx)
-            .await
+            .init_catchup(BlockHeight(15), &tx)
             .expect("Error while asking for catchup blocks");
 
         let mut received_blocks = vec![];
