@@ -3,7 +3,6 @@
 // Pick one of the two implementations
 use hyle_modules::modules::data_availability::blocks_fjall::Blocks;
 //use hyle_modules::modules::data_availability::blocks_memory::Blocks;
-
 use hyle_modules::node_state::module::NodeStateModule;
 use hyle_modules::node_state::NodeStateStore;
 use hyle_modules::{bus::SharedMessageBus, modules::Module};
@@ -46,35 +45,34 @@ impl Module for DataAvailability {
         // When fast catchup is enabled, we load the node state from disk to load blocks
 
         let catchup_policy = if ctx.config.consensus.solo {
-            DaCatchupPolicy::NoCatchup
-        } else if ctx.config.run_fast_catchup {
-            let floor_height = NodeStateModule::load_from_disk::<NodeStateStore>(
-                &ctx.config.data_directory.join("node_state.bin"),
-            )
-            .map(|ns| ns.current_height + 1);
-
-            DaCatchupPolicy::Fast {
-                floor: floor_height.unwrap_or(BlockHeight(0)),
-                backfill: ctx.config.fast_catchup_backfill,
-            }
+            None
         } else {
-            DaCatchupPolicy::Regular
+            let floor_height = if ctx.config.run_fast_catchup {
+                NodeStateModule::load_from_disk::<NodeStateStore>(
+                    &ctx.config.data_directory.join("node_state.bin"),
+                )
+                .map(|ns| ns.current_height + 1)
+            } else {
+                None
+            };
+
+            Some(DaCatchupPolicy {
+                floor: floor_height,
+                backfill: ctx.config.fast_catchup_backfill,
+            })
         };
 
         let blocks = Blocks::new(&ctx.config.data_directory.join("data_availability.db"))?;
 
-        let highest_height = blocks.highest();
-
         info!(
-            "📦  DataAvailability module started with policy {:?} and highest height {}",
-            catchup_policy, highest_height
+            "📦  DataAvailability module started with policy {:?}",
+            catchup_policy
         );
 
         Ok(DataAvailability {
             config: ctx.config.clone(),
             bus,
             blocks,
-            last_processed_height: highest_height,
             buffered_signed_blocks: BTreeSet::new(),
             catchupper: DaCatchupper::new(catchup_policy, ctx.config.da_max_frame_length),
         })
@@ -106,7 +104,6 @@ pub struct DataAvailability {
     config: SharedConf,
     bus: DABusClient,
     pub blocks: Blocks,
-    pub last_processed_height: BlockHeight,
 
     buffered_signed_blocks: BTreeSet<SignedBlock>,
 
@@ -115,55 +112,26 @@ pub struct DataAvailability {
 
 /// Catchup configuration for the Data Availability module.
 #[derive(Default, Debug)]
-enum DaCatchupPolicy {
-    NoCatchup,
-    #[default]
-    Regular,
-    Fast {
-        floor: BlockHeight,
-        backfill: bool,
-    },
+struct DaCatchupPolicy {
+    floor: Option<BlockHeight>,
+    backfill: bool,
 }
 
-#[derive(Default, Debug)]
-enum DaCatchupStatus {
-    Backfill {
-        interval: [BlockHeight; 2],
-        task: tokio::task::JoinHandle<()>,
-    },
-    Catchup {
-        last_processed_height: BlockHeight,
-        task: tokio::task::JoinHandle<()>,
-    },
-    #[default]
-    Idle,
-}
-
-enum DaCatchupTaskStatus {
-    Done,
-    Running,
-    NeedRestart,
-}
-
-/// Represents the state of the catchup task.
-/// A fast catchup from `from` height is used to quickly catch up to the latest block
 #[derive(Debug, Default)]
 struct DaCatchupper {
-    policy: DaCatchupPolicy,
-    status: DaCatchupStatus,
+    policy: Option<DaCatchupPolicy>,
+    status: Option<(tokio::task::JoinHandle<()>, BlockHeight)>,
     pub peers: Vec<String>,
-    pub backfills: Vec<[BlockHeight; 2]>,
     pub stop_height: Option<BlockHeight>,
     da_max_frame_length: usize,
 }
 
 impl DaCatchupper {
-    pub fn new(policy: DaCatchupPolicy, da_max_frame_length: usize) -> Self {
+    pub fn new(policy: Option<DaCatchupPolicy>, da_max_frame_length: usize) -> Self {
         DaCatchupper {
             policy,
-            status: DaCatchupStatus::Idle,
+            status: None,
             peers: vec![],
-            backfills: vec![],
             da_max_frame_length,
             stop_height: None,
         }
@@ -172,32 +140,15 @@ impl DaCatchupper {
     pub fn is_fast_catchup_initial_block(&self, height: &BlockHeight) -> bool {
         matches!(
             self.policy,
-            DaCatchupPolicy::Fast { floor, .. } if height == &floor
+            Some(DaCatchupPolicy { floor: Some(floor), .. }) if height == &floor
         )
-    }
-
-    /// Check if the given height is within the backfill interval, currently running.
-    pub fn is_backfill_block(&self, height: &BlockHeight) -> bool {
-        matches!(
-           self.status,
-            DaCatchupStatus::Backfill { interval: [lo, hi], .. } if height < &hi && height >= &lo
-        )
-    }
-
-    pub fn need_to_tick(&self) -> bool {
-        matches!(
-            self.status,
-            DaCatchupStatus::Catchup { .. } | DaCatchupStatus::Backfill { .. }
-        ) || !self.backfills.is_empty()
     }
 
     #[cfg(test)]
     pub fn stop_task(&mut self) {
-        if let DaCatchupStatus::Catchup { task, .. } | DaCatchupStatus::Backfill { task, .. } =
-            &mut self.status
-        {
+        if let Some((task, _)) = &mut self.status {
             task.abort();
-            self.status = DaCatchupStatus::Idle;
+            self.status = None;
         }
     }
 
@@ -205,22 +156,41 @@ impl DaCatchupper {
         self.peers.choose(&mut rand::thread_rng()).cloned()
     }
 
-    /// Start catchup workflow based on the current policy
     pub async fn init_catchup(
         &mut self,
-        last_processed_height: BlockHeight,
+        from_height: BlockHeight,
         sender: &tokio::sync::mpsc::Sender<SignedBlock>,
     ) -> anyhow::Result<()> {
-        if !matches!(self.status, DaCatchupStatus::Idle) {
+        let mut start_height = from_height;
+
+        if let Some(DaCatchupPolicy {
+            floor: Some(floor), ..
+        }) = &self.policy
+        {
+            start_height = *floor;
+        }
+
+        self.catchup_from(start_height, sender).await
+    }
+
+    /// Start catchup workflow based on the current policy
+    pub async fn catchup_from(
+        &mut self,
+        from_height: BlockHeight,
+        sender: &tokio::sync::mpsc::Sender<SignedBlock>,
+    ) -> anyhow::Result<()> {
+        if self.policy.is_none() {
+            debug!("No catchup policy set, stopping catchup task");
+            return Ok(());
+        }
+
+        if self.status.is_some() {
             debug!("Catchup is already in progress, no need to start a new task");
             return Ok(());
         }
 
-        if self
-            .stop_height
-            .is_some_and(|height| height <= last_processed_height)
-        {
-            info!("Catchup is already done, no need to start a new task");
+        if self.stop_height.is_some_and(|height| height <= from_height) {
+            debug!("Catchup is already done, no need to start a new task");
             return Ok(());
         }
 
@@ -229,154 +199,84 @@ impl DaCatchupper {
             return Ok(());
         };
 
-        let mut start_height = last_processed_height;
+        debug!(
+            "Starting catchup from height {} to {:?} on peer {}",
+            from_height, self.stop_height, peer
+        );
 
-        if let DaCatchupPolicy::Fast { floor, backfill } = &self.policy {
-            if *backfill {
-                self.backfills.push([start_height, *floor]);
-            }
-            start_height = *floor;
-        }
-
-        self.status = DaCatchupStatus::Catchup {
-            task: Self::start_task(
-                peer,
-                self.da_max_frame_length,
-                start_height,
-                None,
-                sender.clone(),
-            )
-            .await
-            .context("Starting catchup task")?,
-            last_processed_height: start_height,
-        };
+        self.status = Some((
+            Self::start_task(peer, self.da_max_frame_length, from_height, sender.clone())
+                .await
+                .context("Starting catchup task")?,
+            from_height,
+        ));
 
         Ok(())
     }
 
-    /// Check if task is finished and catchup is still needed,
-    /// or start a new one if the catchup is idle.
-    /// -> Some(true) if the task needs to be restarted,
-    /// -> Some(false) if the task is done and catchup is complete,
-    /// -> None if the task is still running.
-    fn catchup_task_status(
-        last_processed_height: BlockHeight,
-        stop_height: Option<BlockHeight>,
-        task: &JoinHandle<()>,
-    ) -> DaCatchupTaskStatus {
-        if stop_height.is_some_and(|height| height <= last_processed_height) {
-            info!(
-                "Catchup task finished, last processed height {}",
-                last_processed_height
-            );
-            task.abort();
-            DaCatchupTaskStatus::Done
-        } else if task.is_finished() {
-            info!(
-                "Catchup task finished, but catchup is not done yet, restarting from height {}",
-                last_processed_height
-            );
-            DaCatchupTaskStatus::NeedRestart
-        } else {
-            debug!(
-                "Catchup task is still running, last processed height {}",
-                last_processed_height
-            );
-            DaCatchupTaskStatus::Running
-        }
-    }
-
     /// Try transition the catchup state based on the current status and policy.    
-    pub async fn try_transition(
+    pub async fn manage_catchup(
         &mut self,
-        last_processed_height: BlockHeight,
+        processed_height: BlockHeight,
         sender: &tokio::sync::mpsc::Sender<SignedBlock>,
     ) -> anyhow::Result<()> {
-        if matches!(self.status, DaCatchupStatus::Idle) && self.backfills.is_empty() {
-            trace!("Catchup is already done");
-            return Ok(());
-        }
         let Some(peer) = self.choose_random_peer() else {
             warn!("No peers available for catchup, cannot proceed");
             return Ok(());
         };
 
-        match &mut self.status {
-            DaCatchupStatus::Idle => {
-                if let Some([lo, hi]) = self.backfills.first().copied() {
-                    // Consomme l’entrée maintenant
-                    let _ = self.backfills.remove(0);
+        let Some(policy) = &mut self.policy else {
+            debug!("No catchup policy set, skipping catchup");
+            return Ok(());
+        };
 
-                    info!("Starting backfill from height {} to {}", lo, hi);
-                    self.stop_height = Some(hi);
+        let Some((task, old_height)) = &mut self.status else {
+            // In case status is None, we check if we need to start a new catchup task up to the floor height
+            if policy.backfill && policy.floor.is_some() {
+                policy.backfill = false; // Disable backfill after the first catchup
+                self.stop_height = policy.floor; // Set stop height to the floor if backfill is enabled
 
-                    let task = Self::start_task(
-                        peer,
-                        self.da_max_frame_length,
-                        lo,
-                        Some(hi),
-                        sender.clone(),
-                    )
-                    .await
-                    .context("Starting backfill task")?;
+                debug!(
+                    "Starting backfill catchup from height {} to {:?}",
+                    BlockHeight(0),
+                    policy.floor
+                );
 
-                    // Ici on change de variant (on ne peut pas modifier in place un Idle en Backfill)
-                    self.status = DaCatchupStatus::Backfill {
-                        interval: [lo, hi],
-                        task,
-                    };
-                }
+                self.catchup_from(BlockHeight(0), sender).await?;
+            } else {
+                trace!("Catchup is already done");
             }
+            return Ok(());
+        };
 
-            DaCatchupStatus::Catchup {
-                task,
-                last_processed_height: old_h,
-            } => match Self::catchup_task_status(last_processed_height, self.stop_height, task) {
-                DaCatchupTaskStatus::Done => {
-                    self.status = DaCatchupStatus::Idle;
-                }
-                DaCatchupTaskStatus::Running => {}
-                DaCatchupTaskStatus::NeedRestart => {
-                    let from = (*old_h).max(last_processed_height);
-                    let new_task = Self::start_task(
-                        peer,
-                        self.da_max_frame_length,
-                        from,
-                        None,
-                        sender.clone(),
-                    )
-                    .await
-                    .context("Restarting catchup task")?;
-                    *task = new_task;
-                    *old_h = from;
-                }
-            },
+        if self
+            .stop_height
+            .is_some_and(|height| height <= processed_height)
+        {
+            info!(
+                "Catchup task finished, last processed height {}",
+                processed_height
+            );
+            task.abort();
+            self.status = None;
+        } else if task.is_finished() {
+            info!(
+                "Catchup task finished, but catchup is not done yet, restarting from height {}",
+                processed_height
+            );
+            let from = processed_height.max(*old_height);
 
-            DaCatchupStatus::Backfill { interval, task } => {
-                let [lo, hi] = *interval;
-                if (lo..hi).contains(&last_processed_height) {
-                    match Self::catchup_task_status(last_processed_height, self.stop_height, task) {
-                        DaCatchupTaskStatus::Done => {
-                            self.status = DaCatchupStatus::Idle;
-                        }
-                        DaCatchupTaskStatus::Running => {}
-                        DaCatchupTaskStatus::NeedRestart => {
-                            let new_lo = last_processed_height.max(lo);
-                            let new_task = Self::start_task(
-                                peer,
-                                self.da_max_frame_length,
-                                new_lo,
-                                Some(hi),
-                                sender.clone(),
-                            )
-                            .await
-                            .context("Restarting backfill task")?;
-                            *interval = [new_lo, hi];
-                            *task = new_task;
-                        }
-                    }
-                }
-            }
+            let new_task = Self::start_task(peer, self.da_max_frame_length, from, sender.clone())
+                .await
+                .context("Restarting catchup task")?;
+            *task = new_task;
+            *old_height = from;
+        } else {
+            debug!(
+                "Catchup task is still running, last processed height {}",
+                processed_height
+            );
+            *old_height = processed_height;
         }
 
         Ok(())
@@ -386,7 +286,6 @@ impl DaCatchupper {
         peer: String,
         da_max_frame_length: usize,
         start_height: BlockHeight,
-        auto_stop_height: Option<BlockHeight>,
         sender: tokio::sync::mpsc::Sender<SignedBlock>,
     ) -> anyhow::Result<JoinHandle<()>> {
         info!(
@@ -431,16 +330,6 @@ impl DaCatchupper {
                                     "📦 Received block (height {}) from stream",
                                     block.consensus_proposal.slot
                                 );
-
-                                if let Some(auto_stop_height) = auto_stop_height{
-                                    if block.height() + 1 >= auto_stop_height {
-                                        info!("Stopping catchup task early at height #{} 0x{}", block.height(), block.hashed());
-                                        // wait forever until the task is stopped, with a pending future
-                                        drop(client);
-                                        tokio::time::sleep(Duration::from_secs(1000)).await;
-                                        break;
-                                    }
-                                }
 
                                 if let Err(e) = sender.send(block).await {
                                     tracing::error!("Error while sending block over channel: {:#}", e);
@@ -501,33 +390,39 @@ impl DataAvailability {
             listen<GenesisEvent> cmd => {
                 if let GenesisEvent::GenesisBlock(signed_block) = cmd {
                     debug!("🌱  Genesis block received with validators {:?}", signed_block.consensus_proposal.staking_actions.clone());
-                    if let Ok(height) = log_error!(self.handle_signed_block(signed_block, &mut server).await.context("Handling Genesis block"),  "Handling GenesisBlock Event") {
-                        _ = log_error!(self.catchupper.try_transition(height, &catchup_block_sender).await, "Transitioning catchup state after genesis block");
-                    }
+                    _ = log_error!(self.handle_signed_block(signed_block, &mut server).await.context("Handling Genesis block"),  "Handling GenesisBlock Event");
                 }
                 else {
-                    self.catchupper.init_catchup(
-                        self.last_processed_height,
-                        &catchup_block_sender,
-                    ).await?;
+                    _ = log_error!(
+                        self.catchupper.init_catchup(
+                            self.blocks.highest(),
+                            &catchup_block_sender,
+                        ).await,
+                        "Init catchup on new peer"
+                    );
                 }
             }
 
             listen<PeerEvent> PeerEvent::NewPeer { da_address, .. } => {
                 self.catchupper.peers.push(da_address.clone());
-                self.catchupper.init_catchup(
-                    self.last_processed_height,
-                    &catchup_block_sender,
-                ).await?;
+                info!("New peer {}", da_address);
+                _ = log_error!(
+                    self.catchupper.init_catchup(
+                        self.blocks.highest(),
+                        &catchup_block_sender,
+                    ).await,
+                    "Init catchup on new peer"
+                );
             }
 
-            _ = catchup_task_checker_ticker.tick(), if self.catchupper.need_to_tick() => {
-                _ = log_error!(self.catchupper.try_transition(self.last_processed_height, &catchup_block_sender).await, "Catchup transition after tick");
+            _ = catchup_task_checker_ticker.tick()/*, if self.catchupper.need_to_tick()*/ => {
+                let highest_block = self.blocks.highest();
+                _ = log_error!(self.catchupper.manage_catchup(highest_block, &catchup_block_sender).await, "Catchup transition after tick");
             }
 
             Some(streamed_block) = catchup_block_receiver.recv() => {
                 if let Some(height) = self.handle_signed_block(streamed_block, &mut server).await {
-                    _ = log_error!(self.catchupper.try_transition(height, &catchup_block_sender).await, "Catchup transition after streamed block");
+                    _ = log_error!(self.catchupper.manage_catchup(height, &catchup_block_sender).await, "Catchup transition after streamed block");
                 }
             }
 
@@ -609,7 +504,7 @@ impl DataAvailability {
                     signed_block.height()
                 );
                 if let Some(height) = self.handle_signed_block(signed_block, tcp_server).await {
-                    self.catchupper.try_transition(height, sender).await?;
+                    self.catchupper.manage_catchup(height, sender).await?;
                 }
             }
             MempoolBlockEvent::StartedBuildingBlocks(height) => {
@@ -680,12 +575,14 @@ impl DataAvailability {
             return None;
         }
 
-        if self.catchupper.is_backfill_block(&block.height()) {
+        if self
+            .catchupper
+            .policy
+            .as_ref()
+            .is_some_and(|p| p.floor.is_some_and(|f| block.height() <= f))
+        {
             // If we are in fast catchup, we need to backfill the block
-            _ = log_error!(
-                self.backfill_block(block.clone()).await,
-                "Backfilling block"
-            );
+            _ = log_error!(self.store_block(&block), "Backfilling block");
         } else {
             // store block
             _ = log_error!(
@@ -693,14 +590,13 @@ impl DataAvailability {
                 "Adding processed block"
             );
         }
+
         let highest_processed_height = self.pop_buffer(hash, tcp_server).await;
         _ = log_error!(self.blocks.persist(), "Persisting blocks");
 
         let height = block.height();
 
-        self.last_processed_height = highest_processed_height.unwrap_or(height);
-
-        Some(self.last_processed_height)
+        Some(highest_processed_height.unwrap_or(height))
     }
 
     /// Returns the highest height of the processed blocks
@@ -742,13 +638,7 @@ impl DataAvailability {
         res
     }
 
-    async fn add_processed_block(
-        &mut self,
-        block: SignedBlock,
-        tcp_server: &mut DaTcpServer,
-    ) -> anyhow::Result<()> {
-        // TODO: if we don't have streaming peers, we could just pass the block here
-        // and avoid a clone + drop cost (which can be substantial for large blocks).
+    fn store_block(&mut self, block: &SignedBlock) -> Result<()> {
         self.blocks
             .put(block.clone())
             .context(format!("Storing block {}", block.height()))?;
@@ -778,6 +668,16 @@ impl DataAvailability {
                 .join("")
         );
 
+        Ok(())
+    }
+
+    async fn add_processed_block(
+        &mut self,
+        block: SignedBlock,
+        tcp_server: &mut DaTcpServer,
+    ) -> anyhow::Result<()> {
+        self.store_block(&block)?;
+
         // TODO: use retain once async closures are supported ?
         //
         let errors = tcp_server
@@ -800,42 +700,6 @@ impl DataAvailability {
                 .await,
             "Sending OrderedSignedBlock"
         );
-
-        Ok(())
-    }
-
-    /// Analog to add_processed_block, but without broadcasting the block to peers and NodeState.
-    async fn backfill_block(&mut self, block: SignedBlock) -> anyhow::Result<()> {
-        let height = block.height();
-
-        trace!("Block {} {}: {:#?}", height, block.hashed(), &block);
-
-        if block.height().0 % 10 == 0 || block.has_txs() {
-            info!(
-                "Backfill block #{} 0x{} with {} txs",
-                block.height(),
-                block.hashed(),
-                block.count_txs(),
-            );
-        }
-        debug!(
-            "Backfill block #{} 0x{} with {} transactions: {}",
-            block.height(),
-            block.hashed(),
-            block.count_txs(),
-            block
-                .iter_txs_with_id()
-                .map(|(_, tx_id, tx)| {
-                    let variant: &'static str = (&tx.transaction_data).into();
-                    format!("\n - 0x{} {}", tx_id.1, variant)
-                })
-                .collect::<Vec<_>>()
-                .join("")
-        );
-
-        self.blocks
-            .put(block)
-            .context(format!("Storing block {}", height))?;
 
         Ok(())
     }
@@ -922,7 +786,6 @@ pub mod tests {
                 bus,
                 blocks,
                 buffered_signed_blocks: Default::default(),
-                last_processed_height: BlockHeight(0),
                 catchupper: Default::default(),
             };
 
@@ -984,7 +847,6 @@ pub mod tests {
             bus,
             blocks,
             buffered_signed_blocks: Default::default(),
-            last_processed_height: BlockHeight(0),
             catchupper: Default::default(),
         };
         let mut block = SignedBlock::default();
@@ -1033,7 +895,6 @@ pub mod tests {
             bus,
             blocks,
             buffered_signed_blocks: Default::default(),
-            last_processed_height: BlockHeight(0),
             catchupper: Default::default(),
         };
 
