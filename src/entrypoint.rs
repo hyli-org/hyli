@@ -30,12 +30,13 @@ use hyle_modules::{
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::DAListenerConf,
+        files::{CONSENSUS_BIN, NODE_STATE_BIN},
         gcs_uploader::{GcsUploader, GcsUploaderCtx},
         signed_da_listener::SignedDAListener,
         websocket::WebSocketModule,
         BuildApiContextInner,
     },
-    node_state::module::NodeStateCtx,
+    node_state::{module::NodeStateCtx, NodeStateStore},
 };
 use hyllar::Hyllar;
 use prometheus::Registry;
@@ -256,12 +257,14 @@ async fn common_main(
         openapi: Mutex::new(ApiDoc::openapi()),
     });
 
+    let mut node_state_override: Option<NodeStateStore> = None;
+
     // Before we start the modules, let's fast load from a running node if we are catching up.
     if config.run_fast_catchup {
         // Check states exist and skip catchup if so
         if config.fast_catchup_override
-            || !config.data_directory.join("consensus.bin").exists()
-            || !config.data_directory.join("node_state.bin").exists()
+            || !config.data_directory.join(CONSENSUS_BIN).exists()
+            || !config.data_directory.join(NODE_STATE_BIN).exists()
         {
             // TODO: Make fast_cachup_from a list of nodes to catchup from.
             // Fallback to next node in the list if the first one fails.
@@ -274,15 +277,18 @@ async fn common_main(
                 .await
                 .context("Getting catchup data")?;
 
+            node_state_override =
+                borsh::from_slice(catchup_response.node_state_store.as_slice()).ok();
+
             _ = log_error!(
-                File::create(config.data_directory.join("consensus.bin"))
+                File::create(config.data_directory.join(CONSENSUS_BIN))
                     .and_then(|mut file| file.write_all(&catchup_response.consensus_store))
                     .context("Writing consensus catchup store to disk"),
                 "Saving consensus store"
             );
 
             _ = log_error!(
-                File::create(config.data_directory.join("node_state.bin"))
+                File::create(config.data_directory.join(NODE_STATE_BIN))
                     .and_then(|mut file| file.write_all(&catchup_response.node_state_store))
                     .context("Writing node state catchup store to disk"),
                 "Saving node state store"
@@ -374,11 +380,13 @@ async fn common_main(
                 .as_ref()
                 .expect("Crypto must be defined to run p2p")
                 .clone(),
+            node_state_override,
         };
 
         handler
             .build_module::<NodeStateModule>(NodeStateCtx {
                 node_id: config.id.clone(),
+                node_state_override: ctx.node_state_override.clone(),
                 data_directory: config.data_directory.clone(),
                 api: build_api_ctx.clone(),
             })

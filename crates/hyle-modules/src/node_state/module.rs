@@ -6,6 +6,7 @@ use crate::bus::SharedMessageBus;
 use crate::bus::{command_response::Query, BusClientSender};
 use crate::module_handle_messages;
 use crate::modules::admin::{QueryNodeStateStore, QueryNodeStateStoreResponse};
+use crate::modules::files::NODE_STATE_BIN;
 use crate::modules::{module_bus_client, Module, SharedBuildApiCtx};
 use crate::{log_error, log_warn};
 use anyhow::Result;
@@ -53,6 +54,7 @@ pub struct NodeStateBusClient {
 
 pub struct NodeStateCtx {
     pub node_id: String,
+    pub node_state_override: Option<NodeStateStore>,
     pub data_directory: PathBuf,
     pub api: SharedBuildApiCtx,
 }
@@ -69,9 +71,11 @@ impl Module for NodeStateModule {
         }
         let metrics = NodeStateMetrics::global(ctx.node_id.clone(), "node_state");
 
-        let store = Self::load_from_disk_or_default::<NodeStateStore>(
-            ctx.data_directory.join("node_state.bin").as_path(),
-        );
+        let store = ctx
+            .node_state_override
+            .unwrap_or(Self::load_from_disk_or_default::<NodeStateStore>(
+                ctx.data_directory.join(NODE_STATE_BIN).as_path(),
+            ));
 
         for name in store.contracts.keys() {
             info!("📝 Loaded contract state for {}", name);
@@ -145,7 +149,7 @@ impl Module for NodeStateModule {
     async fn persist(&mut self) -> Result<()> {
         log_error!(
             Self::save_on_disk::<NodeStateStore>(
-                self.data_directory.join("node_state.bin").as_path(),
+                self.data_directory.join(NODE_STATE_BIN).as_path(),
                 &self.inner,
             ),
             "Saving node state"

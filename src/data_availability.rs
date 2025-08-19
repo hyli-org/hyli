@@ -3,8 +3,6 @@
 // Pick one of the two implementations
 use hyle_modules::modules::data_availability::blocks_fjall::Blocks;
 //use hyle_modules::modules::data_availability::blocks_memory::Blocks;
-use hyle_modules::node_state::module::NodeStateModule;
-use hyle_modules::node_state::NodeStateStore;
 use hyle_modules::{bus::SharedMessageBus, modules::Module};
 use hyle_modules::{
     log_error, module_bus_client, module_handle_messages,
@@ -47,17 +45,10 @@ impl Module for DataAvailability {
         let catchup_policy = if ctx.config.consensus.solo {
             None
         } else {
-            let floor_height = if ctx.config.run_fast_catchup {
-                NodeStateModule::load_from_disk::<NodeStateStore>(
-                    &ctx.config.data_directory.join("node_state.bin"),
-                )
-                .map(|ns| ns.current_height + 1)
-            } else {
-                None
-            };
-
             Some(DaCatchupPolicy {
-                floor: floor_height,
+                floor: ctx
+                    .node_state_override
+                    .map(|node_state| node_state.current_height + 1),
                 backfill: ctx.config.fast_catchup_backfill,
             })
         };
@@ -575,12 +566,7 @@ impl DataAvailability {
             return None;
         }
 
-        if self
-            .catchupper
-            .policy
-            .as_ref()
-            .is_some_and(|p| p.floor.is_some_and(|f| block.height() <= f))
-        {
+        if block.height() < self.blocks.highest() {
             // If we are in fast catchup, we need to backfill the block
             _ = log_error!(self.store_block(&block), "Backfilling block");
         } else {
