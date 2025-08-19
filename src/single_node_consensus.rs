@@ -185,7 +185,10 @@ impl SingleNodeConsensus {
         // Query a new cut to Mempool in order to create a new CommitCut
         match self
             .bus
-            .shutdown_aware_request::<Self>(QueryNewCut(self.store.staking.clone()))
+            .shutdown_aware_request::<Self>(QueryNewCut {
+                staking: self.store.staking.clone(),
+                full: true,
+            })
             .await
         {
             Ok(cut) => {
