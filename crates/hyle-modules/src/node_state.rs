@@ -127,9 +127,9 @@ enum BlobTxHandled {
 }
 
 #[derive(Debug)]
-enum TxEvent<'a> {
+pub enum TxEvent<'a> {
     DuplicateBlobTransaction(&'a TxId),
-    SequencedBlobTransaction(&'a TxId, &'a BlobTransaction),
+    SequencedBlobTransaction(&'a TxId, &'a LaneId, u32, &'a BlobTransaction),
     SequencedProofTransaction(&'a TxId, &'a VerifiedProofTransaction),
     Settled(&'a TxId, &'a UnsettledBlobTransaction),
     SettledAsFailed(&'a TxId),
@@ -189,7 +189,7 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     .dp_parent_hashes
                     .insert(tx_id.1.clone(), tx_id.0.clone());
             }
-            &TxEvent::SequencedBlobTransaction(tx_id, blob_tx) => {
+            &TxEvent::SequencedBlobTransaction(tx_id, lane_id, index, blob_tx) => {
                 self.block_under_construction
                     .txs
                     .push((tx_id.clone(), blob_tx.clone().into()));
@@ -302,27 +302,15 @@ impl NodeStateCallback for BlockNodeStateCallback {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct NodeState {
     pub metrics: NodeStateMetrics,
     pub store: NodeStateStore,
-    pub callback: Box<dyn NodeStateCallback + Send + Sync>,
 }
 
-impl std::fmt::Debug for NodeState {
-    // forward to NodeStateStore
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.store.fmt(f)
-    }
-}
-
-impl Clone for NodeState {
-    fn clone(&self) -> Self {
-        NodeState {
-            metrics: self.metrics.clone(),
-            store: self.store.clone(),
-            callback: Box::new(BlockNodeStateCallback::new()),
-        }
-    }
+pub struct NodeStateProcessing<'a> {
+    pub this: &'a mut NodeState,
+    pub callback: &'a mut (dyn NodeStateCallback + Send + Sync),
 }
 
 impl NodeState {
@@ -330,7 +318,6 @@ impl NodeState {
         NodeState {
             metrics: NodeStateMetrics::global(node_id, module_name),
             store: NodeStateStore::default(),
-            callback: Box::new(BlockNodeStateCallback::new()),
         }
     }
 }
@@ -346,6 +333,20 @@ impl std::ops::Deref for NodeState {
 impl std::ops::DerefMut for NodeState {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.store
+    }
+}
+
+impl<'a> std::ops::Deref for NodeStateProcessing<'a> {
+    type Target = NodeStateStore;
+
+    fn deref(&self) -> &Self::Target {
+        &self.this.store
+    }
+}
+
+impl<'a> std::ops::DerefMut for NodeStateProcessing<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.this.store
     }
 }
 
@@ -389,6 +390,26 @@ impl Default for NodeStateStore {
 }
 
 impl NodeState {
+    pub fn handle_signed_block(&mut self, signed_block: &SignedBlock) -> Result<Block> {
+        let mut processing_node_state = NodeStateProcessing {
+            this: self,
+            callback: &mut BlockNodeStateCallback::from_signed(signed_block),
+        };
+        processing_node_state.process_signed_block(signed_block)?;
+        let boxed = processing_node_state.done();
+        let bb: &mut dyn std::any::Any = boxed;
+        Ok(bb
+            .downcast_mut::<BlockNodeStateCallback>()
+            .unwrap()
+            .get_block())
+    }
+}
+
+impl<'any> NodeStateProcessing<'any> {
+    pub fn done(self) -> &'any mut (dyn NodeStateCallback + Send + Sync) {
+        self.callback
+    }
+
     pub fn process_signed_block(&mut self, signed_block: &SignedBlock) -> Result<()> {
         let next_block = self.current_height + 1 == signed_block.height();
         let initial_block = self.current_height.0 == 0 && signed_block.height().0 == 0;
@@ -407,7 +428,7 @@ impl NodeState {
 
         let mut next_unsettled_txs = BTreeSet::new();
         // Handle all transactions
-        for (lane_id, tx_id, tx) in signed_block.iter_txs_with_id() {
+        for (i, (lane_id, tx_id, tx)) in signed_block.iter_txs_with_id().enumerate() {
             debug!("TX {} on lane {}", tx_id.1, lane_id);
 
             match &tx.transaction_data {
@@ -416,7 +437,7 @@ impl NodeState {
                         tx_id.0.clone(),
                         blob_transaction,
                         TxContext {
-                            lane_id,
+                            lane_id: lane_id.clone(),
                             block_hash: signed_block.hashed(),
                             block_height: signed_block.height(),
                             timestamp: signed_block.consensus_proposal.timestamp.clone(),
@@ -442,6 +463,8 @@ impl NodeState {
                         Ok(BlobTxHandled::Ok) => {
                             self.callback.on_event(&TxEvent::SequencedBlobTransaction(
                                 &tx_id,
+                                &lane_id,
+                                i as u32,
                                 blob_transaction,
                             ));
                         }
@@ -482,7 +505,7 @@ impl NodeState {
                                         blob_proof_data.hyle_output.index, &tx_id);
                                     debug!("{err}");
                                     // If we can find a matching blob-tx, store that there (helps debugging settlement issues)
-                                    if let Some((tx, _)) = self.store.unsettled_transactions.get_for_settlement(
+                                    if let Some((tx, _)) = self.this.store.unsettled_transactions.get_for_settlement(
                                         &blob_proof_data.blob_tx_hash,
                                     ) {
                                         // TODO: this is pretty inefficient
@@ -527,30 +550,25 @@ impl NodeState {
             next_unsettled_txs.clear();
         }
 
-        self.metrics.record_contracts(self.contracts.len() as u64);
+        self.this
+            .metrics
+            .record_contracts(self.contracts.len() as u64);
 
         let schedule_timeouts_nb = self.timeouts.count_all() as u64;
-        self.metrics.record_scheduled_timeouts(schedule_timeouts_nb);
-        self.metrics
+        self.this
+            .metrics
+            .record_scheduled_timeouts(schedule_timeouts_nb);
+        self.this
+            .metrics
             .record_unsettled_transactions(self.unsettled_transactions.len() as u64);
-        self.metrics.add_processed_block();
-        self.metrics.record_current_height(self.current_height.0);
+        self.this.metrics.add_processed_block();
+        self.this
+            .metrics
+            .record_current_height(self.current_height.0);
 
         debug!("Done handling signed block: {:?}", signed_block.height());
 
         Ok(())
-    }
-
-    pub fn handle_signed_block(&mut self, signed_block: &SignedBlock) -> Result<Block> {
-        self.callback = Box::new(BlockNodeStateCallback::from_signed(signed_block));
-        self.process_signed_block(signed_block)?;
-        let boxed: Box<dyn NodeStateCallback + Send + Sync + 'static> =
-            std::mem::replace(&mut self.callback, Box::new(BlockNodeStateCallback::new()));
-        let mut bb: Box<dyn std::any::Any> = boxed;
-        Ok(bb
-            .downcast_mut::<BlockNodeStateCallback>()
-            .unwrap()
-            .get_block())
     }
 
     fn get_tx_timeout_window<'a, T: IntoIterator<Item = &'a Blob>>(
@@ -658,6 +676,7 @@ impl NodeState {
         let blob_tx_hash = blob_proof_data.blob_tx_hash.clone();
         // Find the blob being proven and whether we should try to settle the TX.
         let Some((unsettled_tx, should_settle_tx)) = self
+            .this
             .store
             .unsettled_transactions
             .get_for_settlement(&blob_tx_hash)
@@ -782,6 +801,7 @@ impl NodeState {
         trace!("Trying to settle blob tx: {:?}", unsettled_tx_hash);
 
         let unsettled_tx = self
+            .this
             .store
             .unsettled_transactions
             .get(unsettled_tx_hash)
@@ -820,12 +840,12 @@ impl NodeState {
         } else {
             Self::settle_blobs_recursively(
                 unsettled_tx,
-                &self.store.contracts,
+                &self.this.store.contracts,
                 SettlementStatus::TryingToSettle,
                 updated_contracts,
                 unsettled_tx.blobs.values(),
                 vec![],
-                &mut self.callback,
+                self.callback,
             )
         };
 
@@ -876,7 +896,7 @@ impl NodeState {
         mut contract_changes: BTreeMap<ContractName, ModifiedContractData>,
         mut blob_iter: impl Iterator<Item = &'a UnsettledBlobMetadata> + Clone,
         mut blob_proof_output_indices: Vec<usize>,
-        callback: &mut Box<dyn NodeStateCallback + Send + Sync>,
+        callback: &mut (dyn NodeStateCallback + Send + Sync),
     ) -> SettlementResult {
         // Recursion end-case: we succesfully settled all prior blobs, so success.
         let Some(current_blob) = blob_iter.next() else {
@@ -1101,7 +1121,7 @@ impl NodeState {
                 .or_default()
                 .push(TransactionStateEvent::SettledAsFailed);*/
 
-                self.metrics.add_failed_transactions(1);
+                self.this.metrics.add_failed_transactions(1);
                 info!("⛈️ Settled tx {} as failed", &bth);
 
                 return next_txs_to_try_and_settle;
@@ -1126,8 +1146,8 @@ impl NodeState {
             &TxId(settled_tx.parent_dp_hash.clone(), bth.clone()),
             &settled_tx,
         ));
-        self.metrics.add_settled_transactions(1);
-        self.metrics.add_successful_transactions(1);
+        self.this.metrics.add_settled_transactions(1);
+        self.this.metrics.add_successful_transactions(1);
         info!("✨ Settled tx {}", &bth);
 
         // Go through each blob and:
@@ -1782,11 +1802,15 @@ impl NodeState {
     ///    3. Try to settle_until_done all descendant transactions
     ///    4. Among the remaining descendants, set a timeout for them
     fn clear_timeouts(&mut self) {
-        let mut txs_at_timeout = self.store.timeouts.drop(&self.store.current_height);
+        let mut txs_at_timeout = self
+            .this
+            .store
+            .timeouts
+            .drop(&self.this.store.current_height);
         txs_at_timeout.retain(|tx| {
             if let Some(tx) = self.unsettled_transactions.remove(tx) {
                 info!("⏰ Blob tx timed out: {}", &tx.hash);
-                self.metrics.add_triggered_timeouts();
+                self.this.metrics.add_triggered_timeouts();
                 let hash = tx.hash.clone();
                 let parent_hash = tx.parent_dp_hash.clone();
                 let lane_id = tx.tx_context.lane_id.clone();
@@ -1844,7 +1868,6 @@ pub mod test {
         NodeState {
             metrics: NodeStateMetrics::global("test".to_string(), "test"),
             store: NodeStateStore::default(),
-            callback: Box::new(BlockNodeStateCallback::new()),
         }
     }
 
@@ -2083,14 +2106,21 @@ pub mod test {
         }
     }
     impl NodeState {
+        pub fn for_testing(&'_ mut self) -> NodeStateProcessing<'_> {
+            NodeStateProcessing {
+                this: self,
+                callback: Box::leak(Box::new(BlockNodeStateCallback::new())),
+            }
+        }
+
         // Convenience method to handle a signed block in tests.
         pub fn force_handle_block(&mut self, block: &SignedBlock) -> Block {
-            if block.consensus_proposal.slot <= self.current_height.0
+            if block.consensus_proposal.slot <= self.store.current_height.0
                 || block.consensus_proposal.slot == 0
             {
                 panic!("Invalid block height");
             }
-            self.current_height = BlockHeight(block.consensus_proposal.slot - 1);
+            self.store.current_height = BlockHeight(block.consensus_proposal.slot - 1);
             self.handle_signed_block(block).unwrap()
         }
 
@@ -2111,7 +2141,7 @@ pub mod test {
 
         pub fn handle_register_contract_effect(&mut self, tx: &RegisterContractEffect) {
             info!("📝 Registering contract {}", tx.contract_name);
-            self.contracts.insert(
+            self.store.contracts.insert(
                 tx.contract_name.clone(),
                 Contract {
                     name: tx.contract_name.clone(),
@@ -2127,8 +2157,41 @@ pub mod test {
             &self,
             contract_name: &ContractName,
         ) -> Option<BlockHeight> {
-            self.unsettled_transactions
+            self.store
+                .unsettled_transactions
                 .get_earliest_unsettled_height(contract_name)
+        }
+    }
+
+    impl<'a> NodeStateProcessing<'a> {
+        // Convenience method to handle a signed block in tests.
+        pub fn force_handle_block(&mut self, block: &SignedBlock) -> Block {
+            self.this.force_handle_block(block)
+        }
+
+        pub fn craft_block_and_handle(&mut self, height: u64, txs: Vec<Transaction>) -> Block {
+            self.this.craft_block_and_handle(height, txs)
+        }
+
+        pub fn craft_block_and_handle_with_parent_dp_hash(
+            &mut self,
+            height: u64,
+            txs: Vec<Transaction>,
+            parent_dp_hash: DataProposalHash,
+        ) -> Block {
+            self.this
+                .craft_block_and_handle_with_parent_dp_hash(height, txs, parent_dp_hash)
+        }
+
+        pub fn handle_register_contract_effect(&mut self, tx: &RegisterContractEffect) {
+            self.this.handle_register_contract_effect(tx)
+        }
+
+        pub fn get_earliest_unsettled_height(
+            &self,
+            contract_name: &ContractName,
+        ) -> Option<BlockHeight> {
+            self.this.get_earliest_unsettled_height(contract_name)
         }
     }
 

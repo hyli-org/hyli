@@ -31,7 +31,9 @@ fn sign_data(secret_key: &SecretKey, expected_data: &[u8]) -> ([u8; 32], [u8; 64
 
 #[test_log::test(tokio::test)]
 async fn happy_path_with_tx_context() {
-    let mut state = new_node_state().await;
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
+
     let c1 = ContractName::new("c1");
     let register_c1 = make_register_contract_effect(c1.clone());
     state.handle_register_contract_effect(&register_c1);
@@ -69,7 +71,9 @@ async fn assert_two_transactions_with_different_contracts_using_same_native_cont
     native_failure: bool,
     blob_order_reversed: bool,
 ) {
-    let mut state = new_node_state().await;
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
+
     let c1 = ContractName::new("c1");
     let register_c1 = make_register_contract_effect(c1.clone());
     let n1 = ContractName::new("sha3_256");
@@ -465,7 +469,9 @@ async fn iterate_over_blobs_in_the_right_order() {
 
 #[test_log::test(tokio::test)]
 async fn blob_tx_without_blobs() {
-    let mut state = new_node_state().await;
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
+
     let identity = Identity::new("test@c1");
 
     let blob_tx = BlobTransaction::new(identity.clone(), vec![]);
@@ -475,7 +481,9 @@ async fn blob_tx_without_blobs() {
 
 #[test_log::test(tokio::test)]
 async fn blob_tx_with_incorrect_identity() {
-    let mut state = new_node_state().await;
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
+
     let identity = Identity::new("incorrect_id");
 
     let blob_tx = BlobTransaction::new(identity.clone(), vec![new_blob("test")]);
@@ -485,7 +493,9 @@ async fn blob_tx_with_incorrect_identity() {
 
 #[test_log::test(tokio::test)]
 async fn two_proof_for_one_blob_tx() {
-    let mut state = new_node_state().await;
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
+
     let c1 = ContractName::new("c1");
     let c2 = ContractName::new("c2");
     let identity = Identity::new("test@c1");
@@ -559,7 +569,9 @@ async fn multiple_failing_proofs() {
 
 #[test_log::test(tokio::test)]
 async fn wrong_blob_index_for_contract() {
-    let mut state = new_node_state().await;
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
+
     let c1 = ContractName::new("c1");
     let c2 = ContractName::new("c2");
 
@@ -591,7 +603,9 @@ async fn wrong_blob_index_for_contract() {
 
 #[test_log::test(tokio::test)]
 async fn two_proof_for_same_blob() {
-    let mut state = new_node_state().await;
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
+
     let c1 = ContractName::new("c1");
     let c2 = ContractName::new("c2");
 
@@ -638,7 +652,9 @@ async fn two_proof_for_same_blob() {
 
 #[test_log::test(tokio::test)]
 async fn two_proof_with_some_invalid_blob_proof_output() {
-    let mut state = new_node_state().await;
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
+
     let c1 = ContractName::new("c1");
 
     let register_c1 = make_register_contract_effect(c1.clone());
@@ -730,7 +746,9 @@ async fn settle_with_multiple_state_reads() {
 
 #[test_log::test(tokio::test)]
 async fn change_same_contract_state_multiple_times_in_same_tx() {
-    let mut state = new_node_state().await;
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
+
     let c1 = ContractName::new("c1");
 
     let register_c1 = make_register_contract_effect(c1.clone());
@@ -781,7 +799,8 @@ async fn change_same_contract_state_multiple_times_in_same_tx() {
 
 #[test_log::test(tokio::test)]
 async fn dead_end_in_proving_settles_still() {
-    let mut state = new_node_state().await;
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
 
     let c1 = ContractName::new("c1");
     let register_c1 = make_register_contract_effect(c1.clone());
@@ -853,7 +872,9 @@ async fn dead_end_in_proving_settles_still() {
 
 #[test_log::test(tokio::test)]
 async fn duplicate_proof_with_inconsistent_state_should_never_settle() {
-    let mut state = new_node_state().await;
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
+
     let c1 = ContractName::new("c1");
 
     let register_c1 = make_register_contract_effect(c1.clone());
@@ -902,7 +923,9 @@ async fn duplicate_proof_with_inconsistent_state_should_never_settle() {
 
 #[test_log::test(tokio::test)]
 async fn duplicate_proof_with_inconsistent_state_should_never_settle_another() {
-    let mut state = new_node_state().await;
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
+
     let c1 = ContractName::new("c1");
 
     let register_c1 = make_register_contract_effect(c1.clone());
@@ -1706,7 +1729,8 @@ async fn test_failure_proof_must_wait_for_previous_blobs() {
 
 #[test_log::test(tokio::test)]
 async fn test_invalid_onchain_effect_causes_immediate_failure() {
-    let mut state = new_node_state().await;
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
 
     // Register parent contract first
     let parent_contract_name = ContractName::new("parent.hyle");

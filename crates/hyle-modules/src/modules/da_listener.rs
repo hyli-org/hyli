@@ -55,7 +55,6 @@ impl Module for DAListener {
         let node_state = NodeState {
             store: node_state_store,
             metrics: NodeStateMetrics::global("da_listener".to_string(), "da_listener"),
-            callback: Box::new(BlockNodeStateCallback::new()),
         };
 
         // Annoying edge case: on startup this will be 0, but we do want to process block 0.

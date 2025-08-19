@@ -1,6 +1,6 @@
 use crate::node_state::{
     contract_registration::validate_contract_registration_metadata, ContractStatus,
-    ModifiedContractData, ModifiedContractFields, NodeState,
+    ModifiedContractData, ModifiedContractFields, NodeState, NodeStateProcessing,
 };
 use anyhow::{bail, Result};
 use sdk::*;
@@ -135,7 +135,8 @@ fn handle_update_program_id_blob(
     }
 
     let contract =
-        NodeState::get_contract(contracts, contract_changes, &update.contract_name)?.clone();
+        NodeStateProcessing::get_contract(contracts, contract_changes, &update.contract_name)?
+            .clone();
 
     contract_changes
         .entry(update.contract_name.clone())
@@ -173,7 +174,8 @@ fn handle_update_timeout_window_blob(
     }
 
     let contract =
-        NodeState::get_contract(contracts, contract_changes, &update.contract_name)?.clone();
+        NodeStateProcessing::get_contract(contracts, contract_changes, &update.contract_name)?
+            .clone();
 
     let new_update = SideEffect::UpdateTimeoutWindow;
     contract_changes
