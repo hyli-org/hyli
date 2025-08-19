@@ -261,6 +261,7 @@ impl NodeIntegrationCtx {
                 openapi: Default::default(),
             }),
             crypto,
+            node_state_override: None,
         };
 
         let mut handler = ModulesHandler::new(&bus).await;
@@ -303,6 +304,7 @@ impl NodeIntegrationCtx {
                 node_id: config.id.clone(),
                 data_directory: config.data_directory.clone(),
                 api: ctx.api.clone(),
+                node_state_override: None,
             },
             &mut mocks,
         )
