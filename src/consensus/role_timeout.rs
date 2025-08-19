@@ -172,6 +172,7 @@ impl Consensus {
 
                 self.broadcast_net_message((timeout, kind).into())?;
 
+                // Rescheduling broadcast of this same timeout message, but sooner than the regular waiting time
                 self.store.bft_round_state.timeout.state.schedule_next(
                     TimestampMsClock::now(),
                     self.config.consensus.timeout_after / 2,
