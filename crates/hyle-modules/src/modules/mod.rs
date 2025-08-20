@@ -129,6 +129,11 @@ where
     }
 }
 
+pub mod files {
+    pub const NODE_STATE_BIN: &str = "node_state.bin";
+    pub const CONSENSUS_BIN: &str = "consensus.bin";
+}
+
 struct ModuleStarter {
     pub name: &'static str,
     starter: Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'static>>,

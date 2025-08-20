@@ -13,4 +13,5 @@ pub struct SharedRunContext {
     pub config: SharedConf,
     pub api: SharedBuildApiCtx,
     pub crypto: SharedBlstCrypto,
+    pub start_height: Option<BlockHeight>,
 }

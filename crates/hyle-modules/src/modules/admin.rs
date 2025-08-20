@@ -1,9 +1,9 @@
 //! Public API for interacting with the node.
 
 use crate::{
-    bus::{metrics::BusMetrics, BusClientSender, SharedMessageBus},
+    bus::{command_response::CmdRespClient, BusClientSender, SharedMessageBus},
     log_error, module_bus_client, module_handle_messages,
-    modules::{signal::ShutdownModule, Module},
+    modules::Module,
 };
 use anyhow::{anyhow, Context, Result};
 pub use axum::Router;
@@ -13,9 +13,12 @@ use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
+    Json,
 };
+use hyle_net::http::HttpClient;
 use sdk::*;
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
+use std::{future::Future, path::PathBuf, pin::Pin};
 use tokio_util::sync::CancellationToken;
 use tower_http::catch_panic::CatchPanicLayer;
 use tracing::info;
@@ -25,12 +28,26 @@ pub use client_sdk::rest_client as client;
 
 use super::{
     rest::request_logger,
-    signal::{self, PersistModule},
+    signal::{self},
 };
+
+#[derive(Clone)]
+pub struct QueryNodeStateStore;
+
+#[derive(Clone)]
+pub struct QueryNodeStateStoreResponse(pub Vec<u8>);
+
+#[derive(Clone)]
+pub struct QueryConsensusCatchupStore;
+
+#[derive(Clone)]
+pub struct QueryConsensusCatchupStoreResponse(pub Vec<u8>);
 
 module_bus_client! {
     struct AdminBusClient {
         sender(signal::PersistModule),
+        sender(crate::bus::command_response::Query<QueryNodeStateStore, QueryNodeStateStoreResponse>),
+        sender(crate::bus::command_response::Query<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse>),
     }
 }
 
@@ -71,6 +88,7 @@ impl Module for AdminApi {
             Router::new()
                 .route("/v1/admin/persist", post(persist))
                 .route("/v1/admin/download/{file}", get(download))
+                .route("/v1/admin/catchup", get(catchup))
                 .with_state(RouterState {
                     bus: AdminBusClient::new_from_bus(bus.new_handle()).await,
                     data_directory: ctx.data_directory,
@@ -158,6 +176,74 @@ pub async fn download(
     }
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct CatchupStoreResponse {
+    #[serde(with = "base64_field")]
+    pub node_state_store: Vec<u8>,
+    #[serde(with = "base64_field")]
+    pub consensus_store: Vec<u8>,
+}
+
+pub struct NodeAdminApiClient {
+    client: HttpClient,
+}
+
+impl NodeAdminApiClient {
+    pub fn new(uri: String) -> anyhow::Result<Self> {
+        let client = HttpClient {
+            url: uri.parse().context("Invalid URI for NodeAdminApiClient")?,
+            api_key: None,
+            retry: None,
+        };
+        Ok(Self { client })
+    }
+
+    pub fn get_catchup_store(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<CatchupStoreResponse>> + Send + '_>> {
+        Box::pin(async move {
+            self.client
+                .get("v1/admin/catchup")
+                .await
+                .context("getting catchup store to initialize the node".to_string())
+        })
+    }
+}
+
+pub async fn catchup(State(mut state): State<RouterState>) -> Result<impl IntoResponse, AppError> {
+    tracing::info!("Getting catchup states from all modules");
+
+    // Since node state is based on consensus, we first ask this state
+    // to be sure its height will be <= consensus height.
+
+    let node_state = log_error!(
+        state
+            .bus
+            .shutdown_aware_request::<()>(QueryNodeStateStore {})
+            .await,
+        "Getting node state store"
+    )
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?
+    .0;
+
+    let consensus_state = log_error!(
+        state
+            .bus
+            .shutdown_aware_request::<()>(QueryConsensusCatchupStore {})
+            .await,
+        "Getting consensus catchup store"
+    )
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?
+    .0;
+
+    let catchup_response = CatchupStoreResponse {
+        node_state_store: node_state,
+        consensus_store: consensus_state,
+    };
+
+    Ok(Json(catchup_response))
+}
+
 pub struct RouterState {
     bus: AdminBusClient,
     data_directory: PathBuf,
@@ -217,19 +303,6 @@ impl Clone for RouterState {
             bus: self.bus.clone(),
             data_directory: self.data_directory.clone(),
         }
-    }
-}
-
-impl Clone for AdminBusClient {
-    fn clone(&self) -> AdminBusClient {
-        use crate::utils::static_type_map::Pick;
-
-        AdminBusClient::new(
-            Pick::<BusMetrics>::get(self).clone(),
-            Pick::<tokio::sync::broadcast::Sender<PersistModule>>::get(self).clone(),
-            Pick::<tokio::sync::broadcast::Receiver<ShutdownModule>>::get(self).resubscribe(),
-            Pick::<tokio::sync::broadcast::Receiver<PersistModule>>::get(self).resubscribe(),
-        )
     }
 }
 

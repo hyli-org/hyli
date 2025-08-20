@@ -1,10 +1,16 @@
 #![cfg(test)]
 
+use std::path::PathBuf;
+
 use assertables::assert_err;
 use sdk::hyle_model_utils::TimestampMs;
 
-use crate::node_state::test::contract_registration_tests::{
-    make_register_hyli_wallet_identity_tx, make_register_tx_with_constructor,
+use crate::{
+    modules::Module,
+    node_state::{
+        module::NodeStateModule,
+        test::contract_registration_tests::make_register_hyli_wallet_identity_tx,
+    },
 };
 use ::secp256k1::{ecdsa::Signature, rand, Message, PublicKey, Secp256k1, SecretKey};
 use sha2::Digest;

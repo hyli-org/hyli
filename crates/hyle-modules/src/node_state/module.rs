@@ -4,9 +4,11 @@ use super::metrics::NodeStateMetrics;
 use super::{NodeState, NodeStateStore};
 use crate::bus::SharedMessageBus;
 use crate::bus::{command_response::Query, BusClientSender};
-use crate::log_error;
 use crate::module_handle_messages;
+use crate::modules::admin::{QueryNodeStateStore, QueryNodeStateStoreResponse};
+use crate::modules::files::NODE_STATE_BIN;
 use crate::modules::{module_bus_client, Module, SharedBuildApiCtx};
+use crate::{log_error, log_warn};
 use anyhow::Result;
 use sdk::*;
 use std::path::PathBuf;
@@ -46,6 +48,7 @@ pub struct NodeStateBusClient {
     receiver(Query<QueryUnsettledTxCount, u64>),
     receiver(Query<QueryBlockHeight , BlockHeight>),
     receiver(Query<QueryUnsettledTx, UnsettledBlobTransaction>),
+    receiver(Query<QueryNodeStateStore, QueryNodeStateStoreResponse>),
 }
 }
 
@@ -68,7 +71,7 @@ impl Module for NodeStateModule {
         let metrics = NodeStateMetrics::global(ctx.node_id.clone(), "node_state");
 
         let store = Self::load_from_disk_or_default::<NodeStateStore>(
-            ctx.data_directory.join("node_state.bin").as_path(),
+            ctx.data_directory.join(NODE_STATE_BIN).as_path(),
         );
 
         for name in store.contracts.keys() {
@@ -120,14 +123,18 @@ impl Module for NodeStateModule {
                     None => Err(anyhow::anyhow!("Transaction not found")),
                 }
             }
+            command_response<QueryNodeStateStore, QueryNodeStateStoreResponse> _ => {
+                serialize_node_state_store(&self.inner.store)
+            }
             listen<DataEvent> block => {
                 match block {
                     DataEvent::OrderedSignedBlock(block) => {
                         // TODO: If we are in a broken state, this will likely kill the node every time.
-                        let node_state_block = self.inner.handle_signed_block(&block)?;
-                        _ = log_error!(self
-                            .bus
-                            .send(NodeStateEvent::NewBlock(Box::new(node_state_block))), "Sending DataEvent while processing SignedBlock");
+                        if let Ok(node_state_block) = log_warn!(self.inner.handle_signed_block(&block), "handling signed block in NodeStateModule") {
+                            _ = log_error!(self
+                                .bus
+                                .send(NodeStateEvent::NewBlock(Box::new(node_state_block))), "Sending DataEvent while processing SignedBlock");
+                        }
                     }
                 }
             }
@@ -139,10 +146,17 @@ impl Module for NodeStateModule {
     async fn persist(&mut self) -> Result<()> {
         log_error!(
             Self::save_on_disk::<NodeStateStore>(
-                self.data_directory.join("node_state.bin").as_path(),
+                self.data_directory.join(NODE_STATE_BIN).as_path(),
                 &self.inner,
             ),
             "Saving node state"
         )
     }
+}
+
+fn serialize_node_state_store(
+    store: &NodeStateStore,
+) -> anyhow::Result<QueryNodeStateStoreResponse> {
+    let bytes = borsh::to_vec(store)?;
+    Ok(QueryNodeStateStoreResponse(bytes))
 }
