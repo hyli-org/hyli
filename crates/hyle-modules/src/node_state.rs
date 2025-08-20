@@ -794,6 +794,9 @@ impl NodeState {
 
         let contract_name = &current_blob.blob.contract_name;
 
+        // Need a placeholder for executed blobs, and otherwise we do use 0 anyways.
+        blob_proof_output_indices.push(0);
+
         // Execute blob that needs onchain execution
         match Self::process_blob_on_chain_execution(
             unsettled_tx,
@@ -829,8 +832,6 @@ impl NodeState {
                 };
             }
         };
-
-        blob_proof_output_indices.push(0);
 
         // Regular case: go through each proof for this blob. If they settle, carry on recursively.
         for (i, proof_metadata) in current_blob.possible_proofs.iter().enumerate() {
