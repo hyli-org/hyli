@@ -230,21 +230,7 @@ impl DaCatchupper {
         };
 
         let Some((task, old_height)) = &mut self.status else {
-            // In case status is None, we check if we need to start a new catchup task up to the floor height
-            if policy.backfill && policy.floor.is_some() {
-                policy.backfill = false; // Disable backfill after the first catchup
-                self.stop_height = policy.floor; // Set stop height to the floor if backfill is enabled
-
-                debug!(
-                    "Starting backfill catchup from height {} to {:?}",
-                    BlockHeight(0),
-                    policy.floor
-                );
-
-                self.catchup_from(BlockHeight(0), sender)?;
-            } else {
-                trace!("Catchup is already done");
-            }
+            trace!("Catchup is already done");
             return Ok(());
         };
 
@@ -258,6 +244,19 @@ impl DaCatchupper {
             );
             task.abort();
             self.status = None;
+            // In case status is None, we check if we need to start a new catchup task up to the floor height
+            if policy.backfill && policy.floor.is_some() {
+                policy.backfill = false; // Disable backfill after the first catchup
+                self.stop_height = policy.floor; // Set stop height to the floor if backfill is enabled
+
+                debug!(
+                    "Starting backfill catchup from height {} to {:?}",
+                    BlockHeight(0),
+                    policy.floor
+                );
+
+                self.catchup_from(BlockHeight(0), sender)?;
+            }
         } else if task.is_finished() {
             info!(
                 "Catchup task finished, but catchup is not done yet, restarting from height {}",
@@ -754,6 +753,7 @@ pub mod tests {
         DataAvailabilityServer,
     };
     use staking::state::Staking;
+    use tracing::info;
 
     /// For use in integration tests
     pub struct DataAvailabilityTestCtx {
@@ -1139,5 +1139,106 @@ pub mod tests {
         assert_eq!(received_blocks.len(), 5);
         assert_eq!(received_blocks[0].height(), BlockHeight(15));
         assert_eq!(received_blocks[4].height(), BlockHeight(19));
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_da_fast_catchup() {
+        let sender_global_bus = crate::bus::SharedMessageBus::new(
+            crate::bus::metrics::BusMetrics::global("global".to_string()),
+        );
+        let mut block_sender = TestBusClient::new_from_bus(sender_global_bus.new_handle()).await;
+        let mut da_sender = DataAvailabilityTestCtx::new(sender_global_bus).await;
+        let mut server = DataAvailabilityServer::start(7890, "DaServer")
+            .await
+            .unwrap();
+
+        let receiver_global_bus = crate::bus::SharedMessageBus::new(
+            crate::bus::metrics::BusMetrics::global("global".to_string()),
+        );
+        let mut da_receiver = DataAvailabilityTestCtx::new(receiver_global_bus).await;
+        da_receiver.da.catchupper.policy = Some(DaCatchupPolicy {
+            floor: Some(BlockHeight(8)),
+            backfill: true,
+        });
+        da_receiver.da.catchupper.da_max_frame_length = da_sender.da.config.da_max_frame_length;
+
+        // Push some blocks to the sender
+        let mut block = SignedBlock::default();
+        let mut blocks = vec![];
+        for i in 1..11 {
+            blocks.push(block.clone());
+            block.consensus_proposal.parent_hash = block.hashed();
+            block.consensus_proposal.slot = i;
+        }
+
+        let block_ten = block.clone();
+
+        blocks.reverse();
+
+        for block in blocks {
+            da_sender.handle_signed_block(block, &mut server).await;
+        }
+
+        let da_sender_address = da_sender.da.config.da_public_address.clone();
+
+        tokio::spawn(async move {
+            da_sender.da.start().await.unwrap();
+        });
+
+        // wait until it's up
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Setup done
+        let (tx, mut rx) = tokio::sync::mpsc::channel(200);
+        da_receiver
+            .da
+            .catchupper
+            .peers
+            .push(da_sender_address.clone());
+
+        // first init catchup should get last blocks after the floor = 8
+        _ = da_receiver.da.catchupper.init_catchup(BlockHeight(0), &tx);
+        _ = block_sender.send(MempoolBlockEvent::BuiltSignedBlock(block_ten.clone()));
+
+        let mut received_blocks = vec![];
+        while let Some(streamed_block) = rx.recv().await {
+            da_receiver
+                .handle_signed_block(streamed_block.clone(), &mut server)
+                .await;
+            received_blocks.push(streamed_block);
+            if received_blocks.len() == 3 {
+                break;
+            }
+        }
+
+        assert_eq!(received_blocks.len(), 3);
+
+        for i in 8..11 {
+            assert!(received_blocks.iter().any(|b| b.height().0 == i));
+        }
+
+        // Stop the task
+        da_receiver.da.catchupper.stop_height = Some(BlockHeight(10));
+        _ = da_receiver
+            .da
+            .catchupper
+            .manage_catchup(BlockHeight(10), &tx);
+
+        let mut received_blocks = vec![];
+        while let Some(streamed_block) = rx.recv().await {
+            da_receiver
+                .handle_signed_block(streamed_block.clone(), &mut server)
+                .await;
+            received_blocks.push(streamed_block);
+            if received_blocks.len() == 8 {
+                break;
+            }
+        }
+
+        assert_eq!(received_blocks.len(), 8);
+
+        for i in 0..8 {
+            assert!(received_blocks.iter().any(|b| b.height().0 == i));
+        }
     }
 }
