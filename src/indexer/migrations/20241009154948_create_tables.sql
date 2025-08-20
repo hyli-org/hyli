@@ -84,11 +84,9 @@ CREATE TABLE contract_state (
 CREATE TABLE transaction_state_events (
     block_hash TEXT NOT NULL REFERENCES blocks(hash) ON DELETE CASCADE,
     block_height INT,
-    index INT,
     tx_hash TEXT NOT NULL,
     parent_dp_hash TEXT NOT NULL,
     FOREIGN KEY (tx_hash, parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE,
-    
     events JSONB NOT NULL
 );
 

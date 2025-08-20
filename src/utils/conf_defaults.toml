@@ -86,7 +86,7 @@ peer_check_interval = 100
 events = ["node_state", "new_block", "new_tx"]
 
 [indexer]
-query_buffer_size = 100
+query_buffer_size = 100000
 persist_proofs = true
 
 [gcs]
