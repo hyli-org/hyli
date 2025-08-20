@@ -50,10 +50,10 @@ impl Module for DataAvailability {
         } else {
             Some(DaCatchupPolicy {
                 floor: if ctx.config.run_fast_catchup {
-                    ctx.node_state_override.and_then(|node_state| {
+                    ctx.start_height.and_then(|start_height| {
                         // Avoid fast catchup reexecution
-                        if highest_block < node_state.current_height {
-                            Some(node_state.current_height + 1)
+                        if highest_block < start_height {
+                            Some(start_height + 1)
                         } else {
                             None
                         }
@@ -145,6 +145,10 @@ impl DaCatchupper {
         )
     }
 
+    pub fn need_to_tick(&self) -> bool {
+        self.policy.is_some() && self.status.is_some()
+    }
+
     #[cfg(test)]
     pub fn stop_task(&mut self) {
         if let Some((task, _)) = &mut self.status {
@@ -219,19 +223,23 @@ impl DaCatchupper {
         processed_height: BlockHeight,
         sender: &tokio::sync::mpsc::Sender<SignedBlock>,
     ) -> anyhow::Result<()> {
+        if self.policy.is_none() {
+            debug!("No catchup policy set, skipping catchup");
+            return Ok(());
+        };
+
+        if self.status.is_none() {
+            trace!("Catchup is already done");
+            return Ok(());
+        };
+
         let Some(peer) = self.choose_random_peer() else {
             warn!("No peers available for catchup, cannot proceed");
             return Ok(());
         };
 
-        let Some(policy) = &mut self.policy else {
-            debug!("No catchup policy set, skipping catchup");
-            return Ok(());
-        };
-
         let Some((task, old_height)) = &mut self.status else {
-            trace!("Catchup is already done");
-            return Ok(());
+            unreachable!("Status was already checked");
         };
 
         if self
@@ -244,18 +252,21 @@ impl DaCatchupper {
             );
             task.abort();
             self.status = None;
-            // In case status is None, we check if we need to start a new catchup task up to the floor height
-            if policy.backfill && policy.floor.is_some() {
-                policy.backfill = false; // Disable backfill after the first catchup
-                self.stop_height = policy.floor; // Set stop height to the floor if backfill is enabled
 
-                debug!(
-                    "Starting backfill catchup from height {} to {:?}",
-                    BlockHeight(0),
-                    policy.floor
-                );
+            if let Some(policy) = &mut self.policy {
+                // In case status is None, we check if we need to start a new catchup task up to the floor height
+                if policy.backfill && policy.floor.is_some() {
+                    policy.backfill = false; // Disable backfill after the first catchup
+                    self.stop_height = policy.floor; // Set stop height to the floor if backfill is enabled
 
-                self.catchup_from(BlockHeight(0), sender)?;
+                    debug!(
+                        "Starting backfill catchup from height {} to {:?}",
+                        BlockHeight(0),
+                        policy.floor
+                    );
+
+                    self.catchup_from(BlockHeight(0), sender)?;
+                }
             }
         } else if task.is_finished() {
             info!(
@@ -265,8 +276,7 @@ impl DaCatchupper {
             let from = processed_height.max(*old_height);
 
             let new_task = Self::start_task(peer, self.da_max_frame_length, from, sender.clone());
-            *task = new_task;
-            *old_height = from;
+            self.status = Some((new_task, from));
         } else {
             debug!(
                 "Catchup task is still running, last processed height {}",
@@ -414,7 +424,7 @@ impl DataAvailability {
                 );
             }
 
-            _ = catchup_task_checker_ticker.tick()/*, if self.catchupper.need_to_tick()*/ => {
+            _ = catchup_task_checker_ticker.tick(), if self.catchupper.need_to_tick() => {
                 let highest_block = self.blocks.highest();
                 _ = log_error!(self.catchupper.manage_catchup(highest_block, &catchup_block_sender), "Catchup transition after tick");
             }

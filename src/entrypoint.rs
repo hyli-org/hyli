@@ -388,13 +388,14 @@ async fn common_main(
                 .as_ref()
                 .expect("Crypto must be defined to run p2p")
                 .clone(),
-            node_state_override,
+            start_height: node_state_override
+                .as_ref()
+                .map(|node_state| node_state.current_height),
         };
 
         handler
             .build_module::<NodeStateModule>(NodeStateCtx {
                 node_id: config.id.clone(),
-                node_state_override: ctx.node_state_override.clone(),
                 data_directory: config.data_directory.clone(),
                 api: build_api_ctx.clone(),
             })

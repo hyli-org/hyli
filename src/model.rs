@@ -1,7 +1,7 @@
 //! Various data structures
 
 use hyle_crypto::SharedBlstCrypto;
-use hyle_modules::{modules::SharedBuildApiCtx, node_state::NodeStateStore};
+use hyle_modules::modules::SharedBuildApiCtx;
 
 // Re-export
 pub use hyle_model::*;
@@ -13,5 +13,5 @@ pub struct SharedRunContext {
     pub config: SharedConf,
     pub api: SharedBuildApiCtx,
     pub crypto: SharedBlstCrypto,
-    pub node_state_override: Option<NodeStateStore>,
+    pub start_height: Option<BlockHeight>,
 }

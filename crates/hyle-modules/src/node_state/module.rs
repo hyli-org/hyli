@@ -54,7 +54,6 @@ pub struct NodeStateBusClient {
 
 pub struct NodeStateCtx {
     pub node_id: String,
-    pub node_state_override: Option<NodeStateStore>,
     pub data_directory: PathBuf,
     pub api: SharedBuildApiCtx,
 }
@@ -71,11 +70,9 @@ impl Module for NodeStateModule {
         }
         let metrics = NodeStateMetrics::global(ctx.node_id.clone(), "node_state");
 
-        let store = ctx
-            .node_state_override
-            .unwrap_or(Self::load_from_disk_or_default::<NodeStateStore>(
-                ctx.data_directory.join(NODE_STATE_BIN).as_path(),
-            ));
+        let store = Self::load_from_disk_or_default::<NodeStateStore>(
+            ctx.data_directory.join(NODE_STATE_BIN).as_path(),
+        );
 
         for name in store.contracts.keys() {
             info!("📝 Loaded contract state for {}", name);
