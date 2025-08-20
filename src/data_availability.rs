@@ -40,6 +40,9 @@ impl Module for DataAvailability {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> anyhow::Result<Self> {
         let bus = DABusClient::new_from_bus(bus.new_handle()).await;
 
+        let blocks = Blocks::new(&ctx.config.data_directory.join("data_availability.db"))?;
+        let highest_block = blocks.highest();
+
         // When fast catchup is enabled, we load the node state from disk to load blocks
 
         let catchup_policy = if ctx.config.consensus.solo {
@@ -47,8 +50,14 @@ impl Module for DataAvailability {
         } else {
             Some(DaCatchupPolicy {
                 floor: if ctx.config.run_fast_catchup {
-                    ctx.node_state_override
-                        .map(|node_state| node_state.current_height + 1)
+                    ctx.node_state_override.and_then(|node_state| {
+                        // Avoid fast catchup reexecution
+                        if highest_block < node_state.current_height {
+                            Some(node_state.current_height + 1)
+                        } else {
+                            None
+                        }
+                    })
                 } else {
                     None
                 },
@@ -56,10 +65,8 @@ impl Module for DataAvailability {
             })
         };
 
-        let blocks = Blocks::new(&ctx.config.data_directory.join("data_availability.db"))?;
-
         info!(
-            "📦  DataAvailability module started with policy {:?}",
+            "📦  DataAvailability module built with policy {:?}",
             catchup_policy
         );
 
