@@ -321,6 +321,8 @@ impl Indexer {
             return Ok(());
         }
 
+        info!("Dumping SQL queries to database");
+
         let mut transaction = self.db.begin().await?;
 
         for sql_update in self.handler_store.sql_queries.drain(..) {
@@ -338,50 +340,85 @@ impl Indexer {
 
 impl NodeStateCallback for Indexer {
     fn on_event(&mut self, event: &TxEvent) {
-        match event {
-            &TxEvent::DuplicateBlobTransaction(tx_id) => {}
-            &TxEvent::SequencedBlobTransaction(tx_id, lane_id, index, blob_tx) => {
-                /*
-                TABLE transactions (
-                parent_dp_hash TEXT NOT NULL,                           -- Data Proposal hash
-                tx_hash TEXT NOT NULL,
-                version INT NOT NULL,
-                transaction_type transaction_type NOT NULL,      -- Field to identify the type of transaction (used for joins)
-                transaction_status transaction_status NOT NULL,  -- Field to identify the status of the transaction
-                block_hash TEXT REFERENCES blocks(hash) ON DELETE CASCADE,
-                block_height INT,
-                lane_id TEXT,                           -- Lane ID
-                index INT,                              -- Index of the transaction within the block
-                identity TEXT,                          -- Identity (NULL except for blob transactions)
-                PRIMARY KEY (parent_dp_hash, tx_hash),
-                CHECK (length(tx_hash) = 64)*/
-                self.handler_store.sql_queries.push(
-                sqlx::query("INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)")
-                    .bind(DataProposalHashDb(tx_id.0.clone()))
-                    .bind(TxHashDb(tx_id.1.clone()))
-                    .bind(1)
-                    .bind(TransactionTypeDb::BlobTransaction)
-                    .bind(TransactionStatusDb::Sequenced)
-                    .bind(self.handler_store.block_hash.clone())
-                    .bind(self.handler_store.block_height.0 as i64)
-                    .bind(LaneIdDb(lane_id.clone()))
-                    .bind(index as i32)
-                    .bind(blob_tx.identity.clone().0)
-            );
+        match *event {
+            TxEvent::DuplicateBlobTransaction(ref tx_id) => {
+                // Return early, we want to skip events or it will violate the foreign key
+                return;
             }
-            &TxEvent::SequencedProofTransaction(tx_id, proof_tx) => {}
-            &TxEvent::Settled(tx_id, unsettled_tx) => {}
-            &TxEvent::SettledAsFailed(tx_id) => {}
-            &TxEvent::TimedOut(tx_id) => {}
-            &TxEvent::TxError(tx_id, err) => {}
-            &TxEvent::NewProof(tx_id, tx_hash, ref unsettled_tx, proof_output) => {}
-            &TxEvent::BlobSettled(tx_id, unsettled_blob_metadata, blob_index, size) => {}
-            &TxEvent::ContractDeleted(tx_id, contract_name) => {}
-            &TxEvent::ContractRegistered(tx_id, contract_name) => {}
-            &TxEvent::ContractStateUpdated(tx_id, contract_name, state_commitment) => {}
-            &TxEvent::ContractProgramIdUpdated(tx_id, contract_name, program_id) => {}
-            &TxEvent::ContractTimeoutWindowUpdated(tx_id, contract_name, timeout_window) => {}
-        };
+            TxEvent::SequencedBlobTransaction(ref tx_id, lane_id, index, ref blob_tx) => {
+                self.handler_store.sql_queries.push(
+                    sqlx::query("INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)")
+                        .bind(DataProposalHashDb(tx_id.0.clone()))
+                        .bind(TxHashDb(tx_id.1.clone()))
+                        .bind(1)
+                        .bind(TransactionTypeDb::BlobTransaction)
+                        .bind(TransactionStatusDb::Sequenced)
+                        .bind(self.handler_store.block_hash.clone())
+                        .bind(self.handler_store.block_height.0 as i64)
+                        .bind(LaneIdDb(lane_id.clone()))
+                        .bind(index as i32)
+                        .bind(blob_tx.identity.clone().0)
+                );
+            }
+            TxEvent::SequencedProofTransaction(ref tx_id, lane_id, index, ref proof_tx) => {
+                self.handler_store.sql_queries.push(
+                    sqlx::query("INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL)")
+                        .bind(DataProposalHashDb(tx_id.0.clone()))
+                        .bind(TxHashDb(tx_id.1.clone()))
+                        .bind(1)
+                        .bind(TransactionTypeDb::BlobTransaction)
+                        .bind(TransactionStatusDb::Sequenced)
+                        .bind(self.handler_store.block_hash.clone())
+                        .bind(self.handler_store.block_height.0 as i64)
+                        .bind(LaneIdDb(lane_id.clone()))
+                        .bind(index as i32)
+                );
+            }
+            TxEvent::Settled(ref tx_id, ref _unsettled_tx) => {
+                self.handler_store.sql_queries.push(
+                    sqlx::query("UPDATE transactions SET transaction_status = $1 WHERE tx_hash = $2 AND parent_dp_hash = $3")
+                        .bind(TransactionStatusDb::Success)
+                        .bind(TxHashDb(tx_id.1.clone()))
+                        .bind(DataProposalHashDb(tx_id.0.clone()))
+                );
+            }
+            TxEvent::SettledAsFailed(ref tx_id) => {
+                self.handler_store.sql_queries.push(
+                    sqlx::query("UPDATE transactions SET transaction_status = $1 WHERE tx_hash = $2 AND parent_dp_hash = $3")
+                        .bind(TransactionStatusDb::Failure)
+                        .bind(TxHashDb(tx_id.1.clone()))
+                        .bind(DataProposalHashDb(tx_id.0.clone()))
+                );
+            }
+            TxEvent::TimedOut(ref tx_id) => {
+                self.handler_store.sql_queries.push(
+                    sqlx::query("UPDATE transactions SET transaction_status = $1 WHERE tx_hash = $2 AND parent_dp_hash = $3")
+                        .bind(TransactionStatusDb::TimedOut)
+                        .bind(TxHashDb(tx_id.1.clone()))
+                        .bind(DataProposalHashDb(tx_id.0.clone()))
+                );
+            }
+            TxEvent::TxError(ref tx_id, ref err) => {}
+            TxEvent::NewProof(ref tx_id, ref tx_hash, ref unsettled_tx, ref proof_output) => {}
+            TxEvent::BlobSettled(ref tx_id, ref unsettled_blob_metadata, blob_index, size) => {}
+            TxEvent::ContractDeleted(ref tx_id, ref contract_name) => {}
+            TxEvent::ContractRegistered(ref tx_id, ref contract_name) => {}
+            TxEvent::ContractStateUpdated(ref tx_id, ref contract_name, ref state_commitment) => {}
+            TxEvent::ContractProgramIdUpdated(ref tx_id, ref contract_name, ref program_id) => {}
+            TxEvent::ContractTimeoutWindowUpdated(
+                ref tx_id,
+                ref contract_name,
+                ref timeout_window,
+            ) => {}
+        }
+        self.handler_store.sql_queries.push(
+            sqlx::query("INSERT INTO transaction_state_events (block_hash, block_height, tx_hash, parent_dp_hash, events) VALUES ($1, $2, $3, $4, $5::jsonb)")
+                .bind(self.handler_store.block_hash.clone())
+                .bind(self.handler_store.block_height.0 as i64)
+                .bind(TxHashDb(event.tx_id().1.clone()))
+                .bind(DataProposalHashDb(event.tx_id().0.clone()))
+                .bind(serde_json::to_value(event).unwrap_or(serde_json::Value::Null))
+        );
     }
 }
 

@@ -126,11 +126,11 @@ enum BlobTxHandled {
     Ok,
 }
 
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub enum TxEvent<'a> {
     DuplicateBlobTransaction(&'a TxId),
     SequencedBlobTransaction(&'a TxId, &'a LaneId, u32, &'a BlobTransaction),
-    SequencedProofTransaction(&'a TxId, &'a VerifiedProofTransaction),
+    SequencedProofTransaction(&'a TxId, &'a LaneId, u32, &'a VerifiedProofTransaction),
     Settled(&'a TxId, &'a UnsettledBlobTransaction),
     SettledAsFailed(&'a TxId),
     TimedOut(&'a TxId),
@@ -147,6 +147,27 @@ pub enum TxEvent<'a> {
     ContractStateUpdated(&'a TxId, &'a ContractName, &'a StateCommitment),
     ContractProgramIdUpdated(&'a TxId, &'a ContractName, &'a ProgramId),
     ContractTimeoutWindowUpdated(&'a TxId, &'a ContractName, &'a TimeoutWindow),
+}
+
+impl<'a> TxEvent<'a> {
+    pub fn tx_id(&self) -> &TxId {
+        match self {
+            TxEvent::DuplicateBlobTransaction(tx_id) => tx_id,
+            TxEvent::SequencedBlobTransaction(tx_id, _, _, _) => tx_id,
+            TxEvent::SequencedProofTransaction(tx_id, _, _, _) => tx_id,
+            TxEvent::Settled(tx_id, _) => tx_id,
+            TxEvent::SettledAsFailed(tx_id) => tx_id,
+            TxEvent::TimedOut(tx_id) => tx_id,
+            TxEvent::TxError(tx_id, _) => tx_id,
+            TxEvent::NewProof(tx_id, _, _, _) => tx_id,
+            TxEvent::BlobSettled(tx_id, _, _, _) => tx_id,
+            TxEvent::ContractDeleted(tx_id, _) => tx_id,
+            TxEvent::ContractRegistered(tx_id, _) => tx_id,
+            TxEvent::ContractStateUpdated(tx_id, _, _) => tx_id,
+            TxEvent::ContractProgramIdUpdated(tx_id, _, _) => tx_id,
+            TxEvent::ContractTimeoutWindowUpdated(tx_id, _, _) => tx_id,
+        }
+    }
 }
 
 pub trait NodeStateCallback: std::any::Any {
@@ -197,7 +218,7 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     .dp_parent_hashes
                     .insert(tx_id.1.clone(), tx_id.0.clone());
             }
-            &TxEvent::SequencedProofTransaction(tx_id, proof_tx) => {
+            &TxEvent::SequencedProofTransaction(tx_id, lane_id, index, proof_tx) => {
                 self.block_under_construction
                     .txs
                     .push((tx_id.clone(), proof_tx.clone().into()));
@@ -445,6 +466,12 @@ impl<'any> NodeStateProcessing<'any> {
                         },
                     ) {
                         Ok(BlobTxHandled::ShouldSettle(tx_hash)) => {
+                            self.callback.on_event(&TxEvent::SequencedBlobTransaction(
+                                &tx_id,
+                                &lane_id,
+                                i as u32,
+                                blob_transaction,
+                            ));
                             let mut blob_tx_to_try_and_settle = BTreeSet::new();
                             blob_tx_to_try_and_settle.insert(tx_hash);
                             // In case of a BlobTransaction with only native verifies, we need to trigger the
@@ -479,8 +506,9 @@ impl<'any> NodeStateProcessing<'any> {
                     error!("Unverified recursive proof transaction should not be in a block");
                 }
                 TransactionData::VerifiedProof(proof_tx) => {
-                    self.callback
-                        .on_event(&TxEvent::SequencedProofTransaction(&tx_id, proof_tx));
+                    self.callback.on_event(&TxEvent::SequencedProofTransaction(
+                        &tx_id, &lane_id, i as u32, proof_tx,
+                    ));
                     // First, store the proofs and check if we can settle the transaction
                     // NB: if some of the blob proof outputs are bad, we just ignore those
                     // but we don't actually fail the transaction.
