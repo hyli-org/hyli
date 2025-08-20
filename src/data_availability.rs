@@ -753,7 +753,6 @@ pub mod tests {
         DataAvailabilityServer,
     };
     use staking::state::Staking;
-    use tracing::info;
 
     /// For use in integration tests
     pub struct DataAvailabilityTestCtx {
@@ -1148,7 +1147,7 @@ pub mod tests {
         );
         let mut block_sender = TestBusClient::new_from_bus(sender_global_bus.new_handle()).await;
         let mut da_sender = DataAvailabilityTestCtx::new(sender_global_bus).await;
-        let mut server = DataAvailabilityServer::start(7890, "DaServer")
+        let mut server = DataAvailabilityServer::start(7891, "DaServer")
             .await
             .unwrap();
 
