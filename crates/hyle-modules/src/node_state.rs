@@ -498,7 +498,8 @@ impl<'any> NodeStateProcessing<'any> {
                         Err(e) => {
                             let err = format!("Failed to handle blob transaction: {e:?}");
                             error!(tx_hash = %tx_id.1, "{err}");
-                            self.callback.on_event(&TxEvent::TxError(&tx_id, &err));
+                            // No callback, tx doesn't exist yet.
+                            //self.callback.on_event(&TxEvent::TxError(&tx_id, &err));
                         }
                     }
                 }
