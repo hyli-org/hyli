@@ -24,7 +24,7 @@ use hyle_modules::{
     },
 };
 use hyle_net::clock::TimestampMsClock;
-use sqlx::{postgres::PgPoolOptions, PgPool, Pool, Postgres, QueryBuilder, Row};
+use sqlx::{postgres::PgPoolOptions, Acquire, PgPool, Pool, Postgres, QueryBuilder, Row};
 use std::{
     collections::{HashMap, HashSet},
     ops::{Deref, DerefMut},
@@ -196,58 +196,6 @@ fn calculate_optimal_batch_size(params_per_item: usize) -> usize {
     std::cmp::max(1, optimal_size)
 }
 
-#[derive(Debug)]
-pub struct TxDataStore {
-    pub tx_hash: TxHashDb,
-    pub parent_data_proposal_hash: DataProposalHashDb,
-    pub blob_index: i32,
-    pub identity: String,
-    pub contract_name: String,
-    pub blob_data: Vec<u8>,
-    pub verified: bool,
-}
-
-#[derive(Debug)]
-pub struct TxEventStore {
-    pub block_hash: ConsensusProposalHash,
-    pub block_height: i64,
-    pub index: i32,
-    pub tx_hash: TxHashDb,
-    pub parent_data_proposal_hash: DataProposalHashDb,
-    pub events: String,
-}
-
-#[derive(Debug)]
-pub struct TxContractStore {
-    pub tx_hash: TxHashDb,
-    pub parent_data_proposal_hash: DataProposalHashDb,
-    pub verifier: String,
-    pub program_id: Vec<u8>,
-    pub timeout_window: Option<TimeoutWindowDb>,
-    pub state_commitment: Vec<u8>,
-    pub contract_name: String,
-}
-
-#[derive(Debug)]
-pub struct TxContractStateStore {
-    pub contract_name: String,
-    pub block_hash: ConsensusProposalHash,
-    pub state_commitment: Vec<u8>,
-}
-
-#[derive(Debug)]
-pub struct TxBlobProofOutputStore {
-    pub proof_tx_hash: TxHashDb,
-    pub proof_parent_dp_hash: DataProposalHashDb,
-    pub blob_tx_hash: TxHashDb,
-    pub blob_parent_dp_hash: DataProposalHashDb,
-    pub blob_index: i32,
-    pub blob_proof_output_index: i32,
-    pub contract_name: String,
-    pub hyle_output: String,
-    pub settled: bool,
-}
-
 #[derive(Default)]
 pub(crate) struct IndexerHandlerStore {
     sql_queries: Vec<
@@ -260,6 +208,11 @@ pub(crate) struct IndexerHandlerStore {
     block_height: BlockHeight,
     block_hash: BlockHash,
     last_update: TimestampMs,
+
+    blocks: Vec<BlockStore>,
+    txs: Vec<TxStore>,
+    tx_status_update: HashMap<TxId, TransactionStatusDb>,
+    tx_events: Vec<TxEventStore>,
 }
 
 impl std::fmt::Debug for IndexerHandlerStore {
@@ -277,14 +230,14 @@ impl Indexer {
             self.handler_store.block_height = block.height();
             self.handler_store.block_hash = block.hashed();
 
-            self.handler_store.sql_queries.push(
-                sqlx::query("INSERT INTO blocks (hash, parent_hash, height, timestamp, total_txs) VALUES ($1, $2, $3, $4, $5)")
-                    .bind(self.handler_store.block_hash.clone())
-                    .bind(block.consensus_proposal.parent_hash.clone())
-                    .bind(self.handler_store.block_height.0 as i64)
-                    .bind(into_utc_date_time(&block.consensus_proposal.timestamp).unwrap_or_else(|_| Utc::now()))
-                    .bind(block.count_txs() as i64)
-            );
+            self.handler_store.blocks.push(BlockStore {
+                block_hash: self.handler_store.block_hash.clone(),
+                parent_hash: block.parent_hash().clone(),
+                block_height: self.handler_store.block_height,
+                timestamp: into_utc_date_time(&block.consensus_proposal.timestamp)
+                    .unwrap_or_else(|_| Utc::now()),
+                total_txs: block.count_txs() as i64,
+            });
 
             NodeStateProcessing {
                 this: &mut ns,
@@ -317,25 +270,131 @@ impl Indexer {
     }
 
     pub(crate) async fn dump_store_to_db(&mut self) -> Result<()> {
-        if self.handler_store.sql_queries.is_empty() {
+        /*if self.handler_store.sql_queries.is_empty() {
             return Ok(());
-        }
+        }*/
 
         info!("Dumping SQL queries to database");
 
-        let mut transaction = self.db.begin().await?;
+        //let mut transaction = self.db.begin().await?;
+        let transaction = &self.db;
+
+        // First insert blocks
+        for block in self.handler_store.blocks.drain(..) {
+            sqlx::query("INSERT INTO blocks (hash, parent_hash, height, timestamp, total_txs) VALUES ($1, $2, $3, $4, $5)")
+                .bind(block.block_hash)
+                .bind(block.parent_hash)
+                .bind(block.block_height.0 as i64)
+                .bind(block.timestamp)
+                .bind(block.total_txs)
+                .execute(transaction)
+                .await?;
+        }
+
+        // Then transactions
+        let batch_size = calculate_optimal_batch_size(10);
+        while !self.handler_store.txs.is_empty() {
+            let chunk = self
+                .handler_store
+                .txs
+                .drain(..std::cmp::min(batch_size, self.handler_store.txs.len()))
+                .collect::<Vec<_>>();
+            let mut query_builder = QueryBuilder::<Postgres>::new(
+                    "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) ",
+                );
+            query_builder.push_values(chunk.into_iter(), |mut b, tx| {
+                b.push_bind(tx.dp_hash)
+                    .push_bind(tx.tx_hash)
+                    .push_bind(1)
+                    .push_bind(tx.transaction_type)
+                    .push_bind(TransactionStatusDb::Sequenced)
+                    .push_bind(tx.block_hash)
+                    .push_bind(tx.block_height.0 as i32)
+                    .push_bind(tx.lane_id)
+                    .push_bind(tx.index)
+                    .push_bind(tx.identity);
+            });
+            // for genesis block verified proof tx
+            query_builder.push(" ON CONFLICT DO NOTHING");
+            _ = log_error!(
+                query_builder.build().execute(transaction).await,
+                "Inserting transactions"
+            )?;
+        }
+
+        // Then status updates
+        /*for (tx_id, status) in self.handler_store.tx_status_update.drain() {
+            sqlx::query("UPDATE transactions SET transaction_status = $1 WHERE tx_hash = $2 AND parent_dp_hash = $3")
+                .bind(status)
+                .bind(TxHashDb(tx_id.1))
+                .bind(DataProposalHashDb(tx_id.0))
+                .execute(&mut *transaction)
+                .await?;
+        }*/
+
+        // Then events
+        let batch_size = calculate_optimal_batch_size(5); // 5 params per event
+        while !self.handler_store.tx_events.is_empty() {
+            let chunk = self
+                .handler_store
+                .tx_events
+                .drain(..std::cmp::min(batch_size, self.handler_store.tx_events.len()))
+                .collect::<Vec<_>>();
+            let mut query_builder = QueryBuilder::<Postgres>::new(
+            "INSERT INTO transaction_state_events (block_hash, block_height, tx_hash, parent_dp_hash, events) ",
+            );
+            query_builder.push_values(chunk.into_iter(), |mut b, event| {
+                b.push_bind(event.block_hash)
+                    .push_bind(event.block_height.0 as i64)
+                    .push_bind(event.tx_hash)
+                    .push_bind(event.dp_hash)
+                    .push_bind(event.event_data);
+            });
+            _ = log_error!(
+                query_builder.build().execute(transaction).await,
+                "Inserting transaction state events"
+            )?;
+        }
 
         for sql_update in self.handler_store.sql_queries.drain(..) {
             _ = log_error!(
-                sql_update.execute(&mut *transaction).await,
+                sql_update.execute(transaction).await,
                 "Executing SQL update"
             )?;
         }
 
-        transaction.commit().await?;
+        //transaction.commit().await?;
 
         Ok(())
     }
+}
+
+#[derive(Debug)]
+pub struct TxStore {
+    pub tx_hash: TxHashDb,
+    pub dp_hash: DataProposalHashDb,
+    pub transaction_type: TransactionTypeDb,
+    pub block_hash: ConsensusProposalHash,
+    pub block_height: BlockHeight,
+    pub lane_id: Option<LaneIdDb>,
+    pub index: i32,
+    pub identity: Option<String>,
+}
+
+pub struct BlockStore {
+    pub block_hash: ConsensusProposalHash,
+    pub parent_hash: ConsensusProposalHash,
+    pub block_height: BlockHeight,
+    pub timestamp: DateTime<Utc>,
+    pub total_txs: i64,
+}
+
+pub struct TxEventStore {
+    pub block_hash: ConsensusProposalHash,
+    pub block_height: BlockHeight,
+    pub tx_hash: TxHashDb,
+    pub dp_hash: DataProposalHashDb,
+    pub event_data: serde_json::Value,
 }
 
 impl NodeStateCallback for Indexer {
@@ -346,57 +405,43 @@ impl NodeStateCallback for Indexer {
                 return;
             }
             TxEvent::SequencedBlobTransaction(ref tx_id, lane_id, index, ref blob_tx) => {
-                self.handler_store.sql_queries.push(
-                    sqlx::query("INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)")
-                        .bind(DataProposalHashDb(tx_id.0.clone()))
-                        .bind(TxHashDb(tx_id.1.clone()))
-                        .bind(1)
-                        .bind(TransactionTypeDb::BlobTransaction)
-                        .bind(TransactionStatusDb::Sequenced)
-                        .bind(self.handler_store.block_hash.clone())
-                        .bind(self.handler_store.block_height.0 as i64)
-                        .bind(LaneIdDb(lane_id.clone()))
-                        .bind(index as i32)
-                        .bind(blob_tx.identity.clone().0)
-                );
+                self.handler_store.txs.push(TxStore {
+                    tx_hash: TxHashDb(tx_id.1.clone()),
+                    dp_hash: DataProposalHashDb(tx_id.0.clone()),
+                    transaction_type: TransactionTypeDb::BlobTransaction,
+                    block_hash: self.handler_store.block_hash.clone(),
+                    block_height: self.handler_store.block_height,
+                    lane_id: Some(LaneIdDb(lane_id.clone())),
+                    index: index as i32,
+                    identity: Some(blob_tx.identity.clone().0),
+                });
             }
             TxEvent::SequencedProofTransaction(ref tx_id, lane_id, index, ref proof_tx) => {
-                self.handler_store.sql_queries.push(
-                    sqlx::query("INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL)")
-                        .bind(DataProposalHashDb(tx_id.0.clone()))
-                        .bind(TxHashDb(tx_id.1.clone()))
-                        .bind(1)
-                        .bind(TransactionTypeDb::BlobTransaction)
-                        .bind(TransactionStatusDb::Sequenced)
-                        .bind(self.handler_store.block_hash.clone())
-                        .bind(self.handler_store.block_height.0 as i64)
-                        .bind(LaneIdDb(lane_id.clone()))
-                        .bind(index as i32)
-                );
+                self.handler_store.txs.push(TxStore {
+                    tx_hash: TxHashDb(tx_id.1.clone()),
+                    dp_hash: DataProposalHashDb(tx_id.0.clone()),
+                    transaction_type: TransactionTypeDb::ProofTransaction,
+                    block_hash: self.handler_store.block_hash.clone(),
+                    block_height: self.handler_store.block_height,
+                    lane_id: Some(LaneIdDb(lane_id.clone())),
+                    index: index as i32,
+                    identity: None,
+                });
             }
-            TxEvent::Settled(ref tx_id, ref _unsettled_tx) => {
-                self.handler_store.sql_queries.push(
-                    sqlx::query("UPDATE transactions SET transaction_status = $1 WHERE tx_hash = $2 AND parent_dp_hash = $3")
-                        .bind(TransactionStatusDb::Success)
-                        .bind(TxHashDb(tx_id.1.clone()))
-                        .bind(DataProposalHashDb(tx_id.0.clone()))
-                );
+            TxEvent::Settled(tx_id, ref _unsettled_tx) => {
+                self.handler_store
+                    .tx_status_update
+                    .insert(tx_id.clone(), TransactionStatusDb::Success);
             }
-            TxEvent::SettledAsFailed(ref tx_id) => {
-                self.handler_store.sql_queries.push(
-                    sqlx::query("UPDATE transactions SET transaction_status = $1 WHERE tx_hash = $2 AND parent_dp_hash = $3")
-                        .bind(TransactionStatusDb::Failure)
-                        .bind(TxHashDb(tx_id.1.clone()))
-                        .bind(DataProposalHashDb(tx_id.0.clone()))
-                );
+            TxEvent::SettledAsFailed(tx_id) => {
+                self.handler_store
+                    .tx_status_update
+                    .insert(tx_id.clone(), TransactionStatusDb::Failure);
             }
-            TxEvent::TimedOut(ref tx_id) => {
-                self.handler_store.sql_queries.push(
-                    sqlx::query("UPDATE transactions SET transaction_status = $1 WHERE tx_hash = $2 AND parent_dp_hash = $3")
-                        .bind(TransactionStatusDb::TimedOut)
-                        .bind(TxHashDb(tx_id.1.clone()))
-                        .bind(DataProposalHashDb(tx_id.0.clone()))
-                );
+            TxEvent::TimedOut(tx_id) => {
+                self.handler_store
+                    .tx_status_update
+                    .insert(tx_id.clone(), TransactionStatusDb::TimedOut);
             }
             TxEvent::TxError(ref tx_id, ref err) => {}
             TxEvent::NewProof(ref tx_id, ref tx_hash, ref unsettled_tx, ref proof_output) => {}
@@ -411,14 +456,13 @@ impl NodeStateCallback for Indexer {
                 ref timeout_window,
             ) => {}
         }
-        self.handler_store.sql_queries.push(
-            sqlx::query("INSERT INTO transaction_state_events (block_hash, block_height, tx_hash, parent_dp_hash, events) VALUES ($1, $2, $3, $4, $5::jsonb)")
-                .bind(self.handler_store.block_hash.clone())
-                .bind(self.handler_store.block_height.0 as i64)
-                .bind(TxHashDb(event.tx_id().1.clone()))
-                .bind(DataProposalHashDb(event.tx_id().0.clone()))
-                .bind(serde_json::to_value(event).unwrap_or(serde_json::Value::Null))
-        );
+        self.handler_store.tx_events.push(TxEventStore {
+            block_hash: self.handler_store.block_hash.clone(),
+            block_height: self.handler_store.block_height,
+            tx_hash: TxHashDb(event.tx_id().1.clone()),
+            dp_hash: DataProposalHashDb(event.tx_id().0.clone()),
+            event_data: serde_json::to_value(event).unwrap_or(serde_json::Value::Null),
+        });
     }
 }
 
