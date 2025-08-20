@@ -7,7 +7,6 @@ use fixtures::{
     test_helpers::{self, ConfMaker},
 };
 use hyle::utils::conf::Conf;
-use tracing::error;
 
 mod fixtures;
 
@@ -27,7 +26,7 @@ async fn setup_4_nodes() -> Result<()> {
     }
 }
 
-// #[ignore = "This is intended to easily start a few nodes locally for devs"]
+#[ignore = "This is intended to easily start a few nodes locally for devs"]
 #[test_log::test(tokio::test)]
 async fn setup_4_nodes_catchup() -> Result<()> {
     let mut ctx = E2ECtx::new_multi_with_indexer(4, 1000).await?;

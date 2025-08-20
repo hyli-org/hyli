@@ -130,8 +130,8 @@ where
 }
 
 pub mod files {
-    pub const NODE_STATE_BIN: &'static str = "node_state.bin";
-    pub const CONSENSUS_BIN: &'static str = "consensus.bin";
+    pub const NODE_STATE_BIN: &str = "node_state.bin";
+    pub const CONSENSUS_BIN: &str = "consensus.bin";
 }
 
 struct ModuleStarter {
