@@ -149,7 +149,7 @@ impl DaCatchupper {
     }
 
     pub fn need_to_tick(&self) -> bool {
-        self.policy.is_some() && (self.policy.as_ref().unwrap().backfill || self.status.is_some())
+        self.policy.as_ref().is_some_and(|p| p.backfill) || self.status.is_some()
     }
 
     #[cfg(test)]
