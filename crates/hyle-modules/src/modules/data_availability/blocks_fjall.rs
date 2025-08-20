@@ -4,7 +4,7 @@ use fjall::{
 };
 use sdk::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock};
 use std::{fmt::Debug, path::Path};
-use tracing::{error, info, trace};
+use tracing::{debug, error, info, trace};
 
 struct FjallHashKey(ConsensusProposalHash);
 struct FjallHeightKey([u8; 8]);
@@ -50,7 +50,18 @@ pub struct Blocks {
 }
 
 impl Blocks {
+    pub fn new_handle(&self) -> Blocks {
+        Blocks {
+            db: self.db.clone(),
+            by_hash: self.by_hash.clone(),
+            by_height: self.by_height.clone(),
+        }
+    }
+
     fn decode_block(item: Slice) -> Result<SignedBlock> {
+        borsh::from_slice(&item).map_err(Into::into)
+    }
+    fn decode_height(item: Slice) -> Result<BlockHeight> {
         borsh::from_slice(&item).map_err(Into::into)
     }
     fn decode_block_hash(item: Slice) -> Result<ConsensusProposalHash> {
@@ -118,10 +129,52 @@ impl Blocks {
         item.map(Self::decode_block).transpose()
     }
 
-    pub fn contains(&mut self, block: &ConsensusProposalHash) -> bool {
+    pub fn contains(&self, block: &ConsensusProposalHash) -> bool {
         self.by_hash
             .contains_key(FjallHashKey(block.clone()))
             .unwrap_or(false)
+    }
+
+    /// Scan the whole by_height table and returns the first missing height
+    pub fn first_hole_by_height(&self) -> Result<Option<BlockHeight>> {
+        if self.is_empty() {
+            return Ok(None);
+        }
+
+        let Some(upper_bound) = self
+            .by_height
+            .last_key_value()
+            .map_err(|e| anyhow::anyhow!(e))?
+            .and_then(|(k, _v)| Self::decode_height(k).ok())
+        else {
+            return Ok(None);
+        };
+
+        debug!(
+            "Start scanning by_height partition to find first missing block up to {:?}",
+            upper_bound
+        );
+
+        for i in 0..upper_bound.0 {
+            if i % 1000 == 0 {
+                trace!("Checking block #{} is present or not", i);
+            }
+            let key = FjallHeightKey::new(BlockHeight(i));
+            if !self
+                .by_height
+                .contains_key(key)
+                .map_err(|e| anyhow::anyhow!(e))?
+            {
+                return Ok(Some(BlockHeight(i)));
+            }
+        }
+
+        debug!(
+            "No holes found in by_height partition up to {:?}",
+            upper_bound
+        );
+
+        Ok(None)
     }
 
     pub fn last(&self) -> Option<SignedBlock> {

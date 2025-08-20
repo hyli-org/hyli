@@ -12,6 +12,7 @@ use hyle_modules::{
     },
 };
 use hyle_net::tcp::TcpEvent;
+use tokio::pin;
 use tokio::task::JoinHandle;
 
 use crate::{
@@ -122,6 +123,7 @@ struct DaCatchupPolicy {
 struct DaCatchupper {
     policy: Option<DaCatchupPolicy>,
     status: Option<(tokio::task::JoinHandle<anyhow::Result<()>>, BlockHeight)>,
+    backfill_start_height: Option<BlockHeight>,
     pub peers: Vec<String>,
     pub stop_height: Option<BlockHeight>,
     da_max_frame_length: usize,
@@ -132,6 +134,7 @@ impl DaCatchupper {
         DaCatchupper {
             policy,
             status: None,
+            backfill_start_height: None,
             peers: vec![],
             da_max_frame_length,
             stop_height: None,
@@ -146,7 +149,7 @@ impl DaCatchupper {
     }
 
     pub fn need_to_tick(&self) -> bool {
-        self.policy.is_some() && self.status.is_some()
+        self.policy.is_some() && (self.policy.as_ref().unwrap().backfill || self.status.is_some())
     }
 
     #[cfg(test)]
@@ -255,17 +258,19 @@ impl DaCatchupper {
 
             if let Some(policy) = &mut self.policy {
                 // In case status is None, we check if we need to start a new catchup task up to the floor height
-                if policy.backfill && policy.floor.is_some() {
+                if policy.backfill && policy.floor.is_some() && self.backfill_start_height.is_some()
+                {
                     policy.backfill = false; // Disable backfill after the first catchup
                     self.stop_height = policy.floor; // Set stop height to the floor if backfill is enabled
 
+                    let start_height = self.backfill_start_height.unwrap();
+
                     debug!(
                         "Starting backfill catchup from height {} to {:?}",
-                        BlockHeight(0),
-                        policy.floor
+                        start_height, policy.floor
                     );
 
-                    self.catchup_from(BlockHeight(0), sender)?;
+                    self.catchup_from(start_height, sender)?;
                 }
             }
         } else if task.is_finished() {
@@ -386,6 +391,21 @@ impl DataAvailability {
         let mut catchup_task_checker_ticker =
             tokio::time::interval(std::time::Duration::from_millis(5000));
 
+        let blocks_handle = self.blocks.new_handle();
+
+        let (first_hole_sender, mut first_hole_receiver) =
+            tokio::sync::mpsc::channel::<Option<BlockHeight>>(1);
+
+        // Start scanning local storage for first hole, if any
+        _ = tokio::task::spawn(async move {
+            _ = first_hole_sender.send(
+                blocks_handle
+                    .first_hole_by_height()
+                    .ok()
+                    .and_then(|height| height),
+            );
+        });
+
         module_handle_messages! {
             on_self self,
             listen<MempoolBlockEvent> evt => {
@@ -458,6 +478,13 @@ impl DataAvailability {
                     ).await,
                     "Send next block to peer"
                 );
+            }
+
+            Some(hole) = first_hole_receiver.recv() => {
+                self.catchupper.backfill_start_height = hole;
+                let highest_block = self.blocks.highest();
+                _ = log_error!(self.catchupper.manage_catchup(highest_block, &catchup_block_sender), "Catchup transition after tick");
+
             }
         };
 
