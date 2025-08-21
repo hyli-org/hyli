@@ -492,7 +492,7 @@ impl DataAvailability {
             }
 
             Some(hole) = first_hole_receiver.recv() => {
-                info!("Received first hole {:?}", &hole);
+                info!("Setting backfill start height as {:?}", &hole);
                 self.catchupper.backfill_start_height = hole;
                 let highest_block = self.blocks.highest();
                 _ = log_error!(self.catchupper.manage_catchup(highest_block, &catchup_block_sender), "Catchup transition after tick");
@@ -1272,20 +1272,36 @@ pub mod tests {
             .catchupper
             .manage_catchup(BlockHeight(10), &tx);
 
+        // should not start backfill
+        _ = da_receiver
+            .da
+            .catchupper
+            .manage_catchup(BlockHeight(10), &tx);
+
+        assert!(rx.try_recv().is_err());
+
+        da_receiver.da.catchupper.backfill_start_height = Some(BlockHeight(5));
+
+        // should start backfill from height 5
+        _ = da_receiver
+            .da
+            .catchupper
+            .manage_catchup(BlockHeight(10), &tx);
+
         let mut received_blocks = vec![];
         while let Some(streamed_block) = rx.recv().await {
             da_receiver
                 .handle_signed_block(streamed_block.clone(), &mut server)
                 .await;
             received_blocks.push(streamed_block);
-            if received_blocks.len() == 8 {
+            if received_blocks.len() == 3 {
                 break;
             }
         }
 
-        assert_eq!(received_blocks.len(), 8);
+        assert_eq!(received_blocks.len(), 3);
 
-        for i in 0..8 {
+        for i in 5..8 {
             assert!(received_blocks.iter().any(|b| b.height().0 == i));
         }
     }
