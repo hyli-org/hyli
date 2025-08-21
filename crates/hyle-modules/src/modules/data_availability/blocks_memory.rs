@@ -3,7 +3,7 @@ use anyhow::Result;
 use indexmap::IndexMap;
 use sdk::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock};
 use std::path::Path;
-use tracing::{info, trace};
+use tracing::{debug, info, trace};
 
 #[derive(Debug)]
 pub struct Blocks {
@@ -73,5 +73,35 @@ impl Blocks {
             return Box::new(::std::iter::empty());
         };
         Box::new(iter.values().map(|block| Ok(block.hashed().clone())))
+    }
+
+    /// Scan the whole by_height table and returns the first missing height
+    pub fn first_hole_by_height(&self) -> Result<Option<BlockHeight>> {
+        let Some(upper_bound) = self.last().map(|block| block.height()) else {
+            anyhow::bail!("Empty InMemory storage can't have holes");
+        };
+
+        debug!(
+            "Start scanning blocks in memory to find first missing block up to {:?}",
+            upper_bound
+        );
+
+        for i in 0..upper_bound.0 {
+            if i % 1000 == 0 {
+                trace!("Checking block #{} is present or not", i);
+            }
+            if !self
+                .data
+                .binary_search_by(|_, block| block.height().0.cmp(&i))
+                .is_ok()
+            {
+                info!("Found hole at height {}", i);
+                return Ok(Some(BlockHeight(i)));
+            }
+        }
+
+        debug!("No holes found in InMemory storage up to {:?}", upper_bound);
+
+        Ok(None)
     }
 }
