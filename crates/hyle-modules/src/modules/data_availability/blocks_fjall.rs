@@ -3,7 +3,7 @@ use fjall::{
     Config, Keyspace, KvSeparationOptions, PartitionCreateOptions, PartitionHandle, Slice,
 };
 use sdk::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock};
-use std::{fmt::Debug, io::Read, path::Path};
+use std::{fmt::Debug, path::Path};
 use tracing::{debug, error, info, trace};
 
 struct FjallHashKey(ConsensusProposalHash);

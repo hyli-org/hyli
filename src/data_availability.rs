@@ -233,19 +233,18 @@ impl DaCatchupper {
         if self.status.is_none() {
             if let Some(policy) = &mut self.policy {
                 // In case status is None, we check if we need to start a new catchup task up to the floor height
-                if policy.backfill && policy.floor.is_some() && self.backfill_start_height.is_some()
-                {
-                    policy.backfill = false; // Disable backfill after the first catchup
-                    self.stop_height = policy.floor; // Set stop height to the floor if backfill is enabled
+                if policy.backfill && policy.floor.is_some() {
+                    if let Some(start_height) = self.backfill_start_height {
+                        policy.backfill = false; // Disable backfill after the first catchup
+                        self.stop_height = policy.floor; // Set stop height to the floor if backfill is enabled
 
-                    let start_height = self.backfill_start_height.unwrap();
+                        debug!(
+                            "Starting backfill catchup from height {} to {:?}",
+                            start_height, policy.floor
+                        );
 
-                    debug!(
-                        "Starting backfill catchup from height {} to {:?}",
-                        start_height, policy.floor
-                    );
-
-                    self.catchup_from(start_height, sender)?;
+                        self.catchup_from(start_height, sender)?;
+                    }
                 } else {
                     trace!("Catchup is already done");
                 }
