@@ -1,9 +1,9 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use fjall::{
     Config, Keyspace, KvSeparationOptions, PartitionCreateOptions, PartitionHandle, Slice,
 };
 use sdk::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock};
-use std::{fmt::Debug, path::Path};
+use std::{fmt::Debug, io::Read, path::Path};
 use tracing::{debug, error, info, trace};
 
 struct FjallHashKey(ConsensusProposalHash);
@@ -19,6 +19,12 @@ impl AsRef<[u8]> for FjallHashKey {
 impl FjallHeightKey {
     fn new(height: BlockHeight) -> Self {
         Self(height.0.to_be_bytes())
+    }
+}
+
+impl From<FjallHeightKey> for BlockHeight {
+    fn from(value: FjallHeightKey) -> Self {
+        BlockHeight(u64::from_be_bytes(value.0))
     }
 }
 
@@ -62,7 +68,8 @@ impl Blocks {
         borsh::from_slice(&item).map_err(Into::into)
     }
     fn decode_height(item: Slice) -> Result<BlockHeight> {
-        borsh::from_slice(&item).map_err(Into::into)
+        let key = item.first_chunk::<8>().context("Malformed key")?;
+        Ok(BlockHeight::from(FjallHeightKey(*key)))
     }
     fn decode_block_hash(item: Slice) -> Result<ConsensusProposalHash> {
         borsh::from_slice(&item).map_err(Into::into)
@@ -137,17 +144,13 @@ impl Blocks {
 
     /// Scan the whole by_height table and returns the first missing height
     pub fn first_hole_by_height(&self) -> Result<Option<BlockHeight>> {
-        if self.is_empty() {
-            return Ok(None);
-        }
-
         let Some(upper_bound) = self
             .by_height
             .last_key_value()
-            .map_err(|e| anyhow::anyhow!(e))?
+            .unwrap_or_default()
             .and_then(|(k, _v)| Self::decode_height(k).ok())
         else {
-            return Ok(None);
+            anyhow::bail!("Empty partition can't have holes");
         };
 
         debug!(
@@ -165,6 +168,7 @@ impl Blocks {
                 .contains_key(key)
                 .map_err(|e| anyhow::anyhow!(e))?
             {
+                info!("Found hole at height {}", i);
                 return Ok(Some(BlockHeight(i)));
             }
         }

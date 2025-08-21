@@ -12,7 +12,6 @@ use hyle_modules::{
     },
 };
 use hyle_net::tcp::TcpEvent;
-use tokio::pin;
 use tokio::task::JoinHandle;
 
 use crate::{
@@ -113,7 +112,7 @@ pub struct DataAvailability {
 }
 
 /// Catchup configuration for the Data Availability module.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 struct DaCatchupPolicy {
     floor: Option<BlockHeight>,
     backfill: bool,
@@ -232,12 +231,32 @@ impl DaCatchupper {
         };
 
         if self.status.is_none() {
-            trace!("Catchup is already done");
+            if let Some(policy) = &mut self.policy {
+                // In case status is None, we check if we need to start a new catchup task up to the floor height
+                if policy.backfill && policy.floor.is_some() && self.backfill_start_height.is_some()
+                {
+                    policy.backfill = false; // Disable backfill after the first catchup
+                    self.stop_height = policy.floor; // Set stop height to the floor if backfill is enabled
+
+                    let start_height = self.backfill_start_height.unwrap();
+
+                    debug!(
+                        "Starting backfill catchup from height {} to {:?}",
+                        start_height, policy.floor
+                    );
+
+                    self.catchup_from(start_height, sender)?;
+                } else {
+                    trace!("Catchup is already done");
+                }
+            }
+
             return Ok(());
         };
 
         let Some(peer) = self.choose_random_peer() else {
             warn!("No peers available for catchup, cannot proceed");
+
             return Ok(());
         };
 
@@ -255,24 +274,6 @@ impl DaCatchupper {
             );
             task.abort();
             self.status = None;
-
-            if let Some(policy) = &mut self.policy {
-                // In case status is None, we check if we need to start a new catchup task up to the floor height
-                if policy.backfill && policy.floor.is_some() && self.backfill_start_height.is_some()
-                {
-                    policy.backfill = false; // Disable backfill after the first catchup
-                    self.stop_height = policy.floor; // Set stop height to the floor if backfill is enabled
-
-                    let start_height = self.backfill_start_height.unwrap();
-
-                    debug!(
-                        "Starting backfill catchup from height {} to {:?}",
-                        start_height, policy.floor
-                    );
-
-                    self.catchup_from(start_height, sender)?;
-                }
-            }
         } else if task.is_finished() {
             info!(
                 "Catchup task finished, but catchup is not done yet, restarting from height {}",
@@ -394,16 +395,26 @@ impl DataAvailability {
         let blocks_handle = self.blocks.new_handle();
 
         let (first_hole_sender, mut first_hole_receiver) =
-            tokio::sync::mpsc::channel::<Option<BlockHeight>>(1);
+            tokio::sync::mpsc::channel::<Option<BlockHeight>>(10);
+
+        let catchup_policy_clone = self.catchupper.policy.clone();
 
         // Start scanning local storage for first hole, if any
         _ = tokio::task::spawn(async move {
-            _ = first_hole_sender.send(
-                blocks_handle
-                    .first_hole_by_height()
-                    .ok()
-                    .and_then(|height| height),
-            );
+            if let Some(DaCatchupPolicy { backfill: true, .. }) = catchup_policy_clone {
+                loop {
+                    match blocks_handle.first_hole_by_height() {
+                        Err(e) => {
+                            debug!("Catchup not started yet, no data in partition: {}", e);
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                        }
+                        Ok(el) => {
+                            _ = first_hole_sender.send(el).await;
+                            break;
+                        }
+                    }
+                }
+            }
         });
 
         module_handle_messages! {
@@ -481,6 +492,7 @@ impl DataAvailability {
             }
 
             Some(hole) = first_hole_receiver.recv() => {
+                info!("Received first hole {:?}", &hole);
                 self.catchupper.backfill_start_height = hole;
                 let highest_block = self.blocks.highest();
                 _ = log_error!(self.catchupper.manage_catchup(highest_block, &catchup_block_sender), "Catchup transition after tick");
