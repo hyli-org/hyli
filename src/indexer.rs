@@ -24,12 +24,18 @@ use hyle_modules::{
     },
 };
 use hyle_net::clock::TimestampMsClock;
-use sqlx::{postgres::PgPoolOptions, Acquire, PgPool, Pool, Postgres, QueryBuilder, Row};
+use sqlx::{
+    postgres::{PgPoolCopyExt, PgPoolOptions},
+    Acquire, PgPool, Pool, Postgres, QueryBuilder, Row,
+};
+use std::io::{Read, Write};
 use std::{
     collections::{HashMap, HashSet},
     ops::{Deref, DerefMut},
     sync::Arc,
 };
+use tokio::io::ReadBuf;
+use tokio_util::io::StreamReader;
 use tracing::{debug, info, trace};
 
 module_bus_client! {
@@ -223,6 +229,63 @@ impl std::fmt::Debug for IndexerHandlerStore {
     }
 }
 
+/*pub trait AsyncRead {
+    // Required method
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<Result<()>>;
+}*/
+
+pub struct VecTxEventStore<'a>(&'a mut Vec<TxEventStore>, usize);
+
+impl tokio::io::AsyncRead for VecTxEventStore<'_> {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut core::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> core::task::Poll<std::result::Result<(), std::io::Error>> {
+        let this = self.get_mut();
+        if this.0.is_empty() {
+            return core::task::Poll::Ready(Ok(()));
+        }
+        let event = this.0.pop().unwrap();
+        let v = format!(
+            "{}\t{}\t{}\t{}\t{}\n",
+            event.block_hash,
+            event.block_height.0 as i64,
+            event.tx_hash.0,
+            event.dp_hash.0,
+            if event.event_data.is_null() {
+                "{}"
+            } else {
+                &event.event_data.to_string()
+            }
+        )
+        .replace("\\", "\\\\");
+        let mut v = v.as_bytes();
+        if this.1 > 0 {
+            v = &v[this.1..];
+        }
+        if v.len() > buf.remaining() {
+            // Write some chars
+            this.1 += buf.remaining();
+            /*tracing::error!(
+                "Putting {} (partial)",
+                String::from_utf8_lossy(&v[..buf.remaining()])
+            );*/
+            buf.put_slice(&v[..buf.remaining()]);
+            this.0.push(event);
+        } else {
+            /*tracing::error!("Putting {}", String::from_utf8_lossy(&v));*/
+            buf.put_slice(v);
+            this.1 = 0;
+        }
+        core::task::Poll::Ready(Ok(()))
+    }
+}
+
 impl Indexer {
     pub async fn handle_signed_block(&mut self, block: SignedBlock) -> Result<(), Error> {
         {
@@ -248,14 +311,17 @@ impl Indexer {
         }
         //self.handle_processed_block(block.clone())?;
 
-        if self.handler_store.sql_queries.len() >= self.conf.indexer.query_buffer_size {
+        /*if self.handler_store.sql_queries.len() >= self.conf.indexer.query_buffer_size {
             // If we have more than configured blocks, we dump the store to the database
             self.dump_store_to_db().await?;
-        }
+        }*/
+
         // if last block is newer than 5sec dump store to db
         let now = TimestampMsClock::now();
-        if self.handler_store.last_update.0 + 5000 < now.0 {
-            self.dump_store_to_db().await?;
+        if self.handler_store.tx_events.len() > 100000
+            || self.handler_store.last_update.0 + 5000 < now.0
+        {
+            log_error!(self.dump_store_to_db().await, "dumping to DB")?;
             self.handler_store.last_update = now;
         }
 
@@ -278,6 +344,8 @@ impl Indexer {
 
         //let mut transaction = self.db.begin().await?;
         let transaction = &self.db;
+        let mut transaction = transaction.acquire().await?;
+        let transaction = transaction.acquire().await?;
 
         // First insert blocks
         for block in self.handler_store.blocks.drain(..) {
@@ -287,7 +355,7 @@ impl Indexer {
                 .bind(block.block_height.0 as i64)
                 .bind(block.timestamp)
                 .bind(block.total_txs)
-                .execute(transaction)
+                .execute(&mut *transaction)
                 .await?;
         }
 
@@ -317,53 +385,67 @@ impl Indexer {
             // for genesis block verified proof tx
             query_builder.push(" ON CONFLICT DO NOTHING");
             _ = log_error!(
-                query_builder.build().execute(transaction).await,
+                query_builder.build().execute(&mut *transaction).await,
                 "Inserting transactions"
             )?;
         }
 
         // Then status updates
-        /*for (tx_id, status) in self.handler_store.tx_status_update.drain() {
-            sqlx::query("UPDATE transactions SET transaction_status = $1 WHERE tx_hash = $2 AND parent_dp_hash = $3")
-                .bind(status)
-                .bind(TxHashDb(tx_id.1))
-                .bind(DataProposalHashDb(tx_id.0))
-                .execute(&mut *transaction)
-                .await?;
-        }*/
+        // Create a temporary table to insert updates
+        sqlx::query("CREATE TEMPORARY TABLE IF NOT EXISTS updates (tx_hash TEXT NOT NULL, parent_dp_hash TEXT NOT NULL, transaction_status transaction_status NOT NULL)")
+            .execute(&mut *transaction)
+            .await?;
 
-        // Then events
-        let batch_size = calculate_optimal_batch_size(5); // 5 params per event
-        while !self.handler_store.tx_events.is_empty() {
-            let chunk = self
-                .handler_store
-                .tx_events
-                .drain(..std::cmp::min(batch_size, self.handler_store.tx_events.len()))
-                .collect::<Vec<_>>();
+        let batch_size = calculate_optimal_batch_size(3);
+        while !self.handler_store.tx_status_update.is_empty() {
+            let mut entries = vec![];
+            for _ in 0..std::cmp::min(batch_size, self.handler_store.tx_status_update.len()) {
+                let key = self
+                    .handler_store
+                    .tx_status_update
+                    .keys()
+                    .next()
+                    .unwrap()
+                    .clone();
+                entries.push((
+                    self.handler_store.tx_status_update.remove(&key).unwrap(),
+                    key,
+                ));
+            }
+            // Insert status updates into the temporary table
             let mut query_builder = QueryBuilder::<Postgres>::new(
-            "INSERT INTO transaction_state_events (block_hash, block_height, tx_hash, parent_dp_hash, events) ",
+                "INSERT INTO updates (tx_hash, parent_dp_hash, transaction_status) ",
             );
-            query_builder.push_values(chunk.into_iter(), |mut b, event| {
-                b.push_bind(event.block_hash)
-                    .push_bind(event.block_height.0 as i64)
-                    .push_bind(event.tx_hash)
-                    .push_bind(event.dp_hash)
-                    .push_bind(event.event_data);
+            query_builder.push_values(entries.into_iter(), |mut b, (status, tx_id)| {
+                b.push_bind(TxHashDb(tx_id.1))
+                    .push_bind(DataProposalHashDb(tx_id.0))
+                    .push_bind(status);
             });
             _ = log_error!(
-                query_builder.build().execute(transaction).await,
-                "Inserting transaction state events"
+                query_builder.build().execute(&mut *transaction).await,
+                "Inserting status updates into temporary table"
             )?;
         }
 
-        for sql_update in self.handler_store.sql_queries.drain(..) {
-            _ = log_error!(
-                sql_update.execute(transaction).await,
-                "Executing SQL update"
-            )?;
-        }
+        // Batch update transaction statuses from the temporary table
+        sqlx::query(
+            "UPDATE transactions SET transaction_status = updates.transaction_status
+             FROM updates
+             WHERE transactions.tx_hash = updates.tx_hash AND transactions.parent_dp_hash = updates.parent_dp_hash"
+        )
+        .execute(&mut *transaction)
+        .await?;
 
-        //transaction.commit().await?;
+        // Truncate the temporary table
+        sqlx::query("TRUNCATE TABLE updates")
+            .execute(&mut *transaction)
+            .await?;
+
+        // COPY seems about 2x faster than INSERT
+        let mut copy = transaction.copy_in_raw("COPY transaction_state_events (block_hash, block_height, tx_hash, parent_dp_hash, events) FROM STDIN WITH (FORMAT TEXT)").await?;
+        let toto = VecTxEventStore(&mut self.handler_store.tx_events, 0);
+        copy.read_from(toto).await?;
+        copy.finish().await?;
 
         Ok(())
     }
