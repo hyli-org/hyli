@@ -90,10 +90,10 @@ impl Blocks {
             if i % 1000 == 0 {
                 trace!("Checking block #{} is present or not", i);
             }
-            if !self
+            if self
                 .data
                 .binary_search_by(|_, block| block.height().0.cmp(&i))
-                .is_ok()
+                .is_err()
             {
                 info!("Found hole at height {}", i);
                 return Ok(Some(BlockHeight(i)));
