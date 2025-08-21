@@ -365,6 +365,35 @@ impl DaCatchupper {
 }
 
 impl DataAvailability {
+    pub fn start_scanning_for_first_hole(
+        &self,
+    ) -> tokio::sync::mpsc::Receiver<Option<BlockHeight>> {
+        let blocks_handle = self.blocks.new_handle();
+
+        let (first_hole_sender, first_hole_receiver) =
+            tokio::sync::mpsc::channel::<Option<BlockHeight>>(10);
+
+        if let Some(DaCatchupPolicy { backfill: true, .. }) = self.catchupper.policy {
+            // Start scanning local storage for first hole, if any
+            _ = tokio::task::spawn(async move {
+                loop {
+                    match blocks_handle.first_hole_by_height() {
+                        Err(e) => {
+                            debug!("Catchup not started yet, no data in partition: {}", e);
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                        }
+                        Ok(el) => {
+                            _ = first_hole_sender.send(el).await;
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        first_hole_receiver
+    }
+
     pub async fn start(&mut self) -> Result<()> {
         info!(
             "📡  Starting DataAvailability module, listening for stream requests on port {}",
@@ -381,6 +410,8 @@ impl DataAvailability {
         let (catchup_block_sender, mut catchup_block_receiver) =
             tokio::sync::mpsc::channel::<SignedBlock>(100);
 
+        let mut first_hole_receiver = self.start_scanning_for_first_hole();
+
         // Used to send blocks to clients (indexers/peers)
         // // This is a JoinSet of tuples containing:
         // // - A vector of block hashes to send
@@ -390,31 +421,6 @@ impl DataAvailability {
             tokio::task::JoinSet::new();
         let mut catchup_task_checker_ticker =
             tokio::time::interval(std::time::Duration::from_millis(5000));
-
-        let blocks_handle = self.blocks.new_handle();
-
-        let (first_hole_sender, mut first_hole_receiver) =
-            tokio::sync::mpsc::channel::<Option<BlockHeight>>(10);
-
-        let catchup_policy_clone = self.catchupper.policy.clone();
-
-        // Start scanning local storage for first hole, if any
-        _ = tokio::task::spawn(async move {
-            if let Some(DaCatchupPolicy { backfill: true, .. }) = catchup_policy_clone {
-                loop {
-                    match blocks_handle.first_hole_by_height() {
-                        Err(e) => {
-                            debug!("Catchup not started yet, no data in partition: {}", e);
-                            tokio::time::sleep(Duration::from_millis(500)).await;
-                        }
-                        Ok(el) => {
-                            _ = first_hole_sender.send(el).await;
-                            break;
-                        }
-                    }
-                }
-            }
-        });
 
         module_handle_messages! {
             on_self self,
