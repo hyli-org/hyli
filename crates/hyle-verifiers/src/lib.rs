@@ -20,6 +20,8 @@ pub fn verify(
     program_id: &ProgramId,
 ) -> Result<Vec<HyleOutput>, Error> {
     match verifier.0.as_str() {
+        #[cfg(feature = "cairo-m")]
+        hyle_model::verifiers::CAIRO_M => cairo_m::verify(proof, program_id),
         #[cfg(feature = "risc0")]
         hyle_model::verifiers::RISC0_1 => risc0_1::verify(proof, program_id),
         hyle_model::verifiers::NOIR => noir::verify(proof, program_id),
@@ -37,6 +39,36 @@ pub fn validate_program_id(verifier: &Verifier, program_id: &ProgramId) -> Resul
         #[cfg(feature = "sp1")]
         hyle_model::verifiers::SP1_4 => sp1_4::validate_program_id(program_id),
         _ => Ok(()),
+    }
+}
+
+#[cfg(feature = "cairo-m")]
+pub mod cairo_m {
+    use super::*;
+    use cairo_m_prover::{verifier::verify_cairo_m, Proof};
+    use sonic_rs::{Deserialize, Serialize};
+    use stwo_prover::core::vcs::blake2_merkle::{Blake2sMerkleChannel, Blake2sMerkleHasher};
+
+    #[derive(Serialize, Deserialize)]
+    pub struct HyleOutputCairoM {
+        pub hyle_output: HyleOutput,
+        pub proof: Proof<Blake2sMerkleHasher>,
+    }
+
+    pub fn verify(
+        proof_bytes: &ProofData,
+        program_id: &ProgramId,
+    ) -> Result<Vec<HyleOutput>, Error> {
+        let hyle_output_cairo_m: HyleOutputCairoM = sonic_rs::from_slice(&proof_bytes.0)?;
+        let proof_program_id = hyle_output_cairo_m.proof.program_id().0.to_le_bytes();
+
+        if program_id.0 != proof_program_id {
+            return Err(anyhow::anyhow!("Invalid Cairo M program ID"));
+        };
+
+        verify_cairo_m::<Blake2sMerkleChannel>(hyle_output_cairo_m.proof, None)?;
+
+        Ok(vec![hyle_output_cairo_m.hyle_output])
     }
 }
 
