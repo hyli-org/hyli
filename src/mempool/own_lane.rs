@@ -624,7 +624,7 @@ pub mod test {
         ctx.process_new_data_proposal(dp)?;
         ctx.timer_tick().await?;
 
-        let data_proposal = match ctx.assert_broadcast("DataProposal").await.msg {
+        let data_proposal = match ctx.assert_broadcast_only_for("DataProposal").await.1.msg {
             MempoolNetMessage::DataProposal(_, dp) => dp,
             _ => panic!("Expected DataProposal message"),
         };
@@ -776,8 +776,12 @@ pub mod test {
         // Récupère les deux DataProposals broadcastées par ctx1
         let mut dps = vec![];
         for _ in 0..2 {
-            match ctx1.assert_broadcast("DataProposal").await.msg {
-                MempoolNetMessage::DataProposal(hash, dp) => dps.push((hash, dp)),
+            let (set, msg) = ctx1.assert_broadcast_only_for("DataProposal").await;
+            match msg.msg {
+                MempoolNetMessage::DataProposal(hash, dp) => {
+                    assert_eq!(set.len(), 1);
+                    dps.push((hash, dp));
+                }
                 _ => panic!("Expected DataProposal message"),
             }
         }
@@ -795,8 +799,12 @@ pub mod test {
         // Récupère les deux DataProposals broadcastées par ctx1
         let mut dps = vec![];
         for _ in 0..1 {
-            match ctx1.assert_broadcast("DataProposal").await.msg {
-                MempoolNetMessage::DataProposal(hash, dp) => dps.push((hash, dp)),
+            let (set, msg) = ctx1.assert_broadcast_only_for("DataProposal").await;
+            match msg.msg {
+                MempoolNetMessage::DataProposal(hash, dp) => {
+                    assert_eq!(set.len(), 1);
+                    dps.push((hash, dp));
+                }
                 _ => panic!("Expected DataProposal message"),
             }
         }
@@ -810,8 +818,12 @@ pub mod test {
         // Récupère les deux DataProposals broadcastées par ctx1
         let mut dps = vec![];
         for _ in 0..1 {
-            match ctx1.assert_broadcast("DataProposal").await.msg {
-                MempoolNetMessage::DataProposal(hash, dp) => dps.push((hash, dp)),
+            let (set, msg) = ctx1.assert_broadcast_only_for("DataProposal").await;
+            match msg.msg {
+                MempoolNetMessage::DataProposal(hash, dp) => {
+                    assert_eq!(set.len(), 1);
+                    dps.push((hash, dp));
+                }
                 _ => panic!("Expected DataProposal message"),
             }
         }

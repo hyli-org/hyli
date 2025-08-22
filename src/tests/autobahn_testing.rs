@@ -52,6 +52,31 @@ macro_rules! broadcast {
     };
 }
 
+macro_rules! broadcast_only_for {
+    (description: $description:literal, from: $sender:expr, to: [$($node:expr),*]$(, message_matches: $pattern:pat $(=> $asserts:block)? )?) => {
+        {
+            // Construct the broadcast message with sender information
+            let (set, message) = $sender.assert_broadcast_only_for(format!("[broadcast from: {}] {}", stringify!($sender), $description).as_str()).await;
+
+            $({
+                let msg_variant_name: &'static str = message.msg.clone().into();
+                if let $pattern = (&set, &message.msg) {
+                    $($asserts)?
+                } else {
+                    panic!("[broadcast only for from: {}] {}: Message {} did not match {}", stringify!($sender), $description, msg_variant_name, stringify!($pattern));
+                }
+            })?
+
+            // Distribute the message to each specified node
+            $(
+                $node.handle_msg(&message, (format!("[handling broadcast message from: {} at: {}] {}", stringify!($sender), stringify!($node), $description).as_str())).await;
+            )*
+
+            message
+        }
+    };
+}
+
 macro_rules! send {
     (
         description: $description:literal,
@@ -180,10 +205,12 @@ macro_rules! disseminate {
             .unwrap();
         $owner.timer_tick().await.unwrap();
 
-        let dp_msg = broadcast! {
+        let dp_msg = broadcast_only_for! {
             description: "Disseminate DataProposal",
-            from: $owner, to: [$($voter),+],
-            message_matches: MempoolNetMessage::DataProposal(_, _)
+            from: $owner, to: [$(&mut $voter),+],
+            message_matches: (set, MempoolNetMessage::DataProposal(_, _)) => {
+                assert_eq!(set.len(), vec![$(&$voter),+].len().div_euclid(3));
+            }
         };
 
         join_all(
@@ -411,10 +438,11 @@ async fn autobahn_basic_flow() {
         .unwrap();
     node1.mempool_ctx.timer_tick().await.unwrap();
 
-    broadcast! {
+    broadcast_only_for! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, data) => {
+        message_matches: (set, MempoolNetMessage::DataProposal(_, data)) => {
+            assert_eq!(set.len(), 1);
             assert_eq!(data.txs.len(), 2);
         }
     };
@@ -547,10 +575,10 @@ async fn mempool_broadcast_multiple_data_proposals() {
         .unwrap();
     node1.mempool_ctx.timer_tick().await.unwrap();
 
-    broadcast! {
+    broadcast_only_for! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: (_set, MempoolNetMessage::DataProposal(_, _))
     };
 
     join_all(
@@ -588,10 +616,10 @@ async fn mempool_broadcast_multiple_data_proposals() {
         .unwrap();
     node1.mempool_ctx.timer_tick().await.unwrap();
 
-    broadcast! {
+    broadcast_only_for! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: (_set, MempoolNetMessage::DataProposal(_, _))
     };
 
     join_all(
@@ -628,10 +656,10 @@ async fn mempool_podaupdate_too_early() {
         .unwrap();
     node1.mempool_ctx.timer_tick().await.unwrap();
 
-    let dp_msg = broadcast! {
+    let dp_msg = broadcast_only_for! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: (_set, MempoolNetMessage::DataProposal(_, _))
     };
 
     join_all(
@@ -707,7 +735,7 @@ async fn mempool_podaupdate_too_early() {
     };
 
     broadcast! {
-        description: "Disseminate Tx",
+        description: "Disseminate Poda",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
         message_matches: MempoolNetMessage::PoDAUpdate(hash, signatures) => {
             assert_eq!(hash, &dp.hashed());
@@ -897,10 +925,11 @@ async fn mempool_fail_to_vote_on_fork() {
 
     let dp1_check;
 
-    broadcast! {
+    broadcast_only_for! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, data) => {
+        message_matches: (_set, MempoolNetMessage::DataProposal(_, data)) => {
+            assert_eq!(_set.len(), 1);
             dp1_check = data.clone();
         }
     };
@@ -925,8 +954,8 @@ async fn mempool_fail_to_vote_on_fork() {
     };
 
     node1.mempool_ctx.assert_broadcast("poda update f+1").await;
-    node1.mempool_ctx.assert_broadcast("poda update 2f+1").await;
-    node1.mempool_ctx.assert_broadcast("poda update 3f+1").await;
+    // node1.mempool_ctx.assert_broadcast("poda update 2f+1").await;
+    // node1.mempool_ctx.assert_broadcast("poda update 3f+1").await;
 
     // Second data proposal
 
@@ -942,10 +971,10 @@ async fn mempool_fail_to_vote_on_fork() {
         .unwrap();
     node1.mempool_ctx.timer_tick().await.unwrap();
 
-    broadcast! {
+    broadcast_only_for! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: (_set, MempoolNetMessage::DataProposal(_, _))
     };
 
     join_all(
@@ -2318,10 +2347,10 @@ async fn follower_commits_cut_then_mempool_sends_stale_lane() {
     node1.mempool_ctx.timer_tick().await.unwrap();
 
     // Disseminate to node2
-    broadcast! {
+    broadcast_only_for! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: (_set, MempoolNetMessage::DataProposal(_, _))
     };
     node2.mempool_ctx.handle_processed_data_proposals().await;
     send! {

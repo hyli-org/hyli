@@ -576,15 +576,13 @@ impl Mempool {
 
     fn broadcast_weak(&mut self, net_message: MempoolNetMessage) -> Result<()> {
         let own_key = self.crypto.validator_pubkey();
-        let mut selected: HashSet<ValidatorPublicKey> = self
+        let selected: HashSet<ValidatorPublicKey> = self
             .staking
             .choose_weak_quorum(vec![own_key], &mut rand::thread_rng())
             .context("Choosing validators for a weak certificate")?
             .into_iter()
             .map(|s| s.clone())
             .collect();
-
-        selected.insert(own_key.clone());
 
         _ = self.broadcast_only_for_net_message(selected, net_message)?;
 

@@ -169,36 +169,6 @@ impl MempoolTestCtx {
             .expect("fail to handle event");
     }
 
-    #[track_caller]
-    pub fn assert_broadcast_only_for(
-        &mut self,
-        description: &str,
-    ) -> MsgWithHeader<MempoolNetMessage> {
-        #[allow(clippy::expect_fun_call)]
-        let rec = self
-            .out_receiver
-            .try_recv()
-            .expect(format!("{description}: No message broadcasted").as_str());
-
-        match rec {
-            OutboundMessage::BroadcastMessageOnlyFor(_, net_msg) => {
-                if let NetMessage::MempoolMessage(msg) = net_msg {
-                    msg
-                } else {
-                    println!(
-                        "{description}: Mempool OutboundMessage message is missing, found {net_msg}"
-                    );
-                    self.assert_broadcast_only_for(description)
-                }
-            }
-            _ => {
-                println!(
-                    "{description}: Broadcast OutboundMessage message is missing, found {rec:?}",
-                );
-                self.assert_broadcast_only_for(description)
-            }
-        }
-    }
     pub fn assert_send(
         &mut self,
         to: &ValidatorPublicKey,
@@ -277,6 +247,44 @@ impl MempoolTestCtx {
                 _ => {
                     println!("{description}: Broadcast OutboundMessage message is missing, found {rec:?}");
                     self.assert_broadcast(description.as_str()).await
+                }
+            }
+        })
+    }
+
+    pub fn assert_broadcast_only_for(
+        &mut self,
+        description: &str,
+    ) -> Pin<
+        Box<
+            dyn Future<
+                    Output = (
+                        HashSet<ValidatorPublicKey>,
+                        MsgWithHeader<MempoolNetMessage>,
+                    ),
+                > + '_,
+        >,
+    > {
+        let description = description.to_string().clone();
+        Box::pin(async move {
+            #[allow(clippy::expect_fun_call)]
+            let rec = tokio::time::timeout(Duration::from_millis(1000), self.out_receiver.recv())
+                .await
+                .expect(format!("{description}: No message broadcasted only for").as_str())
+                .expect(format!("{description}: No message broadcasted only for").as_str());
+
+            match rec {
+                OutboundMessage::BroadcastMessageOnlyFor(validators, net_msg) => {
+                    if let NetMessage::MempoolMessage(msg) = net_msg {
+                        (validators, msg)
+                    } else {
+                        println!("{description}: Mempool OutboundMessage message is missing, found {net_msg}");
+                        self.assert_broadcast_only_for(description.as_str()).await
+                    }
+                }
+                _ => {
+                    println!("{description}: BroadcastOnlyFor OutboundMessage message is missing, found {rec:?}");
+                    self.assert_broadcast_only_for(description.as_str()).await
                 }
             }
         })

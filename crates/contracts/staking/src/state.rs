@@ -129,7 +129,7 @@ impl Staking {
             .sum();
         let f = self.compute_f();
 
-        while power < f + 1 {
+        while power < f + 1 && !validators.is_empty() {
             let random = validators.remove(0);
             power += self.get_stake(random).unwrap_or(0);
             res.push(random);
