@@ -68,7 +68,7 @@ pub struct UnsettledBlobTransaction {
 pub struct UnsettledBlobMetadata {
     pub blob: Blob,
     // Each time we receive a proof, we add it to this list
-    pub possible_proofs: Vec<(ProgramId, HyleOutput, Verifier)>,
+    pub possible_proofs: Vec<(ProgramId, Verifier, TxId, HyleOutput)>,
 }
 
 #[derive(

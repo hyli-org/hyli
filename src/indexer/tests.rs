@@ -6,6 +6,7 @@ use hyle_contract_sdk::{BlobIndex, HyleOutput, Identity, ProgramId, StateCommitm
 use hyle_model::api::{
     APIBlob, APIBlock, APIContract, APITransaction, APITransactionEvents, TransactionStatusDb,
 };
+use hyle_modules::node_state::test::{craft_signed_block, craft_signed_block_with_parent_dp_hash};
 use serde_json::json;
 use std::future::IntoFuture;
 use utils::TimestampMs;
@@ -17,7 +18,7 @@ use crate::{
         Blob, BlobData, BlobProofOutput, ProofData, SignedBlock, Transaction, TransactionData,
         VerifiedProofTransaction,
     },
-    node_state::{metrics::NodeStateMetrics, NodeState, NodeStateStore},
+    node_state::NodeState,
     utils::conf::IndexerConf,
 };
 
@@ -48,7 +49,10 @@ async fn new_indexer(pool: PgPool) -> (Indexer, Explorer) {
         Indexer {
             bus: IndexerBusClient::new_from_bus(bus.new_handle()).await,
             db: pool.clone(),
-            node_state: NodeState::create("indexer".to_string(), "indexer"),
+            node_state: Some(Box::new(NodeState::create(
+                "indexer".to_string(),
+                "indexer",
+            ))),
 
             handler_store: IndexerHandlerStore::default(),
             conf,
@@ -282,10 +286,10 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
         LaneId(ValidatorPublicKey("ttt".into())),
         vec![parent_data_proposal.clone()],
     ));
-    let block = node_state.force_handle_block(&signed_block);
 
     indexer
-        .handle_processed_block(block)
+        .handle_signed_block(signed_block)
+        .await
         .expect("Failed to handle block");
     indexer
         .dump_store_to_db()
@@ -456,10 +460,10 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
         LaneId(ValidatorPublicKey("ttt".into())),
         vec![data_proposal, data_proposal_2],
     ));
-    let block_2 = node_state.force_handle_block(&signed_block);
-    let block_2_hash = block_2.hash.clone();
+    let block_2_hash = signed_block.hashed();
     indexer
-        .handle_processed_block(block_2)
+        .handle_signed_block(signed_block)
+        .await
         .expect("Failed to handle block");
     indexer
         .dump_store_to_db()
@@ -643,7 +647,14 @@ pub fn make_register_hyli_wallet_identity_tx() -> BlobTransaction {
     BlobTransaction::new("hyli@wallet".to_string(), tx.blobs)
 }
 
-async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Block, Block, Block)> {
+async fn scenario_contracts() -> Result<(
+    ContainerAsync<Postgres>,
+    Indexer,
+    SignedBlock,
+    SignedBlock,
+    SignedBlock,
+    SignedBlock,
+)> {
     let container = Postgres::default()
         .with_tag("17-alpine")
         .start()
@@ -660,8 +671,6 @@ async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Bloc
     MIGRATOR.run(&db).await.unwrap();
     let (indexer, _) = new_indexer(db).await;
 
-    let mut node_state = NodeState::create("test".to_string(), "test");
-
     let register_wallet = new_register_tx("wallet".into(), StateCommitment(vec![]));
     let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
 
@@ -674,7 +683,7 @@ async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Bloc
         StateCommitment(vec![0]),
     );
 
-    node_state.craft_block_and_handle(
+    let b1 = craft_signed_block(
         1,
         vec![
             register_wallet.into(),
@@ -684,7 +693,7 @@ async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Bloc
     );
 
     // Create a couple fake blocks with contracts
-    let b1 = node_state.craft_block_and_handle(
+    let b3 = craft_signed_block(
         3,
         vec![
             new_register_tx(ContractName::new("a"), StateCommitment(vec![])).into(),
@@ -713,7 +722,7 @@ async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Bloc
         StateCommitment(vec![2]),
     );
 
-    let b2 = node_state.craft_block_and_handle(
+    let b4 = craft_signed_block(
         4,
         vec![
             delete_a.into(),
@@ -753,7 +762,7 @@ async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Bloc
         StateCommitment(vec![5]),
     );
 
-    let b3 = node_state.craft_block_and_handle_with_parent_dp_hash(
+    let b5 = craft_signed_block_with_parent_dp_hash(
         5,
         vec![
             new_register_tx(ContractName::new("a"), StateCommitment(vec![])).into(),
@@ -769,14 +778,14 @@ async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Bloc
         DataProposalHash("test".to_string()),
     );
 
-    Ok((container, indexer, b1, b2, b3))
+    Ok((container, indexer, b1, b3, b4, b5))
 }
 
 #[test_log::test(tokio::test)]
 async fn test_contracts_dump_every_block() -> Result<()> {
-    let (_c, mut indexer, b1, b2, b3) = scenario_contracts().await?;
+    let (_c, mut indexer, b1, b3, b4, b5) = scenario_contracts().await?;
 
-    indexer.handle_processed_block(b1.clone()).unwrap();
+    indexer.handle_signed_block(b3.clone()).await.unwrap();
     indexer.dump_store_to_db().await.unwrap();
     let rows = sqlx::query("SELECT * FROM contracts")
         .fetch_all(&indexer.db)
@@ -789,7 +798,7 @@ async fn test_contracts_dump_every_block() -> Result<()> {
         vec!["a", "b", "c"]
     );
 
-    indexer.handle_processed_block(b2.clone()).unwrap();
+    indexer.handle_signed_block(b4.clone()).await.unwrap();
     indexer.dump_store_to_db().await.unwrap();
     let rows = sqlx::query("SELECT * FROM contracts")
         .fetch_all(&indexer.db)
@@ -802,7 +811,7 @@ async fn test_contracts_dump_every_block() -> Result<()> {
         vec!["b"]
     );
 
-    indexer.handle_processed_block(b3.clone()).unwrap();
+    indexer.handle_signed_block(b5.clone()).await.unwrap();
     indexer.dump_store_to_db().await.unwrap();
 
     let rows = sqlx::query("SELECT * FROM contracts")
@@ -820,10 +829,10 @@ async fn test_contracts_dump_every_block() -> Result<()> {
 
 #[test_log::test(tokio::test)]
 async fn test_contracts_batched() -> Result<()> {
-    let (_c, mut indexer, b1, b2, b3) = scenario_contracts().await?;
-    indexer.handle_processed_block(b1).unwrap();
-    indexer.handle_processed_block(b2).unwrap();
-    indexer.handle_processed_block(b3).unwrap();
+    let (_c, mut indexer, b1, b3, b4, b5) = scenario_contracts().await?;
+    indexer.handle_signed_block(b3).await.unwrap();
+    indexer.handle_signed_block(b4).await.unwrap();
+    indexer.handle_signed_block(b5).await.unwrap();
     indexer.dump_store_to_db().await.unwrap();
 
     let rows = sqlx::query("SELECT * FROM contracts")
