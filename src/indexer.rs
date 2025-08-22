@@ -24,7 +24,10 @@ use hyle_modules::{
 };
 use hyle_net::clock::TimestampMsClock;
 use sqlx::{postgres::PgPoolOptions, Acquire, PgPool, Pool, Postgres, QueryBuilder, Row};
-use std::{collections::HashMap, ops::Deref};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    ops::Deref,
+};
 use tokio::io::ReadBuf;
 use tracing::info;
 
@@ -182,7 +185,7 @@ pub(crate) struct IndexerHandlerStore {
     last_update: TimestampMs,
 
     blocks: Vec<BlockStore>,
-    txs: Vec<TxStore>,
+    txs: VecDeque<TxStore>,
     tx_status_update: HashMap<TxId, TransactionStatusDb>,
     tx_events: StreamableData,
     blobs: StreamableData,
@@ -287,7 +290,7 @@ impl Indexer {
                 parent_data_proposal_hash,
                 tx,
             } => {
-                self.handler_store.txs.push(TxStore {
+                self.handler_store.txs.push_front(TxStore {
                     tx_hash: TxHashDb(tx.hashed().clone()),
                     dp_hash: DataProposalHashDb(parent_data_proposal_hash.clone()),
                     transaction_type: TransactionTypeDb::BlobTransaction,
@@ -342,6 +345,8 @@ impl Indexer {
                 .await?;
         }
 
+        tracing::warn!("totoro {:?}", self.handler_store.txs);
+
         // Then transactions
         let batch_size = calculate_optimal_batch_size(10);
         while !self.handler_store.txs.is_empty() {
@@ -351,20 +356,41 @@ impl Indexer {
                 .drain(..std::cmp::min(batch_size, self.handler_store.txs.len()))
                 .collect::<Vec<_>>();
             let mut query_builder = QueryBuilder::<Postgres>::new(
-                    "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) ",
+                    "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) VALUES ",
                 );
-            query_builder.push_values(chunk.into_iter(), |mut b, tx| {
-                b.push_bind(tx.dp_hash)
-                    .push_bind(tx.tx_hash)
-                    .push_bind(1)
-                    .push_bind(tx.transaction_type)
-                    .push_bind(TransactionStatusDb::WaitingDissemination)
-                    .push_bind(tx.block_hash)
-                    .push_bind(tx.block_height.0 as i32)
-                    .push_bind(tx.lane_id)
-                    .push_bind(tx.index)
-                    .push_bind(tx.identity);
-            });
+            // PG won't let us have the same TX twice in the insert into values, so do this as a workaround.
+            let mut already_inserted: HashSet<TxId> = HashSet::new();
+            let l = chunk.len();
+            let mut add_comma = false;
+            for (i, tx) in chunk.into_iter().enumerate() {
+                if already_inserted.insert(TxId(tx.dp_hash.0.clone(), tx.tx_hash.0.clone())) {
+                    if add_comma {
+                        query_builder.push(",");
+                    }
+                    query_builder.push("(");
+                    query_builder.push_bind(tx.dp_hash);
+                    query_builder.push(",");
+                    query_builder.push_bind(tx.tx_hash);
+                    query_builder.push(",");
+                    query_builder.push_bind(1);
+                    query_builder.push(",");
+                    query_builder.push_bind(tx.transaction_type);
+                    query_builder.push(",");
+                    query_builder.push_bind(TransactionStatusDb::WaitingDissemination);
+                    query_builder.push(",");
+                    query_builder.push_bind(tx.block_hash);
+                    query_builder.push(",");
+                    query_builder.push_bind(tx.block_height.0 as i32);
+                    query_builder.push(",");
+                    query_builder.push_bind(tx.lane_id);
+                    query_builder.push(",");
+                    query_builder.push_bind(tx.index);
+                    query_builder.push(",");
+                    query_builder.push_bind(tx.identity);
+                    query_builder.push(")");
+                    add_comma = true;
+                }
+            }
             // for genesis block verified proof tx
             query_builder.push(
                 " ON CONFLICT (parent_dp_hash, tx_hash)
@@ -374,6 +400,10 @@ impl Indexer {
                     block_hash = COALESCE(excluded.block_hash, transactions.block_hash),
                     block_height = GREATEST(excluded.block_height, transactions.block_height)",
             );
+            if already_inserted.is_empty() {
+                continue;
+            }
+            tracing::info!("Executing query: {}", query_builder.sql());
             _ = log_error!(
                 query_builder.build().execute(&mut *transaction).await,
                 "Inserting transactions"
@@ -583,7 +613,7 @@ impl NodeStateCallback for Indexer {
                 return;
             }
             TxEvent::SequencedBlobTransaction(tx_id, lane_id, index, blob_tx) => {
-                self.handler_store.txs.push(TxStore {
+                self.handler_store.txs.push_front(TxStore {
                     tx_hash: TxHashDb(tx_id.1.clone()),
                     dp_hash: DataProposalHashDb(tx_id.0.clone()),
                     transaction_type: TransactionTypeDb::BlobTransaction,
@@ -618,7 +648,7 @@ impl NodeStateCallback for Indexer {
                     .or_insert(TransactionStatusDb::Sequenced);
             }
             TxEvent::SequencedProofTransaction(tx_id, lane_id, index, ..) => {
-                self.handler_store.txs.push(TxStore {
+                self.handler_store.txs.push_front(TxStore {
                     tx_hash: TxHashDb(tx_id.1.clone()),
                     dp_hash: DataProposalHashDb(tx_id.0.clone()),
                     transaction_type: TransactionTypeDb::ProofTransaction,
