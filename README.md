@@ -1,16 +1,16 @@
-# Hyli
+# Hyli [![Build Status][actions-badge]][actions-url] [![Code Coverage][codecov-badge]][codecov-url]
 
 <div align="center">
+
   <a href="https://hyli.org/">
     <img src="https://github.com/hyli-org/hyli-assets/blob/main/Logos/Logo/HYLI_WORDMARK_ORANGE.png?raw=true" width="320" alt="Hyli">
   </a>
 
   _**Hyli** is the new proof-powered L1 to build the next generation of apps onchain._
 
-  This repository hosts the **Rust client** for the [Hyli](https://hyli.org) chain.
+  This repository hosts the **Rust node client** for the [Hyli](https://hyli.org) chain.
 
-  [![Build Status][actions-badge]][actions-url]
-  [![Code Coverage][codecov-badge]][codecov-url]
+  
   
   [![Telegram Chat][tg-badge]][tg-url]
   [![Twitter][twitter-badge]][twitter-url]
