@@ -37,7 +37,7 @@ On Hyli, instead of executing transactions onchain, you run your app logic anywh
 
 ## 🚀 Getting Started
 
-### Quickstart with Cargo
+### Recommended: Quickstart with Cargo
 
 Clone this repository.
 
@@ -49,9 +49,9 @@ rm -rf data_node && RISC0_DEV_MODE=true SP1_PROVER=mock cargo run -- --pg
 
 You can now use the [Hyli explorer](https://explorer.hyli.org/). Select `localhost` in the upper-right corner.
 
-### With Cargo
+Use [our quickstart guide](https://docs.hyli.org/quickstart/run/) to start building!
 
-#### Start a local node
+#### Options
 
 To launch a local node for building and debugging smart contracts, without indexer:
 
@@ -65,8 +65,6 @@ If you need sp1 verifier, enable the feature: `sp1`
 ```sh
 cargo run -F sp1
 ```
-
-#### Run with Indexer
 
 To run the indexer, you can use the `--pg` node argument:
 
@@ -89,13 +87,14 @@ and then in the `hyli` root:
 cargo run
 ```
 
-## Configuration
+### Configuration
 
 You can configure Hyli using environment variables or a configuration file.
 
 Read the [configuration files and environment variables reference in our docs](https://docs.hyli.org/reference/local-node/#configuration).
 
-## 🐳 Getting Started with Docker
+## 🐳 Alternative: Getting Started with Docker
+<details>
 
 ### Build Locally
 
@@ -139,9 +138,7 @@ docker run -v ./db:/hyle/data -e HYLE_RUN_INDEXER=false -p 4321:4321 -p 1234:123
 > 🛠️ **Note**: If you build on MacOS (Apple Silicon), add `--platform linux/arm64` to run script.
 > 🛠️ **Note**: If you encounter permission issues with the `/hyle/data` volume, add the `--privileged` flag.
 
-## Start building
-
-Use [our quickstart guide](https://docs.hyli.org/quickstart/run/) to start building!
+</details>
 
 ## 📊 Monitoring with Grafana and Prometheus
 
