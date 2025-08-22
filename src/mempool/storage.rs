@@ -43,6 +43,15 @@ pub struct LaneEntryMetadata {
     pub signatures: Vec<ValidatorDAG>,
 }
 
+impl LaneEntryMetadata {
+    pub fn validators(&self) -> Vec<ValidatorPublicKey> {
+        self.signatures
+            .iter()
+            .map(|s| s.signature.validator.clone())
+            .collect()
+    }
+}
+
 pub trait Storage {
     fn persist(&self) -> Result<()>;
 

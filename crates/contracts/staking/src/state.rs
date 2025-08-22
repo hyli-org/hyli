@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
+use rand::seq::SliceRandom;
 use sdk::{info, BlockHeight, Identity, LaneBytesSize, LaneId, ValidatorPublicKey};
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +26,36 @@ pub struct Staking {
 
 /// Minimal stake necessary to be part of consensus
 pub const MIN_STAKE: u128 = 32;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum CertificateReliability {
+    None,     // _ < f + 1
+    Weak,     // f + 1 <= _ < 2f + 1
+    Reliable, // 2f + 1 <= _ < 3f + 1
+    Full,     // 3f + 1 <= _
+}
+
+// Implémentation de Ord et PartialOrd
+impl PartialOrd for CertificateReliability {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for CertificateReliability {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use CertificateReliability::*;
+        let rank = |r: &CertificateReliability| -> u8 {
+            match r {
+                None => 0,
+                Weak => 1,
+                Reliable => 2,
+                Full => 3,
+            }
+        };
+        rank(self).cmp(&rank(other))
+    }
+}
 
 impl Staking {
     pub fn new() -> Self {
@@ -70,6 +101,55 @@ impl Staking {
             Ok(())
         } else {
             Err("Validator does not have enough stake".to_string())
+        }
+    }
+
+    /// Returns a random list of validators to add to present validators, to form a weak quorum
+    pub fn choose_weak_quorum<'a, R>(
+        &'a self,
+        present_pubkeys: Vec<&'a ValidatorPublicKey>,
+        rng: &mut R,
+    ) -> Result<Vec<&'a ValidatorPublicKey>>
+    where
+        R: rand::Rng + ?Sized,
+    {
+        let mut validators: Vec<&ValidatorPublicKey> = self
+            .bonded()
+            .iter()
+            .filter(|v| !present_pubkeys.contains(v))
+            .collect();
+
+        let mut res: Vec<&ValidatorPublicKey> = vec![];
+
+        validators.shuffle(rng);
+
+        let mut power: u128 = present_pubkeys
+            .iter()
+            .filter_map(|pp| self.get_stake(pp))
+            .sum();
+        let f = self.compute_f();
+
+        while power < f + 1 {
+            let random = validators.remove(0);
+            power += self.get_stake(random).unwrap_or(0);
+            res.push(random);
+        }
+
+        Ok(res)
+    }
+
+    pub fn check_reliability(&self, validators: &[ValidatorPublicKey]) -> CertificateReliability {
+        let f = self.compute_f();
+        let power = self.compute_voting_power(validators);
+
+        if power < f + 1 {
+            return CertificateReliability::None;
+        } else if power < 2 * f + 1 {
+            return CertificateReliability::Weak;
+        } else if power < 3 * f + 1 {
+            return CertificateReliability::Reliable;
+        } else {
+            return CertificateReliability::Full;
         }
     }
 

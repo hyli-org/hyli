@@ -24,6 +24,7 @@ borsh = { workspace = true, features = ["derive"] }
 
 risc0-zkvm = { workspace = true, optional = true, features = ['std'] }
 client-sdk = { workspace = true, features = ["risc0"], optional = true }
+rand.workspace = true
 
 [dev-dependencies]
 risc0-zkvm = { workspace = true, features = ['std', 'prove'] }
