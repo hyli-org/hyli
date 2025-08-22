@@ -1,41 +1,66 @@
+# Hyli
+
+<div align="center">
+  <a href="https://hyli.org/">
+    <img src="https://github.com/hyli-org/hyli-assets/blob/main/Logos/Logo/HYLI_WORDMARK_ORANGE.png?raw=true" width="320" alt="Hyli">
+  </a>
+
+  _**Hyli** is the new proof-powered L1 to build the next generation of apps onchain._
+
+  This repository hosts the **Rust client** for the [Hyli](https://hyli.org) chain.
+
+  [![Build Status][actions-badge]][actions-url]
+  [![Code Coverage][codecov-badge]][codecov-url]
+  
+  [![Telegram Chat][tg-badge]][tg-url]
+  [![Twitter][twitter-badge]][twitter-url]
+</div>
+
+> [!IMPORTANT]
 > `main` is the development branch.
 > When building applications or running examples, use the [latest release](https://github.com/hyli-org/hyli/releases) instead.
 
-# Hyli
+## :tangerine: What is Hyli?
 
-[![Telegram Chat][tg-badge]][tg-url]
-[![Build Status][actions-badge]][actions-url]
-[![Code Coverage][codecov-badge]][codecov-url]
-[![Twitter][twitter-badge]][twitter-url]
+With Hyli, developers can build fast, composable, and verifiable apps without dealing with the usual pains of blockchain.
 
-_Hyli is the new proof-powered L1 to build the next generation of apps onchain._
+On Hyli, instead of executing transactions onchain, you run your app logic anywhere off-chain, in Rust, Noir, or even multiple languages at once. You only need to send a proof for onchain settlement.
 
-This repository hosts the **Rust client** for the [Hyli](https://hyli.org) chain.
-
----
-
-## 📎 Useful Links
-
-- 🌐 [Hyli Website](https://www.hyli.org/)
-- 📚 [Hyli Documentation](https://docs.hyli.org)
-- 📨 [Telegram](https://t.me/hyli_org)
-
----
+<div align="center">
+    <p>
+        📚 <a href="https://hyli.org/">Website</a> | <a href="https://docs.hyli.org">Docs</a> | <a href="https://docs.hyli.org/guide/">Hyli Guide</a> | <a href="https://docs.hyli.org/quickstart/">Quickstart</a> | <a href="https://docs.hyli.org/tooling/">Tooling</a>
+    </p>
+    <p>
+        Follow <a href="https://twitter.com/hyli_org">on X</a> | <a href="https://www.linkedin.com/company/hyli-org">LinkedIn</a> | <a href="https://t.me/hyli_org">Telegram</a> | <a href="https://www.youtube.com/@hyli-org">YouTube</a> | <a href="https://blog.hyli.org/">Blog &amp; Newsletter</a>
+    </p>
+</div>
 
 ## 🚀 Getting Started
 
+### Quickstart with Cargo
+
+Clone this repository.
+
+Run:
+```sh
+git checkout v0.13.1
+rm -rf data_node && RISC0_DEV_MODE=true SP1_PROVER=mock cargo run -- --pg
+```
+
+You can now use the [Hyli explorer](https://explorer.hyli.org/). Select `localhost` in the upper-right corner.
+
 ### With Cargo
 
-#### Start a Single-Node Devnet
+#### Start a local node
 
-To launch a single-node devnet (consensus disabled) for building and debugging smart contracts:
+To launch a local node for building and debugging smart contracts, without indexer:
 
 ```bash
 cargo build
 HYLE_RUN_INDEXER=false cargo run
 ```
 
-Note: if you need sp1 verifier, enable the feature: `sp1`
+If you need sp1 verifier, enable the feature: `sp1`
 
 ```sh
 cargo run -F sp1
@@ -50,9 +75,8 @@ cargo run -- --pg
 ```
 
 It will start a postgres server for you, and will close it (with all its data) whenever you stop the node.
-This is usefull during development.
 
-If you want data persistance, you can run the PostgreSQL server:
+If you want data persistence, you can run the PostgreSQL server:
 
 ```bash
 # Start PostgreSQL with default configuration:
@@ -65,30 +89,11 @@ and then in the `hyli` root:
 cargo run
 ```
 
-### Configuration
+## Configuration
 
-You can configure Hyli using environment variables or a configuration file:
+You can configure Hyli using environment variables or a configuration file.
 
-#### Using a Configuration File
-
-Copy the default configuration file to the directory where the node will run:
-
-```bash
-cp ./src/utils/conf_defaults.toml config.toml
-```
-
-If a file named `config.toml` is present, it will be automatically loaded at node startup.
-
-#### Using Environment Variables
-
-Examples of configuration via environment variables:
-
-```bash
-HYLE_RUN_INDEXER=false
-HYLE_CONSENSUS__SLOT_DURATION=100
-```
-
----
+Read the [configuration files and environment variables reference in our docs](https://docs.hyli.org/reference/local-node/#configuration).
 
 ## 🐳 Getting Started with Docker
 
@@ -134,7 +139,9 @@ docker run -v ./db:/hyle/data -e HYLE_RUN_INDEXER=false -p 4321:4321 -p 1234:123
 > 🛠️ **Note**: If you build on MacOS (Apple Silicon), add `--platform linux/arm64` to run script.
 > 🛠️ **Note**: If you encounter permission issues with the `/hyle/data` volume, add the `--privileged` flag.
 
----
+## Start building
+
+Use [our quickstart guide](https://docs.hyli.org/quickstart/run/) to start building!
 
 ## 📊 Monitoring with Grafana and Prometheus
 
@@ -157,8 +164,6 @@ To stop the monitoring stack:
 ```bash
 docker compose -f tools/docker-compose.yml down
 ```
-
----
 
 ## 🛠️ Profiling and Debugging
 
