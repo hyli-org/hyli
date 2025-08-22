@@ -37,7 +37,7 @@ On Hyli, instead of executing transactions onchain, you run your app logic anywh
 
 ## 🚀 Getting Started
 
-### Recommended: Quickstart with Cargo
+### Quickstart with Cargo
 
 Clone this repository.
 
@@ -51,7 +51,7 @@ You can now use the [Hyli explorer](https://explorer.hyli.org/). Select `localho
 
 Use [our quickstart guide](https://docs.hyli.org/quickstart/run/) to start building!
 
-### 🚀 [Alternative] Getting started with Cargo
+### 📦 [Alternative] Getting started with Cargo
 
 <details>
 <summary>Click to open Cargo instructions.</summary>
@@ -90,7 +90,7 @@ cargo run
 
 </details>
 
-### 🐳 Alternative: Getting started with Docker
+### 🐳 [Alternative] Getting started with Docker
 
 <details>
 <summary>Click to open Docker instructions.</summary>
