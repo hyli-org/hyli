@@ -95,6 +95,7 @@ Read the [configuration files and environment variables reference in our docs](h
 
 ## 🐳 Alternative: Getting Started with Docker
 <details>
+<summary>Click to open Docker instructions.</summary>
 
 ### Build Locally
 
