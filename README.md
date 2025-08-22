@@ -51,7 +51,10 @@ You can now use the [Hyli explorer](https://explorer.hyli.org/). Select `localho
 
 Use [our quickstart guide](https://docs.hyli.org/quickstart/run/) to start building!
 
-#### Options
+### 🚀 [Alternative] Getting started with Cargo
+
+<details>
+<summary>Click to open Cargo instructions.</summary>
 
 To launch a local node for building and debugging smart contracts, without indexer:
 
@@ -66,13 +69,11 @@ If you need sp1 verifier, enable the feature: `sp1`
 cargo run -F sp1
 ```
 
-To run the indexer, you can use the `--pg` node argument:
+To auto-start a temporary PostgreSQL instance and run the indexer, use the `--pg` flag:
 
 ```sh
 cargo run -- --pg
 ```
-
-It will start a postgres server for you, and will close it (with all its data) whenever you stop the node.
 
 If you want data persistence, you can run the PostgreSQL server:
 
@@ -87,13 +88,10 @@ and then in the `hyli` root:
 cargo run
 ```
 
-### Configuration
+</details>
 
-You can configure Hyli using environment variables or a configuration file.
+### 🐳 Alternative: Getting started with Docker
 
-Read the [configuration files and environment variables reference in our docs](https://docs.hyli.org/reference/local-node/#configuration).
-
-## 🐳 Alternative: Getting Started with Docker
 <details>
 <summary>Click to open Docker instructions.</summary>
 
@@ -140,6 +138,12 @@ docker run -v ./db:/hyle/data -e HYLE_RUN_INDEXER=false -p 4321:4321 -p 1234:123
 > 🛠️ **Note**: If you encounter permission issues with the `/hyle/data` volume, add the `--privileged` flag.
 
 </details>
+
+### Configuration
+
+You can configure Hyli using environment variables or a configuration file.
+
+Read the [configuration files and environment variables reference in our docs](https://docs.hyli.org/reference/local-node/#configuration).
 
 ## 📊 Monitoring with Grafana and Prometheus
 
