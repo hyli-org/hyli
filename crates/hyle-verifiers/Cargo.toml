@@ -28,9 +28,6 @@ sonic-rs = { version = "0.5.3", optional = true }
 stwo-prover = { git = "https://github.com/starkware-libs/stwo", features = [
   "parallel",
 ], rev = "ab57a1c", optional = true }
-# Poseidon2 hash function implementation
-# TODO: Remove patch once https://github.com/HorizenLabs/poseidon2/pull/8 is merged
-zkhash = { git = "https://github.com/HorizenLabs/poseidon2", branch = "main", optional = true }
 
 sp1-sdk = { workspace = true, features = ["network"], optional = true }
 risc0-zkvm = { workspace = true, features = ["std"], optional = true }
@@ -43,10 +40,4 @@ test-log = { workspace = true, features = ["color", "trace"] }
 default = []
 risc0 = ["dep:risc0-zkvm"]
 sp1 = ["dep:sp1-sdk", "dep:bincode", "dep:serde_json", "dep:once_cell"]
-cairo-m = [
-  "dep:cairo-m-prover",
-  "dep:stwo-prover",
-  "dep:sonic-rs",
-  "dep:serde",
-  "dep:zkhash",
-]
+cairo-m = ["dep:cairo-m-prover", "dep:stwo-prover", "dep:sonic-rs", "dep:serde"]

@@ -5716,7 +5716,6 @@ dependencies = [
  "stwo-prover",
  "test-log",
  "tracing",
- "zkhash 0.2.0 (git+https://github.com/AntoineFONDEUR/poseidon2?branch=poseidon2-M31)",
 ]
 
 [[package]]

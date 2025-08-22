@@ -46,7 +46,7 @@ pub fn validate_program_id(verifier: &Verifier, program_id: &ProgramId) -> Resul
 pub mod cairo_m {
     use super::*;
     use cairo_m_prover::{verifier::verify_cairo_m, Proof};
-    use sonic_rs::{Deserialize, Serialize};
+    use serde::{Deserialize, Serialize};
     use stwo_prover::core::vcs::blake2_merkle::{Blake2sMerkleChannel, Blake2sMerkleHasher};
 
     #[derive(Serialize, Deserialize)]
