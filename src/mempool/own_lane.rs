@@ -6,6 +6,7 @@ use crate::{bus::BusClientSender, model::*};
 use anyhow::{bail, Context, Result};
 use client_sdk::tcp_client::TcpServerMessage;
 use futures::StreamExt;
+use staking::state::CertificateReliability;
 use std::collections::HashSet;
 use tracing::{debug, trace};
 
@@ -159,8 +160,16 @@ impl super::Mempool {
             return Ok(true);
         };
 
-        self.rebroadcast_data_proposal(&metadata, &dp_hash)
-            .context("Rebroadcasting oldest DataProposal")
+        if self
+            .staking
+            .check_reliability(metadata.validators().as_slice())
+            < CertificateReliability::Weak
+        {
+            self.rebroadcast_data_proposal(&metadata, &dp_hash)
+                .context("Rebroadcasting oldest DataProposal")
+        } else {
+            Ok(false)
+        }
     }
 
     /// Rebroadcast DataProposal to validators that have not signed it yet.
@@ -191,26 +200,26 @@ impl super::Mempool {
             self.metrics
                 .dp_disseminations
                 .add(self.staking.bonded().len() as u64, &[]);
-            self.broadcast_net_message(MempoolNetMessage::DataProposal(
+            self.broadcast_weak(MempoolNetMessage::DataProposal(
                 data_proposal.hashed(),
                 data_proposal.clone(),
             ))?;
         } else {
             // If None, rebroadcast it to every validator that has not yet signed it
-            let validator_that_has_signed: HashSet<&ValidatorPublicKey> = entry_metadata
+            let signators: HashSet<&ValidatorPublicKey> = entry_metadata
                 .signatures
                 .iter()
                 .map(|s| &s.signature.validator)
                 .collect();
+            let signators: Vec<&ValidatorPublicKey> = signators.into_iter().collect();
 
             // No PoA means we rebroadcast the DataProposal for non present voters
-            let only_for: HashSet<ValidatorPublicKey> = self
-                .staking
-                .bonded()
-                .iter()
-                .filter(|pubkey| !validator_that_has_signed.contains(pubkey))
-                .cloned()
-                .collect();
+            let only_for: HashSet<ValidatorPublicKey> = HashSet::from_iter(
+                self.staking
+                    .choose_weak_quorum(signators, &mut rand::thread_rng())?
+                    .into_iter()
+                    .cloned(),
+            );
 
             if only_for.is_empty() {
                 return Ok(false);
@@ -615,7 +624,7 @@ pub mod test {
         ctx.process_new_data_proposal(dp)?;
         ctx.timer_tick().await?;
 
-        let data_proposal = match ctx.assert_broadcast("DataProposal").await.msg {
+        let data_proposal = match ctx.assert_broadcast_only_for("DataProposal").await.1.msg {
             MempoolNetMessage::DataProposal(_, dp) => dp,
             _ => panic!("Expected DataProposal message"),
         };
@@ -767,8 +776,12 @@ pub mod test {
         // Récupère les deux DataProposals broadcastées par ctx1
         let mut dps = vec![];
         for _ in 0..2 {
-            match ctx1.assert_broadcast("DataProposal").await.msg {
-                MempoolNetMessage::DataProposal(hash, dp) => dps.push((hash, dp)),
+            let (set, msg) = ctx1.assert_broadcast_only_for("DataProposal").await;
+            match msg.msg {
+                MempoolNetMessage::DataProposal(hash, dp) => {
+                    assert_eq!(set.len(), 1);
+                    dps.push((hash, dp));
+                }
                 _ => panic!("Expected DataProposal message"),
             }
         }
@@ -786,8 +799,12 @@ pub mod test {
         // Récupère les deux DataProposals broadcastées par ctx1
         let mut dps = vec![];
         for _ in 0..1 {
-            match ctx1.assert_broadcast("DataProposal").await.msg {
-                MempoolNetMessage::DataProposal(hash, dp) => dps.push((hash, dp)),
+            let (set, msg) = ctx1.assert_broadcast_only_for("DataProposal").await;
+            match msg.msg {
+                MempoolNetMessage::DataProposal(hash, dp) => {
+                    assert_eq!(set.len(), 1);
+                    dps.push((hash, dp));
+                }
                 _ => panic!("Expected DataProposal message"),
             }
         }
@@ -801,8 +818,12 @@ pub mod test {
         // Récupère les deux DataProposals broadcastées par ctx1
         let mut dps = vec![];
         for _ in 0..1 {
-            match ctx1.assert_broadcast("DataProposal").await.msg {
-                MempoolNetMessage::DataProposal(hash, dp) => dps.push((hash, dp)),
+            let (set, msg) = ctx1.assert_broadcast_only_for("DataProposal").await;
+            match msg.msg {
+                MempoolNetMessage::DataProposal(hash, dp) => {
+                    assert_eq!(set.len(), 1);
+                    dps.push((hash, dp));
+                }
                 _ => panic!("Expected DataProposal message"),
             }
         }

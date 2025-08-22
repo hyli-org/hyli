@@ -574,6 +574,21 @@ impl Mempool {
         Ok(())
     }
 
+    fn broadcast_weak(&mut self, net_message: MempoolNetMessage) -> Result<()> {
+        let own_key = self.crypto.validator_pubkey();
+        let selected: HashSet<ValidatorPublicKey> = self
+            .staking
+            .choose_weak_quorum(vec![own_key], &mut rand::thread_rng())
+            .context("Choosing validators for a weak certificate")?
+            .into_iter()
+            .map(|s| s.clone())
+            .collect();
+
+        _ = self.broadcast_only_for_net_message(selected, net_message)?;
+
+        Ok(())
+    }
+
     #[inline(always)]
     fn broadcast_net_message(&mut self, net_message: MempoolNetMessage) -> Result<()> {
         let enum_variant_name: &'static str = (&net_message).into();
