@@ -58,7 +58,7 @@ fn handle_register_blob(
 
     let (contract_status, side_effects) = if reg.constructor_metadata.is_some() {
         (
-            ContractStatus::RegisterWithConstructor(Contract {
+            ContractStatus::Updated(Contract {
                 name: reg.contract_name.clone(),
                 program_id: reg.program_id.clone(),
                 state: reg.state_commitment.clone(),

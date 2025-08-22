@@ -38,7 +38,6 @@ CREATE TABLE blobs (
     identity TEXT NOT NULL,            -- Identity field from the original BlobTransaction struct
     contract_name TEXT NOT NULL,       -- Contract name associated with the blob
     data BYTEA NOT NULL,               -- Actual blob data (stored as binary)
-    verified BOOLEAN NOT NULL,         -- Field to indicate if the blob is verified
     PRIMARY KEY (parent_dp_hash, tx_hash, blob_index), -- Composite primary key (parent_dp_hash + tx_hash + blob_index) to uniquely identify each blob
     CHECK (blob_index >= 0),           -- Ensure the index is positive
     FOREIGN KEY (parent_dp_hash, tx_hash) REFERENCES transactions(parent_dp_hash, tx_hash) ON DELETE CASCADE
@@ -59,18 +58,20 @@ CREATE TABLE blob_proof_outputs (
     PRIMARY KEY (proof_parent_dp_hash, proof_tx_hash, blob_parent_dp_hash, blob_tx_hash, blob_index, blob_proof_output_index),
     FOREIGN KEY (blob_parent_dp_hash, blob_tx_hash, blob_index) REFERENCES blobs(parent_dp_hash, tx_hash, blob_index) ON DELETE CASCADE,
     FOREIGN KEY (blob_tx_hash, blob_parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE,
-    FOREIGN KEY (proof_tx_hash, proof_parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE,
+    --FOREIGN KEY (proof_tx_hash, proof_parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE,
     UNIQUE (blob_parent_dp_hash, blob_tx_hash, blob_index, blob_proof_output_index)
 );
 
 CREATE TABLE contracts (
-    tx_hash TEXT NOT NULL,
-    parent_dp_hash TEXT NOT NULL,
+    contract_name TEXT PRIMARY KEY NOT NULL,
     verifier TEXT NOT NULL,
     program_id BYTEA NOT NULL,
-    timeout_window BIGINT,
+    timeout_window BIGINT NOT NULL, -- should we use 0 or NULL for null?
     state_commitment BYTEA NOT NULL,
-    contract_name TEXT PRIMARY KEY NOT NULL,
+    parent_dp_hash TEXT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    metadata BYTEA,
+    deleted_at_height INT,
     FOREIGN KEY (parent_dp_hash, tx_hash) REFERENCES transactions(parent_dp_hash, tx_hash) ON DELETE CASCADE
 );
 

@@ -871,9 +871,7 @@ pub mod test {
     };
     use hyle_modules::{
         handle_messages,
-        node_state::{
-            metrics::NodeStateMetrics, module::NodeStateModule, NodeState, NodeStateStore,
-        },
+        node_state::{module::NodeStateModule, NodeState},
     };
     use std::{future::Future, pin::Pin, sync::Arc};
     use tracing::warn;
