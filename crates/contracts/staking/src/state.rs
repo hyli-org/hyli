@@ -138,10 +138,17 @@ impl Staking {
         Ok(res)
     }
 
-    pub fn check_reliability(&self, validators: &[ValidatorPublicKey]) -> CertificateReliability {
-        let f = self.compute_f();
+    pub fn validators_reliability<'a>(
+        &self,
+        validators: impl Iterator<Item = &'a ValidatorPublicKey>,
+    ) -> CertificateReliability {
         let power = self.compute_voting_power(validators);
 
+        self.power_reliability(power)
+    }
+
+    pub fn power_reliability(&self, power: u128) -> CertificateReliability {
+        let f = self.compute_f();
         if power < f + 1 {
             return CertificateReliability::None;
         } else if power < 2 * f + 1 {
@@ -158,9 +165,12 @@ impl Staking {
         self.total_bond().div_euclid(3)
     }
 
-    pub fn compute_voting_power(&self, validators: &[ValidatorPublicKey]) -> u128 {
+    pub fn compute_voting_power<'a>(
+        &self,
+        validators: impl Iterator<Item = &'a ValidatorPublicKey>,
+    ) -> u128 {
         // Deduplicate validators before computing voting power
-        let mut unique_validators = validators.to_vec();
+        let mut unique_validators: Vec<&'a ValidatorPublicKey> = validators.collect();
         unique_validators.sort();
         unique_validators.dedup();
         unique_validators

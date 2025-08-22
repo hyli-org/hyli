@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
+use staking::state::CertificateReliability;
 use std::{collections::HashSet, time::Duration};
 use tracing::{debug, info, trace, warn};
 
@@ -270,8 +271,6 @@ impl Consensus {
             return Ok(());
         }
 
-        let f = self.bft_round_state.staking.compute_f();
-
         // At this point we must select both NIL and QC timeouts.
         let (mut relevant_timeout_messages, mut tc_kinds) = self
             .store
@@ -292,12 +291,13 @@ impl Consensus {
 
         let mut len = relevant_timeout_messages.len();
 
+        let f = self.bft_round_state.staking.compute_f();
         // TODO: rework function to avoid cloning
         let mut voting_power = self.store.bft_round_state.staking.compute_voting_power(
-            &relevant_timeout_messages
+            (&relevant_timeout_messages)
                 .iter()
-                .map(|s| s.signature.validator.clone())
-                .collect::<Vec<_>>(),
+                .map(|s| &s.signature.validator)
+                .filter(|v| v != &self.crypto.validator_pubkey()),
         );
 
         info!(
@@ -305,10 +305,8 @@ impl Consensus {
         );
 
         // Count requests and if f+1 requests, and not already part of it, join the mutiny
-        if voting_power > f
-            && !relevant_timeout_messages
-                .iter()
-                .any(|s| &s.signature.validator == self.crypto.validator_pubkey())
+        if self.bft_round_state.staking.power_reliability(voting_power)
+            >= CertificateReliability::Weak
         {
             info!("Joining timeout mutiny!");
 
@@ -361,7 +359,8 @@ impl Consensus {
         }
 
         // Create TC if applicable
-        if voting_power > 2 * f
+        if self.bft_round_state.staking.power_reliability(voting_power)
+            >= CertificateReliability::Reliable
             && !matches!(
                 self.bft_round_state.timeout.state,
                 TimeoutState::CertificateEmitted

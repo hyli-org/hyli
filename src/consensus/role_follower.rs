@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
+use staking::state::CertificateReliability;
 use std::collections::BTreeMap;
 use tracing::{debug, info, trace, warn};
 
@@ -343,8 +344,6 @@ impl Consensus {
     /// - Each DataProposal associated with a validator must have received sufficient signatures.
     /// - The aggregated signatures for each DataProposal must be valid.
     fn verify_poda(&mut self, consensus_proposal: &ConsensusProposal) -> Result<()> {
-        let f = self.bft_round_state.staking.compute_f();
-
         trace!(
             "verify poda with staking: {:#?}",
             self.bft_round_state.staking
@@ -362,10 +361,10 @@ impl Consensus {
         }
 
         for (lane_id, data_proposal_hash, lane_size, poda_sig) in &consensus_proposal.cut {
-            let voting_power = self
+            let reliability = self
                 .bft_round_state
                 .staking
-                .compute_voting_power(poda_sig.validators.as_slice());
+                .validators_reliability(poda_sig.validators.iter());
 
             // Check that this is a known lane.
             // TODO: this prevents ever deleting lane which may or may not be desirable.
@@ -408,10 +407,10 @@ impl Consensus {
             }
 
             trace!("consensus_proposal: {:#?}", consensus_proposal);
-            trace!("voting_power: {voting_power} < {f} + 1");
+            trace!("votes reliability: {reliability:?}");
 
             // Verify that DataProposal received enough votes
-            if voting_power < f + 1 {
+            if reliability < CertificateReliability::Weak {
                 bail!(
                     "PoDA for lane {lane_id} does not have enough validators that signed his DataProposal"
                 );

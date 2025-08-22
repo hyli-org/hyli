@@ -42,26 +42,21 @@ impl super::Mempool {
                 .add_signatures(&lane_id, &data_proposal_hash, std::iter::once(vdag))?;
 
         // Compute voting power of all signers to check if the DataProposal received enough votes
-        let validators: Vec<ValidatorPublicKey> = signatures
-            .iter()
-            .map(|s| s.signature.validator.clone())
-            .collect();
-        let old_voting_power = self.staking.compute_voting_power(
-            validators
+
+        let old_reliability = self.staking.validators_reliability(
+            signatures
                 .iter()
-                .filter(|v| *v != &validator)
-                .cloned()
-                .collect::<Vec<_>>()
-                .as_slice(),
+                .map(|s| &s.signature.validator)
+                .filter(|v| *v != &validator),
         );
-        let new_voting_power = self.staking.compute_voting_power(validators.as_slice());
-        let f = self.staking.compute_f();
+
+        let new_reliability = self
+            .staking
+            .validators_reliability(signatures.iter().map(|s| &s.signature.validator));
+
         // Only send the message if voting power exceeds f, 2 * f or is exactly 3 * f + 1
         // This garentees that the message is sent only once per threshold
-        if old_voting_power < f && new_voting_power >= f
-            || old_voting_power < 2 * f && new_voting_power >= 2 * f
-            || new_voting_power > 3 * f
-        {
+        if old_reliability != new_reliability {
             self.broadcast_net_message(MempoolNetMessage::PoDAUpdate(
                 data_proposal_hash,
                 signatures,
@@ -160,10 +155,7 @@ impl super::Mempool {
             return Ok(true);
         };
 
-        if self
-            .staking
-            .check_reliability(metadata.validators().as_slice())
-            < CertificateReliability::Weak
+        if self.staking.validators_reliability(metadata.validators()) < CertificateReliability::Weak
         {
             self.rebroadcast_data_proposal(&metadata, &dp_hash)
                 .context("Rebroadcasting oldest DataProposal")

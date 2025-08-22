@@ -5,13 +5,11 @@ use futures::{Stream, StreamExt};
 use hyle_crypto::BlstCrypto;
 use hyle_model::{DataSized, LaneId};
 use serde::{Deserialize, Serialize};
-use staking::state::Staking;
+use staking::state::{CertificateReliability, Staking};
 use std::{future::Future, vec};
 use tracing::{error, trace};
 
-use crate::model::{
-    Cut, DataProposal, DataProposalHash, Hashed, PoDA, SignedByValidator, ValidatorPublicKey,
-};
+use crate::model::{Cut, DataProposal, DataProposalHash, Hashed, PoDA, ValidatorPublicKey};
 
 use super::ValidatorDAG;
 
@@ -44,11 +42,8 @@ pub struct LaneEntryMetadata {
 }
 
 impl LaneEntryMetadata {
-    pub fn validators(&self) -> Vec<ValidatorPublicKey> {
-        self.signatures
-            .iter()
-            .map(|s| s.signature.validator.clone())
-            .collect()
+    pub fn validators(&self) -> impl Iterator<Item = &ValidatorPublicKey> {
+        self.signatures.iter().map(|s| &s.signature.validator)
     }
 }
 
@@ -126,27 +121,23 @@ pub trait Storage {
                 return Ok(None);
             };
 
-            let filtered: Vec<&SignedByValidator<(DataProposalHash, LaneBytesSize)>> = le
-                .signatures
-                .iter()
-                .filter(|s| bonded_validators.contains(&s.signature.validator))
-                .collect();
+            let filtered = || {
+                le.signatures
+                    .iter()
+                    .filter(|s| bonded_validators.contains(&s.signature.validator))
+            };
 
-            // Compute voting power from the filtered validator set.
-            let filtered_validators: Vec<ValidatorPublicKey> = filtered
-                .iter()
-                .map(|s| s.signature.validator.clone())
-                .collect();
+            let reliability =
+                staking.validators_reliability(filtered().map(|s| &s.signature.validator));
 
-            // TODO: take by reference to avoid cloning above
-            let voting_power = staking.compute_voting_power(&filtered_validators);
-            let f = staking.compute_f();
-
-            trace!("Checking for sufficient voting power: {voting_power} > {f} ?");
+            trace!("Checking for weak reliability {reliability:?} ?");
 
             // Enough votes: aggregate into PoDA and return.
-            if voting_power > f {
-                match BlstCrypto::aggregate((current.clone(), le.cumul_size), &filtered) {
+            if reliability >= CertificateReliability::Weak {
+                match BlstCrypto::aggregate(
+                    (current.clone(), le.cumul_size),
+                    &filtered().collect::<Vec<_>>().as_slice(),
+                ) {
                     Ok(poda) => {
                         return Ok(Some((current, le.cumul_size, poda.signature)));
                     }
@@ -429,7 +420,9 @@ mod tests {
     use crate::mempool::storage_memory::LanesStorage;
     use assertables::assert_none;
     use futures::StreamExt;
-    use hyle_model::{DataSized, Identity, Signature, Transaction, ValidatorSignature};
+    use hyle_model::{
+        DataSized, Identity, Signature, SignedByValidator, Transaction, ValidatorSignature,
+    };
     use staking::state::Staking;
 
     fn setup_storage() -> LanesStorage {
