@@ -52,6 +52,7 @@ async fn test_full_settlement_flow() -> Result<()> {
     let rest_server_port = builder.conf.rest_server_port;
     builder.conf.run_indexer = true;
     builder.conf.run_explorer = true;
+    builder.conf.indexer.query_buffer_size = 10;
     builder.conf.database_url = format!(
         "postgres://postgres:postgres@localhost:{}/postgres",
         pg.get_host_port_ipv4(5432).await.unwrap()

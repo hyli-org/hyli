@@ -66,7 +66,7 @@ CREATE TABLE contracts (
     contract_name TEXT PRIMARY KEY NOT NULL,
     verifier TEXT NOT NULL,
     program_id BYTEA NOT NULL,
-    timeout_window BIGINT NOT NULL, -- should we use 0 or NULL for null?
+    timeout_window BIGINT, -- should we use 0 or NULL for null?
     state_commitment BYTEA NOT NULL,
     parent_dp_hash TEXT NOT NULL,
     tx_hash TEXT NOT NULL,
@@ -87,8 +87,9 @@ CREATE TABLE transaction_state_events (
     block_height INT,
     tx_hash TEXT NOT NULL,
     parent_dp_hash TEXT NOT NULL,
-    FOREIGN KEY (tx_hash, parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE,
-    events JSONB NOT NULL
+    events JSONB NOT NULL,
+    index INT,
+    FOREIGN KEY (tx_hash, parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE
 );
 
 

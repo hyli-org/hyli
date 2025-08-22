@@ -202,7 +202,10 @@ impl BlockNodeStateCallback {
     pub fn from_signed(signed_block: &SignedBlock) -> Self {
         BlockNodeStateCallback {
             block_under_construction: Block {
+                parent_hash: signed_block.parent_hash().clone(),
+                hash: signed_block.hashed(),
                 block_height: signed_block.height(),
+                block_timestamp: signed_block.consensus_proposal.timestamp.clone(),
                 new_bounded_validators: signed_block
                     .consensus_proposal
                     .staking_actions
@@ -321,8 +324,6 @@ impl NodeStateCallback for BlockNodeStateCallback {
                 if blob.contract_name.0 == "staking" {
                     if let Ok(structured_blob) = StructuredBlob::try_from(blob.clone()) {
                         let staking_action: StakingAction = structured_blob.data.parameters;
-
-                        tracing::warn!("totoro staking {:?}", staking_action);
                         self.block_under_construction
                             .staking_actions
                             .push((tx.identity.clone(), staking_action));
