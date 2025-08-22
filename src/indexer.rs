@@ -128,10 +128,10 @@ impl Indexer {
                     "Indexer handling node state event");
             }
 
-            listen<MempoolStatusEvent> _event => {
-                // _ = log_error!(self.handle_mempool_status_event(event)
-                //     .await,
-                //     "Indexer handling mempool status event");
+            listen<MempoolStatusEvent> event => {
+                _ = log_error!(self.handle_mempool_status_event(event)
+                    .await,
+                    "Indexer handling mempool status event");
             }
 
         };
@@ -187,7 +187,7 @@ pub(crate) struct IndexerHandlerStore {
     tx_events: StreamableData,
     blobs: StreamableData,
     blob_proof_outputs: StreamableData,
-    contract_inserts: StreamableData,
+    contract_inserts: Vec<ContractInsertStore>,
     contract_updates: HashMap<ContractName, ContractUpdateStore>,
 }
 
@@ -237,6 +237,15 @@ impl tokio::io::AsyncRead for StreamableData {
 }
 
 impl Indexer {
+    #[cfg(test)]
+    pub(crate) async fn force_handle_signed_block(
+        &mut self,
+        block: SignedBlock,
+    ) -> Result<(), Error> {
+        self.node_state.as_mut().unwrap().current_height = BlockHeight(block.height().0 - 1);
+        self.handle_signed_block(block).await
+    }
+
     pub async fn handle_signed_block(&mut self, block: SignedBlock) -> Result<(), Error> {
         {
             let mut ns = self.node_state.take().unwrap();
@@ -273,7 +282,39 @@ impl Indexer {
     }
 
     pub async fn handle_mempool_status_event(&mut self, event: MempoolStatusEvent) -> Result<()> {
-        //self.handler_store.mempool_events.push(event);
+        match event {
+            MempoolStatusEvent::WaitingDissemination {
+                parent_data_proposal_hash,
+                tx,
+            } => {
+                self.handler_store.txs.push(TxStore {
+                    tx_hash: TxHashDb(tx.hashed().clone()),
+                    dp_hash: DataProposalHashDb(parent_data_proposal_hash.clone()),
+                    transaction_type: TransactionTypeDb::BlobTransaction,
+                    block_hash: None,
+                    block_height: BlockHeight(0),
+                    lane_id: None, // TODO: we know the lane here so not sure why this used to be an option
+                    index: 0,
+                    identity: match tx.transaction_data {
+                        TransactionData::Blob(ref blob_tx) => Some(blob_tx.identity.clone().0),
+                        _ => None,
+                    },
+                });
+                // We skip the blobs here or they'll conflict later and it's easier.
+            }
+            MempoolStatusEvent::DataProposalCreated {
+                parent_data_proposal_hash,
+                data_proposal_hash,
+                txs_metadatas,
+            } => {
+                for tx_metadata in txs_metadatas {
+                    self.handler_store
+                        .tx_status_update
+                        .entry(tx_metadata.id)
+                        .or_insert(TransactionStatusDb::DataProposalCreated);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -317,7 +358,7 @@ impl Indexer {
                     .push_bind(tx.tx_hash)
                     .push_bind(1)
                     .push_bind(tx.transaction_type)
-                    .push_bind(TransactionStatusDb::Sequenced)
+                    .push_bind(TransactionStatusDb::WaitingDissemination)
                     .push_bind(tx.block_hash)
                     .push_bind(tx.block_height.0 as i32)
                     .push_bind(tx.lane_id)
@@ -325,7 +366,14 @@ impl Indexer {
                     .push_bind(tx.identity);
             });
             // for genesis block verified proof tx
-            query_builder.push(" ON CONFLICT DO NOTHING");
+            query_builder.push(
+                " ON CONFLICT (parent_dp_hash, tx_hash)
+                DO UPDATE SET
+                    index = GREATEST(transactions.index, excluded.index),
+                    lane_id = COALESCE(excluded.lane_id, transactions.lane_id),
+                    block_hash = COALESCE(excluded.block_hash, transactions.block_hash),
+                    block_height = GREATEST(excluded.block_height, transactions.block_height)",
+            );
             _ = log_error!(
                 query_builder.build().execute(&mut *transaction).await,
                 "Inserting transactions"
@@ -335,7 +383,7 @@ impl Indexer {
         // Then status updates
         {
             // Create a temporary table to insert updates
-            sqlx::query("CREATE TEMPORARY TABLE IF NOT EXISTS updates (tx_hash TEXT NOT NULL, parent_dp_hash TEXT NOT NULL, transaction_status transaction_status NOT NULL)")
+            sqlx::query("CREATE TEMPORARY TABLE IF NOT EXISTS updates (parent_dp_hash TEXT NOT NULL, tx_hash TEXT NOT NULL, transaction_status transaction_status NOT NULL)")
                 .execute(&mut *transaction)
                 .await?;
 
@@ -357,11 +405,11 @@ impl Indexer {
                 }
                 // Insert status updates into the temporary table
                 let mut query_builder = QueryBuilder::<Postgres>::new(
-                    "INSERT INTO updates (tx_hash, parent_dp_hash, transaction_status) ",
+                    "INSERT INTO updates (parent_dp_hash, tx_hash, transaction_status) ",
                 );
                 query_builder.push_values(entries.into_iter(), |mut b, (status, tx_id)| {
-                    b.push_bind(TxHashDb(tx_id.1))
-                        .push_bind(DataProposalHashDb(tx_id.0))
+                    b.push_bind(DataProposalHashDb(tx_id.0))
+                        .push_bind(TxHashDb(tx_id.1))
                         .push_bind(status);
                 });
                 _ = log_error!(
@@ -385,13 +433,31 @@ impl Indexer {
                 .await?;
         }
 
-        // COPY seems about 2x faster than INSERT
-        let mut copy = transaction.copy_in_raw("COPY contracts (contract_name, verifier, program_id, timeout_window, state_commitment, parent_dp_hash, tx_hash, metadata, deleted_at_height) FROM STDIN WITH (FORMAT TEXT)").await?;
-        copy.read_from(&mut self.handler_store.contract_inserts)
-            .await?;
-        copy.finish().await?;
+        // Contracts, annoyingly, can be added-deleted-added and so on, so we'll insert them one at a time for simplicity.
+        for contract in self.handler_store.contract_inserts.drain(..) {
+            sqlx::query("INSERT INTO contracts (contract_name, verifier, program_id, timeout_window, state_commitment, parent_dp_hash, tx_hash, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (contract_name) DO UPDATE SET
+                verifier = EXCLUDED.verifier,
+                program_id = EXCLUDED.program_id,
+                timeout_window = EXCLUDED.timeout_window,
+                state_commitment = EXCLUDED.state_commitment,
+                parent_dp_hash = EXCLUDED.parent_dp_hash,
+                tx_hash = EXCLUDED.tx_hash,
+                metadata = EXCLUDED.metadata,
+                deleted_at_height = NULL")
+                .bind(contract.contract_name.0)
+                .bind(contract.verifier)
+                .bind(contract.program_id)
+                .bind(contract.timeout_window)
+                .bind(contract.state_commitment)
+                .bind(contract.parent_dp_hash)
+                .bind(contract.tx_hash)
+                .bind(contract.metadata)
+                .execute(&mut *transaction)
+                .await?;
+        }
 
-        let mut copy = transaction.copy_in_raw("COPY transaction_state_events (block_hash, block_height, parent_dp_hash, tx_hash, events) FROM STDIN WITH (FORMAT TEXT)").await?;
+        // COPY seems about 2x faster than INSERT
+        let mut copy = transaction.copy_in_raw("COPY transaction_state_events (block_hash, block_height, parent_dp_hash, tx_hash, index, events) FROM STDIN WITH (FORMAT TEXT)").await?;
         copy.read_from(&mut self.handler_store.tx_events).await?;
         copy.finish().await?;
 
@@ -474,7 +540,7 @@ pub struct TxStore {
     pub tx_hash: TxHashDb,
     pub dp_hash: DataProposalHashDb,
     pub transaction_type: TransactionTypeDb,
-    pub block_hash: ConsensusProposalHash,
+    pub block_hash: Option<ConsensusProposalHash>,
     pub block_height: BlockHeight,
     pub lane_id: Option<LaneIdDb>,
     pub index: i32,
@@ -489,8 +555,19 @@ pub struct BlockStore {
     pub total_txs: i64,
 }
 
+struct ContractInsertStore {
+    pub contract_name: ContractName,
+    pub verifier: String,
+    pub program_id: Vec<u8>,
+    pub timeout_window: TimeoutWindowDb,
+    pub state_commitment: Vec<u8>,
+    pub parent_dp_hash: DataProposalHashDb,
+    pub tx_hash: TxHashDb,
+    pub metadata: Option<Vec<u8>>,
+}
+
 #[derive(Default)]
-pub struct ContractUpdateStore {
+struct ContractUpdateStore {
     pub verifier: Option<String>,
     pub program_id: Option<Vec<u8>>,
     pub timeout_window: Option<TimeoutWindowDb>,
@@ -510,7 +587,7 @@ impl NodeStateCallback for Indexer {
                     tx_hash: TxHashDb(tx_id.1.clone()),
                     dp_hash: DataProposalHashDb(tx_id.0.clone()),
                     transaction_type: TransactionTypeDb::BlobTransaction,
-                    block_hash: self.handler_store.block_hash.clone(),
+                    block_hash: Some(self.handler_store.block_hash.clone()),
                     block_height: self.handler_store.block_height,
                     lane_id: Some(LaneIdDb(lane_id.clone())),
                     index: index as i32,
@@ -527,18 +604,33 @@ impl NodeStateCallback for Indexer {
                         hex::encode(&blob.data.0),
                     ));
                 }
+                self.handler_store
+                    .tx_status_update
+                    .entry(tx_id.clone())
+                    .and_modify(|status| {
+                        if *status != TransactionStatusDb::Success
+                            && *status != TransactionStatusDb::Failure
+                            && *status != TransactionStatusDb::TimedOut
+                        {
+                            *status = TransactionStatusDb::Sequenced;
+                        }
+                    })
+                    .or_insert(TransactionStatusDb::Sequenced);
             }
             TxEvent::SequencedProofTransaction(tx_id, lane_id, index, ..) => {
                 self.handler_store.txs.push(TxStore {
                     tx_hash: TxHashDb(tx_id.1.clone()),
                     dp_hash: DataProposalHashDb(tx_id.0.clone()),
                     transaction_type: TransactionTypeDb::ProofTransaction,
-                    block_hash: self.handler_store.block_hash.clone(),
+                    block_hash: Some(self.handler_store.block_hash.clone()),
                     block_height: self.handler_store.block_height,
                     lane_id: Some(LaneIdDb(lane_id.clone())),
                     index: index as i32,
                     identity: None,
                 });
+                self.handler_store
+                    .tx_status_update
+                    .insert(tx_id.clone(), TransactionStatusDb::Success);
             }
             TxEvent::Settled(tx_id, ..) => {
                 self.handler_store
@@ -576,24 +668,19 @@ impl NodeStateCallback for Indexer {
                 }
             }
             TxEvent::ContractRegistered(tx_id, contract_name, contract, metadata) => {
-                self.handler_store.contract_inserts.0.push(format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-                    contract_name,
-                    contract.verifier,
-                    hex::encode(&contract.program_id.0),
-                    match contract.timeout_window {
-                        TimeoutWindow::NoTimeout => 0,
-                        TimeoutWindow::Timeout(window) => window.0,
-                    },
-                    hex::encode(&contract.state.0),
-                    tx_id.0,
-                    tx_id.1,
-                    metadata
-                        .as_ref()
-                        .map(|m| format!("\\\\x{}", hex::encode(m)))
-                        .unwrap_or("\\N".to_string()),
-                    "\\N"
-                ));
+                self.handler_store
+                    .contract_inserts
+                    .push(ContractInsertStore {
+                        contract_name: contract_name.clone(),
+                        verifier: contract.verifier.0.clone(),
+                        program_id: contract.program_id.0.clone(),
+                        timeout_window: TimeoutWindowDb(contract.timeout_window.clone()),
+                        state_commitment: contract.state.0.clone(),
+                        parent_dp_hash: DataProposalHashDb(tx_id.0.clone()),
+                        tx_hash: TxHashDb(tx_id.1.clone()),
+                        metadata: metadata.clone(),
+                    });
+                self.handler_store.contract_updates.remove(contract_name);
                 // Don't push events
                 return;
             }
@@ -655,11 +742,12 @@ impl NodeStateCallback for Indexer {
             }
         }
         self.handler_store.tx_events.0.push(format!(
-            "{}\t{}\t{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\t{}\n",
             self.handler_store.block_hash,
             self.handler_store.block_height,
             event.tx_id().0,
             event.tx_id().1,
+            self.handler_store.tx_events.0.len(),
             serde_json::to_value(event)
                 .unwrap_or(serde_json::Value::Null)
                 .to_string()
