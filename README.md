@@ -145,6 +145,10 @@ You can configure Hyli using environment variables or a configuration file.
 
 Read the [configuration files and environment variables reference in our docs](https://docs.hyli.org/reference/local-node/#configuration).
 
+## 🧰 Build with Hyli
+
+Once your node is running, use [our Quickstart guide](https://docs.hyli.org/quickstart/) to run the node, wallet, and scaffold and to start building easily.
+
 ## 📊 Monitoring with Grafana and Prometheus
 
 ### Starting Services
