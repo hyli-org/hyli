@@ -1,3 +1,5 @@
+#![allow(clippy::indexing_slicing)]
+
 use assert_json_diff::assert_json_include;
 use axum_test::TestServer;
 use client_sdk::transaction_builder::ProvableBlobTx;

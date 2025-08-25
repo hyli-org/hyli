@@ -1,6 +1,6 @@
 use crate::node_state::{
     contract_registration::validate_contract_registration_metadata, ContractStatus,
-    ModifiedContractData, ModifiedContractFields, NodeState, NodeStateProcessing,
+    ModifiedContractData, ModifiedContractFields, NodeStateProcessing,
 };
 use anyhow::{bail, Result};
 use sdk::*;
