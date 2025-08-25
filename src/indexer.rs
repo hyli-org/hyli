@@ -13,13 +13,14 @@ use anyhow::{Context, Error, Result};
 use chrono::{DateTime, Utc};
 use hyle_model::api::{TransactionStatusDb, TransactionTypeDb};
 use hyle_model::utils::TimestampMs;
+use hyle_modules::bus::BusClientSender;
 use hyle_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
     modules::{gcs_uploader::GCSRequest, module_bus_client, Module, SharedBuildApiCtx},
     node_state::{
-        module::NodeStateModule, NodeState, NodeStateCallback, NodeStateProcessing, NodeStateStore,
-        TxEvent,
+        module::NodeStateModule, BlockNodeStateCallback, NodeState, NodeStateCallback,
+        NodeStateProcessing, NodeStateStore, TxEvent,
     },
 };
 use hyle_net::clock::TimestampMsClock;
@@ -45,7 +46,7 @@ struct IndexerBusClient {
 pub struct Indexer {
     bus: IndexerBusClient,
     db: PgPool,
-    node_state: Option<Box<NodeState>>,
+    node_state: NodeState,
     handler_store: IndexerHandlerStore,
     conf: Conf,
 }
@@ -80,7 +81,7 @@ impl Module for Indexer {
         let indexer = Indexer {
             bus,
             db: pool,
-            node_state: Some(Box::new(node_state)),
+            node_state,
             handler_store: IndexerHandlerStore::default(),
             conf,
         };
@@ -95,11 +96,10 @@ impl Module for Indexer {
     async fn persist(&mut self) -> Result<()> {
         NodeStateModule::save_on_disk(
             &self.conf.data_directory.join("indexer_node_state.bin"),
-            &self.node_state.as_ref().expect("should exist").store,
+            &self.node_state.store,
         )
         .context("Failed to save node state to disk")?;
-        let persisted_da_start_height =
-            BlockHeight(self.node_state.as_ref().unwrap().current_height.0 + 1);
+        let persisted_da_start_height = BlockHeight(self.node_state.current_height.0 + 1);
 
         tracing::debug!(
             "Indexer saving DA start height: {}",
@@ -184,6 +184,9 @@ pub(crate) struct IndexerHandlerStore {
     block_hash: BlockHash,
     last_update: TimestampMs,
 
+    // Intended to be temporary, for CSI & co.
+    block_callback: BlockNodeStateCallback,
+
     blocks: Vec<BlockStore>,
     txs: VecDeque<TxStore>,
     tx_status_update: HashMap<TxId, TransactionStatusDb>,
@@ -245,13 +248,12 @@ impl Indexer {
         &mut self,
         block: SignedBlock,
     ) -> Result<(), Error> {
-        self.node_state.as_mut().unwrap().current_height = BlockHeight(block.height().0 - 1);
+        self.node_state.current_height = BlockHeight(block.height().0 - 1);
         self.handle_signed_block(block).await
     }
 
     pub async fn handle_signed_block(&mut self, block: SignedBlock) -> Result<(), Error> {
         {
-            let mut ns = self.node_state.take().unwrap();
             self.handler_store.block_height = block.height();
             self.handler_store.block_hash = block.hashed();
 
@@ -265,11 +267,16 @@ impl Indexer {
             });
 
             NodeStateProcessing {
-                this: &mut ns,
-                callback: self,
+                this: &mut self.node_state,
+                callback: &mut self.handler_store,
             }
             .process_signed_block(&block)?;
-            self.node_state = Some(ns);
+
+            // We use the indexer as node-state-processor for CSI
+            // TODO: refactor this away it conflicts with running the indexer in the full node as we send all events twice.
+            self.bus.send(NodeStateEvent::NewBlock(Box::new(
+                self.handler_store.block_callback.get_block(),
+            )));
         }
 
         // if last block is newer than 5sec dump store to db
@@ -345,8 +352,6 @@ impl Indexer {
                 .await?;
         }
 
-        tracing::warn!("totoro {:?}", self.handler_store.txs);
-
         // Then transactions
         let batch_size = calculate_optimal_batch_size(10);
         while !self.handler_store.txs.is_empty() {
@@ -403,7 +408,6 @@ impl Indexer {
             if already_inserted.is_empty() {
                 continue;
             }
-            tracing::info!("Executing query: {}", query_builder.sql());
             _ = log_error!(
                 query_builder.build().execute(&mut *transaction).await,
                 "Inserting transactions"
@@ -605,26 +609,28 @@ struct ContractUpdateStore {
     pub deleted_at_height: Option<i32>,
 }
 
-impl NodeStateCallback for Indexer {
+impl NodeStateCallback for IndexerHandlerStore {
     fn on_event(&mut self, event: &TxEvent) {
+        self.block_callback.on_event(event);
+
         match *event {
-            TxEvent::DuplicateBlobTransaction(..) => {
+            TxEvent::DuplicateBlobTransaction(..) | TxEvent::RejectedBlobTransaction(..) => {
                 // Return early, we want to skip events or it will violate the foreign key
                 return;
             }
             TxEvent::SequencedBlobTransaction(tx_id, lane_id, index, blob_tx) => {
-                self.handler_store.txs.push_front(TxStore {
+                self.txs.push_front(TxStore {
                     tx_hash: TxHashDb(tx_id.1.clone()),
                     dp_hash: DataProposalHashDb(tx_id.0.clone()),
                     transaction_type: TransactionTypeDb::BlobTransaction,
-                    block_hash: Some(self.handler_store.block_hash.clone()),
-                    block_height: self.handler_store.block_height,
+                    block_hash: Some(self.block_hash.clone()),
+                    block_height: self.block_height,
                     lane_id: Some(LaneIdDb(lane_id.clone())),
                     index: index as i32,
                     identity: Some(blob_tx.identity.clone().0),
                 });
                 for (index, blob) in blob_tx.blobs.iter().enumerate() {
-                    self.handler_store.blobs.0.push(format!(
+                    self.blobs.0.push(format!(
                         "{}\t{}\t{}\t{}\t{}\t\\\\x{}\n",
                         tx_id.0,
                         tx_id.1,
@@ -634,8 +640,7 @@ impl NodeStateCallback for Indexer {
                         hex::encode(&blob.data.0),
                     ));
                 }
-                self.handler_store
-                    .tx_status_update
+                self.tx_status_update
                     .entry(tx_id.clone())
                     .and_modify(|status| {
                         if *status != TransactionStatusDb::Success
@@ -648,33 +653,29 @@ impl NodeStateCallback for Indexer {
                     .or_insert(TransactionStatusDb::Sequenced);
             }
             TxEvent::SequencedProofTransaction(tx_id, lane_id, index, ..) => {
-                self.handler_store.txs.push_front(TxStore {
+                self.txs.push_front(TxStore {
                     tx_hash: TxHashDb(tx_id.1.clone()),
                     dp_hash: DataProposalHashDb(tx_id.0.clone()),
                     transaction_type: TransactionTypeDb::ProofTransaction,
-                    block_hash: Some(self.handler_store.block_hash.clone()),
-                    block_height: self.handler_store.block_height,
+                    block_hash: Some(self.block_hash.clone()),
+                    block_height: self.block_height,
                     lane_id: Some(LaneIdDb(lane_id.clone())),
                     index: index as i32,
                     identity: None,
                 });
-                self.handler_store
-                    .tx_status_update
+                self.tx_status_update
                     .insert(tx_id.clone(), TransactionStatusDb::Success);
             }
             TxEvent::Settled(tx_id, ..) => {
-                self.handler_store
-                    .tx_status_update
+                self.tx_status_update
                     .insert(tx_id.clone(), TransactionStatusDb::Success);
             }
             TxEvent::SettledAsFailed(tx_id) => {
-                self.handler_store
-                    .tx_status_update
+                self.tx_status_update
                     .insert(tx_id.clone(), TransactionStatusDb::Failure);
             }
             TxEvent::TimedOut(tx_id) => {
-                self.handler_store
-                    .tx_status_update
+                self.tx_status_update
                     .insert(tx_id.clone(), TransactionStatusDb::TimedOut);
             }
             TxEvent::TxError(..) => {}
@@ -683,7 +684,7 @@ impl NodeStateCallback for Indexer {
             TxEvent::BlobSettled(tx_id, _tx, blob, blob_index, proof_data, blob_proof_index) => {
                 // Can be None for executed blobs
                 if let Some((_, _, proof_tx_id, hyle_output)) = proof_data {
-                    self.handler_store.blob_proof_outputs.0.push(format!(
+                    self.blob_proof_outputs.0.push(format!(
                         "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
                         tx_id.0,
                         tx_id.1,
@@ -698,39 +699,35 @@ impl NodeStateCallback for Indexer {
                 }
             }
             TxEvent::ContractRegistered(tx_id, contract_name, contract, metadata) => {
-                self.handler_store
-                    .contract_inserts
-                    .push(ContractInsertStore {
-                        contract_name: contract_name.clone(),
-                        verifier: contract.verifier.0.clone(),
-                        program_id: contract.program_id.0.clone(),
-                        timeout_window: TimeoutWindowDb(contract.timeout_window.clone()),
-                        state_commitment: contract.state.0.clone(),
-                        parent_dp_hash: DataProposalHashDb(tx_id.0.clone()),
-                        tx_hash: TxHashDb(tx_id.1.clone()),
-                        metadata: metadata.clone(),
-                    });
-                self.handler_store.contract_updates.remove(contract_name);
+                self.contract_inserts.push(ContractInsertStore {
+                    contract_name: contract_name.clone(),
+                    verifier: contract.verifier.0.clone(),
+                    program_id: contract.program_id.0.clone(),
+                    timeout_window: TimeoutWindowDb(contract.timeout_window.clone()),
+                    state_commitment: contract.state.0.clone(),
+                    parent_dp_hash: DataProposalHashDb(tx_id.0.clone()),
+                    tx_hash: TxHashDb(tx_id.1.clone()),
+                    metadata: metadata.clone(),
+                });
+                self.contract_updates.remove(contract_name);
                 // Don't push events
                 return;
             }
             TxEvent::ContractDeleted(_, contract_name) => {
-                self.handler_store
-                    .contract_updates
+                self.contract_updates
                     .entry(contract_name.clone())
                     .and_modify(|e| {
-                        e.deleted_at_height = Some(self.handler_store.block_height.0 as i32);
+                        e.deleted_at_height = Some(self.block_height.0 as i32);
                     })
                     .or_insert(ContractUpdateStore {
-                        deleted_at_height: Some(self.handler_store.block_height.0 as i32),
+                        deleted_at_height: Some(self.block_height.0 as i32),
                         ..Default::default()
                     });
                 // Don't push events
                 return;
             }
             TxEvent::ContractStateUpdated(_, contract_name, state_commitment) => {
-                self.handler_store
-                    .contract_updates
+                self.contract_updates
                     .entry(contract_name.clone())
                     .and_modify(|e| {
                         e.state_commitment = Some(state_commitment.0.clone());
@@ -743,8 +740,7 @@ impl NodeStateCallback for Indexer {
                 return;
             }
             TxEvent::ContractProgramIdUpdated(_, contract_name, program_id) => {
-                self.handler_store
-                    .contract_updates
+                self.contract_updates
                     .entry(contract_name.clone())
                     .and_modify(|e| {
                         e.program_id = Some(program_id.0.clone());
@@ -757,8 +753,7 @@ impl NodeStateCallback for Indexer {
                 return;
             }
             TxEvent::ContractTimeoutWindowUpdated(_, contract_name, timeout_window) => {
-                self.handler_store
-                    .contract_updates
+                self.contract_updates
                     .entry(contract_name.clone())
                     .and_modify(|e| {
                         e.timeout_window = Some(TimeoutWindowDb(timeout_window.clone()));
@@ -771,13 +766,13 @@ impl NodeStateCallback for Indexer {
                 return;
             }
         }
-        self.handler_store.tx_events.0.push(format!(
+        self.tx_events.0.push(format!(
             "{}\t{}\t{}\t{}\t{}\t{}\n",
-            self.handler_store.block_hash,
-            self.handler_store.block_height,
+            self.block_hash,
+            self.block_height,
             event.tx_id().0,
             event.tx_id().1,
-            self.handler_store.tx_events.0.len(),
+            self.tx_events.0.len(),
             serde_json::to_value(event)
                 .unwrap_or(serde_json::Value::Null)
                 .to_string()

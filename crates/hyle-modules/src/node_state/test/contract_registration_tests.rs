@@ -340,7 +340,8 @@ fn check_block_is_ok(block: &Block) {
         assert!(dp_hashes.contains(tx_hash));
     }
 
-    for (tx_hash, _) in block.transactions_events.iter() {
+    for (tx_hash, ev) in block.transactions_events.iter() {
+        tracing::info!("Event for tx hash: {:?}", ev);
         assert!(dp_hashes.contains(tx_hash));
     }
 }

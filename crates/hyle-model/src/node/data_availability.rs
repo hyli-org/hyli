@@ -159,7 +159,6 @@ pub enum TransactionStateEvent {
         proof_tx_hash: TxHash,
         program_output: Vec<u8>,
     },
-    SettleEvent(String),
     Settled,
     SettledAsFailed,
     TimedOut,
