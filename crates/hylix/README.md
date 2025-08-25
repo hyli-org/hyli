@@ -1,35 +1,46 @@
-# 🧪 Hylix — Build, Test & Deploy vApps on Hyli
+# Hylix
 
-> The easiest way to build vApps.
-> Powered by Risc0 & SP1. Designed for developers.
+<div align="center">
 
----
+  _Build, test & deploy verifiable apps on Hyli._
 
-## ✨ Why Hylix?
+  **Hyli** is the easiest way to build vApps. Powered by Risc0 & SP1. Designed for developers.
+</div>
 
-Hylix is a modern developer toolbox and CLI (`hyl`) to build vApps on [Hyli](https://hyli.org), a privacy-preserving, proof-first blockchain leveraging SP1, Risc0 or Noir. Whether you're prototyping or going to production, Hylab gives you the smoothest path from idea to zk-rollout.
+## :test_tube: Why Hylix?
 
-**Main benefits:**
+Hylix is a developer toolbox and CLI (`hy`) to build vApps on [Hyli](https://hyli.org), the new proof-powered L1 to build the next generation of apps onchain.
+
+### Who is this for?
+
+Developers who are building vApps on the Hyli blockchain and have prior knowledge of Rust and CLI usage.
+
+### Main benefits
 
 * ✅ Zero-config project scaffolding
 * 🚀 Built-in SP1 and Risc0 support (with Noir and more soon)
 * 🧪 End-to-end testing made simple
-* 🧱 Easy setup local devnet with provers & explorer
-* 🔐 Prover network integration (no local proving infra needed)
+* 🧱 Easy local node setup with explorer
+* 🔐 No proving infra needed
 
----
+## 🧪 Trying this out
 
-## 🚀 Getting Started
+We’re just getting started. If you're testing Hylix early:
+
+* Share [issues or ideas](https://github.com/hyli-org/hyli/issues) in this repository
+* [Ping the Hyli team](https://t.me/hyli_org) with feedback or questions
+
+## 🚀 Getting started
 
 Install the CLI:
 
-```bash
+```sh
 cargo install hylix
 ```
 
 Then run:
 
-```bash
+```sh
 hy new my-vapp
 cd my-vapp
 hy build
@@ -37,26 +48,39 @@ hy devnet
 hy test
 ```
 
-That’s it, you’re building on Hyli.
+## 🧰 CLI reference
 
----
+### Cheatsheet
 
-## 🧰 CLI Reference
+| Command   | Action           |
+|-----------|------------------|
+| [`hy new [PROJECT]`](#hy-new-project)    | Create a project using [the scaffold](https://github.com/hyli-org/app-scaffold). |
+| [`hy build`](#hy-build)  | Build contracts.  |
+| [`hy test`](#hy-test)   | Run E2E tests.    |
+| [`hy run`](#hy-run)    | Start backend.    |
+| [`hy devnet`](#hy-devnet) | Start local node.  |
 
 ### `hy new [PROJECT]`
 
-Scaffold a new Hyli vApp project.
+Generate a new project:
 
-* Ask to choose SP1 or Risc0 as backend
-* Clone the default vApp template
-* (soon) Try to validate & setup your local dev environment (Rust, risc0, sp1 toolchains...)
-* Noir & Cairo support coming soon
-
-```bash
+```sh
 hy new my-vapp
 ```
 
-#### 🧱 Project Structure
+* You will be asked to choose SP1 or Risc0 for your backend
+* Clone the default vApp scaffold
+
+<details>
+  <summary>Coming soon:</summary>
+
+* More proving schemes
+* Validate & setup your local dev environment (Rust, risc0, sp1 toolchains...)
+
+</details>
+
+<details>
+  <summary>Scaffold structure</summary>
 
 A Hylix vApp project is made of three main components:
 
@@ -69,68 +93,24 @@ A Hylix vApp project is made of three main components:
     * 🧩 Optional custom logic & APIs
 * 🎨 **front/**: Frontend interface powered by **Bun** and **Vite** (optional)
 
-Each part is optional — you can build CLI-only vApps, headless backends, or full dApps.
+Each part is optional: you can build CLI-only vApps, headless backends, or full dApps.
+</details>
 
----
+Read more: [Scaffold repo](https://github.com/hyli-org/app-scaffold/) | [Quickstart in docs](https://docs.hyli.org/quickstart/edit/).
 
 ### `hy build`
 
-Build the project.
+Build the project:
 
-```bash
+```sh
 hy build
 ```
 
----
+Then, clean the project build artifacts:
 
-### `hy clean`
-
-Clean the project build artifacts.
-
-```bash
+```sh
 hy clean
 ```
-
----
-
-### `hy test`
-
-Run your vApp’s **end-to-end tests** in a fully orchestrated local Hyli environment.
-
-```bash
-hy test
-```
-
-Execute unit & E2E tests, see [Testing](Testing.md) page for more.
-
-#### Key Features
-
-* ✅ Runs contract unit tests
-* 🧪 Supports full E2E workflows (from proving to verification)
-* ⚙️ Fully integrated with `cargo test` or custom test runners
-
-#### What happens under the hood for e2e tests:
-
-1. Starts `hy devnet` if not already running
-2. Compiles your project (`hy build`)
-3. Runs your application backend `hy run`
-4. Runs tests defined in `tests/` using `cargo test`
-5. Shuts down the devnet & backend after completion (unless `--keep-alive` is set)
-
-#### Example:
-
-```bash
-hy test
-```
-
-Want to keep the devnet alive after tests?
-
-```bash
-hy test --keep-alive
-```
-
----
-
 ### `hy devnet`
 
 Launch a local devnet with:
@@ -142,20 +122,20 @@ Launch a local devnet with:
 * Explorer
 * Pre-funded test accounts
 
-```bash
+```sh
 hy devnet
 ```
 
 Want to pause the network ?
 
-```bash 
+```sh
 hy devnet stop 
 hy devnet start
 ```
 
 Want a fresh state?
 
-```bash
+```sh
 hy devnet --reset
 ```
 
@@ -163,18 +143,52 @@ hy devnet --reset
 
 Want to fork a running network ?
 
-```bash 
+```sh
 hy devnet fork [ENDPOINT]
 ```
 
----
+### `hy test`
+
+Run your vApp’s **end-to-end tests** in a fully orchestrated local Hyli environment.
+
+```sh
+hy test
+```
+
+[Read more on executing unit & E2E tests](Testing.md).
+
+#### Key Features
+
+* ✅ Contract unit tests
+* 🧪 Full E2E workflows (from proving to verification)
+* ⚙️ Full integration with `cargo test` or custom test runners
+
+#### What it does (under the hood)
+
+1. Starts `hy devnet` if not already running
+2. Compiles your project (`hy build`)
+3. Runs your application backend `hy run`
+4. Runs tests defined in `tests/` using `cargo test`
+5. Shuts down the devnet & backend after completion (unless `--keep-alive` is set)
+
+#### Example
+
+```sh
+hy test
+```
+
+Want to keep the devnet alive after tests?
+
+```sh
+hy test --keep-alive
+```
 
 ### `hy run`
 
 Start your backend service locally or on testnet.
 The app backend **registers your contract**, **runs a local auto-prover**, and launches core modules like the **contract indexer**. You can customize the backend in the `server/` folder.
 
-```bash
+```sh
 hy run
 ```
 
@@ -192,79 +206,30 @@ By default, `hy run` operates in local dev mode.
 * 📇 Launches a contract indexer to track state transitions
 * 🛠️ Wires everything together for a ready-to-use dev backend
 
-#### Testnet mode (soon)
-
-```bash
-hy run --testnet
-```
-
-This will:
-
-* Start the backend connected to the testnet
-* Ask to upload your contract on the prover network
-
----
-
-## 📡 Upload to a Prover Network (soon)
-
-Upload your compiled ELF to a prover network for proof generation.
-
-This is especially useful on testnet where you want to avoid setting up local proving infrastructure.
-
-```bash
-hy upload
-```
-
-**What it does:**
-
-* Validates the ELF format
-* Register the contract on the prover network given the ELFs
-
-**Why use it?**
-
-* ⚡ Avoid local proving (faster dev loop)
-* 🌍 Share proof artifacts with teammates or collaborators
-* 🧱 Make your app testnet-ready without running provers
-
-
----
-
 ## 🧠 Under the Hood
 
 Hylix builds on top of:
 
 * **SP1/Risc0 zkVM** for fast, verifiable compute
-* CairoM for client side verifiable compute
-* Noir for client side privacy (soon)
 * **Rust** for native speed and tooling compatibility
 * **Bun**, **vite**, vue3 & tailwind for frontend application
 
-Coming soon:
+## 🛤️ Roadmap
 
-* 🧑‍🎨 Noir Integration
-* 🌀 Cairo Exploration
-* 📦 Custom Prover Uploads via `hy upload`
+* [ ] Noir + Cairo support
+* [ ] Tool auto-upgrade
+* [ ] Plugins for custom commands
+* [ ] Test proc-macro for isolated E2E testing
+* [ ] Upload to a prover network (`hy upload`): upload your compiled ELF to a prover network without setting up lovcal proving infrastructure
+* [ ] Testnet mode (`hy run --testnet`) to start a backend and deploy the contract on a prover network
 
----
+## :link: Links
 
-## 🧪 Try It Out
-
-We’re just getting started. If you're testing Hylix early:
-
-* Open issues or ideas [here](https://github.com/hyli-org/hyli/issues)
-* Share feedback with the Hyli team
-* [Ping us](https://t.me/hyli_org) with questions!
-
----
-
-## 🛤️ Wishlist
-
-* [ ] Noir support
-- [ ] Tool auto-upgrade
-* [ ] Cairo experiments
-* [ ] Plugin system for custom commands
-- [ ] Test proc-macro for isolated e2e testing
-
----
-
-## ❤️ Built with love by the Hyli Team
+<div align="center">
+    <p>
+        📚 <a href="https://hyli.org/">Website</a> | <a href="https://docs.hyli.org">Docs</a> | <a href="https://docs.hyli.org/guide/">Hyli Guide</a> | <a href="https://docs.hyli.org/quickstart/">Quickstart</a> | <a href="https://docs.hyli.org/tooling/">Tooling</a>
+    </p>
+    <p>
+        Follow <a href="https://twitter.com/hyli_org">on X</a> | <a href="https://www.linkedin.com/company/hyli-org">LinkedIn</a> | <a href="https://t.me/hyli_org">Telegram</a> | <a href="https://www.youtube.com/@hyli-org">YouTube</a> | <a href="https://blog.hyli.org/">Blog &amp; Newsletter</a>
+    </p>
+</div>

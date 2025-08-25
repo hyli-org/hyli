@@ -2,22 +2,18 @@
 
 > Write, run, and automate tests for your vApp with confidence.
 
----
-
 ## 📦 Types of Tests
 
-Hylix supports different layers of testing depending on what you want to validate:
+Hylix supports two main layers of testing:
 
-| Type           | Description                                                   | Tooling used        |
-| -------------- | ------------------------------------------------------------- | ------------------- |
-| **Unit tests** | Test logic in isolation (e.g. zk program functions)           | `cargo test`        |
-| **E2E tests**  | Test your full vApp with a local chain, provers, and backend | `hy test` + devnet |
-
----
+| Type           | What it validates                                     | How to run          |
+| -------------- | ----------------------------------------------------- | ------------------- |
+| **Unit tests** | Contract or backend logic in isolation                | `cargo test`        |
+| **E2E tests**  | Full vApp workflow with local chain, provers, backend | `hy test` + local devnet |
 
 ## ✅ Writing Contract Unit Tests
 
-Unit tests live in your zk program crate (under `contracts/mycontract/src/`) and are written in standard Rust.
+Unit tests live in your vApp's crate (e.g. `contracts/mycontract/src/`) and use normal Rust testing.
 
 Example:
 
@@ -39,19 +35,18 @@ Run only unit tests:
 cargo test
 ```
 
-You can also add tests to your backend server under `server/src`.
-
----
+You can also add tests to your backend (`server/src`).
 
 ## 🧪 Writing E2E Tests
 
-End-to-end tests are placed in the `tests/` folder at the root of your project.
-They allow you to test:
+End-to-end tests live in the `tests/` folder at the root of your project.
 
-* contract registration
-* proof generation & verification
-* interaction with a local chain
-* API/backend behavior
+They allow you to validate:
+
+- Contract registration
+- Proof generation & verification
+- Interaction with a local chain
+- Backend & API behavior
 
 Example file: `tests/e2e.rs`
 
@@ -65,52 +60,39 @@ fn test_end_to_end_proof_verification() {
 }
 ```
 
-You can use 
-* [`Hyli client sdk`](https://crates.io/crates/hyle-client-sdk) to interact with the node and indexer 
-*  [Hyli testing sdk]() to help you write your tests and compose with existing contracts (wallet, tokens)
+Use:
 
----
+- [`Hyli client SDK`](https://crates.io/crates/hyle-client-sdk) to interact with the node / indexer
+- Coming soon: `Hyli testing SDK` for helpers like registering accounts or sending tokens <!--TODO: add Hyli testing SDK link-->
 
 ## 🚀 Running Tests
 
-To run **all tests** in an orchestrated environment:
+Run all tests in an orchestrated environment:
 
 ```bash
 hy test
 ```
 
-What this does:
+This will:
 
-1. Compiles the project
-2. Launches a devnet with `hy devnet`
-3. Run your contract backend via `hy run`
-4. Runs your test suite
-5. Tears down the setup (unless `--keep-alive` is passed)
+1. Start a local devnet (`hy devnet`) if not already running
+1. Compile your project (`hy build`)
+1. Launch your backend (`hy run`)
+1. Run tests in tests / via `cargo test`
+1. Shut down the devnet and backend after completion
 
----
+## 🔁 [Optional] Persistent devnet
 
-## 🔁 Persistent Devnet (Optional)
-
-Keep your devnet alive between test runs for faster iterations:
+Keep the devnet alive between test runs for faster iteration:
 
 ```bash
 hy test --keep-alive
 ```
 
----
-
 ## 🧪 Test Fixtures & Helpers
 
-You can define shared setup logic in a `mod helpers` or `test_utils.rs` to handle your custom logic. The Hyli testing sdk
-gives some helpers like:
+You can define shared setup logic in a `helpers` module or `test_utils.rs`. The Hyli testing SDK gives utilities like:
 
-* register accounts
-* send tokens
-
----
-
-## 🔮 Coming Soon
-
-* [ ] `#[hyli_e2e_test]` procedural macro for isolated E2E tests
-* [ ] Simulation mode for testnet
-
+- account registration
+- token transfers
+- composing tests with built-in contracts (wallet, tokens)
