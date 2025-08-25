@@ -332,8 +332,7 @@ mod tests {
     use super::*;
     use crate::bus::metrics::BusMetrics;
     use crate::bus::SharedMessageBus;
-    use crate::node_state::metrics::NodeStateMetrics;
-    use crate::node_state::{NodeState, NodeStateStore};
+    use crate::node_state::NodeState;
     use std::sync::Arc;
 
     #[derive(Clone, Debug, Default, BorshSerialize, BorshDeserialize)]
@@ -509,10 +508,7 @@ mod tests {
         let mut indexer = build_indexer(contract_name.clone()).await;
         register_contract(&mut indexer).await;
 
-        let mut node_state = NodeState {
-            metrics: NodeStateMetrics::global("test".to_string(), "test"),
-            store: NodeStateStore::default(),
-        };
+        let mut node_state = NodeState::create("test".to_string(), "test");
         let block = node_state
             .handle_signed_block(&SignedBlock::default())
             .unwrap();

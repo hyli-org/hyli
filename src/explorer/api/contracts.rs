@@ -154,45 +154,6 @@ pub async fn get_contract(
     }
 }
 
-#[utoipa::path(
-    get,
-    tag = "Indexer",
-    params(
-        ("contract_name" = String, Path, description = "Contract name"),
-        ("height" = String, Path, description = "Block height")
-    ),
-    path = "/state/contract/{contract_name}/block/{height}",
-    responses(
-        (status = OK, body = APIContractState)
-    )
-)]
-pub async fn get_contract_state_by_height(
-    Path((contract_name, height)): Path<(String, i64)>,
-    State(state): State<ExplorerApiState>,
-) -> Result<Json<APIContractState>, StatusCode> {
-    let contract = log_error!(
-        sqlx::query_as::<_, ContractStateDb>(
-            r#"
-        SELECT cs.*
-        FROM contract_state cs
-        JOIN blocks b ON cs.block_hash = b.hash
-        WHERE contract_name = $1 AND height = $2"#,
-        )
-        .bind(contract_name)
-        .bind(height)
-        .fetch_optional(&state.db)
-        .await
-        .map(|db| db.map(Into::<APIContractState>::into)),
-        "Failed to fetch contract state by height"
-    )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    match contract {
-        Some(contract) => Ok(Json(contract)),
-        None => Err(StatusCode::NOT_FOUND),
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimeoutWindowDb(pub TimeoutWindow);
 

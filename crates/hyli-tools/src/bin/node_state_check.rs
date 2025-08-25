@@ -12,7 +12,7 @@ use hyle_modules::modules::{Module, module_bus_client};
 use hyle_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{ModulesHandler, da_listener::DAListenerConf, signed_da_listener::SignedDAListener},
-    node_state::{NodeState, metrics::NodeStateMetrics},
+    node_state::NodeState,
     utils::logger::setup_tracing,
 };
 
@@ -153,10 +153,7 @@ impl Module for NodeStateCheck {
 
 impl NodeStateCheck {
     pub async fn start(&mut self) -> Result<()> {
-        let mut node_state = NodeState {
-            metrics: NodeStateMetrics::global("node_state_check".to_string(), "node_state_check"),
-            store: Default::default(),
-        };
+        let mut node_state = NodeState::create("node_state_check".to_string(), "node_state_check");
         module_handle_messages! {
             on_self self,
             listen<DataEvent> event => {
