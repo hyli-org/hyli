@@ -266,7 +266,7 @@ impl Indexer {
 
             // We use the indexer as node-state-processor for CSI
             // TODO: refactor this away it conflicts with running the indexer in the full node as we send all events twice.
-            _ = self.bus.send(NodeStateEvent::NewBlock(Box::new(
+            self.bus.send(NodeStateEvent::NewBlock(Box::new(
                 self.handler_store.block_callback.get_block(),
             )))?;
         }

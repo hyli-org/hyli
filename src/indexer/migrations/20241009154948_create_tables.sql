@@ -58,7 +58,7 @@ CREATE TABLE blob_proof_outputs (
     PRIMARY KEY (proof_parent_dp_hash, proof_tx_hash, blob_parent_dp_hash, blob_tx_hash, blob_index, blob_proof_output_index),
     FOREIGN KEY (blob_parent_dp_hash, blob_tx_hash, blob_index) REFERENCES blobs(parent_dp_hash, tx_hash, blob_index) ON DELETE CASCADE,
     FOREIGN KEY (blob_tx_hash, blob_parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE,
-    --FOREIGN KEY (proof_tx_hash, proof_parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE,
+    FOREIGN KEY (proof_tx_hash, proof_parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE,
     UNIQUE (blob_parent_dp_hash, blob_tx_hash, blob_index, blob_proof_output_index)
 );
 
