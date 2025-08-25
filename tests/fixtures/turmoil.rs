@@ -138,7 +138,7 @@ impl TurmoilCtx {
 
         let node = TurmoilHost::from(&node_conf);
 
-        _ = Self::setup_simulation(&[node.clone()], sim);
+        _ = Self::setup_simulation(std::slice::from_ref(&node), sim);
 
         self.nodes.push(node);
         Ok(self.nodes.last().unwrap().client.clone())

@@ -12,7 +12,7 @@ use crate::bus::{bus_client, BusClientReceiver, BusClientSender};
 use crate::consensus::ConsensusEvent;
 use crate::genesis::{Genesis, GenesisEvent};
 use crate::mempool::api::RestApiMessage;
-use crate::mempool::test::NodeStateEvent;
+use crate::mempool::tests::NodeStateEvent;
 use crate::mempool::{MempoolNetMessage, QueryNewCut};
 use crate::model::*;
 use crate::p2p::network::{HeaderSigner, MsgWithHeader};
@@ -64,7 +64,7 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
                         contract_name: contract_name.clone(),
                         ..Default::default()
                     }
-                    .as_blob("hyle".into(), None, None)],
+                    .as_blob("hyle".into())],
                 )
                 .into()],
             )],

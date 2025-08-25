@@ -5,6 +5,12 @@ log_format = "full"
 # Directory name to store node state.
 data_directory = "data_node"
 
+# Fast Cachup mode
+run_fast_catchup = false
+fast_catchup_override = true
+fast_catchup_backfill = false
+fast_catchup_from = "127.0.0.1:43222"
+
 # Data availability module, which streams historical & new blocks.
 # Public IP
 da_public_address = "127.0.0.1:4141"
@@ -81,3 +87,13 @@ events = ["node_state", "new_block", "new_tx"]
 
 [indexer]
 query_buffer_size = 100
+persist_proofs = true
+
+[gcs]
+# GCS bucket info
+gcs_bucket = "testnet_proofs"
+gcs_prefix = "local"
+
+# GCS uploader options
+save_proofs = false
+save_blocks = false

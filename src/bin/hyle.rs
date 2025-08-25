@@ -42,7 +42,7 @@ static GLOBAL_ALLOC: alloc_metrics::MetricAlloc<std::alloc::System> =
 #[cfg(all(
     feature = "alloc-track",
     not(feature = "dhat"),
-    not(feature = "alloc-track")
+    not(feature = "monitoring")
 ))]
 #[global_allocator]
 static GLOBAL_ALLOC: alloc_track::AllocTrack<std::alloc::System> = alloc_track::AllocTrack::new(

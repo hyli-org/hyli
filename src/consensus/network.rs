@@ -23,7 +23,7 @@ use crate::p2p::network::{HeaderSignableData, IntoHeaderSignableData};
     PartialOrd,
 )]
 pub enum TCKind {
-    NilProposal,
+    NilProposal(NilQC),
     PrepareQC((PrepareQC, ConsensusProposal)),
 }
 
@@ -46,9 +46,37 @@ pub enum TCKind {
 /// To handle these two cases, we need specific data on top of the regular timeout message.
 pub enum TimeoutKind {
     /// Sign a different message to signify 'nil proposal' for aggregation
-    NilProposal(SignedByValidator<(Slot, View, ConsensusProposalHash, ConsensusTimeoutMarker)>),
+    NilProposal(SignedByValidator<(Slot, View, ConsensusProposalHash, NilConsensusTimeoutMarker)>),
     /// Resending the prepare QC & matching proposal (for convenience for the leader to repropose)
     PrepareQC((PrepareQC, ConsensusProposal)),
+}
+
+impl TimeoutKind {
+    pub fn is_aggregatable_with(&self, other: &Self) -> bool {
+        match self {
+            TimeoutKind::NilProposal(SignedByValidator {
+                msg: (slot, view, parent_hash, _),
+                ..
+            }) => {
+                if let TimeoutKind::NilProposal(SignedByValidator {
+                    msg: (other_slot, other_view, other_parent_hash, _),
+                    ..
+                }) = other
+                {
+                    slot == other_slot && view == other_view && parent_hash == other_parent_hash
+                } else {
+                    false
+                }
+            }
+            TimeoutKind::PrepareQC((_, cp)) => {
+                if let TimeoutKind::PrepareQC((_, other_cp)) = other {
+                    cp.hashed() == other_cp.hashed()
+                } else {
+                    false
+                }
+            }
+        }
+    }
 }
 
 #[derive(
@@ -109,6 +137,21 @@ impl From<ConfirmAck> for ConsensusNetMessage {
     PartialOrd,
 )]
 pub struct ConsensusTimeoutMarker;
+
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    Clone,
+    BorshSerialize,
+    BorshDeserialize,
+    PartialEq,
+    Eq,
+    Hash,
+    Ord,
+    PartialOrd,
+)]
+pub struct NilConsensusTimeoutMarker;
 
 /// This first message will be used in the TC to generate a proof of timeout
 /// Here we add the parent hash purely to avoid replay attacks
@@ -240,7 +283,7 @@ impl Display for ConsensusNetMessage {
                     _ = write!(f, "{v},");
                 }
                 match kindcert {
-                    TCKind::NilProposal => {
+                    TCKind::NilProposal(..) => {
                         _ = writeln!(f, "NilProposal certificate");
                     }
                     TCKind::PrepareQC((kindcert, cp)) => {
@@ -291,7 +334,7 @@ impl IntoHeaderSignableData for ConsensusNetMessage {
             }
             .unwrap_or_default(),
             ConsensusNetMessage::TimeoutCertificate(qc, tck, s, v) => match tck {
-                TCKind::NilProposal => borsh::to_vec(&(&qc.signature, s, v)),
+                TCKind::NilProposal(..) => borsh::to_vec(&(&qc.signature, s, v)),
                 TCKind::PrepareQC((qc, cp)) => borsh::to_vec(&(&qc.signature, cp.hashed(), s, v)),
             }
             .unwrap_or_default(),
@@ -387,9 +430,10 @@ pub enum Ticket {
     CommitQC(CommitQC),
     TimeoutQC(TimeoutQC, TCKind),
     /// Technical value used internally that should never be used to start a slot
-    ForcedCommitQc,
+    ForcedCommitQC(View),
 }
 
 pub type PrepareQC = QuorumCertificate<PrepareVoteMarker>;
 pub type CommitQC = QuorumCertificate<ConfirmAckMarker>;
 pub type TimeoutQC = QuorumCertificate<ConsensusTimeoutMarker>;
+pub type NilQC = QuorumCertificate<NilConsensusTimeoutMarker>;

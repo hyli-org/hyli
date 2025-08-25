@@ -1,18 +1,20 @@
 //! State required for participation in consensus by the node.
 
-use anyhow::{bail, Context, Error, Result};
+use anyhow::{bail, Error, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use contract_registration::validate_contract_registration_metadata;
-use contract_registration::{validate_contract_name_registration, validate_state_commitment_size};
-use hyle_tld::{handle_blob_for_hyle_tld, validate_hyle_contract_blobs};
+use contract_registration::{validate_contract_name_tld, validate_state_commitment_size};
+use hyle_tld::validate_hyle_contract_blobs;
+use hyle_verifiers::native_impl::verify_native_impl;
 use metrics::NodeStateMetrics;
 use ordered_tx_map::OrderedTxMap;
 use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
 use sdk::*;
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use timeouts::Timeouts;
 use tracing::{debug, error, info, trace};
+
+use crate::node_state::hyle_tld::handle_blob_for_hyle_tld;
 
 mod api;
 pub mod contract_registration;
@@ -55,18 +57,43 @@ impl ModifiedContractFields {
 // and keep track of which fields changed and the list of side effects we processed.
 type ModifiedContractData = (ContractStatus, ModifiedContractFields, Vec<SideEffect>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 enum ContractStatus {
+    WaitingDeletion,
     Deleted,
     UnknownState,
     Updated(Contract),
+    // We expect the next blob to be a blob containing the constructor metadata
+    RegisterWithConstructor(Contract),
+}
+
+/// Represents the result of processing a proof
+#[derive(Debug)]
+enum ProofProcessingResult {
+    /// The proof was processed successfully
+    Success,
+    /// The proof failed validation but we should try other proofs
+    Invalid(String),
+    /// The proof failed with a fatal error - should settle as failed immediately
+    ProvenFailure(String),
+}
+
+/// Represents the result of on-chain processing of a blob
+#[derive(Debug)]
+enum BlobProcessingResult {
+    /// The blob was processed successfully
+    Success,
+    /// The blob failed with a fatal error - should settle as failed immediately
+    ProvenFailure(String),
+    /// The blob cannot be executed on-chain.
+    NotApplicable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SettlementStatus {
-    // When starting to settle a BlobTx, we need to have a "Unknown" status that will be updated when a tx is flagged as failed, or as not ready to settle.
-    // At the end of the settlement recursion, if status is still Unknown, then the tx is settled as success.
-    Unknown,
+    // When starting to settle a BlobTx, we need to have a "TryToSettle" status that will be updated when a tx is flagged as failed, or as not ready to settle.
+    // At the end of the settlement recursion, if status is still TryToSettle, then the tx is settled as success.
+    TryingToSettle,
     SettleAsSuccess,
     SettleAsFailed,
     // This status is used to flag a tx not ready to settle.
@@ -97,32 +124,6 @@ enum BlobTxHandled {
     Duplicate,
     /// No special handling.
     Ok,
-}
-
-#[derive(
-    Debug, Serialize, Deserialize, Default, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
-)]
-/// Used as a blob action to force a tx to timeout.
-pub struct NukeTxAction {
-    pub txs: BTreeMap<TxHash, Vec<HyleOutput>>,
-}
-
-impl ContractAction for NukeTxAction {
-    fn as_blob(
-        &self,
-        contract_name: ContractName,
-        caller: Option<BlobIndex>,
-        callees: Option<Vec<BlobIndex>>,
-    ) -> Blob {
-        Blob {
-            contract_name,
-            data: BlobData::from(StructuredBlobData {
-                caller,
-                callees,
-                parameters: self.clone(),
-            }),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -435,35 +436,21 @@ impl NodeState {
 
         let (blob_tx_hash, blobs_hash) = (tx.hashed(), tx.blobs_hash());
 
-        let mut should_try_and_settle = true;
-
-        // Reject blob Tx with blobs for the 'hyle' contract if:
-        // - the identity is not the TLD itself for a DeleteContractAction
-        // - the NukeTxAction is not signed with the HyliPubKey itself
-        // No need to wait settlement, as this is a static check.
-        if let Err(validation_error) = validate_hyle_contract_blobs(tx) {
+        // Reject blob Tx with blobs for the 'hyle' contract if
+        // the identity is not the TLD itself for
+        // DeleteContractAction, UpdateContractProgramIdAction and UpdateContractTimeoutWindowAction actions
+        if let Err(validation_error) = validate_hyle_contract_blobs(&self.contracts, tx) {
             bail!(
                 "Blob Transaction contains invalid blobs for 'hyle' contract: {}",
                 validation_error
             );
         }
 
-        // For now, reject blob Tx with blobs for unknown contracts.
-        if tx
-            .blobs
-            .iter()
-            .any(|blob| !self.contracts.contains_key(&blob.contract_name))
-        {
-            let contracts = tx
-                .blobs
-                .iter()
-                .filter(|blob| !self.contracts.contains_key(&blob.contract_name))
-                .map(|blob| blob.contract_name.0.clone())
-                .collect::<Vec<_>>()
-                .join(", ");
+        // For now, reject blob Tx if the first contract is unknown
+        if !self.contracts.contains_key(&tx.blobs[0].contract_name) {
             bail!(
-                "Blob Transaction contains blobs for unknown contracts: {}",
-                contracts
+                "Blob Transaction's first contract {} is unknown",
+                tx.blobs[0].contract_name
             );
         }
 
@@ -471,66 +458,31 @@ impl NodeState {
             .blobs
             .iter()
             .enumerate()
-            .filter_map(|(index, blob)| {
+            .map(|(index, blob)| {
                 tracing::trace!("Handling blob - {:?}", blob);
-                if let Some(Ok(verifier)) = self
-                    .contracts
-                    .get(&blob.contract_name)
-                    .map(|b| TryInto::<NativeVerifiers>::try_into(&b.verifier))
-                {
-                    let hyle_output = hyle_verifiers::native::verify(
-                        blob_tx_hash.clone(),
-                        BlobIndex(index),
-                        &tx.blobs,
-                        verifier,
-                    );
-                    tracing::trace!("Native verifier in blob tx - {:?}", hyle_output);
-                    // Verifier contracts won't be updated
-                    // FIXME: When we need stateful native contracts
-                    if hyle_output.success {
-                        return None;
-                    } else {
-                        return Some((
-                            BlobIndex(index),
-                            UnsettledBlobMetadata {
-                                blob: blob.clone(),
-                                possible_proofs: vec![(
-                                    verifier.into(),
-                                    hyle_output,
-                                    verifier.into(),
-                                )],
-                            },
-                        ));
-                    }
-                } else if blob.contract_name.0 == "hyle" {
-                    // 'hyle' is a special case -> See settlement logic.
-                } else {
-                    should_try_and_settle = false;
-                }
-                Some((
+                (
                     BlobIndex(index),
                     UnsettledBlobMetadata {
                         blob: blob.clone(),
                         possible_proofs: vec![],
                     },
-                ))
+                )
             })
             .collect();
 
         // If we're behind other pending transactions, we can't settle yet.
-        match self.unsettled_transactions.add(UnsettledBlobTransaction {
-            identity: tx.identity.clone(),
-            parent_dp_hash,
-            hash: tx_hash.clone(),
-            tx_context,
-            blobs_hash,
-            blobs,
-        }) {
-            Some(should_settle) => should_try_and_settle = should_settle && should_try_and_settle,
-            None => {
-                return Ok(BlobTxHandled::Duplicate);
-            }
-        }
+        let Some(should_try_and_settle) =
+            self.unsettled_transactions.add(UnsettledBlobTransaction {
+                identity: tx.identity.clone(),
+                parent_dp_hash,
+                hash: tx_hash.clone(),
+                tx_context,
+                blobs_hash,
+                blobs,
+            })
+        else {
+            return Ok(BlobTxHandled::Duplicate);
+        };
 
         if self.unsettled_transactions.is_next_to_settle(&blob_tx_hash) {
             let block_height = self.current_height;
@@ -575,6 +527,7 @@ impl NodeState {
 
         // TODO: add diverse verifications ? (without the inital state checks!).
         // TODO: success to false is valid outcome and can be settled.
+
         Self::verify_hyle_output(unsettled_tx, &blob_proof_data.hyle_output)?;
 
         let Some(blob) = unsettled_tx
@@ -710,15 +663,6 @@ impl NodeState {
         *dp_parent_hash = unsettled_tx.parent_dp_hash.clone();
         *lane_id = unsettled_tx.tx_context.lane_id.clone();
 
-        // Sanity check: if some of the blob contracts are not registered, we can't proceed
-        if !unsettled_tx.blobs.values().all(|blob_metadata| {
-            tracing::trace!("Checking contract: {:?}", blob_metadata.blob.contract_name);
-            self.contracts
-                .contains_key(&blob_metadata.blob.contract_name)
-        }) {
-            bail!("Cannot settle TX: some blob contracts are not registered");
-        }
-
         let updated_contracts = BTreeMap::new();
 
         let settlement_result = if
@@ -741,8 +685,9 @@ impl NodeState {
             }
         } else {
             Self::settle_blobs_recursively(
+                unsettled_tx,
                 &self.contracts,
-                SettlementStatus::Unknown,
+                SettlementStatus::TryingToSettle,
                 updated_contracts,
                 unsettled_tx.blobs.values(),
                 vec![],
@@ -769,7 +714,7 @@ impl NodeState {
                 // If some blobs are still sequenced behind others, we can only settle this TX as failed.
                 // (failed TX won't change the state, so we can settle it right away).
             }
-            SettlementStatus::Unknown => {
+            SettlementStatus::TryingToSettle => {
                 unreachable!(
                     "Settlement status should not be Idle when trying to settle a blob tx"
                 );
@@ -791,6 +736,7 @@ impl NodeState {
     }
 
     fn settle_blobs_recursively<'a>(
+        unsettled_tx: &UnsettledBlobTransaction,
         contracts: &HashMap<ContractName, Contract>,
         mut settlement_status: SettlementStatus,
         mut contract_changes: BTreeMap<ContractName, ModifiedContractData>,
@@ -800,8 +746,40 @@ impl NodeState {
     ) -> SettlementResult {
         // Recursion end-case: we succesfully settled all prior blobs, so success.
         let Some(current_blob) = blob_iter.next() else {
+            // Sanity checks
+            for (contract_name, (contract_status, _, _)) in contract_changes.iter() {
+                tracing::trace!(
+                    "sanity check - contract {contract_name:?} is in state {contract_status:?}"
+                );
+                // Sanity check: a contract state cannot be in RegisterWithConstructor as it would mean the constructor blob has not been sent
+                if let ContractStatus::RegisterWithConstructor(_) = contract_status {
+                    let msg = format!(
+                            "Contract '{contract_name}' is in RegisterWithConstructor state at settlement end; constructor blob missing.",
+                        );
+                    debug!("{msg}");
+                    events.push(TransactionStateEvent::SettleEvent(msg));
+                    return SettlementResult {
+                        settlement_status: SettlementStatus::SettleAsFailed,
+                        contract_changes,
+                        blob_proof_output_indices,
+                    };
+                }
+                // Sanity check: a contract state cannot be in WaitingDeletion as it would mean the deletion blob has not been sent
+                if let ContractStatus::WaitingDeletion = contract_status {
+                    let msg = format!(
+                            "Contract '{contract_name}' is in WaitingDeletion state at settlement end; deletion blob missing.",
+                        );
+                    debug!("{msg}");
+                    events.push(TransactionStateEvent::SettleEvent(msg));
+                    return SettlementResult {
+                        settlement_status: SettlementStatus::SettleAsFailed,
+                        contract_changes,
+                        blob_proof_output_indices,
+                    };
+                }
+            }
             tracing::trace!("Settlement - Done");
-            if settlement_status == SettlementStatus::Unknown {
+            if settlement_status == SettlementStatus::TryingToSettle {
                 // All blobs have been processed, if settlement status is still idle, this means:
                 // - no blobs are proven to be failing
                 // - no blobs are proven to be not ready for settlement
@@ -815,42 +793,45 @@ impl NodeState {
         };
 
         let contract_name = &current_blob.blob.contract_name;
+
+        // Need a placeholder for executed blobs, and otherwise we do use 0 anyways.
         blob_proof_output_indices.push(0);
 
-        // Super special case - the hyle contract has "synthetic proofs".
-        // We need to check the current state of 'current_contracts' to check validity,
-        // so we really can't do this before we've settled the earlier blobs.
-        if contract_name.0 == "hyle" {
-            tracing::trace!("Settlement - processing for Hyle");
-            return match handle_blob_for_hyle_tld(
-                contracts,
-                &mut contract_changes,
-                &current_blob.blob,
-            ) {
-                Ok(()) => {
-                    tracing::trace!("Settlement - OK side effect");
-                    Self::settle_blobs_recursively(
-                        contracts,
-                        settlement_status,
-                        contract_changes,
-                        blob_iter.clone(),
-                        blob_proof_output_indices.clone(),
-                        events,
-                    )
-                }
-                Err(err) => {
-                    // We have a valid proof of failure, we short-circuit.
-                    let msg = format!("Could not settle blob proof output for 'hyle': {err:?}");
-                    debug!("{msg}");
-                    events.push(TransactionStateEvent::SettleEvent(msg));
-                    SettlementResult {
-                        settlement_status: SettlementStatus::SettleAsFailed,
-                        contract_changes,
-                        blob_proof_output_indices,
-                    }
-                }
-            };
-        }
+        // Execute blob that needs onchain execution
+        match Self::process_blob_on_chain_execution(
+            unsettled_tx,
+            contracts,
+            &mut contract_changes,
+            current_blob,
+            &settlement_status,
+        ) {
+            BlobProcessingResult::NotApplicable => {
+                // This isn't a blob that needs onchain execution. Continue with normal processing
+            }
+            BlobProcessingResult::Success => {
+                tracing::trace!("OnChainExecution Settlement - OK");
+                return Self::settle_blobs_recursively(
+                    unsettled_tx,
+                    contracts,
+                    settlement_status.clone(),
+                    contract_changes,
+                    blob_iter.clone(),
+                    blob_proof_output_indices.clone(),
+                    events,
+                );
+            }
+            BlobProcessingResult::ProvenFailure(msg) => {
+                // Fatal error - settle as failed immediately
+                let msg = format!("On-chain execution failed: {msg}");
+                debug!("{msg}");
+                events.push(TransactionStateEvent::SettleEvent(msg));
+                return SettlementResult {
+                    settlement_status: SettlementStatus::SettleAsFailed,
+                    contract_changes,
+                    blob_proof_output_indices,
+                };
+            }
+        };
 
         // Regular case: go through each proof for this blob. If they settle, carry on recursively.
         for (i, proof_metadata) in current_blob.possible_proofs.iter().enumerate() {
@@ -860,52 +841,57 @@ impl NodeState {
 
             // TODO: ideally make this CoW
             let mut current_contracts = contract_changes.clone();
-            if let Err(msg) = Self::process_proof(
+            let proof_result = Self::process_proof(
                 contracts,
                 &mut current_contracts,
                 contract_name,
                 proof_metadata,
-                current_blob,
-            ) {
-                // Not a valid proof, log it and try the next one.
-                let msg = format!(
-                    "Could not settle blob proof output #{i} for contract '{contract_name}': {msg}"
-                );
-                debug!("{msg}");
-                events.push(TransactionStateEvent::SettleEvent(msg));
-                continue;
-            }
-            if !proof_metadata.1.success {
-                // We have a valid proof of failure, we short-circuit.
-                let msg = format!(
-                    "Proven failure for blob {} - {:?}",
-                    i,
-                    String::from_utf8(proof_metadata.1.program_outputs.clone())
-                );
-                debug!("{msg}");
-                events.push(TransactionStateEvent::SettleEvent(msg));
-                return SettlementResult {
-                    settlement_status: SettlementStatus::SettleAsFailed,
-                    contract_changes,
-                    blob_proof_output_indices,
-                };
-            }
-
-            tracing::trace!("Settlement - OK blob");
-            let settlement_result = Self::settle_blobs_recursively(
-                contracts,
-                settlement_status.clone(),
-                current_contracts,
-                blob_iter.clone(),
-                blob_proof_output_indices.clone(),
-                events,
             );
-            // If this proof settles, early return, otherwise try the next one (with continue for explicitness)
-            match settlement_result.settlement_status {
-                SettlementStatus::SettleAsSuccess | SettlementStatus::SettleAsFailed => {
-                    return settlement_result;
+
+            match proof_result {
+                ProofProcessingResult::Success => {
+                    tracing::trace!("Settlement - OK blob");
+                    let settlement_result = Self::settle_blobs_recursively(
+                        unsettled_tx,
+                        contracts,
+                        settlement_status.clone(),
+                        current_contracts,
+                        blob_iter.clone(),
+                        blob_proof_output_indices.clone(),
+                        events,
+                    );
+                    // If this proof settles, early return, otherwise try the next one (with continue for explicitness)
+                    match settlement_result.settlement_status {
+                        SettlementStatus::SettleAsSuccess | SettlementStatus::SettleAsFailed => {
+                            return settlement_result;
+                        }
+                        SettlementStatus::NotReadyToSettle | SettlementStatus::TryingToSettle => {
+                            continue
+                        }
+                    }
                 }
-                SettlementStatus::NotReadyToSettle | SettlementStatus::Unknown => continue,
+                ProofProcessingResult::Invalid(msg) => {
+                    // Not a valid proof, log it and try the next one.
+                    let msg = format!(
+                        "Could not settle blob proof output #{i} for contract '{contract_name}': {msg}"
+                    );
+                    debug!("{msg}");
+                    events.push(TransactionStateEvent::SettleEvent(msg));
+                    continue;
+                }
+                ProofProcessingResult::ProvenFailure(msg) => {
+                    // Fatal error - settle as failed immediately
+                    let msg = format!(
+                        "Fatal error processing blob proof output #{i} for contract '{contract_name}': {msg}"
+                    );
+                    debug!("{msg}");
+                    events.push(TransactionStateEvent::SettleEvent(msg));
+                    return SettlementResult {
+                        settlement_status: SettlementStatus::SettleAsFailed,
+                        contract_changes,
+                        blob_proof_output_indices,
+                    };
+                }
             }
         }
 
@@ -923,8 +909,9 @@ impl NodeState {
             ));
 
         let remaining_settlement = Self::settle_blobs_recursively(
+            unsettled_tx,
             contracts,
-            settlement_status,
+            SettlementStatus::NotReadyToSettle,
             contract_changes.clone(),
             blob_iter,
             blob_proof_output_indices.clone(),
@@ -938,7 +925,7 @@ impl NodeState {
 
         // If we end up here, the TX isn't ready yet.
         SettlementResult {
-            settlement_status: SettlementStatus::NotReadyToSettle,
+            settlement_status: remaining_settlement.settlement_status,
             contract_changes,
             blob_proof_output_indices,
         }
@@ -977,9 +964,9 @@ impl NodeState {
                 block_under_construction.failed_txs.push(bth);
                 return next_txs_to_try_and_settle;
             }
-            SettlementStatus::NotReadyToSettle | SettlementStatus::Unknown => {
+            SettlementStatus::NotReadyToSettle | SettlementStatus::TryingToSettle => {
                 unreachable!(
-                        "Settlement status should not be NotReadyToSettle nor Idle when trying to settle a blob tx"
+                        "Settlement status should not be NotReadyToSettle nor TryingToSettle when trying to settle a blob tx"
                     );
             }
             SettlementStatus::SettleAsSuccess => {
@@ -997,8 +984,6 @@ impl NodeState {
         self.metrics.add_successful_transactions(1);
         info!(tx_height =% block_under_construction.block_height, "✨ Settled tx {}", &bth);
 
-        let mut txs_to_nuke = BTreeMap::<TxHash, Vec<HyleOutput>>::new();
-
         // Go through each blob and:
         // - keep track of which blob proof output we used to settle the TX for each blob.
         // - take note of staking actions
@@ -1013,13 +998,6 @@ impl NodeState {
             ));
 
             let blob = blob_metadata.blob;
-
-            if blob.contract_name.0 == "hyle" {
-                // Keep track of all txs to nuke
-                if let Ok(data) = StructuredBlobData::<NukeTxAction>::try_from(blob.data.clone()) {
-                    txs_to_nuke.extend(data.parameters.txs.clone());
-                }
-            }
 
             // Keep track of all stakers
             if blob.contract_name.0 == "staking" {
@@ -1045,6 +1023,16 @@ impl NodeState {
                         "Contract status should not be UnknownState when trying to settle a blob tx"
                     );
                 }
+                ContractStatus::RegisterWithConstructor(..) => {
+                    unreachable!(
+                        "Contract status should not be CreatedWithMetadata when trying to settle a blob tx"
+                    );
+                }
+                ContractStatus::WaitingDeletion => {
+                    unreachable!(
+                        "Contract status should not be WaitingDeletion when trying to settle a blob tx"
+                    );
+                }
                 ContractStatus::Deleted => {
                     debug!("✏️ Delete {} contract", contract_name);
                     self.contracts.remove(&contract_name);
@@ -1058,7 +1046,7 @@ impl NodeState {
                         .cloned()
                     {
                         if let Some(popped_tx) = self.unsettled_transactions.remove(&tx_hash) {
-                            info!("⏳ Timeout tx {} (from contract deletion)", &tx_hash);
+                            info!(tx_height =% block_under_construction.block_height, "⏳ Timeout tx {} (from contract deletion)", &tx_hash);
 
                             potentially_blocked_contracts
                                 .extend(OrderedTxMap::get_contracts_blocked_by_tx(&popped_tx));
@@ -1173,82 +1161,6 @@ impl NodeState {
             }
         }
 
-        if !txs_to_nuke.is_empty() {
-            tracing::debug!("Txs to nuke: {:?}", txs_to_nuke);
-
-            // For the first blob of each tx to nuke, we need to create a fake verified proof that has a hyle_output success at false
-            let mut updates: BTreeMap<TxHash, Vec<(ProgramId, HyleOutput, Verifier)>> =
-                BTreeMap::new();
-
-            for (tx_hash, hyle_outputs) in txs_to_nuke.iter() {
-                if let Some(unsettled_blob_tx) = self.unsettled_transactions.get(tx_hash) {
-                    for hyle_output in hyle_outputs {
-                        if let Some(blob_metadata) = unsettled_blob_tx.blobs.get(&hyle_output.index)
-                        {
-                            let contract_name = &blob_metadata.blob.contract_name;
-                            if let Some(contract) = self.contracts.get(contract_name) {
-                                let mut hyle_output = hyle_output.clone();
-                                // If the hyle_output received is failed, we select the current state of the contract as the initial and next state
-                                if !hyle_output.success {
-                                    hyle_output.initial_state = contract.state.clone();
-                                    hyle_output.next_state = contract.state.clone();
-                                }
-                                updates.entry(tx_hash.clone()).or_default().push((
-                                    contract.program_id.clone(),
-                                    hyle_output,
-                                    contract.verifier.clone(),
-                                ));
-                            } else {
-                                tracing::error!("Contract {} not found", contract_name);
-                            }
-                        } else {
-                            tracing::error!(
-                                "Blob at index {} not found for tx to nuke {}",
-                                hyle_output.index,
-                                tx_hash
-                            );
-                        }
-                    }
-                } else {
-                    tracing::error!("Tx to nuke {} not found", tx_hash);
-                }
-            }
-
-            let mut forced_txs = BTreeSet::new();
-
-            for (tx_hash, hyle_outputs) in updates {
-                if let Some(unsettled_blob_tx) = self.unsettled_transactions.get_mut(&tx_hash) {
-                    for (program_id, hyle_output, verifier) in hyle_outputs {
-                        if let Some(blob_metadata) =
-                            unsettled_blob_tx.blobs.get_mut(&hyle_output.index)
-                        {
-                            // This is a hack to force the settlement as failed of the TXs to nuke.
-                            forced_txs.insert(tx_hash.clone());
-                            blob_metadata.possible_proofs.push((
-                                program_id,
-                                hyle_output.clone(),
-                                verifier.clone(),
-                            ));
-                            block_under_construction
-                                .transactions_events
-                                .entry(tx_hash.clone())
-                                .or_default()
-                                .push(TransactionStateEvent::NewProof {
-                                    blob_index: hyle_output.index,
-                                    proof_tx_hash: bth.clone(),
-                                    program_output: hyle_output.program_outputs.clone(),
-                                });
-                        }
-                    }
-                }
-            }
-
-            // Add the TXs to nuke to the list of TXs to try and settle next, in order to force them to fail
-            // WARNING: this is a hack to force the settlement of the TXs to nuke.
-            // WARNING: In the correct path, we are supposed to settle as failed only transaction that are next to settle
-            next_txs_to_try_and_settle.extend(forced_txs);
-        }
-
         // Keep track of settled txs
         block_under_construction.successful_txs.push(bth);
 
@@ -1300,70 +1212,6 @@ impl NodeState {
             )
         }
 
-        // Get the specific blob we're verifying
-        let blob = &unsettled_tx
-            .blobs
-            .get(&hyle_output.index)
-            .context("Blob index out of bounds")?
-            .blob;
-
-        // Verify that each side effect has a matching register/delete contract action in this specific blob
-        #[cfg(test)]
-        let check_effects = true;
-        #[cfg(not(test))]
-        let check_effects = blob.contract_name.0 == "hyle";
-        if check_effects {
-            if let Ok(data) =
-                StructuredBlobData::<RegisterContractAction>::try_from(blob.data.clone())
-            {
-                let Some(eff) = hyle_output.onchain_effects.first() else {
-                    bail!(
-                        "Proof for RegisterContractAction blob #{} does not have any onchain effects",
-                        hyle_output.index
-                    )
-                };
-                if let OnchainEffect::RegisterContract(effect) = eff {
-                    if effect != &data.parameters.into() {
-                        bail!(
-                            "Proof for RegisterContractAction blob #{} does not match the onchain effect",
-                            hyle_output.index
-                        )
-                    }
-                } else {
-                    bail!(
-                        "Proof for RegisterContractAction blob #{} does not have a register onchain effect",
-                        hyle_output.index
-                    )
-                }
-            } else if let Ok(data) =
-                StructuredBlobData::<DeleteContractAction>::try_from(blob.data.clone())
-            {
-                let Some(eff) = hyle_output.onchain_effects.first() else {
-                    bail!(
-                        "Proof for DeleteContractAction blob #{} does not have any onchain effects",
-                        hyle_output.index
-                    )
-                };
-                if let OnchainEffect::DeleteContract(effect) = eff {
-                    if effect != &data.parameters.contract_name {
-                        bail!(
-                            "Proof for DeleteContractAction blob #{} does not match the onchain effect",
-                            hyle_output.index
-                        )
-                    }
-                } else {
-                    bail!(
-                        "Proof for DeleteContractAction blob #{} does not have a delete onchain effect",
-                        hyle_output.index
-                    )
-                }
-            } else if let Ok(_data) =
-                StructuredBlobData::<UpdateContractProgramIdAction>::try_from(blob.data.clone())
-            {
-                // FIXME: add checks?
-            }
-        }
-
         Ok(())
     }
 
@@ -1377,7 +1225,10 @@ impl NodeState {
             .get(contract_name)
             .and_then(|(contract_status, ..)| match contract_status {
                 ContractStatus::Updated(contract) => Some(contract),
-                ContractStatus::Deleted | ContractStatus::UnknownState => None,
+                ContractStatus::RegisterWithConstructor(contract) => Some(contract),
+                ContractStatus::Deleted
+                | ContractStatus::WaitingDeletion
+                | ContractStatus::UnknownState => None,
             })
             .or_else(|| contracts.get(contract_name))
             .ok_or_else(|| {
@@ -1388,6 +1239,116 @@ impl NodeState {
         Ok(contract)
     }
 
+    // Called when trying to execute on-chain a blob
+    fn process_blob_on_chain_execution(
+        unsettled_tx: &UnsettledBlobTransaction,
+        contracts: &HashMap<ContractName, Contract>,
+        contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
+        current_blob: &UnsettledBlobMetadata,
+        settlement_status: &SettlementStatus,
+    ) -> BlobProcessingResult {
+        let contract_name = &current_blob.blob.contract_name;
+
+        // Handle native verifiers
+        if let Some(contract) = contracts.get(contract_name) {
+            if let Ok(verifier) = TryInto::<NativeVerifiers>::try_into(&contract.verifier) {
+                tracing::trace!(
+                    "Processing native verifier blob for contract {}",
+                    contract_name
+                );
+
+                let (identity, success) = match verify_native_impl(&current_blob.blob, &verifier) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        return BlobProcessingResult::ProvenFailure(format!(
+                            "Native blob verification failed: {:?}",
+                            e
+                        ));
+                    }
+                };
+
+                // Identity verification
+                if unsettled_tx.identity != identity {
+                    return BlobProcessingResult::ProvenFailure(format!(
+                        "NativeVerifier identity '{}' does not correspond to BlobTx identity '{}'.",
+                        identity, unsettled_tx.identity,
+                    ));
+                }
+
+                if !success {
+                    return BlobProcessingResult::ProvenFailure(
+                        "Native verifier execution failed".to_string(),
+                    );
+                }
+
+                tracing::trace!("NativeVerifier Settlement - OK blob");
+                // Native verifiers don't change state, so we return success without updating contract_changes
+                return BlobProcessingResult::Success;
+            }
+        }
+
+        // Handle special contract operations for the "hyle" contract
+        // We need to check the current state of 'current_contracts' to check validity,
+        // so we really can't do this before we've settled the earlier blobs.
+        if contract_name.0 == "hyle" {
+            tracing::trace!("Settlement - processing for Hyle");
+            return match handle_blob_for_hyle_tld(contracts, contract_changes, &current_blob.blob) {
+                Ok(()) => BlobProcessingResult::Success,
+                Err(err) => {
+                    // We have a valid proof of failure, we short-circuit.
+                    BlobProcessingResult::ProvenFailure(format!(
+                        "Could not settle blob proof output for 'hyle': {err:?}"
+                    ))
+                }
+            };
+        }
+
+        if let Some((current_status, _, se)) = contract_changes.get_mut(contract_name) {
+            // Special case for contract registration
+            // Two case scenario:
+            // 1. The contract is created with metadata, so we expect the next blob to be a constructor blob.
+            // 2. The contract is created without metadata, so we expect the next blob to be a regular blob.
+            // Here we handle case 1.
+            if let ContractStatus::RegisterWithConstructor(created_contract) = current_status {
+                // current_blob is considered as constructor blob. It does not need to be proven.
+                *current_status = ContractStatus::Updated(created_contract.clone());
+                se.push(SideEffect::Register(Some(current_blob.blob.data.0.clone())));
+
+                tracing::trace!("Registration Settlement - OK blob");
+                return BlobProcessingResult::Success;
+            }
+            // Special case for contract deletion from TLD
+            if current_status == &mut ContractStatus::WaitingDeletion {
+                if !current_blob.blob.data.0.is_empty() {
+                    // Non-empty blob is not a valid deletion
+                    return BlobProcessingResult::ProvenFailure(format!("Trying to settle a blob for the deleted contract {contract_name:?} with non-empty data."));
+                }
+
+                *current_status = ContractStatus::Deleted;
+                se.push(SideEffect::Delete);
+
+                tracing::trace!("Deletion Settlement - OK blob");
+                return BlobProcessingResult::Success;
+            }
+            // Special case for contract deletion
+            if current_status == &mut ContractStatus::Deleted {
+                return BlobProcessingResult::ProvenFailure(format!(
+                    "Trying to settle a blob for a deleted contract {contract_name:?}"
+                ));
+            }
+        } else if !contracts.contains_key(contract_name) {
+            // Now processing a blob for a contract that is not registered yet
+            // if all previous blobs have been proven (i.e. setttlement status still at TryingToSettle)
+            // and none of them generate an OnChainEffect, Tx should fail
+            if settlement_status == &SettlementStatus::TryingToSettle {
+                return BlobProcessingResult::ProvenFailure(format!("Trying to settle a blob for an unknown and unregistered contract {contract_name:?}"));
+            }
+        }
+
+        // Default case: no special processing needed
+        BlobProcessingResult::NotApplicable
+    }
+
     // Called when trying to actually settle a blob TX - processes a proof for settlement.
     // verify_hyle_output has already been called at this point.
     // Not called for the Hyle TLD.
@@ -1396,68 +1357,112 @@ impl NodeState {
         contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
         contract_name: &ContractName,
         proof_metadata: &(ProgramId, HyleOutput, Verifier),
-        current_blob: &UnsettledBlobMetadata,
-    ) -> Result<()> {
-        validate_state_commitment_size(&proof_metadata.1.next_state)?;
+    ) -> ProofProcessingResult {
+        if let Err(e) = validate_state_commitment_size(&proof_metadata.1.next_state) {
+            return ProofProcessingResult::Invalid(e.to_string());
+        }
 
-        let contract = Self::get_contract(contracts, contract_changes, contract_name)?.clone();
+        let contract = match Self::get_contract(contracts, contract_changes, contract_name) {
+            Ok(contract) => contract.clone(),
+            Err(e) => return ProofProcessingResult::Invalid(e.to_string()),
+        };
 
         tracing::trace!(
             "Processing proof for contract {} with state {:?}",
             contract.name,
             contract.state
         );
+
         if proof_metadata.1.initial_state != contract.state {
-            bail!(
+            return ProofProcessingResult::Invalid(format!(
                 "Initial state mismatch: {:?}, expected {:?}",
-                proof_metadata.1.initial_state,
-                contract.state
-            )
+                proof_metadata.1.initial_state, contract.state
+            ));
         }
 
         if proof_metadata.0 != contract.program_id {
-            bail!(
+            return ProofProcessingResult::Invalid(format!(
                 "Program ID mismatch: {:?}, expected {:?} on {}",
-                proof_metadata.0,
-                contract.program_id,
-                contract.name
-            )
+                proof_metadata.0, contract.program_id, contract.name
+            ));
         }
 
         if proof_metadata.2 != contract.verifier {
-            bail!(
+            return ProofProcessingResult::Invalid(format!(
                 "Verifier mismatch: {:?}, expected {:?} on {}",
-                proof_metadata.2,
-                contract.verifier,
-                contract.name
-            )
+                proof_metadata.2, contract.verifier, contract.name
+            ));
+        }
+
+        // Proof processed successfully, continue with recursion
+        if !proof_metadata.1.success {
+            return ProofProcessingResult::ProvenFailure(format!(
+                "Execution failed: {:?}",
+                String::from_utf8(proof_metadata.1.program_outputs.clone())
+            ));
         }
 
         for state_read in &proof_metadata.1.state_reads {
-            let other_contract = Self::get_contract(contracts, contract_changes, &state_read.0)?;
+            let other_contract =
+                match Self::get_contract(contracts, contract_changes, &state_read.0) {
+                    Ok(contract) => contract,
+                    Err(e) => return ProofProcessingResult::Invalid(e.to_string()),
+                };
             if state_read.1 != other_contract.state {
-                bail!(
+                return ProofProcessingResult::Invalid(format!(
                     "State read {:?} does not match other contract state {:?}",
-                    state_read,
-                    other_contract.state
-                )
+                    state_read, other_contract.state
+                ));
             }
         }
 
         for effect in &proof_metadata.1.onchain_effects {
             match effect {
-                OnchainEffect::RegisterContract(effect) => {
-                    validate_contract_registration_metadata(
+                OnchainEffect::RegisterContractWithConstructor(effect) => {
+                    // Validation of contract registration metadata should cause immediate failure
+                    if let Err(e) = validate_contract_registration_metadata(
                         &contract.name,
                         &effect.contract_name,
                         &effect.verifier,
                         &effect.program_id,
                         &effect.state_commitment,
-                    )?;
+                    ) {
+                        return ProofProcessingResult::ProvenFailure(format!(
+                            "Contract registration validation failed: {e}"
+                        ));
+                    }
 
-                    let metadata = StructuredBlobData::<RegisterContractAction>::try_from(
-                        current_blob.blob.data.clone(),
-                    )?;
+                    contract_changes.insert(
+                        effect.contract_name.clone(),
+                        (
+                            ContractStatus::RegisterWithConstructor(Contract {
+                                name: effect.contract_name.clone(),
+                                program_id: effect.program_id.clone(),
+                                state: effect.state_commitment.clone(),
+                                verifier: effect.verifier.clone(),
+                                timeout_window: effect
+                                    .timeout_window
+                                    .clone()
+                                    .unwrap_or(contract.timeout_window.clone()),
+                            }),
+                            ModifiedContractFields::all(),
+                            vec![],
+                        ),
+                    );
+                }
+                OnchainEffect::RegisterContract(effect) => {
+                    // Validation of contract registration metadata should cause immediate failure
+                    if let Err(e) = validate_contract_registration_metadata(
+                        &contract.name,
+                        &effect.contract_name,
+                        &effect.verifier,
+                        &effect.program_id,
+                        &effect.state_commitment,
+                    ) {
+                        return ProofProcessingResult::ProvenFailure(format!(
+                            "Contract registration validation failed: {e}"
+                        ));
+                    }
 
                     contract_changes.insert(
                         effect.contract_name.clone(),
@@ -1473,26 +1478,90 @@ impl NodeState {
                                     .unwrap_or(contract.timeout_window.clone()),
                             }),
                             ModifiedContractFields::all(),
-                            vec![SideEffect::Register(
-                                metadata.parameters.constructor_metadata,
-                            )],
+                            vec![SideEffect::Register(None)],
                         ),
                     );
                 }
                 OnchainEffect::DeleteContract(cn) => {
-                    // TODO - check the contract exists ?
-                    validate_contract_name_registration(&contract.name, cn)?;
+                    // Contract name validation for deletion should also cause immediate failure
+                    if let Err(e) = validate_contract_name_tld(&contract.name, cn) {
+                        return ProofProcessingResult::ProvenFailure(format!(
+                            "Contract deletion validation failed: {e}"
+                        ));
+                    }
                     contract_changes
                         .entry(cn.clone())
                         .and_modify(|c| {
-                            c.0 = ContractStatus::Deleted;
+                            c.0 = ContractStatus::WaitingDeletion;
                             c.2.push(SideEffect::Delete);
                         })
                         .or_insert_with(|| {
                             (
-                                ContractStatus::Deleted,
+                                ContractStatus::WaitingDeletion,
                                 ModifiedContractFields::all(),
                                 vec![SideEffect::Delete],
+                            )
+                        });
+                }
+                OnchainEffect::UpdateContractProgramId(cn, program_id) => {
+                    // Only hyle and the contract itself can update its programId
+                    if contract_name != &"hyle".into() && cn != contract_name {
+                        return ProofProcessingResult::ProvenFailure(format!(
+                            "Forbidden programId update: contract {contract_name} trying to upgrade {cn}"
+                        ));
+                    }
+                    contract_changes
+                        .entry(cn.clone())
+                        .and_modify(|c| {
+                            c.0 = ContractStatus::Updated(Contract {
+                                program_id: program_id.clone(),
+                                ..contract.clone()
+                            });
+                            c.1.program_id = true;
+                            c.2.push(SideEffect::UpdateProgramId);
+                        })
+                        .or_insert_with(|| {
+                            (
+                                ContractStatus::Updated(Contract {
+                                    program_id: program_id.clone(),
+                                    ..contract.clone()
+                                }),
+                                ModifiedContractFields {
+                                    program_id: true,
+                                    ..ModifiedContractFields::default()
+                                },
+                                vec![SideEffect::UpdateProgramId],
+                            )
+                        });
+                }
+                OnchainEffect::UpdateTimeoutWindow(cn, timeout_window) => {
+                    // Only hyle and the contract itself can update its TimeoutWindow
+                    if contract_name != &"hyle".into() && cn != contract_name {
+                        return ProofProcessingResult::ProvenFailure(format!(
+                            "Forbidden TimeoutWindow update: contract {contract_name} trying to upgrade {cn}"
+                        ));
+                    }
+                    contract_changes
+                        .entry(cn.clone())
+                        .and_modify(|c| {
+                            c.0 = ContractStatus::Updated(Contract {
+                                timeout_window: timeout_window.clone(),
+                                ..contract.clone()
+                            });
+                            c.1.timeout_window = true;
+                            c.2.push(SideEffect::UpdateTimeoutWindow);
+                        })
+                        .or_insert_with(|| {
+                            (
+                                ContractStatus::Updated(Contract {
+                                    timeout_window: timeout_window.clone(),
+                                    ..contract.clone()
+                                }),
+                                ModifiedContractFields {
+                                    timeout_window: true,
+                                    ..ModifiedContractFields::default()
+                                },
+                                vec![SideEffect::UpdateTimeoutWindow],
                             )
                         });
                 }
@@ -1524,7 +1593,7 @@ impl NodeState {
                 )
             });
 
-        Ok(())
+        ProofProcessingResult::Success
     }
 
     /// Clear timeouts for transactions that have timed out.
@@ -1642,34 +1711,36 @@ pub mod test {
     }
 
     pub fn make_register_contract_tx(name: ContractName) -> BlobTransaction {
-        BlobTransaction::new(
-            "hyle@hyle",
-            vec![RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                contract_name: name,
-                ..Default::default()
-            }
-            .as_blob("hyle".into(), None, None)],
-        )
+        let register_contract_action = RegisterContractAction {
+            verifier: "test".into(),
+            program_id: ProgramId(vec![]),
+            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+            contract_name: name.clone(),
+            constructor_metadata: Some(vec![1]),
+            ..Default::default()
+        };
+        let hyle_blob = register_contract_action.as_blob("hyle".into());
+
+        let register_contract_blob = register_contract_action.as_blob(name);
+
+        BlobTransaction::new("hyle@hyle", vec![hyle_blob, register_contract_blob])
     }
     pub fn make_register_contract_tx_with_actions(
         name: ContractName,
         blobs: Vec<Blob>,
     ) -> BlobTransaction {
-        let list = [
-            vec![RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![]),
-                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                contract_name: name,
-                ..Default::default()
-            }
-            .as_blob("hyle".into(), None, None)],
-            blobs,
-        ]
-        .concat();
+        let register_contract_action = RegisterContractAction {
+            verifier: "test".into(),
+            program_id: ProgramId(vec![]),
+            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+            contract_name: name.clone(),
+            constructor_metadata: Some(vec![1]),
+            ..Default::default()
+        };
+        let hyle_blob = register_contract_action.as_blob("hyle".into());
+
+        let register_contract_blob = register_contract_action.as_blob(name);
+        let list = [vec![hyle_blob, register_contract_blob], blobs].concat();
 
         BlobTransaction::new("hyle@hyle", list)
     }

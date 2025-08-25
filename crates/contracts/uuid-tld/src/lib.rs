@@ -4,10 +4,8 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use rand::Rng;
 use rand_seeder::SipHasher;
 use sdk::{
-    info,
-    utils::{parse_calldata, parse_raw_calldata},
-    Blob, BlobData, BlobIndex, Calldata, ContractAction, ContractName, OnchainEffect,
-    RegisterContractAction, RunResult, ZkContract,
+    info, utils::parse_raw_calldata, Blob, BlobData, BlobIndex, Calldata, ContractAction,
+    ContractName, OnchainEffect, RegisterContractAction, RunResult, ZkContract,
 };
 use uuid::Uuid;
 
@@ -62,7 +60,7 @@ impl ZkContract for UuidTld {
             }
         }
 
-        if let Ok((action, exec_ctx)) = parse_calldata::<RegisterContractAction>(calldata) {
+        if let Ok((action, exec_ctx)) = parse_raw_calldata::<RegisterContractAction>(calldata) {
             // Extract UUID from contract name
             let parts: Vec<&str> = action.contract_name.0.split('.').collect();
             let uuid = match Uuid::parse_str(parts[0]) {

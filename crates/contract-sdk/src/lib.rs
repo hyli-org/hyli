@@ -54,6 +54,15 @@ macro_rules! info {
     }
 }
 
+// Si la feature "tracing" est activée, on redirige vers `tracing::error!`
+#[cfg(feature = "tracing")]
+#[macro_export]
+macro_rules! error {
+    ($($arg:tt)*) => {
+        $crate::tracing::error!($($arg)*);
+    }
+}
+
 // Si la feature "tracing" n'est pas activée, on redirige vers la fonction env::log
 #[cfg(all(not(feature = "tracing"), feature = "risc0"))]
 #[macro_export]
@@ -66,6 +75,23 @@ macro_rules! info {
 #[cfg(all(not(feature = "tracing"), not(feature = "risc0")))]
 #[macro_export]
 macro_rules! info {
+    ($($arg:tt)*) => {
+        println!($($arg)*);
+    }
+}
+
+// Si la feature "tracing" n'est pas activée, on redirige vers la fonction env::log
+#[cfg(all(not(feature = "tracing"), feature = "risc0"))]
+#[macro_export]
+macro_rules! error {
+    ($($arg:tt)*) => {
+        risc0_zkvm::guest::env::log(&format!($($arg)*));
+    }
+}
+
+#[cfg(all(not(feature = "tracing"), not(feature = "risc0")))]
+#[macro_export]
+macro_rules! error {
     ($($arg:tt)*) => {
         println!($($arg)*);
     }

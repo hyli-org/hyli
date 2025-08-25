@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::bus::command_response::{CmdRespClient, Query};
+use crate::bus::command_response::CmdRespClient;
 use crate::bus::BusClientSender;
 use crate::consensus::ConfirmAckMarker;
 use crate::consensus::{CommittedConsensusProposal, ConsensusEvent, QueryConsensusInfo};
@@ -13,7 +13,11 @@ use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyle_crypto::SharedBlstCrypto;
 use hyle_model::utils::TimestampMs;
+use hyle_modules::bus::command_response::Query;
 use hyle_modules::bus::SharedMessageBus;
+use hyle_modules::modules::admin::{
+    QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse,
+};
 use hyle_modules::modules::module_bus_client;
 use hyle_modules::modules::Module;
 use hyle_modules::{log_error, module_handle_messages};
@@ -26,6 +30,7 @@ struct SingleNodeConsensusBusClient {
     sender(ConsensusEvent),
     sender(Query<QueryNewCut, Cut>),
     receiver(Query<QueryConsensusInfo, ConsensusInfo>),
+    receiver(Query<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse>),
     receiver(GenesisEvent),
 }
 }
@@ -165,6 +170,9 @@ impl SingleNodeConsensus {
                 let validators = vec![];
                 Ok(ConsensusInfo { slot, view, round_leader, last_timestamp, validators })
             },
+            command_response<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse> _ => {
+                Ok(QueryConsensusCatchupStoreResponse(vec![]))
+            },
             _ = interval.tick() => {
                 self.handle_new_slot_tick().await?;
             },
@@ -177,7 +185,10 @@ impl SingleNodeConsensus {
         // Query a new cut to Mempool in order to create a new CommitCut
         match self
             .bus
-            .shutdown_aware_request::<Self>(QueryNewCut(self.store.staking.clone()))
+            .shutdown_aware_request::<Self>(QueryNewCut {
+                staking: self.store.staking.clone(),
+                full: true,
+            })
             .await
         {
             Ok(cut) => {

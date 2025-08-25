@@ -25,6 +25,7 @@ pub mod bus_ws_connector;
 pub mod contract_state_indexer;
 pub mod da_listener;
 pub mod data_availability;
+pub mod gcs_uploader;
 pub mod prover;
 pub mod prover_metrics;
 pub mod rest;
@@ -126,6 +127,11 @@ where
         log_error!(fs::rename(tmp, file), "Rename file")?;
         Ok(())
     }
+}
+
+pub mod files {
+    pub const NODE_STATE_BIN: &str = "node_state.bin";
+    pub const CONSENSUS_BIN: &str = "consensus.bin";
 }
 
 struct ModuleStarter {

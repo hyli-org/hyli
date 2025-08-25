@@ -261,6 +261,7 @@ impl NodeIntegrationCtx {
                 openapi: Default::default(),
             }),
             crypto,
+            start_height: None,
         };
 
         let mut handler = ModulesHandler::new(&bus).await;

@@ -1,10 +1,11 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::*;
+use serde::Serialize;
 use std::collections::{BTreeSet, HashSet};
 use std::collections::{HashMap, VecDeque};
 
 // struct used to guarantee coherence between the 2 fields
-#[derive(Default, Debug, Clone, BorshSerialize, BorshDeserialize)]
+#[derive(Default, Debug, Clone, BorshSerialize, BorshDeserialize, Serialize)]
 pub struct OrderedTxMap {
     map: HashMap<TxHash, UnsettledBlobTransaction>,
     tx_order: HashMap<ContractName, VecDeque<TxHash>>,
@@ -13,10 +14,6 @@ pub struct OrderedTxMap {
 impl OrderedTxMap {
     pub fn get(&self, hash: &TxHash) -> Option<&UnsettledBlobTransaction> {
         self.map.get(hash)
-    }
-
-    pub fn get_mut(&mut self, hash: &TxHash) -> Option<&mut UnsettledBlobTransaction> {
-        self.map.get_mut(hash)
     }
 
     /// Returns true if the tx is the next to settle for all the contracts it contains
@@ -77,25 +74,13 @@ impl OrderedTxMap {
         let mut contract_names = HashSet::new();
         for blob in tx.blobs.values() {
             contract_names.insert(blob.blob.contract_name.clone());
-            // Temp hack for speed.
-            if blob.blob.contract_name.0 != "hyle" {
-                continue;
-            }
-            // This is a bit horrible, we should try to be leaner.
-            if let Ok(data) =
-                StructuredBlobData::<RegisterContractAction>::try_from(blob.blob.data.clone())
-            {
-                contract_names.insert(data.parameters.contract_name.clone());
-            } else if let Ok(data) =
-                StructuredBlobData::<DeleteContractAction>::try_from(blob.blob.data.clone())
-            {
-                contract_names.insert(data.parameters.contract_name.clone());
-            }
         }
         contract_names
     }
 
     pub fn get_next_txs_blocked_by_tx(&self, tx: &UnsettledBlobTransaction) -> BTreeSet<TxHash> {
+        // NB: The BTreeSet will give an unordered collection of tx hashes.
+        // This is fine for our use case, as the tx settlement logic guarantees that the order is respected.
         let mut blocked_txs = BTreeSet::new();
         for contract in Self::get_contracts_blocked_by_tx(tx) {
             if let Some(next_tx) = self.get_next_unsettled_tx(&contract) {
@@ -321,7 +306,7 @@ mod tests {
                     state_commitment: StateCommitment(vec![0, 1, 2, 3]),
                     ..Default::default()
                 }
-                .as_blob(contract1.clone(), None, None),
+                .as_blob(contract2.clone()),
                 possible_proofs: vec![],
             },
         );

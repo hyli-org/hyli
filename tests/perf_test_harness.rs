@@ -28,6 +28,46 @@ async fn setup_4_nodes() -> Result<()> {
 
 #[ignore = "This is intended to easily start a few nodes locally for devs"]
 #[test_log::test(tokio::test)]
+async fn setup_4_nodes_catchup() -> Result<()> {
+    let mut ctx = E2ECtx::new_multi_with_indexer(4, 1000).await?;
+
+    // To use this harness, comment out the 'ignore' above and run something like:
+    // RUST_LOG=perf_test_harness=warn,error cargo test --release --test perf_test_harness -- --nocapture
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    ctx.stop_node(3).await?;
+    ctx.get_instructions_for(3);
+
+    let mut conf = ctx.nodes.get(3).expect("Node 3 should exist").conf.clone();
+
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    conf.run_fast_catchup = true;
+    conf.fast_catchup_from = format!(
+        "http://localhost:{}",
+        ctx.nodes
+            .first()
+            .expect("Node 0 should exist")
+            .conf
+            .admin_server_port
+    );
+    conf.fast_catchup_backfill = true;
+    // conf.consensus.timestamp_checks = TimestampCheck::Monotonic;
+
+    let process = test_helpers::TestProcess::new("hyle", conf);
+
+    tracing::warn!(
+        "🚀 Start the last node in catchup mode with the following command:\nhyle=$(pwd)/target/release/hyle && (cd {} && RUST_LOG=debug \"$hyle\")",
+        process.dir.path().display()
+    );
+
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+}
+
+#[ignore = "This is intended to easily start a few nodes locally for devs"]
+#[test_log::test(tokio::test)]
 async fn custom_setup() -> Result<()> {
     std::env::set_var("RISC0_DEV_MODE", "1");
 
@@ -37,7 +77,7 @@ async fn custom_setup() -> Result<()> {
     let count = 4;
     let mut nodes = {
         let mut nodes = Vec::new();
-        let mut confs = Vec::new();
+        let mut confs: Vec<Conf> = Vec::new();
 
         let default_conf = Conf::new(vec![], None, None).unwrap();
 

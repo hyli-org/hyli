@@ -39,7 +39,7 @@ pub trait E2EContract {
 
 pub struct E2ECtx {
     pg: Option<ContainerAsync<Postgres>>,
-    nodes: Vec<test_helpers::TestProcess>,
+    pub nodes: Vec<test_helpers::TestProcess>,
     clients: Vec<NodeApiHttpClient>,
     client_index: usize,
     indexer_client: Option<IndexerApiHttpClient>,
@@ -376,16 +376,18 @@ impl E2ECtx {
     where
         Contract: E2EContract,
     {
-        let blobs = vec![RegisterContractAction {
-            verifier: Contract::verifier(),
-            program_id: Contract::program_id(),
-            state_commitment: Contract::state_commitment(),
-            contract_name: name.into(),
-            ..Default::default()
-        }
-        .as_blob("hyle".into(), None, None)];
+        let tx = BlobTransaction::new(
+            sender.clone(),
+            vec![RegisterContractAction {
+                verifier: Contract::verifier(),
+                program_id: Contract::program_id(),
+                state_commitment: Contract::state_commitment(),
+                contract_name: name.into(),
+                ..Default::default()
+            }
+            .as_blob("hyle".into())],
+        );
 
-        let tx = BlobTransaction::new(sender.clone(), blobs.clone());
         assert_ok!(self.client().send_tx_blob(tx).await);
 
         tokio::time::timeout(Duration::from_secs(30), async {

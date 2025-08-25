@@ -510,7 +510,7 @@ pub mod test {
     use anyhow::Result;
     use hyle_crypto::BlstCrypto;
 
-    use crate::mempool::test::*;
+    use crate::mempool::tests::*;
 
     #[test_log::test(tokio::test)]
     async fn test_single_mempool_receiving_new_txs() -> Result<()> {
@@ -679,7 +679,7 @@ pub mod test {
 
         // Store the DP locally.
         let register_tx = make_register_contract_tx(ContractName::new("test1"));
-        let data_proposal = ctx.create_data_proposal(None, &[register_tx.clone()]);
+        let data_proposal = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
         ctx.process_new_data_proposal(data_proposal.clone())?;
 
         // Then make another validator vote on it.

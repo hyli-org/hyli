@@ -1,13 +1,12 @@
 use anyhow::{Context, Result};
 use config::{Config, Environment, File};
+use hyle_modules::modules::gcs_uploader::GCSConf;
 use hyle_modules::modules::websocket::WebSocketConfig;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use serde_with::DurationMilliSeconds;
 use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::Arc, time::Duration};
 use strum_macros::IntoStaticStr;
-
-use crate::indexer::IndexerConf;
 
 #[serde_as]
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -86,6 +85,12 @@ pub struct NodeWebSocketConfig {
     pub events: Vec<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct IndexerConf {
+    pub query_buffer_size: usize,
+    pub persist_proofs: bool,
+}
+
 impl From<NodeWebSocketConfig> for WebSocketConfig {
     fn from(config: NodeWebSocketConfig) -> Self {
         Self {
@@ -111,6 +116,12 @@ pub struct Conf {
 
     /// Peer-to-peer layer configuration
     pub p2p: P2pConf,
+
+    // FastCatchup option, from the admin API of a running node.
+    pub run_fast_catchup: bool,
+    pub fast_catchup_override: bool,
+    pub fast_catchup_backfill: bool,
+    pub fast_catchup_from: String,
 
     // Validator options
     /// Consensus configuration
@@ -159,6 +170,9 @@ pub struct Conf {
 
     /// Configuration for the indexer module
     pub indexer: IndexerConf,
+
+    /// GCSUploader configuration
+    pub gcs: GCSConf,
 }
 
 impl Conf {

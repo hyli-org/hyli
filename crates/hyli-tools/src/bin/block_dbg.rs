@@ -35,6 +35,7 @@ use smt_token::{
 };
 use std::collections::HashMap;
 use std::fs;
+use std::future::Future;
 use std::io::Write;
 use std::io::{self};
 use std::time::Duration;
@@ -323,13 +324,11 @@ impl BlockDbg {
         entries.sort_by_key(|e| e.file_name());
         for entry in entries {
             let path = entry.path();
-            if path.extension().map(|e| e == "bin").unwrap_or(false) {
-                if let Ok(bytes) = fs::read(&path) {
-                    if let Ok((block, tx_count)) = borsh::from_slice::<(SignedBlock, usize)>(&bytes)
-                    {
-                        blocks.push((block, tx_count));
-                    }
-                }
+            if path.extension().map(|e| e == "bin").unwrap_or(false)
+                && let Ok(bytes) = fs::read(&path)
+                && let Ok((block, tx_count)) = borsh::from_slice::<(SignedBlock, usize)>(&bytes)
+            {
+                blocks.push((block, tx_count));
             }
         }
         // Sort blocks by block_height (numeric order)
@@ -442,8 +441,8 @@ impl BlockDbg {
                             KeyCode::Down | KeyCode::Char('j') => {
                                 match ui_state.focused_panel {
                                     FocusPanel::BlockList => {
-                                        let display_blocks: Vec<_> = ui_state.blocks.iter().filter(|(_, tx_count)| *tx_count > 0).collect();
-                                        if ui_state.selected + 1 < display_blocks.len() {
+                                        let display_blocks = ui_state.blocks.iter().filter(|(_, tx_count)| *tx_count > 0).count();
+                                        if ui_state.selected + 1 < display_blocks {
                                             ui_state.selected += 1;
                                         }
                                     }

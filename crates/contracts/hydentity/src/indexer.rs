@@ -16,7 +16,7 @@ use client_sdk::contract_indexer::{
     utoipa::{self, ToSchema},
     AppError,
 };
-use sdk::{info, Blob, BlobIndex, BlobTransaction, Identity, TxContext};
+use sdk::{error, info, Blob, BlobIndex, BlobTransaction, Identity, TxContext};
 use serde::Serialize;
 
 use client_sdk::contract_indexer::axum;
@@ -42,7 +42,14 @@ impl ContractHandler for Hydentity {
             data,
         } = tx.blobs.get(index.0).context("Failed to get blob")?;
 
-        let action: HydentityAction = borsh::from_slice(&data.0)?;
+        let action: HydentityAction = match borsh::from_slice(&data.0) {
+            Ok(act) => act,
+            Err(e) => {
+                error!("Failed to deserialize action as ab Hydentity action: {}", e);
+                // Could not process the action, but it should not fail the execution
+                return Ok(None);
+            }
+        };
         match action {
             HydentityAction::RegisterIdentity { account } => {
                 let (name, hash) = Hydentity::parse_id(&account)?;

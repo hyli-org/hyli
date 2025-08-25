@@ -8,7 +8,7 @@ use client_sdk::{
 use hyle::{
     model::BlobTransaction,
     rest::client::NodeApiHttpClient,
-    utils::conf::{Conf, NodeWebSocketConfig, P2pConf, P2pMode},
+    utils::conf::{Conf, NodeWebSocketConfig, P2pConf, P2pMode, TimestampCheck},
 };
 use hyle_crypto::BlstCrypto;
 use hyle_model::TxHash;
@@ -71,7 +71,7 @@ impl Default for ConfMaker {
         let mut default = Conf::new(vec![], None, None).unwrap();
 
         default.log_format = "node".to_string(); // Activate node name in logs for convenience in tests.
-        default.p2p.mode = hyle::utils::conf::P2pMode::FullValidator;
+        default.p2p.mode = P2pMode::FullValidator;
         default.consensus.solo = false;
         default.genesis.stakers = {
             let mut stakers = std::collections::HashMap::new();
@@ -80,9 +80,12 @@ impl Default for ConfMaker {
             stakers
         };
         default.genesis.keep_tokens_in_faucet = true; // Keep faucet tokens for tests
+        default.indexer.persist_proofs = false; // Disable proof persistence for tests
 
         default.run_indexer = false; // disable indexer by default to avoid needed PG
         default.run_explorer = false; // disable indexer by default to avoid needed PG
+
+        default.consensus.timestamp_checks = TimestampCheck::Monotonic;
 
         info!("Default conf: {:?}", default);
 

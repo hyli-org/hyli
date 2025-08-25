@@ -1,10 +1,10 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use fjall::{
     Config, Keyspace, KvSeparationOptions, PartitionCreateOptions, PartitionHandle, Slice,
 };
 use sdk::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock};
 use std::{fmt::Debug, path::Path};
-use tracing::{error, info, trace};
+use tracing::{debug, error, info, trace};
 
 struct FjallHashKey(ConsensusProposalHash);
 struct FjallHeightKey([u8; 8]);
@@ -19,6 +19,12 @@ impl AsRef<[u8]> for FjallHashKey {
 impl FjallHeightKey {
     fn new(height: BlockHeight) -> Self {
         Self(height.0.to_be_bytes())
+    }
+}
+
+impl From<FjallHeightKey> for BlockHeight {
+    fn from(value: FjallHeightKey) -> Self {
+        BlockHeight(u64::from_be_bytes(value.0))
     }
 }
 
@@ -50,8 +56,20 @@ pub struct Blocks {
 }
 
 impl Blocks {
+    pub fn new_handle(&self) -> Blocks {
+        Blocks {
+            db: self.db.clone(),
+            by_hash: self.by_hash.clone(),
+            by_height: self.by_height.clone(),
+        }
+    }
+
     fn decode_block(item: Slice) -> Result<SignedBlock> {
         borsh::from_slice(&item).map_err(Into::into)
+    }
+    fn decode_height(item: Slice) -> Result<BlockHeight> {
+        let key = item.first_chunk::<8>().context("Malformed key")?;
+        Ok(BlockHeight::from(FjallHeightKey(*key)))
     }
     fn decode_block_hash(item: Slice) -> Result<ConsensusProposalHash> {
         borsh::from_slice(&item).map_err(Into::into)
@@ -118,10 +136,49 @@ impl Blocks {
         item.map(Self::decode_block).transpose()
     }
 
-    pub fn contains(&mut self, block: &ConsensusProposalHash) -> bool {
+    pub fn contains(&self, block: &ConsensusProposalHash) -> bool {
         self.by_hash
             .contains_key(FjallHashKey(block.clone()))
             .unwrap_or(false)
+    }
+
+    /// Scan the whole by_height table and returns the first missing height
+    pub fn first_hole_by_height(&self) -> Result<Option<BlockHeight>> {
+        let Some(upper_bound) = self
+            .by_height
+            .last_key_value()
+            .unwrap_or_default()
+            .and_then(|(k, _v)| Self::decode_height(k).ok())
+        else {
+            anyhow::bail!("Empty partition can't have holes");
+        };
+
+        debug!(
+            "Start scanning by_height partition to find first missing block up to {:?}",
+            upper_bound
+        );
+
+        for i in 0..upper_bound.0 {
+            if i % 1000 == 0 {
+                trace!("Checking block #{} is present or not", i);
+            }
+            let key = FjallHeightKey::new(BlockHeight(i));
+            if !self
+                .by_height
+                .contains_key(key)
+                .map_err(|e| anyhow::anyhow!(e))?
+            {
+                info!("Found hole at height {}", i);
+                return Ok(Some(BlockHeight(i)));
+            }
+        }
+
+        debug!(
+            "No holes found in by_height partition up to {:?}",
+            upper_bound
+        );
+
+        Ok(None)
     }
 
     pub fn last(&self) -> Option<SignedBlock> {
@@ -138,6 +195,10 @@ impl Blocks {
                 None
             }
         }
+    }
+
+    pub fn highest(&self) -> BlockHeight {
+        self.last().map_or(BlockHeight(0), |b| b.height())
     }
 
     pub fn last_block_hash(&self) -> Option<ConsensusProposalHash> {

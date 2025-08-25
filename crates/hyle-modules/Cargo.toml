@@ -14,6 +14,7 @@ client-sdk = { workspace = true, features = ["rest", "indexer"] }
 hyle-net = { workspace = true }
 hyle-verifiers = { workspace = true }
 
+config = { workspace = true, default-features = false, features = ["toml"] }
 sha3 = { workspace = true }
 anyhow = { workspace = true }
 borsh = { workspace = true }
@@ -34,6 +35,9 @@ tracing-subscriber = { workspace = true, features = [
 paste = { workspace = true }
 hex = { workspace = true }
 fjall = { workspace = true }
+
+# GCS
+google-cloud-storage = { workspace = true }
 
 tokio = { workspace = true, features = ["full", "tracing"] }
 tokio-util = { workspace = true }
