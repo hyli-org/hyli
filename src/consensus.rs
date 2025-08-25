@@ -31,7 +31,7 @@ use role_follower::FollowerState;
 use role_leader::LeaderState;
 use role_timeout::TimeoutRoleState;
 use serde::{Deserialize, Serialize};
-use staking::state::{Staking, MIN_STAKE};
+use staking::state::{CertificateReliability, Staking, MIN_STAKE};
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::time::Duration;
@@ -397,31 +397,28 @@ impl Consensus {
         // This helpfully ignores any signatures that would not be actually part of the consensus
         // since those would have voting power 0.
         // TODO: should we reject such messages?
-        let voting_power = self
+        let reliability = self
             .bft_round_state
             .staking
-            .compute_voting_power(quorum_certificate.validators.as_slice());
-
-        let f = self.bft_round_state.staking.compute_f();
+            .validators_reliability(quorum_certificate.validators.iter());
 
         trace!(
-            "📩 Slot {} validated votes: {} / {} ({} validators for a total bond = {})",
+            "📩 Slot {} reliability: {reliability:?} ({} validators for a total bond = {})",
             self.bft_round_state.slot,
-            voting_power,
-            2 * f + 1,
             self.bft_round_state.staking.bonded().len(),
             self.bft_round_state.staking.total_bond()
         );
 
         // Verify enough validators signed
-        if voting_power < 2 * f + 1 {
+        if reliability >= CertificateReliability::Reliable {
+            Ok(())
+        } else {
             bail!(
-                "Quorum Certificate does not contain enough voting power ({} < {})",
-                voting_power,
-                2 * f + 1
+                "Quorum Certificate does not contain enough voting power ({:?} < {:?})",
+                reliability,
+                CertificateReliability::Reliable
             );
         }
-        Ok(())
     }
 
     /// Connect to all validators & ask to be part of consensus

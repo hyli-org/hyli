@@ -6,10 +6,10 @@ use crate::{
     bus::command_response::CmdRespClient,
     consensus::{role_follower::follower_state, *},
     mempool::QueryNewCut,
-    model::{Hashed, ValidatorPublicKey},
+    model::Hashed,
 };
 use hyle_model::{utils::TimestampMs, ConsensusProposal, ConsensusStakingAction};
-use staking::state::MIN_STAKE;
+use staking::state::{CertificateReliability, MIN_STAKE};
 use tokio::sync::broadcast;
 use tracing::{debug, error, trace};
 
@@ -280,33 +280,25 @@ impl Consensus {
             .insert(prepare_vote);
 
         // Get matching vote count
-        let validated_votes = self
-            .bft_round_state
-            .leader
-            .prepare_votes
-            .iter()
-            .map(|signed_message| signed_message.signature.validator.clone())
-            .collect::<Vec<ValidatorPublicKey>>();
 
-        let votes_power = self
-            .bft_round_state
-            .staking
-            .compute_voting_power(&validated_votes);
-        let voting_power = votes_power + self.get_own_voting_power();
-
-        // Waits for at least n-f = 2f+1 matching PrepareVote messages
-        let f = self.bft_round_state.staking.compute_f();
+        let reliability = self.bft_round_state.staking.validators_reliability(
+            self.bft_round_state
+                .leader
+                .prepare_votes
+                .iter()
+                .map(|signed_message| &signed_message.signature.validator)
+                .chain(std::iter::once(self.crypto.validator_pubkey())),
+        );
 
         debug!(
-            "📩 Slot {} validated votes: {} / {} ({} validators for a total bond = {})",
+            "📩 Slot {} reliability {:?} ({} validators for a total bond = {})",
             self.bft_round_state.slot,
-            voting_power,
-            2 * f + 1,
+            reliability,
             self.bft_round_state.staking.bonded().len(),
             self.bft_round_state.staking.total_bond()
         );
 
-        if voting_power > 2 * f {
+        if reliability >= CertificateReliability::Reliable {
             // Get all received signatures
             let aggregates: &Vec<&PrepareVote> =
                 &self.bft_round_state.leader.prepare_votes.iter().collect();
@@ -386,33 +378,25 @@ impl Consensus {
             return Ok(());
         }
 
-        // Compute voting power so far and hope for >= 2f+1
-        let confirmed_ack_validators = self
-            .bft_round_state
-            .leader
-            .confirm_ack
-            .iter()
-            .map(|signed_message| signed_message.signature.validator.clone())
-            .collect::<Vec<ValidatorPublicKey>>();
-
-        let confirmed_power = self
-            .bft_round_state
-            .staking
-            .compute_voting_power(&confirmed_ack_validators);
-        let voting_power = confirmed_power + self.get_own_voting_power();
-
-        let f = self.bft_round_state.staking.compute_f();
+        // Check certificate is reliable (>= 2f+1)
+        let reliability = self.bft_round_state.staking.validators_reliability(
+            self.bft_round_state
+                .leader
+                .confirm_ack
+                .iter()
+                .map(|signed_message| &signed_message.signature.validator)
+                .chain(std::iter::once(self.crypto.validator_pubkey())),
+        );
 
         debug!(
-            "✅ Slot {} confirmed acks: {} / {} ({} validators for a total bond = {})",
+            "✅ Slot {} reliability {:?} ({} validators for a total bond = {})",
             self.bft_round_state.slot,
-            voting_power,
-            2 * f + 1,
+            reliability,
             self.bft_round_state.staking.bonded().len(),
             self.bft_round_state.staking.total_bond()
         );
 
-        if voting_power > 2 * f {
+        if reliability >= CertificateReliability::Reliable {
             // Get all signatures received and change ValidatorPublicKey for ValidatorPubKey
             let aggregates: &Vec<&ConfirmAck> =
                 &self.bft_round_state.leader.confirm_ack.iter().collect();
