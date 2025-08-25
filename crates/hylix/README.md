@@ -217,12 +217,6 @@ Hylix builds on top of:
 * **Rust** for native speed and tooling compatibility
 * **Bun**, **vite**, vue3 & tailwind for frontend application
 
-Coming soon:
-
-* 🧑‍🎨 Noir Integration
-* 🌀 Cairo Exploration
-* 📦 Custom Prover Uploads via `hy upload`
-
 ## 🛤️ Roadmap
 
 * [ ] Noir + Cairo support
