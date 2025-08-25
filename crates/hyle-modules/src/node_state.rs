@@ -249,7 +249,7 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     .dp_parent_hashes
                     .insert(tx_id.1.clone(), tx_id.0.clone());
             }
-            TxEvent::SequencedBlobTransaction(tx_id, lane_id, index, blob_tx) => {
+            TxEvent::SequencedBlobTransaction(tx_id, lane_id, _, blob_tx) => {
                 self.block_under_construction
                     .txs
                     .push((tx_id.clone(), blob_tx.clone().into()));
@@ -260,7 +260,7 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     .lane_ids
                     .insert(tx_id.1.clone(), lane_id.clone());
             }
-            TxEvent::SequencedProofTransaction(tx_id, lane_id, index, proof_tx) => {
+            TxEvent::SequencedProofTransaction(tx_id, lane_id, _, proof_tx) => {
                 self.block_under_construction
                     .txs
                     .push((tx_id.clone(), proof_tx.clone().into()));
@@ -349,7 +349,7 @@ impl NodeStateCallback for BlockNodeStateCallback {
                         blob_proof_output_index: blob_proof_index,
                     });
             }
-            TxEvent::BlobSettled(tx_id, tx, blob, blob_index, proof_data, blob_proof_index) => {
+            TxEvent::BlobSettled(tx_id, tx, blob, blob_index, _, blob_proof_index) => {
                 self.block_under_construction.verified_blobs.push((
                     tx_id.1.clone(),
                     blob_index,
@@ -394,17 +394,17 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     ),
                 );
             }
-            TxEvent::ContractStateUpdated(tx_id, contract_name, state_commitment) => {
+            TxEvent::ContractStateUpdated(_, contract_name, state_commitment) => {
                 self.block_under_construction
                     .updated_states
                     .insert(contract_name.clone(), state_commitment.clone());
             }
-            TxEvent::ContractProgramIdUpdated(tx_id, contract_name, program_id) => {
+            TxEvent::ContractProgramIdUpdated(_, contract_name, program_id) => {
                 self.block_under_construction
                     .updated_program_ids
                     .insert(contract_name.clone(), program_id.clone());
             }
-            TxEvent::ContractTimeoutWindowUpdated(tx_id, contract_name, timeout_window) => {
+            TxEvent::ContractTimeoutWindowUpdated(_, contract_name, timeout_window) => {
                 self.block_under_construction
                     .updated_timeout_windows
                     .insert(contract_name.clone(), timeout_window.clone());
@@ -1847,9 +1847,6 @@ impl<'any> NodeStateProcessing<'any> {
             if let Some(tx) = self.unsettled_transactions.remove(tx) {
                 info!("⏰ Blob tx timed out: {}", &tx.hash);
                 self.this.metrics.add_triggered_timeouts();
-                let hash = tx.hash.clone();
-                let parent_hash = tx.parent_dp_hash.clone();
-                let lane_id = tx.tx_context.lane_id.clone();
                 self.callback.on_event(&TxEvent::TimedOut(&TxId(
                     tx.parent_dp_hash.clone(),
                     tx.hash.clone(),

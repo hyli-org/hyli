@@ -12,7 +12,7 @@ use hyle_modules::modules::{Module, module_bus_client};
 use hyle_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{ModulesHandler, da_listener::DAListenerConf, signed_da_listener::SignedDAListener},
-    node_state::{NodeState, metrics::NodeStateMetrics},
+    node_state::NodeState,
     utils::logger::setup_tracing,
 };
 

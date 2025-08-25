@@ -9,10 +9,7 @@ use tracing::{debug, error, info, trace, warn};
 use crate::{
     bus::{BusClientSender, SharedMessageBus},
     modules::{data_availability::blocks_fjall::Blocks, module_bus_client, Module},
-    node_state::{
-        metrics::NodeStateMetrics, module::NodeStateEvent, BlockNodeStateCallback, NodeState,
-        NodeStateStore,
-    },
+    node_state::{metrics::NodeStateMetrics, module::NodeStateEvent, NodeState, NodeStateStore},
     utils::da_codec::{DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest},
 };
 use crate::{log_error, module_handle_messages};

@@ -160,17 +160,6 @@ impl std::ops::Deref for Indexer {
     }
 }
 
-fn calculate_optimal_batch_size(params_per_item: usize) -> usize {
-    let max_params: usize = 65000; // Security margin
-    if params_per_item == 0 {
-        return 1;
-    }
-
-    let optimal_size = max_params / params_per_item;
-    // Assert there is at least 1 elem per batch
-    std::cmp::max(1, optimal_size)
-}
-
 #[derive(Default)]
 pub(crate) struct IndexerHandlerStore {
     sql_queries: Vec<
@@ -202,370 +191,6 @@ impl std::fmt::Debug for IndexerHandlerStore {
         f.debug_struct("IndexerHandlerStore")
             .field("sql_queries", &self.sql_queries.len())
             .finish()
-    }
-}
-
-#[derive(Default)]
-pub struct StreamableData(pub Vec<String>, usize);
-
-impl StreamableData {
-    pub fn new(data: Vec<String>) -> Self {
-        StreamableData(data, 0)
-    }
-}
-
-impl tokio::io::AsyncRead for StreamableData {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut core::task::Context<'_>,
-        buf: &mut ReadBuf<'_>,
-    ) -> core::task::Poll<std::result::Result<(), std::io::Error>> {
-        let this = self.get_mut();
-        if this.0.is_empty() {
-            return core::task::Poll::Ready(Ok(()));
-        }
-        let data = this.0.pop().unwrap();
-        let mut v = data.as_bytes();
-        if this.1 > 0 {
-            v = &v[this.1..];
-        }
-        if v.len() > buf.remaining() {
-            // Fill the buffer then start over (rare so allowed to be a little inefficient)
-            this.1 += buf.remaining();
-            buf.put_slice(&v[..buf.remaining()]);
-            this.0.push(data);
-        } else {
-            buf.put_slice(v);
-            this.1 = 0;
-        }
-        core::task::Poll::Ready(Ok(()))
-    }
-}
-
-impl Indexer {
-    #[cfg(test)]
-    pub(crate) async fn force_handle_signed_block(
-        &mut self,
-        block: SignedBlock,
-    ) -> Result<(), Error> {
-        self.node_state.current_height = BlockHeight(block.height().0 - 1);
-        self.handle_signed_block(block).await
-    }
-
-    pub async fn handle_signed_block(&mut self, block: SignedBlock) -> Result<(), Error> {
-        {
-            self.handler_store.block_height = block.height();
-            self.handler_store.block_hash = block.hashed();
-
-            self.handler_store.blocks.push(BlockStore {
-                block_hash: self.handler_store.block_hash.clone(),
-                parent_hash: block.parent_hash().clone(),
-                block_height: self.handler_store.block_height,
-                timestamp: into_utc_date_time(&block.consensus_proposal.timestamp)
-                    .unwrap_or_else(|_| Utc::now()),
-                total_txs: block.count_txs() as i64,
-            });
-
-            NodeStateProcessing {
-                this: &mut self.node_state,
-                callback: &mut self.handler_store,
-            }
-            .process_signed_block(&block)?;
-
-            // We use the indexer as node-state-processor for CSI
-            // TODO: refactor this away it conflicts with running the indexer in the full node as we send all events twice.
-            self.bus.send(NodeStateEvent::NewBlock(Box::new(
-                self.handler_store.block_callback.get_block(),
-            )));
-        }
-
-        // if last block is newer than 5sec dump store to db
-        let now = TimestampMsClock::now();
-        if self.handler_store.tx_events.0.len() > self.conf.indexer.query_buffer_size
-            || self.handler_store.last_update.0 + 5000 < now.0
-        {
-            log_error!(self.dump_store_to_db().await, "dumping to DB")?;
-            self.handler_store.last_update = now;
-        }
-
-        Ok(())
-    }
-
-    pub async fn handle_mempool_status_event(&mut self, event: MempoolStatusEvent) -> Result<()> {
-        match event {
-            MempoolStatusEvent::WaitingDissemination {
-                parent_data_proposal_hash,
-                tx,
-            } => {
-                self.handler_store.txs.push_front(TxStore {
-                    tx_hash: TxHashDb(tx.hashed().clone()),
-                    dp_hash: DataProposalHashDb(parent_data_proposal_hash.clone()),
-                    transaction_type: TransactionTypeDb::BlobTransaction,
-                    block_hash: None,
-                    block_height: BlockHeight(0),
-                    lane_id: None, // TODO: we know the lane here so not sure why this used to be an option
-                    index: 0,
-                    identity: match tx.transaction_data {
-                        TransactionData::Blob(ref blob_tx) => Some(blob_tx.identity.clone().0),
-                        _ => None,
-                    },
-                });
-                // We skip the blobs here or they'll conflict later and it's easier.
-            }
-            MempoolStatusEvent::DataProposalCreated {
-                parent_data_proposal_hash,
-                data_proposal_hash,
-                txs_metadatas,
-            } => {
-                for tx_metadata in txs_metadatas {
-                    self.handler_store
-                        .tx_status_update
-                        .entry(tx_metadata.id)
-                        .or_insert(TransactionStatusDb::DataProposalCreated);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub(crate) fn empty_store(&self) -> bool {
-        self.handler_store.sql_queries.is_empty()
-    }
-
-    pub(crate) async fn dump_store_to_db(&mut self) -> Result<()> {
-        info!("Dumping SQL queries to database");
-
-        //let mut transaction = self.db.begin().await?;
-        let transaction = &self.db;
-        let mut transaction = transaction.acquire().await?;
-        let transaction = transaction.acquire().await?;
-
-        // First insert blocks
-        for block in self.handler_store.blocks.drain(..) {
-            sqlx::query("INSERT INTO blocks (hash, parent_hash, height, timestamp, total_txs) VALUES ($1, $2, $3, $4, $5)")
-                .bind(block.block_hash)
-                .bind(block.parent_hash)
-                .bind(block.block_height.0 as i64)
-                .bind(block.timestamp)
-                .bind(block.total_txs)
-                .execute(&mut *transaction)
-                .await?;
-        }
-
-        // Then transactions
-        let batch_size = calculate_optimal_batch_size(10);
-        while !self.handler_store.txs.is_empty() {
-            let chunk = self
-                .handler_store
-                .txs
-                .drain(..std::cmp::min(batch_size, self.handler_store.txs.len()))
-                .collect::<Vec<_>>();
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                    "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) VALUES ",
-                );
-            // PG won't let us have the same TX twice in the insert into values, so do this as a workaround.
-            let mut already_inserted: HashSet<TxId> = HashSet::new();
-            let l = chunk.len();
-            let mut add_comma = false;
-            for (i, tx) in chunk.into_iter().enumerate() {
-                if already_inserted.insert(TxId(tx.dp_hash.0.clone(), tx.tx_hash.0.clone())) {
-                    if add_comma {
-                        query_builder.push(",");
-                    }
-                    query_builder.push("(");
-                    query_builder.push_bind(tx.dp_hash);
-                    query_builder.push(",");
-                    query_builder.push_bind(tx.tx_hash);
-                    query_builder.push(",");
-                    query_builder.push_bind(1);
-                    query_builder.push(",");
-                    query_builder.push_bind(tx.transaction_type);
-                    query_builder.push(",");
-                    query_builder.push_bind(TransactionStatusDb::WaitingDissemination);
-                    query_builder.push(",");
-                    query_builder.push_bind(tx.block_hash);
-                    query_builder.push(",");
-                    query_builder.push_bind(tx.block_height.0 as i32);
-                    query_builder.push(",");
-                    query_builder.push_bind(tx.lane_id);
-                    query_builder.push(",");
-                    query_builder.push_bind(tx.index);
-                    query_builder.push(",");
-                    query_builder.push_bind(tx.identity);
-                    query_builder.push(")");
-                    add_comma = true;
-                }
-            }
-            // for genesis block verified proof tx
-            query_builder.push(
-                " ON CONFLICT (parent_dp_hash, tx_hash)
-                DO UPDATE SET
-                    index = GREATEST(transactions.index, excluded.index),
-                    lane_id = COALESCE(excluded.lane_id, transactions.lane_id),
-                    block_hash = COALESCE(excluded.block_hash, transactions.block_hash),
-                    block_height = GREATEST(excluded.block_height, transactions.block_height)",
-            );
-            if already_inserted.is_empty() {
-                continue;
-            }
-            _ = log_error!(
-                query_builder.build().execute(&mut *transaction).await,
-                "Inserting transactions"
-            )?;
-        }
-
-        // Then status updates
-        {
-            // Create a temporary table to insert updates
-            sqlx::query("CREATE TEMPORARY TABLE IF NOT EXISTS updates (parent_dp_hash TEXT NOT NULL, tx_hash TEXT NOT NULL, transaction_status transaction_status NOT NULL)")
-                .execute(&mut *transaction)
-                .await?;
-
-            let batch_size = calculate_optimal_batch_size(3);
-            while !self.handler_store.tx_status_update.is_empty() {
-                let mut entries = vec![];
-                for _ in 0..std::cmp::min(batch_size, self.handler_store.tx_status_update.len()) {
-                    let key = self
-                        .handler_store
-                        .tx_status_update
-                        .keys()
-                        .next()
-                        .unwrap()
-                        .clone();
-                    entries.push((
-                        self.handler_store.tx_status_update.remove(&key).unwrap(),
-                        key,
-                    ));
-                }
-                // Insert status updates into the temporary table
-                let mut query_builder = QueryBuilder::<Postgres>::new(
-                    "INSERT INTO updates (parent_dp_hash, tx_hash, transaction_status) ",
-                );
-                query_builder.push_values(entries.into_iter(), |mut b, (status, tx_id)| {
-                    b.push_bind(DataProposalHashDb(tx_id.0))
-                        .push_bind(TxHashDb(tx_id.1))
-                        .push_bind(status);
-                });
-                _ = log_error!(
-                    query_builder.build().execute(&mut *transaction).await,
-                    "Inserting status updates into temporary table"
-                )?;
-            }
-
-            // Batch update transaction statuses from the temporary table
-            sqlx::query(
-                "UPDATE transactions SET transaction_status = updates.transaction_status
-                FROM updates
-                WHERE transactions.tx_hash = updates.tx_hash AND transactions.parent_dp_hash = updates.parent_dp_hash"
-            )
-            .execute(&mut *transaction)
-            .await?;
-
-            // Truncate the temporary table
-            sqlx::query("TRUNCATE TABLE updates")
-                .execute(&mut *transaction)
-                .await?;
-        }
-
-        // Contracts, annoyingly, can be added-deleted-added and so on, so we'll insert them one at a time for simplicity.
-        for contract in self.handler_store.contract_inserts.drain(..) {
-            sqlx::query("INSERT INTO contracts (contract_name, verifier, program_id, timeout_window, state_commitment, parent_dp_hash, tx_hash, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (contract_name) DO UPDATE SET
-                verifier = EXCLUDED.verifier,
-                program_id = EXCLUDED.program_id,
-                timeout_window = EXCLUDED.timeout_window,
-                state_commitment = EXCLUDED.state_commitment,
-                parent_dp_hash = EXCLUDED.parent_dp_hash,
-                tx_hash = EXCLUDED.tx_hash,
-                metadata = EXCLUDED.metadata,
-                deleted_at_height = NULL")
-                .bind(contract.contract_name.0)
-                .bind(contract.verifier)
-                .bind(contract.program_id)
-                .bind(contract.timeout_window)
-                .bind(contract.state_commitment)
-                .bind(contract.parent_dp_hash)
-                .bind(contract.tx_hash)
-                .bind(contract.metadata)
-                .execute(&mut *transaction)
-                .await?;
-        }
-
-        // COPY seems about 2x faster than INSERT
-        let mut copy = transaction.copy_in_raw("COPY transaction_state_events (block_hash, block_height, parent_dp_hash, tx_hash, index, events) FROM STDIN WITH (FORMAT TEXT)").await?;
-        copy.read_from(&mut self.handler_store.tx_events).await?;
-        copy.finish().await?;
-
-        let mut copy = transaction.copy_in_raw("COPY blobs (parent_dp_hash, tx_hash, blob_index, identity, contract_name, data) FROM STDIN WITH (FORMAT TEXT)").await?;
-        copy.read_from(&mut self.handler_store.blobs).await?;
-        copy.finish().await?;
-
-        let mut copy = transaction.copy_in_raw("COPY blob_proof_outputs (blob_parent_dp_hash, blob_tx_hash, proof_parent_dp_hash, proof_tx_hash, blob_index, blob_proof_output_index, contract_name, hyle_output, settled) FROM STDIN WITH (FORMAT TEXT)").await?;
-        copy.read_from(&mut self.handler_store.blob_proof_outputs)
-            .await?;
-        copy.finish().await?;
-
-        // Then contract updates
-        {
-            // Create a temporary table to insert updates
-            sqlx::query("CREATE TEMPORARY TABLE IF NOT EXISTS contract_updates (contract_name TEXT PRIMARY KEY NOT NULL, verifier TEXT, program_id BYTEA, timeout_window BIGINT, state_commitment BYTEA, deleted_at_height INT)")
-                .execute(&mut *transaction)
-                .await?;
-
-            let batch_size = calculate_optimal_batch_size(6);
-            while !self.handler_store.contract_updates.is_empty() {
-                let mut entries = vec![];
-                for _ in 0..std::cmp::min(batch_size, self.handler_store.contract_updates.len()) {
-                    let key = self
-                        .handler_store
-                        .contract_updates
-                        .keys()
-                        .next()
-                        .unwrap()
-                        .clone();
-                    entries.push((
-                        self.handler_store.contract_updates.remove(&key).unwrap(),
-                        key,
-                    ));
-                }
-                // Insert contract updates into the temporary table
-                let mut query_builder = QueryBuilder::<Postgres>::new(
-                    "INSERT INTO contract_updates (contract_name, verifier, program_id, timeout_window, state_commitment, deleted_at_height) ",
-                );
-                query_builder.push_values(entries.into_iter(), |mut b, (update, contract_name)| {
-                    b.push_bind(contract_name.0)
-                        .push_bind(update.verifier)
-                        .push_bind(update.program_id)
-                        .push_bind(update.timeout_window)
-                        .push_bind(update.state_commitment)
-                        .push_bind(update.deleted_at_height);
-                });
-                _ = log_error!(
-                    query_builder.build().execute(&mut *transaction).await,
-                    "Inserting contract updates into temporary table"
-                )?;
-            }
-
-            // Batch update contract updates from the temporary table
-            sqlx::query(
-                "UPDATE contracts SET
-                    verifier = COALESCE(contract_updates.verifier, contracts.verifier),
-                    program_id = COALESCE(contract_updates.program_id, contracts.program_id),
-                    timeout_window = COALESCE(contract_updates.timeout_window, contracts.timeout_window),
-                    state_commitment = COALESCE(contract_updates.state_commitment, contracts.state_commitment),
-                    deleted_at_height = COALESCE(contract_updates.deleted_at_height, contracts.deleted_at_height)
-                FROM contract_updates
-                WHERE contracts.contract_name = contract_updates.contract_name"
-            )
-            .execute(&mut *transaction)
-            .await?;
-
-            // Truncate the temporary table
-            sqlx::query("TRUNCATE TABLE contract_updates")
-                .execute(&mut *transaction)
-                .await?;
-        }
-
-        Ok(())
     }
 }
 
@@ -607,6 +232,93 @@ struct ContractUpdateStore {
     pub timeout_window: Option<TimeoutWindowDb>,
     pub state_commitment: Option<Vec<u8>>,
     pub deleted_at_height: Option<i32>,
+}
+
+impl Indexer {
+    #[cfg(test)]
+    pub(crate) async fn force_handle_signed_block(
+        &mut self,
+        block: SignedBlock,
+    ) -> Result<(), Error> {
+        self.node_state.current_height = BlockHeight(block.height().0 - 1);
+        self.handle_signed_block(block).await
+    }
+
+    pub async fn handle_signed_block(&mut self, block: SignedBlock) -> Result<(), Error> {
+        {
+            self.handler_store.block_height = block.height();
+            self.handler_store.block_hash = block.hashed();
+
+            self.handler_store.blocks.push(BlockStore {
+                block_hash: self.handler_store.block_hash.clone(),
+                parent_hash: block.parent_hash().clone(),
+                block_height: self.handler_store.block_height,
+                timestamp: into_utc_date_time(&block.consensus_proposal.timestamp)
+                    .unwrap_or_else(|_| Utc::now()),
+                total_txs: block.count_txs() as i64,
+            });
+
+            NodeStateProcessing {
+                this: &mut self.node_state,
+                callback: &mut self.handler_store,
+            }
+            .process_signed_block(&block)?;
+
+            // We use the indexer as node-state-processor for CSI
+            // TODO: refactor this away it conflicts with running the indexer in the full node as we send all events twice.
+            _ = self.bus.send(NodeStateEvent::NewBlock(Box::new(
+                self.handler_store.block_callback.get_block(),
+            )))?;
+        }
+
+        // if last block is newer than 5sec dump store to db
+        let now = TimestampMsClock::now();
+        if self.handler_store.tx_events.0.len() > self.conf.indexer.query_buffer_size
+            || self.handler_store.last_update.0 + 5000 < now.0
+        {
+            log_error!(self.dump_store_to_db().await, "dumping to DB")?;
+            self.handler_store.last_update = now;
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_mempool_status_event(&mut self, event: MempoolStatusEvent) -> Result<()> {
+        match event {
+            MempoolStatusEvent::WaitingDissemination {
+                parent_data_proposal_hash,
+                tx,
+            } => {
+                self.handler_store.txs.push_front(TxStore {
+                    tx_hash: TxHashDb(tx.hashed().clone()),
+                    dp_hash: DataProposalHashDb(parent_data_proposal_hash.clone()),
+                    transaction_type: TransactionTypeDb::BlobTransaction,
+                    block_hash: None,
+                    block_height: BlockHeight(0),
+                    lane_id: None, // TODO: we know the lane here so not sure why this used to be an option
+                    index: 0,
+                    identity: match tx.transaction_data {
+                        TransactionData::Blob(ref blob_tx) => Some(blob_tx.identity.clone().0),
+                        _ => None,
+                    },
+                });
+                // We skip the blobs here or they'll conflict later and it's easier.
+            }
+            MempoolStatusEvent::DataProposalCreated { txs_metadatas, .. } => {
+                for tx_metadata in txs_metadatas {
+                    self.handler_store
+                        .tx_status_update
+                        .entry(tx_metadata.id)
+                        .or_insert(TransactionStatusDb::DataProposalCreated);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn empty_store(&self) -> bool {
+        self.handler_store.sql_queries.is_empty()
+    }
 }
 
 impl NodeStateCallback for IndexerHandlerStore {
@@ -781,9 +493,296 @@ impl NodeStateCallback for IndexerHandlerStore {
     }
 }
 
+impl Indexer {
+    pub(crate) async fn dump_store_to_db(&mut self) -> Result<()> {
+        info!("Dumping SQL queries to database");
+
+        //let mut transaction = self.db.begin().await?;
+        let transaction = &self.db;
+        let mut transaction = transaction.acquire().await?;
+        let transaction = transaction.acquire().await?;
+
+        // First insert blocks
+        for block in self.handler_store.blocks.drain(..) {
+            sqlx::query("INSERT INTO blocks (hash, parent_hash, height, timestamp, total_txs) VALUES ($1, $2, $3, $4, $5)")
+                .bind(block.block_hash)
+                .bind(block.parent_hash)
+                .bind(block.block_height.0 as i64)
+                .bind(block.timestamp)
+                .bind(block.total_txs)
+                .execute(&mut *transaction)
+                .await?;
+        }
+
+        // Then transactions
+        let batch_size = calculate_optimal_batch_size(10);
+        while !self.handler_store.txs.is_empty() {
+            let chunk = self
+                .handler_store
+                .txs
+                .drain(..std::cmp::min(batch_size, self.handler_store.txs.len()))
+                .collect::<Vec<_>>();
+            let mut query_builder = QueryBuilder::<Postgres>::new(
+                    "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) VALUES ",
+                );
+            // PG won't let us have the same TX twice in the insert into values, so do this as a workaround.
+            let mut already_inserted: HashSet<TxId> = HashSet::new();
+            let mut add_comma = false;
+            for tx in chunk.into_iter() {
+                if already_inserted.insert(TxId(tx.dp_hash.0.clone(), tx.tx_hash.0.clone())) {
+                    if add_comma {
+                        query_builder.push(",");
+                    }
+                    query_builder.push("(");
+                    query_builder.push_bind(tx.dp_hash);
+                    query_builder.push(",");
+                    query_builder.push_bind(tx.tx_hash);
+                    query_builder.push(",");
+                    query_builder.push_bind(1);
+                    query_builder.push(",");
+                    query_builder.push_bind(tx.transaction_type);
+                    query_builder.push(",");
+                    query_builder.push_bind(TransactionStatusDb::WaitingDissemination);
+                    query_builder.push(",");
+                    query_builder.push_bind(tx.block_hash);
+                    query_builder.push(",");
+                    query_builder.push_bind(tx.block_height.0 as i32);
+                    query_builder.push(",");
+                    query_builder.push_bind(tx.lane_id);
+                    query_builder.push(",");
+                    query_builder.push_bind(tx.index);
+                    query_builder.push(",");
+                    query_builder.push_bind(tx.identity);
+                    query_builder.push(")");
+                    add_comma = true;
+                }
+            }
+            // for genesis block verified proof tx
+            query_builder.push(
+                " ON CONFLICT (parent_dp_hash, tx_hash)
+                DO UPDATE SET
+                    index = GREATEST(transactions.index, excluded.index),
+                    lane_id = COALESCE(excluded.lane_id, transactions.lane_id),
+                    block_hash = COALESCE(excluded.block_hash, transactions.block_hash),
+                    block_height = GREATEST(excluded.block_height, transactions.block_height)",
+            );
+            if already_inserted.is_empty() {
+                continue;
+            }
+            _ = log_error!(
+                query_builder.build().execute(&mut *transaction).await,
+                "Inserting transactions"
+            )?;
+        }
+
+        // Then status updates
+        {
+            // Create a temporary table to insert updates
+            sqlx::query("CREATE TEMPORARY TABLE IF NOT EXISTS updates (parent_dp_hash TEXT NOT NULL, tx_hash TEXT NOT NULL, transaction_status transaction_status NOT NULL)")
+                .execute(&mut *transaction)
+                .await?;
+
+            let batch_size = calculate_optimal_batch_size(3);
+            while !self.handler_store.tx_status_update.is_empty() {
+                let mut entries = vec![];
+                #[allow(clippy::unwrap_used, reason = "Must exist from check above")]
+                for _ in 0..std::cmp::min(batch_size, self.handler_store.tx_status_update.len()) {
+                    let key = self
+                        .handler_store
+                        .tx_status_update
+                        .keys()
+                        .next()
+                        .unwrap()
+                        .clone();
+                    entries.push((
+                        self.handler_store.tx_status_update.remove(&key).unwrap(),
+                        key,
+                    ));
+                }
+                // Insert status updates into the temporary table
+                let mut query_builder = QueryBuilder::<Postgres>::new(
+                    "INSERT INTO updates (parent_dp_hash, tx_hash, transaction_status) ",
+                );
+                query_builder.push_values(entries.into_iter(), |mut b, (status, tx_id)| {
+                    b.push_bind(DataProposalHashDb(tx_id.0))
+                        .push_bind(TxHashDb(tx_id.1))
+                        .push_bind(status);
+                });
+                _ = log_error!(
+                    query_builder.build().execute(&mut *transaction).await,
+                    "Inserting status updates into temporary table"
+                )?;
+            }
+
+            // Batch update transaction statuses from the temporary table
+            sqlx::query(
+                "UPDATE transactions SET transaction_status = updates.transaction_status
+                FROM updates
+                WHERE transactions.tx_hash = updates.tx_hash AND transactions.parent_dp_hash = updates.parent_dp_hash"
+            )
+            .execute(&mut *transaction)
+            .await?;
+
+            // Truncate the temporary table
+            sqlx::query("TRUNCATE TABLE updates")
+                .execute(&mut *transaction)
+                .await?;
+        }
+
+        // Contracts, annoyingly, can be added-deleted-added and so on, so we'll insert them one at a time for simplicity.
+        for contract in self.handler_store.contract_inserts.drain(..) {
+            sqlx::query("INSERT INTO contracts (contract_name, verifier, program_id, timeout_window, state_commitment, parent_dp_hash, tx_hash, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (contract_name) DO UPDATE SET
+                verifier = EXCLUDED.verifier,
+                program_id = EXCLUDED.program_id,
+                timeout_window = EXCLUDED.timeout_window,
+                state_commitment = EXCLUDED.state_commitment,
+                parent_dp_hash = EXCLUDED.parent_dp_hash,
+                tx_hash = EXCLUDED.tx_hash,
+                metadata = EXCLUDED.metadata,
+                deleted_at_height = NULL")
+                .bind(contract.contract_name.0)
+                .bind(contract.verifier)
+                .bind(contract.program_id)
+                .bind(contract.timeout_window)
+                .bind(contract.state_commitment)
+                .bind(contract.parent_dp_hash)
+                .bind(contract.tx_hash)
+                .bind(contract.metadata)
+                .execute(&mut *transaction)
+                .await?;
+        }
+
+        // COPY seems about 2x faster than INSERT
+        let mut copy = transaction.copy_in_raw("COPY transaction_state_events (block_hash, block_height, parent_dp_hash, tx_hash, index, events) FROM STDIN WITH (FORMAT TEXT)").await?;
+        copy.read_from(&mut self.handler_store.tx_events).await?;
+        copy.finish().await?;
+
+        let mut copy = transaction.copy_in_raw("COPY blobs (parent_dp_hash, tx_hash, blob_index, identity, contract_name, data) FROM STDIN WITH (FORMAT TEXT)").await?;
+        copy.read_from(&mut self.handler_store.blobs).await?;
+        copy.finish().await?;
+
+        let mut copy = transaction.copy_in_raw("COPY blob_proof_outputs (blob_parent_dp_hash, blob_tx_hash, proof_parent_dp_hash, proof_tx_hash, blob_index, blob_proof_output_index, contract_name, hyle_output, settled) FROM STDIN WITH (FORMAT TEXT)").await?;
+        copy.read_from(&mut self.handler_store.blob_proof_outputs)
+            .await?;
+        copy.finish().await?;
+
+        // Then contract updates
+        {
+            // Create a temporary table to insert updates
+            sqlx::query("CREATE TEMPORARY TABLE IF NOT EXISTS contract_updates (contract_name TEXT PRIMARY KEY NOT NULL, verifier TEXT, program_id BYTEA, timeout_window BIGINT, state_commitment BYTEA, deleted_at_height INT)")
+                .execute(&mut *transaction)
+                .await?;
+
+            let batch_size = calculate_optimal_batch_size(6);
+            while !self.handler_store.contract_updates.is_empty() {
+                let mut entries = vec![];
+                #[allow(clippy::unwrap_used, reason = "Must exist from check above")]
+                for _ in 0..std::cmp::min(batch_size, self.handler_store.contract_updates.len()) {
+                    let key = self
+                        .handler_store
+                        .contract_updates
+                        .keys()
+                        .next()
+                        .unwrap()
+                        .clone();
+                    entries.push((
+                        self.handler_store.contract_updates.remove(&key).unwrap(),
+                        key,
+                    ));
+                }
+                // Insert contract updates into the temporary table
+                let mut query_builder = QueryBuilder::<Postgres>::new(
+                    "INSERT INTO contract_updates (contract_name, verifier, program_id, timeout_window, state_commitment, deleted_at_height) ",
+                );
+                query_builder.push_values(entries.into_iter(), |mut b, (update, contract_name)| {
+                    b.push_bind(contract_name.0)
+                        .push_bind(update.verifier)
+                        .push_bind(update.program_id)
+                        .push_bind(update.timeout_window)
+                        .push_bind(update.state_commitment)
+                        .push_bind(update.deleted_at_height);
+                });
+                _ = log_error!(
+                    query_builder.build().execute(&mut *transaction).await,
+                    "Inserting contract updates into temporary table"
+                )?;
+            }
+
+            // Batch update contract updates from the temporary table
+            sqlx::query(
+                "UPDATE contracts SET
+                    verifier = COALESCE(contract_updates.verifier, contracts.verifier),
+                    program_id = COALESCE(contract_updates.program_id, contracts.program_id),
+                    timeout_window = COALESCE(contract_updates.timeout_window, contracts.timeout_window),
+                    state_commitment = COALESCE(contract_updates.state_commitment, contracts.state_commitment),
+                    deleted_at_height = COALESCE(contract_updates.deleted_at_height, contracts.deleted_at_height)
+                FROM contract_updates
+                WHERE contracts.contract_name = contract_updates.contract_name"
+            )
+            .execute(&mut *transaction)
+            .await?;
+
+            // Truncate the temporary table
+            sqlx::query("TRUNCATE TABLE contract_updates")
+                .execute(&mut *transaction)
+                .await?;
+        }
+
+        Ok(())
+    }
+}
+
+fn calculate_optimal_batch_size(params_per_item: usize) -> usize {
+    let max_params: usize = 65000; // Security margin
+    if params_per_item == 0 {
+        return 1;
+    }
+
+    let optimal_size = max_params / params_per_item;
+    // Assert there is at least 1 elem per batch
+    std::cmp::max(1, optimal_size)
+}
+
 pub fn into_utc_date_time(ts: &TimestampMs) -> Result<DateTime<Utc>> {
     DateTime::from_timestamp_millis(ts.0.try_into().context("Converting u64 into i64")?)
         .context("Converting i64 into UTC DateTime")
+}
+
+#[derive(Default)]
+pub struct StreamableData(pub Vec<String>, usize);
+
+impl StreamableData {
+    pub fn new(data: Vec<String>) -> Self {
+        StreamableData(data, 0)
+    }
+}
+
+#[allow(clippy::indexing_slicing, reason = "data-byte exist by construction")]
+impl tokio::io::AsyncRead for StreamableData {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut core::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> core::task::Poll<std::result::Result<(), std::io::Error>> {
+        let this = self.get_mut();
+        let Some(data) = this.0.pop() else {
+            return core::task::Poll::Ready(Ok(()));
+        };
+        let mut v = data.as_bytes();
+        if this.1 > 0 {
+            v = &v[this.1..]; // Should never panic by construction
+        }
+        if v.len() > buf.remaining() {
+            // Fill the buffer then start over (rare so allowed to be a little inefficient)
+            this.1 += buf.remaining();
+            buf.put_slice(&v[..buf.remaining()]); // always safe
+            this.0.push(data);
+        } else {
+            buf.put_slice(v);
+            this.1 = 0;
+        }
+        core::task::Poll::Ready(Ok(()))
+    }
 }
 
 #[cfg(test)]
