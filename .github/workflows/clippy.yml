@@ -27,7 +27,7 @@ jobs:
         with:
           deny: warnings
           token: ${{ secrets.GITHUB_TOKEN }}
-          options: "--all-targets --all-features"
+          options: "--all-targets -F sp1 -F risc0"
       - name: Run rustfmt
         run: cargo fmt --all -- --check
       - name: Run cargo check
