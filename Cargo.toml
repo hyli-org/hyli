@@ -236,6 +236,12 @@ ignored = ["zip", "bytes", "tokio-util"]
 [patch.crates-io]
 sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.8-risczero.0" }
 
+# Temporary patch for zkhash to support M31 field operations
+# This patches the HorizenLabs/poseidon2 repo to use our custom branch with M31 field support
+# TODO: Remove this patch once https://github.com/HorizenLabs/poseidon2/pull/8 is merged
+[patch."https://github.com/HorizenLabs/poseidon2"]
+zkhash = { git = "https://github.com/AntoineFONDEUR/poseidon2", branch = "poseidon2-M31", optional = true }
+
 [dev-dependencies]
 amm = { workspace = true, features = ["client"] }
 uuid-tld = { workspace = true, features = ["client"] }
@@ -270,6 +276,7 @@ default = ["risc0"]
 
 turmoil = ["hyle-net/turmoil", "client-sdk/turmoil"]
 
+cairo-m = ["hyle-verifiers/cairo-m"]
 risc0 = ["hyle-verifiers/risc0", "client-sdk/risc0"]
 sp1 = ["hyle-verifiers/sp1", "client-sdk/sp1"]
 
