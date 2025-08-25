@@ -1396,9 +1396,6 @@ impl<'any> NodeStateProcessing<'any> {
             }
         }
 
-        // Keep track of settled txs
-        //block_under_construction.successful_txs.push(bth);
-
         next_txs_to_try_and_settle
     }
 
@@ -1881,8 +1878,6 @@ impl<'any> NodeStateProcessing<'any> {
                 false
             }
         });
-
-        //block_under_construction.timed_out_txs = txs_at_timeout;
     }
 }
 
