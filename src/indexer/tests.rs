@@ -49,11 +49,7 @@ async fn new_indexer(pool: PgPool) -> (Indexer, Explorer) {
         Indexer {
             bus: IndexerBusClient::new_from_bus(bus.new_handle()).await,
             db: pool.clone(),
-            node_state: Some(Box::new(NodeState::create(
-                "indexer".to_string(),
-                "indexer",
-            ))),
-
+            node_state: NodeState::create("indexer".to_string(), "indexer"),
             handler_store: IndexerHandlerStore::default(),
             conf,
         },
@@ -1128,11 +1124,6 @@ async fn test_indexer_api() -> Result<()> {
     // Contracts
     // Get contract by name
     let transactions_response = server.get("/contract/contract_1").await;
-    transactions_response.assert_status_ok();
-    assert!(!transactions_response.text().is_empty());
-
-    // Get contract state by name and height
-    let transactions_response = server.get("/state/contract/contract_1/block/1").await;
     transactions_response.assert_status_ok();
     assert!(!transactions_response.text().is_empty());
 

@@ -722,7 +722,7 @@ async fn settle_with_multiple_state_reads() {
         .unwrap()
         .iter()
         .any(|e| {
-            let TransactionStateEvent::SettleEvent(errmsg) = e else {
+            let TransactionStateEvent::Error(errmsg) = e else {
                 return false;
             };
             errmsg.contains("does not match other contract state")
@@ -1817,15 +1817,15 @@ async fn test_invalid_onchain_effect_causes_immediate_failure() {
         .iter()
         .any(|e| matches!(e, TransactionStateEvent::SettledAsFailed)));
 
-    // Check that we have a SettleEvent with the validation error message
+    // Check that we have an Error with the validation error message
     assert!(
         events.iter().any(|e| {
-            if let TransactionStateEvent::SettleEvent(msg) = e {
+            if let TransactionStateEvent::Error(msg) = e {
                 msg.contains("Contract registration validation failed")
             } else {
                 false
             }
         }),
-        "Should have a SettleEvent with validation error message"
+        "Should have an Error with validation error message"
     );
 }
