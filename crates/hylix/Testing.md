@@ -78,7 +78,7 @@ This will:
 1. Start a local devnet (`hy devnet`) if not already running
 1. Compile your project (`hy build`)
 1. Launch your backend (`hy run`)
-1. Run tests in tests/ via cargo test
+1. Run tests in tests / via `cargo test`
 1. Shut down the devnet and backend after completion
 
 ## 🔁 [Optional] Persistent devnet

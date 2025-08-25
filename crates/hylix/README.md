@@ -10,7 +10,6 @@
 ## :test_tube: Why Hylix?
 
 Hylix is a developer toolbox and CLI (`hy`) to build vApps on [Hyli](https://hyli.org), the new proof-powered L1 to build the next generation of apps onchain.
-<!-- Alex note: changed `hyl` to `hy` here, please confirm-->
 
 ### Who is this for?
 
@@ -112,8 +111,6 @@ Then, clean the project build artifacts:
 ```sh
 hy clean
 ```
-<!--Alex note: is hy clean needed as a separate step or could we merge it with hy build above, either in docs or in tooling?-->
-
 ### `hy devnet`
 
 Launch a local devnet with:
@@ -166,7 +163,7 @@ hy test
 * 🧪 Full E2E workflows (from proving to verification)
 * ⚙️ Full integration with `cargo test` or custom test runners
 
-#### E2E testing workflow
+#### What it does (under the hood)
 
 1. Starts `hy devnet` if not already running
 2. Compiles your project (`hy build`)
