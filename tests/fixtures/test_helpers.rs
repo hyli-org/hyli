@@ -174,9 +174,24 @@ impl TestProcess {
 
     pub async fn stop(&mut self) -> anyhow::Result<()> {
         if let Some(mut process) = self.process.take() {
-            // TODO: support windows?
-            signal(process.id().unwrap().try_into().unwrap(), signal::SIGQUIT)
-                .context("Failed to stop child")?;
+            #[cfg(unix)]
+            {
+                // On Unix systems, try graceful shutdown with SIGQUIT first
+                if let Ok(pid) = process.id().map(|id| id.try_into().unwrap()) {
+                    if let Err(e) = signal(pid, signal::SIGQUIT) {
+                        tracing::warn!("Failed to send SIGQUIT to process {}: {}", pid, e);
+                        // Fall back to kill if SIGQUIT fails
+                        process.kill().await.context("Failed to kill child process")?;
+                    }
+                }
+            }
+            
+            #[cfg(not(unix))]
+            {
+                // On Windows, use the kill method directly
+                process.kill().await.context("Failed to kill child process")?;
+            }
+            
             process.wait().await.context("Failed to wait for process")?;
             Ok(())
         } else {
