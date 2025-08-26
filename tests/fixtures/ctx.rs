@@ -417,9 +417,10 @@ impl E2ECtx {
             .await
     }
 
-    pub async fn send_proof_single(&self, proof: ProofTransaction) -> Result<()> {
-        assert_ok!(self.client().send_tx_proof(proof).await);
-        Ok(())
+    pub async fn send_proof_single(&self, proof: ProofTransaction) -> Result<TxHash> {
+        let tx_hash = self.client().send_tx_proof(proof).await;
+        assert_ok!(&tx_hash);
+        tx_hash
     }
 
     pub async fn send_proof(

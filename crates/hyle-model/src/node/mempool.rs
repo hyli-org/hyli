@@ -106,6 +106,7 @@ impl DataSized for DataProposal {
     BorshDeserialize,
     BorshSerialize,
 )]
+#[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct TxId(pub DataProposalHash, pub TxHash);
 
 #[derive(

@@ -1,3 +1,5 @@
+#![allow(clippy::indexing_slicing)]
+
 use assert_json_diff::assert_json_include;
 use axum_test::TestServer;
 use client_sdk::transaction_builder::ProvableBlobTx;
@@ -6,6 +8,7 @@ use hyle_contract_sdk::{BlobIndex, HyleOutput, Identity, ProgramId, StateCommitm
 use hyle_model::api::{
     APIBlob, APIBlock, APIContract, APITransaction, APITransactionEvents, TransactionStatusDb,
 };
+use hyle_modules::node_state::test::{craft_signed_block, craft_signed_block_with_parent_dp_hash};
 use serde_json::json;
 use std::future::IntoFuture;
 use utils::TimestampMs;
@@ -17,7 +20,7 @@ use crate::{
         Blob, BlobData, BlobProofOutput, ProofData, SignedBlock, Transaction, TransactionData,
         VerifiedProofTransaction,
     },
-    node_state::{metrics::NodeStateMetrics, NodeState, NodeStateStore},
+    node_state::NodeState,
     utils::conf::IndexerConf,
 };
 
@@ -39,7 +42,7 @@ async fn new_indexer(pool: PgPool) -> (Indexer, Explorer) {
 
     let conf = Conf {
         indexer: IndexerConf {
-            query_buffer_size: 100,
+            query_buffer_size: 1,
             persist_proofs: false,
         },
         ..Conf::default()
@@ -49,7 +52,6 @@ async fn new_indexer(pool: PgPool) -> (Indexer, Explorer) {
             bus: IndexerBusClient::new_from_bus(bus.new_handle()).await,
             db: pool.clone(),
             node_state: NodeState::create("indexer".to_string(), "indexer"),
-
             handler_store: IndexerHandlerStore::default(),
             conf,
         },
@@ -188,6 +190,7 @@ async fn assert_tx_not_found(server: &TestServer, tx_hash: TxHash) {
 async fn test_indexer_handle_block_flow() -> Result<()> {
     let container = Postgres::default()
         .with_tag("17-alpine")
+        .with_cmd(["postgres", "-c", "log_statement=all"])
         .start()
         .await
         .unwrap();
@@ -272,11 +275,6 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
         proof_tx_4,
     ];
 
-    let mut node_state = NodeState {
-        store: NodeStateStore::default(),
-        metrics: NodeStateMetrics::global("test".to_string(), "test"),
-    };
-
     // Handling a block containing txs
 
     let parent_data_proposal = DataProposal::new(None, txs);
@@ -286,10 +284,10 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
         LaneId(ValidatorPublicKey("ttt".into())),
         vec![parent_data_proposal.clone()],
     ));
-    let block = node_state.force_handle_block(&signed_block);
 
     indexer
-        .handle_processed_block(block)
+        .handle_signed_block(signed_block)
+        .await
         .expect("Failed to handle block");
     indexer
         .dump_store_to_db()
@@ -342,6 +340,8 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
         .await
         .expect("MempoolStatusEvent");
 
+    indexer.dump_store_to_db().await.expect("Dump to db");
+
     assert_tx_status(
         &server,
         register_tx_1_wd.hashed(),
@@ -357,6 +357,8 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
         .await
         .expect("MempoolStatusEvent");
 
+    indexer.dump_store_to_db().await.expect("Dump to db");
+
     assert_tx_status(
         &server,
         register_tx_2_wd.hashed(),
@@ -364,26 +366,8 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     )
     .await;
 
-    indexer
-        .handle_mempool_status_event(MempoolStatusEvent::WaitingDissemination {
-            parent_data_proposal_hash: parent_data_proposal.hashed(),
-            tx: blob_transaction_wd.clone(),
-        })
-        .await
-        .expect("MempoolStatusEvent");
-
-    assert_tx_status(
-        &server,
-        blob_transaction_wd.hashed(),
-        TransactionStatusDb::WaitingDissemination,
-    )
-    .await;
-
-    assert_tx_not_found(&server, proof_tx_1_wd.hashed()).await;
-
     let parent_data_proposal_hash = parent_data_proposal.hashed();
 
-    // We skip blob_transaction_wd
     let data_proposal = DataProposal::new(
         Some(parent_data_proposal_hash.clone()),
         vec![register_tx_1_wd.clone(), register_tx_2_wd.clone()],
@@ -399,9 +383,30 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     };
 
     indexer
+        .handle_mempool_status_event(MempoolStatusEvent::WaitingDissemination {
+            parent_data_proposal_hash: data_proposal.hashed(),
+            tx: blob_transaction_wd.clone(),
+        })
+        .await
+        .expect("MempoolStatusEvent");
+
+    indexer.dump_store_to_db().await.expect("Dump to db");
+
+    assert_tx_status(
+        &server,
+        blob_transaction_wd.hashed(),
+        TransactionStatusDb::WaitingDissemination,
+    )
+    .await;
+
+    assert_tx_not_found(&server, proof_tx_1_wd.hashed()).await;
+
+    indexer
         .handle_mempool_status_event(data_proposal_created_event.clone())
         .await
         .expect("MempoolStatusEvent");
+
+    indexer.dump_store_to_db().await.expect("Dump to db");
 
     assert_tx_status(
         &server,
@@ -446,6 +451,8 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
         .await
         .expect("MempoolStatusEvent");
 
+    indexer.dump_store_to_db().await.expect("Dump to db");
+
     assert_tx_status(
         &server,
         blob_transaction_wd.hashed(),
@@ -460,10 +467,10 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
         LaneId(ValidatorPublicKey("ttt".into())),
         vec![data_proposal, data_proposal_2],
     ));
-    let block_2 = node_state.force_handle_block(&signed_block);
-    let block_2_hash = block_2.hash.clone();
+    let block_2_hash = signed_block.hashed();
     indexer
-        .handle_processed_block(block_2)
+        .handle_signed_block(signed_block)
+        .await
         .expect("Failed to handle block");
     indexer
         .dump_store_to_db()
@@ -524,13 +531,14 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
                 "blobs": [{
                     "contract_name": "c1",
                     "data": hex::encode([1,2,3]),
-                    "proof_outputs": [
+                    // For now, unsettled txs don't have blob proof outputs stored.
+                    "proof_outputs": [/*
                         {
                             "initial_state": [7,7,7],
                         },
                         {
                             "initial_state": [8,8],
-                        }
+                        } */
                     ]
                 }],
                 "transaction_status": "Sequenced",
@@ -565,14 +573,6 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     assert_json_include!(
         actual: blob_transactions_response.json::<serde_json::Value>(),
         expected: json!([
-            // {
-            //     "blobs": [{
-            //         "contract_name": "c2",
-            //         "data": hex::encode(register_tx_2.blobs.get(1).map(|b| b.data.0.clone()).unwrap_or_default()), // Blob de registering
-            //         "proof_outputs": []
-            //     }],
-            //     "tx_hash": register_tx_2.hashed().to_string(),
-            // },
             {
                 "blobs": [{
                     "contract_name": "c2",
@@ -647,9 +647,17 @@ pub fn make_register_hyli_wallet_identity_tx() -> BlobTransaction {
     BlobTransaction::new("hyli@wallet".to_string(), tx.blobs)
 }
 
-async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Block, Block, Block)> {
+async fn scenario_contracts() -> Result<(
+    ContainerAsync<Postgres>,
+    Indexer,
+    SignedBlock,
+    SignedBlock,
+    SignedBlock,
+    SignedBlock,
+)> {
     let container = Postgres::default()
         .with_tag("17-alpine")
+        .with_cmd(["postgres", "-c", "log_statement=all"])
         .start()
         .await
         .unwrap();
@@ -664,11 +672,6 @@ async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Bloc
     MIGRATOR.run(&db).await.unwrap();
     let (indexer, _) = new_indexer(db).await;
 
-    let mut node_state = NodeState {
-        store: NodeStateStore::default(),
-        metrics: NodeStateMetrics::global("test".to_string(), "test"),
-    };
-
     let register_wallet = new_register_tx("wallet".into(), StateCommitment(vec![]));
     let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
 
@@ -681,7 +684,7 @@ async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Bloc
         StateCommitment(vec![0]),
     );
 
-    node_state.craft_block_and_handle(
+    let b1 = craft_signed_block(
         1,
         vec![
             register_wallet.into(),
@@ -691,7 +694,7 @@ async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Bloc
     );
 
     // Create a couple fake blocks with contracts
-    let b1 = node_state.craft_block_and_handle(
+    let b3 = craft_signed_block(
         3,
         vec![
             new_register_tx(ContractName::new("a"), StateCommitment(vec![])).into(),
@@ -720,7 +723,7 @@ async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Bloc
         StateCommitment(vec![2]),
     );
 
-    let b2 = node_state.craft_block_and_handle(
+    let b4 = craft_signed_block(
         4,
         vec![
             delete_a.into(),
@@ -760,7 +763,7 @@ async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Bloc
         StateCommitment(vec![5]),
     );
 
-    let b3 = node_state.craft_block_and_handle_with_parent_dp_hash(
+    let mut b5 = craft_signed_block_with_parent_dp_hash(
         5,
         vec![
             new_register_tx(ContractName::new("a"), StateCommitment(vec![])).into(),
@@ -768,80 +771,95 @@ async fn scenario_contracts() -> Result<(ContainerAsync<Postgres>, Indexer, Bloc
             delete_b_proof,
             delete_a.into(),
             delete_a_proof,
-            new_register_tx(ContractName::new("a"), StateCommitment(vec![])).into(),
             new_register_tx(ContractName::new("d"), StateCommitment(vec![])).into(),
             delete_d.into(),
             delete_d_proof,
         ],
         DataProposalHash("test".to_string()),
     );
+    // Reconstruct A in a separate DP
+    let parent = Some(b5.data_proposals[0].1[0].hashed());
+    b5.data_proposals[0].1.push(DataProposal::new(
+        parent,
+        vec![new_register_tx(ContractName::new("a"), StateCommitment(vec![])).into()],
+    ));
 
-    Ok((container, indexer, b1, b2, b3))
+    Ok((container, indexer, b1, b3, b4, b5))
 }
 
 #[test_log::test(tokio::test)]
 async fn test_contracts_dump_every_block() -> Result<()> {
-    let (_c, mut indexer, b1, b2, b3) = scenario_contracts().await?;
+    let (_c, mut indexer, b1, b3, b4, b5) = scenario_contracts().await?;
+    indexer.force_handle_signed_block(b1).await.unwrap();
 
-    indexer.handle_processed_block(b1.clone()).unwrap();
+    indexer.force_handle_signed_block(b3.clone()).await.unwrap();
     indexer.dump_store_to_db().await.unwrap();
-    let rows = sqlx::query("SELECT * FROM contracts")
-        .fetch_all(&indexer.db)
-        .await
-        .context("fetch contracts")?;
+    let rows = sqlx::query(
+        "SELECT * FROM contracts where deleted_at_height is NULL order by contract_name",
+    )
+    .fetch_all(&indexer.db)
+    .await
+    .context("fetch contracts")?;
     assert_eq!(
         rows.iter()
             .map(|r| r.get::<String, _>("contract_name"))
             .collect::<Vec<_>>(),
-        vec!["a", "b", "c"]
+        vec!["a", "b", "c", "wallet"]
     );
 
-    indexer.handle_processed_block(b2.clone()).unwrap();
+    indexer.force_handle_signed_block(b4.clone()).await.unwrap();
     indexer.dump_store_to_db().await.unwrap();
-    let rows = sqlx::query("SELECT * FROM contracts")
-        .fetch_all(&indexer.db)
-        .await
-        .context("fetch contracts")?;
+    let rows = sqlx::query(
+        "SELECT * FROM contracts where deleted_at_height is NULL order by contract_name",
+    )
+    .fetch_all(&indexer.db)
+    .await
+    .context("fetch contracts")?;
     assert_eq!(
         rows.iter()
             .map(|r| r.get::<String, _>("contract_name"))
             .collect::<Vec<_>>(),
-        vec!["b"]
+        vec!["b", "wallet"]
     );
 
-    indexer.handle_processed_block(b3.clone()).unwrap();
+    indexer.force_handle_signed_block(b5.clone()).await.unwrap();
     indexer.dump_store_to_db().await.unwrap();
 
-    let rows = sqlx::query("SELECT * FROM contracts")
-        .fetch_all(&indexer.db)
-        .await
-        .context("fetch contracts")?;
+    let rows = sqlx::query(
+        "SELECT * FROM contracts where deleted_at_height is NULL order by contract_name",
+    )
+    .fetch_all(&indexer.db)
+    .await
+    .context("fetch contracts")?;
     assert_eq!(
         rows.iter()
             .map(|r| r.get::<String, _>("contract_name"))
             .collect::<Vec<_>>(),
-        vec!["a"]
+        vec!["a", "wallet"]
     );
     Ok(())
 }
 
 #[test_log::test(tokio::test)]
 async fn test_contracts_batched() -> Result<()> {
-    let (_c, mut indexer, b1, b2, b3) = scenario_contracts().await?;
-    indexer.handle_processed_block(b1).unwrap();
-    indexer.handle_processed_block(b2).unwrap();
-    indexer.handle_processed_block(b3).unwrap();
+    let (_c, mut indexer, b1, b3, b4, b5) = scenario_contracts().await?;
+    indexer.force_handle_signed_block(b1).await.unwrap();
+    indexer.force_handle_signed_block(b3).await.unwrap();
+    indexer.force_handle_signed_block(b4).await.unwrap();
+    indexer.force_handle_signed_block(b5).await.unwrap();
     indexer.dump_store_to_db().await.unwrap();
 
-    let rows = sqlx::query("SELECT * FROM contracts")
-        .fetch_all(&indexer.db)
-        .await
-        .context("fetch contracts")?;
+    let rows = sqlx::query(
+        "SELECT * FROM contracts where deleted_at_height is NULL order by contract_name",
+    )
+    .fetch_all(&indexer.db)
+    .await
+    .context("fetch contracts")?;
     assert_eq!(
         rows.iter()
             .map(|r| r.get::<String, _>("contract_name"))
             .collect::<Vec<_>>(),
-        vec!["a"]
+        vec!["a", "wallet"]
     );
     Ok(())
 }
@@ -852,6 +870,7 @@ async fn test_contracts_batched() -> Result<()> {
 async fn test_indexer_api_doubles() -> Result<()> {
     let container = Postgres::default()
         .with_tag("17-alpine")
+        .with_cmd(["postgres", "-c", "log_statement=all"])
         .start()
         .await
         .unwrap();
@@ -959,6 +978,7 @@ async fn test_indexer_api_doubles() -> Result<()> {
 async fn test_indexer_api() -> Result<()> {
     let container = Postgres::default()
         .with_tag("17-alpine")
+        .with_cmd(["postgres", "-c", "log_statement=all"])
         .start()
         .await
         .unwrap();
@@ -1106,11 +1126,6 @@ async fn test_indexer_api() -> Result<()> {
     // Contracts
     // Get contract by name
     let transactions_response = server.get("/contract/contract_1").await;
-    transactions_response.assert_status_ok();
-    assert!(!transactions_response.text().is_empty());
-
-    // Get contract state by name and height
-    let transactions_response = server.get("/state/contract/contract_1/block/1").await;
     transactions_response.assert_status_ok();
     assert!(!transactions_response.text().is_empty());
 

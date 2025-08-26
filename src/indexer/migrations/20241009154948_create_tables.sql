@@ -38,7 +38,6 @@ CREATE TABLE blobs (
     identity TEXT NOT NULL,            -- Identity field from the original BlobTransaction struct
     contract_name TEXT NOT NULL,       -- Contract name associated with the blob
     data BYTEA NOT NULL,               -- Actual blob data (stored as binary)
-    verified BOOLEAN NOT NULL,         -- Field to indicate if the blob is verified
     PRIMARY KEY (parent_dp_hash, tx_hash, blob_index), -- Composite primary key (parent_dp_hash + tx_hash + blob_index) to uniquely identify each blob
     CHECK (blob_index >= 0),           -- Ensure the index is positive
     FOREIGN KEY (parent_dp_hash, tx_hash) REFERENCES transactions(parent_dp_hash, tx_hash) ON DELETE CASCADE
@@ -64,13 +63,15 @@ CREATE TABLE blob_proof_outputs (
 );
 
 CREATE TABLE contracts (
-    tx_hash TEXT NOT NULL,
-    parent_dp_hash TEXT NOT NULL,
+    contract_name TEXT PRIMARY KEY NOT NULL,
     verifier TEXT NOT NULL,
     program_id BYTEA NOT NULL,
-    timeout_window BIGINT,
+    timeout_window BIGINT, -- should we use 0 or NULL for null?
     state_commitment BYTEA NOT NULL,
-    contract_name TEXT PRIMARY KEY NOT NULL,
+    parent_dp_hash TEXT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    metadata BYTEA,
+    deleted_at_height INT,
     FOREIGN KEY (parent_dp_hash, tx_hash) REFERENCES transactions(parent_dp_hash, tx_hash) ON DELETE CASCADE
 );
 
@@ -84,12 +85,11 @@ CREATE TABLE contract_state (
 CREATE TABLE transaction_state_events (
     block_hash TEXT NOT NULL REFERENCES blocks(hash) ON DELETE CASCADE,
     block_height INT,
-    index INT,
     tx_hash TEXT NOT NULL,
     parent_dp_hash TEXT NOT NULL,
-    FOREIGN KEY (tx_hash, parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE,
-    
-    events JSONB NOT NULL
+    events JSONB NOT NULL,
+    index INT,
+    FOREIGN KEY (tx_hash, parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE
 );
 
 

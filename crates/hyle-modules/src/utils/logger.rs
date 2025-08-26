@@ -145,6 +145,9 @@ pub fn setup_tracing(log_format: &str, node_name: String) -> Result<()> {
     if !var.contains("fjall") {
         filter = filter.add_directive("fjall=warn".parse()?);
     }
+    if !var.contains("sqlx") {
+        filter = filter.add_directive("sqlx=warn".parse()?);
+    }
     if !var.contains("opentelemetry") {
         filter = filter.add_directive("opentelemetry=warn".parse()?);
         filter = filter.add_directive("opentelemetry_sdk=warn".parse()?);

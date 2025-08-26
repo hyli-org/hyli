@@ -52,6 +52,7 @@ async fn test_full_settlement_flow() -> Result<()> {
     let rest_server_port = builder.conf.rest_server_port;
     builder.conf.run_indexer = true;
     builder.conf.run_explorer = true;
+    builder.conf.indexer.query_buffer_size = 10;
     builder.conf.database_url = format!(
         "postgres://postgres:postgres@localhost:{}/postgres",
         pg.get_host_port_ipv4(5432).await.unwrap()
@@ -145,7 +146,15 @@ async fn test_full_settlement_flow() -> Result<()> {
     let mut tries = 0;
     let contract = loop {
         match pg_client.get_indexer_contract(&"c1".into()).await {
-            Ok(contract) => break contract,
+            Ok(contract) if contract.state_commitment == [4, 5, 6] => break contract,
+            Ok(_) => {
+                info!("Indexer not ready yet, retrying...");
+                tries += 1;
+                if tries > 10 {
+                    return Err(anyhow::anyhow!("Indexer did not catch up in time"));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
             Err(e) => {
                 info!("Indexer not ready yet: {e}, retrying...");
                 tries += 1;
@@ -336,13 +345,17 @@ async fn test_tx_settlement_duplicates() -> Result<()> {
     client.send_tx_proof(proof_c1.clone()).await.unwrap();
     client.send_tx_proof(proof_c2.clone()).await.unwrap();
 
-    info!("➡️  Sending blobs for c1 & c2.hyle - 3rd time");
+    info!(
+        "➡️  Sending blobs for c1 & c2.hyle - 3rd time (hash: {})",
+        tx.hashed()
+    );
 
     // Re submit the same blob tx after it was settled - should be accepted
 
     let tx_hashed = tx.hashed();
     client.send_tx_blob(tx).await.unwrap();
-    hyle_node.wait_for_n_blocks(1).await?;
+    // Need to make sure a DP happens or the second batch or proofs will be forgotten about.
+    hyle_node.wait_for_n_blocks(2).await?;
 
     let contract = client.get_contract("c1".into()).await?;
     assert_eq!(contract.state_commitment.0, vec![4, 5, 6]);

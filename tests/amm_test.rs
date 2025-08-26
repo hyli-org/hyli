@@ -26,6 +26,7 @@ mod e2e_amm {
     };
     use hyle_contract_sdk::{Blob, Calldata, ContractName, HyleOutput};
     use hyle_contracts::{AMM_ELF, AMM_ID, HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
+    use hyle_model::api::TransactionStatusDb;
     use hyllar::{
         client::tx_executor_handler::{approve, transfer},
         erc20::ERC20,
@@ -177,7 +178,7 @@ mod e2e_amm {
         )?;
         transfer(&mut tx, "hyllar".into(), "bob@hydentity".into(), 25)?;
 
-        ctx.send_provable_blob_tx(&tx).await?;
+        let tx_hash = ctx.send_provable_blob_tx(&tx).await?;
         let tx = executor.process(tx)?;
         let mut proofs = tx.iter_prove();
 
@@ -190,8 +191,23 @@ mod e2e_amm {
         info!("➡️  Sending proof for hyllar");
         ctx.send_proof_single(bob_transfer_proof).await?;
 
-        info!("➡️  Waiting for height 5 on indexer");
-        ctx.wait_indexer_height(5).await?;
+        let mut tries = 0;
+        loop {
+            if let Ok(tx) = ctx
+                .indexer_client()
+                .get_transaction_with_hash(&tx_hash)
+                .await
+            {
+                if tx.transaction_status == TransactionStatusDb::Success {
+                    break;
+                }
+            }
+            tries += 1;
+            if tries >= 10 {
+                panic!("Failed to get transaction with hash {}", tx_hash);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
 
         let state: Hyllar = ctx
             .indexer_client()
