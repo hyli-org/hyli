@@ -495,7 +495,7 @@ impl NodeStateCallback for IndexerHandlerStore {
 
 impl Indexer {
     pub(crate) async fn dump_store_to_db(&mut self) -> Result<()> {
-        info!("Dumping SQL queries to database");
+        debug!("Dumping SQL queries to database");
 
         //let mut transaction = self.db.begin().await?;
         let transaction = &self.db;
