@@ -30,7 +30,6 @@ use std::{
     ops::Deref,
 };
 use tokio::io::ReadBuf;
-use tracing::info;
 
 module_bus_client! {
 #[derive(Debug)]
@@ -495,7 +494,7 @@ impl NodeStateCallback for IndexerHandlerStore {
 
 impl Indexer {
     pub(crate) async fn dump_store_to_db(&mut self) -> Result<()> {
-        debug!("Dumping SQL queries to database");
+        tracing::debug!("Dumping SQL queries to database");
 
         //let mut transaction = self.db.begin().await?;
         let transaction = &self.db;

@@ -146,7 +146,15 @@ async fn test_full_settlement_flow() -> Result<()> {
     let mut tries = 0;
     let contract = loop {
         match pg_client.get_indexer_contract(&"c1".into()).await {
-            Ok(contract) => break contract,
+            Ok(contract) if contract.state_commitment == [4, 5, 6] => break contract,
+            Ok(_) => {
+                info!("Indexer not ready yet, retrying...");
+                tries += 1;
+                if tries > 10 {
+                    return Err(anyhow::anyhow!("Indexer did not catch up in time"));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
             Err(e) => {
                 info!("Indexer not ready yet: {e}, retrying...");
                 tries += 1;
