@@ -111,6 +111,7 @@ Then, clean the project build artifacts:
 ```sh
 hy clean
 ```
+
 ### `hy devnet`
 
 Launch a local devnet with:
@@ -163,7 +164,7 @@ hy test
 * 🧪 Full E2E workflows (from proving to verification)
 * ⚙️ Full integration with `cargo test` or custom test runners
 
-#### What it does (under the hood)
+#### What `hy test` does (under the hood)
 
 1. Starts `hy devnet` if not already running
 2. Compiles your project (`hy build`)
@@ -199,14 +200,14 @@ By default, `hy run` operates in local dev mode.
 * `--testnet`: Register and interact with contracts on the public Hyli testnet.
 * `--watch`: Automatically rebuild and re-register on file changes (coming soon)
 
-#### What it does (under the hood)
+#### What `hy run` does (under the hood)
 
 * ✅ Registers your vApp contract on-chain
 * 🔁 Starts a local auto-prover (generates and posts proofs when needed)
 * 📇 Launches a contract indexer to track state transitions
 * 🛠️ Wires everything together for a ready-to-use dev backend
 
-## 🧠 Under the Hood
+## 🧠 Hylix components
 
 Hylix builds on top of:
 
