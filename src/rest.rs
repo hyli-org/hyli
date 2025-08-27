@@ -4,15 +4,15 @@ pub use hyli_modules::modules::rest::*;
 mod tests {
     use crate::{
         data_availability::DataAvailability, genesis::Genesis, mempool::api::RestApiMessage,
-        model::SharedRunContext, node_state::module::NodeStateModule, p2p::P2P,
-        single_node_consensus::SingleNodeConsensus, tcp_server::TcpServer,
-        utils::integration_test::NodeIntegrationCtxBuilder,
+        model::SharedRunContext, p2p::P2P, single_node_consensus::SingleNodeConsensus,
+        tcp_server::TcpServer, utils::integration_test::NodeIntegrationCtxBuilder,
     };
     use anyhow::Result;
     use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
     use hyli_model::*;
     use hyli_modules::{
         bus::SharedMessageBus, module_bus_client, module_handle_messages, modules::Module,
+        node_state::module::NodeStateModule,
     };
     use std::time::Duration;
     use tracing::info;

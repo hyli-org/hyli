@@ -6,7 +6,6 @@ use crate::{
         WsExplorerBlobTx,
     },
     model::*,
-    node_state::module::NodeStateEvent,
     utils::conf::{Conf, SharedConf},
 };
 use anyhow::{Context, Error, Result};

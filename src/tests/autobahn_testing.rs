@@ -270,18 +270,21 @@ macro_rules! build_nodes {
     }};
 }
 
-use crate::bus::command_response::Query;
-use crate::bus::dont_use_this::get_receiver;
-use crate::bus::metrics::BusMetrics;
-use crate::bus::{bus_client, SharedMessageBus};
-use crate::consensus::test::ConsensusTestCtx;
-use crate::consensus::{ConsensusEvent, ConsensusNetMessage, TCKind, Ticket, TimeoutKind};
-use crate::mempool::tests::{make_register_contract_tx, MempoolTestCtx};
-use crate::mempool::{MempoolNetMessage, QueryNewCut, ValidatorDAG};
-use crate::model::*;
-use crate::node_state::module::NodeStateEvent;
-use crate::p2p::network::OutboundMessage;
-use crate::p2p::P2PCommand;
+use crate::{
+    bus::{
+        bus_client, command_response::Query, dont_use_this::get_receiver, metrics::BusMetrics,
+        SharedMessageBus,
+    },
+    consensus::{
+        test::ConsensusTestCtx, ConsensusEvent, ConsensusNetMessage, TCKind, Ticket, TimeoutKind,
+    },
+    mempool::{
+        tests::{make_register_contract_tx, MempoolTestCtx},
+        MempoolNetMessage, QueryNewCut, ValidatorDAG,
+    },
+    model::*,
+    p2p::{network::OutboundMessage, P2PCommand},
+};
 use hyli_crypto::BlstCrypto;
 use hyli_modules::handle_messages;
 use tracing::info;

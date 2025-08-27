@@ -2,8 +2,7 @@ use hyli_modules::{log_error, module_handle_messages};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use crate::{
-    consensus::ConsensusEvent, model::*, node_state::module::NodeStateEvent,
-    p2p::network::MsgWithHeader, utils::conf::P2pMode,
+    consensus::ConsensusEvent, model::*, p2p::network::MsgWithHeader, utils::conf::P2pMode,
 };
 
 use client_sdk::tcp_client::TcpServerMessage;

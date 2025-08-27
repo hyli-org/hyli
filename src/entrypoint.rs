@@ -9,7 +9,6 @@ use crate::{
     indexer::Indexer,
     mempool::Mempool,
     model::{api::NodeInfo, SharedRunContext},
-    node_state::module::NodeStateModule,
     p2p::P2P,
     rest::{ApiDoc, RestApi, RestApiRunContext},
     single_node_consensus::SingleNodeConsensus,
@@ -36,7 +35,10 @@ use hyli_modules::{
         websocket::WebSocketModule,
         BuildApiContextInner,
     },
-    node_state::{module::NodeStateCtx, NodeStateStore},
+    node_state::{
+        module::{NodeStateCtx, NodeStateModule},
+        NodeStateStore,
+    },
 };
 use hyllar::Hyllar;
 use prometheus::Registry;

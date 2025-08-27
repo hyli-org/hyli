@@ -792,16 +792,16 @@ pub mod tests {
     use super::Blocks;
     use super::{module_bus_client, DaTcpServer};
     use crate::data_availability::DaCatchupPolicy;
-    use crate::node_state::NodeState;
     use crate::{
         bus::BusClientSender,
         consensus::CommittedConsensusProposal,
         model::*,
-        node_state::module::{NodeStateBusClient, NodeStateEvent},
         utils::{conf::Conf, integration_test::find_available_port},
     };
     use anyhow::Result;
     use hyli_modules::log_error;
+    use hyli_modules::node_state::module::NodeStateBusClient;
+    use hyli_modules::node_state::NodeState;
     use hyli_modules::utils::da_codec::{
         DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest,
         DataAvailabilityServer,
