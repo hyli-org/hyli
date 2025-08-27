@@ -509,9 +509,7 @@ mod tests {
         register_contract(&mut indexer).await;
 
         let mut node_state = NodeState::create("test".to_string(), "test");
-        let block = node_state
-            .handle_signed_block(&SignedBlock::default())
-            .unwrap();
+        let block = node_state.force_handle_block(&SignedBlock::default());
 
         let event = NodeStateEvent::NewBlock(Box::new(block));
 
