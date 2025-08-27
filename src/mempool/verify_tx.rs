@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use hyle_model::{DataProposalHash, DataSized, LaneBytesSize, LaneId, ValidatorPublicKey};
+use hyli_model::{DataProposalHash, DataSized, LaneBytesSize, LaneId, ValidatorPublicKey};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
 
@@ -344,28 +344,28 @@ impl super::Mempool {
 
                     if is_recursive {
                         match verify_recursive_proof(proof, verifier, program_id) {
-                            Ok((local_program_ids, local_hyle_outputs)) => {
+                            Ok((local_program_ids, local_hyli_outputs)) => {
                                 let data_matches = local_program_ids
                                     .iter()
-                                    .zip(local_hyle_outputs.iter())
+                                    .zip(local_hyli_outputs.iter())
                                     .zip(proof_tx.proven_blobs.iter())
                                     .all(
                                         |(
-                                            (local_program_id, local_hyle_output),
+                                            (local_program_id, local_hyli_output),
                                             BlobProofOutput {
                                                 program_id,
-                                                hyle_output,
+                                                hyli_output,
                                                 ..
                                             },
                                         )| {
-                                            local_hyle_output == hyle_output
+                                            local_hyli_output == hyli_output
                                                 && local_program_id == program_id
                                         },
                                     );
                                 if local_program_ids.len() != proof_tx.proven_blobs.len()
                                     || !data_matches
                                 {
-                                    warn!("Refusing DataProposal: incorrect HyleOutput in proof transaction");
+                                    warn!("Refusing DataProposal: incorrect HyliOutput in proof transaction");
                                     return DataProposalVerdict::Refuse;
                                 }
                             }
@@ -380,11 +380,11 @@ impl super::Mempool {
                                 // TODO: we could check the blob hash here too.
                                 if outputs.len() != proof_tx.proven_blobs.len()
                                     && std::iter::zip(outputs.iter(), proof_tx.proven_blobs.iter())
-                                        .any(|(output, BlobProofOutput { hyle_output, .. })| {
-                                            output != hyle_output
+                                        .any(|(output, BlobProofOutput { hyli_output, .. })| {
+                                            output != hyli_output
                                         })
                                 {
-                                    warn!("Refusing DataProposal: incorrect HyleOutput in proof transaction");
+                                    warn!("Refusing DataProposal: incorrect HyliOutput in proof transaction");
                                     return DataProposalVerdict::Refuse;
                                 }
                             }
@@ -436,8 +436,8 @@ pub mod test {
         },
         p2p::network::HeaderSigner,
     };
-    use hyle_crypto::BlstCrypto;
-    use hyle_model::{ContractName, DataProposalHash, SignedByValidator, Transaction};
+    use hyli_crypto::BlstCrypto;
+    use hyli_model::{ContractName, DataProposalHash, SignedByValidator, Transaction};
 
     #[test_log::test(tokio::test)]
     async fn test_get_verdict() {

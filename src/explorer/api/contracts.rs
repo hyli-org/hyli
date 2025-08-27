@@ -7,7 +7,7 @@ use axum::{
 };
 
 use crate::model::*;
-use hyle_modules::log_error;
+use hyli_modules::log_error;
 
 #[derive(sqlx::FromRow, Debug)]
 pub struct ContractDb {

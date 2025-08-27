@@ -4,11 +4,11 @@ use assert_json_diff::assert_json_include;
 use axum_test::TestServer;
 use client_sdk::transaction_builder::ProvableBlobTx;
 use hydentity::{client::tx_executor_handler::register_identity, HydentityAction};
-use hyle_contract_sdk::{BlobIndex, HyleOutput, Identity, ProgramId, StateCommitment, TxHash};
-use hyle_model::api::{
+use hyli_contract_sdk::{BlobIndex, HyliOutput, Identity, ProgramId, StateCommitment, TxHash};
+use hyli_model::api::{
     APIBlob, APIBlock, APIContract, APITransaction, APITransactionEvents, TransactionStatusDb,
 };
-use hyle_modules::node_state::test::{craft_signed_block, craft_signed_block_with_parent_dp_hash};
+use hyli_modules::node_state::test::{craft_signed_block, craft_signed_block_with_parent_dp_hash};
 use serde_json::json;
 use std::future::IntoFuture;
 use utils::TimestampMs;
@@ -64,7 +64,7 @@ fn new_register_tx(
     state_commitment: StateCommitment,
 ) -> BlobTransaction {
     BlobTransaction::new(
-        "hyle@hyle",
+        "hyli@hyli",
         vec![RegisterContractAction {
             verifier: "test".into(),
             program_id: ProgramId(vec![3, 2, 1]),
@@ -72,7 +72,7 @@ fn new_register_tx(
             contract_name: contract_name.clone(),
             ..Default::default()
         }
-        .as_blob("hyle".into())],
+        .as_blob("hyli".into())],
     )
 }
 
@@ -143,7 +143,7 @@ fn new_proof_tx(
                 program_id: ProgramId(vec![3, 2, 1]),
                 verifier: "test".into(),
                 blob_tx_hash: blob_transaction.hashed(),
-                hyle_output: HyleOutput {
+                hyli_output: HyliOutput {
                     version: 1,
                     initial_state,
                     next_state,
@@ -703,8 +703,8 @@ async fn scenario_contracts() -> Result<(
         ],
     );
 
-    let delete_a = new_delete_tx(ContractName::new("hyle"), ContractName::new("a"));
-    let delete_c = new_delete_tx(ContractName::new("hyle"), ContractName::new("c"));
+    let delete_a = new_delete_tx(ContractName::new("hyli"), ContractName::new("a"));
+    let delete_c = new_delete_tx(ContractName::new("hyli"), ContractName::new("c"));
 
     let delete_a_proof = new_proof_tx(
         "hyli@wallet".into(),
@@ -733,7 +733,7 @@ async fn scenario_contracts() -> Result<(
         ],
     );
 
-    let delete_b = new_delete_tx(ContractName::new("hyle"), ContractName::new("b"));
+    let delete_b = new_delete_tx(ContractName::new("hyli"), ContractName::new("b"));
     let delete_b_proof = new_proof_tx(
         "hyli@wallet".into(),
         "wallet".into(),
@@ -743,7 +743,7 @@ async fn scenario_contracts() -> Result<(
         StateCommitment(vec![3]),
     );
 
-    let delete_a = new_delete_tx(ContractName::new("hyle"), ContractName::new("a"));
+    let delete_a = new_delete_tx(ContractName::new("hyli"), ContractName::new("a"));
     let delete_a_proof = new_proof_tx(
         "hyli@wallet".into(),
         "wallet".into(),
@@ -753,7 +753,7 @@ async fn scenario_contracts() -> Result<(
         StateCommitment(vec![4]),
     );
 
-    let delete_d = new_delete_tx(ContractName::new("hyle"), ContractName::new("d"));
+    let delete_d = new_delete_tx(ContractName::new("hyli"), ContractName::new("d"));
     let delete_d_proof = new_proof_tx(
         "hyli@wallet".into(),
         "wallet".into(),
@@ -1130,7 +1130,7 @@ async fn test_indexer_api() -> Result<()> {
     assert!(!transactions_response.text().is_empty());
 
     // Websocket
-    let listener = hyle_net::net::bind_tcp_listener(0).await.unwrap();
+    let listener = hyli_net::net::bind_tcp_listener(0).await.unwrap();
     let addr = listener.local_addr().unwrap();
 
     tokio::spawn(axum::serve(listener, explorer.api(None)).into_future());

@@ -1,5 +1,5 @@
 [package]
-name = "hyle-bonsai-runner"
+name = "hyli-bonsai-runner"
 description = "Hyli async lib to use risc0 bonsai"
 license = "MIT"
 version = { workspace = true }
@@ -20,7 +20,7 @@ borsh = { workspace = true }
 
 bonsai-sdk = { workspace = true, features = ["non_blocking"] }
 boundless-market = { workspace = true }
-hyle-net = { workspace = true }
+hyli-net = { workspace = true }
 risc0-zkvm = { workspace = true }
 bytemuck = { workspace = true }
 # Has to be compatible with whatever bonsai-sdk returns, which is not really documented...

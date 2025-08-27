@@ -2,12 +2,12 @@ use crate::bus::BusClientSender;
 
 use anyhow::Result;
 use client_sdk::tcp_client::{TcpApiServer, TcpServerMessage};
-use hyle_modules::{
+use hyli_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
     modules::{module_bus_client, Module},
 };
-use hyle_net::tcp::TcpEvent;
+use hyli_net::tcp::TcpEvent;
 use tracing::info;
 
 module_bus_client! {

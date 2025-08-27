@@ -66,7 +66,7 @@ where
             private_input: vec![],
         };
 
-        let hyle_output = match self.handle(&calldata) {
+        let hyli_output = match self.handle(&calldata) {
             Ok(ho) => ho,
             Err(e) => {
                 error!(
@@ -77,12 +77,12 @@ where
             }
         };
 
-        let program_outputs = str::from_utf8(&hyle_output.program_outputs).unwrap_or("no output");
+        let program_outputs = str::from_utf8(&hyli_output.program_outputs).unwrap_or("no output");
 
         info!("🚀 Executed {contract_name}: {}", program_outputs);
         debug!(
             handler = %contract_name,
-            "hyle_output: {:?}", hyle_output
+            "hyli_output: {:?}", hyli_output
         );
         Ok(None)
     }

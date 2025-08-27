@@ -5,8 +5,8 @@ use tracing::{debug, info, trace, warn};
 
 use super::*;
 use crate::model::{Slot, View};
-use hyle_model::{utils::TimestampMs, ConsensusProposalHash, Hashed, Signed, SignedByValidator};
-use hyle_net::clock::TimestampMsClock;
+use hyli_model::{utils::TimestampMs, ConsensusProposalHash, Hashed, Signed, SignedByValidator};
+use hyli_net::clock::TimestampMsClock;
 
 #[derive(Debug, BorshSerialize, BorshDeserialize, Default)]
 pub(super) enum TimeoutState {

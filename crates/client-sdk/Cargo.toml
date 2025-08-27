@@ -1,5 +1,5 @@
 [package]
-name = "hyle-client-sdk"
+name = "hyli-client-sdk"
 description = "Hyli client SDK"
 license = "MIT"
 version = { workspace = true }
@@ -9,10 +9,10 @@ repository = { workspace = true }
 rust-version = { workspace = true }
 
 [dependencies]
-hyle-model = { workspace = true }
+hyli-model = { workspace = true }
 sdk = { workspace = true, default-features = false, features = ["full-model"] }
 bonsai-runner = { workspace = true, optional = true }
-hyle-net = { workspace = true }
+hyli-net = { workspace = true }
 
 anyhow = { workspace = true }
 borsh = { workspace = true }
@@ -43,7 +43,7 @@ test-log = { workspace = true, features = [
 ], default-features = false }
 
 [features]
-turmoil = ["hyle-net/turmoil"]
+turmoil = ["hyli-net/turmoil"]
 rest = []
 indexer = ["dep:utoipa", "dep:axum", "dep:utoipa-axum", "dep:tokio"]
 risc0 = ["dep:risc0-zkvm", "dep:bonsai-runner"]

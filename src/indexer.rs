@@ -11,10 +11,10 @@ use crate::{
 };
 use anyhow::{Context, Error, Result};
 use chrono::{DateTime, Utc};
-use hyle_model::api::{TransactionStatusDb, TransactionTypeDb};
-use hyle_model::utils::TimestampMs;
-use hyle_modules::bus::BusClientSender;
-use hyle_modules::{
+use hyli_model::api::{TransactionStatusDb, TransactionTypeDb};
+use hyli_model::utils::TimestampMs;
+use hyli_modules::bus::BusClientSender;
+use hyli_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
     modules::{gcs_uploader::GCSRequest, module_bus_client, Module, SharedBuildApiCtx},
@@ -23,7 +23,7 @@ use hyle_modules::{
         NodeStateProcessing, NodeStateStore, TxEvent,
     },
 };
-use hyle_net::clock::TimestampMsClock;
+use hyli_net::clock::TimestampMsClock;
 use sqlx::{postgres::PgPoolOptions, Acquire, PgPool, Pool, Postgres, QueryBuilder, Row};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -394,7 +394,7 @@ impl NodeStateCallback for IndexerHandlerStore {
             TxEvent::NewProof(..) => {}
             TxEvent::BlobSettled(tx_id, _tx, blob, blob_index, proof_data, blob_proof_index) => {
                 // Can be None for executed blobs
-                if let Some((_, _, proof_tx_id, hyle_output)) = proof_data {
+                if let Some((_, _, proof_tx_id, hyli_output)) = proof_data {
                     self.blob_proof_outputs.0.push(format!(
                         "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
                         tx_id.0,
@@ -404,7 +404,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                         blob_index,
                         blob_proof_index, // blob_proof_output_index <- this needed?
                         blob.contract_name,
-                        serde_json::to_string(hyle_output).unwrap_or_default(),
+                        serde_json::to_string(hyli_output).unwrap_or_default(),
                         true, // settled
                     ));
                 }
@@ -660,7 +660,7 @@ impl Indexer {
         copy.read_from(&mut self.handler_store.blobs).await?;
         copy.finish().await?;
 
-        let mut copy = transaction.copy_in_raw("COPY blob_proof_outputs (blob_parent_dp_hash, blob_tx_hash, proof_parent_dp_hash, proof_tx_hash, blob_index, blob_proof_output_index, contract_name, hyle_output, settled) FROM STDIN WITH (FORMAT TEXT)").await?;
+        let mut copy = transaction.copy_in_raw("COPY blob_proof_outputs (blob_parent_dp_hash, blob_tx_hash, proof_parent_dp_hash, proof_tx_hash, blob_index, blob_proof_output_index, contract_name, hyli_output, settled) FROM STDIN WITH (FORMAT TEXT)").await?;
         copy.read_from(&mut self.handler_store.blob_proof_outputs)
             .await?;
         copy.finish().await?;

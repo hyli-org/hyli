@@ -1,0 +1,69 @@
+[package]
+name = "hyli-modules"
+description = "Collection of Hyli Modules"
+license-file = { workspace = true }
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
+
+[dependencies]
+sdk = { workspace = true, features = ["full-model"] }
+client-sdk = { workspace = true, features = ["rest", "indexer"] }
+hyli-net = { workspace = true }
+hyli-verifiers = { workspace = true }
+
+config = { workspace = true, default-features = false, features = ["toml"] }
+sha3 = { workspace = true }
+anyhow = { workspace = true }
+borsh = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+assertables = { workspace = true }
+anymap = { workspace = true }
+syn = { workspace = true }
+quote = { workspace = true }
+rand = { workspace = true }
+futures = { workspace = true }
+tracing-subscriber = { workspace = true, features = [
+  "env-filter",
+  "fmt",
+  "json",
+] }
+paste = { workspace = true }
+hex = { workspace = true }
+fjall = { workspace = true }
+
+# GCS
+google-cloud-storage = { workspace = true }
+
+tokio = { workspace = true, features = ["full", "tracing"] }
+tokio-util = { workspace = true }
+
+axum = { workspace = true, features = ["ws"] }
+
+utoipa = { workspace = true }
+utoipa-axum = { workspace = true }
+utoipa-swagger-ui = { workspace = true, features = ["axum"] }
+
+tower-http = { workspace = true, features = ["trace", "cors", "catch-panic"] }
+prometheus = { workspace = true }
+opentelemetry = { workspace = true }
+
+test-log = { workspace = true, features = ["color", "trace"], optional = true }
+indexmap = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+hyli-model = { workspace = true }
+sha2 = { workspace = true }
+secp256k1 = { workspace = true, features = ["rand", "global-context"] }
+test-log = { workspace = true, features = ["color", "trace"] }
+hydentity = { workspace = true, features = ["client"] }
+
+[features]
+risc0 = ["client-sdk/risc0"]
+sp1 = ["client-sdk/sp1"]
+test = ["dep:test-log"]

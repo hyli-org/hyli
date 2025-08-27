@@ -6,7 +6,7 @@ use fixtures::{
     ctx::E2ECtx,
     test_helpers::{self, ConfMaker},
 };
-use hyle::utils::conf::Conf;
+use hyli::utils::conf::Conf;
 
 mod fixtures;
 
@@ -54,10 +54,10 @@ async fn setup_4_nodes_catchup() -> Result<()> {
     conf.fast_catchup_backfill = true;
     // conf.consensus.timestamp_checks = TimestampCheck::Monotonic;
 
-    let process = test_helpers::TestProcess::new("hyle", conf);
+    let process = test_helpers::TestProcess::new("hyli", conf);
 
     tracing::warn!(
-        "🚀 Start the last node in catchup mode with the following command:\nhyle=$(pwd)/target/release/hyle && (cd {} && RUST_LOG=debug \"$hyle\")",
+        "🚀 Start the last node in catchup mode with the following command:\nhyli=$(pwd)/target/release/hyli && (cd {} && RUST_LOG=debug \"$hyli\")",
         process.dir.path().display()
     );
 
@@ -105,14 +105,14 @@ async fn custom_setup() -> Result<()> {
         for node_conf in confs.iter_mut() {
             node_conf.p2p.peers = peers.clone();
             node_conf.genesis.stakers = genesis_stakers.clone();
-            let node = test_helpers::TestProcess::new("hyle", node_conf.clone());
+            let node = test_helpers::TestProcess::new("hyli", node_conf.clone());
             nodes.push(node);
         }
         nodes
     };
 
     tracing::warn!(
-        "🚀 Start the first node with the following command:\nhyle=$(pwd)/target/release/hyle && (cd {} && RUST_LOG=info \"$hyle\")",
+        "🚀 Start the first node with the following command:\nhyli=$(pwd)/target/release/hyli && (cd {} && RUST_LOG=info \"$hyli\")",
         nodes[0].dir.path().display()
     );
 

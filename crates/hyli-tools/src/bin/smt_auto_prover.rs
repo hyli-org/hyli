@@ -6,8 +6,8 @@ use clap::{Parser, command};
 use client_sdk::{
     contract_indexer::utoipa::OpenApi, helpers::risc0::Risc0Prover, rest_client::NodeApiHttpClient,
 };
-use hyle_contract_sdk::api::NodeInfo;
-use hyle_modules::{
+use hyli_contract_sdk::api::NodeInfo;
+use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
         BuildApiContextInner, ModulesHandler,
@@ -184,7 +184,7 @@ impl Conf {
         }
         let conf: Self = s
             .add_source(
-                config::Environment::with_prefix("hyle")
+                config::Environment::with_prefix("hyli")
                     .separator("__")
                     .prefix_separator("_"),
             )

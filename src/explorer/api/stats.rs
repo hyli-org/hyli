@@ -1,8 +1,8 @@
 use super::ExplorerApiState;
 use axum::{extract::State, http::StatusCode, Json};
-use hyle_model::api::{NetworkStats, ProofStat};
+use hyli_model::api::{NetworkStats, ProofStat};
 
-use hyle_modules::log_error;
+use hyli_modules::log_error;
 
 #[derive(sqlx::FromRow, Debug)]
 pub struct Point<T = i64> {

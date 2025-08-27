@@ -4,7 +4,7 @@ use tracing::debug;
 use crate::consensus::role_follower::follower_state;
 
 use super::{role_follower::Prepare, *};
-use hyle_model::{ConsensusProposalHash, ValidatorPublicKey};
+use hyli_model::{ConsensusProposalHash, ValidatorPublicKey};
 
 impl Consensus {
     /// When a validator receives a sync request from another validator, it will check if it has the prepare message in its buffer.

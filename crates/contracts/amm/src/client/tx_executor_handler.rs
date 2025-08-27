@@ -5,7 +5,7 @@ use client_sdk::{
 };
 use hyllar::HyllarAction;
 use sdk::{
-    utils::as_hyle_output, Blob, BlobIndex, Calldata, ContractName, RegisterContractEffect,
+    utils::as_hyli_output, Blob, BlobIndex, Calldata, ContractName, RegisterContractEffect,
     StateCommitment, ZkContract,
 };
 
@@ -22,11 +22,11 @@ impl TxExecutorHandler for Amm {
         borsh::to_vec(self).context("Failed to serialize Hyllar")
     }
 
-    fn handle(&mut self, calldata: &Calldata) -> Result<sdk::HyleOutput> {
+    fn handle(&mut self, calldata: &Calldata) -> Result<sdk::HyliOutput> {
         let initial_state_commitment = <Self as ZkContract>::commit(self);
         let mut res = <Self as ZkContract>::execute(self, calldata);
         let next_state_commitment = <Self as ZkContract>::commit(self);
-        Ok(as_hyle_output(
+        Ok(as_hyli_output(
             initial_state_commitment,
             next_state_commitment,
             calldata,

@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use hyle_risc0_recursion::{ProofInput, Risc0Journal, Risc0ProgramId};
+use hyli_risc0_recursion::{ProofInput, Risc0Journal, Risc0ProgramId};
 use risc0_zkvm::guest::env;
 
 risc0_zkvm::guest::entry!(main);

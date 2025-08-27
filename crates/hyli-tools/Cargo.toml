@@ -27,10 +27,10 @@ path = "src/bin/rate_limiter_proxy.rs"
 required-features = ["rate-proxy"]
 
 [dependencies]
-hyle-contract-sdk = { workspace = true }
+hyli-contract-sdk = { workspace = true }
 client-sdk = { workspace = true, features = ["rest"] }
-hyle-modules = { workspace = true }
-hyle-model = { workspace = true }
+hyli-modules = { workspace = true }
+hyli-model = { workspace = true }
 smt-token = { workspace = true, features = ["client"] }
 
 anyhow = { workspace = true }

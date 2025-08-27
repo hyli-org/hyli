@@ -5,13 +5,13 @@ use client_sdk::{
     transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutor},
 };
 
-use hyle::{
+use hyli::{
     model::BlobTransaction,
     rest::client::NodeApiHttpClient,
     utils::conf::{Conf, NodeWebSocketConfig, P2pConf, P2pMode, TimestampCheck},
 };
-use hyle_crypto::BlstCrypto;
-use hyle_model::TxHash;
+use hyli_crypto::BlstCrypto;
+use hyli_model::TxHash;
 use signal_child::signal;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -119,7 +119,7 @@ impl TestProcess {
         let mut cargo_bin: Command = std::process::Command::cargo_bin(command).unwrap().into();
 
         // Create a temporary directory for the node
-        let tmpdir = tempfile::Builder::new().prefix("hyle").tempdir().unwrap();
+        let tmpdir = tempfile::Builder::new().prefix("hyli").tempdir().unwrap();
         let cmd = cargo_bin.current_dir(&tmpdir);
         cmd.kill_on_drop(true);
         cmd.stdout(std::process::Stdio::piped());
@@ -134,7 +134,7 @@ impl TestProcess {
         cmd.env("RISC0_DEV_MODE", "1");
 
         let secret = BlstCrypto::secret_from_name(&conf.id);
-        cmd.env("HYLE_VALIDATOR_SECRET", hex::encode(secret));
+        cmd.env("HYLI_VALIDATOR_SECRET", hex::encode(secret));
 
         Self {
             conf,
@@ -267,7 +267,7 @@ pub async fn send_transaction<S: StateUpdater>(
 }
 
 pub async fn find_available_port() -> u16 {
-    let listener = hyle_net::net::TcpListener::bind("127.0.0.1:0")
+    let listener = hyli_net::net::TcpListener::bind("127.0.0.1:0")
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();

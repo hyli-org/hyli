@@ -4,7 +4,7 @@ use sha3::{Digest, Sha3_256};
 use std::{fmt::Display, ops::Deref};
 use strum_macros::IntoStaticStr;
 
-use hyle_model::*;
+use hyli_model::*;
 
 use crate::p2p::network::{HeaderSignableData, IntoHeaderSignableData};
 

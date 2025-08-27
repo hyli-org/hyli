@@ -62,7 +62,7 @@ fn test_end_to_end_proof_verification() {
 
 Use:
 
-- [`Hyli client SDK`](https://crates.io/crates/hyle-client-sdk) to interact with the node / indexer
+- [`Hyli client SDK`](https://crates.io/crates/hyli-client-sdk) to interact with the node / indexer
 - Coming soon: `Hyli testing SDK` for helpers like registering accounts or sending tokens <!--TODO: add Hyli testing SDK link-->
 
 ## 🚀 Running Tests

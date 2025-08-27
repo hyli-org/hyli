@@ -11,13 +11,13 @@ use hydentity::{
     client::tx_executor_handler::{register_identity, verify_identity},
     Hydentity,
 };
-use hyle::mempool::verifiers::verify_proof;
-use hyle_contract_sdk::{
-    Blob, BlobTransaction, Calldata, ContractName, Hashed, HyleOutput, ProgramId, StateCommitment,
+use hyli::mempool::verifiers::verify_proof;
+use hyli_contract_sdk::{
+    Blob, BlobTransaction, Calldata, ContractName, Hashed, HyliOutput, ProgramId, StateCommitment,
     Verifier, ZkContract,
 };
-use hyle_contracts::{HYDENTITY_ELF, HYDENTITY_ID, UUID_TLD_ELF, UUID_TLD_ID};
-use hyle_model::{OnchainEffect, RegisterContractAction};
+use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, UUID_TLD_ELF, UUID_TLD_ID};
+use hyli_model::{OnchainEffect, RegisterContractAction};
 use uuid_tld::{UuidTld, UuidTldAction};
 
 contract_states!(
@@ -32,7 +32,7 @@ mod fixtures;
 struct UuidContract {}
 impl E2EContract for UuidContract {
     fn verifier() -> Verifier {
-        Verifier(hyle_model::verifiers::RISC0_1.to_string())
+        Verifier(hyli_model::verifiers::RISC0_1.to_string())
     }
     fn program_id() -> ProgramId {
         ProgramId(UUID_TLD_ID.to_vec())
@@ -47,7 +47,7 @@ async fn test_uuid_registration() {
     std::env::set_var("RISC0_DEV_MODE", "1");
 
     let ctx = E2ECtx::new_multi_with_indexer(2, 500).await.unwrap();
-    ctx.register_contract::<UuidContract>("hyle@hyle".into(), "uuid")
+    ctx.register_contract::<UuidContract>("hyli@hyli".into(), "uuid")
         .await
         .unwrap();
 
@@ -156,7 +156,7 @@ async fn test_uuid_registration() {
 
     let outputs = verify_proof(
         &uuid_proof.proof,
-        &Verifier(hyle_model::verifiers::RISC0_1.to_string()),
+        &Verifier(hyli_model::verifiers::RISC0_1.to_string()),
         &ProgramId(UUID_TLD_ID.to_vec()),
     )
     .expect("Must validate proof");

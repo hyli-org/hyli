@@ -8,10 +8,10 @@ use std::sync::{Arc, Mutex};
 use anyhow::{bail, Context, Result};
 use axum::Router;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
-use hyle_model::api::NodeInfo;
-use hyle_model::TxHash;
-use hyle_modules::modules::{BuildApiContextInner, ModulesHandler};
-use hyle_modules::node_state::module::NodeStateCtx;
+use hyli_model::api::NodeInfo;
+use hyli_model::TxHash;
+use hyli_modules::modules::{BuildApiContextInner, ModulesHandler};
+use hyli_modules::node_state::module::NodeStateCtx;
 use tracing::info;
 
 use crate::bus::metrics::BusMetrics;
@@ -29,13 +29,13 @@ use crate::rest::{RestApi, RestApiRunContext};
 use crate::single_node_consensus::SingleNodeConsensus;
 use crate::tcp_server::TcpServer;
 use crate::utils::conf::Conf;
-use hyle_crypto::BlstCrypto;
+use hyli_crypto::BlstCrypto;
 
-use hyle_modules::{module_bus_client, module_handle_messages, modules::Module};
+use hyli_modules::{module_bus_client, module_handle_messages, modules::Module};
 
 // Assume that we can reuse the OS-provided port.
 pub async fn find_available_port() -> u16 {
-    let listener = hyle_net::net::TcpListener::bind("127.0.0.1:0")
+    let listener = hyli_net::net::TcpListener::bind("127.0.0.1:0")
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();

@@ -8,7 +8,7 @@ use crate::{
     mempool::QueryNewCut,
     model::{Hashed, ValidatorPublicKey},
 };
-use hyle_model::{utils::TimestampMs, ConsensusProposal, ConsensusStakingAction};
+use hyli_model::{utils::TimestampMs, ConsensusProposal, ConsensusStakingAction};
 use staking::state::MIN_STAKE;
 use tokio::sync::broadcast;
 use tracing::{debug, error, trace};
@@ -131,7 +131,7 @@ impl Consensus {
                     {
                         debug!("⏳ Delaying slot start");
                         self.bft_round_state.leader.pending_ticket = Some(ticket);
-                        let command_sender = hyle_modules::utils::static_type_map::Pick::<
+                        let command_sender = hyli_modules::utils::static_type_map::Pick::<
                             broadcast::Sender<ConsensusCommand>,
                         >::get(&self.bus)
                         .clone();

@@ -4,10 +4,10 @@ use std::{
 };
 
 use futures::StreamExt;
-use hyle_crypto::SharedBlstCrypto;
-use hyle_model::{utils::TimestampMs, DataProposalHash, LaneId, ValidatorPublicKey};
-use hyle_modules::{log_error, log_warn};
-use hyle_net::clock::TimestampMsClock;
+use hyli_crypto::SharedBlstCrypto;
+use hyli_model::{utils::TimestampMs, DataProposalHash, LaneId, ValidatorPublicKey};
+use hyli_modules::{log_error, log_warn};
+use hyli_net::clock::TimestampMsClock;
 use tokio::pin;
 use tracing::{debug, info, warn};
 
