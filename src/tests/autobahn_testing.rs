@@ -243,8 +243,8 @@ use assertables::assert_matches;
 pub(crate) use broadcast;
 pub(crate) use build_tuple;
 use futures::future::join_all;
-use hyle_model::utils::TimestampMs;
-use hyle_modules::utils::da_codec::DataAvailabilityServer;
+use hyli_model::utils::TimestampMs;
+use hyli_modules::utils::da_codec::DataAvailabilityServer;
 pub(crate) use send;
 pub(crate) use simple_commit_round;
 
@@ -282,8 +282,8 @@ use crate::model::*;
 use crate::node_state::module::NodeStateEvent;
 use crate::p2p::network::OutboundMessage;
 use crate::p2p::P2PCommand;
-use hyle_crypto::BlstCrypto;
-use hyle_modules::handle_messages;
+use hyli_crypto::BlstCrypto;
+use hyli_modules::handle_messages;
 use tracing::info;
 
 bus_client!(
@@ -380,7 +380,7 @@ fn create_poda(
     data_proposal_hash: DataProposalHash,
     line_size: LaneBytesSize,
     nodes: &[&AutobahnTestCtx],
-) -> hyle_crypto::Signed<(DataProposalHash, LaneBytesSize), AggregateSignature> {
+) -> hyli_crypto::Signed<(DataProposalHash, LaneBytesSize), AggregateSignature> {
     let mut signed_messages: Vec<ValidatorDAG> = nodes
         .iter()
         .map(|node| {

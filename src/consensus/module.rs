@@ -1,5 +1,5 @@
 use anyhow::Result;
-use hyle_modules::{
+use hyli_modules::{
     bus::SharedMessageBus,
     log_error,
     modules::{files::CONSENSUS_BIN, Module},

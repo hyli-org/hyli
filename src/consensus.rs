@@ -17,15 +17,15 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Context, Error, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
-use hyle_crypto::BlstCrypto;
-use hyle_crypto::SharedBlstCrypto;
-use hyle_model::utils::TimestampMs;
-use hyle_modules::bus::BusMessage;
-use hyle_modules::modules::admin::{
+use hyli_crypto::BlstCrypto;
+use hyli_crypto::SharedBlstCrypto;
+use hyli_model::utils::TimestampMs;
+use hyli_modules::bus::BusMessage;
+use hyli_modules::modules::admin::{
     QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse,
 };
-use hyle_modules::{log_error, module_bus_client, module_handle_messages, modules::Module};
-use hyle_net::clock::TimestampMsClock;
+use hyli_modules::{log_error, module_bus_client, module_handle_messages, modules::Module};
+use hyli_net::clock::TimestampMsClock;
 use metrics::ConsensusMetrics;
 use role_follower::FollowerState;
 use role_leader::LeaderState;
@@ -869,7 +869,7 @@ pub mod test {
         rest::RestApi,
         utils::integration_test::NodeIntegrationCtxBuilder,
     };
-    use hyle_modules::{
+    use hyli_modules::{
         handle_messages,
         node_state::{module::NodeStateModule, NodeState},
     };

@@ -1,4 +1,4 @@
-use hyle_model::LaneId;
+use hyli_model::LaneId;
 use opentelemetry::{
     metrics::{Counter, Gauge},
     InstrumentationScope, KeyValue,

@@ -7,7 +7,7 @@ use axum::{
 };
 
 use crate::model::*;
-use hyle_modules::log_error;
+use hyli_modules::log_error;
 
 #[derive(sqlx::FromRow, Debug)]
 pub struct BlobDb {
@@ -61,7 +61,7 @@ WITH latest_height_for_this_tx_hash AS (
 
 SELECT 
       blobs.*,
-      array_remove(ARRAY_AGG(blob_proof_outputs.hyle_output), NULL) AS proof_outputs
+      array_remove(ARRAY_AGG(blob_proof_outputs.hyli_output), NULL) AS proof_outputs
 FROM blobs
 LEFT JOIN
      blob_proof_outputs
@@ -112,7 +112,7 @@ pub async fn get_blob(
             r#"
 SELECT 
   blobs.*, 
-  array_remove(ARRAY_AGG(blob_proof_outputs.hyle_output), NULL) AS proof_outputs
+  array_remove(ARRAY_AGG(blob_proof_outputs.hyli_output), NULL) AS proof_outputs
 FROM blobs
 LEFT JOIN blob_proof_outputs 
   ON blobs.parent_dp_hash = blob_proof_outputs.blob_parent_dp_hash

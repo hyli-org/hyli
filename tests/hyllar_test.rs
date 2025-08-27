@@ -17,8 +17,8 @@ mod e2e_hyllar {
         client::tx_executor_handler::{register_identity, verify_identity},
         Hydentity,
     };
-    use hyle_contract_sdk::{Blob, Calldata, ContractName, HyleOutput};
-    use hyle_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
+    use hyli_contract_sdk::{Blob, Calldata, ContractName, HyliOutput};
+    use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
     use hyllar::{client::tx_executor_handler::transfer, erc20::ERC20, Hyllar, FAUCET_ID};
 
     use super::*;

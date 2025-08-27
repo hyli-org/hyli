@@ -26,7 +26,7 @@ pub async fn generate_recursive_proof(program_ids: &[[u8; 32]], proofs: &[&[u8]]
     let env = env.build().unwrap();
 
     let receipt = risc0_zkvm::default_prover()
-        .prove(env, hyle_contracts::RISC0_RECURSION_ELF)
+        .prove(env, hyli_contracts::RISC0_RECURSION_ELF)
         .unwrap()
         .receipt;
 

@@ -11,17 +11,17 @@ use crate::model::*;
 use crate::utils::conf::SharedConf;
 use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
-use hyle_crypto::SharedBlstCrypto;
-use hyle_model::utils::TimestampMs;
-use hyle_modules::bus::command_response::Query;
-use hyle_modules::bus::SharedMessageBus;
-use hyle_modules::modules::admin::{
+use hyli_crypto::SharedBlstCrypto;
+use hyli_model::utils::TimestampMs;
+use hyli_modules::bus::command_response::Query;
+use hyli_modules::bus::SharedMessageBus;
+use hyli_modules::modules::admin::{
     QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse,
 };
-use hyle_modules::modules::module_bus_client;
-use hyle_modules::modules::Module;
-use hyle_modules::{log_error, module_handle_messages};
-use hyle_net::clock::TimestampMsClock;
+use hyli_modules::modules::module_bus_client;
+use hyli_modules::modules::Module;
+use hyli_modules::{log_error, module_handle_messages};
+use hyli_net::clock::TimestampMsClock;
 use staking::state::Staking;
 use tracing::{debug, warn};
 
@@ -244,10 +244,10 @@ mod tests {
     use crate::bus::{bus_client, SharedMessageBus};
     use crate::utils::conf::Conf;
     use anyhow::Result;
-    use hyle_crypto::BlstCrypto;
-    use hyle_modules::bus::dont_use_this::get_sender;
-    use hyle_modules::handle_messages;
-    use hyle_modules::modules::signal::ShutdownModule;
+    use hyli_crypto::BlstCrypto;
+    use hyli_modules::bus::dont_use_this::get_sender;
+    use hyli_modules::handle_messages;
+    use hyli_modules::modules::signal::ShutdownModule;
     use std::sync::Arc;
     use tokio::sync::broadcast::{Receiver, Sender};
 

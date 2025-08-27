@@ -60,7 +60,7 @@ To launch a local node for building and debugging smart contracts, without index
 
 ```bash
 cargo build
-HYLE_RUN_INDEXER=false cargo run
+HYLI_RUN_INDEXER=false cargo run
 ```
 
 If you need sp1 verifier, enable the feature: `sp1`
@@ -99,9 +99,9 @@ cargo run
 
 ```bash
 # Build the dependency image, this is a cache layer for faster iteration builds
-docker build -f Dockerfile.dependencies -t hyle-dep .
+docker build -f Dockerfile.dependencies -t hyli-dep .
 # Build the node image
-docker build -t hyle .
+docker build -t hyli .
 ```
 
 ### Build Locally on MacOS (Apple Silicon)
@@ -114,7 +114,7 @@ If you are building for an architecture different than your host machine (e.g., 
 export DOCKER_BUILDKIT=1
 
 # 2. Create and use a buildx builder (only needed once)
-docker buildx create --use --name hyle-builder
+docker buildx create --use --name hyli-builder
 docker buildx inspect --bootstrap
 
 # 3. Install QEMU for cross-platform builds
@@ -123,19 +123,19 @@ docker run --privileged --rm tonistiigi/binfmt --install all
 
 ```bash
 # Build the dependency image, this is a cache layer for faster iteration builds
-docker buildx build --platform linux/arm64 -f Dockerfile.dependencies -t hyle-dep .
+docker buildx build --platform linux/arm64 -f Dockerfile.dependencies -t hyli-dep .
 # Build the node image
-docker buildx build --platform linux/arm64 -t hyle .
+docker buildx build --platform linux/arm64 -t hyli .
 ```
 
 ### Run Locally with Docker
 
 ```bash
-docker run -v ./db:/hyle/data -e HYLE_RUN_INDEXER=false -p 4321:4321 -p 1234:1234 hyle
+docker run -v ./db:/hyli/data -e HYLI_RUN_INDEXER=false -p 4321:4321 -p 1234:1234 hyli
 ```
 
 > 🛠️ **Note**: If you build on MacOS (Apple Silicon), add `--platform linux/arm64` to run script.
-> 🛠️ **Note**: If you encounter permission issues with the `/hyle/data` volume, add the `--privileged` flag.
+> 🛠️ **Note**: If you encounter permission issues with the `/hyli/data` volume, add the `--privileged` flag.
 
 </details>
 

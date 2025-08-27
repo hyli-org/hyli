@@ -1,5 +1,5 @@
 [package]
-name = "hyle-uuid-tld"
+name = "hyli-uuid-tld"
 description = "Hyli Smart Contract"
 license-file = { workspace = true }
 version = { workspace = true }

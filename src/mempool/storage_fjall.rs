@@ -6,21 +6,21 @@ use fjall::{
     Config, Keyspace, KvSeparationOptions, PartitionCreateOptions, PartitionHandle, Slice,
 };
 use futures::Stream;
-use hyle_model::LaneId;
+use hyli_model::LaneId;
 use tracing::info;
 
 use crate::{
     mempool::storage::MetadataOrMissingHash,
     model::{DataProposal, DataProposalHash, Hashed},
 };
-use hyle_modules::log_warn;
+use hyli_modules::log_warn;
 
 use super::{
     storage::{EntryOrMissingHash, LaneEntryMetadata, Storage},
     ValidatorDAG,
 };
 
-pub use hyle_model::LaneBytesSize;
+pub use hyli_model::LaneBytesSize;
 
 #[derive(Clone)]
 pub struct LanesStorage {

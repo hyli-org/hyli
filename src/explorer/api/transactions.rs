@@ -10,7 +10,7 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use hyle_model::utils::TimestampMs;
+use hyli_model::utils::TimestampMs;
 use sqlx::postgres::PgRow;
 use sqlx::types::chrono::NaiveDateTime;
 use sqlx::FromRow;
@@ -18,7 +18,7 @@ use sqlx::Row;
 use sqlx::{prelude::Type, Postgres};
 
 use crate::model::*;
-use hyle_modules::log_error;
+use hyli_modules::log_error;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DataProposalHashDb(pub DataProposalHash);
@@ -502,7 +502,7 @@ pub async fn get_blob_transactions_by_contract(
     let rows = log_error!(sqlx::query(
         r#"
         with blobs as (
-            SELECT blobs.*, array_remove(ARRAY_AGG(blob_proof_outputs.hyle_output), NULL) AS proof_outputs
+            SELECT blobs.*, array_remove(ARRAY_AGG(blob_proof_outputs.hyli_output), NULL) AS proof_outputs
             FROM blobs
             LEFT JOIN blob_proof_outputs ON blobs.parent_dp_hash = blob_proof_outputs.blob_parent_dp_hash AND blobs.tx_hash = blob_proof_outputs.blob_tx_hash AND blobs.blob_index = blob_proof_outputs.blob_index
             WHERE blobs.contract_name = $1

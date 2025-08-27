@@ -1,5 +1,5 @@
 [package]
-name = "hyle-amm"
+name = "hyli-amm"
 description = "Hyli Smart Contract"
 license = "MIT"
 version = { workspace = true }

@@ -12,22 +12,22 @@ members = [
   "crates/bonsai-runner",
   "crates/client-sdk",
   "crates/contract-sdk",
-  "crates/hyle-loadtest",
-  "crates/hyle-model",
-  "crates/hyle-crypto",
-  "crates/hyle-verifiers",
-  "crates/hyle-modules",
+  "crates/hyli-loadtest",
+  "crates/hyli-model",
+  "crates/hyli-crypto",
+  "crates/hyli-verifiers",
+  "crates/hyli-modules",
   "crates/hyli-tools",
   "crates/noir-tools",
 ]
 default-members = [
   "crates/contracts",
   "crates/contracts/hydentity",
-  "crates/hyle-loadtest",
-  "crates/hyle-model",
-  "crates/hyle-crypto",
-  "crates/hyle-net",
-  "crates/hyle-modules",
+  "crates/hyli-loadtest",
+  "crates/hyli-model",
+  "crates/hyli-crypto",
+  "crates/hyli-net",
+  "crates/hyli-modules",
   "crates/hyli-tools",
   ".",
 ]
@@ -42,23 +42,23 @@ rust-version = "1.88"
 license-file = "LICENSE"
 
 [workspace.dependencies]
-bonsai-runner = { version = "0.13.0-rc.4", default-features = false, path = "crates/bonsai-runner", package = "hyle-bonsai-runner" }
-sdk = { version = "0.13.0-rc.4", default-features = false, path = "crates/contract-sdk", package = "hyle-contract-sdk" }
-hyle-contract-sdk = { version = "0.13.0-rc.4", default-features = false, path = "crates/contract-sdk", package = "hyle-contract-sdk" }
-client-sdk = { version = "0.13.0-rc.4", default-features = false, path = "crates/client-sdk", package = "hyle-client-sdk" }
-hyle-net = { version = "0.13.0-rc.4", default-features = false, path = "crates/hyle-net", package = "hyle-net" }
-hyle-model = { version = "0.13.0-rc.4", default-features = false, path = "crates/hyle-model", package = "hyle-model" }
-hyle-crypto = { version = "0.13.0-rc.4", default-features = false, path = "crates/hyle-crypto", package = "hyle-crypto" }
-hyle-verifiers = { version = "0.13.0-rc.4", default-features = false, path = "crates/hyle-verifiers", package = "hyle-verifiers" }
-risc0-recursion = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/risc0-recursion", package = "hyle-risc0-recursion" }
-hydentity = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/hydentity", package = "hyle-hydentity" }
-hyllar = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/hyllar", package = "hyle-hyllar" }
-smt-token = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/smt-token", package = "hyle-smt-token" }
-staking = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/staking", package = "hyle-staking" }
-amm = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/amm", package = "hyle-amm" }
-uuid-tld = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/uuid-tld", package = "hyle-uuid-tld" }
-hyle-contracts = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts", package = "hyle-contracts" }
-hyle-modules = { version = "0.13.0-rc.4", default-features = false, path = "crates/hyle-modules", package = "hyle-modules" }
+bonsai-runner = { version = "0.13.0-rc.4", default-features = false, path = "crates/bonsai-runner", package = "hyli-bonsai-runner" }
+sdk = { version = "0.13.0-rc.4", default-features = false, path = "crates/contract-sdk", package = "hyli-contract-sdk" }
+hyli-contract-sdk = { version = "0.13.0-rc.4", default-features = false, path = "crates/contract-sdk", package = "hyli-contract-sdk" }
+client-sdk = { version = "0.13.0-rc.4", default-features = false, path = "crates/client-sdk", package = "hyli-client-sdk" }
+hyli-net = { version = "0.13.0-rc.4", default-features = false, path = "crates/hyli-net", package = "hyli-net" }
+hyli-model = { version = "0.13.0-rc.4", default-features = false, path = "crates/hyli-model", package = "hyli-model" }
+hyli-crypto = { version = "0.13.0-rc.4", default-features = false, path = "crates/hyli-crypto", package = "hyli-crypto" }
+hyli-verifiers = { version = "0.13.0-rc.4", default-features = false, path = "crates/hyli-verifiers", package = "hyli-verifiers" }
+risc0-recursion = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/risc0-recursion", package = "hyli-risc0-recursion" }
+hydentity = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/hydentity", package = "hyli-hydentity" }
+hyllar = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/hyllar", package = "hyli-hyllar" }
+smt-token = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/smt-token", package = "hyli-smt-token" }
+staking = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/staking", package = "hyli-staking" }
+amm = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/amm", package = "hyli-amm" }
+uuid-tld = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/uuid-tld", package = "hyli-uuid-tld" }
+hyli-contracts = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts", package = "hyli-contracts" }
+hyli-modules = { version = "0.13.0-rc.4", default-features = false, path = "crates/hyli-modules", package = "hyli-modules" }
 
 # Common external dependencies
 alloc-metrics = { version = "0.1.1" }
@@ -138,7 +138,7 @@ uuid = { version = "1.18.0", default-features = false }
 whoami = { version = "1.6.1", default-features = false }
 
 [package]
-name = "hyle"
+name = "hyli"
 description = "Hyli node"
 license-file = { workspace = true }
 version = { workspace = true }
@@ -146,10 +146,10 @@ edition = { workspace = true }
 homepage = { workspace = true }
 repository = { workspace = true }
 rust-version = { workspace = true }
-default-run = "hyle"
+default-run = "hyli"
 
 [[bin]]
-name = "hyle"
+name = "hyli"
 
 [[bin]]
 name = "indexer"
@@ -163,24 +163,24 @@ undocumented_unsafe_blocks = "warn"
 
 [dependencies]
 # Public dependencies
-hyle-contract-sdk = { workspace = true, default-features = false, features = [
+hyli-contract-sdk = { workspace = true, default-features = false, features = [
   "tracing",
 ] }
 staking = { workspace = true, default-features = false, features = ["client"] }
 client-sdk = { workspace = true, features = ["rest", "indexer"] }
-hyle-net = { workspace = true }
-hyle-model = { workspace = true, default-features = false, features = [
+hyli-net = { workspace = true }
+hyli-model = { workspace = true, default-features = false, features = [
   "full",
   "sqlx",
 ] }
-hyle-crypto = { workspace = true }
+hyli-crypto = { workspace = true }
 hydentity = { workspace = true, features = ["client"] }
 hyllar = { workspace = true, features = ["client"] }
 smt-token = { workspace = true, features = ["client"] }
 risc0-recursion = { workspace = true }
-hyle-verifiers = { workspace = true }
-hyle-contracts = { workspace = true }
-hyle-modules = { workspace = true }
+hyli-verifiers = { workspace = true }
+hyli-contracts = { workspace = true }
+hyli-modules = { workspace = true }
 
 
 anyhow = { workspace = true }
@@ -250,7 +250,7 @@ client-sdk = { workspace = true, default-features = false, features = [
   "rest",
   "risc0",
 ] }
-hyle-modules = { workspace = true, default-features = false, features = [
+hyli-modules = { workspace = true, default-features = false, features = [
   "test",
 ] }
 
@@ -274,21 +274,21 @@ signal-child = "1.0.6"
 [features]
 default = ["risc0"]
 
-turmoil = ["hyle-net/turmoil", "client-sdk/turmoil"]
+turmoil = ["hyli-net/turmoil", "client-sdk/turmoil"]
 
-cairo-m = ["hyle-verifiers/cairo-m"]
-risc0 = ["hyle-verifiers/risc0", "client-sdk/risc0"]
-sp1 = ["hyle-verifiers/sp1", "client-sdk/sp1"]
+cairo-m = ["hyli-verifiers/cairo-m"]
+risc0 = ["hyli-verifiers/risc0", "client-sdk/risc0"]
+sp1 = ["hyli-verifiers/sp1", "client-sdk/sp1"]
 
 # Disable dependency keyring by default, as it requires libdbus
-keyring = ["hyle-crypto/keyring"]
+keyring = ["hyli-crypto/keyring"]
 
 dhat = ["dep:dhat"]
 monitoring = ["dep:alloc-metrics"]
 alloc-track = ["dep:alloc-track"]
 
 # Activate this feature to recompile contracts locally (mostly useful for iterating on tests)
-nonreproducible = ["hyle-contracts/nonreproducible"]
+nonreproducible = ["hyli-contracts/nonreproducible"]
 node_local_proving = ["risc0-zkvm/client"]
 
 [profile.release]

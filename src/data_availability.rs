@@ -1,17 +1,17 @@
 //! Minimal block storage layer for data availability.
 
 // Pick one of the two implementations
-use hyle_modules::modules::data_availability::blocks_fjall::Blocks;
-//use hyle_modules::modules::data_availability::blocks_memory::Blocks;
-use hyle_modules::{bus::SharedMessageBus, modules::Module};
-use hyle_modules::{
+use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
+//use hyli_modules::modules::data_availability::blocks_memory::Blocks;
+use hyli_modules::{bus::SharedMessageBus, modules::Module};
+use hyli_modules::{
     log_error, module_bus_client, module_handle_messages,
     utils::da_codec::{
         DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest,
         DataAvailabilityServer,
     },
 };
-use hyle_net::tcp::TcpEvent;
+use hyli_net::tcp::TcpEvent;
 use tokio::task::JoinHandle;
 
 use crate::{
@@ -98,7 +98,7 @@ struct DABusClient {
 }
 
 type DaTcpServer =
-    hyle_net::tcp::tcp_server::TcpServer<DataAvailabilityRequest, DataAvailabilityEvent>;
+    hyli_net::tcp::tcp_server::TcpServer<DataAvailabilityRequest, DataAvailabilityEvent>;
 
 #[derive(Debug)]
 pub struct DataAvailability {
@@ -317,7 +317,7 @@ impl DaCatchupper {
 
             client.send(DataAvailabilityRequest(start_height)).await?;
 
-            let timeout_duration = std::env::var("HYLE_DA_SLEEP_TIMEOUT")
+            let timeout_duration = std::env::var("HYLI_DA_SLEEP_TIMEOUT")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .map(Duration::from_secs)
@@ -801,8 +801,8 @@ pub mod tests {
         utils::{conf::Conf, integration_test::find_available_port},
     };
     use anyhow::Result;
-    use hyle_modules::log_error;
-    use hyle_modules::utils::da_codec::{
+    use hyli_modules::log_error;
+    use hyli_modules::utils::da_codec::{
         DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest,
         DataAvailabilityServer,
     };

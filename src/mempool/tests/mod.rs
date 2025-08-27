@@ -17,9 +17,9 @@ use crate::{
 };
 use anyhow::Result;
 use assertables::assert_ok;
-use hyle_contract_sdk::StateCommitment;
-use hyle_crypto::BlstCrypto;
-use hyle_modules::modules::Module;
+use hyli_contract_sdk::StateCommitment;
+use hyli_crypto::BlstCrypto;
+use hyli_modules::modules::Module;
 use tokio::sync::broadcast::Receiver;
 use utils::TimestampMs;
 
@@ -443,7 +443,7 @@ pub fn create_data_vote(
 
 pub fn make_register_contract_tx(name: ContractName) -> Transaction {
     BlobTransaction::new(
-        "hyle@hyle",
+        "hyli@hyli",
         vec![RegisterContractAction {
             verifier: "test".into(),
             program_id: ProgramId(vec![]),
@@ -451,7 +451,7 @@ pub fn make_register_contract_tx(name: ContractName) -> Transaction {
             contract_name: name,
             ..Default::default()
         }
-        .as_blob("hyle".into())],
+        .as_blob("hyli".into())],
     )
     .into()
 }

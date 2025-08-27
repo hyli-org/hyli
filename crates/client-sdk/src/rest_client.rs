@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use hyle_net::http::HttpClient;
+use hyli_net::http::HttpClient;
 use sdk::{
     api::{
         APIBlob, APIBlock, APIContract, APINodeContract, APIRegisterContract, APIStaking,
@@ -351,7 +351,7 @@ impl DerefMut for NodeApiHttpClient {
 
 #[allow(dead_code)]
 pub mod test {
-    use sdk::{hyle_model_utils::TimestampMs, Hashed, TimeoutWindow};
+    use sdk::{hyli_model_utils::TimestampMs, Hashed, TimeoutWindow};
 
     use super::*;
     use std::sync::{Arc, Mutex};

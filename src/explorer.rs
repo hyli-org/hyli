@@ -16,18 +16,18 @@ use axum::{
     Router,
 };
 use futures::{SinkExt, StreamExt};
-use hyle_model::api::{
+use hyli_model::api::{
     BlobWithStatus, TransactionStatusDb, TransactionTypeDb, TransactionWithBlobs,
 };
-use hyle_model::utils::TimestampMs;
-use hyle_modules::bus::BusMessage;
-use hyle_modules::log_error;
-use hyle_modules::{
+use hyli_model::utils::TimestampMs;
+use hyli_modules::bus::BusMessage;
+use hyli_modules::log_error;
+use hyli_modules::{
     bus::SharedMessageBus,
     module_handle_messages,
     modules::{module_bus_client, Module, SharedBuildApiCtx},
 };
-use hyle_net::logged_task::logged_task;
+use hyli_net::logged_task::logged_task;
 use sqlx::Row;
 use sqlx::{postgres::PgPoolOptions, PgPool, Pool, Postgres};
 use std::collections::HashMap;

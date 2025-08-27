@@ -7,14 +7,14 @@ use crate::{
     model::SharedRunContext, utils::conf::SharedConf,
 };
 use anyhow::{bail, Context, Error, Result};
-use hyle_crypto::{BlstCrypto, SharedBlstCrypto};
-use hyle_model::{BlockHeight, NodeStateEvent, ValidatorPublicKey};
-use hyle_modules::{
+use hyli_crypto::{BlstCrypto, SharedBlstCrypto};
+use hyli_model::{BlockHeight, NodeStateEvent, ValidatorPublicKey};
+use hyli_modules::{
     bus::{BusMessage, SharedMessageBus},
     log_warn, module_handle_messages,
     modules::{module_bus_client, Module},
 };
-use hyle_net::{
+use hyli_net::{
     clock::TimestampMsClock,
     tcp::{
         p2p_server::{P2PServer, P2PServerEvent},

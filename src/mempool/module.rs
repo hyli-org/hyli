@@ -1,4 +1,4 @@
-use hyle_modules::{log_error, module_handle_messages};
+use hyli_modules::{log_error, module_handle_messages};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use crate::{
@@ -7,8 +7,8 @@ use crate::{
 };
 
 use client_sdk::tcp_client::TcpServerMessage;
-use hyle_model::{DataProposalHash, LaneBytesSize, LaneId};
-use hyle_modules::{bus::SharedMessageBus, modules::Module};
+use hyli_model::{DataProposalHash, LaneBytesSize, LaneId};
+use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use tracing::warn;
 
 use super::{api::RestApiMessage, MempoolNetMessage, QueryNewCut};

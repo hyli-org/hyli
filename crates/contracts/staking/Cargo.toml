@@ -1,5 +1,5 @@
 [package]
-name = "hyle-staking"
+name = "hyli-staking"
 description = "Hyli Smart Contract"
 license-file = { workspace = true }
 version = { workspace = true }

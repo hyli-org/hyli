@@ -24,7 +24,7 @@ jobs:
 
       - name: Run contract update command
         run: |
-          cargo build -p hyle-contracts --features build -vv
+          cargo build -p hyli-contracts --features build -vv
 
       - name: Check for changes
         run: |

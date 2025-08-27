@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use client_sdk::helpers::risc0::Risc0Prover;
-use hyle_smt_token::{
+use hyli_smt_token::{
     account::{Account, AccountSMT},
     client::tx_executor_handler::metadata::{PROGRAM_ID, SMT_TOKEN_ELF},
     SmtTokenAction, SmtTokenContract,

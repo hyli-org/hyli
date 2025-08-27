@@ -1,15 +1,15 @@
 use anyhow::{Context, Result};
 use clap::{Parser, command};
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
-use hyle_model::DataEvent;
+use hyli_model::DataEvent;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
-use hyle_contract_sdk::BlockHeight;
-use hyle_modules::module_handle_messages;
-use hyle_modules::modules::{Module, module_bus_client};
-use hyle_modules::{
+use hyli_contract_sdk::BlockHeight;
+use hyli_modules::module_handle_messages;
+use hyli_modules::modules::{Module, module_bus_client};
+use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{ModulesHandler, da_listener::DAListenerConf, signed_da_listener::SignedDAListener},
     node_state::NodeState,
@@ -107,7 +107,7 @@ impl Conf {
         }
         let conf: Self = s
             .add_source(
-                config::Environment::with_prefix("hyle")
+                config::Environment::with_prefix("hyli")
                     .separator("__")
                     .prefix_separator("_"),
             )

@@ -2,8 +2,8 @@ use anyhow::Result;
 use async_stream::try_stream;
 use borsh::{BorshDeserialize, BorshSerialize};
 use futures::{Stream, StreamExt};
-use hyle_crypto::BlstCrypto;
-use hyle_model::{DataSized, LaneId};
+use hyli_crypto::BlstCrypto;
+use hyli_model::{DataSized, LaneId};
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
 use std::{future::Future, vec};
@@ -15,7 +15,7 @@ use crate::model::{
 
 use super::ValidatorDAG;
 
-pub use hyle_model::LaneBytesSize;
+pub use hyli_model::LaneBytesSize;
 
 pub enum CanBePutOnTop {
     Yes,
@@ -420,7 +420,7 @@ mod tests {
     use crate::mempool::storage_memory::LanesStorage;
     use assertables::assert_none;
     use futures::StreamExt;
-    use hyle_model::{DataSized, Identity, Signature, Transaction, ValidatorSignature};
+    use hyli_model::{DataSized, Identity, Signature, Transaction, ValidatorSignature};
     use staking::state::Staking;
 
     fn setup_storage() -> LanesStorage {

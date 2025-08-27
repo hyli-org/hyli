@@ -151,7 +151,7 @@ impl UuidTld {
 #[cfg(test)]
 mod test {
     use crate::*;
-    use hyle_model_utils::TimestampMs;
+    use hyli_model_utils::TimestampMs;
     use sdk::*;
 
     fn make_calldata<T: ContractAction>(action: T, identity: &str) -> Calldata {

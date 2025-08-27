@@ -195,8 +195,8 @@ impl LightSmtExecutor {
 
 #[cfg(test)]
 mod tests {
-    use hyle_smt_token::client::light_executor::LightSmtExecutor;
-    use hyle_smt_token::{SmtTokenAction, FAUCET_ID, TOTAL_SUPPLY};
+    use hyli_smt_token::client::light_executor::LightSmtExecutor;
+    use hyli_smt_token::{SmtTokenAction, FAUCET_ID, TOTAL_SUPPLY};
     use sdk::Identity;
 
     fn identity(name: &str) -> Identity {

@@ -13,7 +13,7 @@ This architecture is subject to change while sdk will be developped.
 To regenerate the _.img and _.txt files, you should run
 
 ```
-cargo build -p hyle-contracts --features build
+cargo build -p hyli-contracts --features build
 ```
 
 For testing, you can recreate the contracts on the fly (without docker) by running the `--features nonreproducible` flag.

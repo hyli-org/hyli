@@ -7,15 +7,15 @@ use alloc::{format, vec};
 use borsh::{BorshDeserialize, BorshSerialize};
 use core::result::Result;
 
-use hyle_model::{
-    Blob, BlobIndex, Calldata, DropEndOfReader, HyleOutput, IndexedBlobs, StateCommitment,
+use hyli_model::{
+    Blob, BlobIndex, Calldata, DropEndOfReader, HyliOutput, IndexedBlobs, StateCommitment,
     StructuredBlob,
 };
 
 /// This function is used to parse the contract input blob data into a given template `Action`
 /// It assumes that the blob data is the `Action` serialized with borsh.
 /// It returns a tuple with the parsed `Action` and an [ExecutionContext] that can be used
-/// by the contract, and will be needed by the sdk to build the [HyleOutput].
+/// by the contract, and will be needed by the sdk to build the [HyliOutput].
 ///
 /// Alternative: [parse_calldata]
 pub fn parse_raw_calldata<Action>(calldata: &Calldata) -> Result<(Action, ExecutionContext), String>
@@ -43,7 +43,7 @@ where
 /// This function is used to parse the contract input blob data.
 /// It assumes that the blob data is a [StructuredBlobData] serialized with borsh.
 /// It returns a tuple with the parsed `Action` and an [ExecutionContext] that can be used
-/// by the contract, and will be needed by the sdk to build the [HyleOutput].
+/// by the contract, and will be needed by the sdk to build the [HyliOutput].
 ///
 /// The [ExecutionContext] will holds the caller/callees information.
 /// See [StructuredBlobData] page for more information on caller/callees.
@@ -123,8 +123,8 @@ fn fail(
     calldata: &Calldata,
     initial_state_commitment: StateCommitment,
     message: &str,
-) -> HyleOutput {
-    HyleOutput {
+) -> HyliOutput {
+    HyliOutput {
         version: 1,
         initial_state: initial_state_commitment.clone(),
         next_state: initial_state_commitment,
@@ -141,12 +141,12 @@ fn fail(
     }
 }
 
-pub fn as_hyle_output(
+pub fn as_hyli_output(
     initial_state_commitment: StateCommitment,
     next_state_commitment: StateCommitment,
     calldata: &Calldata,
     res: &mut crate::RunResult,
-) -> HyleOutput {
+) -> HyliOutput {
     match res {
         Ok((ref mut program_output, execution_context, ref mut onchain_effects)) => {
             if !execution_context.callees_blobs.is_empty() {
@@ -159,7 +159,7 @@ pub fn as_hyle_output(
                     ),
                 );
             }
-            HyleOutput {
+            HyliOutput {
                 version: 1,
                 initial_state: initial_state_commitment,
                 next_state: next_state_commitment,
@@ -254,7 +254,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyle_model::{Blob, BlobData, ContractName, TxHash};
+    use hyli_model::{Blob, BlobData, ContractName, TxHash};
 
     fn make_calldata(
         identity: Identity,

@@ -3,8 +3,8 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{Context, Result};
 use clap::{Parser, command};
 
-use hyle_contract_sdk::BlockHeight;
-use hyle_modules::{
+use hyli_contract_sdk::BlockHeight;
+use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
         ModulesHandler,
@@ -92,7 +92,7 @@ impl Conf {
         }
         let conf: Self = s
             .add_source(
-                config::Environment::with_prefix("hyle")
+                config::Environment::with_prefix("hyli")
                     .separator("__")
                     .prefix_separator("_"),
             )
