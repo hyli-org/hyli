@@ -11,13 +11,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - crate: hyle
+          - crate: hyli
             features: sp1
-          - crate: hyle-client-sdk
+          - crate: hyli-client-sdk
             features: rest,indexer,risc0,sp1,turmoil
-          - crate: hyle-contract-sdk
+          - crate: hyli-contract-sdk
             features: sp1
-          - crate: hyle-contract-sdk
+          - crate: hyli-contract-sdk
             features: risc0
         crate: ${{ fromJson(needs.list-crates.outputs.crates) }}
 
@@ -39,7 +39,7 @@ jobs:
         run: cargo build -p ${{ matrix.crate }} --features ${{ matrix.features }}
       
       - name: Build doc for crate '${{ matrix.crate }}'
-        if: matrix.crate != 'hyle-noir-tools'
+        if: matrix.crate != 'hyli-noir-tools'
         run: cargo docs-rs -p ${{ matrix.crate }}
 
   list-crates:
