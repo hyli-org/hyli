@@ -2,7 +2,6 @@
 
 use crate::bus::BusClientSender;
 use crate::model::*;
-use crate::node_state::module::NodeStateEvent;
 use crate::p2p::network::HeaderSigner;
 use crate::{
     bus::command_response::Query,

@@ -5,7 +5,6 @@ use crate::{
     consensus::{CommittedConsensusProposal, ConsensusEvent},
     genesis::GenesisEvent,
     model::*,
-    node_state::module::NodeStateEvent,
     p2p::network::{
         HeaderSignableData, HeaderSigner, IntoHeaderSignableData, MsgWithHeader, OutboundMessage,
     },

@@ -1,5 +1,14 @@
 #![allow(clippy::indexing_slicing)]
 
+use crate::{
+    bus::SharedMessageBus,
+    explorer::Explorer,
+    model::{
+        Blob, BlobData, BlobProofOutput, ProofData, SignedBlock, Transaction, TransactionData,
+        VerifiedProofTransaction,
+    },
+    utils::conf::IndexerConf,
+};
 use assert_json_diff::assert_json_include;
 use axum_test::TestServer;
 use client_sdk::transaction_builder::ProvableBlobTx;
@@ -10,27 +19,15 @@ use hyli_model::api::{
 };
 use hyli_modules::node_state::test::{craft_signed_block, craft_signed_block_with_parent_dp_hash};
 use serde_json::json;
-use std::future::IntoFuture;
-use utils::TimestampMs;
-
-use crate::{
-    bus::SharedMessageBus,
-    explorer::Explorer,
-    model::{
-        Blob, BlobData, BlobProofOutput, ProofData, SignedBlock, Transaction, TransactionData,
-        VerifiedProofTransaction,
-    },
-    node_state::NodeState,
-    utils::conf::IndexerConf,
-};
-
-use super::*;
-
 use sqlx::postgres::PgPoolOptions;
+use std::future::IntoFuture;
 use testcontainers_modules::{
     postgres::Postgres,
     testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
 };
+use utils::TimestampMs;
+
+use super::*;
 
 async fn setup_test_server(explorer: &Explorer) -> Result<TestServer> {
     let router = explorer.api(None);

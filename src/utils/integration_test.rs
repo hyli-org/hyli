@@ -5,33 +5,34 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use crate::{
+    bus::{bus_client, metrics::BusMetrics, BusClientReceiver, SharedMessageBus},
+    consensus::Consensus,
+    data_availability::DataAvailability,
+    explorer::Explorer,
+    genesis::{Genesis, GenesisEvent},
+    indexer::Indexer,
+    mempool::Mempool,
+    model::SharedRunContext,
+    p2p::P2P,
+    rest::{RestApi, RestApiRunContext},
+    single_node_consensus::SingleNodeConsensus,
+    tcp_server::TcpServer,
+    utils::conf::Conf,
+};
 use anyhow::{bail, Context, Result};
 use axum::Router;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
-use hyli_model::api::NodeInfo;
-use hyli_model::TxHash;
-use hyli_modules::modules::{BuildApiContextInner, ModulesHandler};
-use hyli_modules::node_state::module::NodeStateCtx;
-use tracing::info;
-
-use crate::bus::metrics::BusMetrics;
-use crate::bus::{bus_client, BusClientReceiver, SharedMessageBus};
-use crate::consensus::Consensus;
-use crate::data_availability::DataAvailability;
-use crate::explorer::Explorer;
-use crate::genesis::{Genesis, GenesisEvent};
-use crate::indexer::Indexer;
-use crate::mempool::Mempool;
-use crate::model::SharedRunContext;
-use crate::node_state::module::{NodeStateEvent, NodeStateModule};
-use crate::p2p::P2P;
-use crate::rest::{RestApi, RestApiRunContext};
-use crate::single_node_consensus::SingleNodeConsensus;
-use crate::tcp_server::TcpServer;
-use crate::utils::conf::Conf;
 use hyli_crypto::BlstCrypto;
-
-use hyli_modules::{module_bus_client, module_handle_messages, modules::Module};
+use hyli_model::NodeStateEvent;
+use hyli_model::{api::NodeInfo, TxHash};
+use hyli_modules::node_state::module::NodeStateModule;
+use hyli_modules::{
+    module_bus_client, module_handle_messages,
+    modules::{BuildApiContextInner, Module, ModulesHandler},
+    node_state::module::NodeStateCtx,
+};
+use tracing::info;
 
 // Assume that we can reuse the OS-provided port.
 pub async fn find_available_port() -> u16 {
