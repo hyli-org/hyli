@@ -281,7 +281,7 @@ impl Default for NodeStateStore {
 
 impl NodeState {
     /// Convenience wrapper
-    pub fn process_signed_block<T: NodeStateCallback + Send + Sync + 'static>(
+    pub fn process_signed_block<T: NodeStateCallback + Send + Sync>(
         &mut self,
         signed_block: &SignedBlock,
         callback: &mut T,
