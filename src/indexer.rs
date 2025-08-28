@@ -12,15 +12,12 @@ use anyhow::{Context, Error, Result};
 use chrono::{DateTime, Utc};
 use hyli_model::api::{TransactionStatusDb, TransactionTypeDb};
 use hyli_model::utils::TimestampMs;
-use hyli_modules::bus::BusClientSender;
+use hyli_modules::{bus::BusClientSender, node_state::BlockNodeStateCallback};
 use hyli_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
     modules::{gcs_uploader::GCSRequest, module_bus_client, Module, SharedBuildApiCtx},
-    node_state::{
-        module::NodeStateModule, BlockNodeStateCallback, NodeState, NodeStateCallback,
-        NodeStateProcessing, NodeStateStore, TxEvent,
-    },
+    node_state::{module::NodeStateModule, NodeState, NodeStateCallback, NodeStateStore, TxEvent},
 };
 use hyli_net::clock::TimestampMsClock;
 use sqlx::{postgres::PgPoolOptions, Acquire, PgPool, Pool, Postgres, QueryBuilder, Row};
@@ -256,11 +253,8 @@ impl Indexer {
                 total_txs: block.count_txs() as i64,
             });
 
-            NodeStateProcessing {
-                this: &mut self.node_state,
-                callback: &mut self.handler_store,
-            }
-            .process_signed_block(&block)?;
+            self.node_state
+                .process_signed_block(&block, &mut self.handler_store)?;
 
             // We use the indexer as node-state-processor for CSI
             // TODO: refactor this away it conflicts with running the indexer in the full node as we send all events twice.
