@@ -8,7 +8,7 @@ use crate::module_handle_messages;
 use crate::modules::admin::{QueryNodeStateStore, QueryNodeStateStoreResponse};
 use crate::modules::files::NODE_STATE_BIN;
 use crate::modules::{module_bus_client, Module, SharedBuildApiCtx};
-use crate::node_state::block_retrocompat::BlockNodeStateCallback;
+use crate::node_state::BlockNodeStateCallback;
 use crate::{log_error, log_warn};
 use anyhow::Result;
 use sdk::*;

@@ -12,7 +12,7 @@ use anyhow::{Context, Error, Result};
 use chrono::{DateTime, Utc};
 use hyli_model::api::{TransactionStatusDb, TransactionTypeDb};
 use hyli_model::utils::TimestampMs;
-use hyli_modules::{bus::BusClientSender, node_state::block_retrocompat::BlockNodeStateCallback};
+use hyli_modules::{bus::BusClientSender, node_state::BlockNodeStateCallback};
 use hyli_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
