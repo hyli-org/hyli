@@ -2255,7 +2255,7 @@ dependencies = [
  "bitflags 2.9.2",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.11.0",
  "lazy_static",
  "lazycell",
  "log",
@@ -2278,7 +2278,7 @@ dependencies = [
  "bitflags 2.9.2",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.11.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2712,8 +2712,9 @@ dependencies = [
 [[package]]
 name = "cairo-m-common"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#c84a89b772b092b0b47a089ca4ea1fafb135c938"
+source = "git+https://github.com/kkrt-labs/cairo-m#df1f906f859f1d1887d2f8ff6f0b4db174290cb3"
 dependencies = [
+ "anyhow",
  "num-traits",
  "paste",
  "serde",
@@ -2726,7 +2727,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#c84a89b772b092b0b47a089ca4ea1fafb135c938"
+source = "git+https://github.com/kkrt-labs/cairo-m#df1f906f859f1d1887d2f8ff6f0b4db174290cb3"
 dependencies = [
  "anyhow",
  "ariadne",
@@ -2743,7 +2744,7 @@ dependencies = [
  "logos",
  "num-traits",
  "salsa",
- "sonic-rs 0.3.17",
+ "sonic-rs 0.5.4",
  "thiserror 2.0.16",
  "tracing",
  "tracing-subscriber 0.3.19",
@@ -2753,7 +2754,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler-codegen"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#c84a89b772b092b0b47a089ca4ea1fafb135c938"
+source = "git+https://github.com/kkrt-labs/cairo-m#df1f906f859f1d1887d2f8ff6f0b4db174290cb3"
 dependencies = [
  "cairo-m-common",
  "cairo-m-compiler-diagnostics",
@@ -2777,7 +2778,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler-diagnostics"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#c84a89b772b092b0b47a089ca4ea1fafb135c938"
+source = "git+https://github.com/kkrt-labs/cairo-m#df1f906f859f1d1887d2f8ff6f0b4db174290cb3"
 dependencies = [
  "ariadne",
  "chumsky",
@@ -2786,22 +2787,24 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler-mir"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#c84a89b772b092b0b47a089ca4ea1fafb135c938"
+source = "git+https://github.com/kkrt-labs/cairo-m#df1f906f859f1d1887d2f8ff6f0b4db174290cb3"
 dependencies = [
  "cairo-m-compiler-diagnostics",
  "cairo-m-compiler-parser",
  "cairo-m-compiler-semantic",
  "chumsky",
  "index_vec",
+ "log",
  "rustc-hash 1.1.0",
  "salsa",
  "salsa-macros",
+ "stwo-prover",
 ]
 
 [[package]]
 name = "cairo-m-compiler-parser"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#c84a89b772b092b0b47a089ca4ea1fafb135c938"
+source = "git+https://github.com/kkrt-labs/cairo-m#df1f906f859f1d1887d2f8ff6f0b4db174290cb3"
 dependencies = [
  "ariadne",
  "cairo-m-compiler-diagnostics",
@@ -2820,7 +2823,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler-semantic"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#c84a89b772b092b0b47a089ca4ea1fafb135c938"
+source = "git+https://github.com/kkrt-labs/cairo-m#df1f906f859f1d1887d2f8ff6f0b4db174290cb3"
 dependencies = [
  "anyhow",
  "ariadne",
@@ -2847,7 +2850,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-project"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#c84a89b772b092b0b47a089ca4ea1fafb135c938"
+source = "git+https://github.com/kkrt-labs/cairo-m#df1f906f859f1d1887d2f8ff6f0b4db174290cb3"
 dependencies = [
  "anyhow",
  "ignore",
@@ -2861,7 +2864,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-prover"
 version = "0.1.1"
-source = "git+https://github.com/kkrt-labs/cairo-m#c84a89b772b092b0b47a089ca4ea1fafb135c938"
+source = "git+https://github.com/kkrt-labs/cairo-m#df1f906f859f1d1887d2f8ff6f0b4db174290cb3"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2889,7 +2892,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-runner"
 version = "0.1.1"
-source = "git+https://github.com/kkrt-labs/cairo-m#c84a89b772b092b0b47a089ca4ea1fafb135c938"
+source = "git+https://github.com/kkrt-labs/cairo-m#df1f906f859f1d1887d2f8ff6f0b4db174290cb3"
 dependencies = [
  "anyhow",
  "cairo-m-common",
@@ -2911,7 +2914,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-test-utils"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#c84a89b772b092b0b47a089ca4ea1fafb135c938"
+source = "git+https://github.com/kkrt-labs/cairo-m#df1f906f859f1d1887d2f8ff6f0b4db174290cb3"
 dependencies = [
  "once_cell",
  "pulldown-cmark",
@@ -4313,7 +4316,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "778e2ac28f6c47af28e4907f13ffd1e1ddbd400980a9abd7c8df189bf578a5ad"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -6499,7 +6502,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07033963ba89ebaf1584d767badaa2e8fcec21aedea6b8c0346d487d49c28667"
 dependencies = [
  "cfg-if 1.0.3",
- "windows-targets 0.53.3",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -8459,7 +8462,7 @@ dependencies = [
  "once_cell",
  "socket2 0.5.10",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -9578,7 +9581,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.4.15",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -9591,7 +9594,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.9.4",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11231,7 +11234,7 @@ dependencies = [
  "cfg-if 1.0.3",
  "libc",
  "psm",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -11579,7 +11582,7 @@ dependencies = [
  "getrandom 0.3.3",
  "once_cell",
  "rustix 1.0.8",
- "windows-sys 0.60.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -12330,7 +12333,7 @@ version = "1.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
 dependencies = [
- "cfg-if 1.0.3",
+ "cfg-if 0.1.10",
  "static_assertions",
 ]
 
@@ -12879,7 +12882,7 @@ version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0978bf7171b3d90bac376700cb56d606feb40f251a475a5d6634613564460b22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
