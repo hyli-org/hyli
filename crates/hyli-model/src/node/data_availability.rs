@@ -165,7 +165,20 @@ pub enum TransactionStateEvent {
     DroppedAsDuplicate,
 }
 
+#[derive(Default, Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
+pub struct BlockStakingData {
+    pub new_bounded_validators: Vec<ValidatorPublicKey>,
+    pub staking_actions: Vec<(Identity, StakingAction)>,
+}
+
+#[derive(Default, Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
+pub struct NodeStateBlock {
+    pub signed_block: std::sync::Arc<SignedBlock>,
+    pub parsed_block: std::sync::Arc<Block>,
+    pub staking_data: std::sync::Arc<BlockStakingData>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
 pub enum NodeStateEvent {
-    NewBlock(Box<Block>),
+    NewBlock(NodeStateBlock),
 }

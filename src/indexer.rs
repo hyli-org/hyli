@@ -258,9 +258,12 @@ impl Indexer {
 
             // We use the indexer as node-state-processor for CSI
             // TODO: refactor this away it conflicts with running the indexer in the full node as we send all events twice.
-            self.bus.send(NodeStateEvent::NewBlock(Box::new(
-                self.handler_store.block_callback.get_block(),
-            )))?;
+            let (parsed_block, staking_data) = self.handler_store.block_callback.take();
+            self.bus.send(NodeStateEvent::NewBlock(NodeStateBlock {
+                signed_block: block.into(),
+                parsed_block: parsed_block.into(),
+                staking_data: staking_data.into(),
+            }))?;
         }
 
         // if last block is newer than 5sec dump store to db

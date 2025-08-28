@@ -117,9 +117,9 @@ impl DAListener {
                 block.consensus_proposal.slot,
                 block.consensus_proposal.hashed()
             );
-            let processed_block = self.node_state.handle_signed_block(&block)?;
+            let processed_block = self.node_state.handle_signed_block(block)?;
             self.bus
-                .send_waiting_if_full(NodeStateEvent::NewBlock(Box::new(processed_block)))
+                .send_waiting_if_full(NodeStateEvent::NewBlock(processed_block))
                 .await?;
             return Ok(());
         }
@@ -148,10 +148,10 @@ impl DAListener {
                         block.consensus_proposal.hashed()
                     );
                 }
-                let processed_block = self.node_state.handle_signed_block(&block)?;
+                let processed_block = self.node_state.handle_signed_block(block)?;
                 trace!("📦 Handled block outputs: {:?}", processed_block);
                 self.bus
-                    .send_waiting_if_full(NodeStateEvent::NewBlock(Box::new(processed_block)))
+                    .send_waiting_if_full(NodeStateEvent::NewBlock(processed_block))
                     .await?;
 
                 // Process any buffered blocks that are now in sequence
@@ -185,10 +185,10 @@ impl DAListener {
                     block.consensus_proposal.slot,
                     block.consensus_proposal.hashed()
                 );
-                let processed_block = self.node_state.handle_signed_block(&block)?;
+                let processed_block = self.node_state.handle_signed_block(block)?;
                 debug!("📦 Handled buffered block outputs: {:?}", processed_block);
                 self.bus
-                    .send_waiting_if_full(NodeStateEvent::NewBlock(Box::new(processed_block)))
+                    .send_waiting_if_full(NodeStateEvent::NewBlock(processed_block))
                     .await?;
             } else {
                 error!(

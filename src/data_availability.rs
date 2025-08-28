@@ -808,8 +808,7 @@ pub mod tests {
     };
     use staking::state::Staking;
 
-    /// For use in integration tests
-    pub struct DataAvailabilityTestCtx {
+    struct DataAvailabilityTestCtx {
         pub node_state_bus: NodeStateBusClient,
         pub da: super::DataAvailability,
         pub node_state: NodeState,
@@ -851,14 +850,14 @@ pub mod tests {
             tcp_server: &mut DaTcpServer,
         ) {
             self.da.handle_signed_block(block.clone(), tcp_server).await;
-            // TODO: we use this in autobahn_testing, but it'd be cleaner to separate it.
-            let Ok(full_block) = self.node_state.handle_signed_block(&block) else {
-                tracing::warn!("Error while handling signed block {}", block.hashed());
+            let block_hash = block.hashed();
+            let Ok(full_block) = self.node_state.handle_signed_block(block) else {
+                tracing::warn!("Error while handling signed block {}", block_hash);
                 return;
             };
             _ = log_error!(
                 self.node_state_bus
-                    .send_waiting_if_full(NodeStateEvent::NewBlock(Box::new(full_block)))
+                    .send_waiting_if_full(NodeStateEvent::NewBlock(full_block))
                     .await,
                 "Sending NodeState event"
             );

@@ -288,7 +288,7 @@ struct DumpUiState {
     processed_height: Option<u64>,
     node_state: Option<NodeState>,
     tx_status: HashMap<TxId, TxStatus>,
-    processed_blocks: HashMap<u64, Block>,
+    processed_blocks: HashMap<u64, Arc<Block>>,
 }
 
 impl Module for BlockDbg {
@@ -498,17 +498,17 @@ impl BlockDbg {
                                         let outputs = ui_state.blocks.iter().filter_map(|(block, _)|
                                                 if block.consensus_proposal.slot <= target_height {
                                                     tracing::info!("Processing block {}", block.consensus_proposal.slot);
-                                                    ui_state.node_state.as_mut().unwrap().handle_signed_block(block).ok()
+                                                    ui_state.node_state.as_mut().unwrap().handle_signed_block(block.clone()).ok()
                                                 } else {
                                                     None
                                                 }
                                             ).collect::<Vec<_>>();
                                         for block in outputs {
-                                            ui_state.processed_height = Some(block.block_height.0);
-                                            ui_state.process_block_outputs(&block);
+                                            ui_state.processed_height = Some(block.parsed_block.block_height.0);
+                                            ui_state.process_block_outputs(&block.parsed_block);
                                             // Activate if you want provers on.
                                             // self.bus.send(NodeStateEvent::NewBlock(Box::new(block.clone())))?;
-                                            ui_state.processed_blocks.insert(block.block_height.0, block);
+                                            ui_state.processed_blocks.insert(block.parsed_block.block_height.0, block.parsed_block);
                                             ui_state.redraw = true;
                                         }
                                     }

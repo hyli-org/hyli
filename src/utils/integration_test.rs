@@ -386,7 +386,12 @@ impl NodeIntegrationCtx {
         loop {
             let event: NodeStateEvent = self.bus_client.recv().await?;
             let NodeStateEvent::NewBlock(block) = event;
-            if block.successful_txs.iter().any(|tx_hash| tx_hash == &tx) {
+            if block
+                .parsed_block
+                .successful_txs
+                .iter()
+                .any(|tx_hash| tx_hash == &tx)
+            {
                 break;
             }
         }

@@ -168,7 +168,7 @@ impl Staking {
 
     /// Update the state of staking with staking actions in a block
     #[cfg(feature = "client")]
-    pub fn process_block(&mut self, block: &sdk::Block) -> Result<(), String> {
+    pub fn process_block(&mut self, block: &sdk::BlockStakingData) -> Result<(), String> {
         use sdk::StakingAction;
         for action in &block.staking_actions {
             match action.clone() {

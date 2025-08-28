@@ -158,9 +158,9 @@ impl NodeStateCheck {
             on_self self,
             listen<DataEvent> event => {
                 let DataEvent::OrderedSignedBlock(block) = event;
-                let proc = node_state.handle_signed_block(&block)?;
+                let proc = node_state.handle_signed_block(block)?;
                 if let Some(max) = self.read_to
-                    && proc.block_height >= max {
+                    && proc.parsed_block.block_height >= max {
                         tracing::info!("Reached read_to block height: {}", max);
                         break;
                     }

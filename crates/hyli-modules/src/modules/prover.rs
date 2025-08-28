@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ops::Deref;
 use std::sync::Mutex;
 use std::time::Duration;
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
@@ -222,7 +223,9 @@ where
         module_handle_messages! {
             on_self self,
             listen<NodeStateEvent> event => {
-                let res = log_error!(self.handle_node_state_event(event).await, "handle note state event");
+                let NodeStateEvent::NewBlock(block) = event;
+                let block = block.parsed_block.deref().clone();
+                let res = log_error!(self.handle_node_state_event(block).await, "handle note state event");
                 self.metrics.snapshot_buffered_blobs(self.store.buffered_blobs.len() as u64);
                 self.metrics
                     .snapshot_unsettled_blobs(self.store.proving_txs.len() as u64);
@@ -264,8 +267,7 @@ impl<Contract> AutoProver<Contract>
 where
     Contract: TxExecutorHandler + Debug + Clone + Send + Sync + 'static,
 {
-    async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
-        let NodeStateEvent::NewBlock(block) = event;
+    async fn handle_node_state_event(&mut self, block: Block) -> Result<()> {
         if block.block_height.0 < self.store.next_height.0 {
             info!(
                 cn =% self.ctx.contract_name,
@@ -288,7 +290,7 @@ where
             .is_some_and(|h| block.block_height.0 <= h.0)
         {
             let block_height = block.block_height;
-            self.handle_catchup_block(*block)
+            self.handle_catchup_block(block)
                 .await
                 .context("Failed to handle settled block")?;
             if self.catching_up.is_some_and(|h| block_height.0 == h.0) {
@@ -447,7 +449,7 @@ where
                 );
             }
         } else {
-            self.handle_processed_block(*block).await?;
+            self.handle_processed_block(block).await?;
         }
 
         Ok(())

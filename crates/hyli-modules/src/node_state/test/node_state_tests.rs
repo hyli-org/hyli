@@ -1075,7 +1075,7 @@ async fn test_tx_no_timeout_once_settled() {
 
     let blob_tx_hash = blob_tx.hashed();
 
-    state.force_handle_block(&crafted_block);
+    state.force_handle_block(crafted_block);
 
     assert_eq!(
         timeouts::tests::get(&state.timeouts, &blob_tx_hash),
@@ -1145,7 +1145,7 @@ async fn test_tx_on_timeout_settle_next_txs() {
         ],
     );
 
-    state.force_handle_block(&crafted_block);
+    state.force_handle_block(crafted_block);
 
     let later_crafted_block = craft_signed_block(
         108,
@@ -1155,7 +1155,7 @@ async fn test_tx_on_timeout_settle_next_txs() {
         ],
     );
 
-    state.force_handle_block(&later_crafted_block);
+    state.force_handle_block(later_crafted_block);
 
     // Time out
     let block = state.craft_block_and_handle(204, vec![]);

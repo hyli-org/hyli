@@ -631,29 +631,27 @@ impl Consensus {
     async fn handle_node_state_event(&mut self, msg: NodeStateEvent) -> Result<()> {
         match msg {
             NodeStateEvent::NewBlock(block) => {
-                let block_total_tx = block.total_txs();
                 self.store
                     .bft_round_state
                     .staking
-                    .process_block(block.as_ref())
+                    .process_block(&block.staking_data)
                     .map_err(|e| anyhow!(e))?;
 
                 if let StateTag::Joining = self.bft_round_state.state_tag {
-                    if self.store.bft_round_state.joining.staking_updated_to < block.block_height.0
-                    {
-                        info!(
-                            "🚪 Processed block {} with {} txs",
-                            block.block_height.0, block_total_tx
-                        );
-                        self.store.bft_round_state.joining.staking_updated_to =
-                            block.block_height.0;
-                        self.store.bft_round_state.parent_timestamp = block.block_timestamp;
-                        self.store.bft_round_state.slot = block.block_height.0 + 1;
+                    let block_height = block.signed_block.consensus_proposal.slot;
+                    if self.store.bft_round_state.joining.staking_updated_to < block_height {
+                        info!("🚪 Processed block {}", block_height);
+                        self.store.bft_round_state.joining.staking_updated_to = block_height;
+                        self.store.bft_round_state.parent_cut =
+                            block.signed_block.consensus_proposal.cut.clone();
+                        self.store.bft_round_state.parent_timestamp =
+                            block.signed_block.consensus_proposal.timestamp.clone();
+                        self.store.bft_round_state.slot = block_height + 1;
                         self.store.bft_round_state.view = 0;
-                        self.store.bft_round_state.parent_hash = block.hash.clone();
+                        self.store.bft_round_state.parent_hash = block.signed_block.hashed();
                         // Some of our internal logic relies on BFT slot + 1 == cp slot to mean we have committed, so do that.
                         self.store.bft_round_state.current_proposal = Some(ConsensusProposal {
-                            slot: block.block_height.0,
+                            slot: block_height,
                             ..Default::default()
                         });
 
@@ -712,7 +710,7 @@ impl Consensus {
                             on_self self,
                             listen<NodeStateEvent> event => {
                                 let NodeStateEvent::NewBlock(block) = &event;
-                                if block.block_height.0 != 0 {
+                                if block.signed_block.consensus_proposal.slot != 0 {
                                     bail!("Non-genesis block received during consensus genesis");
                                 }
                                 match self.handle_node_state_event(event).await {
@@ -723,6 +721,7 @@ impl Consensus {
                         };
 
                         self.bft_round_state.parent_hash = signed_block.hashed();
+                        self.bft_round_state.parent_cut = signed_block.consensus_proposal.cut.clone();
                         self.bft_round_state.slot = 1;
                         self.bft_round_state.view = 0;
                         let round_leader = self.round_leader()?;
@@ -864,7 +863,6 @@ pub mod test {
 
     use crate::{
         bus::{bus_client, command_response::CmdRespClient},
-        model::Block,
         rest::RestApi,
         utils::integration_test::NodeIntegrationCtxBuilder,
     };
@@ -977,6 +975,18 @@ pub mod test {
             self.consensus.bft_round_state.slot = 1;
             self.consensus.bft_round_state.parent_hash =
                 ConsensusProposalHash("genesis".to_string());
+            self.consensus.bft_round_state.parent_cut = vec![(
+                LaneId(
+                    cryptos
+                        .first()
+                        .expect("No cryptos available")
+                        .validator_pubkey()
+                        .clone(),
+                ),
+                DataProposalHash("genesis".to_string()),
+                LaneBytesSize(100),
+                AggregateSignature::default(),
+            )];
 
             if index == 0 {
                 self.consensus.bft_round_state.state_tag = StateTag::Leader;
@@ -1113,47 +1123,44 @@ pub mod test {
         async fn add_staker(&mut self, staker: &Self, amount: u128, err: &str) {
             info!("➕ {} Add staker: {:?}", self.name, staker.name);
             self.consensus
-                .handle_node_state_event(NodeStateEvent::NewBlock(Box::new(Block {
-                    staking_actions: vec![
-                        (staker.name.clone().into(), StakingAction::Stake { amount }),
-                        (
-                            staker.name.clone().into(),
-                            StakingAction::Delegate {
-                                validator: staker.pubkey(),
-                            },
-                        ),
-                    ],
+                .handle_node_state_event(NodeStateEvent::NewBlock(NodeStateBlock {
+                    staking_data: BlockStakingData {
+                        staking_actions: vec![
+                            (staker.name.clone().into(), StakingAction::Stake { amount }),
+                            (
+                                staker.name.clone().into(),
+                                StakingAction::Delegate {
+                                    validator: staker.pubkey(),
+                                },
+                            ),
+                        ],
+                        new_bounded_validators: vec![],
+                    }
+                    .into(),
                     ..Default::default()
-                })))
+                }))
                 .await
                 .expect(err);
         }
 
-        async fn add_bonded_staker(&mut self, staker: &Self, amount: u128, err: &str) {
-            self.add_staker(staker, amount, err).await;
-            self.consensus
-                .handle_node_state_event(NodeStateEvent::NewBlock(Box::new(Block {
-                    new_bounded_validators: vec![staker.pubkey()],
-                    ..Default::default()
-                })))
-                .await
-                .expect(err)
-        }
-
         async fn with_stake(&mut self, amount: u128, err: &str) {
             self.consensus
-                .handle_node_state_event(NodeStateEvent::NewBlock(Box::new(Block {
-                    staking_actions: vec![
-                        (self.name.clone().into(), StakingAction::Stake { amount }),
-                        (
-                            self.name.clone().into(),
-                            StakingAction::Delegate {
-                                validator: self.consensus.crypto.validator_pubkey().clone(),
-                            },
-                        ),
-                    ],
+                .handle_node_state_event(NodeStateEvent::NewBlock(NodeStateBlock {
+                    staking_data: BlockStakingData {
+                        staking_actions: vec![
+                            (self.name.clone().into(), StakingAction::Stake { amount }),
+                            (
+                                self.name.clone().into(),
+                                StakingAction::Delegate {
+                                    validator: self.consensus.crypto.validator_pubkey().clone(),
+                                },
+                            ),
+                        ],
+                        new_bounded_validators: vec![],
+                    }
+                    .into(),
                     ..Default::default()
-                })))
+                }))
                 .await
                 .expect(err)
         }
@@ -1807,10 +1814,8 @@ pub mod test {
         }
 
         let mut node3 = ConsensusTestCtx::new_node("node-3").await;
-        node3.consensus.bft_round_state.state_tag = StateTag::Joining;
+        node3.setup_for_joining([&node1, &node2].as_slice());
         node3.consensus.bft_round_state.joining.staking_updated_to = 1;
-        node3.add_bonded_staker(&node1, 100, "Add staker").await;
-        node3.add_bonded_staker(&node2, 100, "Add staker").await;
 
         // Slot 2: Node3 synchronizes its consensus to the others. - leader = node2
         {
@@ -1954,12 +1959,13 @@ pub mod test {
 
         let mut bc = TestBC::new_from_bus(node.bus.new_handle()).await;
 
-        let GenesisEvent::GenesisBlock(block) = node.wait_for_genesis_event().await.unwrap() else {
+        let GenesisEvent::GenesisBlock(signed_block) = node.wait_for_genesis_event().await.unwrap()
+        else {
             panic!("Expected a GenesisBlock event");
         };
 
         let block = NodeState::create("test".to_string(), "test")
-            .handle_signed_block(&block)
+            .handle_signed_block(signed_block)
             .unwrap();
 
         // Check that we haven't started the consensus yet
@@ -1971,7 +1977,7 @@ pub mod test {
             }
         }
 
-        bc.send(NodeStateEvent::NewBlock(Box::new(block))).unwrap();
+        bc.send(NodeStateEvent::NewBlock(block)).unwrap();
 
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(1)) => {

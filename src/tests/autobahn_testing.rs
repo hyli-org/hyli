@@ -244,7 +244,7 @@ pub(crate) use broadcast;
 pub(crate) use build_tuple;
 use futures::future::join_all;
 use hyli_model::utils::TimestampMs;
-use hyli_modules::utils::da_codec::DataAvailabilityServer;
+use hyli_modules::{bus::dont_use_this::get_sender, node_state::NodeState};
 pub(crate) use send;
 pub(crate) use simple_commit_round;
 
@@ -1022,9 +1022,6 @@ async fn mempool_fail_to_vote_on_fork() {
 
 #[test_log::test(tokio::test)]
 async fn autobahn_rejoin_flow() {
-    let mut server = DataAvailabilityServer::start(7890, "DaServer")
-        .await
-        .unwrap();
     let (mut node1, mut node2) = build_nodes!(2).await;
 
     // Let's setup the consensus so our joining node has some blocks to catch up.
@@ -1041,11 +1038,8 @@ async fn autobahn_rejoin_flow() {
         .consensus_ctx
         .setup_for_joining(&[&node1.consensus_ctx, &node2.consensus_ctx]);
 
-    // Let's setup a DataAvailability on this bus
-    let mut da = crate::data_availability::tests::DataAvailabilityTestCtx::new(
-        joining_node.shared_bus.new_handle(),
-    )
-    .await;
+    // Let's setup a NodeState on this bus
+    let mut ns = NodeState::create("test".to_string(), "test");
 
     let mut blocks = vec![SignedBlock {
         data_proposals: vec![],
@@ -1068,12 +1062,16 @@ async fn autobahn_rejoin_flow() {
         });
     }
 
+    let ns_event_sender = get_sender::<NodeStateEvent>(&joining_node.shared_bus).await;
     let mut ns_event_receiver = get_receiver::<NodeStateEvent>(&joining_node.shared_bus).await;
     let mut commit_receiver = get_receiver::<ConsensusEvent>(&node1.shared_bus).await;
 
     // Catchup up to the last block, but don't actually process the last block message yet.
-    for block in blocks.get(0..blocks.len() - 1).unwrap() {
-        da.handle_signed_block(block.clone(), &mut server).await;
+    for signed_block in blocks.get(0..blocks.len() - 1).unwrap() {
+        let node_state_block = ns.handle_signed_block(signed_block.clone()).unwrap();
+        ns_event_sender
+            .send(NodeStateEvent::NewBlock(node_state_block))
+            .unwrap();
     }
     while let Ok(event) = ns_event_receiver.try_recv() {
         info!("{:?}", event);
@@ -1102,8 +1100,12 @@ async fn autobahn_rejoin_flow() {
     }
 
     // Now process block 2
-    da.handle_signed_block(blocks.get(2).unwrap().clone(), &mut server)
-        .await;
+    let signed_block = blocks.get(2).unwrap().clone();
+    let node_state_block = ns.handle_signed_block(signed_block).unwrap();
+    ns_event_sender
+        .send(NodeStateEvent::NewBlock(node_state_block))
+        .unwrap();
+
     while let Ok(event) = ns_event_receiver.try_recv() {
         info!("{:?}", event);
         joining_node
@@ -1134,13 +1136,17 @@ async fn autobahn_rejoin_flow() {
         while let Ok(event) = commit_receiver.try_recv() {
             let ConsensusEvent::CommitConsensusProposal(ccp) = event;
             if ccp.consensus_proposal.slot > 2 {
-                let block = SignedBlock {
+                let signed_block = SignedBlock {
                     data_proposals: vec![],
                     certificate: ccp.certificate,
                     consensus_proposal: ccp.consensus_proposal,
                 };
-                da.handle_signed_block(block.clone(), &mut server).await;
-                blocks.push(block);
+                let node_state_block = ns.handle_signed_block(signed_block.clone()).unwrap();
+                ns_event_sender
+                    .send(NodeStateEvent::NewBlock(node_state_block))
+                    .unwrap();
+
+                blocks.push(signed_block);
             }
         }
         while let Ok(event) = ns_event_receiver.try_recv() {

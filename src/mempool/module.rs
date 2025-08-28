@@ -97,7 +97,7 @@ impl Module for Mempool {
                 let NodeStateEvent::NewBlock(block) = cmd;
                 // In this p2p mode we don't receive consensus events so we must update manually.
                 if self.conf.p2p.mode == P2pMode::LaneManager {
-                    if let Err(e) = self.staking.process_block(block.as_ref()) {
+                    if let Err(e) = self.staking.process_block(&block.staking_data) {
                         tracing::error!("Error processing block in mempool: {:?}", e);
                     }
                 }
