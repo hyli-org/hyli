@@ -7,7 +7,7 @@ use derive_more::derive::Display;
 use serde::{Deserialize, Serialize};
 use utils::TimestampMs;
 
-use crate::{staking::*, *};
+use crate::*;
 
 #[derive(
     Debug, Default, Clone, Serialize, Deserialize, BorshSerialize, BorshDeserialize, Eq, PartialEq,
@@ -26,8 +26,6 @@ pub struct Block {
     pub dropped_duplicate_txs: Vec<TxId>,
     pub blob_proof_outputs: Vec<HandledBlobProofOutput>,
     pub verified_blobs: Vec<(TxHash, BlobIndex, Option<usize>)>,
-    pub new_bounded_validators: Vec<ValidatorPublicKey>,
-    pub staking_actions: Vec<(Identity, StakingAction)>,
     pub registered_contracts:
         BTreeMap<ContractName, (TxHash, RegisterContractEffect, Option<Vec<u8>>)>,
     pub deleted_contracts: BTreeMap<ContractName, TxHash>,

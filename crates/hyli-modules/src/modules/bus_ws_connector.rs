@@ -83,10 +83,11 @@ impl NodeWebsocketConnector {
 
     fn handle_new_block(event: NodeStateEvent) -> Vec<WebsocketOutEvent> {
         let NodeStateEvent::NewBlock(block) = event;
+        let block = block.parsed_block;
 
         let api_block = APIBlock {
             hash: block.hash.clone(),
-            parent_hash: block.parent_hash,
+            parent_hash: block.parent_hash.clone(),
             height: block.block_height.0,
             timestamp: block.block_timestamp.0 as i64,
             total_txs: block.txs.len() as u64,
@@ -97,6 +98,7 @@ impl NodeWebsocketConnector {
 
     fn handle_new_tx(event: NodeStateEvent) -> Vec<WebsocketOutEvent> {
         let NodeStateEvent::NewBlock(block) = event;
+        let block = block.parsed_block;
         let mut txs = Vec::new();
 
         for (idx, (id, tx)) in block.txs.iter().enumerate() {

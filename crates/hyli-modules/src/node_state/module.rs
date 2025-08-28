@@ -8,7 +8,6 @@ use crate::module_handle_messages;
 use crate::modules::admin::{QueryNodeStateStore, QueryNodeStateStoreResponse};
 use crate::modules::files::NODE_STATE_BIN;
 use crate::modules::{module_bus_client, Module, SharedBuildApiCtx};
-use crate::node_state::BlockNodeStateCallback;
 use crate::{log_error, log_warn};
 use anyhow::Result;
 use sdk::*;
@@ -130,12 +129,11 @@ impl Module for NodeStateModule {
             listen<DataEvent> block => {
                 match block {
                     DataEvent::OrderedSignedBlock(signed_block) => {
-                        let mut callback = BlockNodeStateCallback::from_signed(&signed_block);
-                        if log_warn!(self.inner.process_signed_block(&signed_block, &mut callback), "handling signed block in NodeStateModule").is_ok() {
-                            let node_state_block = callback.get_block();
-                            _ = log_error!(self
-                                .bus
-                                .send(NodeStateEvent::NewBlock(Box::new(node_state_block))), "Sending DataEvent while processing SignedBlock");
+                        if let Ok(block) = log_warn!(self.inner.handle_signed_block(signed_block), "handling signed block in NodeStateModule") {
+                            _ = log_error!(
+                                self.bus.send(NodeStateEvent::NewBlock(block)),
+                                "Sending DataEvent while processing SignedBlock"
+                            );
                         }
                     }
                 }

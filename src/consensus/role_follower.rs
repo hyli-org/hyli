@@ -361,6 +361,10 @@ impl Consensus {
             bail!("Cut does not include all lanes from the previous cut");
         }
 
+        // TODO: would be good to check that the parent cut we're comparing against isn't empty
+        // (which can happen on restart-from-scratch).
+        // However, the genesis block currently is an empty cut so that won't work.
+
         for (lane_id, data_proposal_hash, lane_size, poda_sig) in &consensus_proposal.cut {
             let voting_power = self
                 .bft_round_state

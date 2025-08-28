@@ -148,7 +148,8 @@ where
     /// coming from node state.
     async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<(), Error> {
         let NodeStateEvent::NewBlock(block) = event;
-        self.handle_processed_block(*block).await?;
+        self.handle_processed_block(block.parsed_block.deref().clone())
+            .await?;
 
         Ok(())
     }
@@ -510,10 +511,10 @@ mod tests {
 
         let mut node_state = NodeState::create("test".to_string(), "test");
         let block = node_state
-            .handle_signed_block(&SignedBlock::default())
+            .handle_signed_block(SignedBlock::default())
             .unwrap();
 
-        let event = NodeStateEvent::NewBlock(Box::new(block));
+        let event = NodeStateEvent::NewBlock(block);
 
         indexer.handle_node_state_event(event).await.unwrap();
         // Add assertions based on the expected state changes

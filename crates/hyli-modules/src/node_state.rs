@@ -292,11 +292,16 @@ impl NodeState {
         Ok(())
     }
 
-    /// For retrocompatibility only
-    pub fn handle_signed_block(&mut self, signed_block: &SignedBlock) -> Result<Block> {
-        let mut callback = BlockNodeStateCallback::from_signed(signed_block);
-        self.process_signed_block(signed_block, &mut callback)?;
-        Ok(callback.get_block())
+    /// Further convenience wrapper
+    pub fn handle_signed_block(&mut self, signed_block: SignedBlock) -> Result<NodeStateBlock> {
+        let mut callback = BlockNodeStateCallback::from_signed(&signed_block);
+        self.process_signed_block(&signed_block, &mut callback)?;
+        let (parsed_block, staking_data) = callback.take();
+        Ok(NodeStateBlock {
+            signed_block: signed_block.into(),
+            parsed_block: parsed_block.into(),
+            staking_data: staking_data.into(),
+        })
     }
 }
 
@@ -1664,15 +1669,10 @@ impl<'any> NodeStateProcessing<'any> {
 #[derive(Default)]
 pub struct BlockNodeStateCallback {
     block_under_construction: Block,
+    staking_data: BlockStakingData,
 }
 
 impl BlockNodeStateCallback {
-    pub fn new() -> Self {
-        BlockNodeStateCallback {
-            block_under_construction: Block::default(),
-        }
-    }
-
     pub fn from_signed(signed_block: &SignedBlock) -> Self {
         BlockNodeStateCallback {
             block_under_construction: Block {
@@ -1680,6 +1680,9 @@ impl BlockNodeStateCallback {
                 hash: signed_block.hashed(),
                 block_height: signed_block.height(),
                 block_timestamp: signed_block.consensus_proposal.timestamp.clone(),
+                ..Default::default()
+            },
+            staking_data: BlockStakingData {
                 new_bounded_validators: signed_block
                     .consensus_proposal
                     .staking_actions
@@ -1696,8 +1699,11 @@ impl BlockNodeStateCallback {
         }
     }
 
-    pub fn get_block(&mut self) -> Block {
-        std::mem::take(&mut self.block_under_construction)
+    pub fn take(&mut self) -> (Block, BlockStakingData) {
+        (
+            std::mem::take(&mut self.block_under_construction),
+            std::mem::take(&mut self.staking_data),
+        )
     }
 }
 
@@ -1830,7 +1836,7 @@ impl NodeStateCallback for BlockNodeStateCallback {
                 if blob.contract_name.0 == "staking" {
                     if let Ok(structured_blob) = StructuredBlob::try_from(blob.clone()) {
                         let staking_action: StakingAction = structured_blob.data.parameters;
-                        self.block_under_construction
+                        self.staking_data
                             .staking_actions
                             .push((tx.identity.clone(), staking_action));
                     } else {
@@ -1889,6 +1895,8 @@ impl NodeStateCallback for BlockNodeStateCallback {
 pub mod test {
     mod contract_registration_tests;
     mod node_state_tests;
+
+    use std::ops::Deref;
 
     use super::*;
     use hyli_net::clock::TimestampMsClock;
@@ -2140,24 +2148,28 @@ pub mod test {
         fn for_testing(&'_ mut self) -> NodeStateProcessing<'_> {
             NodeStateProcessing {
                 this: self,
-                callback: Box::leak(Box::new(BlockNodeStateCallback::new())),
+                callback: Box::leak(Box::new(BlockNodeStateCallback::default())),
             }
         }
 
         // Convenience method to handle a signed block in tests.
-        pub fn force_handle_block(&mut self, block: &SignedBlock) -> Block {
+        pub fn force_handle_block(&mut self, block: SignedBlock) -> Block {
             if block.consensus_proposal.slot <= self.store.current_height.0
                 || block.consensus_proposal.slot == 0
             {
                 panic!("Invalid block height");
             }
             self.store.current_height = BlockHeight(block.consensus_proposal.slot - 1);
-            self.handle_signed_block(block).unwrap()
+            self.handle_signed_block(block)
+                .unwrap()
+                .parsed_block
+                .deref()
+                .clone()
         }
 
         pub fn craft_block_and_handle(&mut self, height: u64, txs: Vec<Transaction>) -> Block {
             let block = craft_signed_block(height, txs);
-            self.force_handle_block(&block)
+            self.force_handle_block(block)
         }
 
         pub fn craft_block_and_handle_with_parent_dp_hash(
@@ -2167,7 +2179,7 @@ pub mod test {
             parent_dp_hash: DataProposalHash,
         ) -> Block {
             let block = craft_signed_block_with_parent_dp_hash(height, txs, parent_dp_hash);
-            self.force_handle_block(&block)
+            self.force_handle_block(block)
         }
 
         pub fn handle_register_contract_effect(&mut self, tx: &RegisterContractEffect) {
@@ -2196,7 +2208,7 @@ pub mod test {
 
     impl<'a> NodeStateProcessing<'a> {
         // Convenience method to handle a signed block in tests.
-        pub fn force_handle_block(&mut self, block: &SignedBlock) -> Block {
+        pub fn force_handle_block(&mut self, block: SignedBlock) -> Block {
             self.this.force_handle_block(block)
         }
 
