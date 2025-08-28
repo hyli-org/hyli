@@ -93,7 +93,7 @@ impl OrderedTxMap {
     /// Returns true if the tx is the next unsettled tx for all the contracts it contains
     /// If the TX was already in the map, this returns None
     pub fn add(&mut self, tx: UnsettledBlobTransaction) -> Option<bool> {
-        if self.map.contains_key(&tx.hash) {
+        if self.map.contains_key(&tx.tx_id.1) {
             return None;
         }
         let mut is_next = true;
@@ -103,13 +103,13 @@ impl OrderedTxMap {
         for contract in contract_names {
             is_next = match self.tx_order.get_mut(&contract) {
                 Some(vec) => {
-                    vec.push_back(tx.hash.clone());
+                    vec.push_back(tx.tx_id.1.clone());
                     vec.len() == 1
                 }
                 None => {
                     self.tx_order.insert(contract.clone(), {
                         let mut vec = VecDeque::new();
-                        vec.push_back(tx.hash.clone());
+                        vec.push_back(tx.tx_id.1.clone());
                         vec
                     });
                     true
@@ -117,7 +117,7 @@ impl OrderedTxMap {
             } && is_next;
         }
 
-        self.map.insert(tx.hash.clone(), tx);
+        self.map.insert(tx.tx_id.1.clone(), tx);
         Some(is_next)
     }
 
@@ -127,7 +127,7 @@ impl OrderedTxMap {
             let contract_names = Self::get_contracts_blocked_by_tx(tx);
             for contract_name in contract_names {
                 if let Some(vec) = self.tx_order.get_mut(&contract_name) {
-                    if let Some(pos) = vec.iter().position(|h| h == &tx.hash) {
+                    if let Some(pos) = vec.iter().position(|h| h == &tx.tx_id.1) {
                         vec.remove(pos);
                     }
                     if vec.is_empty() {
@@ -151,8 +151,7 @@ mod tests {
     fn new_tx(hash: &str, contract: &str) -> UnsettledBlobTransaction {
         UnsettledBlobTransaction {
             identity: Identity::new("toto"),
-            hash: TxHash::new(hash),
-            parent_dp_hash: DataProposalHash::default(),
+            tx_id: TxId(DataProposalHash::default(), TxHash::new(hash)),
             blobs_hash: BlobsHashes::default(),
             blobs: BTreeMap::from_iter(vec![(
                 BlobIndex(0),
@@ -196,9 +195,9 @@ mod tests {
         map.add(new_tx("tx2", "c1"));
         map.add(new_tx("tx3", "c2"));
 
-        assert_eq!(tx1, map.get(&tx1).unwrap().hash);
-        assert_eq!(tx2, map.get(&tx2).unwrap().hash);
-        assert_eq!(tx3, map.get(&tx3).unwrap().hash);
+        assert_eq!(tx1, map.get(&tx1).unwrap().tx_id.1);
+        assert_eq!(tx2, map.get(&tx2).unwrap().tx_id.1);
+        assert_eq!(tx3, map.get(&tx3).unwrap().tx_id.1);
 
         assert_eq!(map.map.len(), 3);
         assert_eq!(map.tx_order.len(), 2);
@@ -212,7 +211,7 @@ mod tests {
         map.add(new_tx("tx1", "c1"));
         map.add(new_tx("tx1", "c1"));
 
-        assert_eq!(tx1, map.get(&tx1).unwrap().hash);
+        assert_eq!(tx1, map.get(&tx1).unwrap().tx_id.1);
 
         assert_eq!(map.map.len(), 1);
         assert_eq!(map.tx_order.len(), 1);
@@ -230,7 +229,7 @@ mod tests {
             .insert(BlobIndex(2), tx.blobs[&BlobIndex(0)].clone());
         tx.blobs.get_mut(&BlobIndex(1)).unwrap().blob.contract_name = ContractName::new("c2");
 
-        let hash = tx.hash.clone();
+        let hash = tx.tx_id.1.clone();
 
         assert!(map.add(tx).unwrap());
         assert_eq!(
@@ -316,7 +315,7 @@ mod tests {
         assert_eq!(map.tx_order.get(&contract1).unwrap().len(), 1);
         assert_eq!(map.tx_order.get(&contract2).unwrap().len(), 1);
 
-        map.remove(&tx.hash);
+        map.remove(&tx.tx_id.1);
 
         assert_eq!(map.map.len(), 0);
         assert_eq!(map.tx_order.get(&contract1), None);

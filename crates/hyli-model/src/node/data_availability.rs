@@ -46,8 +46,7 @@ pub struct Contract {
 )]
 pub struct UnsettledBlobTransaction {
     pub identity: Identity,
-    pub parent_dp_hash: DataProposalHash,
-    pub hash: TxHash,
+    pub tx_id: TxId,
     pub tx_context: TxContext,
     pub blobs_hash: BlobsHashes,
     pub blobs: BTreeMap<BlobIndex, UnsettledBlobMetadata>,
