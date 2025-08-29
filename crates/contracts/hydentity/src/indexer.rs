@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{identity_provider::IdentityVerification, AccountInfo, Hydentity, HydentityAction};
 use anyhow::{anyhow, Context, Result};
 use client_sdk::contract_indexer::{
@@ -35,7 +37,7 @@ impl ContractHandler for Hydentity {
         &mut self,
         tx: &BlobTransaction,
         index: BlobIndex,
-        _tx_context: TxContext,
+        _tx_context: Arc<TxContext>,
     ) -> Result<Option<()>> {
         let Blob {
             contract_name,

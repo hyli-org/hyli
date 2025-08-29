@@ -38,7 +38,8 @@ impl TxExecutorHandler for NativeVerifierHandler {
     }
 
     fn construct_state(
-        _: &sdk::RegisterContractEffect,
+        _: &sdk::ContractName,
+        _: &sdk::Contract,
         _: &Option<Vec<u8>>,
     ) -> anyhow::Result<Self> {
         Ok(Self)

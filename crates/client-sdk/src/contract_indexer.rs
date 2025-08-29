@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use std::{collections::BTreeMap, str, sync::Arc};
+use std::{collections::BTreeMap, ops::Deref, str, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
@@ -22,7 +22,7 @@ use crate::transaction_builder::TxExecutorHandler;
 pub struct ContractStateStore<State> {
     pub state: Option<State>,
     pub contract_name: ContractName,
-    pub unsettled_blobs: BTreeMap<TxId, (BlobTransaction, TxContext)>,
+    pub unsettled_blobs: BTreeMap<TxId, (BlobTransaction, Arc<TxContext>)>,
 }
 
 pub type ContractHandlerStore<T> = Arc<RwLock<ContractStateStore<T>>>;
@@ -49,7 +49,7 @@ where
         &mut self,
         tx: &BlobTransaction,
         index: BlobIndex,
-        tx_context: TxContext,
+        tx_context: Arc<TxContext>,
     ) -> Result<Option<Event>> {
         let Blob {
             contract_name,
@@ -62,7 +62,7 @@ where
             blobs: tx.blobs.clone().into(),
             tx_blob_count: tx.blobs.len(),
             tx_hash: tx.hashed(),
-            tx_ctx: Some(tx_context),
+            tx_ctx: Some(tx_context.deref().clone()),
             private_input: vec![],
         };
 
@@ -91,7 +91,7 @@ where
         &mut self,
         _tx: &BlobTransaction,
         _index: BlobIndex,
-        _tx_context: TxContext,
+        _tx_context: Arc<TxContext>,
     ) -> Result<Option<Event>> {
         Ok(None)
     }
@@ -100,7 +100,7 @@ where
         &mut self,
         _tx: &BlobTransaction,
         _index: BlobIndex,
-        _tx_context: TxContext,
+        _tx_context: Arc<TxContext>,
     ) -> Result<Option<Event>> {
         Ok(None)
     }
@@ -109,7 +109,7 @@ where
         &mut self,
         _tx: &BlobTransaction,
         _index: BlobIndex,
-        _tx_context: TxContext,
+        _tx_context: Arc<TxContext>,
     ) -> Result<Option<Event>> {
         Ok(None)
     }

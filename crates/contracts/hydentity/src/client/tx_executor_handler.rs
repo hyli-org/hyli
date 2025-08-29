@@ -4,10 +4,7 @@ use client_sdk::{
     helpers::risc0::Risc0Prover,
     transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutorBuilder, TxExecutorHandler},
 };
-use sdk::{
-    utils::as_hyli_output, Blob, Calldata, ContractName, RegisterContractEffect, StateCommitment,
-    ZkContract,
-};
+use sdk::{utils::as_hyli_output, Blob, Calldata, ContractName, StateCommitment, ZkContract};
 
 pub mod metadata {
     pub const HYDENTITY_ELF: &[u8] = include_bytes!("../../hydentity.img");
@@ -33,8 +30,9 @@ impl TxExecutorHandler for Hydentity {
     }
 
     fn construct_state(
-        _register_blob: &RegisterContractEffect,
-        _metadata: &Option<Vec<u8>>,
+        _: &sdk::ContractName,
+        _: &sdk::Contract,
+        _: &Option<Vec<u8>>,
     ) -> Result<Self> {
         Ok(Self::default())
     }
