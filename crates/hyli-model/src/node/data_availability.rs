@@ -180,8 +180,8 @@ pub struct StatefulEvents {
 pub enum StatefulEvent {
     SequencedTx(BlobTransaction, Arc<TxContext>),
     SettledTx(UnsettledBlobTransaction),
-    FailedTx,
-    TimedOutTx,
+    FailedTx(UnsettledBlobTransaction),
+    TimedOutTx(UnsettledBlobTransaction),
     ContractRegistration(ContractName, Contract, Option<Vec<u8>>),
     ContractUpdate(ContractName, Contract),
     ContractDelete(ContractName),

@@ -154,39 +154,33 @@ where
         Ok(())
     }
 
-    async fn handle_tx<F>(
-        &mut self,
-        tx_id: &TxId,
-        handler: F,
-        remove_from_unsettled: bool,
-    ) -> Result<()>
+    async fn handle_tx<F>(&mut self, tx: &UnsettledBlobTransaction, handler: F) -> Result<()>
     where
         F: Fn(&mut State, &BlobTransaction, BlobIndex, Arc<TxContext>) -> Result<Option<Event>>,
     {
         let mut store = self.store.write().await;
-        let (tx, tx_context) = match if remove_from_unsettled {
-            store.unsettled_blobs.remove(tx_id)
-        } else {
-            store.unsettled_blobs.get(tx_id).cloned()
-        } {
-            Some(tx) => tx,
-            None => {
-                debug!(cn = %self.contract_name, "🔨 No supported blobs found in transaction: {}", tx_id);
-                return Ok(());
-            }
-        };
-
         let state = store
             .state
             .as_mut()
             .ok_or(anyhow!("No state found for {}", self.contract_name))?;
+
+        // TODO: don't clone here.
+        let tx_ctx = tx.tx_context.clone();
+        let tx = BlobTransaction::new(
+            tx.identity.clone(),
+            tx.blobs
+                .values()
+                .map(|b| &b.blob)
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
 
         for (index, Blob { contract_name, .. }) in tx.blobs.iter().enumerate() {
             if self.contract_name != *contract_name {
                 return Ok(());
             }
 
-            let event = handler(state, &tx, BlobIndex(index), tx_context.clone())?;
+            let event = handler(state, &tx, BlobIndex(index), tx_ctx.clone())?;
             if TypeId::of::<Event>() != TypeId::of::<()>() {
                 if let Some(event) = event {
                     let _ = log_debug!(
@@ -210,7 +204,7 @@ where
             debug!(handler = %self.contract_name, "🔨 Processing block: {}", block.consensus_proposal.slot);
         }
 
-        for (tx_id, event) in &stateful_events.events {
+        for (_, event) in &stateful_events.events {
             match event {
                 StatefulEvent::ContractRegistration(name, contract, metadata) => {
                     if self.contract_name == *name {
@@ -220,65 +214,32 @@ where
                 StatefulEvent::ContractDelete(..) | StatefulEvent::ContractUpdate(..) => {
                     // TODO: Not supported yet
                 }
-                StatefulEvent::SequencedTx(blob_tx, tx_context) => {
-                    self.handle_blob(tx_id, blob_tx, tx_context.clone()).await?;
+                StatefulEvent::SequencedTx(..) => {
+                    // Nothing to do so far
                 }
-                StatefulEvent::SettledTx(_unsettled_tx) => {
-                    self.handle_tx(
-                        tx_id,
-                        |state, tx, index, ctx| state.handle_transaction_success(tx, index, ctx),
-                        true,
-                    )
+                StatefulEvent::SettledTx(tx) => {
+                    self.handle_tx(tx, |state, tx, index, ctx| {
+                        state.handle_transaction_success(tx, index, ctx)
+                    })
                     .await
                     .context("handling settled tx")?;
                 }
-                StatefulEvent::FailedTx => {
-                    self.handle_tx(
-                        tx_id,
-                        |state, tx, index, ctx| state.handle_transaction_failed(tx, index, ctx),
-                        true,
-                    )
+                StatefulEvent::FailedTx(tx) => {
+                    self.handle_tx(tx, |state, tx, index, ctx| {
+                        state.handle_transaction_failed(tx, index, ctx)
+                    })
                     .await
                     .context("handling failed tx")?;
                 }
-                StatefulEvent::TimedOutTx => {
-                    self.handle_tx(
-                        tx_id,
-                        |state, tx, index, ctx| state.handle_transaction_timeout(tx, index, ctx),
-                        true,
-                    )
+                StatefulEvent::TimedOutTx(tx) => {
+                    self.handle_tx(tx, |state, tx, index, ctx| {
+                        state.handle_transaction_timeout(tx, index, ctx)
+                    })
                     .await
                     .context("handling timed out tx")?;
                 }
             }
         }
-        Ok(())
-    }
-
-    async fn handle_blob(
-        &mut self,
-        tx_id: &TxId,
-        tx: &BlobTransaction,
-        tx_context: Arc<TxContext>,
-    ) -> Result<()> {
-        let mut found_supported_blob = false;
-
-        for b in &tx.blobs {
-            if self.contract_name == b.contract_name {
-                found_supported_blob = true;
-                break;
-            }
-        }
-
-        if found_supported_blob {
-            debug!(cn = %self.contract_name, "⚒️  Found supported blob in transaction: {}", tx_id);
-            self.store
-                .write()
-                .await
-                .unsettled_blobs
-                .insert(tx_id.clone(), (tx.clone(), tx_context));
-        }
-
         Ok(())
     }
 
@@ -320,6 +281,7 @@ mod tests {
     use crate::bus::metrics::BusMetrics;
     use crate::bus::SharedMessageBus;
     use crate::node_state::NodeState;
+    use std::collections::BTreeMap;
     use std::sync::Arc;
 
     #[derive(Clone, Debug, Default, BorshSerialize, BorshDeserialize)]
@@ -421,35 +383,6 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn test_handle_blob() {
-        let contract_name = ContractName::from("test_contract");
-        let blob = Blob {
-            contract_name: contract_name.clone(),
-            data: BlobData(vec![1, 2, 3]),
-        };
-        let tx = BlobTransaction::new("test", vec![blob]);
-        let tx_hash = tx.hashed();
-        let tx_context = Arc::new(TxContext::default());
-
-        let mut indexer = build_indexer(contract_name.clone()).await;
-        register_contract(&mut indexer).await;
-        indexer
-            .handle_blob(
-                &TxId(DataProposalHash::default(), tx_hash.clone()),
-                &tx,
-                tx_context,
-            )
-            .await
-            .unwrap();
-
-        let store = indexer.store.read().await;
-        assert!(store
-            .unsettled_blobs
-            .contains_key(&TxId(DataProposalHash::default(), tx_hash.clone())));
-        assert!(store.state.clone().unwrap().0.is_empty());
-    }
-
-    #[test_log::test(tokio::test)]
     async fn test_settle_tx() {
         let contract_name = ContractName::from("test_contract");
         let blob = Blob {
@@ -462,24 +395,30 @@ mod tests {
 
         let mut indexer = build_indexer(contract_name.clone()).await;
         register_contract(&mut indexer).await;
-        {
-            let mut store = indexer.store.write().await;
-            store
-                .unsettled_blobs
-                .insert(tx_id.clone(), (tx, tx_context));
-        }
 
         indexer
             .handle_tx(
-                &tx_id,
+                &UnsettledBlobTransaction {
+                    tx_id,
+                    blobs_hash: tx.blobs_hash(),
+                    identity: tx.identity.clone(),
+                    blobs: BTreeMap::from_iter(tx.blobs.iter().enumerate().map(|(i, b)| {
+                        (
+                            BlobIndex(i),
+                            UnsettledBlobMetadata {
+                                blob: b.clone(),
+                                ..Default::default()
+                            },
+                        )
+                    })),
+                    tx_context,
+                },
                 |state, tx, index, ctx| state.handle_transaction_success(tx, index, ctx),
-                true,
             )
             .await
             .unwrap();
 
         let store = indexer.store.read().await;
-        assert!(!store.unsettled_blobs.contains_key(&tx_id));
         assert_eq!(store.state.clone().unwrap().0, vec![1, 2, 3]);
     }
 

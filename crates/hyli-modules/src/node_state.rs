@@ -140,8 +140,8 @@ pub enum TxEvent<'a> {
     ),
     SequencedProofTransaction(&'a TxId, &'a LaneId, u32, &'a VerifiedProofTransaction),
     Settled(&'a TxId, &'a UnsettledBlobTransaction),
-    SettledAsFailed(&'a TxId),
-    TimedOut(&'a TxId),
+    SettledAsFailed(&'a TxId, &'a UnsettledBlobTransaction),
+    TimedOut(&'a TxId, &'a UnsettledBlobTransaction),
     TxError(&'a TxId, &'a str),
     NewProof(
         &'a TxId,
@@ -183,9 +183,9 @@ impl<'a> TxEvent<'a> {
             TxEvent::DuplicateBlobTransaction(tx_id) => tx_id,
             TxEvent::SequencedBlobTransaction(tx_id, ..) => tx_id,
             TxEvent::SequencedProofTransaction(tx_id, ..) => tx_id,
-            TxEvent::Settled(tx_id, _) => tx_id,
-            TxEvent::SettledAsFailed(tx_id) => tx_id,
-            TxEvent::TimedOut(tx_id) => tx_id,
+            TxEvent::Settled(tx_id, ..) => tx_id,
+            TxEvent::SettledAsFailed(tx_id, ..) => tx_id,
+            TxEvent::TimedOut(tx_id, ..) => tx_id,
             TxEvent::TxError(tx_id, _) => tx_id,
             TxEvent::NewProof(tx_id, _, _, _, _) => tx_id,
             TxEvent::BlobSettled(tx_id, _, _, _, _, _) => tx_id,
@@ -994,7 +994,7 @@ impl<'any> NodeStateProcessing<'any> {
             SettlementStatus::SettleAsFailed => {
                 // If it's a failed settlement, mark it so and move on.
                 self.callback
-                    .on_event(&TxEvent::SettledAsFailed(&settled_tx.tx_id));
+                    .on_event(&TxEvent::SettledAsFailed(&settled_tx.tx_id, &settled_tx));
 
                 self.this.metrics.add_failed_transactions(1);
                 info!("⛈️ Settled tx {} as failed", &bth);
@@ -1074,7 +1074,8 @@ impl<'any> NodeStateProcessing<'any> {
 
                             potentially_blocked_contracts
                                 .extend(OrderedTxMap::get_contracts_blocked_by_tx(&popped_tx));
-                            self.callback.on_event(&TxEvent::TimedOut(&popped_tx.tx_id));
+                            self.callback
+                                .on_event(&TxEvent::TimedOut(&popped_tx.tx_id, &popped_tx));
                         }
                     }
 
@@ -1615,7 +1616,7 @@ impl<'any> NodeStateProcessing<'any> {
             if let Some(tx) = self.unsettled_transactions.remove(tx) {
                 info!("⏰ Blob tx timed out: {}", &tx.tx_id);
                 self.this.metrics.add_triggered_timeouts();
-                self.callback.on_event(&TxEvent::TimedOut(&tx.tx_id));
+                self.callback.on_event(&TxEvent::TimedOut(&tx.tx_id, &tx));
 
                 // Attempt to settle following transactions
                 let blob_tx_to_try_and_settle: BTreeSet<TxHash> =
@@ -1703,9 +1704,6 @@ impl NodeStateCallback for BlockNodeStateCallback {
                 self.block_under_construction
                     .dp_parent_hashes
                     .insert(tx_id.1.clone(), tx_id.0.clone());
-                self.stateful_events
-                    .events
-                    .push((tx_id.clone(), StatefulEvent::FailedTx));
             }
             TxEvent::DuplicateBlobTransaction(tx_id) => {
                 self.block_under_construction
@@ -1761,7 +1759,7 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     StatefulEvent::SettledTx(unsettled_tx.clone()),
                 ));
             }
-            TxEvent::SettledAsFailed(tx_id) => {
+            TxEvent::SettledAsFailed(tx_id, unsettled_tx) => {
                 self.block_under_construction
                     .failed_txs
                     .push(tx_id.1.clone());
@@ -1775,9 +1773,9 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     .push(TransactionStateEvent::SettledAsFailed);
                 self.stateful_events
                     .events
-                    .push((tx_id.clone(), StatefulEvent::FailedTx));
+                    .push((tx_id.clone(), StatefulEvent::FailedTx(unsettled_tx.clone())));
             }
-            TxEvent::TimedOut(tx_id) => {
+            TxEvent::TimedOut(tx_id, unsettled_tx) => {
                 self.block_under_construction
                     .timed_out_txs
                     .push(tx_id.1.clone());
@@ -1789,9 +1787,10 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     .entry(tx_id.1.clone())
                     .or_default()
                     .push(TransactionStateEvent::TimedOut);
-                self.stateful_events
-                    .events
-                    .push((tx_id.clone(), StatefulEvent::TimedOutTx));
+                self.stateful_events.events.push((
+                    tx_id.clone(),
+                    StatefulEvent::TimedOutTx(unsettled_tx.clone()),
+                ));
             }
             TxEvent::TxError(tx_id, err) => {
                 self.block_under_construction

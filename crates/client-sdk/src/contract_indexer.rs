@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use std::{collections::BTreeMap, ops::Deref, str, sync::Arc};
+use std::{ops::Deref, str, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{debug, error};
 
@@ -22,7 +22,6 @@ use crate::transaction_builder::TxExecutorHandler;
 pub struct ContractStateStore<State> {
     pub state: Option<State>,
     pub contract_name: ContractName,
-    pub unsettled_blobs: BTreeMap<TxId, (BlobTransaction, Arc<TxContext>)>,
 }
 
 pub type ContractHandlerStore<T> = Arc<RwLock<ContractStateStore<T>>>;
@@ -32,7 +31,6 @@ impl<State> Default for ContractStateStore<State> {
         ContractStateStore {
             state: None,
             contract_name: Default::default(),
-            unsettled_blobs: BTreeMap::new(),
         }
     }
 }

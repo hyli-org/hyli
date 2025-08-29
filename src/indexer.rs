@@ -379,11 +379,11 @@ impl NodeStateCallback for IndexerHandlerStore {
                 self.tx_status_update
                     .insert(tx_id.clone(), TransactionStatusDb::Success);
             }
-            TxEvent::SettledAsFailed(tx_id) => {
+            TxEvent::SettledAsFailed(tx_id, ..) => {
                 self.tx_status_update
                     .insert(tx_id.clone(), TransactionStatusDb::Failure);
             }
-            TxEvent::TimedOut(tx_id) => {
+            TxEvent::TimedOut(tx_id, ..) => {
                 self.tx_status_update
                     .insert(tx_id.clone(), TransactionStatusDb::TimedOut);
             }
