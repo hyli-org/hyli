@@ -247,8 +247,14 @@ impl<Contract> AutoProver<Contract>
 where
     Contract: TxExecutorHandler + Debug + Clone + Send + Sync + 'static,
 {
-    async fn handle_block(&mut self, block: Block) -> Result<()> {
-        self.handle_node_state_event(block).await
+    async fn handle_node_state_block(&mut self, block: NodeStateBlock) -> Result<()> {
+        self.handle_block(block.signed_block.height(), block.stateful_events)
+            .await
+    }
+
+    async fn handle_processed(&mut self, block: NodeStateBlock) -> Result<()> {
+        self.handle_processed_block(block.signed_block.height(), block.stateful_events)
+            .await
     }
 }
 
@@ -257,27 +263,27 @@ async fn test_auto_prover_simple() -> Result<()> {
     let (mut node_state, mut auto_prover, api_client) = setup().await?;
 
     tracing::info!("✨ Block 1");
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
 
-    auto_prover.handle_processed_block(block_1).await?;
+    auto_prover.handle_processed(block_1).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
     tracing::info!("✨ Block 2");
-    let block_2 = node_state.craft_block_and_handle(2, proofs);
-    auto_prover.handle_processed_block(block_2).await?;
+    let block_2 = node_state.craft_new_block_and_handle(2, proofs);
+    auto_prover.handle_processed(block_2).await?;
 
     assert_eq!(read_contract_state(&node_state).value, 1);
 
     tracing::info!("✨ Block 3");
-    let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3), new_blob_tx(3)]);
-    auto_prover.handle_processed_block(block_3).await?;
+    let block_3 = node_state.craft_new_block_and_handle(3, vec![new_blob_tx(3), new_blob_tx(3)]);
+    auto_prover.handle_processed(block_3).await?;
     let proofs_3 = get_txs(&api_client).await;
     assert_eq!(proofs_3.len(), 1);
     tracing::info!("✨ Block 4");
-    let block_4 = node_state.craft_block_and_handle(4, proofs_3);
-    auto_prover.handle_processed_block(block_4).await?;
+    let block_4 = node_state.craft_new_block_and_handle(4, proofs_3);
+    auto_prover.handle_processed(block_4).await?;
     assert_eq!(read_contract_state(&node_state).value, 1 + 3 + 3);
 
     Ok(())
@@ -288,21 +294,21 @@ async fn test_auto_prover_basic() -> Result<()> {
     let (mut node_state, mut auto_prover, api_client) = setup().await?;
 
     tracing::info!("✨ Block 1");
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
 
-    auto_prover.handle_block(block_1).await?;
+    auto_prover.handle_node_state_block(block_1).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
     tracing::info!("✨ Block 2");
-    let block_2 = node_state.craft_block_and_handle(2, proofs);
-    auto_prover.handle_block(block_2).await?;
+    let block_2 = node_state.craft_new_block_and_handle(2, proofs);
+    auto_prover.handle_node_state_block(block_2).await?;
 
     assert_eq!(read_contract_state(&node_state).value, 1);
 
     tracing::info!("✨ Block 3");
-    let block_3 = node_state.craft_block_and_handle(
+    let block_3 = node_state.craft_new_block_and_handle(
         3,
         vec![
             new_blob_tx(3), /* this one will timeout */
@@ -310,16 +316,16 @@ async fn test_auto_prover_basic() -> Result<()> {
             new_blob_tx(3),
         ],
     );
-    auto_prover.handle_block(block_3).await?;
+    auto_prover.handle_node_state_block(block_3).await?;
 
     // Proofs 3 won't be sent, to trigger a timeout
     let proofs_3 = get_txs(&api_client).await;
     assert_eq!(proofs_3.len(), 1);
 
     tracing::info!("✨ Block 4");
-    let block_4 =
-        node_state.craft_block_and_handle(4, vec![new_blob_tx(4), new_blob_tx(4), new_blob_tx(4)]);
-    auto_prover.handle_block(block_4).await?;
+    let block_4 = node_state
+        .craft_new_block_and_handle(4, vec![new_blob_tx(4), new_blob_tx(4), new_blob_tx(4)]);
+    auto_prover.handle_node_state_block(block_4).await?;
 
     // No proof at this point.
     let proofs_4 = get_txs(&api_client).await;
@@ -327,14 +333,14 @@ async fn test_auto_prover_basic() -> Result<()> {
 
     for i in 5..15 {
         tracing::info!("✨ Block {i}");
-        let block = node_state.craft_block_and_handle(i, vec![]);
-        auto_prover.handle_block(block).await?;
+        let block = node_state.craft_new_block_and_handle(i, vec![]);
+        auto_prover.handle_node_state_block(block).await?;
     }
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 2);
 
-    let _block_11 = node_state.craft_block_and_handle(16, proofs);
+    let _block_11 = node_state.craft_new_block_and_handle(16, proofs);
     assert_eq!(read_contract_state(&node_state).value, 4);
 
     Ok(())
@@ -345,27 +351,27 @@ async fn test_auto_prover_tx_failed() -> Result<()> {
     let (mut node_state, mut auto_prover, api_client) = setup().await?;
 
     tracing::info!("✨ Block 1");
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_failing_blob_tx(1)]);
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_failing_blob_tx(1)]);
 
-    auto_prover.handle_processed_block(block_1).await?;
+    auto_prover.handle_processed(block_1).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
     tracing::info!("✨ Block 2");
-    let block_2 = node_state.craft_block_and_handle(2, proofs);
+    let block_2 = node_state.craft_new_block_and_handle(2, proofs);
     assert_eq!(read_contract_state(&node_state).value, 0);
-    auto_prover.handle_processed_block(block_2).await?;
+    auto_prover.handle_processed(block_2).await?;
 
     tracing::info!("✨ Block 3");
-    let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
-    auto_prover.handle_processed_block(block_3).await?;
+    let block_3 = node_state.craft_new_block_and_handle(3, vec![new_blob_tx(3)]);
+    auto_prover.handle_processed(block_3).await?;
 
     let proofs_3 = get_txs(&api_client).await;
     assert_eq!(proofs_3.len(), 1);
 
     tracing::info!("✨ Block 4");
-    node_state.craft_block_and_handle(4, proofs_3);
+    node_state.craft_new_block_and_handle(4, proofs_3);
 
     assert_eq!(read_contract_state(&node_state).value, 3);
 
@@ -377,20 +383,20 @@ async fn test_auto_prover_tx_middle_failed() -> Result<()> {
     let (mut node_state, mut auto_prover, api_client) = setup().await?;
 
     tracing::info!("✨ Block 1");
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
 
-    auto_prover.handle_processed_block(block_1).await?;
+    auto_prover.handle_processed(block_1).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
     tracing::info!("✨ Block 2");
-    let block_2 = node_state.craft_block_and_handle(2, proofs);
+    let block_2 = node_state.craft_new_block_and_handle(2, proofs);
     assert_eq!(read_contract_state(&node_state).value, 1);
-    auto_prover.handle_processed_block(block_2).await?;
+    auto_prover.handle_processed(block_2).await?;
 
     tracing::info!("✨ Block 3");
-    let block_3 = node_state.craft_block_and_handle(
+    let block_3 = node_state.craft_new_block_and_handle(
         3,
         vec![
             new_failing_blob_tx(3),
@@ -404,13 +410,13 @@ async fn test_auto_prover_tx_middle_failed() -> Result<()> {
             new_failing_blob_tx(3),
         ],
     );
-    auto_prover.handle_processed_block(block_3).await?;
+    auto_prover.handle_processed(block_3).await?;
 
     let proofs_3 = get_txs(&api_client).await;
     assert_eq!(proofs_3.len(), 1);
 
     tracing::info!("✨ Block 4");
-    node_state.craft_block_and_handle(4, proofs_3);
+    node_state.craft_new_block_and_handle(4, proofs_3);
 
     assert_eq!(read_contract_state(&node_state).value, 1 + 3 + 3);
 
@@ -423,38 +429,38 @@ async fn test_auto_prover_tx_failed_after_success_in_same_block() -> Result<()> 
     let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 5, 5).await?;
 
     tracing::info!("✨ Block 1");
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
-    let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
-    let block_3 = node_state.craft_block_and_handle(3, vec![new_failing_blob_tx(3)]);
-    let block_4 = node_state.craft_block_and_handle(4, vec![new_failing_blob_tx(4)]);
-    let block_5 = node_state.craft_block_and_handle(5, vec![new_blob_tx(5)]);
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
+    let block_2 = node_state.craft_new_block_and_handle(2, vec![new_blob_tx(2)]);
+    let block_3 = node_state.craft_new_block_and_handle(3, vec![new_failing_blob_tx(3)]);
+    let block_4 = node_state.craft_new_block_and_handle(4, vec![new_failing_blob_tx(4)]);
+    let block_5 = node_state.craft_new_block_and_handle(5, vec![new_blob_tx(5)]);
 
     let blocks = vec![block_1, block_2, block_3, block_4, block_5];
     for block in blocks {
-        auto_prover.handle_processed_block(block).await?;
+        auto_prover.handle_processed(block).await?;
     }
     // All proofs needs to arrive in the same block to raise the error
     let proofs = get_txs(&api_client).await;
-    let block_6 = node_state.craft_block_and_handle(6, proofs);
+    let block_6 = node_state.craft_new_block_and_handle(6, proofs);
 
-    auto_prover.handle_processed_block(block_6).await?;
+    auto_prover.handle_processed(block_6).await?;
     assert_eq!(read_contract_state(&node_state).value, 1 + 2 + 5);
     tracing::info!("✨ Block 7");
-    let block_7 = node_state.craft_block_and_handle(7, vec![new_blob_tx(7)]);
-    auto_prover.handle_processed_block(block_7).await?;
+    let block_7 = node_state.craft_new_block_and_handle(7, vec![new_blob_tx(7)]);
+    auto_prover.handle_processed(block_7).await?;
 
     // Process some blocks to pop buffer
     for i in 8..=12 {
         tracing::info!("✨ Block {i}");
-        let block = node_state.craft_block_and_handle(i, vec![]);
-        auto_prover.handle_processed_block(block).await?;
+        let block = node_state.craft_new_block_and_handle(i, vec![]);
+        auto_prover.handle_processed(block).await?;
     }
 
     let proofs = get_txs(&api_client).await;
 
     tracing::info!("✨ Block 13");
-    let block_13 = node_state.craft_block_and_handle(13, proofs);
-    auto_prover.handle_processed_block(block_13).await?;
+    let block_13 = node_state.craft_new_block_and_handle(13, proofs);
+    auto_prover.handle_processed(block_13).await?;
     assert_eq!(read_contract_state(&node_state).value, 1 + 2 + 5 + 7);
 
     Ok(())
@@ -465,7 +471,7 @@ async fn test_auto_prover_lot_tx_failed() -> Result<()> {
     let (mut node_state, mut auto_prover, api_client) = setup().await?;
 
     tracing::info!("✨ Block 1");
-    let block_1 = node_state.craft_block_and_handle(
+    let block_1 = node_state.craft_new_block_and_handle(
         1,
         vec![
             new_failing_blob_tx(1),
@@ -474,26 +480,26 @@ async fn test_auto_prover_lot_tx_failed() -> Result<()> {
         ],
     );
 
-    auto_prover.handle_processed_block(block_1).await?;
+    auto_prover.handle_processed(block_1).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
     tracing::info!("✨ Block 2");
-    let block_2 = node_state.craft_block_and_handle(2, proofs);
+    let block_2 = node_state.craft_new_block_and_handle(2, proofs);
     assert_eq!(read_contract_state(&node_state).value, 0);
 
-    auto_prover.handle_processed_block(block_2).await?;
+    auto_prover.handle_processed(block_2).await?;
 
     tracing::info!("✨ Block 3");
-    let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
-    auto_prover.handle_processed_block(block_3).await?;
+    let block_3 = node_state.craft_new_block_and_handle(3, vec![new_blob_tx(3)]);
+    auto_prover.handle_processed(block_3).await?;
 
     let proofs_3 = get_txs(&api_client).await;
     assert_eq!(proofs_3.len(), 1);
 
     tracing::info!("✨ Block 4");
-    node_state.craft_block_and_handle(4, proofs_3);
+    node_state.craft_new_block_and_handle(4, proofs_3);
 
     assert_eq!(read_contract_state(&node_state).value, 3);
 
@@ -519,13 +525,13 @@ async fn test_auto_prover_instant_failed() -> Result<()> {
     );
 
     tracing::info!("✨ Block 1");
-    let block_1 = node_state.craft_block_and_handle(1, vec![tx.into(), new_blob_tx(1)]);
-    auto_prover.handle_processed_block(block_1).await?;
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![tx.into(), new_blob_tx(1)]);
+    auto_prover.handle_processed(block_1).await?;
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
     tracing::info!("✨ Block 2");
-    let block_2 = node_state.craft_block_and_handle(2, proofs);
-    auto_prover.handle_processed_block(block_2).await?;
+    let block_2 = node_state.craft_new_block_and_handle(2, proofs);
+    auto_prover.handle_processed(block_2).await?;
     assert_eq!(read_contract_state(&node_state).value, 1);
 
     Ok(())
@@ -538,31 +544,31 @@ async fn test_auto_prover_duplicated_tx() -> Result<()> {
     let tx = new_blob_tx(1);
 
     tracing::info!("✨ Block 1");
-    let block_1 = node_state.craft_block_and_handle(1, vec![tx.clone()]);
-    auto_prover.handle_block(block_1.clone()).await?;
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![tx.clone()]);
+    auto_prover.handle_node_state_block(block_1.clone()).await?;
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
     tracing::info!("✨ Block 2");
-    let block_2 = node_state.craft_block_and_handle(2, vec![tx.clone()]);
-    auto_prover.handle_block(block_2.clone()).await?;
+    let block_2 = node_state.craft_new_block_and_handle(2, vec![tx.clone()]);
+    auto_prover.handle_node_state_block(block_2.clone()).await?;
     let proofs_2 = get_txs(&api_client).await;
     assert_eq!(proofs_2.len(), 0);
 
     tracing::info!("✨ Block 3");
-    let block_3 = node_state.craft_block_and_handle(3, proofs);
-    auto_prover.handle_block(block_3.clone()).await?;
+    let block_3 = node_state.craft_new_block_and_handle(3, proofs);
+    auto_prover.handle_node_state_block(block_3.clone()).await?;
     let proofs_3 = get_txs(&api_client).await;
     assert_eq!(proofs_3.len(), 0);
 
     tracing::info!("✨ Block 4");
-    let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(2)]);
-    auto_prover.handle_block(block_4.clone()).await?;
+    let block_4 = node_state.craft_new_block_and_handle(4, vec![new_blob_tx(2)]);
+    auto_prover.handle_node_state_block(block_4.clone()).await?;
     let proofs_4 = get_txs(&api_client).await;
     assert_eq!(proofs_4.len(), 1);
 
     tracing::info!("✨ Block 5");
-    let block_5 = node_state.craft_block_and_handle(5, proofs_4);
+    let block_5 = node_state.craft_new_block_and_handle(5, proofs_4);
     assert_eq!(read_contract_state(&node_state).value, 1 + 2);
 
     tracing::info!("✨ New prover catching up");
@@ -574,16 +580,16 @@ async fn test_auto_prover_duplicated_tx() -> Result<()> {
 
     let blocks = [block_1, block_2, block_3, block_4, block_5];
     for block in blocks {
-        auto_prover_catchup.handle_block(block).await?;
+        auto_prover_catchup.handle_node_state_block(block).await?;
     }
 
     tracing::info!("✨ Block 6");
-    let block_6 = node_state.craft_block_and_handle(6, vec![new_blob_tx(6)]);
-    auto_prover_catchup.handle_block(block_6).await?;
+    let block_6 = node_state.craft_new_block_and_handle(6, vec![new_blob_tx(6)]);
+    auto_prover_catchup.handle_node_state_block(block_6).await?;
     let proofs_6 = get_txs(&api_client).await;
     assert_eq!(proofs_6.len(), 1);
     tracing::info!("✨ Block 7");
-    let _block_7 = node_state.craft_block_and_handle(7, proofs_6);
+    let _block_7 = node_state.craft_new_block_and_handle(7, proofs_6);
     assert_eq!(read_contract_state(&node_state).value, 1 + 2 + 6);
 
     Ok(())
@@ -608,21 +614,21 @@ async fn test_auto_prover_two_blobs_in_tx() -> Result<()> {
     );
 
     tracing::info!("✨ Block 1");
-    let block_1 = node_state.craft_block_and_handle(1, vec![tx.into(), new_blob_tx(4)]);
-    auto_prover.handle_processed_block(block_1).await?;
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![tx.into(), new_blob_tx(4)]);
+    auto_prover.handle_processed(block_1).await?;
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
     tracing::info!("✨ Block 2");
-    let block_2 = node_state.craft_block_and_handle(2, proofs);
-    auto_prover.handle_processed_block(block_2).await?;
+    let block_2 = node_state.craft_new_block_and_handle(2, proofs);
+    auto_prover.handle_processed(block_2).await?;
     assert_eq!(read_contract_state(&node_state).value, 2 + 3 + 4);
 
-    let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(5)]);
-    auto_prover.handle_processed_block(block_3).await?;
+    let block_3 = node_state.craft_new_block_and_handle(3, vec![new_blob_tx(5)]);
+    auto_prover.handle_processed(block_3).await?;
     let proofs_3 = get_txs(&api_client).await;
     assert_eq!(proofs_3.len(), 1);
     tracing::info!("✨ Block 4");
-    let _ = node_state.craft_block_and_handle(4, proofs_3);
+    let _ = node_state.craft_new_block_and_handle(4, proofs_3);
     assert_eq!(read_contract_state(&node_state).value, 2 + 3 + 4 + 5);
 
     Ok(())
@@ -633,29 +639,29 @@ async fn test_auto_prover_tx_commitment_metadata_failed() -> Result<()> {
     let (mut node_state, mut auto_prover, api_client) = setup().await?;
 
     tracing::info!("✨ Block 1");
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(66)]);
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(66)]);
 
-    let _ = auto_prover.handle_processed_block(block_1).await;
+    let _ = auto_prover.handle_processed(block_1).await;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 0);
 
     for i in 2..7 {
         tracing::info!("✨ Block {i}");
-        let block = node_state.craft_block_and_handle(i, vec![]);
-        auto_prover.handle_processed_block(block).await?;
+        let block = node_state.craft_new_block_and_handle(i, vec![]);
+        auto_prover.handle_processed(block).await?;
     }
 
     tracing::info!("✨ Block 7");
-    let block_7 = node_state.craft_block_and_handle(7, vec![new_blob_tx(7)]);
-    auto_prover.handle_processed_block(block_7).await?;
+    let block_7 = node_state.craft_new_block_and_handle(7, vec![new_blob_tx(7)]);
+    auto_prover.handle_processed(block_7).await?;
 
     let proofs_7 = get_txs(&api_client).await;
     assert_eq!(proofs_7.len(), 1);
 
     tracing::info!("✨ Block 8");
-    let block_8 = node_state.craft_block_and_handle(8, proofs_7);
-    auto_prover.handle_processed_block(block_8).await?;
+    let block_8 = node_state.craft_new_block_and_handle(8, proofs_7);
+    auto_prover.handle_processed(block_8).await?;
 
     assert_eq!(read_contract_state(&node_state).value, 7);
 
@@ -667,28 +673,28 @@ async fn test_auto_prover_catchup_n() -> Result<()> {
     let (mut node_state, _, api_client) = setup().await?;
     let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 3, 10).await?;
 
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
-    let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
-    let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
+    let block_2 = node_state.craft_new_block_and_handle(2, vec![new_blob_tx(2)]);
+    let block_3 = node_state.craft_new_block_and_handle(3, vec![new_blob_tx(3)]);
 
-    auto_prover.handle_processed_block(block_1.clone()).await?;
-    auto_prover.handle_processed_block(block_2.clone()).await?;
-    auto_prover.handle_processed_block(block_3.clone()).await?;
+    auto_prover.handle_processed(block_1.clone()).await?;
+    auto_prover.handle_processed(block_2.clone()).await?;
+    auto_prover.handle_processed(block_3.clone()).await?;
 
-    let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]);
-    auto_prover.handle_processed_block(block_4.clone()).await?;
+    let block_4 = node_state.craft_new_block_and_handle(4, vec![new_blob_tx(4)]);
+    auto_prover.handle_processed(block_4.clone()).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
-    let block_5 = node_state.craft_block_and_handle(5, proofs);
-    auto_prover.handle_processed_block(block_5.clone()).await?;
+    let block_5 = node_state.craft_new_block_and_handle(5, proofs);
+    auto_prover.handle_processed(block_5.clone()).await?;
 
     assert_eq!(read_contract_state(&node_state).value, 10);
 
-    let block_6 = node_state.craft_block_and_handle(6, vec![new_blob_tx(6)]);
-    let block_7 = node_state.craft_block_and_handle(7, vec![new_blob_tx(7)]);
-    let block_8 = node_state.craft_block_and_handle(8, vec![new_blob_tx(8)]);
+    let block_6 = node_state.craft_new_block_and_handle(6, vec![new_blob_tx(6)]);
+    let block_7 = node_state.craft_new_block_and_handle(7, vec![new_blob_tx(7)]);
+    let block_8 = node_state.craft_new_block_and_handle(8, vec![new_blob_tx(8)]);
 
     tracing::info!("✨ New prover catching up with blocks 6 and 7");
     api_client.set_block_height(BlockHeight(7));
@@ -697,18 +703,34 @@ async fn test_auto_prover_catchup_n() -> Result<()> {
         .await
         .expect("Failed to create new auto prover");
 
-    auto_prover_catchup.handle_block(block_1.clone()).await?;
-    auto_prover_catchup.handle_block(block_2.clone()).await?;
-    auto_prover_catchup.handle_block(block_3.clone()).await?;
-    auto_prover_catchup.handle_block(block_4.clone()).await?;
-    auto_prover_catchup.handle_block(block_5.clone()).await?;
-    auto_prover_catchup.handle_block(block_6.clone()).await?;
-    auto_prover_catchup.handle_block(block_7.clone()).await?;
-    auto_prover_catchup.handle_block(block_8.clone()).await?;
+    auto_prover_catchup
+        .handle_node_state_block(block_1.clone())
+        .await?;
+    auto_prover_catchup
+        .handle_node_state_block(block_2.clone())
+        .await?;
+    auto_prover_catchup
+        .handle_node_state_block(block_3.clone())
+        .await?;
+    auto_prover_catchup
+        .handle_node_state_block(block_4.clone())
+        .await?;
+    auto_prover_catchup
+        .handle_node_state_block(block_5.clone())
+        .await?;
+    auto_prover_catchup
+        .handle_node_state_block(block_6.clone())
+        .await?;
+    auto_prover_catchup
+        .handle_node_state_block(block_7.clone())
+        .await?;
+    auto_prover_catchup
+        .handle_node_state_block(block_8.clone())
+        .await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1); // Txs from mutliple catching blocs are batched
-    let _ = node_state.craft_block_and_handle(9, proofs);
+    let _ = node_state.craft_new_block_and_handle(9, proofs);
 
     assert_eq!(read_contract_state(&node_state).value, 10 + 6 + 7 + 8);
     Ok(())
@@ -719,26 +741,26 @@ async fn test_auto_prover_catchup_timeout_1() -> Result<()> {
     let (mut node_state, _, api_client) = setup().await?;
     let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 3, 10).await?;
 
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
-    let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
-    let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
+    let block_2 = node_state.craft_new_block_and_handle(2, vec![new_blob_tx(2)]);
+    let block_3 = node_state.craft_new_block_and_handle(3, vec![new_blob_tx(3)]);
 
-    auto_prover.handle_processed_block(block_1.clone()).await?;
-    auto_prover.handle_processed_block(block_2.clone()).await?;
-    auto_prover.handle_processed_block(block_3.clone()).await?;
+    auto_prover.handle_processed(block_1.clone()).await?;
+    auto_prover.handle_processed(block_2.clone()).await?;
+    auto_prover.handle_processed(block_3.clone()).await?;
 
-    let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]);
-    auto_prover.handle_processed_block(block_4.clone()).await?;
+    let block_4 = node_state.craft_new_block_and_handle(4, vec![new_blob_tx(4)]);
+    auto_prover.handle_processed(block_4.clone()).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
-    let block_5 = node_state.craft_block_and_handle(5, proofs);
-    auto_prover.handle_processed_block(block_5.clone()).await?;
+    let block_5 = node_state.craft_new_block_and_handle(5, proofs);
+    auto_prover.handle_processed(block_5.clone()).await?;
 
     assert_eq!(read_contract_state(&node_state).value, 10);
 
-    let block_6 = node_state.craft_block_and_handle(
+    let block_6 = node_state.craft_new_block_and_handle(
         6,
         vec![
             new_blob_tx(6), /* This one will timeout on block 11 */
@@ -748,15 +770,15 @@ async fn test_auto_prover_catchup_timeout_1() -> Result<()> {
         ],
     );
 
-    let block_7 = node_state.craft_block_and_handle(7, vec![new_blob_tx(7)]);
-    let block_8 = node_state.craft_block_and_handle(8, vec![new_blob_tx(8)]);
+    let block_7 = node_state.craft_new_block_and_handle(7, vec![new_blob_tx(7)]);
+    let block_8 = node_state.craft_new_block_and_handle(8, vec![new_blob_tx(8)]);
 
     let mut blocks = vec![
         block_1, block_2, block_3, block_4, block_5, block_6, block_7, block_8,
     ];
     for i in 9..20 {
         tracing::info!("✨ Block {i}");
-        let block = node_state.craft_block_and_handle(i, vec![]);
+        let block = node_state.craft_new_block_and_handle(i, vec![]);
         blocks.push(block);
     }
 
@@ -769,13 +791,13 @@ async fn test_auto_prover_catchup_timeout_1() -> Result<()> {
         .expect("Failed to create new auto prover");
 
     for block in blocks {
-        auto_prover_catchup.handle_block(block).await?;
+        auto_prover_catchup.handle_node_state_block(block).await?;
     }
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1); // Txs from mutliple catching blocs are batched
     assert_eq!(count_hyli_outputs(&proofs[0]), 4);
-    let _ = node_state.craft_block_and_handle(20, proofs);
+    let _ = node_state.craft_new_block_and_handle(20, proofs);
 
     assert_eq!(read_contract_state(&node_state).value, 10 + 6 + 6 + 7 + 8);
     Ok(())
@@ -786,26 +808,26 @@ async fn test_auto_prover_catchup_timeout_2() -> Result<()> {
     let (mut node_state, _, api_client) = setup().await?;
     let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 3, 10).await?;
 
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
-    let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
-    let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
+    let block_2 = node_state.craft_new_block_and_handle(2, vec![new_blob_tx(2)]);
+    let block_3 = node_state.craft_new_block_and_handle(3, vec![new_blob_tx(3)]);
 
-    auto_prover.handle_processed_block(block_1.clone()).await?;
-    auto_prover.handle_processed_block(block_2.clone()).await?;
-    auto_prover.handle_processed_block(block_3.clone()).await?;
+    auto_prover.handle_processed(block_1.clone()).await?;
+    auto_prover.handle_processed(block_2.clone()).await?;
+    auto_prover.handle_processed(block_3.clone()).await?;
 
-    let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]);
-    auto_prover.handle_processed_block(block_4.clone()).await?;
+    let block_4 = node_state.craft_new_block_and_handle(4, vec![new_blob_tx(4)]);
+    auto_prover.handle_processed(block_4.clone()).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
-    let block_5 = node_state.craft_block_and_handle(5, proofs);
-    auto_prover.handle_processed_block(block_5.clone()).await?;
+    let block_5 = node_state.craft_new_block_and_handle(5, proofs);
+    auto_prover.handle_processed(block_5.clone()).await?;
 
     assert_eq!(read_contract_state(&node_state).value, 10);
 
-    let block_6 = node_state.craft_block_and_handle(
+    let block_6 = node_state.craft_new_block_and_handle(
         6,
         vec![
             new_blob_tx(6), /* This one will timeout */
@@ -815,8 +837,8 @@ async fn test_auto_prover_catchup_timeout_2() -> Result<()> {
         ],
     );
 
-    let block_7 = node_state.craft_block_and_handle(7, vec![new_blob_tx(7)]);
-    let block_8 = node_state.craft_block_and_handle(8, vec![new_blob_tx(8)]);
+    let block_7 = node_state.craft_new_block_and_handle(7, vec![new_blob_tx(7)]);
+    let block_8 = node_state.craft_new_block_and_handle(8, vec![new_blob_tx(8)]);
 
     let mut blocks = vec![
         block_1, block_2, block_3, block_4, block_5, block_6, block_7, block_8,
@@ -824,7 +846,7 @@ async fn test_auto_prover_catchup_timeout_2() -> Result<()> {
     let stop_height = 22;
     for i in 9..stop_height {
         tracing::info!("✨ Block {i}");
-        let block = node_state.craft_block_and_handle(i, vec![]);
+        let block = node_state.craft_new_block_and_handle(i, vec![]);
         blocks.push(block);
     }
 
@@ -836,16 +858,16 @@ async fn test_auto_prover_catchup_timeout_2() -> Result<()> {
         .expect("Failed to create new auto prover");
 
     for block in blocks {
-        auto_prover_catchup.handle_block(block).await?;
+        auto_prover_catchup.handle_node_state_block(block).await?;
     }
     // One more block to trigger proof generation
-    let block = node_state.craft_block_and_handle(stop_height, vec![]);
-    auto_prover_catchup.handle_block(block).await?;
+    let block = node_state.craft_new_block_and_handle(stop_height, vec![]);
+    auto_prover_catchup.handle_node_state_block(block).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
     assert_eq!(count_hyli_outputs(&proofs[0]), 3);
-    let _ = node_state.craft_block_and_handle(stop_height + 1, proofs);
+    let _ = node_state.craft_new_block_and_handle(stop_height + 1, proofs);
 
     assert_eq!(read_contract_state(&node_state).value, 10 + 6 + 7 + 8);
     Ok(())
@@ -856,34 +878,34 @@ async fn test_auto_prover_catchup_timeout_multiple_blocks() -> Result<()> {
     let (mut node_state, _, api_client) = setup().await?;
     let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 3, 10).await?;
 
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
-    let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
-    let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
+    let block_2 = node_state.craft_new_block_and_handle(2, vec![new_blob_tx(2)]);
+    let block_3 = node_state.craft_new_block_and_handle(3, vec![new_blob_tx(3)]);
 
-    auto_prover.handle_processed_block(block_1.clone()).await?;
-    auto_prover.handle_processed_block(block_2.clone()).await?;
-    auto_prover.handle_processed_block(block_3.clone()).await?;
+    auto_prover.handle_processed(block_1.clone()).await?;
+    auto_prover.handle_processed(block_2.clone()).await?;
+    auto_prover.handle_processed(block_3.clone()).await?;
 
-    let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]);
-    auto_prover.handle_processed_block(block_4.clone()).await?;
+    let block_4 = node_state.craft_new_block_and_handle(4, vec![new_blob_tx(4)]);
+    auto_prover.handle_processed(block_4.clone()).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
-    let block_5 = node_state.craft_block_and_handle(5, proofs);
-    auto_prover.handle_processed_block(block_5.clone()).await?;
+    let block_5 = node_state.craft_new_block_and_handle(5, proofs);
+    auto_prover.handle_processed(block_5.clone()).await?;
 
     assert_eq!(read_contract_state(&node_state).value, 10);
 
     let block_6 =
-        node_state.craft_block_and_handle(6, vec![new_blob_tx(6) /* This one will timeout */]);
+        node_state.craft_new_block_and_handle(6, vec![new_blob_tx(6) /* This one will timeout */]);
 
     let block_7 =
-        node_state.craft_block_and_handle(7, vec![new_blob_tx(7) /* This one will timeout */]);
+        node_state.craft_new_block_and_handle(7, vec![new_blob_tx(7) /* This one will timeout */]);
     let block_8 =
-        node_state.craft_block_and_handle(8, vec![new_blob_tx(8) /* This one will timeout */]);
-    let block_9 = node_state.craft_block_and_handle(9, vec![new_blob_tx(9)]);
-    let block_10 = node_state.craft_block_and_handle(10, vec![new_blob_tx(10)]);
+        node_state.craft_new_block_and_handle(8, vec![new_blob_tx(8) /* This one will timeout */]);
+    let block_9 = node_state.craft_new_block_and_handle(9, vec![new_blob_tx(9)]);
+    let block_10 = node_state.craft_new_block_and_handle(10, vec![new_blob_tx(10)]);
 
     let mut blocks = vec![
         block_1, block_2, block_3, block_4, block_5, block_6, block_7, block_8, block_9, block_10,
@@ -891,7 +913,7 @@ async fn test_auto_prover_catchup_timeout_multiple_blocks() -> Result<()> {
     let stop_height = 24;
     for i in 11..stop_height {
         tracing::info!("✨ Block {i}");
-        let block = node_state.craft_block_and_handle(i, vec![]);
+        let block = node_state.craft_new_block_and_handle(i, vec![]);
         blocks.push(block);
     }
 
@@ -903,16 +925,16 @@ async fn test_auto_prover_catchup_timeout_multiple_blocks() -> Result<()> {
         .expect("Failed to create new auto prover");
 
     for block in blocks {
-        auto_prover_catchup.handle_block(block).await?;
+        auto_prover_catchup.handle_node_state_block(block).await?;
     }
     // One more block to trigger proof generation
-    let block = node_state.craft_block_and_handle(stop_height, vec![]);
-    auto_prover_catchup.handle_block(block).await?;
+    let block = node_state.craft_new_block_and_handle(stop_height, vec![]);
+    auto_prover_catchup.handle_node_state_block(block).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1); // Txs from mutliple catching blocs are batched
     assert_eq!(count_hyli_outputs(&proofs[0]), 2);
-    let _ = node_state.craft_block_and_handle(stop_height + 1, proofs);
+    let _ = node_state.craft_new_block_and_handle(stop_height + 1, proofs);
 
     assert_eq!(read_contract_state(&node_state).value, 10 + 9 + 10);
     Ok(())
@@ -923,34 +945,34 @@ async fn test_auto_prover_catchup_timeout_between_settled() -> Result<()> {
     let (mut node_state, _, api_client) = setup().await?;
     let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 3, 10).await?;
 
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
-    let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
-    let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
+    let block_2 = node_state.craft_new_block_and_handle(2, vec![new_blob_tx(2)]);
+    let block_3 = node_state.craft_new_block_and_handle(3, vec![new_blob_tx(3)]);
 
-    auto_prover.handle_processed_block(block_1.clone()).await?;
-    auto_prover.handle_processed_block(block_2.clone()).await?;
-    auto_prover.handle_processed_block(block_3.clone()).await?;
+    auto_prover.handle_processed(block_1.clone()).await?;
+    auto_prover.handle_processed(block_2.clone()).await?;
+    auto_prover.handle_processed(block_3.clone()).await?;
 
-    let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]);
-    auto_prover.handle_processed_block(block_4.clone()).await?;
+    let block_4 = node_state.craft_new_block_and_handle(4, vec![new_blob_tx(4)]);
+    auto_prover.handle_processed(block_4.clone()).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
-    let block_5 = node_state.craft_block_and_handle(5, proofs);
-    auto_prover.handle_processed_block(block_5.clone()).await?;
+    let block_5 = node_state.craft_new_block_and_handle(5, proofs);
+    auto_prover.handle_processed(block_5.clone()).await?;
 
     assert_eq!(read_contract_state(&node_state).value, 10);
 
     let block_6 =
-        node_state.craft_block_and_handle(6, vec![new_blob_tx(6) /* This one will timeout */]);
+        node_state.craft_new_block_and_handle(6, vec![new_blob_tx(6) /* This one will timeout */]);
 
     let block_7 =
-        node_state.craft_block_and_handle(7, vec![new_blob_tx(7) /* This one will timeout */]);
+        node_state.craft_new_block_and_handle(7, vec![new_blob_tx(7) /* This one will timeout */]);
     let block_8 =
-        node_state.craft_block_and_handle(8, vec![new_blob_tx(8) /* This one will timeout */]);
-    let block_9 = node_state.craft_block_and_handle(9, vec![new_blob_tx(9)]);
-    let block_10 = node_state.craft_block_and_handle(10, vec![new_blob_tx(10)]);
+        node_state.craft_new_block_and_handle(8, vec![new_blob_tx(8) /* This one will timeout */]);
+    let block_9 = node_state.craft_new_block_and_handle(9, vec![new_blob_tx(9)]);
+    let block_10 = node_state.craft_new_block_and_handle(10, vec![new_blob_tx(10)]);
 
     let mut blocks = vec![
         block_1, block_2, block_3, block_4, block_5, block_6, block_7, block_8, block_9, block_10,
@@ -958,19 +980,19 @@ async fn test_auto_prover_catchup_timeout_between_settled() -> Result<()> {
     let stop_height = 24;
     for i in 11..stop_height {
         tracing::info!("✨ Block {i}");
-        let block = node_state.craft_block_and_handle(i, vec![]);
+        let block = node_state.craft_new_block_and_handle(i, vec![]);
         blocks.push(block);
     }
 
     for i in 6..stop_height {
         tracing::info!("♻️ Handle block {}", i);
         auto_prover
-            .handle_processed_block(blocks[i as usize - 1].clone())
+            .handle_processed(blocks[i as usize - 1].clone())
             .await?;
     }
     let proofs = get_txs(&api_client).await;
-    let block_24 = node_state.craft_block_and_handle(stop_height, proofs);
-    let block_25 = node_state.craft_block_and_handle(stop_height + 1, vec![new_blob_tx(25)]);
+    let block_24 = node_state.craft_new_block_and_handle(stop_height, proofs);
+    let block_25 = node_state.craft_new_block_and_handle(stop_height + 1, vec![new_blob_tx(25)]);
     blocks.push(block_24);
     blocks.push(block_25);
 
@@ -982,15 +1004,15 @@ async fn test_auto_prover_catchup_timeout_between_settled() -> Result<()> {
         .expect("Failed to create new auto prover");
 
     for block in blocks {
-        auto_prover_catchup.handle_block(block).await?;
+        auto_prover_catchup.handle_node_state_block(block).await?;
     }
     // One more block to trigger proof generation
-    let block = node_state.craft_block_and_handle(stop_height + 2, vec![]);
-    auto_prover_catchup.handle_block(block).await?;
+    let block = node_state.craft_new_block_and_handle(stop_height + 2, vec![]);
+    auto_prover_catchup.handle_node_state_block(block).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
-    let _ = node_state.craft_block_and_handle(stop_height + 3, proofs);
+    let _ = node_state.craft_new_block_and_handle(stop_height + 3, proofs);
 
     assert_eq!(read_contract_state(&node_state).value, 10 + 9 + 10 + 25);
     Ok(())
@@ -1001,17 +1023,17 @@ async fn test_auto_prover_catchup_first_txs_timeout() -> Result<()> {
     let (mut node_state, _, api_client) = setup().await?;
 
     let block_1 =
-        node_state.craft_block_and_handle(1, vec![new_blob_tx(1) /* This one will timeout */]);
+        node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1) /* This one will timeout */]);
     let block_2 =
-        node_state.craft_block_and_handle(2, vec![new_blob_tx(2) /* This one will timeout */]);
+        node_state.craft_new_block_and_handle(2, vec![new_blob_tx(2) /* This one will timeout */]);
     let block_3 =
-        node_state.craft_block_and_handle(3, vec![new_blob_tx(3) /* This one will timeout */]);
+        node_state.craft_new_block_and_handle(3, vec![new_blob_tx(3) /* This one will timeout */]);
 
     let mut blocks = vec![block_1, block_2, block_3];
     let stop_height = 20;
     for i in 4..=stop_height {
         tracing::info!("✨ Block {i}");
-        let block = node_state.craft_block_and_handle(i, vec![]);
+        let block = node_state.craft_new_block_and_handle(i, vec![]);
         blocks.push(block);
     }
 
@@ -1023,21 +1045,23 @@ async fn test_auto_prover_catchup_first_txs_timeout() -> Result<()> {
         .expect("Failed to create new auto prover");
 
     for block in blocks {
-        auto_prover_catchup.handle_block(block).await?;
+        auto_prover_catchup.handle_node_state_block(block).await?;
     }
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 0);
 
     tracing::info!("✨ Block 21");
-    let block_21 = node_state.craft_block_and_handle(21, vec![new_blob_tx(21)]);
+    let block_21 = node_state.craft_new_block_and_handle(21, vec![new_blob_tx(21)]);
 
-    auto_prover_catchup.handle_block(block_21.clone()).await?;
+    auto_prover_catchup
+        .handle_node_state_block(block_21.clone())
+        .await?;
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
     assert_eq!(count_hyli_outputs(&proofs[0]), 1);
     tracing::info!("✨ Block 22");
-    let _ = node_state.craft_block_and_handle(22, proofs);
+    let _ = node_state.craft_new_block_and_handle(22, proofs);
 
     assert_eq!(read_contract_state(&node_state).value, 21);
     Ok(())
@@ -1047,33 +1071,33 @@ async fn test_auto_prover_catchup_first_txs_timeout() -> Result<()> {
 async fn test_auto_prover_buffer_2_blocks() -> Result<()> {
     let (mut node_state, _, api_client) = setup().await?;
 
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
-    let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
-    let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
-    let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]);
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
+    let block_2 = node_state.craft_new_block_and_handle(2, vec![new_blob_tx(2)]);
+    let block_3 = node_state.craft_new_block_and_handle(3, vec![new_blob_tx(3)]);
+    let block_4 = node_state.craft_new_block_and_handle(4, vec![new_blob_tx(4)]);
 
     let blocks = vec![block_1, block_2, block_3, block_4];
 
     let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 2, 100).await?;
 
     for block in blocks.clone() {
-        auto_prover.handle_processed_block(block).await?;
+        auto_prover.handle_processed(block).await?;
     }
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
     tracing::info!("✨ Block 5");
-    let block_5 = node_state.craft_block_and_handle(5, proofs);
-    auto_prover.handle_processed_block(block_5).await?;
+    let block_5 = node_state.craft_new_block_and_handle(5, proofs);
+    auto_prover.handle_processed(block_5).await?;
 
     assert_eq!(read_contract_state(&node_state).value, 1 + 2 + 3);
 
-    let block_6 = node_state.craft_block_and_handle(6, vec![new_blob_tx(6)]);
-    auto_prover.handle_processed_block(block_6).await?;
+    let block_6 = node_state.craft_new_block_and_handle(6, vec![new_blob_tx(6)]);
+    auto_prover.handle_processed(block_6).await?;
     let proofs_6 = get_txs(&api_client).await;
     assert_eq!(proofs_6.len(), 1);
     tracing::info!("✨ Block 7");
-    let _ = node_state.craft_block_and_handle(7, proofs_6);
+    let _ = node_state.craft_new_block_and_handle(7, proofs_6);
     assert_eq!(read_contract_state(&node_state).value, 1 + 2 + 3 + 4 + 6);
 
     Ok(())
@@ -1083,33 +1107,33 @@ async fn test_auto_prover_buffer_2_blocks() -> Result<()> {
 async fn test_auto_prover_buffer_2_txs() -> Result<()> {
     let (mut node_state, _, api_client) = setup().await?;
 
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
-    let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
-    let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
-    let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]);
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
+    let block_2 = node_state.craft_new_block_and_handle(2, vec![new_blob_tx(2)]);
+    let block_3 = node_state.craft_new_block_and_handle(3, vec![new_blob_tx(3)]);
+    let block_4 = node_state.craft_new_block_and_handle(4, vec![new_blob_tx(4)]);
 
     let blocks = vec![block_1, block_2, block_3, block_4];
 
     let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 100, 3).await?;
 
     for block in blocks.clone() {
-        auto_prover.handle_processed_block(block).await?;
+        auto_prover.handle_processed(block).await?;
     }
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
     tracing::info!("✨ Block 5");
-    let block_5 = node_state.craft_block_and_handle(5, proofs);
-    auto_prover.handle_processed_block(block_5).await?;
+    let block_5 = node_state.craft_new_block_and_handle(5, proofs);
+    auto_prover.handle_processed(block_5).await?;
 
     assert_eq!(read_contract_state(&node_state).value, 1 + 2 + 3);
 
-    let block_6 = node_state.craft_block_and_handle(6, vec![new_blob_tx(6), new_blob_tx(6)]);
-    auto_prover.handle_processed_block(block_6).await?;
+    let block_6 = node_state.craft_new_block_and_handle(6, vec![new_blob_tx(6), new_blob_tx(6)]);
+    auto_prover.handle_processed(block_6).await?;
     let proofs_6 = get_txs(&api_client).await;
     assert_eq!(proofs_6.len(), 1);
     tracing::info!("✨ Block 7");
-    let _ = node_state.craft_block_and_handle(7, proofs_6);
+    let _ = node_state.craft_new_block_and_handle(7, proofs_6);
     assert_eq!(
         read_contract_state(&node_state).value,
         1 + 2 + 3 + 4 + 6 + 6
@@ -1122,17 +1146,17 @@ async fn test_auto_prover_buffer_2_txs() -> Result<()> {
 async fn test_auto_prover_buffer_max_txs_per_proof() -> Result<()> {
     let (mut node_state, _, api_client) = setup().await?;
 
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
-    let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2)]);
-    let block_3 = node_state.craft_block_and_handle(3, vec![new_blob_tx(3)]);
-    let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]);
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
+    let block_2 = node_state.craft_new_block_and_handle(2, vec![new_blob_tx(2)]);
+    let block_3 = node_state.craft_new_block_and_handle(3, vec![new_blob_tx(3)]);
+    let block_4 = node_state.craft_new_block_and_handle(4, vec![new_blob_tx(4)]);
 
     let blocks = vec![block_1, block_2, block_3, block_4];
 
     let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 100, 2).await?;
 
     for block in blocks.clone() {
-        auto_prover.handle_processed_block(block).await?;
+        auto_prover.handle_processed(block).await?;
     }
 
     // First proof of 2 txs
@@ -1140,16 +1164,16 @@ async fn test_auto_prover_buffer_max_txs_per_proof() -> Result<()> {
     assert_eq!(proofs.len(), 1);
 
     tracing::info!("✨ Block 5");
-    let block_5 = node_state.craft_block_and_handle(5, proofs);
-    auto_prover.handle_processed_block(block_5).await?;
+    let block_5 = node_state.craft_new_block_and_handle(5, proofs);
+    auto_prover.handle_processed(block_5).await?;
 
     // Proof of 2 next txs
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
     tracing::info!("✨ Block 6");
-    let block_6 = node_state.craft_block_and_handle(6, proofs);
-    auto_prover.handle_processed_block(block_6).await?;
+    let block_6 = node_state.craft_new_block_and_handle(6, proofs);
+    auto_prover.handle_processed(block_6).await?;
 
     assert_eq!(read_contract_state(&node_state).value, 1 + 2 + 3 + 4);
 
@@ -1160,7 +1184,7 @@ async fn test_auto_prover_buffer_max_txs_per_proof() -> Result<()> {
 async fn test_auto_prover_buffer_one_block_max_txs_per_proof() -> Result<()> {
     let (mut node_state, _, api_client) = setup().await?;
 
-    let block = node_state.craft_block_and_handle(
+    let block = node_state.craft_new_block_and_handle(
         1,
         vec![
             new_blob_tx(1),
@@ -1172,21 +1196,21 @@ async fn test_auto_prover_buffer_one_block_max_txs_per_proof() -> Result<()> {
 
     let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 100, 2).await?;
 
-    auto_prover.handle_processed_block(block).await?;
+    auto_prover.handle_processed(block).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
     tracing::info!("✨ Block 5");
-    let block_5 = node_state.craft_block_and_handle(5, proofs);
-    auto_prover.handle_processed_block(block_5).await?;
+    let block_5 = node_state.craft_new_block_and_handle(5, proofs);
+    auto_prover.handle_processed(block_5).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
     tracing::info!("✨ Block 6");
-    let block_6 = node_state.craft_block_and_handle(6, proofs);
-    auto_prover.handle_processed_block(block_6).await?;
+    let block_6 = node_state.craft_new_block_and_handle(6, proofs);
+    auto_prover.handle_processed(block_6).await?;
 
     assert_eq!(read_contract_state(&node_state).value, 1 + 2 + 3 + 4);
 
@@ -1266,14 +1290,14 @@ async fn scenario_auto_prover_artificial_middle_blob_failure(
     mut auto_prover: AutoProver<TestContract>,
 ) -> Result<()> {
     tracing::info!("✨ Block 1");
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
-    auto_prover.handle_processed_block(block_1).await?;
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
+    auto_prover.handle_processed(block_1).await?;
 
     let proofs = get_txs(&api_client).await;
 
     tracing::info!("✨ Block 2");
-    let block_2 = node_state.craft_block_and_handle(2, proofs);
-    auto_prover.handle_processed_block(block_2).await?;
+    let block_2 = node_state.craft_new_block_and_handle(2, proofs);
+    auto_prover.handle_processed(block_2).await?;
 
     tracing::info!("✨ Block 3");
     // Create a batch of valid txs
@@ -1310,8 +1334,8 @@ async fn scenario_auto_prover_artificial_middle_blob_failure(
     ho.success = false;
     let failing_proof = new_proof_tx(&ContractName::new("test2"), &ho, &failing_tx_data.hashed());
 
-    let block_3 = node_state.craft_block_and_handle(3, txs);
-    auto_prover.handle_processed_block(block_3).await?;
+    let block_3 = node_state.craft_new_block_and_handle(3, txs);
+    auto_prover.handle_processed(block_3).await?;
 
     tracing::info!("✨ Block 4");
 
@@ -1325,28 +1349,28 @@ async fn scenario_auto_prover_artificial_middle_blob_failure(
     let proofs = get_txs(&api_client).await;
 
     let block_4 = node_state
-        .craft_block_and_handle(4, vec![first_tx.into(), failing_proof.into(), proof.into()]);
-    auto_prover.handle_processed_block(block_4).await?;
+        .craft_new_block_and_handle(4, vec![first_tx.into(), failing_proof.into(), proof.into()]);
+    auto_prover.handle_processed(block_4).await?;
 
     tracing::info!("✨ Block 5");
-    let block_5 = node_state.craft_block_and_handle(5, proofs);
-    auto_prover.handle_processed_block(block_5).await?;
+    let block_5 = node_state.craft_new_block_and_handle(5, proofs);
+    auto_prover.handle_processed(block_5).await?;
 
     let proofs = get_txs(&api_client).await;
 
     tracing::info!("✨ Block 6");
-    let block_6 = node_state.craft_block_and_handle(6, proofs);
-    auto_prover.handle_processed_block(block_6).await?;
+    let block_6 = node_state.craft_new_block_and_handle(6, proofs);
+    auto_prover.handle_processed(block_6).await?;
 
     for i in 7..12 {
         tracing::info!("✨ Block {i}");
-        let block = node_state.craft_block_and_handle(i, vec![]);
-        auto_prover.handle_processed_block(block).await?;
+        let block = node_state.craft_new_block_and_handle(i, vec![]);
+        auto_prover.handle_processed(block).await?;
     }
 
     let proofs = get_txs(&api_client).await;
-    let block = node_state.craft_block_and_handle(12, proofs);
-    auto_prover.handle_processed_block(block).await?;
+    let block = node_state.craft_new_block_and_handle(12, proofs);
+    auto_prover.handle_processed(block).await?;
 
     assert_eq!(read_contract_state(&node_state).value, 80);
 
@@ -1367,14 +1391,14 @@ async fn test_auto_prover_early_fail_while_buffered() -> Result<()> {
     // Block 1: Failing TX
     tracing::info!("✨ Block 1");
     let failing_tx = new_failing_blob_tx(1);
-    let block_1 = node_state.craft_block_and_handle(1, vec![failing_tx.clone()]);
-    auto_prover.handle_processed_block(block_1).await?;
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![failing_tx.clone()]);
+    auto_prover.handle_processed(block_1).await?;
 
     // Process a few blocks to un-buffer the failing TX
     for i in 2..5 {
         tracing::info!("✨ Block {i}");
-        let block = node_state.craft_block_and_handle(i, vec![]);
-        auto_prover.handle_processed_block(block).await?;
+        let block = node_state.craft_new_block_and_handle(i, vec![]);
+        auto_prover.handle_processed(block).await?;
     }
 
     // Wait for the failing TX to be proven
@@ -1383,48 +1407,48 @@ async fn test_auto_prover_early_fail_while_buffered() -> Result<()> {
     // Block 2: Successful TX (should be buffered)
     tracing::info!("✨ Block 5");
     let success_tx = new_blob_tx(5);
-    let block_5 = node_state.craft_block_and_handle(5, vec![success_tx.clone()]);
-    auto_prover.handle_processed_block(block_5).await?;
+    let block_5 = node_state.craft_new_block_and_handle(5, vec![success_tx.clone()]);
+    auto_prover.handle_processed(block_5).await?;
 
     // Block 3: Simulate settlement of the failed TX from block 1
     tracing::info!("✨ Block 6 (settle fail)");
-    let block_6 = node_state.craft_block_and_handle(6, proofs);
-    auto_prover.handle_processed_block(block_6).await?;
+    let block_6 = node_state.craft_new_block_and_handle(6, proofs);
+    auto_prover.handle_processed(block_6).await?;
 
     // Process a few blocks to un-buffer the failing TX
     for i in 7..9 {
         tracing::info!("✨ Block {i}");
-        let block = node_state.craft_block_and_handle(i, vec![]);
-        auto_prover.handle_processed_block(block).await?;
+        let block = node_state.craft_new_block_and_handle(i, vec![]);
+        auto_prover.handle_processed(block).await?;
     }
 
     // Now the buffered TX should be executed and a proof generated
     let proofs = get_txs(&api_client).await;
 
     tracing::info!("✨ Block 9");
-    let block = node_state.craft_block_and_handle(9, proofs);
-    auto_prover.handle_processed_block(block).await?;
+    let block = node_state.craft_new_block_and_handle(9, proofs);
+    auto_prover.handle_processed(block).await?;
 
     let success_tx = new_blob_tx(6);
     let hash = success_tx.hashed();
 
     tracing::info!("✨ Block 10");
-    let block = node_state.craft_block_and_handle(10, vec![success_tx]);
-    auto_prover.handle_processed_block(block).await?;
+    let block = node_state.craft_new_block_and_handle(10, vec![success_tx]);
+    auto_prover.handle_processed(block).await?;
 
     // Process a few blocks to generate proof
     for i in 11..14 {
         tracing::info!("✨ Block {i}");
-        let block = node_state.craft_block_and_handle(i, vec![]);
-        auto_prover.handle_processed_block(block).await?;
+        let block = node_state.craft_new_block_and_handle(i, vec![]);
+        auto_prover.handle_processed(block).await?;
     }
 
     let proofs = get_txs(&api_client).await;
 
     // Should settle the final TX
     tracing::info!("✨ Block 14");
-    let block = node_state.craft_block_and_handle(14, proofs);
-    assert_eq!(block.successful_txs, vec![hash]);
+    let block = node_state.craft_new_block_and_handle(14, proofs);
+    assert_eq!(block.parsed_block.successful_txs, vec![hash]);
     assert!(node_state
         .get_earliest_unsettled_height(&ContractName::new("test"))
         .is_none(),);
@@ -1450,58 +1474,69 @@ async fn test_auto_prover_catchup_mixed_pending_and_failures() -> Result<()> {
 
     // Block 1: Failing TX
     let failing_tx_1 = new_failing_blob_tx(1);
-    let block_1 = node_state.craft_block_and_handle(1, vec![failing_tx_1.clone()]);
-    auto_prover.handle_node_state_event(block_1.clone()).await?;
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![failing_tx_1.clone()]);
+    auto_prover.handle_node_state_block(block_1.clone()).await?;
 
     // Block 2: Successful TX
     let success_tx_2 = new_blob_tx(2);
-    let block_2 = node_state.craft_block_and_handle(2, vec![success_tx_2.clone()]);
-    auto_prover.handle_node_state_event(block_2.clone()).await?;
+    let block_2 = node_state.craft_new_block_and_handle(2, vec![success_tx_2.clone()]);
+    auto_prover.handle_node_state_block(block_2.clone()).await?;
 
     // Block 3: Pending TX (not settled yet, so not included in successful/failed/timed out)
     let pending_tx = new_blob_tx(3);
-    let block_3 = node_state.craft_block_and_handle(3, vec![pending_tx.clone()]);
-    auto_prover.handle_node_state_event(block_3.clone()).await?;
+    let block_3 = node_state.craft_new_block_and_handle(3, vec![pending_tx.clone()]);
+    auto_prover.handle_node_state_block(block_3.clone()).await?;
 
     // Block 4: Failing TX, and result of 1/2/4
     let failing_tx_4 = new_failing_blob_tx(4);
-    let mut block_4 = node_state.craft_block_and_handle(4, vec![failing_tx_4.clone()]);
-    block_4.successful_txs = vec![success_tx_2.hashed()];
-    block_4.timed_out_txs = vec![failing_tx_1.hashed()];
-    block_4.failed_txs = vec![failing_tx_4.hashed()];
-    block_4
-        .dp_parent_hashes
-        .insert(failing_tx_4.hashed(), DataProposalHash(format!("{}", 4)));
-    block_4
-        .dp_parent_hashes
-        .insert(success_tx_2.hashed(), DataProposalHash(format!("{}", 2)));
-    block_4
-        .dp_parent_hashes
-        .insert(failing_tx_1.hashed(), DataProposalHash(format!("{}", 1)));
-    auto_prover.handle_node_state_event(block_4.clone()).await?;
+    let mut block_4 = node_state.craft_new_block_and_handle(4, vec![failing_tx_4.clone()]);
+    let push_event =
+        |block: &NodeStateBlock,
+         tx: &Transaction,
+         event_ctor: fn(UnsettledBlobTransaction) -> StatefulEvent| {
+            let data = block
+                .stateful_events
+                .events
+                .iter()
+                .find_map(|(tx_id, ev)| {
+                    if tx_id.1 == tx.hashed() {
+                        if let StatefulEvent::SequencedTx(tx, ctx) = ev {
+                            return Some((tx_id.clone(), tx.clone(), ctx.clone()));
+                        }
+                    }
+                    None
+                })
+                .unwrap();
+            (
+                data.0.clone(),
+                event_ctor(UnsettledBlobTransaction {
+                    tx: data.1.clone(),
+                    tx_id: data.0.clone(),
+                    tx_context: data.2.clone(),
+                    blobs_hash: BlobsHashes::default(),
+                    possible_proofs: BTreeMap::new(),
+                }),
+            )
+        };
+    let events = vec![
+        push_event(&block_2, &success_tx_2, StatefulEvent::SettledTx),
+        push_event(&block_1, &failing_tx_1, StatefulEvent::TimedOutTx),
+        push_event(&block_4, &failing_tx_4, StatefulEvent::FailedTx),
+    ];
+    Arc::get_mut(&mut block_4.stateful_events)
+        .unwrap()
+        .events
+        .extend(events);
+    auto_prover.handle_node_state_block(block_4.clone()).await?;
 
     // Block 5 is empty
-    let block_5 = node_state.craft_block_and_handle(5, vec![]);
-    auto_prover.handle_node_state_event(block_5.clone()).await?;
+    let block_5 = node_state.craft_new_block_and_handle(5, vec![]);
+    auto_prover.handle_node_state_block(block_5.clone()).await?;
 
     // Block 6: some other TX
     let other_tx = new_blob_tx(6);
-    let block_6 = Block {
-        block_height: BlockHeight(6),
-        txs: vec![(
-            TxId(DataProposalHash::default(), other_tx.hashed()),
-            other_tx.clone(),
-        )],
-        successful_txs: vec![],
-        failed_txs: vec![],
-        timed_out_txs: vec![],
-        lane_ids: BTreeMap::from_iter(vec![(
-            other_tx.hashed(),
-            LaneId(ValidatorPublicKey(vec![5])),
-        )]),
-        ..Default::default()
-    };
-    auto_prover.handle_node_state_event(block_6.clone()).await?;
+    let block_6 = node_state.craft_new_block_and_handle(6, vec![other_tx.clone()]);
+    auto_prover.handle_node_state_block(block_6.clone()).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
@@ -1525,15 +1560,16 @@ async fn test_auto_prover_catchup_mixed_pending_and_failures() -> Result<()> {
 async fn test_auto_prover_serialize_and_resume() -> Result<()> {
     // Step 1: Run a couple of blocks with a node state
     let (mut node_state, mut prover, api_client) = setup_with_timeout(10).await?;
-    let block_1 = node_state.craft_block_and_handle(1, vec![new_blob_tx(1)]);
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
 
-    prover.handle_block(block_1.clone()).await?;
+    prover.handle_node_state_block(block_1.clone()).await?;
 
     let mut proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
 
-    let block_2 = node_state.craft_block_and_handle(2, vec![new_blob_tx(2), proofs.pop().unwrap()]);
-    let block_3 = node_state.craft_block_and_handle(3, vec![]);
+    let block_2 =
+        node_state.craft_new_block_and_handle(2, vec![new_blob_tx(2), proofs.pop().unwrap()]);
+    let block_3 = node_state.craft_new_block_and_handle(3, vec![]);
     let blocks = vec![block_1.clone(), block_2.clone(), block_3.clone()];
 
     api_client.set_block_height(BlockHeight(2));
@@ -1559,7 +1595,7 @@ async fn test_auto_prover_serialize_and_resume() -> Result<()> {
         .unwrap();
 
     for block in &blocks {
-        auto_prover.handle_block(block.clone()).await?;
+        auto_prover.handle_node_state_block(block.clone()).await?;
     }
 
     let proofs = get_txs(&api_client).await;
@@ -1569,10 +1605,10 @@ async fn test_auto_prover_serialize_and_resume() -> Result<()> {
     auto_prover.persist().await?;
 
     // Step 4: Run a couple more blocks
-    let block_4 = node_state.craft_block_and_handle(4, vec![new_blob_tx(4)]); //, proofs.pop().unwrap()]);
-    let block_5 = node_state.craft_block_and_handle(5, vec![new_blob_tx(5)]);
-    let block_6 = node_state.craft_block_and_handle(6, vec![]);
-    let more_blocks = vec![block_4.clone(), block_5.clone(), block_6.clone()];
+    let block_4 = node_state.craft_new_block_and_handle(4, vec![new_blob_tx(4)]); //, proofs.pop().unwrap()]);
+    let block_5 = node_state.craft_new_block_and_handle(5, vec![new_blob_tx(5)]);
+    let block_6 = node_state.craft_new_block_and_handle(6, vec![]);
+    let more_blocks = [block_4.clone(), block_5.clone(), block_6.clone()];
 
     api_client.set_block_height(BlockHeight(5));
 
@@ -1582,15 +1618,15 @@ async fn test_auto_prover_serialize_and_resume() -> Result<()> {
 
     // Step 6: Catch up again with all blocks
     for block in more_blocks.iter() {
-        auto_prover.handle_block(block.clone()).await?;
+        auto_prover.handle_node_state_block(block.clone()).await?;
     }
 
-    auto_prover.handle_block(block_6.clone()).await?;
+    auto_prover.handle_node_state_block(block_6.clone()).await?;
 
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 3);
 
-    node_state.craft_block_and_handle(7, proofs);
+    node_state.craft_new_block_and_handle(7, proofs);
 
     // Step 7: Check that the contract state is as expected
     let expected = 1 + 2 + 4 + 5;
