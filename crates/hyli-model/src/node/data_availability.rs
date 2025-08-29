@@ -45,31 +45,15 @@ pub struct Contract {
     ToSchema,
 )]
 pub struct UnsettledBlobTransaction {
-    pub identity: Identity,
+    pub tx: BlobTransaction,
     pub tx_id: TxId,
     #[schema(value_type = TxContext)]
     pub tx_context: Arc<TxContext>,
     pub blobs_hash: BlobsHashes,
-    pub blobs: BTreeMap<BlobIndex, UnsettledBlobMetadata>,
+    pub possible_proofs: BTreeMap<BlobIndex, Vec<(ProgramId, Verifier, TxId, HyliOutput)>>, // ToSchema doesn't like the alias
 }
 
-#[derive(
-    Default,
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    BorshSerialize,
-    BorshDeserialize,
-    serde::Serialize,
-    serde::Deserialize,
-    ToSchema,
-)]
-pub struct UnsettledBlobMetadata {
-    pub blob: Blob,
-    // Each time we receive a proof, we add it to this list
-    pub possible_proofs: Vec<(ProgramId, Verifier, TxId, HyliOutput)>,
-}
+pub type BlobProof = (ProgramId, Verifier, TxId, HyliOutput);
 
 #[derive(
     Debug,
