@@ -69,8 +69,9 @@ impl TxExecutorHandler for TestContract {
     }
 
     fn construct_state(
-        _register_blob: &RegisterContractEffect,
-        _metadata: &Option<Vec<u8>>,
+        _: &sdk::ContractName,
+        _: &sdk::Contract,
+        _: &Option<Vec<u8>>,
     ) -> Result<Self> {
         Ok(Self::default())
     }

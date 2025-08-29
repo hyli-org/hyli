@@ -258,11 +258,13 @@ impl Indexer {
 
             // We use the indexer as node-state-processor for CSI
             // TODO: refactor this away it conflicts with running the indexer in the full node as we send all events twice.
-            let (parsed_block, staking_data) = self.handler_store.block_callback.take();
+            let (parsed_block, staking_data, stateful_events) =
+                self.handler_store.block_callback.take();
             self.bus.send(NodeStateEvent::NewBlock(NodeStateBlock {
                 signed_block: block.into(),
                 parsed_block: parsed_block.into(),
                 staking_data: staking_data.into(),
+                stateful_events: stateful_events.into(),
             }))?;
         }
 
@@ -325,7 +327,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                 // Return early, we want to skip events or it will violate the foreign key
                 return;
             }
-            TxEvent::SequencedBlobTransaction(tx_id, lane_id, index, blob_tx) => {
+            TxEvent::SequencedBlobTransaction(tx_id, lane_id, index, blob_tx, _tx_context) => {
                 self.txs.push_front(TxStore {
                     tx_hash: TxHashDb(tx_id.1.clone()),
                     dp_hash: DataProposalHashDb(tx_id.0.clone()),
@@ -377,11 +379,11 @@ impl NodeStateCallback for IndexerHandlerStore {
                 self.tx_status_update
                     .insert(tx_id.clone(), TransactionStatusDb::Success);
             }
-            TxEvent::SettledAsFailed(tx_id) => {
+            TxEvent::SettledAsFailed(tx_id, ..) => {
                 self.tx_status_update
                     .insert(tx_id.clone(), TransactionStatusDb::Failure);
             }
-            TxEvent::TimedOut(tx_id) => {
+            TxEvent::TimedOut(tx_id, ..) => {
                 self.tx_status_update
                     .insert(tx_id.clone(), TransactionStatusDb::TimedOut);
             }
@@ -433,7 +435,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                 // Don't push events
                 return;
             }
-            TxEvent::ContractStateUpdated(_, contract_name, state_commitment) => {
+            TxEvent::ContractStateUpdated(_, contract_name, _contract, state_commitment) => {
                 self.contract_updates
                     .entry(contract_name.clone())
                     .and_modify(|e| {
@@ -446,7 +448,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                 // Don't push events
                 return;
             }
-            TxEvent::ContractProgramIdUpdated(_, contract_name, program_id) => {
+            TxEvent::ContractProgramIdUpdated(_, contract_name, _contract, program_id) => {
                 self.contract_updates
                     .entry(contract_name.clone())
                     .and_modify(|e| {
@@ -459,7 +461,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                 // Don't push events
                 return;
             }
-            TxEvent::ContractTimeoutWindowUpdated(_, contract_name, timeout_window) => {
+            TxEvent::ContractTimeoutWindowUpdated(_, contract_name, _contract, timeout_window) => {
                 self.contract_updates
                     .entry(contract_name.clone())
                     .and_modify(|e| {

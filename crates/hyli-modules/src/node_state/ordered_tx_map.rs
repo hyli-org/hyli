@@ -163,7 +163,7 @@ mod tests {
                     possible_proofs: vec![],
                 },
             )]),
-            tx_context: TxContext::default(),
+            tx_context: Default::default(),
         }
     }
 
