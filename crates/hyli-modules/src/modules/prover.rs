@@ -508,6 +508,7 @@ where
 
         let mut replay_from = None;
 
+        let mut last_contract_state = None;
         for (tx_id, event) in &block.events {
             match event {
                 StatefulEvent::SequencedTx(tx, tx_ctx) => {
@@ -534,37 +535,42 @@ where
                     if *contract_name != self.ctx.contract_name {
                         continue;
                     }
-                    if let Some(prover_state) = self
-                        .store
-                        .tx_chain
-                        .first()
-                        .and_then(|first| self.store.state_history.get(first))
-                    {
-                        if prover_state.0.get_state_commitment() != contract.state {
-                            error!(
-                                cn =% self.ctx.contract_name,
-                                block_height =% block_height,
-                                "Contract state in store does not match the one onchain. Onchain: {:?}, Store: {:?}",
-                                contract, prover_state
-                            );
-                            error!(
-                                cn =% self.ctx.contract_name,
-                                block_height =% block_height,
-                                "This is likely a bug in the prover, please report it to the Hyli team."
-                            );
-                            bail!(
-                                "Contract state in store does not match the one onchain. Onchain: {:?}, Store: {:?}",
-                                contract, prover_state
-                            );
-                        }
-                    } else {
-                        debug!(
-                            cn =% self.ctx.contract_name,
-                            block_height =% block_height,
-                            "No previous state found in store"
-                        );
-                    }
+                    last_contract_state = Some(&contract.state);
                 }
+            }
+        }
+
+        // Check last state
+        if let Some(last_contract_state) = last_contract_state {
+            if let Some(prover_state) = self
+                .store
+                .tx_chain
+                .first()
+                .and_then(|first| self.store.state_history.get(first))
+            {
+                if &prover_state.0.get_state_commitment() != last_contract_state {
+                    error!(
+                        cn =% self.ctx.contract_name,
+                        block_height =% block_height,
+                        "Contract state in store does not match the one onchain. Onchain: {:?}, Store: {:?}",
+                        last_contract_state, prover_state
+                    );
+                    error!(
+                        cn =% self.ctx.contract_name,
+                        block_height =% block_height,
+                        "This is likely a bug in the prover, please report it to the Hyli team."
+                    );
+                    bail!(
+                        "Contract state in store does not match the one onchain. Onchain: {:?}, Store: {:?}",
+                        last_contract_state, prover_state
+                    );
+                }
+            } else {
+                debug!(
+                    cn =% self.ctx.contract_name,
+                    block_height =% block_height,
+                    "No previous state found in store"
+                );
             }
         }
 
