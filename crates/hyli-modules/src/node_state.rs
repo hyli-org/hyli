@@ -1012,11 +1012,6 @@ impl<'any> NodeStateProcessing<'any> {
         }
 
         // Otherwise process the side effects.
-        self.callback
-            .on_event(&TxEvent::Settled(&settled_tx.tx_id, &settled_tx));
-        self.this.metrics.add_settled_transactions(1);
-        self.this.metrics.add_successful_transactions(1);
-        info!("✨ Settled tx {}", &bth);
 
         // Go through each blob and:
         // - keep track of which blob proof output we used to settle the TX for each blob.
@@ -1167,6 +1162,12 @@ impl<'any> NodeStateProcessing<'any> {
                 }
             }
         }
+
+        self.callback
+            .on_event(&TxEvent::Settled(&settled_tx.tx_id, &settled_tx));
+        self.this.metrics.add_settled_transactions(1);
+        self.this.metrics.add_successful_transactions(1);
+        info!("✨ Settled tx {}", &bth);
 
         next_txs_to_try_and_settle
     }
