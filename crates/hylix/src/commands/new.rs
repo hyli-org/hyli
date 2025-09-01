@@ -43,11 +43,11 @@ pub async fn execute(project_name: String, backend: Option<BackendType>) -> Hyli
     pb.finish_with_message("Git repository initialized");
 
     log_success(&format!("Project '{}' created successfully!", project_name));
-    log_info(&format!("Next steps:"));
+    log_info("Next steps:");
     log_info(&format!("  cd {}", project_name));
-    log_info(&format!("  hy build"));
-    log_info(&format!("  hy devnet"));
-    log_info(&format!("  hy test"));
+    log_info("  hy build");
+    log_info("  hy devnet");
+    log_info("  hy test");
 
     Ok(())
 }
@@ -81,7 +81,7 @@ async fn clone_scaffold(project_name: &str) -> HylixResult<()> {
     let scaffold_url = "https://github.com/hyli-org/app-scaffold.git";
     
     let output = Command::new("git")
-        .args(&["clone", scaffold_url, project_name])
+        .args(["clone", scaffold_url, project_name])
         .output()
         .map_err(|e| HylixError::process(format!("Failed to clone scaffold: {}", e)))?;
 
@@ -151,7 +151,7 @@ fn init_git_repo(project_name: &str) -> HylixResult<()> {
     // Initialize a new git repository
     let output = Command::new("git")
         .current_dir(project_name)
-        .args(&["init"])
+        .args(["init"])
         .output()
         .map_err(|e| HylixError::process(format!("Failed to initialize git: {}", e)))?;
 
@@ -166,7 +166,7 @@ fn init_git_repo(project_name: &str) -> HylixResult<()> {
     // Add initial commit
     let output = Command::new("git")
         .current_dir(project_name)
-        .args(&["add", "."])
+        .args(["add", "."])
         .output()
         .map_err(|e| HylixError::process(format!("Failed to add files to git: {}", e)))?;
 
@@ -180,7 +180,7 @@ fn init_git_repo(project_name: &str) -> HylixResult<()> {
 
     let output = Command::new("git")
         .current_dir(project_name)
-        .args(&["commit", "-m", "Initial commit from Hylix scaffold"])
+        .args(["commit", "-m", "Initial commit from Hylix scaffold"])
         .output()
         .map_err(|e| HylixError::process(format!("Failed to create initial commit: {}", e)))?;
 

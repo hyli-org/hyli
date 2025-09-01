@@ -89,7 +89,7 @@ async fn build_project() -> HylixResult<()> {
     // Build contracts
     let output = Command::new("cargo")
         .current_dir("contracts")
-        .args(&["build", "--release"])
+        .args(["build", "--release"])
         .output()
         .map_err(|e| HylixError::test(format!("Failed to build contracts: {}", e)))?;
 
@@ -104,7 +104,7 @@ async fn build_project() -> HylixResult<()> {
     // Build server
     let output = Command::new("cargo")
         .current_dir("server")
-        .args(&["build", "--release"])
+        .args(["build", "--release"])
         .output()
         .map_err(|e| HylixError::test(format!("Failed to build server: {}", e)))?;
 
@@ -126,7 +126,7 @@ async fn start_backend() -> HylixResult<tokio::process::Child> {
     // Start the backend in the background
     let mut backend = tokio::process::Command::new("cargo")
         .current_dir("server")
-        .args(&["run", "--release"])
+        .args(["run", "--release"])
         .spawn()
         .map_err(|e| HylixError::test(format!("Failed to start backend: {}", e)))?;
 
@@ -160,7 +160,7 @@ async fn run_tests() -> HylixResult<()> {
     // Run unit tests in contracts
     let output = Command::new("cargo")
         .current_dir("contracts")
-        .args(&["test"])
+        .args(["test"])
         .output()
         .map_err(|e| HylixError::test(format!("Failed to run contract tests: {}", e)))?;
 
@@ -175,7 +175,7 @@ async fn run_tests() -> HylixResult<()> {
     // Run unit tests in server
     let output = Command::new("cargo")
         .current_dir("server")
-        .args(&["test"])
+        .args(["test"])
         .output()
         .map_err(|e| HylixError::test(format!("Failed to run server tests: {}", e)))?;
 
@@ -190,7 +190,7 @@ async fn run_tests() -> HylixResult<()> {
     // Run E2E tests if they exist
     if std::path::Path::new("tests").exists() {
         let output = Command::new("cargo")
-            .args(&["test"])
+            .args(["test"])
             .output()
             .map_err(|e| HylixError::test(format!("Failed to run E2E tests: {}", e)))?;
 

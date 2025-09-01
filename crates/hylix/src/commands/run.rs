@@ -48,7 +48,7 @@ async fn build_project() -> HylixResult<()> {
     if std::path::Path::new("contracts").exists() {
         let output = Command::new("cargo")
             .current_dir("contracts")
-            .args(&["build", "--release"])
+            .args(["build", "--release"])
             .output()
             .map_err(|e| HylixError::build(format!("Failed to build contracts: {}", e)))?;
 
@@ -64,7 +64,7 @@ async fn build_project() -> HylixResult<()> {
     // Build server
     let output = Command::new("cargo")
         .current_dir("server")
-        .args(&["build", "--release"])
+        .args(["build", "--release"])
         .output()
         .map_err(|e| HylixError::build(format!("Failed to build server: {}", e)))?;
 
@@ -167,7 +167,7 @@ async fn run_with_watch(testnet: bool) -> HylixResult<()> {
 /// Install cargo-watch for watch mode
 async fn install_cargo_watch() -> HylixResult<()> {
     let output = Command::new("cargo")
-        .args(&["install", "cargo-watch"])
+        .args(["install", "cargo-watch"])
         .output()
         .map_err(|e| HylixError::backend(format!("Failed to install cargo-watch: {}", e)))?;
 

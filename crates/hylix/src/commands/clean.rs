@@ -1,5 +1,5 @@
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{create_progress_bar, log_success, log_info};
+use crate::logging::{create_progress_bar, log_info, log_success};
 use std::path::Path;
 use std::process::Command;
 
@@ -50,11 +50,12 @@ pub async fn execute() -> HylixResult<()> {
 /// Validate that we're in a valid project directory
 fn validate_project_directory() -> HylixResult<()> {
     // Check for at least one of the expected directories
-    if !Path::new("contracts").exists() 
-        && !Path::new("server").exists() 
-        && !Path::new("front").exists() {
+    if !Path::new("contracts").exists()
+        && !Path::new("server").exists()
+        && !Path::new("front").exists()
+    {
         return Err(HylixError::project(
-            "No project directories found. Are you in a Hylix project directory?"
+            "No project directories found. Are you in a Hylix project directory?",
         ));
     }
 
@@ -65,7 +66,7 @@ fn validate_project_directory() -> HylixResult<()> {
 async fn clean_contracts() -> HylixResult<()> {
     let output = Command::new("cargo")
         .current_dir("contracts")
-        .args(&["clean"])
+        .args(["clean"])
         .output()
         .map_err(|e| HylixError::build(format!("Failed to clean contracts: {}", e)))?;
 
@@ -87,7 +88,7 @@ async fn clean_contracts() -> HylixResult<()> {
 async fn clean_server() -> HylixResult<()> {
     let output = Command::new("cargo")
         .current_dir("server")
-        .args(&["clean"])
+        .args(["clean"])
         .output()
         .map_err(|e| HylixError::build(format!("Failed to clean server: {}", e)))?;
 
@@ -111,7 +112,7 @@ async fn clean_frontend() -> HylixResult<()> {
     if which::which("bun").is_ok() {
         let output = Command::new("bun")
             .current_dir("front")
-            .args(&["run", "clean"])
+            .args(["run", "clean"])
             .output()
             .map_err(|e| HylixError::build(format!("Failed to clean frontend: {}", e)))?;
 
@@ -122,7 +123,7 @@ async fn clean_frontend() -> HylixResult<()> {
 
     // Fallback: manually clean common frontend build directories
     let build_dirs = ["dist", "build", "out", ".next", "node_modules/.cache"];
-    
+
     for dir in &build_dirs {
         let path = Path::new("front").join(dir);
         if path.exists() {
@@ -138,17 +139,17 @@ async fn clean_frontend() -> HylixResult<()> {
 async fn clean_test_artifacts() -> HylixResult<()> {
     // Clean cargo test artifacts
     let _output = Command::new("cargo")
-        .args(&["test", "--", "--nocapture"])
+        .args(["test", "--", "--nocapture"])
         .output()
         .map_err(|e| HylixError::build(format!("Failed to clean test artifacts: {}", e)))?;
 
     // Clean any test-specific directories
     let test_dirs = ["test-results", "coverage", ".nyc_output"];
-    
+
     for dir in &test_dirs {
         let path = Path::new(dir);
         if path.exists() {
-            std::fs::remove_dir_all(&path)?;
+            std::fs::remove_dir_all(path)?;
             log_info(&format!("Removed {}", path.display()));
         }
     }
@@ -169,12 +170,11 @@ async fn clean_temp_files() -> HylixResult<()> {
     ];
 
     for pattern in &temp_files {
-        if pattern.ends_with('/') {
+        if let Some(dir_name) = pattern.strip_suffix('/') {
             // Directory pattern
-            let dir_name = &pattern[..pattern.len() - 1];
             let path = Path::new(dir_name);
             if path.exists() {
-                std::fs::remove_dir_all(&path)?;
+                std::fs::remove_dir_all(path)?;
                 log_info(&format!("Removed {}", path.display()));
             }
         } else if pattern.contains('*') {
@@ -188,7 +188,7 @@ async fn clean_temp_files() -> HylixResult<()> {
             // Regular file
             let path = Path::new(pattern);
             if path.exists() {
-                std::fs::remove_file(&path)?;
+                std::fs::remove_file(path)?;
                 log_info(&format!("Removed {}", path.display()));
             }
         }

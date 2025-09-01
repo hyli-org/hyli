@@ -59,26 +59,26 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
 /// Start the local devnet
 async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
     if reset {
-        reset_devnet_state(&context).await?;
+        reset_devnet_state(context).await?;
     }
 
     // Start the local node
-    start_local_node(&context).await?;
+    start_local_node(context).await?;
 
     // Deploy Oranj token contract
-    deploy_oranj_contract(&context).await?;
+    deploy_oranj_contract(context).await?;
 
     // Setup wallet app
-    setup_wallet_app(&context).await?;
+    setup_wallet_app(context).await?;
 
     // Start indexer
-    start_indexer(&context).await?;
+    start_indexer(context).await?;
 
     // Start explorer
-    start_explorer(&context).await?;
+    start_explorer(context).await?;
 
     // Create pre-funded test accounts
-    create_test_accounts(&context).await?;
+    create_test_accounts(context).await?;
 
     log_success("Local devnet started successfully!");
     log_info("Services available at:");
@@ -103,7 +103,7 @@ async fn stop_devnet(context: &DevnetContext) -> HylixResult<()> {
 
     // Stop local node
     pb.set_message("Stopping local node...");
-    stop_local_node(&pb, &context).await?;
+    stop_local_node(&pb, context).await?;
 
     pb.finish_with_message("Local devnet stopped successfully!");
     Ok(())
@@ -111,8 +111,8 @@ async fn stop_devnet(context: &DevnetContext) -> HylixResult<()> {
 
 /// Restart the local devnet
 async fn restart_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
-    stop_devnet(&context).await?;
-    start_devnet(reset, &context).await?;
+    stop_devnet(context).await?;
+    start_devnet(reset, context).await?;
     Ok(())
 }
 
@@ -301,7 +301,7 @@ async fn stop_local_node(pb: &indicatif::ProgressBar, context: &DevnetContext) -
         .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?;
 
     pb.set_message("Checking if node is stopped...");
-    while is_devnet_running(&context).await? {
+    while is_devnet_running(context).await? {
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 

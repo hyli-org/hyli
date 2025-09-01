@@ -38,6 +38,7 @@ pub struct DevnetConfig {
 
 /// Build configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct BuildConfig {
     /// Build in release mode by default
     pub release: bool,
@@ -69,15 +70,6 @@ impl Default for DevnetConfig {
     }
 }
 
-impl Default for BuildConfig {
-    fn default() -> Self {
-        Self {
-            release: false,
-            jobs: None,
-            extra_flags: Vec::new(),
-        }
-    }
-}
 
 impl HylixConfig {
     /// Load configuration from file or create default

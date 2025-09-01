@@ -58,7 +58,7 @@ async fn clean_build_artifacts() -> HylixResult<()> {
     if std::path::Path::new("contracts").exists() {
         let output = Command::new("cargo")
             .current_dir("contracts")
-            .args(&["clean"])
+            .args(["clean"])
             .output()
             .map_err(|e| HylixError::build(format!("Failed to clean contracts: {}", e)))?;
 
@@ -75,7 +75,7 @@ async fn clean_build_artifacts() -> HylixResult<()> {
     if std::path::Path::new("server").exists() {
         let output = Command::new("cargo")
             .current_dir("server")
-            .args(&["clean"])
+            .args(["clean"])
             .output()
             .map_err(|e| HylixError::build(format!("Failed to clean server: {}", e)))?;
 
@@ -92,7 +92,7 @@ async fn clean_build_artifacts() -> HylixResult<()> {
     if std::path::Path::new("front").exists() {
         let output = Command::new("bun")
             .current_dir("front")
-            .args(&["run", "clean"])
+            .args(["run", "clean"])
             .output()
             .map_err(|e| HylixError::build(format!("Failed to clean frontend: {}", e)))?;
 
@@ -109,7 +109,7 @@ async fn clean_build_artifacts() -> HylixResult<()> {
 async fn build_contracts() -> HylixResult<()> {
     let output = Command::new("cargo")
         .current_dir("contracts")
-        .args(&["build", "--release"])
+        .args(["build", "--release"])
         .output()
         .map_err(|e| HylixError::build(format!("Failed to build contracts: {}", e)))?;
 
@@ -128,7 +128,7 @@ async fn build_contracts() -> HylixResult<()> {
 async fn build_server() -> HylixResult<()> {
     let output = Command::new("cargo")
         .current_dir("server")
-        .args(&["build", "--release"])
+        .args(["build", "--release"])
         .output()
         .map_err(|e| HylixError::build(format!("Failed to build server: {}", e)))?;
 
@@ -153,7 +153,7 @@ async fn build_frontend() -> HylixResult<()> {
 
     let output = Command::new("bun")
         .current_dir("front")
-        .args(&["run", "build"])
+        .args(["run", "build"])
         .output()
         .map_err(|e| HylixError::build(format!("Failed to build frontend: {}", e)))?;
 
