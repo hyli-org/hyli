@@ -11,6 +11,7 @@ use ordered_tx_map::OrderedTxMap;
 use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
 use sdk::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 use timeouts::Timeouts;
 use tracing::{debug, error, info, trace};
 
@@ -130,11 +131,17 @@ enum BlobTxHandled {
 pub enum TxEvent<'a> {
     RejectedBlobTransaction(&'a TxId),
     DuplicateBlobTransaction(&'a TxId),
-    SequencedBlobTransaction(&'a TxId, &'a LaneId, u32, &'a BlobTransaction),
+    SequencedBlobTransaction(
+        &'a TxId,
+        &'a LaneId,
+        u32,
+        &'a BlobTransaction,
+        &'a Arc<TxContext>,
+    ),
     SequencedProofTransaction(&'a TxId, &'a LaneId, u32, &'a VerifiedProofTransaction),
     Settled(&'a TxId, &'a UnsettledBlobTransaction),
-    SettledAsFailed(&'a TxId),
-    TimedOut(&'a TxId),
+    SettledAsFailed(&'a TxId, &'a UnsettledBlobTransaction),
+    TimedOut(&'a TxId, &'a UnsettledBlobTransaction),
     TxError(&'a TxId, &'a str),
     NewProof(
         &'a TxId,
@@ -159,9 +166,14 @@ pub enum TxEvent<'a> {
         &'a Contract,
         &'a Option<Vec<u8>>,
     ),
-    ContractStateUpdated(&'a TxId, &'a ContractName, &'a StateCommitment),
-    ContractProgramIdUpdated(&'a TxId, &'a ContractName, &'a ProgramId),
-    ContractTimeoutWindowUpdated(&'a TxId, &'a ContractName, &'a TimeoutWindow),
+    ContractStateUpdated(
+        &'a TxId,
+        &'a ContractName,
+        &'a Contract,
+        &'a StateCommitment,
+    ),
+    ContractProgramIdUpdated(&'a TxId, &'a ContractName, &'a Contract, &'a ProgramId),
+    ContractTimeoutWindowUpdated(&'a TxId, &'a ContractName, &'a Contract, &'a TimeoutWindow),
 }
 
 impl<'a> TxEvent<'a> {
@@ -169,19 +181,19 @@ impl<'a> TxEvent<'a> {
         match self {
             TxEvent::RejectedBlobTransaction(tx_id) => tx_id,
             TxEvent::DuplicateBlobTransaction(tx_id) => tx_id,
-            TxEvent::SequencedBlobTransaction(tx_id, _, _, _) => tx_id,
-            TxEvent::SequencedProofTransaction(tx_id, _, _, _) => tx_id,
-            TxEvent::Settled(tx_id, _) => tx_id,
-            TxEvent::SettledAsFailed(tx_id) => tx_id,
-            TxEvent::TimedOut(tx_id) => tx_id,
+            TxEvent::SequencedBlobTransaction(tx_id, ..) => tx_id,
+            TxEvent::SequencedProofTransaction(tx_id, ..) => tx_id,
+            TxEvent::Settled(tx_id, ..) => tx_id,
+            TxEvent::SettledAsFailed(tx_id, ..) => tx_id,
+            TxEvent::TimedOut(tx_id, ..) => tx_id,
             TxEvent::TxError(tx_id, _) => tx_id,
             TxEvent::NewProof(tx_id, _, _, _, _) => tx_id,
             TxEvent::BlobSettled(tx_id, _, _, _, _, _) => tx_id,
             TxEvent::ContractDeleted(tx_id, _) => tx_id,
             TxEvent::ContractRegistered(tx_id, ..) => tx_id,
-            TxEvent::ContractStateUpdated(tx_id, _, _) => tx_id,
-            TxEvent::ContractProgramIdUpdated(tx_id, _, _) => tx_id,
-            TxEvent::ContractTimeoutWindowUpdated(tx_id, _, _) => tx_id,
+            TxEvent::ContractStateUpdated(tx_id, ..) => tx_id,
+            TxEvent::ContractProgramIdUpdated(tx_id, ..) => tx_id,
+            TxEvent::ContractTimeoutWindowUpdated(tx_id, ..) => tx_id,
         }
     }
 }
@@ -296,11 +308,12 @@ impl NodeState {
     pub fn handle_signed_block(&mut self, signed_block: SignedBlock) -> Result<NodeStateBlock> {
         let mut callback = BlockNodeStateCallback::from_signed(&signed_block);
         self.process_signed_block(&signed_block, &mut callback)?;
-        let (parsed_block, staking_data) = callback.take();
+        let (parsed_block, staking_data, stateful_events) = callback.take();
         Ok(NodeStateBlock {
             signed_block: signed_block.into(),
             parsed_block: parsed_block.into(),
             staking_data: staking_data.into(),
+            stateful_events: stateful_events.into(),
         })
     }
 }
@@ -322,30 +335,37 @@ impl<'any> NodeStateProcessing<'any> {
 
         self.clear_timeouts();
 
+        let mut lane_context_cache = HashMap::new();
         let mut next_unsettled_txs = BTreeSet::new();
+
         // Handle all transactions
         for (i, (lane_id, tx_id, tx)) in signed_block.iter_txs_with_id().enumerate() {
             debug!("TX {} on lane {}", tx_id.1, lane_id);
 
             match &tx.transaction_data {
                 TransactionData::Blob(blob_transaction) => {
-                    match self.handle_blob_tx(
-                        tx_id.0.clone(),
-                        blob_transaction,
-                        TxContext {
-                            lane_id: lane_id.clone(),
-                            block_hash: signed_block.hashed(),
-                            block_height: signed_block.height(),
-                            timestamp: signed_block.consensus_proposal.timestamp.clone(),
-                            chain_id: HYLI_TESTNET_CHAIN_ID,
-                        },
-                    ) {
+                    // Cache lane context to reuse the same Arc object
+                    let tx_context =
+                        lane_context_cache
+                            .entry(lane_id.clone())
+                            .or_insert_with(|| {
+                                Arc::new(TxContext {
+                                    lane_id: lane_id.clone(),
+                                    block_hash: signed_block.hashed(),
+                                    block_height: signed_block.height(),
+                                    timestamp: signed_block.consensus_proposal.timestamp.clone(),
+                                    chain_id: HYLI_TESTNET_CHAIN_ID,
+                                })
+                            });
+                    match self.handle_blob_tx(tx_id.0.clone(), blob_transaction, tx_context.clone())
+                    {
                         Ok(BlobTxHandled::ShouldSettle(tx_hash)) => {
                             self.callback.on_event(&TxEvent::SequencedBlobTransaction(
                                 &tx_id,
                                 &lane_id,
                                 i as u32,
                                 blob_transaction,
+                                tx_context,
                             ));
                             let mut blob_tx_to_try_and_settle = BTreeSet::new();
                             blob_tx_to_try_and_settle.insert(tx_hash);
@@ -368,6 +388,7 @@ impl<'any> NodeStateProcessing<'any> {
                                 &lane_id,
                                 i as u32,
                                 blob_transaction,
+                                tx_context,
                             ));
                         }
                         Err(e) => {
@@ -492,7 +513,7 @@ impl<'any> NodeStateProcessing<'any> {
         &mut self,
         parent_dp_hash: DataProposalHash,
         tx: &BlobTransaction,
-        tx_context: TxContext,
+        tx_context: Arc<TxContext>,
     ) -> Result<BlobTxHandled, Error> {
         let tx_hash = tx.hashed();
         debug!("Handle blob tx: {:?} (hash: {})", tx, tx_hash);
@@ -973,7 +994,7 @@ impl<'any> NodeStateProcessing<'any> {
             SettlementStatus::SettleAsFailed => {
                 // If it's a failed settlement, mark it so and move on.
                 self.callback
-                    .on_event(&TxEvent::SettledAsFailed(&settled_tx.tx_id));
+                    .on_event(&TxEvent::SettledAsFailed(&settled_tx.tx_id, &settled_tx));
 
                 self.this.metrics.add_failed_transactions(1);
                 info!("⛈️ Settled tx {} as failed", &bth);
@@ -991,11 +1012,6 @@ impl<'any> NodeStateProcessing<'any> {
         }
 
         // Otherwise process the side effects.
-        self.callback
-            .on_event(&TxEvent::Settled(&settled_tx.tx_id, &settled_tx));
-        self.this.metrics.add_settled_transactions(1);
-        self.this.metrics.add_successful_transactions(1);
-        info!("✨ Settled tx {}", &bth);
 
         // Go through each blob and:
         // - keep track of which blob proof output we used to settle the TX for each blob.
@@ -1053,7 +1069,8 @@ impl<'any> NodeStateProcessing<'any> {
 
                             potentially_blocked_contracts
                                 .extend(OrderedTxMap::get_contracts_blocked_by_tx(&popped_tx));
-                            self.callback.on_event(&TxEvent::TimedOut(&popped_tx.tx_id));
+                            self.callback
+                                .on_event(&TxEvent::TimedOut(&popped_tx.tx_id, &popped_tx));
                         }
                     }
 
@@ -1110,6 +1127,7 @@ impl<'any> NodeStateProcessing<'any> {
                         self.callback.on_event(&TxEvent::ContractStateUpdated(
                             &settled_tx.tx_id,
                             &contract_name,
+                            &contract,
                             &contract.state,
                         ));
                     }
@@ -1123,6 +1141,7 @@ impl<'any> NodeStateProcessing<'any> {
                         self.callback.on_event(&TxEvent::ContractProgramIdUpdated(
                             &settled_tx.tx_id,
                             &contract_name,
+                            &contract,
                             &contract.program_id,
                         ));
                     }
@@ -1136,12 +1155,19 @@ impl<'any> NodeStateProcessing<'any> {
                             .on_event(&TxEvent::ContractTimeoutWindowUpdated(
                                 &settled_tx.tx_id,
                                 &contract_name,
+                                &contract,
                                 &contract.timeout_window,
                             ));
                     }
                 }
             }
         }
+
+        self.callback
+            .on_event(&TxEvent::Settled(&settled_tx.tx_id, &settled_tx));
+        self.this.metrics.add_settled_transactions(1);
+        self.this.metrics.add_successful_transactions(1);
+        info!("✨ Settled tx {}", &bth);
 
         next_txs_to_try_and_settle
     }
@@ -1172,7 +1198,7 @@ impl<'any> NodeStateProcessing<'any> {
         }
 
         if let Some(tx_ctx) = &hyli_output.tx_ctx {
-            if *tx_ctx != unsettled_tx.tx_context {
+            if *tx_ctx != *unsettled_tx.tx_context {
                 bail!(
                     "Proof tx_context '{:?}' does not correspond to BlobTx tx_context '{:?}'.",
                     tx_ctx,
@@ -1591,7 +1617,7 @@ impl<'any> NodeStateProcessing<'any> {
             if let Some(tx) = self.unsettled_transactions.remove(tx) {
                 info!("⏰ Blob tx timed out: {}", &tx.tx_id);
                 self.this.metrics.add_triggered_timeouts();
-                self.callback.on_event(&TxEvent::TimedOut(&tx.tx_id));
+                self.callback.on_event(&TxEvent::TimedOut(&tx.tx_id, &tx));
 
                 // Attempt to settle following transactions
                 let blob_tx_to_try_and_settle: BTreeSet<TxHash> =
@@ -1629,6 +1655,7 @@ impl<'any> NodeStateProcessing<'any> {
 pub struct BlockNodeStateCallback {
     block_under_construction: Block,
     staking_data: BlockStakingData,
+    stateful_events: StatefulEvents,
 }
 
 impl BlockNodeStateCallback {
@@ -1655,13 +1682,15 @@ impl BlockNodeStateCallback {
                     .collect(),
                 ..Default::default()
             },
+            ..Default::default()
         }
     }
 
-    pub fn take(&mut self) -> (Block, BlockStakingData) {
+    pub fn take(&mut self) -> (Block, BlockStakingData, StatefulEvents) {
         (
             std::mem::take(&mut self.block_under_construction),
             std::mem::take(&mut self.staking_data),
+            std::mem::take(&mut self.stateful_events),
         )
     }
 }
@@ -1685,7 +1714,7 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     .dp_parent_hashes
                     .insert(tx_id.1.clone(), tx_id.0.clone());
             }
-            TxEvent::SequencedBlobTransaction(tx_id, lane_id, _, blob_tx) => {
+            TxEvent::SequencedBlobTransaction(tx_id, lane_id, _, blob_tx, tx_context) => {
                 self.block_under_construction
                     .txs
                     .push((tx_id.clone(), blob_tx.clone().into()));
@@ -1695,6 +1724,10 @@ impl NodeStateCallback for BlockNodeStateCallback {
                 self.block_under_construction
                     .lane_ids
                     .insert(tx_id.1.clone(), lane_id.clone());
+                self.stateful_events.events.push((
+                    tx_id.clone(),
+                    StatefulEvent::SequencedTx(blob_tx.clone(), tx_context.clone()),
+                ));
             }
             TxEvent::SequencedProofTransaction(tx_id, lane_id, _, proof_tx) => {
                 self.block_under_construction
@@ -1722,8 +1755,12 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     .entry(tx_id.1.clone())
                     .or_default()
                     .push(TransactionStateEvent::Settled);
+                self.stateful_events.events.push((
+                    tx_id.clone(),
+                    StatefulEvent::SettledTx(unsettled_tx.clone()),
+                ));
             }
-            TxEvent::SettledAsFailed(tx_id) => {
+            TxEvent::SettledAsFailed(tx_id, unsettled_tx) => {
                 self.block_under_construction
                     .failed_txs
                     .push(tx_id.1.clone());
@@ -1735,8 +1772,11 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     .entry(tx_id.1.clone())
                     .or_default()
                     .push(TransactionStateEvent::SettledAsFailed);
+                self.stateful_events
+                    .events
+                    .push((tx_id.clone(), StatefulEvent::FailedTx(unsettled_tx.clone())));
             }
-            TxEvent::TimedOut(tx_id) => {
+            TxEvent::TimedOut(tx_id, unsettled_tx) => {
                 self.block_under_construction
                     .timed_out_txs
                     .push(tx_id.1.clone());
@@ -1748,6 +1788,10 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     .entry(tx_id.1.clone())
                     .or_default()
                     .push(TransactionStateEvent::TimedOut);
+                self.stateful_events.events.push((
+                    tx_id.clone(),
+                    StatefulEvent::TimedOutTx(unsettled_tx.clone()),
+                ));
             }
             TxEvent::TxError(tx_id, err) => {
                 self.block_under_construction
@@ -1829,21 +1873,46 @@ impl NodeStateCallback for BlockNodeStateCallback {
                         metadata.clone(),
                     ),
                 );
+                self.stateful_events.events.push((
+                    tx_id.clone(),
+                    StatefulEvent::ContractRegistration(
+                        contract_name.clone(),
+                        contract.clone(),
+                        metadata.clone(),
+                    ),
+                ));
             }
-            TxEvent::ContractStateUpdated(_, contract_name, state_commitment) => {
+            TxEvent::ContractStateUpdated(tx_id, contract_name, contract, state_commitment) => {
                 self.block_under_construction
                     .updated_states
                     .insert(contract_name.clone(), state_commitment.clone());
+                self.stateful_events.events.push((
+                    tx_id.clone(),
+                    StatefulEvent::ContractUpdate(contract_name.clone(), contract.clone()),
+                ));
             }
-            TxEvent::ContractProgramIdUpdated(_, contract_name, program_id) => {
+            TxEvent::ContractProgramIdUpdated(tx_id, contract_name, contract, program_id) => {
                 self.block_under_construction
                     .updated_program_ids
                     .insert(contract_name.clone(), program_id.clone());
+                self.stateful_events.events.push((
+                    tx_id.clone(),
+                    StatefulEvent::ContractUpdate(contract_name.clone(), contract.clone()),
+                ));
             }
-            TxEvent::ContractTimeoutWindowUpdated(_, contract_name, timeout_window) => {
+            TxEvent::ContractTimeoutWindowUpdated(
+                tx_id,
+                contract_name,
+                contract,
+                timeout_window,
+            ) => {
                 self.block_under_construction
                     .updated_timeout_windows
                     .insert(contract_name.clone(), timeout_window.clone());
+                self.stateful_events.events.push((
+                    tx_id.clone(),
+                    StatefulEvent::ContractUpdate(contract_name.clone(), contract.clone()),
+                ));
             }
         };
     }
@@ -2197,13 +2266,13 @@ pub mod test {
         }
     }
 
-    fn bogus_tx_context() -> TxContext {
-        TxContext {
+    fn bogus_tx_context() -> Arc<TxContext> {
+        Arc::new(TxContext {
             lane_id: LaneId::default(),
             block_hash: ConsensusProposalHash("0xfedbeef".to_owned()),
             block_height: BlockHeight(133),
             timestamp: TimestampMsClock::now(),
             chain_id: HYLI_TESTNET_CHAIN_ID,
-        }
+        })
     }
 }

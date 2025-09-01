@@ -5,8 +5,7 @@ use client_sdk::{
 };
 use hyllar::HyllarAction;
 use sdk::{
-    utils::as_hyli_output, Blob, BlobIndex, Calldata, ContractName, RegisterContractEffect,
-    StateCommitment, ZkContract,
+    utils::as_hyli_output, Blob, BlobIndex, Calldata, ContractName, StateCommitment, ZkContract,
 };
 
 use crate::{Amm, AmmAction};
@@ -35,8 +34,9 @@ impl TxExecutorHandler for Amm {
     }
 
     fn construct_state(
-        _register_blob: &RegisterContractEffect,
-        _metadata: &Option<Vec<u8>>,
+        _: &sdk::ContractName,
+        _: &sdk::Contract,
+        _: &Option<Vec<u8>>,
     ) -> Result<Self> {
         Ok(Self::default())
     }
