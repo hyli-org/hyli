@@ -195,40 +195,6 @@ async fn start_local_node(context: &DevnetContext) -> HylixResult<()> {
     Ok(())
 }
 
-/// Wait for block height to reach a specific value
-async fn wait_for_block_height(pb: &indicatif::ProgressBar, context: &DevnetContext, target_height: u64) -> HylixResult<()> {
-    let max_attempts = 60; // 1 minutes with 1-second intervals
-    let mut attempts = 0;
-    
-    while attempts < max_attempts {
-        match tokio::time::timeout(Duration::from_secs(5), context.client.get_block_height()).await {
-            Ok(result) => match result {
-                Ok(block_height) => {
-                    let current_height = block_height.0;
-                    
-                    if current_height >= target_height {
-                        pb.set_message("Hyli node started successfully");
-                        return Ok(());
-                    }
-                }
-                Err(e) => {
-                    // Continue waiting
-                }
-            },
-            Err(_) => {
-                pb.set_message(format!("Timeout getting block height, retrying... (attempt {}/{})", attempts, max_attempts));
-                // Continue waiting
-            }
-        }
-        
-        attempts += 1;
-        if attempts < max_attempts {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-        }
-    }
-    
-    Err(HylixError::devnet(format!("Failed to reach block height {} after {} attempts", target_height, max_attempts)))
-}
 
 /// Deploy Oranj token contract
 async fn deploy_oranj_contract(context: &DevnetContext) -> HylixResult<()> {
@@ -342,4 +308,40 @@ async fn stop_local_node(pb: &indicatif::ProgressBar, context: &DevnetContext) -
     pb.set_message("Hyli node stopped successfully");
 
     Ok(())
+}
+
+
+/// Wait for block height to reach a specific value
+async fn wait_for_block_height(pb: &indicatif::ProgressBar, context: &DevnetContext, target_height: u64) -> HylixResult<()> {
+    let max_attempts = 60; // 1 minutes with 1-second intervals
+    let mut attempts = 0;
+    
+    while attempts < max_attempts {
+        match tokio::time::timeout(Duration::from_secs(5), context.client.get_block_height()).await {
+            Ok(result) => match result {
+                Ok(block_height) => {
+                    let current_height = block_height.0;
+                    
+                    if current_height >= target_height {
+                        pb.set_message("Hyli node started successfully");
+                        return Ok(());
+                    }
+                }
+                Err(e) => {
+                    // Continue waiting
+                }
+            },
+            Err(_) => {
+                pb.set_message(format!("Timeout getting block height, retrying... (attempt {}/{})", attempts, max_attempts));
+                // Continue waiting
+            }
+        }
+        
+        attempts += 1;
+        if attempts < max_attempts {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+    
+    Err(HylixError::devnet(format!("Failed to reach block height {} after {} attempts", target_height, max_attempts)))
 }
