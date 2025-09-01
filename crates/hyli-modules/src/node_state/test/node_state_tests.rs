@@ -49,10 +49,10 @@ async fn happy_path_with_tx_context() {
         .unwrap();
 
     let mut hyli_output = make_hyli_output(blob_tx.clone(), BlobIndex(0));
-    hyli_output.tx_ctx = Some(ctx.clone());
+    hyli_output.tx_ctx = Some(ctx.deref().clone());
     let verified_proof = new_proof_tx(&c1, &hyli_output, &blob_tx_id);
     // Modify something so it would fail.
-    let mut ctx = ctx.clone();
+    let mut ctx = ctx.deref().clone();
     ctx.timestamp = TimestampMs(1234);
     hyli_output.tx_ctx = Some(ctx);
     let verified_proof_bad = new_proof_tx(&c1, &hyli_output, &blob_tx_id);
@@ -638,10 +638,9 @@ async fn two_proof_for_same_blob() {
             .unsettled_transactions
             .get(&blob_tx_hash)
             .unwrap()
-            .blobs
+            .possible_proofs
             .get(&BlobIndex(0))
             .unwrap()
-            .possible_proofs
             .len(),
         2
     );

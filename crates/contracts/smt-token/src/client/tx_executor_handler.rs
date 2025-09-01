@@ -5,8 +5,7 @@ use client_sdk::transaction_builder::{ProvableBlobTx, TxExecutorHandler};
 use sdk::{
     merkle_utils::BorshableMerkleProof,
     utils::{as_hyli_output, parse_calldata},
-    Calldata, ContractName, HyliOutput, Identity, RegisterContractEffect, StateCommitment,
-    StructuredBlob,
+    Calldata, ContractName, HyliOutput, Identity, StateCommitment, StructuredBlob,
 };
 
 pub mod metadata {
@@ -190,8 +189,9 @@ impl TxExecutorHandler for SmtTokenProvableState {
     }
 
     fn construct_state(
-        _register_blob: &RegisterContractEffect,
-        _metadata: &Option<Vec<u8>>,
+        _: &sdk::ContractName,
+        _: &sdk::Contract,
+        _: &Option<Vec<u8>>,
     ) -> Result<Self> {
         Ok(Self::default())
     }

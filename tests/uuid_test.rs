@@ -1,4 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
+use std::ops::Deref;
+
 use client_sdk::{
     contract_states,
     helpers::risc0::Risc0Prover,
@@ -86,7 +88,7 @@ async fn test_uuid_registration() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     };
-    tx.add_context(tx_context.clone());
+    tx.add_context(tx_context.deref().clone());
 
     // Process claim TX and get the UUID
     let tx = executor.process(tx).unwrap();
@@ -139,7 +141,7 @@ async fn test_uuid_registration() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     };
-    tx.add_context(tx_context.clone());
+    tx.add_context(tx_context.deref().clone());
 
     // Process registration TX
     let tx = executor.process(tx).unwrap();

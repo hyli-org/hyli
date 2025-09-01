@@ -72,8 +72,8 @@ impl OrderedTxMap {
     pub fn get_contracts_blocked_by_tx(tx: &UnsettledBlobTransaction) -> HashSet<ContractName> {
         // Collect into a hashset for unicity
         let mut contract_names = HashSet::new();
-        for blob in tx.blobs.values() {
-            contract_names.insert(blob.blob.contract_name.clone());
+        for blob in &tx.tx.blobs {
+            contract_names.insert(blob.contract_name.clone());
         }
         contract_names
     }
@@ -142,28 +142,23 @@ impl OrderedTxMap {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::indexing_slicing)]
-    use std::collections::BTreeMap;
-
-    use sdk::*;
 
     use super::*;
+    use std::collections::BTreeMap;
 
     fn new_tx(hash: &str, contract: &str) -> UnsettledBlobTransaction {
         UnsettledBlobTransaction {
-            identity: Identity::new("toto"),
+            tx: BlobTransaction::new(
+                Identity::new("toto"),
+                vec![Blob {
+                    contract_name: ContractName(contract.to_string()),
+                    data: BlobData::default(),
+                }],
+            ),
             tx_id: TxId(DataProposalHash::default(), TxHash::new(hash)),
             blobs_hash: BlobsHashes::default(),
-            blobs: BTreeMap::from_iter(vec![(
-                BlobIndex(0),
-                UnsettledBlobMetadata {
-                    blob: Blob {
-                        contract_name: ContractName(contract.to_string()),
-                        data: BlobData::default(),
-                    },
-                    possible_proofs: vec![],
-                },
-            )]),
-            tx_context: TxContext::default(),
+            possible_proofs: BTreeMap::from_iter(vec![(BlobIndex(0), vec![])]),
+            tx_context: Default::default(),
         }
     }
 
@@ -223,11 +218,11 @@ mod tests {
         let mut map = OrderedTxMap::default();
 
         let mut tx = new_tx("tx1", "c1");
-        tx.blobs
-            .insert(BlobIndex(1), tx.blobs[&BlobIndex(0)].clone());
-        tx.blobs
-            .insert(BlobIndex(2), tx.blobs[&BlobIndex(0)].clone());
-        tx.blobs.get_mut(&BlobIndex(1)).unwrap().blob.contract_name = ContractName::new("c2");
+        let mut blobs = tx.tx.blobs.clone();
+        blobs.push(tx.tx.blobs[0].clone());
+        blobs.push(tx.tx.blobs[0].clone());
+        blobs[1].contract_name = ContractName::new("c2");
+        tx.tx = BlobTransaction::new(tx.tx.identity.clone(), blobs);
 
         let hash = tx.tx_id.1.clone();
 
@@ -295,20 +290,18 @@ mod tests {
         let contract2 = ContractName::new("c2");
 
         let mut tx = new_tx("tx1", "hyli");
-        tx.blobs.insert(
-            BlobIndex(1),
-            UnsettledBlobMetadata {
-                blob: RegisterContractAction {
-                    verifier: "test".into(),
-                    contract_name: contract2.clone(),
-                    program_id: ProgramId(vec![1, 2, 3]),
-                    state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                    ..Default::default()
-                }
-                .as_blob(contract2.clone()),
-                possible_proofs: vec![],
-            },
+        let mut blobs = tx.tx.blobs.clone();
+        blobs.push(
+            RegisterContractAction {
+                verifier: "test".into(),
+                contract_name: contract2.clone(),
+                program_id: ProgramId(vec![1, 2, 3]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                ..Default::default()
+            }
+            .as_blob(contract2.clone()),
         );
+        tx.tx = BlobTransaction::new(tx.tx.identity.clone(), blobs);
         map.add(tx.clone());
 
         // Verify initial state

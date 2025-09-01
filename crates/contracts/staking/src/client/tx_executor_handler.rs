@@ -6,8 +6,7 @@ use client_sdk::{
 use sdk::{
     api::{APIFees, APIFeesBalance, APIStaking},
     utils::as_hyli_output,
-    Blob, Calldata, ContractName, RegisterContractEffect, StakingAction, StateCommitment,
-    ValidatorPublicKey, ZkContract,
+    Blob, Calldata, ContractName, StakingAction, StateCommitment, ValidatorPublicKey, ZkContract,
 };
 
 use crate::{
@@ -37,8 +36,9 @@ impl TxExecutorHandler for Staking {
         ))
     }
     fn construct_state(
-        _register_blob: &RegisterContractEffect,
-        _metadata: &Option<Vec<u8>>,
+        _: &sdk::ContractName,
+        _: &sdk::Contract,
+        _: &Option<Vec<u8>>,
     ) -> Result<Self> {
         Ok(Self::default())
     }

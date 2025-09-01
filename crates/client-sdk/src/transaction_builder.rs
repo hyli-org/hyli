@@ -8,8 +8,8 @@ use std::{
 
 use anyhow::{bail, Result};
 use sdk::{
-    Blob, BlobIndex, BlobTransaction, Calldata, ContractAction, ContractName, Hashed, HyliOutput,
-    Identity, ProofTransaction, RegisterContractEffect, StateCommitment, TxContext,
+    Blob, BlobIndex, BlobTransaction, Calldata, Contract, ContractAction, ContractName, Hashed,
+    HyliOutput, Identity, ProofTransaction, StateCommitment, TxContext,
 };
 
 use crate::helpers::ClientSdkProver;
@@ -399,7 +399,8 @@ pub trait TxExecutorHandler {
 
     /// Parse a registration blob and construct the initial state of the contract
     fn construct_state(
-        register_blob: &RegisterContractEffect,
+        contract_name: &ContractName,
+        contract: &Contract,
         metadata: &Option<Vec<u8>>,
     ) -> anyhow::Result<Self>
     where

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
@@ -45,29 +45,20 @@ pub struct Contract {
     ToSchema,
 )]
 pub struct UnsettledBlobTransaction {
-    pub identity: Identity,
+    pub tx: BlobTransaction,
     pub tx_id: TxId,
-    pub tx_context: TxContext,
+    #[schema(value_type = TxContext)]
+    pub tx_context: Arc<TxContext>,
     pub blobs_hash: BlobsHashes,
-    pub blobs: BTreeMap<BlobIndex, UnsettledBlobMetadata>,
+    pub possible_proofs: BTreeMap<BlobIndex, Vec<(ProgramId, Verifier, TxId, HyliOutput)>>, // ToSchema doesn't like the alias
 }
 
-#[derive(
-    Default,
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    BorshSerialize,
-    BorshDeserialize,
-    serde::Serialize,
-    serde::Deserialize,
-    ToSchema,
-)]
-pub struct UnsettledBlobMetadata {
-    pub blob: Blob,
-    // Each time we receive a proof, we add it to this list
-    pub possible_proofs: Vec<(ProgramId, Verifier, TxId, HyliOutput)>,
+pub type BlobProof = (ProgramId, Verifier, TxId, HyliOutput);
+
+impl UnsettledBlobTransaction {
+    pub fn iter_blobs(&self) -> impl Iterator<Item = (&Blob, &Vec<BlobProof>)> + Clone {
+        std::iter::zip(self.tx.blobs.iter(), self.possible_proofs.values())
+    }
 }
 
 #[derive(
@@ -171,10 +162,27 @@ pub struct BlockStakingData {
 }
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
+pub struct StatefulEvents {
+    pub events: Vec<(TxId, StatefulEvent)>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
+pub enum StatefulEvent {
+    SequencedTx(BlobTransaction, Arc<TxContext>),
+    SettledTx(UnsettledBlobTransaction),
+    FailedTx(UnsettledBlobTransaction),
+    TimedOutTx(UnsettledBlobTransaction),
+    ContractRegistration(ContractName, Contract, Option<Vec<u8>>),
+    ContractUpdate(ContractName, Contract),
+    ContractDelete(ContractName),
+}
+
+#[derive(Default, Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
 pub struct NodeStateBlock {
     pub signed_block: std::sync::Arc<SignedBlock>,
     pub parsed_block: std::sync::Arc<Block>,
     pub staking_data: std::sync::Arc<BlockStakingData>,
+    pub stateful_events: std::sync::Arc<StatefulEvents>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]

@@ -6,10 +6,7 @@ use client_sdk::{
         TxExecutorHandlerResult,
     },
 };
-use sdk::{
-    utils::as_hyli_output, Blob, Calldata, ContractName, RegisterContractEffect, StateCommitment,
-    ZkContract,
-};
+use sdk::{utils::as_hyli_output, Blob, Calldata, ContractName, StateCommitment, ZkContract};
 
 pub mod metadata {
     pub const UUID_TLD_ELF: &[u8] = include_bytes!("../../uuid-tld.img");
@@ -47,8 +44,9 @@ impl TxExecutorHandler for UuidTld {
     }
 
     fn construct_state(
-        _register_blob: &RegisterContractEffect,
-        _metadata: &Option<Vec<u8>>,
+        _: &sdk::ContractName,
+        _: &sdk::Contract,
+        _: &Option<Vec<u8>>,
     ) -> TxExecutorHandlerResult<Self> {
         Ok(Self::default())
     }
