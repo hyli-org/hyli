@@ -7,13 +7,6 @@ FROM ${DEP_IMAGE} AS builder
 # Re-declare ARG to make it available in this build stage
 ARG ENABLE_CAIRO_M
 
-# Setup rust toolchain based on cairo-m feature
-RUN if [ "${ENABLE_CAIRO_M}" = "true" ]; then \
-    rustup override set nightly; \
-else \
-    rustup override set stable; \
-fi
-
 WORKDIR /usr/src/hyli
 
 # Build application
@@ -22,7 +15,7 @@ COPY .cargo/config.toml .cargo/config.toml
 COPY src ./src
 COPY crates ./crates
 RUN if [ "${ENABLE_CAIRO_M}" = "true" ]; then \
-    cargo build --release -F sp1 -F risc0 -F cairo-m -F rate-proxy; \
+    cargo +nightly-2025-04-06 build --release -F sp1 -F risc0 -F cairo-m -F rate-proxy; \
 else \
     cargo build --release -F sp1 -F risc0 -F rate-proxy; \
 fi
