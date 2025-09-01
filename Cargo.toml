@@ -19,6 +19,7 @@ members = [
   "crates/hyli-modules",
   "crates/hyli-tools",
   "crates/noir-tools",
+  "crates/hylix",
 ]
 default-members = [
   "crates/contracts",
