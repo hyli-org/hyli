@@ -55,6 +55,12 @@ pub struct UnsettledBlobTransaction {
 
 pub type BlobProof = (ProgramId, Verifier, TxId, HyliOutput);
 
+impl UnsettledBlobTransaction {
+    pub fn iter_blobs(&self) -> impl Iterator<Item = (&Blob, &Vec<BlobProof>)> + Clone {
+        std::iter::zip(self.tx.blobs.iter(), self.possible_proofs.values())
+    }
+}
+
 #[derive(
     Debug,
     Default,

@@ -708,9 +708,8 @@ impl<'any> NodeStateProcessing<'any> {
         Fail fast: try to find a stateless (native verifiers are considered stateless for now) contract
         with a hyli output to success false (in all possible combinations)
         */
-        let settlement_result = if unsettled_tx.possible_proofs.iter().any(|(i, proofs)| {
-            NATIVE_VERIFIERS_CONTRACT_LIST
-                .contains(&unsettled_tx.tx.blobs[i.0].contract_name.0.as_str())
+        let settlement_result = if unsettled_tx.iter_blobs().any(|(blob, proofs)| {
+            NATIVE_VERIFIERS_CONTRACT_LIST.contains(&blob.contract_name.0.as_str())
                 && proofs
                     .iter()
                     .any(|possible_proof| !possible_proof.3.success)
@@ -727,10 +726,7 @@ impl<'any> NodeStateProcessing<'any> {
                 &self.this.store.contracts,
                 SettlementStatus::TryingToSettle,
                 updated_contracts,
-                std::iter::zip(
-                    unsettled_tx.tx.blobs.iter(),
-                    unsettled_tx.possible_proofs.values(),
-                ),
+                unsettled_tx.iter_blobs(),
                 vec![],
                 self.callback,
             )
@@ -1013,19 +1009,17 @@ impl<'any> NodeStateProcessing<'any> {
         // Go through each blob and:
         // - keep track of which blob proof output we used to settle the TX for each blob.
         // - take note of staking actions
-        for (blob, (blob_index, possible_proofs)) in
-            std::iter::zip(&settled_tx.tx.blobs, &settled_tx.possible_proofs)
-        {
+        for (blob_index, (blob, possible_proofs)) in settled_tx.iter_blobs().enumerate() {
             let proof_index = settlement_result
                 .blob_proof_output_indices
-                .get(blob_index.0)
+                .get(blob_index)
                 .cloned()
                 .unwrap();
             self.callback.on_event(&TxEvent::BlobSettled(
                 &settled_tx.tx_id,
                 &settled_tx,
                 blob,
-                *blob_index,
+                BlobIndex(blob_index),
                 possible_proofs.get(proof_index),
                 proof_index,
             ));
