@@ -638,10 +638,9 @@ async fn two_proof_for_same_blob() {
             .unsettled_transactions
             .get(&blob_tx_hash)
             .unwrap()
-            .blobs
+            .possible_proofs
             .get(&BlobIndex(0))
             .unwrap()
-            .possible_proofs
             .len(),
         2
     );

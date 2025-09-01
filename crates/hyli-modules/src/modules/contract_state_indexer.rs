@@ -164,23 +164,13 @@ where
             .as_mut()
             .ok_or(anyhow!("No state found for {}", self.contract_name))?;
 
-        // TODO: don't clone here.
         let tx_ctx = tx.tx_context.clone();
-        let tx = BlobTransaction::new(
-            tx.identity.clone(),
-            tx.blobs
-                .values()
-                .map(|b| &b.blob)
-                .cloned()
-                .collect::<Vec<_>>(),
-        );
-
-        for (index, Blob { contract_name, .. }) in tx.blobs.iter().enumerate() {
+        for (index, Blob { contract_name, .. }) in tx.tx.blobs.iter().enumerate() {
             if self.contract_name != *contract_name {
                 continue;
             }
 
-            let event = handler(state, &tx, BlobIndex(index), tx_ctx.clone())?;
+            let event = handler(state, &tx.tx, BlobIndex(index), tx_ctx.clone())?;
             if TypeId::of::<Event>() != TypeId::of::<()>() {
                 if let Some(event) = event {
                     let _ = log_debug!(
@@ -398,17 +388,9 @@ mod tests {
             .handle_tx(
                 &UnsettledBlobTransaction {
                     tx_id,
+                    tx: tx.clone(),
                     blobs_hash: tx.blobs_hash(),
-                    identity: tx.identity.clone(),
-                    blobs: BTreeMap::from_iter(tx.blobs.iter().enumerate().map(|(i, b)| {
-                        (
-                            BlobIndex(i),
-                            UnsettledBlobMetadata {
-                                blob: b.clone(),
-                                ..Default::default()
-                            },
-                        )
-                    })),
+                    possible_proofs: BTreeMap::new(),
                     tx_context,
                 },
                 |state, tx, index, ctx| state.handle_transaction_success(tx, index, ctx),
