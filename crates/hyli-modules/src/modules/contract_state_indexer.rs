@@ -177,16 +177,14 @@ where
 
         for (index, Blob { contract_name, .. }) in tx.blobs.iter().enumerate() {
             if self.contract_name != *contract_name {
-                return Ok(());
+                continue;
             }
 
             let event = handler(state, &tx, BlobIndex(index), tx_ctx.clone())?;
             if TypeId::of::<Event>() != TypeId::of::<()>() {
                 if let Some(event) = event {
                     let _ = log_debug!(
-                        self.bus.send(CSIBusEvent {
-                            event: event.clone(),
-                        }),
+                        self.bus.send(CSIBusEvent { event }),
                         "Sending CSI bus event"
                     );
                 }
@@ -201,7 +199,7 @@ where
         stateful_events: Arc<StatefulEvents>,
     ) -> Result<()> {
         if !stateful_events.events.is_empty() {
-            debug!(handler = %self.contract_name, "🔨 Processing block: {}", block.consensus_proposal.slot);
+            debug!(handler = %self.contract_name, "🔨 Processing block: {} with {} events", block.consensus_proposal.slot, stateful_events.events.len());
         }
 
         for (_, event) in &stateful_events.events {
