@@ -5800,6 +5800,7 @@ dependencies = [
  "color-eyre",
  "console",
  "dirs",
+ "hyli-client-sdk",
  "indicatif",
  "reqwest 0.11.27",
  "serde",

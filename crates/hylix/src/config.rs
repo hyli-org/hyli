@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::logging::log_info;
+
 /// Hylix configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HylixConfig {
@@ -59,7 +61,7 @@ impl Default for HylixConfig {
 impl Default for DevnetConfig {
     fn default() -> Self {
         Self {
-            node_port: 8080,
+            node_port: 4321,
             explorer_port: 3000,
             indexer_port: 8081,
             auto_start: true,
@@ -85,10 +87,12 @@ impl HylixConfig {
         if config_path.exists() {
             let content = std::fs::read_to_string(&config_path)?;
             let config: Self = toml::from_str(&content)?;
+            log_info(&format!("Loaded configuration from file {}", config_path.display()));
             Ok(config)
         } else {
             let config = Self::default();
             config.save()?;
+            log_info(&format!("Created default configuration in file {}", config_path.display()));
             Ok(config)
         }
     }

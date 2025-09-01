@@ -44,6 +44,9 @@ pub enum HylixError {
 
     #[error("Validation error: {0}")]
     Validation(String),
+
+    #[error("Client SDK error: {0}")]
+    ClientSdk(#[from] anyhow::Error),
 }
 
 impl HylixError {

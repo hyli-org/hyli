@@ -86,6 +86,12 @@ enum DevnetAction {
     },
     /// Stop the local devnet
     Stop,
+    /// Restart the local devnet
+    Restart {
+        /// Reset to fresh state
+        #[arg(long)]
+        reset: bool,
+    },
     /// Fork a running network
     Fork {
         /// Network endpoint to fork
@@ -106,8 +112,6 @@ async fn main() -> Result<()> {
     // Initialize logging
     logging::init_logging(cli.verbose, cli.quiet)?;
 
-    info!("Starting Hylix CLI");
-
     // Execute the command
     match cli.command {
         Commands::New { name, backend } => {
@@ -126,6 +130,7 @@ async fn main() -> Result<()> {
             let devnet_action = match action {
                 DevnetAction::Start { reset } => commands::devnet::DevnetAction::Start { reset },
                 DevnetAction::Stop => commands::devnet::DevnetAction::Stop,
+                DevnetAction::Restart { reset } => commands::devnet::DevnetAction::Restart { reset },
                 DevnetAction::Fork { endpoint } => commands::devnet::DevnetAction::Fork { endpoint },
             };
             commands::devnet::execute(devnet_action).await?;

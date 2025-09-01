@@ -51,5 +51,8 @@ thiserror = "1.0"
 indicatif = "0.17"
 console = "0.15"
 
+# Hyli client SDK for REST API calls
+client-sdk = { workspace = true, features = ["rest"] }
+
 [dev-dependencies]
 tempfile = "3.8"
