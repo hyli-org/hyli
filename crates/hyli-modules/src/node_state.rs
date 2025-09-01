@@ -2173,23 +2173,28 @@ pub mod test {
         }
 
         // Convenience method to handle a signed block in tests.
-        pub fn force_handle_block(&mut self, block: SignedBlock) -> Block {
+        pub fn force_handle_block(&mut self, block: SignedBlock) -> NodeStateBlock {
             if block.consensus_proposal.slot <= self.store.current_height.0
                 || block.consensus_proposal.slot == 0
             {
                 panic!("Invalid block height");
             }
             self.store.current_height = BlockHeight(block.consensus_proposal.slot - 1);
-            self.handle_signed_block(block)
-                .unwrap()
-                .parsed_block
-                .deref()
-                .clone()
+            self.handle_signed_block(block).unwrap()
+        }
+
+        pub fn craft_new_block_and_handle(
+            &mut self,
+            height: u64,
+            txs: Vec<Transaction>,
+        ) -> NodeStateBlock {
+            let block = craft_signed_block(height, txs);
+            self.force_handle_block(block)
         }
 
         pub fn craft_block_and_handle(&mut self, height: u64, txs: Vec<Transaction>) -> Block {
             let block = craft_signed_block(height, txs);
-            self.force_handle_block(block)
+            self.force_handle_block(block).parsed_block.deref().clone()
         }
 
         pub fn craft_block_and_handle_with_parent_dp_hash(
@@ -2199,7 +2204,7 @@ pub mod test {
             parent_dp_hash: DataProposalHash,
         ) -> Block {
             let block = craft_signed_block_with_parent_dp_hash(height, txs, parent_dp_hash);
-            self.force_handle_block(block)
+            self.force_handle_block(block).parsed_block.deref().clone()
         }
 
         pub fn handle_register_contract_effect(&mut self, tx: &RegisterContractEffect) {
@@ -2228,7 +2233,7 @@ pub mod test {
 
     impl<'a> NodeStateProcessing<'a> {
         // Convenience method to handle a signed block in tests.
-        pub fn force_handle_block(&mut self, block: SignedBlock) -> Block {
+        pub fn force_handle_block(&mut self, block: SignedBlock) -> NodeStateBlock {
             self.this.force_handle_block(block)
         }
 

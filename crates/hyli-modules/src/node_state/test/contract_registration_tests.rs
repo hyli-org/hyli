@@ -152,7 +152,7 @@ async fn test_register_contract_failure() {
         ],
     );
 
-    let block = state.force_handle_block(signed_block);
+    let block = state.force_handle_block(signed_block).parsed_block;
 
     assert_eq!(state.contracts.len(), 2);
     assert_eq!(block.successful_txs, vec![register_good.hashed()]);
@@ -218,7 +218,7 @@ async fn test_register_contract_composition() {
         ],
     );
 
-    let block = state.force_handle_block(crafted_block);
+    let block = state.force_handle_block(crafted_block).parsed_block;
     assert_eq!(state.contracts.len(), 2);
 
     check_block_is_ok(&block);
