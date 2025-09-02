@@ -15,9 +15,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         default_backend: BackendType::Risc0,
         devnet: hylix::config::DevnetConfig {
             version: "0.14.0-rc1".to_string(),
+            wallet_version: "main".to_string(),
             node_port: 8080,
             da_port: 4141,
-            wallet_port: 3000,
+            wallet_api_port: 3000,
+            wallet_ui_port: 8080,
             indexer_port: 8081,
             postgres_port: 5432,
             auto_start: true,

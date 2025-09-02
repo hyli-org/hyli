@@ -29,12 +29,16 @@ pub enum BackendType {
 pub struct DevnetConfig {
     /// Version of the local node & indexer
     pub version: String,
+    /// Default port for the wallet app
+    pub wallet_version: String,
     /// Default port for the local node
     pub node_port: u16,
     /// Default port for the DA server
     pub da_port: u16,
     /// Default port for the wallet app
-    pub wallet_port: u16,
+    pub wallet_api_port: u16,
+    /// Default port for the wallet UI
+    pub wallet_ui_port: u16,
     /// Default port for the indexer
     pub indexer_port: u16,
     /// Default port for the postgres server
@@ -69,10 +73,12 @@ impl Default for DevnetConfig {
     fn default() -> Self {
         Self {
             version: "0.14.0-rc1".to_string(),
+            wallet_version: "main".to_string(),
             node_port: 4321,
             da_port: 4141,
             postgres_port: 5432,
-            wallet_port: 8081,
+            wallet_api_port: 8081,
+            wallet_ui_port: 8080,
             indexer_port: 8082,
             auto_start: true,
         }

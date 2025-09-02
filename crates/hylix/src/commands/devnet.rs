@@ -72,7 +72,7 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
     start_indexer(&pb, context).await?;
 
     // Setup wallet app
-    setup_wallet_app(&pb, context).await?;
+    start_wallet_app(&pb, context).await?;
 
     // Create pre-funded test accounts
     create_test_accounts(&pb, context).await?;
@@ -93,7 +93,7 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
         "  Explorer: https://explorer.hyli.org/?network=localhost&indexer={}&node={}&wallet={}",
         context.config.devnet.indexer_port,
         context.config.devnet.node_port,
-        context.config.devnet.wallet_port
+        context.config.devnet.wallet_api_port
     ));
     log_info(&format!(
         "  Indexer: http://localhost:{}/swagger-ui",
@@ -106,6 +106,10 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
 /// Stop the local devnet
 async fn stop_devnet(_context: &DevnetContext) -> HylixResult<()> {
     let pb = create_progress_bar("Stopping local devnet...");
+
+    // Stop wallet app
+    pb.set_message("Stopping wallet app...");
+    stop_wallet_app(&pb).await?;
 
     // Stop indexer
     pb.set_message("Stopping indexer...");
@@ -175,7 +179,7 @@ async fn reset_devnet_state(_context: &DevnetContext) -> HylixResult<()> {
 /// Create the docker network
 async fn create_docker_network(pb: &indicatif::ProgressBar) -> HylixResult<()> {
     use tokio::process::Command;
-    
+
     pb.set_message("Creating docker network...");
 
     let output = Command::new("docker")
@@ -225,7 +229,10 @@ async fn start_local_node(pb: &indicatif::ProgressBar, context: &DevnetContext) 
         .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
 
     if !output.status.success() {
-        log_warning(&format!("Error: {}", String::from_utf8_lossy(&output.stderr)));
+        log_warning(&format!(
+            "Error: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     } else {
         pb.set_message("Hyli node started successfully");
     }
@@ -238,26 +245,100 @@ async fn start_local_node(pb: &indicatif::ProgressBar, context: &DevnetContext) 
     Ok(())
 }
 
-
 /// Setup wallet app
-async fn setup_wallet_app(
-    _pb: &indicatif::ProgressBar,
-    _context: &DevnetContext,
-) -> HylixResult<()> {
-    // TODO: Implement wallet app setup
-    // This would involve:
-    // 1. Deploying the wallet contract
-    // 2. Setting up auto-provers
-    // 3. Configuring the wallet interface
+async fn start_wallet_app(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
+    use tokio::process::Command;
 
-    // Placeholder implementation
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    let image = format!(
+        "ghcr.io/hyli-org/wallet/wallet-server:{}",
+        context.config.devnet.wallet_version
+    );
+
+    pull_docker_image(pb, &image).await?;
+
+    pb.set_message("Starting wallet app...");
+
+    let output = Command::new("docker")
+        .args([
+            "run",
+            "-d",
+            "--network=hyli-devnet",
+            "--name",
+            "hyli-devnet-wallet",
+            "-e",
+            "HYLI_NODE_URL=http://hyli-devnet-node:4321",
+            "-e",
+            "HYLI_INDEXER_URL=http://hyli-devnet-indexer:4321",
+            "-e",
+            "HYLI_DA_READ_FROM=hyli-devnet-node:4141",
+            "-p",
+            &format!("{}:4000", context.config.devnet.wallet_api_port),
+            &image,
+            "/app/server",
+            "-m",
+            "-w",
+            "-a",
+        ])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!(
+            "Error: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    } else {
+        pb.set_message("Hyli wallet app started successfully");
+    }
+
+    start_wallet_ui(pb, context).await
+}
+
+async fn start_wallet_ui(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
+    use tokio::process::Command;
+
+    let image = format!(
+        "ghcr.io/hyli-org/wallet/wallet-ui:{}",
+        context.config.devnet.wallet_version
+    );
+
+    pull_docker_image(pb, &image).await?;
+
+    pb.set_message("Starting wallet UI...");
+
+    let output = Command::new("docker")
+        .args([
+            "run",
+            "-d",
+            "--network=hyli-devnet",
+            "--name",
+            "hyli-devnet-wallet-ui",
+            "-p",
+            &format!("{}:8080", context.config.devnet.wallet_ui_port),
+            &image,
+        ])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!(
+            "Error: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    } else {
+        pb.set_message("Hyli wallet UI started successfully");
+    }
 
     Ok(())
 }
 
 /// Start the postgres server
-async fn start_postgres_server(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
+async fn start_postgres_server(
+    pb: &indicatif::ProgressBar,
+    context: &DevnetContext,
+) -> HylixResult<()> {
     use tokio::process::Command;
 
     pull_docker_image(pb, "postgres:17").await?;
@@ -286,7 +367,10 @@ async fn start_postgres_server(pb: &indicatif::ProgressBar, context: &DevnetCont
         .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
 
     if !output.status.success() {
-        log_warning(&format!("Error: {}", String::from_utf8_lossy(&output.stderr)));
+        log_warning(&format!(
+            "Error: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     } else {
         pb.set_message("Hyli postgres server started successfully");
     }
@@ -327,7 +411,10 @@ async fn start_indexer(pb: &indicatif::ProgressBar, context: &DevnetContext) -> 
         .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
 
     if !output.status.success() {
-        log_warning(&format!("Error: {}", String::from_utf8_lossy(&output.stderr)));
+        log_warning(&format!(
+            "Error: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     } else {
         pb.set_message("Hyli indexer started successfully");
     }
@@ -348,6 +435,66 @@ async fn create_test_accounts(
 
     // Placeholder implementation
     std::thread::sleep(std::time::Duration::from_millis(500));
+
+    Ok(())
+}
+
+/// Stop the wallet app
+async fn stop_wallet_app(pb: &indicatif::ProgressBar) -> HylixResult<()> {
+    use tokio::process::Command;
+
+    pb.set_message("Stopping wallet app...");
+    let output = Command::new("docker")
+        .args(["stop", "hyli-devnet-wallet"])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message("Hyli wallet app stopped successfully");
+    }
+
+    pb.set_message("Removing wallet app...");
+
+    let output = Command::new("docker")
+        .args(["rm", "hyli-devnet-wallet"])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to remove Docker container: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message("Hyli wallet app removed successfully");
+    }
+
+    pb.set_message("Stopping wallet UI...");
+    let output = Command::new("docker")
+        .args(["stop", "hyli-devnet-wallet-ui"])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message("Hyli wallet UI stopped successfully");
+    }
+
+    pb.set_message("Removing wallet UI...");
+    let output = Command::new("docker")
+        .args(["rm", "hyli-devnet-wallet-ui"])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to remove Docker container: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message("Hyli wallet UI removed successfully");
+    }
 
     Ok(())
 }
@@ -398,10 +545,13 @@ async fn stop_indexer(pb: &indicatif::ProgressBar) -> HylixResult<()> {
         .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?;
 
     if !output.status.success() {
-        log_warning(&format!("Error: {}", String::from_utf8_lossy(&output.stderr)));
+        log_warning(&format!(
+            "Error: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
     } else {
         pb.set_message("Hyli indexer stopped successfully");
-    }  
+    }
 
     pb.set_message("Removing Hyli indexer...");
     let output = Command::new("docker")
