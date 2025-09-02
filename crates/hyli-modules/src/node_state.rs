@@ -129,7 +129,13 @@ enum BlobTxHandled {
 
 #[derive(serde::Serialize, Debug)]
 pub enum TxEvent<'a> {
-    RejectedBlobTransaction(&'a TxId),
+    RejectedBlobTransaction(
+        &'a TxId,
+        &'a LaneId,
+        u32,
+        &'a BlobTransaction,
+        &'a Arc<TxContext>,
+    ),
     DuplicateBlobTransaction(&'a TxId),
     SequencedBlobTransaction(
         &'a TxId,
@@ -179,7 +185,7 @@ pub enum TxEvent<'a> {
 impl<'a> TxEvent<'a> {
     pub fn tx_id(&self) -> &TxId {
         match self {
-            TxEvent::RejectedBlobTransaction(tx_id) => tx_id,
+            TxEvent::RejectedBlobTransaction(tx_id, ..) => tx_id,
             TxEvent::DuplicateBlobTransaction(tx_id) => tx_id,
             TxEvent::SequencedBlobTransaction(tx_id, ..) => tx_id,
             TxEvent::SequencedProofTransaction(tx_id, ..) => tx_id,
@@ -394,8 +400,13 @@ impl<'any> NodeStateProcessing<'any> {
                         Err(e) => {
                             let err = format!("Failed to handle blob transaction: {e:?}");
                             error!(tx_hash = %tx_id.1, "{err}");
-                            self.callback
-                                .on_event(&TxEvent::RejectedBlobTransaction(&tx_id));
+                            self.callback.on_event(&TxEvent::RejectedBlobTransaction(
+                                &tx_id,
+                                &lane_id,
+                                i as u32,
+                                blob_transaction,
+                                tx_context,
+                            ));
                         }
                     }
                 }
@@ -1690,7 +1701,7 @@ impl BlockNodeStateCallback {
 impl NodeStateCallback for BlockNodeStateCallback {
     fn on_event(&mut self, event: &TxEvent) {
         match *event {
-            TxEvent::RejectedBlobTransaction(tx_id) => {
+            TxEvent::RejectedBlobTransaction(tx_id, ..) => {
                 self.block_under_construction
                     .failed_txs
                     .push(tx_id.1.clone());

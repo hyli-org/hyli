@@ -119,8 +119,11 @@ pub struct Conf {
 
     // FastCatchup option, from the admin API of a running node.
     pub run_fast_catchup: bool,
+    /// If false, skip fast catchup if there are already files present. If true, always fast-catchup on startup.
     pub fast_catchup_override: bool,
+    /// Whether to also download older blocks after catchup.
     pub fast_catchup_backfill: bool,
+    /// IP address to use for fast catchup
     pub fast_catchup_from: String,
 
     // Validator options

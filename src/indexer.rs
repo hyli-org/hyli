@@ -323,11 +323,12 @@ impl NodeStateCallback for IndexerHandlerStore {
         self.block_callback.on_event(event);
 
         match *event {
-            TxEvent::DuplicateBlobTransaction(..) | TxEvent::RejectedBlobTransaction(..) => {
+            TxEvent::DuplicateBlobTransaction(..) => {
                 // Return early, we want to skip events or it will violate the foreign key
                 return;
             }
-            TxEvent::SequencedBlobTransaction(tx_id, lane_id, index, blob_tx, _tx_context) => {
+            TxEvent::SequencedBlobTransaction(tx_id, lane_id, index, blob_tx, _tx_context)
+            | TxEvent::RejectedBlobTransaction(tx_id, lane_id, index, blob_tx, _tx_context) => {
                 self.txs.push_front(TxStore {
                     tx_hash: TxHashDb(tx_id.1.clone()),
                     dp_hash: DataProposalHashDb(tx_id.0.clone()),
@@ -349,17 +350,29 @@ impl NodeStateCallback for IndexerHandlerStore {
                         hex::encode(&blob.data.0),
                     ));
                 }
-                self.tx_status_update
-                    .entry(tx_id.clone())
-                    .and_modify(|status| {
-                        if *status != TransactionStatusDb::Success
-                            && *status != TransactionStatusDb::Failure
-                            && *status != TransactionStatusDb::TimedOut
-                        {
-                            *status = TransactionStatusDb::Sequenced;
-                        }
-                    })
-                    .or_insert(TransactionStatusDb::Sequenced);
+                match *event {
+                    TxEvent::RejectedBlobTransaction(..) => {
+                        self.tx_status_update
+                            .entry(tx_id.clone())
+                            .and_modify(|status| {
+                                *status = TransactionStatusDb::Failure;
+                            })
+                            .or_insert(TransactionStatusDb::Failure);
+                    }
+                    _ => {
+                        self.tx_status_update
+                            .entry(tx_id.clone())
+                            .and_modify(|status| {
+                                if *status != TransactionStatusDb::Success
+                                    && *status != TransactionStatusDb::Failure
+                                    && *status != TransactionStatusDb::TimedOut
+                                {
+                                    *status = TransactionStatusDb::Sequenced;
+                                }
+                            })
+                            .or_insert(TransactionStatusDb::Sequenced);
+                    }
+                }
             }
             TxEvent::SequencedProofTransaction(tx_id, lane_id, index, ..) => {
                 self.txs.push_front(TxStore {
