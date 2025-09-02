@@ -27,16 +27,20 @@ pub enum BackendType {
 /// Devnet configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DevnetConfig {
-    /// Version of the local node & indexer
-    pub version: String,
-    /// Default port for the wallet app
-    pub wallet_version: String,
+    /// Custom image for the Hyli node and indexer
+    pub node_image: String,
+    /// Custom image for the wallet server
+    pub wallet_server_image: String,
+    /// Custom image for the wallet UI
+    pub wallet_ui_image: String,
     /// Default port for the local node
     pub node_port: u16,
     /// Default port for the DA server
     pub da_port: u16,
     /// Default port for the wallet app
     pub wallet_api_port: u16,
+    /// Default port for the wallet WS
+    pub wallet_ws_port: u16,
     /// Default port for the wallet UI
     pub wallet_ui_port: u16,
     /// Default port for the indexer
@@ -72,12 +76,14 @@ impl Default for HylixConfig {
 impl Default for DevnetConfig {
     fn default() -> Self {
         Self {
-            version: "0.14.0-rc1".to_string(),
-            wallet_version: "main".to_string(),
+            node_image: "ghcr.io/hyli-org/hyli:0.14.0-rc1".to_string(),
+            wallet_server_image: "ghcr.io/hyli-org/wallet/wallet-server:main".to_string(),
+            wallet_ui_image: "ghcr.io/hyli-org/wallet/wallet-ui:main".to_string(),
             node_port: 4321,
             da_port: 4141,
             postgres_port: 5432,
             wallet_api_port: 8081,
+            wallet_ws_port: 8081,
             wallet_ui_port: 8080,
             indexer_port: 8082,
             auto_start: true,

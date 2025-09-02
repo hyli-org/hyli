@@ -251,9 +251,10 @@ async fn create_docker_network(pb: &indicatif::ProgressBar) -> HylixResult<()> {
 /// Start the local node
 async fn start_local_node(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
     use tokio::process::Command;
-    let image = format!("ghcr.io/hyli-org/hyli:{}", context.config.devnet.version);
+    
+    let image = &context.config.devnet.node_image;
 
-    pull_docker_image(pb, &image).await?;
+    pull_docker_image(pb, image).await?;
 
     pb.set_message("Starting Hyli node with Docker...");
 
@@ -300,12 +301,9 @@ async fn start_local_node(pb: &indicatif::ProgressBar, context: &DevnetContext) 
 async fn start_wallet_app(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
     use tokio::process::Command;
 
-    let image = format!(
-        "ghcr.io/hyli-org/wallet/wallet-server:{}",
-        context.config.devnet.wallet_version
-    );
+    let image = &context.config.devnet.wallet_server_image;
 
-    pull_docker_image(pb, &image).await?;
+    pull_docker_image(pb, image).await?;
 
     pb.set_message("Starting wallet app...");
 
@@ -349,12 +347,9 @@ async fn start_wallet_app(pb: &indicatif::ProgressBar, context: &DevnetContext) 
 async fn start_wallet_ui(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
     use tokio::process::Command;
 
-    let image = format!(
-        "ghcr.io/hyli-org/wallet/wallet-ui:{}",
-        context.config.devnet.wallet_version
-    );
+    let image = &context.config.devnet.wallet_ui_image;
 
-    pull_docker_image(pb, &image).await?;
+    pull_docker_image(pb, image).await?;
 
     pb.set_message("Starting wallet UI...");
 
@@ -365,6 +360,16 @@ async fn start_wallet_ui(pb: &indicatif::ProgressBar, context: &DevnetContext) -
             "--network=hyli-devnet",
             "--name",
             "hyli-devnet-wallet-ui",
+            "-e",
+            &format!("NODE_BASE_URL=http://localhost:{}", context.config.devnet.node_port),
+            "-e",
+            &format!("WALLET_SERVER_BASE_URL=http://localhost:{}", context.config.devnet.wallet_api_port),
+            "-e",
+            &format!("WALLET_WS_URL=ws://localhost:{}", context.config.devnet.wallet_ws_port),
+            "-e",
+            &format!("INDEXER_BASE_URL=http://localhost:{}", context.config.devnet.indexer_port),
+            "-e",
+            "TX_EXPLORER_URL=https://explorer.hyli.org/",
             "-p",
             &format!("{}:80", context.config.devnet.wallet_ui_port),
             &image,
@@ -434,7 +439,8 @@ async fn start_postgres_server(
 /// Start the indexer
 async fn start_indexer(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
     use std::process::Command;
-    let image = format!("ghcr.io/hyli-org/hyli:{}", context.config.devnet.version);
+    
+    let image = &context.config.devnet.node_image;
 
     start_postgres_server(pb, context).await?;
 

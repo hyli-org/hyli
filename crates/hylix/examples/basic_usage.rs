@@ -14,11 +14,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let new_config = HylixConfig {
         default_backend: BackendType::Risc0,
         devnet: hylix::config::DevnetConfig {
-            version: "0.14.0-rc1".to_string(),
-            wallet_version: "main".to_string(),
+            node_image: "ghcr.io/hyli-org/hyli:0.14.0-rc1".to_string(),
+            wallet_server_image: "ghcr.io/hyli-org/wallet/wallet-server:main".to_string(),
+            wallet_ui_image: "ghcr.io/hyli-org/wallet/wallet-ui:main".to_string(),
             node_port: 8080,
             da_port: 4141,
             wallet_api_port: 3000,
+            wallet_ws_port: 8081,
             wallet_ui_port: 8080,
             indexer_port: 8081,
             postgres_port: 5432,

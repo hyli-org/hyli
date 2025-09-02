@@ -123,6 +123,8 @@ Launch a local devnet with:
 * Explorer
 * Pre-funded test accounts
 
+See [Configuration](#configuration) section for customization.
+
 ```sh
 hy devnet
 ```
@@ -212,6 +214,33 @@ By default, `hy run` operates in local dev mode.
 * 🔁 Starts a local auto-prover (generates and posts proofs when needed)
 * 📇 Launches a contract indexer to track state transitions
 * 🛠️ Wires everything together for a ready-to-use dev backend
+
+## Configuration
+
+Hylix stores its configuration in `~/.config/hylix/config.toml` (Linux). You can customize various aspects of the CLI behavior:
+
+### Custom Docker Images
+
+You can specify custom Docker images for different services in your devnet configuration:
+
+```toml
+[devnet]
+# Custom Docker images for each service
+custom_node_image = "ghcr.io/hyli-org/hyli:0.14.0-rc1"
+custom_wallet_server_image = "ghcr.io/hyli-org/wallet/wallet-server:main"
+custom_wallet_ui_image = "ghcr.io/hyli-org/wallet/wallet-ui:main"
+
+# Or use completely custom images:
+# custom_node_image = "my-registry.com/my-hyli-node:v1.0.0"
+# custom_wallet_server_image = "my-registry.com/my-wallet-server:latest"
+# custom_wallet_ui_image = "my-registry.com/my-wallet-ui:dev"
+```
+
+This allows you to:
+- Use specific versions of services
+- Test with custom-built images
+- Use images from private registries
+- Override default images for development/testing
 
 ## 🧠 Hylix components
 
