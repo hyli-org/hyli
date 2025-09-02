@@ -189,7 +189,7 @@ impl Hashed<TxHash> for ProofTransaction {
     fn hashed(&self) -> TxHash {
         let mut hasher = Sha3_256::new();
         hasher.update(self.contract_name.0.as_bytes());
-        hasher.update(self.program_id.0.clone());
+        hasher.update(self.program_id.0.as_slice());
         hasher.update(self.verifier.0.as_bytes());
         hasher.update(self.proof.hashed().0);
         let hash_bytes = hasher.finalize();
