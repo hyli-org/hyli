@@ -33,8 +33,8 @@ pub struct DevnetConfig {
     pub node_port: u16,
     /// Default port for the DA server
     pub da_port: u16,
-    /// Default port for the explorer
-    pub explorer_port: u16,
+    /// Default port for the wallet app
+    pub wallet_port: u16,
     /// Default port for the indexer
     pub indexer_port: u16,
     /// Default port for the postgres server
@@ -72,7 +72,7 @@ impl Default for DevnetConfig {
             node_port: 4321,
             da_port: 4141,
             postgres_port: 5432,
-            explorer_port: 8081,
+            wallet_port: 8081,
             indexer_port: 8082,
             auto_start: true,
         }

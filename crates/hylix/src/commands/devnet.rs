@@ -71,9 +71,6 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
     // Start indexer
     start_indexer(&pb, context).await?;
 
-    // Start explorer
-    start_explorer(&pb, context).await?;
-
     // Setup wallet app
     setup_wallet_app(&pb, context).await?;
 
@@ -93,8 +90,10 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
         context.config.devnet.node_port
     ));
     log_info(&format!(
-        "  Explorer: http://localhost:{}",
-        context.config.devnet.explorer_port
+        "  Explorer: https://explorer.hyli.org/?network=localhost&indexer={}&node={}&wallet={}",
+        context.config.devnet.indexer_port,
+        context.config.devnet.node_port,
+        context.config.devnet.wallet_port
     ));
     log_info(&format!(
         "  Indexer: http://localhost:{}/swagger-ui",
@@ -107,10 +106,6 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
 /// Stop the local devnet
 async fn stop_devnet(_context: &DevnetContext) -> HylixResult<()> {
     let pb = create_progress_bar("Stopping local devnet...");
-
-    // Stop explorer
-    pb.set_message("Stopping explorer...");
-    stop_explorer(&pb).await?;
 
     // Stop indexer
     pb.set_message("Stopping indexer...");
@@ -340,20 +335,6 @@ async fn start_indexer(pb: &indicatif::ProgressBar, context: &DevnetContext) -> 
     Ok(())
 }
 
-/// Start the explorer
-async fn start_explorer(_pb: &indicatif::ProgressBar, _context: &DevnetContext) -> HylixResult<()> {
-    // TODO: Implement explorer startup
-    // This would involve:
-    // 1. Starting the explorer web application
-    // 2. Configuring it to connect to the local node and indexer
-    // 3. Setting up the web interface
-
-    // Placeholder implementation
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
-    Ok(())
-}
-
 /// Create pre-funded test accounts
 async fn create_test_accounts(
     _pb: &indicatif::ProgressBar,
@@ -367,14 +348,6 @@ async fn create_test_accounts(
 
     // Placeholder implementation
     std::thread::sleep(std::time::Duration::from_millis(500));
-
-    Ok(())
-}
-
-/// Stop the explorer
-async fn stop_explorer(_pb: &indicatif::ProgressBar) -> HylixResult<()> {
-    // TODO: Implement explorer shutdown
-    // This would involve stopping the explorer process
 
     Ok(())
 }

@@ -30,7 +30,7 @@ mod tests {
         let config = HylixConfig::default();
         assert_eq!(config.default_backend, BackendType::Sp1);
         assert_eq!(config.devnet.node_port, 8080);
-        assert_eq!(config.devnet.explorer_port, 3000);
+        assert_eq!(config.devnet.wallet_port, 4000);
         assert_eq!(config.devnet.indexer_port, 8081);
     }
 

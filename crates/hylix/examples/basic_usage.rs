@@ -17,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             version: "0.14.0-rc1".to_string(),
             node_port: 8080,
             da_port: 4141,
-            explorer_port: 3000,
+            wallet_port: 3000,
             indexer_port: 8081,
             postgres_port: 5432,
             auto_start: true,
