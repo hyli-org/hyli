@@ -133,22 +133,33 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
     }
 
     create_docker_network(&pb).await?;
+    pb.finish_and_clear();
+    log_success("[1/5] Docker network created");
 
     // Start the local node
+    let pb = create_progress_bar("Starting local node...");
     start_local_node(&pb, context).await?;
+    pb.finish_and_clear();
+    log_success("[2/5] Local node started");
 
     // Start indexer
+    let pb = create_progress_bar("Starting indexer...");
     start_indexer(&pb, context).await?;
+    pb.finish_and_clear();
+    log_success("[3/5] Indexer started");
 
     // Setup wallet app
+    let pb = create_progress_bar("Starting wallet app...");
     start_wallet_app(&pb, context).await?;
+    pb.finish_and_clear();
+    log_success("[4/5] Wallet app started");
 
     // Create pre-funded test accounts
+    let pb = create_progress_bar("Creating test accounts...");
     create_test_accounts(&pb, context).await?;
-
     pb.finish_and_clear();
+    log_success("[5/5] Test accounts created");
 
-    log_success("Local devnet started successfully!");
     check_devnet_status(context).await?;
 
     Ok(())
