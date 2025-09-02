@@ -107,7 +107,7 @@ impl Hashed<BlobProofOutputHash> for BlobProofOutput {
         let mut hasher = Sha3_256::new();
         hasher.update(self.blob_tx_hash.0.as_bytes());
         hasher.update(self.original_proof_hash.0.as_bytes());
-        hasher.update(self.program_id.0.clone());
+        hasher.update(self.program_id.0.as_slice());
         hasher.update(contract::Hashed::hashed(&self.hyli_output).0);
         BlobProofOutputHash(hasher.finalize().to_vec())
     }
@@ -118,8 +118,8 @@ impl Hashed<HyliOutputHash> for HyliOutput {
     fn hashed(&self) -> HyliOutputHash {
         let mut hasher = Sha3_256::new();
         hasher.update(self.version.to_le_bytes());
-        hasher.update(self.initial_state.0.clone());
-        hasher.update(self.next_state.0.clone());
+        hasher.update(self.initial_state.0.as_slice());
+        hasher.update(self.next_state.0.as_slice());
         hasher.update(self.identity.0.as_bytes());
         hasher.update(self.index.0.to_le_bytes());
         for blob in &self.blobs {
