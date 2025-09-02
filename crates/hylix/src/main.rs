@@ -37,6 +37,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Create a new vApp project
+    #[command(alias = "n")]
     New {
         /// Project name
         name: String,
@@ -45,18 +46,21 @@ enum Commands {
         backend: Option<ConfigBackendType>,
     },
     /// Build the project
+    #[command(alias = "b")]
     Build {
         /// Clean build artifacts before building
         #[arg(long)]
         clean: bool,
     },
     /// Run end-to-end tests
+    #[command(alias = "t")]
     Test {
         /// Keep devnet alive after tests complete
         #[arg(long)]
         keep_alive: bool,
     },
     /// Start backend service
+    #[command(alias = "r")]
     Run {
         /// Register and interact with contracts on the public Hyli testnet
         #[arg(long)]
@@ -66,11 +70,13 @@ enum Commands {
         watch: bool,
     },
     /// Manage local devnet
+    #[command(alias = "d")]
     Devnet {
         #[command(subcommand)]
         action: DevnetAction,
     },
     /// Clean build artifacts
+    #[command(alias = "c")]
     Clean,
 }
 
@@ -79,22 +85,27 @@ enum Commands {
 #[derive(Subcommand)]
 enum DevnetAction {
     /// Start the local devnet
+    #[command(alias = "s")]
     Start {
         /// Reset to fresh state
         #[arg(long)]
         reset: bool,
     },
     /// Stop the local devnet
+    #[command(alias = "st")]
     Stop,
     /// Check the status of the local devnet
+    #[command(alias = "stat")]
     Status,
     /// Restart the local devnet
+    #[command(alias = "rs")]
     Restart {
         /// Reset to fresh state
         #[arg(long)]
         reset: bool,
     },
     /// Fork a running network
+    #[command(alias = "f")]
     Fork {
         /// Network endpoint to fork
         endpoint: String,
