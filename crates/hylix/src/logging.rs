@@ -21,7 +21,7 @@ pub fn init_logging(verbose: bool, quiet: bool) -> color_eyre::Result<()> {
                 .with_thread_names(false)
                 .with_file(false)
                 .with_line_number(false)
-                .with_ansi(true)
+                .with_ansi(false) // Disable ANSI in tracing-subscriber to avoid conflicts
                 .without_time()
                 .compact(),
         );
@@ -45,22 +45,38 @@ pub fn create_progress_bar(message: &str) -> indicatif::ProgressBar {
     pb
 }
 
-/// Log a success message with green color
+/// Log a success message with green color using console directly
 pub fn log_success(message: &str) {
-    tracing::info!("{} {}", console::style("✓").green(), message);
+    if console::Term::stdout().features().colors_supported() {
+        println!("{} {}", console::style("✓").green(), message);
+    } else {
+        println!("✓ {}", message);
+    }
 }
 
-/// Log an error message with red color
+/// Log an error message with red color using console directly
 pub fn log_error(message: &str) {
-    tracing::error!("{} {}", console::style("✗").red(), message);
+    if console::Term::stdout().features().colors_supported() {
+        eprintln!("{} {}", console::style("✗").red(), message);
+    } else {
+        eprintln!("✗ {}", message);
+    }
 }
 
-/// Log a warning message with yellow color
+/// Log a warning message with yellow color using console directly
 pub fn log_warning(message: &str) {
-    tracing::warn!("{} {}", console::style("⚠").yellow(), message);
+    if console::Term::stdout().features().colors_supported() {
+        println!("{} {}", console::style("⚠").yellow(), message);
+    } else {
+        println!("⚠ {}", message);
+    }
 }
 
-/// Log an info message with blue color
+/// Log an info message with blue color using console directly
 pub fn log_info(message: &str) {
-    tracing::info!("{} {}", console::style("ℹ").blue(), message);
+    if console::Term::stdout().features().colors_supported() {
+        println!("{} {}", console::style("ℹ").blue(), message);
+    } else {
+        println!("ℹ {}", message);
+    }
 }
