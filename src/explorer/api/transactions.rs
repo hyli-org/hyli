@@ -438,10 +438,12 @@ with filtered as (
     WHERE 
         t.tx_hash = $1
         AND t.block_height = b.height
-)
+),
+parsed as(
 SELECT
     block_hash,
     height,
+    parent_dp_hash,
     tx_hash,
     events
 FROM
@@ -449,7 +451,9 @@ FROM
 WHERE first_res = TRUE
 ORDER BY 
     height DESC,
-    index DESC;
+    index DESC
+)
+select block_hash, height, parent_dp_hash, tx_hash, jsonb_agg(events) as events from parsed group by 1,2,3,4;
 "#,
         )
         .bind(tx_hash)
