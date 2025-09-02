@@ -2,7 +2,7 @@
 //!
 //! This example demonstrates how to use the Hylix CLI programmatically.
 
-use hylix::{HylixConfig, BackendType};
+use hylix::{BackendType, HylixConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -11,10 +11,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Loaded config: {:?}", config);
 
     // Example of creating a new project configuration
-    let mut new_config = HylixConfig::default();
-    new_config.default_backend = BackendType::Risc0;
-    new_config.devnet.node_port = 9000;
-    
+    let new_config = HylixConfig {
+        default_backend: BackendType::Risc0,
+        devnet: hylix::config::DevnetConfig {
+            node_port: 8080,
+            explorer_port: 3000,
+            indexer_port: 8081,
+            auto_start: true,
+        },
+        ..Default::default()
+    };
+
     // Save the new configuration
     new_config.save()?;
     println!("Saved new configuration");

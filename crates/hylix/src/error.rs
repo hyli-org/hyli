@@ -49,6 +49,7 @@ pub enum HylixError {
     ClientSdk(#[from] anyhow::Error),
 }
 
+#[allow(dead_code)]
 impl HylixError {
     /// Create a new process execution error
     pub fn process(msg: impl Into<String>) -> Self {
