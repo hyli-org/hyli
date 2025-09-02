@@ -84,6 +84,7 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
     log_info("  - hyli-devnet-node");
     log_info("  - hyli-devnet-postgres");
     log_info("  - hyli-devnet-indexer");
+    log_info("  - hyli-devnet-wallet");
     log_info("Services available at:");
     log_info(&format!(
         "  Node: http://localhost:{}/swagger-ui",
@@ -98,6 +99,14 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
     log_info(&format!(
         "  Indexer: http://localhost:{}/swagger-ui",
         context.config.devnet.indexer_port
+    ));
+    log_info(&format!(
+        "  Wallet API: http://localhost:{}/swagger-ui",
+        context.config.devnet.wallet_api_port
+    ));
+    log_info(&format!(
+        "  Wallet UI: http://localhost:{}",
+        context.config.devnet.wallet_ui_port
     ));
 
     Ok(())
@@ -315,7 +324,7 @@ async fn start_wallet_ui(pb: &indicatif::ProgressBar, context: &DevnetContext) -
             "--name",
             "hyli-devnet-wallet-ui",
             "-p",
-            &format!("{}:8080", context.config.devnet.wallet_ui_port),
+            &format!("{}:80", context.config.devnet.wallet_ui_port),
             &image,
         ])
         .output()
@@ -441,168 +450,29 @@ async fn create_test_accounts(
 
 /// Stop the wallet app
 async fn stop_wallet_app(pb: &indicatif::ProgressBar) -> HylixResult<()> {
-    use tokio::process::Command;
+    // Stop and remove wallet app
+    stop_and_remove_container(pb, "hyli-devnet-wallet", "Hyli wallet app").await?;
 
-    pb.set_message("Stopping wallet app...");
-    let output = Command::new("docker")
-        .args(["stop", "hyli-devnet-wallet"])
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?;
-
-    if !output.status.success() {
-        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
-    } else {
-        pb.set_message("Hyli wallet app stopped successfully");
-    }
-
-    pb.set_message("Removing wallet app...");
-
-    let output = Command::new("docker")
-        .args(["rm", "hyli-devnet-wallet"])
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to remove Docker container: {}", e)))?;
-
-    if !output.status.success() {
-        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
-    } else {
-        pb.set_message("Hyli wallet app removed successfully");
-    }
-
-    pb.set_message("Stopping wallet UI...");
-    let output = Command::new("docker")
-        .args(["stop", "hyli-devnet-wallet-ui"])
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?;
-
-    if !output.status.success() {
-        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
-    } else {
-        pb.set_message("Hyli wallet UI stopped successfully");
-    }
-
-    pb.set_message("Removing wallet UI...");
-    let output = Command::new("docker")
-        .args(["rm", "hyli-devnet-wallet-ui"])
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to remove Docker container: {}", e)))?;
-
-    if !output.status.success() {
-        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
-    } else {
-        pb.set_message("Hyli wallet UI removed successfully");
-    }
-
-    Ok(())
-}
-
-/// Stop the postgres server
-async fn stop_postgres_server(pb: &indicatif::ProgressBar) -> HylixResult<()> {
-    use tokio::process::Command;
-
-    pb.set_message("Stopping postgres server...");
-    let output = Command::new("docker")
-        .args(["stop", "hyli-devnet-postgres"])
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?;
-
-    if !output.status.success() {
-        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
-    } else {
-        pb.set_message("Hyli postgres server stopped successfully");
-    }
-
-    pb.set_message("Removing postgres server...");
-
-    let output = Command::new("docker")
-        .args(["rm", "hyli-devnet-postgres"])
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to remove Docker container: {}", e)))?;
-
-    if !output.status.success() {
-        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
-    } else {
-        pb.set_message("Hyli postgres server removed successfully");
-    }
+    // Stop and remove wallet UI
+    stop_and_remove_container(pb, "hyli-devnet-wallet-ui", "Hyli wallet UI").await?;
 
     Ok(())
 }
 
 /// Stop the indexer
 async fn stop_indexer(pb: &indicatif::ProgressBar) -> HylixResult<()> {
-    use tokio::process::Command;
+    // Stop and remove indexer
+    stop_and_remove_container(pb, "hyli-devnet-indexer", "Hyli indexer").await?;
 
-    pb.set_message("Stopping Hyli indexer...");
-    let output = Command::new("docker")
-        .args(["stop", "hyli-devnet-indexer"])
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?;
-
-    if !output.status.success() {
-        log_warning(&format!(
-            "Error: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    } else {
-        pb.set_message("Hyli indexer stopped successfully");
-    }
-
-    pb.set_message("Removing Hyli indexer...");
-    let output = Command::new("docker")
-        .args(["rm", "hyli-devnet-indexer"])
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to remove Docker container: {}", e)))?;
-
-    if !output.status.success() {
-        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
-    } else {
-        pb.set_message("Hyli indexer removed successfully");
-    }
-
-    stop_postgres_server(pb).await?;
+    // Stop and remove postgres server
+    stop_and_remove_container(pb, "hyli-devnet-postgres", "Hyli postgres server").await?;
 
     Ok(())
 }
 
 /// Stop the local node
 async fn stop_local_node(pb: &indicatif::ProgressBar) -> HylixResult<()> {
-    use tokio::process::Command;
-
-    pb.set_message("Stopping Hyli node...");
-    let output = Command::new("docker")
-        .args(["stop", "hyli-devnet-node"])
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?;
-
-    if !output.status.success() {
-        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
-    } else {
-        pb.set_message("Hyli node stopped successfully");
-    }
-
-    pb.set_message("Removing Hyli node...");
-
-    let output = Command::new("docker")
-        .args(["rm", "hyli-devnet-node"])
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to remove Docker container: {}", e)))?;
-
-    if !output.status.success() {
-        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
-    } else {
-        pb.set_message("Hyli node removed successfully");
-    }
-
-    Ok(())
+    stop_and_remove_container(pb, "hyli-devnet-node", "Hyli node").await
 }
 
 /// Remove the docker network
@@ -722,6 +592,45 @@ async fn pull_docker_image(pb: &indicatif::ProgressBar, image: &str) -> HylixRes
         log_warning("Continuing with existing image if available");
     } else {
         pb.set_message("Docker image pulled successfully");
+    }
+
+    Ok(())
+}
+
+/// Stop and remove a Docker container
+async fn stop_and_remove_container(
+    pb: &indicatif::ProgressBar,
+    container_name: &str,
+    display_name: &str,
+) -> HylixResult<()> {
+    use tokio::process::Command;
+
+    // Stop the container
+    pb.set_message(format!("Stopping {}...", display_name));
+    let output = Command::new("docker")
+        .args(["stop", container_name])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message(format!("{} stopped successfully", display_name));
+    }
+
+    // Remove the container
+    pb.set_message(format!("Removing {}...", display_name));
+    let output = Command::new("docker")
+        .args(["rm", container_name])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to remove Docker container: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message(format!("{} removed successfully", display_name));
     }
 
     Ok(())
