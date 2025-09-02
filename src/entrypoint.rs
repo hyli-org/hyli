@@ -337,13 +337,6 @@ async fn common_main(
             })
             .await?;
         handler
-            .build_module::<ContractStateIndexer<Hyllar>>(ContractStateIndexerCtx {
-                contract_name: "hyllar2".into(),
-                data_directory: config.data_directory.clone(),
-                api: build_api_ctx.clone(),
-            })
-            .await?;
-        handler
             .build_module::<ContractStateIndexer<Hydentity>>(ContractStateIndexerCtx {
                 contract_name: "hydentity".into(),
                 data_directory: config.data_directory.clone(),
