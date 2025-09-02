@@ -1,6 +1,6 @@
 use crate::config::HylixConfig;
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{create_progress_bar, log_info, log_success};
+use crate::logging::{create_progress_bar, log_info, log_success, log_warning};
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use std::time::Duration;
 
@@ -58,32 +58,41 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
 
 /// Start the local devnet
 async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
+    let pb = create_progress_bar("Starting local devnet...");
     if reset {
         reset_devnet_state(context).await?;
     }
 
+    create_docker_network(&pb).await?;
+
     // Start the local node
-    start_local_node(context).await?;
+    start_local_node(&pb, context).await?;
 
     // Deploy Oranj token contract
-    deploy_oranj_contract(context).await?;
-
-    // Setup wallet app
-    setup_wallet_app(context).await?;
+    deploy_oranj_contract(&pb, context).await?;
 
     // Start indexer
-    start_indexer(context).await?;
+    start_indexer(&pb, context).await?;
 
     // Start explorer
-    start_explorer(context).await?;
+    start_explorer(&pb, context).await?;
+
+    // Setup wallet app
+    setup_wallet_app(&pb, context).await?;
 
     // Create pre-funded test accounts
-    create_test_accounts(context).await?;
+    create_test_accounts(&pb, context).await?;
+
+    pb.finish_and_clear();
 
     log_success("Local devnet started successfully!");
+    log_info("Services are running in Docker containers:");
+    log_info("  - hyli-devnet-node");
+    log_info("  - hyli-devnet-postgres");
+    log_info("  - hyli-devnet-indexer");
     log_info("Services available at:");
     log_info(&format!(
-        "  Node: http://localhost:{}",
+        "  Node: http://localhost:{}/swagger-ui",
         context.config.devnet.node_port
     ));
     log_info(&format!(
@@ -91,7 +100,7 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
         context.config.devnet.explorer_port
     ));
     log_info(&format!(
-        "  Indexer: http://localhost:{}",
+        "  Indexer: http://localhost:{}/swagger-ui",
         context.config.devnet.indexer_port
     ));
 
@@ -114,7 +123,8 @@ async fn stop_devnet(context: &DevnetContext) -> HylixResult<()> {
     pb.set_message("Stopping local node...");
     stop_local_node(&pb, context).await?;
 
-    pb.finish_with_message("Local devnet stopped successfully!");
+    pb.finish_and_clear();
+    log_success("Local devnet stopped successfully!");
     Ok(())
 }
 
@@ -166,43 +176,78 @@ async fn reset_devnet_state(_context: &DevnetContext) -> HylixResult<()> {
     Ok(())
 }
 
+/// Create the docker network
+async fn create_docker_network(pb: &indicatif::ProgressBar) -> HylixResult<()> {
+    use tokio::process::Command;
+    
+    pb.set_message("Creating docker network...");
+
+    let output = Command::new("docker")
+        .args(["network", "create", "hyli-devnet"])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to create Docker network: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message("Docker network created successfully");
+    }
+
+    Ok(())
+}
+
 /// Start the local node
-async fn start_local_node(context: &DevnetContext) -> HylixResult<()> {
-    use std::process::Command;
+async fn start_local_node(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
+    use tokio::process::Command;
+    let image = format!("ghcr.io/hyli-org/hyli:{}", context.config.devnet.version);
 
-    let pb = create_progress_bar("Starting Hyli node with Docker...");
+    pull_docker_image(pb, &image).await?;
 
-    let _output = Command::new("docker")
+    pb.set_message("Starting Hyli node with Docker...");
+
+    let output = Command::new("docker")
         .args([
             "run",
             "-d",
             "--rm",
-            "--network=host",
-            "--name",
+            "--network",
             "hyli-devnet",
+            "--name",
+            "hyli-devnet-node",
             "-e",
             "HYLI_RUN_INDEXER=false",
             "-e",
             "HYLI_RUN_EXPLORER=false",
             "-p",
             &format!("{}:4321", context.config.devnet.node_port),
-            "ghcr.io/hyli-org/hyli",
+            "-p",
+            &format!("{}:4141", context.config.devnet.da_port),
+            &image,
         ])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
+        .output()
+        .await
         .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!("Error: {}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message("Hyli node started successfully");
+    }
 
     // Wait for the node to be ready by checking block height
     pb.set_message("Waiting for node to be ready...");
-    wait_for_block_height(&pb, context, 2).await?;
+    wait_for_block_height(pb, context, 2).await?;
 
-    pb.finish_with_message("Hyli node started successfully");
+    pb.set_message("Hyli node started successfully");
     Ok(())
 }
 
 /// Deploy Oranj token contract
-async fn deploy_oranj_contract(_context: &DevnetContext) -> HylixResult<()> {
+async fn deploy_oranj_contract(
+    _pb: &indicatif::ProgressBar,
+    _context: &DevnetContext,
+) -> HylixResult<()> {
     // TODO: Implement Oranj contract deployment
     // This would involve:
     // 1. Compiling the Oranj contract
@@ -216,7 +261,10 @@ async fn deploy_oranj_contract(_context: &DevnetContext) -> HylixResult<()> {
 }
 
 /// Setup wallet app
-async fn setup_wallet_app(_context: &DevnetContext) -> HylixResult<()> {
+async fn setup_wallet_app(
+    _pb: &indicatif::ProgressBar,
+    _context: &DevnetContext,
+) -> HylixResult<()> {
     // TODO: Implement wallet app setup
     // This would involve:
     // 1. Deploying the wallet contract
@@ -229,22 +277,89 @@ async fn setup_wallet_app(_context: &DevnetContext) -> HylixResult<()> {
     Ok(())
 }
 
-/// Start the indexer
-async fn start_indexer(_context: &DevnetContext) -> HylixResult<()> {
-    // TODO: Implement indexer startup
-    // This would involve:
-    // 1. Starting the indexer process
-    // 2. Configuring it to index the local node
-    // 3. Setting up contract-specific indexing
+/// Start the postgres server
+async fn start_postgres_server(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
+    use tokio::process::Command;
 
-    // Placeholder implementation
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    pull_docker_image(pb, "postgres:17").await?;
+
+    pb.set_message("Starting postgres server...");
+
+    let output = Command::new("docker")
+        .args([
+            "run",
+            "-d",
+            "--rm",
+            "--network=hyli-devnet",
+            "--name",
+            "hyli-devnet-postgres",
+            "-p",
+            &format!("{}:5432", context.config.devnet.postgres_port),
+            "-e",
+            "POSTGRES_USER=postgres",
+            "-e",
+            "POSTGRES_PASSWORD=postgres",
+            "-e",
+            "POSTGRES_DB=hyli_indexer",
+            "postgres:17",
+        ])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!("Error: {}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message("Hyli postgres server started successfully");
+    }
+
+    wait_for_postgres_server(pb).await?;
+
+    Ok(())
+}
+
+/// Start the indexer
+async fn start_indexer(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
+    use std::process::Command;
+    let image = format!("ghcr.io/hyli-org/hyli:{}", context.config.devnet.version);
+
+    start_postgres_server(pb, context).await?;
+
+    pb.set_message("Starting Hyli indexer...");
+
+    let output = Command::new("docker")
+        .args([
+            "run",
+            "-d",
+            "--rm",
+            "--network=hyli-devnet",
+            "--name",
+            "hyli-devnet-indexer",
+            "-e",
+            "HYLI_RUN_INDEXER=true",
+            "-e",
+            "HYLI_DATABASE_URL=postgresql://postgres:postgres@hyli-devnet-postgres:5432/hyli_indexer",
+            "-e",
+            "HYLI_DA_READ_FROM=hyli-devnet-node:4141",
+            "-p",
+            &format!("{}:4321", context.config.devnet.indexer_port),
+            &image,
+            "/hyli/indexer",
+        ])
+        .output()
+        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!("Error: {}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message("Hyli indexer started successfully");
+    }
 
     Ok(())
 }
 
 /// Start the explorer
-async fn start_explorer(_context: &DevnetContext) -> HylixResult<()> {
+async fn start_explorer(_pb: &indicatif::ProgressBar, _context: &DevnetContext) -> HylixResult<()> {
     // TODO: Implement explorer startup
     // This would involve:
     // 1. Starting the explorer web application
@@ -258,7 +373,10 @@ async fn start_explorer(_context: &DevnetContext) -> HylixResult<()> {
 }
 
 /// Create pre-funded test accounts
-async fn create_test_accounts(_context: &DevnetContext) -> HylixResult<()> {
+async fn create_test_accounts(
+    _pb: &indicatif::ProgressBar,
+    _context: &DevnetContext,
+) -> HylixResult<()> {
     // TODO: Implement test account creation
     // This would involve:
     // 1. Generating test account keys
@@ -279,10 +397,42 @@ async fn stop_explorer(_pb: &indicatif::ProgressBar) -> HylixResult<()> {
     Ok(())
 }
 
+/// Stop the postgres server
+async fn stop_postgres_server(pb: &indicatif::ProgressBar) -> HylixResult<()> {
+    use tokio::process::Command;
+
+    pb.set_message("Stopping postgres server...");
+    Command::new("docker")
+        .args(["stop", "hyli-devnet-postgres"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?
+        .wait()
+        .await?;
+
+    pb.set_message("Hyli postgres server stopped successfully");
+    Ok(())
+}
+
 /// Stop the indexer
-async fn stop_indexer(_pb: &indicatif::ProgressBar) -> HylixResult<()> {
-    // TODO: Implement indexer shutdown
-    // This would involve stopping the indexer process
+async fn stop_indexer(pb: &indicatif::ProgressBar) -> HylixResult<()> {
+    use tokio::process::Command;
+
+    pb.set_message("Stopping Hyli indexer...");
+    let output = Command::new("docker")
+        .args(["stop", "hyli-devnet-indexer"])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!("Error: {}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message("Hyli postgres server stopped successfully");
+    }   
+
+    stop_postgres_server(pb).await?;
 
     Ok(())
 }
@@ -292,7 +442,7 @@ async fn stop_local_node(pb: &indicatif::ProgressBar, context: &DevnetContext) -
     use std::process::Command;
 
     Command::new("docker")
-        .args(["stop", "hyli-devnet"])
+        .args(["stop", "hyli-devnet-node"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -352,4 +502,60 @@ async fn wait_for_block_height(
         "Failed to reach block height {} after {} attempts",
         target_height, max_attempts
     )))
+}
+
+/// Wait for the postgres server to be ready
+async fn wait_for_postgres_server(pb: &indicatif::ProgressBar) -> HylixResult<()> {
+    let mut attempts = 0;
+    let max_attempts = 60;
+
+    while attempts < max_attempts {
+        pb.set_message("Waiting for postgres server to be ready...");
+        let mut output = tokio::process::Command::new("docker")
+            .args(["exec", "-it", "hyli-devnet-postgres", "pg_isready"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
+
+        if output.wait().await?.success() {
+            return Ok(());
+        }
+
+        attempts += 1;
+        if attempts < max_attempts {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    Err(HylixError::devnet(
+        "Postgres server did not become ready in time",
+    ))
+}
+
+/// Pull docker image
+async fn pull_docker_image(pb: &indicatif::ProgressBar, image: &str) -> HylixResult<()> {
+    use tokio::process::Command;
+
+    pb.set_message(format!("Pulling docker image: {}", image));
+    let output = Command::new("docker")
+        .args(["pull", image])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to pull Docker image: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning("Failed to pull Docker image");
+        if !output.stderr.is_empty() {
+            log_warning(&format!(
+                "Error: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        log_warning("Continuing with existing image if available");
+    } else {
+        pb.set_message("Docker image pulled successfully");
+    }
+
+    Ok(())
 }

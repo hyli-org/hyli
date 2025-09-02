@@ -14,7 +14,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let new_config = HylixConfig {
         default_backend: BackendType::Risc0,
         devnet: hylix::config::DevnetConfig {
+            version: "0.14.0-rc1".to_string(),
             node_port: 8080,
+            da_port: 4141,
             explorer_port: 3000,
             indexer_port: 8081,
             auto_start: true,

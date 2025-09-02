@@ -1,3 +1,4 @@
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -26,19 +27,24 @@ pub enum BackendType {
 /// Devnet configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DevnetConfig {
+    /// Version of the local node & indexer
+    pub version: String,
     /// Default port for the local node
     pub node_port: u16,
+    /// Default port for the DA server
+    pub da_port: u16,
     /// Default port for the explorer
     pub explorer_port: u16,
     /// Default port for the indexer
     pub indexer_port: u16,
+    /// Default port for the postgres server
+    pub postgres_port: u16,
     /// Auto-start devnet on test command
     pub auto_start: bool,
 }
 
 /// Build configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BuildConfig {
     /// Build in release mode by default
     pub release: bool,
@@ -62,29 +68,44 @@ impl Default for HylixConfig {
 impl Default for DevnetConfig {
     fn default() -> Self {
         Self {
+            version: "0.14.0-rc1".to_string(),
             node_port: 4321,
-            explorer_port: 3000,
-            indexer_port: 8081,
+            da_port: 4141,
+            postgres_port: 5432,
+            explorer_port: 8081,
+            indexer_port: 8082,
             auto_start: true,
         }
     }
 }
 
-
 impl HylixConfig {
     /// Load configuration from file or create default
     pub fn load() -> crate::error::HylixResult<Self> {
         let config_path = Self::config_path()?;
-        
+
         if config_path.exists() {
             let content = std::fs::read_to_string(&config_path)?;
-            let config: Self = toml::from_str(&content)?;
-            log_info(&format!("Loaded configuration from file {}", config_path.display()));
+            let config: Self = toml::from_str(&content)
+                .map_err(crate::error::HylixError::Toml)
+                .with_context(|| {
+                    format!(
+                        "Failed to load configuration from file {}",
+                        config_path.display()
+                    )
+                })?;
+            log_info(&format!(
+                "Loaded configuration from file {}",
+                config_path.display()
+            ));
             Ok(config)
         } else {
             let config = Self::default();
             config.save()?;
-            log_info(&format!("Created default configuration in file {}", config_path.display()));
+            log_info(&format!(
+                "Created default configuration in file {}",
+                config_path.display()
+            ));
             Ok(config)
         }
     }
@@ -93,12 +114,12 @@ impl HylixConfig {
     pub fn save(&self) -> crate::error::HylixResult<()> {
         let config_path = Self::config_path()?;
         let config_dir = config_path.parent().unwrap();
-        
+
         std::fs::create_dir_all(config_dir)?;
-        
+
         let content = toml::to_string_pretty(self)?;
         std::fs::write(&config_path, content)?;
-        
+
         Ok(())
     }
 
@@ -106,7 +127,7 @@ impl HylixConfig {
     fn config_path() -> crate::error::HylixResult<PathBuf> {
         let config_dir = dirs::config_dir()
             .ok_or_else(|| crate::error::HylixError::config("Could not find config directory"))?;
-        
+
         Ok(config_dir.join("hylix").join("config.toml"))
     }
 }
