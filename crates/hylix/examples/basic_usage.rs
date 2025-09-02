@@ -19,6 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             da_port: 4141,
             explorer_port: 3000,
             indexer_port: 8081,
+            postgres_port: 5432,
             auto_start: true,
         },
         ..Default::default()

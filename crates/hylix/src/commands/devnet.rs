@@ -68,9 +68,6 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
     // Start the local node
     start_local_node(&pb, context).await?;
 
-    // Deploy Oranj token contract
-    deploy_oranj_contract(&pb, context).await?;
-
     // Start indexer
     start_indexer(&pb, context).await?;
 
@@ -108,7 +105,7 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
 }
 
 /// Stop the local devnet
-async fn stop_devnet(context: &DevnetContext) -> HylixResult<()> {
+async fn stop_devnet(_context: &DevnetContext) -> HylixResult<()> {
     let pb = create_progress_bar("Stopping local devnet...");
 
     // Stop explorer
@@ -121,7 +118,11 @@ async fn stop_devnet(context: &DevnetContext) -> HylixResult<()> {
 
     // Stop local node
     pb.set_message("Stopping local node...");
-    stop_local_node(&pb, context).await?;
+    stop_local_node(&pb).await?;
+
+    // Remove docker network
+    pb.set_message("Removing docker network...");
+    remove_docker_network(&pb).await?;
 
     pb.finish_and_clear();
     log_success("Local devnet stopped successfully!");
@@ -210,7 +211,6 @@ async fn start_local_node(pb: &indicatif::ProgressBar, context: &DevnetContext) 
         .args([
             "run",
             "-d",
-            "--rm",
             "--network",
             "hyli-devnet",
             "--name",
@@ -243,22 +243,6 @@ async fn start_local_node(pb: &indicatif::ProgressBar, context: &DevnetContext) 
     Ok(())
 }
 
-/// Deploy Oranj token contract
-async fn deploy_oranj_contract(
-    _pb: &indicatif::ProgressBar,
-    _context: &DevnetContext,
-) -> HylixResult<()> {
-    // TODO: Implement Oranj contract deployment
-    // This would involve:
-    // 1. Compiling the Oranj contract
-    // 2. Deploying it to the local node
-    // 3. Setting up auto-provers for the contract
-
-    // Placeholder implementation
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
-    Ok(())
-}
 
 /// Setup wallet app
 async fn setup_wallet_app(
@@ -289,7 +273,6 @@ async fn start_postgres_server(pb: &indicatif::ProgressBar, context: &DevnetCont
         .args([
             "run",
             "-d",
-            "--rm",
             "--network=hyli-devnet",
             "--name",
             "hyli-devnet-postgres",
@@ -331,7 +314,6 @@ async fn start_indexer(pb: &indicatif::ProgressBar, context: &DevnetContext) -> 
         .args([
             "run",
             "-d",
-            "--rm",
             "--network=hyli-devnet",
             "--name",
             "hyli-devnet-indexer",
@@ -402,16 +384,32 @@ async fn stop_postgres_server(pb: &indicatif::ProgressBar) -> HylixResult<()> {
     use tokio::process::Command;
 
     pb.set_message("Stopping postgres server...");
-    Command::new("docker")
+    let output = Command::new("docker")
         .args(["stop", "hyli-devnet-postgres"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?
-        .wait()
-        .await?;
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?;
 
-    pb.set_message("Hyli postgres server stopped successfully");
+    if !output.status.success() {
+        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message("Hyli postgres server stopped successfully");
+    }
+
+    pb.set_message("Removing postgres server...");
+
+    let output = Command::new("docker")
+        .args(["rm", "hyli-devnet-postgres"])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to remove Docker container: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message("Hyli postgres server removed successfully");
+    }
+
     Ok(())
 }
 
@@ -429,8 +427,21 @@ async fn stop_indexer(pb: &indicatif::ProgressBar) -> HylixResult<()> {
     if !output.status.success() {
         log_warning(&format!("Error: {}", String::from_utf8_lossy(&output.stderr)));
     } else {
-        pb.set_message("Hyli postgres server stopped successfully");
-    }   
+        pb.set_message("Hyli indexer stopped successfully");
+    }  
+
+    pb.set_message("Removing Hyli indexer...");
+    let output = Command::new("docker")
+        .args(["rm", "hyli-devnet-indexer"])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to remove Docker container: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message("Hyli indexer removed successfully");
+    }
 
     stop_postgres_server(pb).await?;
 
@@ -438,22 +449,55 @@ async fn stop_indexer(pb: &indicatif::ProgressBar) -> HylixResult<()> {
 }
 
 /// Stop the local node
-async fn stop_local_node(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
-    use std::process::Command;
+async fn stop_local_node(pb: &indicatif::ProgressBar) -> HylixResult<()> {
+    use tokio::process::Command;
 
-    Command::new("docker")
+    pb.set_message("Stopping Hyli node...");
+    let output = Command::new("docker")
         .args(["stop", "hyli-devnet-node"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
+        .output()
+        .await
         .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?;
 
-    pb.set_message("Checking if node is stopped...");
-    while is_devnet_running(context).await? {
-        tokio::time::sleep(Duration::from_secs(1)).await;
+    if !output.status.success() {
+        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message("Hyli node stopped successfully");
     }
 
-    pb.set_message("Hyli node stopped successfully");
+    pb.set_message("Removing Hyli node...");
+
+    let output = Command::new("docker")
+        .args(["rm", "hyli-devnet-node"])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to remove Docker container: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message("Hyli node removed successfully");
+    }
+
+    Ok(())
+}
+
+/// Remove the docker network
+async fn remove_docker_network(pb: &indicatif::ProgressBar) -> HylixResult<()> {
+    use tokio::process::Command;
+
+    pb.set_message("Removing docker network...");
+    let output = Command::new("docker")
+        .args(["network", "rm", "hyli-devnet"])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to remove Docker network: {}", e)))?;
+
+    if !output.status.success() {
+        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
+    } else {
+        pb.set_message("Docker network removed successfully");
+    }
 
     Ok(())
 }
