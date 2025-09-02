@@ -10,6 +10,7 @@ pub enum DevnetAction {
     Start { reset: bool },
     Stop,
     Restart { reset: bool },
+    Status,
     Fork { endpoint: String },
 }
 
@@ -48,12 +49,80 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
         DevnetAction::Restart { reset } => {
             restart_devnet(reset, &context).await?;
         }
+        DevnetAction::Status => {
+            check_devnet_status(&context).await?;
+        }
         DevnetAction::Fork { endpoint } => {
             fork_devnet(&endpoint).await?;
         }
     }
 
     Ok(())
+}
+
+/// Check the status of the local devnet
+async fn check_devnet_status(context: &DevnetContext) -> HylixResult<()> {
+    let is_running = is_devnet_running(context).await?;
+    if is_running {
+        log_success("Devnet is running");
+
+        let block_height = context.client.get_block_height().await?;
+        log_info(&format!("Block height: {}", block_height.0));
+
+        check_docker_container(context, "hyli-devnet-node").await?;
+        check_docker_container(context, "hyli-devnet-postgres").await?;
+        check_docker_container(context, "hyli-devnet-indexer").await?;
+        check_docker_container(context, "hyli-devnet-wallet").await?;
+        check_docker_container(context, "hyli-devnet-wallet-ui").await?;
+        log_info("Services available at:");
+        log_info(&format!(
+            "  Node: http://localhost:{}/swagger-ui",
+            context.config.devnet.node_port
+        ));
+        log_info(&format!(
+            "  Explorer: https://explorer.hyli.org/?network=localhost&indexer={}&node={}&wallet={}",
+            context.config.devnet.indexer_port,
+            context.config.devnet.node_port,
+            context.config.devnet.wallet_api_port
+        ));
+        log_info(&format!(
+            "  Indexer: http://localhost:{}/swagger-ui",
+            context.config.devnet.indexer_port
+        ));
+        log_info(&format!(
+            "  Wallet API: http://localhost:{}/swagger-ui",
+            context.config.devnet.wallet_api_port
+        ));
+        log_info(&format!(
+            "  Wallet UI: http://localhost:{}",
+            context.config.devnet.wallet_ui_port
+        ));
+    } else {
+        log_warning("Devnet is not running");
+    }
+    Ok(())
+}
+
+async fn check_docker_container(context: &DevnetContext, container_name: &str) -> HylixResult<()> {
+    let is_running = is_docker_container_running(context, container_name).await?;
+    if is_running {
+        log_success(&format!("Container {} is running", container_name));
+    } else {
+        log_warning(&format!("Container {} is not running", container_name));
+    }
+    Ok(())
+}
+
+async fn is_docker_container_running(_context: &DevnetContext, container_name: &str) -> HylixResult<bool> {
+    use tokio::process::Command;
+
+    let output = Command::new("docker")
+        .args(["ps", "-q", "-f", &format!("name={}", container_name)])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to check Docker container: {}", e)))?;
+
+    Ok(!output.stdout.is_empty())
 }
 
 /// Start the local devnet
@@ -80,34 +149,7 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
     pb.finish_and_clear();
 
     log_success("Local devnet started successfully!");
-    log_info("Services are running in Docker containers:");
-    log_info("  - hyli-devnet-node");
-    log_info("  - hyli-devnet-postgres");
-    log_info("  - hyli-devnet-indexer");
-    log_info("  - hyli-devnet-wallet");
-    log_info("Services available at:");
-    log_info(&format!(
-        "  Node: http://localhost:{}/swagger-ui",
-        context.config.devnet.node_port
-    ));
-    log_info(&format!(
-        "  Explorer: https://explorer.hyli.org/?network=localhost&indexer={}&node={}&wallet={}",
-        context.config.devnet.indexer_port,
-        context.config.devnet.node_port,
-        context.config.devnet.wallet_api_port
-    ));
-    log_info(&format!(
-        "  Indexer: http://localhost:{}/swagger-ui",
-        context.config.devnet.indexer_port
-    ));
-    log_info(&format!(
-        "  Wallet API: http://localhost:{}/swagger-ui",
-        context.config.devnet.wallet_api_port
-    ));
-    log_info(&format!(
-        "  Wallet UI: http://localhost:{}",
-        context.config.devnet.wallet_ui_port
-    ));
+    check_devnet_status(context).await?;
 
     Ok(())
 }

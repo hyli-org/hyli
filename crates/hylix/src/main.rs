@@ -86,6 +86,8 @@ enum DevnetAction {
     },
     /// Stop the local devnet
     Stop,
+    /// Check the status of the local devnet
+    Status,
     /// Restart the local devnet
     Restart {
         /// Reset to fresh state
@@ -131,6 +133,7 @@ async fn main() -> Result<()> {
                 DevnetAction::Start { reset } => commands::devnet::DevnetAction::Start { reset },
                 DevnetAction::Stop => commands::devnet::DevnetAction::Stop,
                 DevnetAction::Restart { reset } => commands::devnet::DevnetAction::Restart { reset },
+                DevnetAction::Status => commands::devnet::DevnetAction::Status,
                 DevnetAction::Fork { endpoint } => commands::devnet::DevnetAction::Fork { endpoint },
             };
             commands::devnet::execute(devnet_action).await?;

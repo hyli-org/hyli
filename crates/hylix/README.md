@@ -140,6 +140,12 @@ Want a fresh state?
 hy devnet --reset
 ```
 
+Check status of devnet
+
+```sh
+hy devnet status
+```
+
 #### Soon
 
 Want to fork a running network ?
