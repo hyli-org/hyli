@@ -55,7 +55,7 @@ impl TcpServer {
             on_self self,
             Some(tcp_event) = server.listen_next() => {
                 if let TcpEvent::Message { dest: _, data } = tcp_event {
-                    _ = log_error!(self.bus.send(data), "Sending message on TcpServerMessage topic from connection pool");
+                    _ = log_error!(self.bus.send_waiting_if_full(data).await, "Sending message on TcpServerMessage topic from connection pool");
                 }
             }
         };
