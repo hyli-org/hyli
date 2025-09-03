@@ -189,3 +189,9 @@ pub struct NodeStateBlock {
 pub enum NodeStateEvent {
     NewBlock(NodeStateBlock),
 }
+
+#[derive(Default, Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
+pub struct BlockStakingEvent {
+    pub signed_block: std::sync::Arc<SignedBlock>,
+    pub staking_data: std::sync::Arc<BlockStakingData>,
+}

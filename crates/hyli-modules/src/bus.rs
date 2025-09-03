@@ -22,6 +22,9 @@ impl BusMessage for () {}
 impl BusMessage for sdk::NodeStateEvent {
     const CAPACITY: usize = LOW_CAPACITY; // Lowered, large data type
 }
+impl BusMessage for sdk::BlockStakingEvent {
+    const CAPACITY: usize = LOW_CAPACITY; // Lowered, large data type
+}
 impl BusMessage for sdk::DataEvent {
     const CAPACITY: usize = LOW_CAPACITY; // Lowered, large data type
 }

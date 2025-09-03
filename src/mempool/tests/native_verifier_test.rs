@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use anyhow::Result;
 use assertables::assert_ok;
 use hyli_crypto::BlstCrypto;
@@ -11,7 +9,6 @@ use crate::{
     bus::{bus_client, BusClientReceiver, BusClientSender},
     mempool::api::RestApiMessage,
     model::verifiers::{BlstSignatureBlob, ShaBlob},
-    rest::RestApi,
     utils::integration_test::NodeIntegrationCtxBuilder,
 };
 
@@ -68,10 +65,8 @@ async fn test_sha3_256_native_verifier() {
 }
 
 async fn scenario(identity: Identity, blob: Blob) -> Result<()> {
-    let mut node_modules = NodeIntegrationCtxBuilder::new().await;
-    node_modules.conf.consensus.slot_duration = Duration::from_millis(200);
-    let mut node_modules = node_modules.skip::<RestApi>().build().await?;
-
+    let builder = NodeIntegrationCtxBuilder::new_with_indexer().await;
+    let mut node_modules = builder.build().await?;
     let mut node_client = Client::new_from_bus(node_modules.bus.new_handle()).await;
 
     // Wait until we process the genesis block

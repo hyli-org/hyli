@@ -182,7 +182,7 @@ struct MempoolBusClient {
     receiver(TcpServerMessage),
     receiver(ConsensusEvent),
     receiver(GenesisEvent),
-    receiver(NodeStateEvent),
+    receiver(BlockStakingEvent),
     receiver(Query<QueryNewCut, Cut>),
 }
 }
