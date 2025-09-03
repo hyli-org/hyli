@@ -140,6 +140,9 @@ async fn is_docker_container_running(
 
 /// Start the local devnet
 async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
+    // Check required dependencies before starting
+    check_required_dependencies()?;
+    
     let mpb = indicatif::MultiProgress::new();
     if reset {
         reset_devnet_state(context).await?;
@@ -781,6 +784,45 @@ async fn stop_and_remove_container(
         log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
     } else {
         pb.set_message(format!("{} removed successfully", display_name));
+    }
+
+    Ok(())
+}
+
+/// Check required dependencies
+fn check_required_dependencies() -> HylixResult<()> {
+    let mut missing_deps = Vec::new();
+
+    if !which::which("docker").is_ok() {
+        missing_deps.push("Docker");
+    }
+    if !which::which("npx").is_ok() {
+        missing_deps.push("npx (Node.js)");
+    }
+
+    if !missing_deps.is_empty() {
+        return Err(HylixError::devnet(format!(
+            "Hylix requires the following binaries to be installed: {}",
+            missing_deps.join(", ")
+        )));
+    }
+
+    // Check if Docker can be executed with proper permissions
+    if let Ok(output) = std::process::Command::new("docker")
+        .args(["ps"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+    {
+        if !output.status.success() {
+            return Err(HylixError::devnet(
+                "Docker is installed but cannot be executed. Please ensure you have proper permissions to run Docker commands.".to_string(),
+            ));
+        }
+    } else {
+        return Err(HylixError::devnet(
+            "Failed to execute Docker command. Please ensure Docker daemon is running and you have proper permissions.".to_string(),
+        ));
     }
 
     Ok(())
