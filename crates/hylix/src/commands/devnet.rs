@@ -140,35 +140,28 @@ async fn is_docker_container_running(
 
 /// Start the local devnet
 async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
-    let pb = create_progress_bar_with_msg("Starting local devnet...");
+    let mpb = indicatif::MultiProgress::new();
     if reset {
         reset_devnet_state(context).await?;
     }
 
-    create_docker_network(&pb).await?;
-    pb.finish_and_clear();
+    create_docker_network(&mpb).await?;
     log_success("[1/5] Docker network created");
 
     // Start the local node
-    let pb = create_progress_bar_with_msg("Starting local node...");
-    start_local_node(&pb, context).await?;
-    pb.finish_and_clear();
+    start_local_node(&mpb, context).await?;
     log_success("[2/5] Local node started");
 
     // Start indexer
-    let pb = create_progress_bar_with_msg("Starting indexer...");
-    start_indexer(&pb, context).await?;
-    pb.finish_and_clear();
+    start_indexer(&mpb, context).await?;
     log_success("[3/5] Indexer started");
 
     // Setup wallet app
-    let pb = create_progress_bar_with_msg("Starting wallet app...");
-    start_wallet_app(&pb, context).await?;
-    pb.finish_and_clear();
+    start_wallet_app(&mpb, context).await?;
     log_success("[4/5] Wallet app started");
 
     // Create pre-funded test accounts
-    create_test_accounts(context).await?;
+    create_test_accounts(&mpb, context).await?;
     log_success("[5/5] Test accounts created");
 
     check_devnet_status(context).await?;
@@ -250,9 +243,10 @@ async fn reset_devnet_state(_context: &DevnetContext) -> HylixResult<()> {
 }
 
 /// Create the docker network
-async fn create_docker_network(pb: &indicatif::ProgressBar) -> HylixResult<()> {
+async fn create_docker_network(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
     use tokio::process::Command;
 
+    let pb = mpb.add(create_progress_bar());
     pb.set_message("Creating docker network...");
 
     let output = Command::new("docker")
@@ -267,16 +261,19 @@ async fn create_docker_network(pb: &indicatif::ProgressBar) -> HylixResult<()> {
         pb.set_message("Docker network created successfully");
     }
 
+    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+
     Ok(())
 }
 
 /// Start the local node
-async fn start_local_node(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
+async fn start_local_node(mpb: &indicatif::MultiProgress, context: &DevnetContext) -> HylixResult<()> {
     use tokio::process::Command;
+    let pb = mpb.add(create_progress_bar());
 
     let image = &context.config.devnet.node_image;
 
-    pull_docker_image(pb, image).await?;
+    pull_docker_image(&pb, image).await?;
 
     pb.set_message("Starting Hyli node with Docker...");
 
@@ -327,19 +324,22 @@ async fn start_local_node(pb: &indicatif::ProgressBar, context: &DevnetContext) 
 
     // Wait for the node to be ready by checking block height
     pb.set_message("Waiting for node to be ready...");
-    wait_for_block_height(pb, context, 2).await?;
+    wait_for_block_height(&pb, context, 2).await?;
 
-    pb.set_message("Hyli node started successfully");
+    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+
     Ok(())
 }
 
 /// Setup wallet app
-async fn start_wallet_app(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
+async fn start_wallet_app(mpb: &indicatif::MultiProgress, context: &DevnetContext) -> HylixResult<()> {
     use tokio::process::Command;
 
     let image = &context.config.devnet.wallet_server_image;
 
-    pull_docker_image(pb, image).await?;
+    let pb = mpb.add(create_progress_bar());
+
+    pull_docker_image(&pb, image).await?;
 
     pb.set_message("Starting wallet app...");
 
@@ -391,15 +391,17 @@ async fn start_wallet_app(pb: &indicatif::ProgressBar, context: &DevnetContext) 
         pb.set_message("Hyli wallet app started successfully");
     }
 
-    start_wallet_ui(pb, context).await
+    start_wallet_ui(mpb, context).await
 }
 
-async fn start_wallet_ui(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
+async fn start_wallet_ui(mpb: &indicatif::MultiProgress, context: &DevnetContext) -> HylixResult<()> {
     use tokio::process::Command;
 
     let image = &context.config.devnet.wallet_ui_image;
 
-    pull_docker_image(pb, image).await?;
+    let pb = mpb.add(create_progress_bar());
+
+    pull_docker_image(&pb, image).await?;
 
     pb.set_message("Starting wallet UI...");
 
@@ -459,17 +461,21 @@ async fn start_wallet_ui(pb: &indicatif::ProgressBar, context: &DevnetContext) -
         pb.set_message("Hyli wallet UI started successfully");
     }
 
+    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+
     Ok(())
 }
 
 /// Start the postgres server
 async fn start_postgres_server(
-    pb: &indicatif::ProgressBar,
+    mpb: &indicatif::MultiProgress,
     context: &DevnetContext,
 ) -> HylixResult<()> {
     use tokio::process::Command;
 
-    pull_docker_image(pb, "postgres:17").await?;
+    let pb = mpb.add(create_progress_bar());
+
+    pull_docker_image(&pb, "postgres:17").await?;
 
     pb.set_message("Starting postgres server...");
 
@@ -513,19 +519,20 @@ async fn start_postgres_server(
         pb.set_message("Hyli postgres server started successfully");
     }
 
-    wait_for_postgres_server(pb).await?;
+    wait_for_postgres_server(&pb).await?;
 
     Ok(())
 }
 
 /// Start the indexer
-async fn start_indexer(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
+async fn start_indexer(mpb: &indicatif::MultiProgress, context: &DevnetContext) -> HylixResult<()> {
     use std::process::Command;
 
     let image = &context.config.devnet.node_image;
 
-    start_postgres_server(pb, context).await?;
+    start_postgres_server(mpb, context).await?;
 
+    let pb = mpb.add(create_progress_bar());
     pb.set_message("Starting Hyli indexer...");
 
     let mut args: Vec<String> = [
@@ -565,26 +572,26 @@ async fn start_indexer(pb: &indicatif::ProgressBar, context: &DevnetContext) -> 
         pb.set_message("Hyli indexer started successfully");
     }
 
+    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+
     Ok(())
 }
 
 
 /// Create pre-funded test accounts
 async fn create_test_accounts(
+    mpb: &indicatif::MultiProgress,
     _context: &DevnetContext,
 ) -> HylixResult<()> {
     let pb = create_progress_bar();
 
-    // Create a MultiProgress to manage multiple progress bars
-    let multi_progress = indicatif::MultiProgress::new();
-    
     // Add the main progress bar to the multi-progress
-    let main_pb = multi_progress.add(pb);
+    let main_pb = mpb.add(pb);
 
     // Create Bob account
     main_pb.set_message("Creating test account: Bob...");
     let bob_success = execute_command_with_progress(
-        &multi_progress,
+        &mpb,
         "Bob account creation",
         "npx",
         &["--yes", "hyli-wallet-cli", "bob", "hylisecure", "vip"]
@@ -599,7 +606,7 @@ async fn create_test_accounts(
     // Create Alice account
     main_pb.set_message("Creating test account: Alice...");
     let alice_success = execute_command_with_progress(
-        &multi_progress,
+        &mpb,
         "Alice account creation",
         "npx",
         &["hyli-wallet-cli", "alice", "hylisecure", "vip"]
@@ -615,7 +622,7 @@ async fn create_test_accounts(
     main_pb.finish_and_clear();
 
     // Clear all progress bars from the multi-progress
-    multi_progress.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
 
     log_info("Test accounts created:");
     log_info("  - Bob (password: hylisecure)");
