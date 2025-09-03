@@ -244,21 +244,13 @@ async fn reset_devnet_state(_context: &DevnetContext) -> HylixResult<()> {
 
 /// Create the docker network
 async fn create_docker_network(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
-    use tokio::process::Command;
-
     let pb = mpb.add(create_progress_bar());
     pb.set_message("Creating docker network...");
 
-    let output = Command::new("docker")
-        .args(["network", "create", "hyli-devnet"])
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to create Docker network: {}", e)))?;
+    let success = execute_command_with_progress(mpb, "docker network create", "docker", &["network", "create", "hyli-devnet"]).await?;
 
-    if !output.status.success() {
-        log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
-    } else {
-        pb.set_message("Docker network created successfully");
+    if !success {
+        return Err(HylixError::process("Failed to create Docker network".to_string()));
     }
 
     mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
@@ -268,13 +260,11 @@ async fn create_docker_network(mpb: &indicatif::MultiProgress) -> HylixResult<()
 
 /// Start the local node
 async fn start_local_node(mpb: &indicatif::MultiProgress, context: &DevnetContext) -> HylixResult<()> {
-    use tokio::process::Command;
-    let pb = mpb.add(create_progress_bar());
-
     let image = &context.config.devnet.node_image;
 
-    pull_docker_image(&pb, image).await?;
+    pull_docker_image(&mpb, image).await?;
 
+    let pb = mpb.add(create_progress_bar());
     pb.set_message("Starting Hyli node with Docker...");
 
     // Build base arguments
@@ -307,19 +297,12 @@ async fn start_local_node(mpb: &indicatif::MultiProgress, context: &DevnetContex
 
     args.push(image.to_string());
 
-    let output = Command::new("docker")
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
-
-    if !output.status.success() {
-        log_warning(&format!(
-            "Error: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    } else {
+    let success = execute_command_with_progress(mpb, "docker run", "docker", &args.iter().map(|s| s.as_str()).collect::<Vec<&str>>()).await?;
+    
+    if success {
         pb.set_message("Hyli node started successfully");
+    } else {
+        return Err(HylixError::process("Failed to start Docker container".to_string()));
     }
 
     // Wait for the node to be ready by checking block height
@@ -337,10 +320,9 @@ async fn start_wallet_app(mpb: &indicatif::MultiProgress, context: &DevnetContex
 
     let image = &context.config.devnet.wallet_server_image;
 
+    pull_docker_image(&mpb, image).await?;
+
     let pb = mpb.add(create_progress_bar());
-
-    pull_docker_image(&pb, image).await?;
-
     pb.set_message("Starting wallet app...");
 
     let mut args: Vec<String> = [
@@ -399,10 +381,9 @@ async fn start_wallet_ui(mpb: &indicatif::MultiProgress, context: &DevnetContext
 
     let image = &context.config.devnet.wallet_ui_image;
 
+    pull_docker_image(&mpb, image).await?;
+
     let pb = mpb.add(create_progress_bar());
-
-    pull_docker_image(&pb, image).await?;
-
     pb.set_message("Starting wallet UI...");
 
     let mut args: Vec<String> = [
@@ -473,10 +454,9 @@ async fn start_postgres_server(
 ) -> HylixResult<()> {
     use tokio::process::Command;
 
+    pull_docker_image(&mpb, "postgres:17").await?;
+
     let pb = mpb.add(create_progress_bar());
-
-    pull_docker_image(&pb, "postgres:17").await?;
-
     pb.set_message("Starting postgres server...");
 
     let mut args: Vec<String> = [
@@ -583,10 +563,8 @@ async fn create_test_accounts(
     mpb: &indicatif::MultiProgress,
     _context: &DevnetContext,
 ) -> HylixResult<()> {
-    let pb = create_progress_bar();
-
     // Add the main progress bar to the multi-progress
-    let main_pb = mpb.add(pb);
+    let main_pb = mpb.add(create_progress_bar());
 
     // Create Bob account
     main_pb.set_message("Creating test account: Bob...");
@@ -754,28 +732,17 @@ async fn wait_for_postgres_server(pb: &indicatif::ProgressBar) -> HylixResult<()
 }
 
 /// Pull docker image
-async fn pull_docker_image(pb: &indicatif::ProgressBar, image: &str) -> HylixResult<()> {
-    use tokio::process::Command;
-
+async fn pull_docker_image(mpb: &indicatif::MultiProgress, image: &str) -> HylixResult<()> {
+    let pb = mpb.add(create_progress_bar());
     pb.set_message(format!("Pulling docker image: {}", image));
-    let output = Command::new("docker")
-        .args(["pull", image])
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to pull Docker image: {}", e)))?;
 
-    if !output.status.success() {
-        log_warning("Failed to pull Docker image");
-        if !output.stderr.is_empty() {
-            log_warning(&format!(
-                "Error: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        log_warning("Continuing with existing image if available");
-    } else {
-        pb.set_message("Docker image pulled successfully");
+    let success = execute_command_with_progress(mpb, "docker pull", "docker", &["pull", image]).await?;
+
+    if !success {
+        return Err(HylixError::process("Failed to pull Docker image".to_string()));
     }
+
+    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
 
     Ok(())
 }
