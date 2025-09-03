@@ -4,6 +4,16 @@ use crate::logging::{create_progress_bar, log_info, log_success, log_warning};
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use std::time::Duration;
 
+/// Helper function to build Docker environment variable arguments
+fn build_env_args(env_vars: &[String]) -> Vec<String> {
+    let mut args = Vec::new();
+    for env_var in env_vars {
+        args.push("-e".to_string());
+        args.push(env_var.clone());
+    }
+    args
+}
+
 /// Devnet action enum
 #[derive(Debug, Clone)]
 pub enum DevnetAction {
@@ -113,7 +123,10 @@ async fn check_docker_container(context: &DevnetContext, container_name: &str) -
     Ok(())
 }
 
-async fn is_docker_container_running(_context: &DevnetContext, container_name: &str) -> HylixResult<bool> {
+async fn is_docker_container_running(
+    _context: &DevnetContext,
+    container_name: &str,
+) -> HylixResult<bool> {
     use tokio::process::Command;
 
     let output = Command::new("docker")
@@ -262,35 +275,45 @@ async fn create_docker_network(pb: &indicatif::ProgressBar) -> HylixResult<()> {
 /// Start the local node
 async fn start_local_node(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
     use tokio::process::Command;
-    
+
     let image = &context.config.devnet.node_image;
 
     pull_docker_image(pb, image).await?;
 
     pb.set_message("Starting Hyli node with Docker...");
 
+    // Build base arguments
+    let mut args: Vec<String> = vec![
+        "run",
+        "-d",
+        "--network",
+        "hyli-devnet",
+        "--name",
+        "hyli-devnet-node",
+        "-p",
+        &format!("{}:4321", context.config.devnet.node_port),
+        "-p",
+        &format!("{}:4141", context.config.devnet.da_port),
+        "-e",
+        "RISC0_DEV_MODE=true",
+        "-e",
+        "SP1_PROVER=mock",
+        "-e",
+        "HYLI_RUN_INDEXER=false",
+        "-e",
+        "HYLI_RUN_EXPLORER=false",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+
+    // Add custom environment variables if configured
+    args.extend(build_env_args(&context.config.devnet.container_env.node));
+
+    args.push(image.to_string());
+
     let output = Command::new("docker")
-        .args([
-            "run",
-            "-d",
-            "--network",
-            "hyli-devnet",
-            "--name",
-            "hyli-devnet-node",
-            "-e",
-            "RISC0_DEV_MODE=true",
-            "-e",
-            "SP1_PROVER=mock",
-            "-e",
-            "HYLI_RUN_INDEXER=false",
-            "-e",
-            "HYLI_RUN_EXPLORER=false",
-            "-p",
-            &format!("{}:4321", context.config.devnet.node_port),
-            "-p",
-            &format!("{}:4141", context.config.devnet.da_port),
-            &image,
-        ])
+        .args(&args)
         .output()
         .await
         .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
@@ -322,29 +345,41 @@ async fn start_wallet_app(pb: &indicatif::ProgressBar, context: &DevnetContext) 
 
     pb.set_message("Starting wallet app...");
 
+    let mut args: Vec<String> = [
+        "run",
+        "-d",
+        "--network=hyli-devnet",
+        "--name",
+        "hyli-devnet-wallet",
+        "-p",
+        &format!("{}:4000", context.config.devnet.wallet_api_port),
+        "-e",
+        "RISC0_DEV_MODE=true",
+        "-e",
+        "HYLI_NODE_URL=http://hyli-devnet-node:4321",
+        "-e",
+        "HYLI_INDEXER_URL=http://hyli-devnet-indexer:4321",
+        "-e",
+        "HYLI_DA_READ_FROM=hyli-devnet-node:4141",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+
+    args.extend(build_env_args(
+        &context.config.devnet.container_env.wallet_server,
+    ));
+
+    args.extend(vec![
+        image.to_string(),
+        "/app/server".to_string(),
+        "-m".to_string(),
+        "-w".to_string(),
+        "-a".to_string(),
+    ]);
+
     let output = Command::new("docker")
-        .args([
-            "run",
-            "-d",
-            "--network=hyli-devnet",
-            "--name",
-            "hyli-devnet-wallet",
-            "-e",
-            "RISC0_DEV_MODE=true",
-            "-e",
-            "HYLI_NODE_URL=http://hyli-devnet-node:4321",
-            "-e",
-            "HYLI_INDEXER_URL=http://hyli-devnet-indexer:4321",
-            "-e",
-            "HYLI_DA_READ_FROM=hyli-devnet-node:4141",
-            "-p",
-            &format!("{}:4000", context.config.devnet.wallet_api_port),
-            &image,
-            "/app/server",
-            "-m",
-            "-w",
-            "-a",
-        ])
+        .args(&args)
         .output()
         .await
         .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
@@ -370,27 +405,49 @@ async fn start_wallet_ui(pb: &indicatif::ProgressBar, context: &DevnetContext) -
 
     pb.set_message("Starting wallet UI...");
 
+    let mut args: Vec<String> = [
+        "run",
+        "-d",
+        "--network=hyli-devnet",
+        "--name",
+        "hyli-devnet-wallet-ui",
+        "-e",
+        &format!(
+            "NODE_BASE_URL=http://localhost:{}",
+            context.config.devnet.node_port
+        ),
+        "-e",
+        &format!(
+            "WALLET_SERVER_BASE_URL=http://localhost:{}",
+            context.config.devnet.wallet_api_port
+        ),
+        "-e",
+        &format!(
+            "WALLET_WS_URL=ws://localhost:{}",
+            context.config.devnet.wallet_ws_port
+        ),
+        "-e",
+        &format!(
+            "INDEXER_BASE_URL=http://localhost:{}",
+            context.config.devnet.indexer_port
+        ),
+        "-e",
+        "TX_EXPLORER_URL=https://explorer.hyli.org/",
+        "-p",
+        &format!("{}:80", context.config.devnet.wallet_ui_port),
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+
+    args.extend(build_env_args(
+        &context.config.devnet.container_env.wallet_ui,
+    ));
+
+    args.extend(vec![image.to_string()]);
+
     let output = Command::new("docker")
-        .args([
-            "run",
-            "-d",
-            "--network=hyli-devnet",
-            "--name",
-            "hyli-devnet-wallet-ui",
-            "-e",
-            &format!("NODE_BASE_URL=http://localhost:{}", context.config.devnet.node_port),
-            "-e",
-            &format!("WALLET_SERVER_BASE_URL=http://localhost:{}", context.config.devnet.wallet_api_port),
-            "-e",
-            &format!("WALLET_WS_URL=ws://localhost:{}", context.config.devnet.wallet_ws_port),
-            "-e",
-            &format!("INDEXER_BASE_URL=http://localhost:{}", context.config.devnet.indexer_port),
-            "-e",
-            "TX_EXPLORER_URL=https://explorer.hyli.org/",
-            "-p",
-            &format!("{}:80", context.config.devnet.wallet_ui_port),
-            &image,
-        ])
+        .args(&args)
         .output()
         .await
         .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
@@ -418,23 +475,33 @@ async fn start_postgres_server(
 
     pb.set_message("Starting postgres server...");
 
+    let mut args: Vec<String> = [
+        "run",
+        "-d",
+        "--network=hyli-devnet",
+        "--name",
+        "hyli-devnet-postgres",
+        "-p",
+        &format!("{}:5432", context.config.devnet.postgres_port),
+        "-e",
+        "POSTGRES_USER=postgres",
+        "-e",
+        "POSTGRES_PASSWORD=postgres",
+        "-e",
+        "POSTGRES_DB=hyli_indexer",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+
+    args.extend(build_env_args(
+        &context.config.devnet.container_env.postgres,
+    ));
+
+    args.extend(vec!["postgres:17".to_string()]);
+
     let output = Command::new("docker")
-        .args([
-            "run",
-            "-d",
-            "--network=hyli-devnet",
-            "--name",
-            "hyli-devnet-postgres",
-            "-p",
-            &format!("{}:5432", context.config.devnet.postgres_port),
-            "-e",
-            "POSTGRES_USER=postgres",
-            "-e",
-            "POSTGRES_PASSWORD=postgres",
-            "-e",
-            "POSTGRES_DB=hyli_indexer",
-            "postgres:17",
-        ])
+        .args(&args)
         .output()
         .await
         .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
@@ -456,31 +523,38 @@ async fn start_postgres_server(
 /// Start the indexer
 async fn start_indexer(pb: &indicatif::ProgressBar, context: &DevnetContext) -> HylixResult<()> {
     use std::process::Command;
-    
+
     let image = &context.config.devnet.node_image;
 
     start_postgres_server(pb, context).await?;
 
     pb.set_message("Starting Hyli indexer...");
 
+    let mut args: Vec<String> = [
+        "run",
+        "-d",
+        "--network=hyli-devnet",
+        "--name",
+        "hyli-devnet-indexer",
+        "-e",
+        "HYLI_RUN_INDEXER=true",
+        "-e",
+        "HYLI_DATABASE_URL=postgresql://postgres:postgres@hyli-devnet-postgres:5432/hyli_indexer",
+        "-e",
+        "HYLI_DA_READ_FROM=hyli-devnet-node:4141",
+        "-p",
+        &format!("{}:4321", context.config.devnet.indexer_port),
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+
+    args.extend(build_env_args(&context.config.devnet.container_env.indexer));
+
+    args.extend(vec![image.to_string(), "/hyli/indexer".to_string()]);
+
     let output = Command::new("docker")
-        .args([
-            "run",
-            "-d",
-            "--network=hyli-devnet",
-            "--name",
-            "hyli-devnet-indexer",
-            "-e",
-            "HYLI_RUN_INDEXER=true",
-            "-e",
-            "HYLI_DATABASE_URL=postgresql://postgres:postgres@hyli-devnet-postgres:5432/hyli_indexer",
-            "-e",
-            "HYLI_DA_READ_FROM=hyli-devnet-node:4141",
-            "-p",
-            &format!("{}:4321", context.config.devnet.indexer_port),
-            &image,
-            "/hyli/indexer",
-        ])
+        .args(&args)
         .output()
         .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
 

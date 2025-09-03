@@ -2,7 +2,7 @@
 //!
 //! This example demonstrates how to use the Hylix CLI programmatically.
 
-use hylix::{BackendType, HylixConfig};
+use hylix::{config::ContainerEnvConfig, BackendType, HylixConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -25,6 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             indexer_port: 8081,
             postgres_port: 5432,
             auto_start: true,
+            container_env: ContainerEnvConfig::default(),
         },
         ..Default::default()
     };

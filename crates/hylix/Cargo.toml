@@ -54,5 +54,8 @@ console = "0.15"
 # Hyli client SDK for REST API calls
 client-sdk = { workspace = true, features = ["rest"] }
 
+# Hyli wallet
+hyli-wallet = { git = "https://github.com/hyli-org/wallet.git", package = "wallet"}
+
 [dev-dependencies]
 tempfile = "3.8"

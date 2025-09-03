@@ -49,6 +49,35 @@ pub struct DevnetConfig {
     pub postgres_port: u16,
     /// Auto-start devnet on test command
     pub auto_start: bool,
+    /// Custom environment variables for containers
+    pub container_env: ContainerEnvConfig,
+}
+
+/// Container environment variables configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContainerEnvConfig {
+    /// Custom environment variables for the node container
+    pub node: Vec<String>,
+    /// Custom environment variables for the indexer container
+    pub indexer: Vec<String>,
+    /// Custom environment variables for the wallet server container
+    pub wallet_server: Vec<String>,
+    /// Custom environment variables for the wallet UI container
+    pub wallet_ui: Vec<String>,
+    /// Custom environment variables for the postgres container
+    pub postgres: Vec<String>,
+}
+
+impl Default for ContainerEnvConfig {
+    fn default() -> Self {
+        Self {
+            node: Vec::new(),
+            indexer: Vec::new(),
+            wallet_server: Vec::new(),
+            wallet_ui: Vec::new(),
+            postgres: Vec::new(),
+        }
+    }
 }
 
 /// Build configuration
@@ -79,14 +108,15 @@ impl Default for DevnetConfig {
             node_image: "ghcr.io/hyli-org/hyli:0.14.0-rc1".to_string(),
             wallet_server_image: "ghcr.io/hyli-org/wallet/wallet-server:main".to_string(),
             wallet_ui_image: "ghcr.io/hyli-org/wallet/wallet-ui:main".to_string(),
-            node_port: 4321,
             da_port: 4141,
+            node_port: 4321,
+            indexer_port: 4322,
             postgres_port: 5432,
-            wallet_api_port: 8081,
-            wallet_ws_port: 8081,
             wallet_ui_port: 8080,
-            indexer_port: 8082,
+            wallet_api_port: 4000,
+            wallet_ws_port: 8081,
             auto_start: true,
+            container_env: ContainerEnvConfig::default(),
         }
     }
 }
