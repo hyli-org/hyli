@@ -52,11 +52,13 @@ pub async fn get_blobs_by_tx_hash(
     let blobs = log_error!(
         sqlx::query_as::<_, BlobDb>(
             r#"
-WITH latest_height_for_this_tx_hash AS (
-  SELECT MAX(block_height) as max_height
+WITH last_tx_for_this_hash AS (
+  SELECT parent_dp_hash
   FROM transactions
   WHERE tx_hash = $1
     AND transaction_type = 'blob_transaction'
+  ORDER BY block_height DESC, index DESC
+  LIMIT 1
 )
 
 SELECT 
@@ -72,7 +74,7 @@ JOIN
      transactions
         ON transactions.parent_dp_hash = blobs.parent_dp_hash AND transactions.tx_hash = blobs.tx_hash
 WHERE blobs.tx_hash = $1
-     AND transactions.block_height = (SELECT max_height FROM latest_height_for_this_tx_hash)
+     AND transactions.parent_dp_hash = (SELECT parent_dp_hash FROM last_tx_for_this_hash)
 GROUP BY
       blobs.parent_dp_hash,
       blobs.tx_hash,
@@ -127,8 +129,9 @@ GROUP BY
   blobs.parent_dp_hash, 
   blobs.tx_hash, 
   blobs.blob_index,
-  transactions.block_height
-ORDER BY transactions.block_height DESC
+  transactions.block_height,
+  transactions.index
+ORDER BY transactions.block_height DESC, transactions.index DESC
 LIMIT 1;
 "#,
         )
