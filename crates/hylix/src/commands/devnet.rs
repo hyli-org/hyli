@@ -572,17 +572,47 @@ async fn start_indexer(pb: &indicatif::ProgressBar, context: &DevnetContext) -> 
 
 /// Create pre-funded test accounts
 async fn create_test_accounts(
-    _pb: &indicatif::ProgressBar,
+    pb: &indicatif::ProgressBar,
     _context: &DevnetContext,
 ) -> HylixResult<()> {
-    // TODO: Implement test account creation
-    // This would involve:
-    // 1. Generating test account keys
-    // 2. Funding them with test tokens
-    // 3. Making them available for testing
+    use tokio::process::Command;
 
-    // Placeholder implementation
-    std::thread::sleep(std::time::Duration::from_millis(500));
+    pb.set_message("Creating test account: Bob...");
+    
+    // Create Bob account
+    let bob_output = Command::new("npx")
+        .args(["--yes", "hyli-wallet-cli", "bob", "hylisecure", "vip"])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to create Bob account: {}", e)))?;
+
+    if !bob_output.status.success() {
+        let stderr = String::from_utf8_lossy(&bob_output.stderr);
+        log_warning(&format!("Bob account creation warning: {}", stderr));
+    } else {
+        pb.set_message("Bob account created successfully");
+    }
+
+    pb.set_message("Creating test account: Alice...");
+    
+    // Create Alice account
+    let alice_output = Command::new("npx")
+        .args(["hyli-wallet-cli", "alice", "hylisecure", "vip"])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to create Alice account: {}", e)))?;
+
+    if !alice_output.status.success() {
+        let stderr = String::from_utf8_lossy(&alice_output.stderr);
+        log_warning(&format!("Alice account creation warning: {}", stderr));
+    } else {
+        pb.set_message("Alice account created successfully");
+    }
+
+    pb.finish_and_clear();
+    log_info("Test accounts created:");
+    log_info("  - Bob (password: hylisecure)");
+    log_info("  - Alice (password: hylisecure)");
 
     Ok(())
 }
