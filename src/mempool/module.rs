@@ -93,8 +93,7 @@ impl Module for Mempool {
             listen<ConsensusEvent> cmd => {
                 let _ = log_error!(self.handle_consensus_event(cmd).await, "Handling ConsensusEvent in Mempool");
             }
-            listen<NodeStateEvent> cmd => {
-                let NodeStateEvent::NewBlock(block) = cmd;
+            listen<BlockStakingEvent> block => {
                 // In this p2p mode we don't receive consensus events so we must update manually.
                 if self.conf.p2p.mode == P2pMode::LaneManager {
                     if let Err(e) = self.staking.process_block(&block.staking_data) {
