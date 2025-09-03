@@ -577,6 +577,8 @@ async fn execute_command_with_progress(
 ) -> HylixResult<bool> {
     use std::process::Command;
     use std::io::{BufRead, BufReader};
+    use tokio::sync::mpsc;
+    use std::collections::VecDeque;
 
     let mut cmd = Command::new(program)
         .args(args)
@@ -585,37 +587,30 @@ async fn execute_command_with_progress(
         .spawn()
         .map_err(|e| HylixError::process(format!("Failed to spawn {}: {}", command_name, e)))?;
 
-    // Create progress bars for stdout and stderr
-    let stdout_pb = multi_progress.add(indicatif::ProgressBar::new_spinner());
-    let stdout_template = format!("  {{spinner:.blue}} {} stdout: {{msg}}", command_name);
-    stdout_pb.enable_steady_tick(Duration::from_millis(100));
-    stdout_pb.set_style(
+    // Create a single progress bar for combined output
+    let output_pb = multi_progress.add(indicatif::ProgressBar::new_spinner());
+    let output_template = format!("  {{spinner:.green}} {}: {{msg}}", command_name);
+    output_pb.enable_steady_tick(Duration::from_millis(100));
+    output_pb.set_style(
         indicatif::ProgressStyle::default_spinner()
-            .template(&stdout_template)
+            .template(&output_template)
             .unwrap()
             .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
     );
-    stdout_pb.set_message("Starting...");
+    output_pb.set_message("Starting...");
 
-    let stderr_pb = multi_progress.add(indicatif::ProgressBar::new_spinner());
-    let stderr_template = format!("  {{spinner:.yellow}} {} stderr: {{msg}}", command_name);
-    stderr_pb.enable_steady_tick(Duration::from_millis(100));
-    stderr_pb.set_style(
-        indicatif::ProgressStyle::default_spinner()
-            .template(&stderr_template)
-            .unwrap()
-            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
-    );
-    stderr_pb.set_message("Starting...");
+    // Create channels for stdout and stderr
+    let (tx, mut rx) = mpsc::channel::<(String, bool)>(100); // (line, is_stderr)
+    let tx_stdout = tx.clone();
+    let tx_stderr = tx;
 
     // Handle stdout
     if let Some(stdout) = cmd.stdout.take() {
-        let stdout_pb = stdout_pb.clone();
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
             for line in reader.lines() {
                 if let Ok(line) = line {
-                    stdout_pb.set_message(line);
+                    let _ = tx_stdout.send((line, false)).await;
                 }
             }
         });
@@ -623,24 +618,54 @@ async fn execute_command_with_progress(
 
     // Handle stderr
     if let Some(stderr) = cmd.stderr.take() {
-        let stderr_pb = stderr_pb.clone();
         tokio::spawn(async move {
             let reader = BufReader::new(stderr);
             for line in reader.lines() {
                 if let Ok(line) = line {
-                    stderr_pb.set_message(line);
+                    let _ = tx_stderr.send((line, true)).await;
                 }
             }
         });
+    }
+
+    // Collect and display output in chronological order
+    let mut output_buffer = VecDeque::new();
+    let mut last_message = String::new();
+    
+    // Process output as it comes in
+    while let Some((line, is_stderr)) = rx.recv().await {
+        output_buffer.push_back((line.clone(), is_stderr));
+        
+        // Keep only the last few lines to avoid overwhelming the progress bar
+        if output_buffer.len() > 5 {
+            output_buffer.pop_front();
+        }
+        
+        // Create a combined message showing recent output
+        let mut combined_message = String::new();
+        for (i, (buf_line, buf_is_stderr)) in output_buffer.iter().enumerate() {
+            if i > 0 {
+                combined_message.push_str(" | ");
+            }
+            if *buf_is_stderr {
+                combined_message.push_str(&format!("[stderr] {}", buf_line));
+            } else {
+                combined_message.push_str(buf_line);
+            }
+        }
+        
+        if combined_message != last_message {
+            output_pb.set_message(combined_message.clone());
+            last_message = combined_message;
+        }
     }
 
     // Wait for command to complete
     let status = cmd.wait()
         .map_err(|e| HylixError::process(format!("Failed to wait for {}: {}", command_name, e)))?;
 
-    // Clear the output progress bars
-    stdout_pb.finish_and_clear();
-    stderr_pb.finish_and_clear();
+    // Clear the output progress bar
+    output_pb.finish_and_clear();
 
     Ok(status.success())
 }
