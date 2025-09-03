@@ -224,7 +224,7 @@ impl SingleNodeConsensus {
 
         self.bus.send(ConsensusEvent::CommitConsensusProposal(
             CommittedConsensusProposal {
-                staking: Staking::default(),
+                staking: self.store.staking.clone(),
                 consensus_proposal,
                 certificate: certificate.signature,
             },
