@@ -1,5 +1,5 @@
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{create_progress_bar, log_info, log_success};
+use crate::logging::{create_progress_bar_with_msg, log_info, log_success};
 use std::path::Path;
 use std::process::Command;
 
@@ -12,34 +12,34 @@ pub async fn execute() -> HylixResult<()> {
 
     // Clean contracts
     if Path::new("contracts").exists() {
-        let pb = create_progress_bar("Cleaning contracts...");
+        let pb = create_progress_bar_with_msg("Cleaning contracts...");
         clean_contracts().await?;
         pb.finish_with_message("Contracts cleaned");
     }
 
     // Clean server
     if Path::new("server").exists() {
-        let pb = create_progress_bar("Cleaning server...");
+        let pb = create_progress_bar_with_msg("Cleaning server...");
         clean_server().await?;
         pb.finish_with_message("Server cleaned");
     }
 
     // Clean frontend
     if Path::new("front").exists() {
-        let pb = create_progress_bar("Cleaning frontend...");
+        let pb = create_progress_bar_with_msg("Cleaning frontend...");
         clean_frontend().await?;
         pb.finish_with_message("Frontend cleaned");
     }
 
     // Clean test artifacts
     if Path::new("tests").exists() {
-        let pb = create_progress_bar("Cleaning test artifacts...");
+        let pb = create_progress_bar_with_msg("Cleaning test artifacts...");
         clean_test_artifacts().await?;
         pb.finish_with_message("Test artifacts cleaned");
     }
 
     // Clean temporary files
-    let pb = create_progress_bar("Cleaning temporary files...");
+    let pb = create_progress_bar_with_msg("Cleaning temporary files...");
     clean_temp_files().await?;
     pb.finish_with_message("Temporary files cleaned");
 

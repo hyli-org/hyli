@@ -31,8 +31,7 @@ pub fn init_logging(verbose: bool, quiet: bool) -> color_eyre::Result<()> {
     Ok(())
 }
 
-/// Create a progress bar for long-running operations
-pub fn create_progress_bar(message: &str) -> indicatif::ProgressBar {
+pub fn create_progress_bar() -> indicatif::ProgressBar {
     let pb = indicatif::ProgressBar::new_spinner();
     pb.enable_steady_tick(Duration::from_millis(100));
     pb.set_style(
@@ -41,6 +40,12 @@ pub fn create_progress_bar(message: &str) -> indicatif::ProgressBar {
             .unwrap()
             .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
     );
+    pb
+}
+
+/// Create a progress bar for long-running operations
+pub fn create_progress_bar_with_msg(message: &str) -> indicatif::ProgressBar {
+    let pb = create_progress_bar();
     pb.set_message(message.to_string());
     pb
 }

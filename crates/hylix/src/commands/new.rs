@@ -1,6 +1,6 @@
 use crate::config::BackendType;
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{create_progress_bar, log_success, log_info};
+use crate::logging::{create_progress_bar_with_msg, log_success, log_info};
 use std::path::Path;
 use std::process::Command;
 
@@ -28,17 +28,17 @@ pub async fn execute(project_name: String, backend: Option<BackendType>) -> Hyli
     log_info(&format!("Using backend: {:?}", backend_type));
 
     // Clone the scaffold repository
-    let pb = create_progress_bar("Cloning scaffold repository...");
+    let pb = create_progress_bar_with_msg("Cloning scaffold repository...");
     clone_scaffold(&project_name).await?;
     pb.finish_with_message("Scaffold cloned successfully");
 
     // Setup project for the chosen backend
-    let pb = create_progress_bar("Setting up project structure...");
+    let pb = create_progress_bar_with_msg("Setting up project structure...");
     setup_backend(&project_name, &backend_type).await?;
     pb.finish_with_message("Project structure configured");
 
     // Initialize git repository
-    let pb = create_progress_bar("Initializing git repository...");
+    let pb = create_progress_bar_with_msg("Initializing git repository...");
     init_git_repo(&project_name)?;
     pb.finish_with_message("Git repository initialized");
 

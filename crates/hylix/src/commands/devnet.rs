@@ -1,6 +1,6 @@
 use crate::config::HylixConfig;
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{create_progress_bar, log_info, log_success, log_warning};
+use crate::logging::{create_progress_bar, create_progress_bar_with_msg, log_info, log_success, log_warning};
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use std::time::Duration;
 
@@ -140,7 +140,7 @@ async fn is_docker_container_running(
 
 /// Start the local devnet
 async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
-    let pb = create_progress_bar("Starting local devnet...");
+    let pb = create_progress_bar_with_msg("Starting local devnet...");
     if reset {
         reset_devnet_state(context).await?;
     }
@@ -150,27 +150,25 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
     log_success("[1/5] Docker network created");
 
     // Start the local node
-    let pb = create_progress_bar("Starting local node...");
+    let pb = create_progress_bar_with_msg("Starting local node...");
     start_local_node(&pb, context).await?;
     pb.finish_and_clear();
     log_success("[2/5] Local node started");
 
     // Start indexer
-    let pb = create_progress_bar("Starting indexer...");
+    let pb = create_progress_bar_with_msg("Starting indexer...");
     start_indexer(&pb, context).await?;
     pb.finish_and_clear();
     log_success("[3/5] Indexer started");
 
     // Setup wallet app
-    let pb = create_progress_bar("Starting wallet app...");
+    let pb = create_progress_bar_with_msg("Starting wallet app...");
     start_wallet_app(&pb, context).await?;
     pb.finish_and_clear();
     log_success("[4/5] Wallet app started");
 
     // Create pre-funded test accounts
-    let pb = create_progress_bar("Creating test accounts...");
-    create_test_accounts(&pb, context).await?;
-    pb.finish_and_clear();
+    create_test_accounts(context).await?;
     log_success("[5/5] Test accounts created");
 
     check_devnet_status(context).await?;
@@ -180,7 +178,7 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
 
 /// Stop the local devnet
 async fn stop_devnet(_context: &DevnetContext) -> HylixResult<()> {
-    let pb = create_progress_bar("Stopping local devnet...");
+    let pb = create_progress_bar_with_msg("Stopping local devnet...");
 
     // Stop wallet app
     pb.set_message("Stopping wallet app...");
@@ -212,7 +210,7 @@ async fn restart_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()>
 
 /// Fork a running network
 async fn fork_devnet(endpoint: &str) -> HylixResult<()> {
-    let pb = create_progress_bar(&format!("Forking network at: {}", endpoint));
+    let pb = create_progress_bar_with_msg(&format!("Forking network at: {}", endpoint));
 
     // TODO: Implement network forking
     // This would involve:
@@ -570,46 +568,131 @@ async fn start_indexer(pb: &indicatif::ProgressBar, context: &DevnetContext) -> 
     Ok(())
 }
 
+/// Helper function to execute a command with real-time progress output
+async fn execute_command_with_progress(
+    multi_progress: &indicatif::MultiProgress,
+    command_name: &str,
+    program: &str,
+    args: &[&str],
+) -> HylixResult<bool> {
+    use std::process::Command;
+    use std::io::{BufRead, BufReader};
+
+    let mut cmd = Command::new(program)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| HylixError::process(format!("Failed to spawn {}: {}", command_name, e)))?;
+
+    // Create progress bars for stdout and stderr
+    let stdout_pb = multi_progress.add(indicatif::ProgressBar::new_spinner());
+    let stdout_template = format!("  {{spinner:.blue}} {} stdout: {{msg}}", command_name);
+    stdout_pb.enable_steady_tick(Duration::from_millis(100));
+    stdout_pb.set_style(
+        indicatif::ProgressStyle::default_spinner()
+            .template(&stdout_template)
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+    );
+    stdout_pb.set_message("Starting...");
+
+    let stderr_pb = multi_progress.add(indicatif::ProgressBar::new_spinner());
+    let stderr_template = format!("  {{spinner:.yellow}} {} stderr: {{msg}}", command_name);
+    stderr_pb.enable_steady_tick(Duration::from_millis(100));
+    stderr_pb.set_style(
+        indicatif::ProgressStyle::default_spinner()
+            .template(&stderr_template)
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+    );
+    stderr_pb.set_message("Starting...");
+
+    // Handle stdout
+    if let Some(stdout) = cmd.stdout.take() {
+        let stdout_pb = stdout_pb.clone();
+        tokio::spawn(async move {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    stdout_pb.set_message(line);
+                }
+            }
+        });
+    }
+
+    // Handle stderr
+    if let Some(stderr) = cmd.stderr.take() {
+        let stderr_pb = stderr_pb.clone();
+        tokio::spawn(async move {
+            let reader = BufReader::new(stderr);
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    stderr_pb.set_message(line);
+                }
+            }
+        });
+    }
+
+    // Wait for command to complete
+    let status = cmd.wait()
+        .map_err(|e| HylixError::process(format!("Failed to wait for {}: {}", command_name, e)))?;
+
+    // Clear the output progress bars
+    stdout_pb.finish_and_clear();
+    stderr_pb.finish_and_clear();
+
+    Ok(status.success())
+}
+
 /// Create pre-funded test accounts
 async fn create_test_accounts(
-    pb: &indicatif::ProgressBar,
     _context: &DevnetContext,
 ) -> HylixResult<()> {
-    use tokio::process::Command;
+    let pb = create_progress_bar();
 
-    pb.set_message("Creating test account: Bob...");
+    // Create a MultiProgress to manage multiple progress bars
+    let multi_progress = indicatif::MultiProgress::new();
     
+    // Add the main progress bar to the multi-progress
+    let main_pb = multi_progress.add(pb);
+
     // Create Bob account
-    let bob_output = Command::new("npx")
-        .args(["--yes", "hyli-wallet-cli", "bob", "hylisecure", "vip"])
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to create Bob account: {}", e)))?;
+    main_pb.set_message("Creating test account: Bob...");
+    let bob_success = execute_command_with_progress(
+        &multi_progress,
+        "Bob account creation",
+        "npx",
+        &["--yes", "hyli-wallet-cli", "bob", "hylisecure", "vip"]
+    ).await?;
 
-    if !bob_output.status.success() {
-        let stderr = String::from_utf8_lossy(&bob_output.stderr);
-        log_warning(&format!("Bob account creation warning: {}", stderr));
+    if !bob_success {
+        log_warning("Bob account creation completed with warnings");
     } else {
-        pb.set_message("Bob account created successfully");
+        main_pb.set_message("Bob account created successfully");
     }
 
-    pb.set_message("Creating test account: Alice...");
-    
     // Create Alice account
-    let alice_output = Command::new("npx")
-        .args(["hyli-wallet-cli", "alice", "hylisecure", "vip"])
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to create Alice account: {}", e)))?;
+    main_pb.set_message("Creating test account: Alice...");
+    let alice_success = execute_command_with_progress(
+        &multi_progress,
+        "Alice account creation",
+        "npx",
+        &["hyli-wallet-cli", "alice", "hylisecure", "vip"]
+    ).await?;
 
-    if !alice_output.status.success() {
-        let stderr = String::from_utf8_lossy(&alice_output.stderr);
-        log_warning(&format!("Alice account creation warning: {}", stderr));
+    if !alice_success {
+        log_warning("Alice account creation completed with warnings");
     } else {
-        pb.set_message("Alice account created successfully");
+        main_pb.set_message("Alice account created successfully");
     }
 
-    pb.finish_and_clear();
+    // Clear the main progress bar
+    main_pb.finish_and_clear();
+
+    // Clear all progress bars from the multi-progress
+    multi_progress.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+
     log_info("Test accounts created:");
     log_info("  - Bob (password: hylisecure)");
     log_info("  - Alice (password: hylisecure)");

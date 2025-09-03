@@ -1,5 +1,5 @@
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{create_progress_bar, log_success, log_info, log_error};
+use crate::logging::{create_progress_bar_with_msg, log_success, log_info, log_error};
 use std::process::Command;
 
 /// Execute the `hy test` command
@@ -10,28 +10,28 @@ pub async fn execute(keep_alive: bool) -> HylixResult<()> {
     validate_project_directory()?;
 
     // Start devnet if not already running
-    let pb = create_progress_bar("Starting devnet...");
+    let pb = create_progress_bar_with_msg("Starting devnet...");
     start_devnet_if_needed().await?;
     pb.finish_with_message("Devnet ready");
 
     // Build the project
-    let pb = create_progress_bar("Building project...");
+    let pb = create_progress_bar_with_msg("Building project...");
     build_project().await?;
     pb.finish_with_message("Project built");
 
     // Start backend
-    let pb = create_progress_bar("Starting backend...");
+    let pb = create_progress_bar_with_msg("Starting backend...");
     let backend_handle = start_backend().await?;
     pb.finish_with_message("Backend started");
 
     // Run tests
-    let pb = create_progress_bar("Running tests...");
+    let pb = create_progress_bar_with_msg("Running tests...");
     run_tests().await?;
     pb.finish_with_message("Tests completed");
 
     // Cleanup
     if !keep_alive {
-        let pb = create_progress_bar("Cleaning up...");
+        let pb = create_progress_bar_with_msg("Cleaning up...");
         cleanup(backend_handle).await?;
         pb.finish_with_message("Cleanup completed");
     } else {

@@ -1,5 +1,5 @@
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{create_progress_bar, log_success, log_info};
+use crate::logging::{create_progress_bar_with_msg, log_success, log_info};
 use std::process::Command;
 
 /// Execute the `hy build` command
@@ -15,18 +15,18 @@ pub async fn execute(clean: bool) -> HylixResult<()> {
     validate_project_directory()?;
 
     // Build contracts
-    let pb = create_progress_bar("Building contracts...");
+    let pb = create_progress_bar_with_msg("Building contracts...");
     build_contracts().await?;
     pb.finish_with_message("Contracts built successfully");
 
     // Build server
-    let pb = create_progress_bar("Building server...");
+    let pb = create_progress_bar_with_msg("Building server...");
     build_server().await?;
     pb.finish_with_message("Server built successfully");
 
     // Build frontend (if exists)
     if std::path::Path::new("front").exists() {
-        let pb = create_progress_bar("Building frontend...");
+        let pb = create_progress_bar_with_msg("Building frontend...");
         build_frontend().await?;
         pb.finish_with_message("Frontend built successfully");
     }
