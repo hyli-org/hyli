@@ -149,21 +149,19 @@ pub enum TxEvent<'a> {
     SettledAsFailed(&'a TxId, &'a UnsettledBlobTransaction),
     TimedOut(&'a TxId, &'a UnsettledBlobTransaction),
     TxError(&'a TxId, &'a str),
-    NewProof(
+    NewBlobProof(
         &'a TxId,
         &'a Blob,
         BlobIndex,
         &'a (ProgramId, Verifier, TxId, HyliOutput),
-        usize,
     ),
-    // Same data as NewProof, but this time the blob is settled.
+    // Essentially the same data as NewProof, but this time the blob is settled.
     BlobSettled(
         &'a TxId,
         &'a UnsettledBlobTransaction,
         &'a Blob,
         BlobIndex,
         Option<&'a (ProgramId, Verifier, TxId, HyliOutput)>,
-        usize,
     ),
     ContractDeleted(&'a TxId, &'a ContractName),
     ContractRegistered(
@@ -193,8 +191,8 @@ impl<'a> TxEvent<'a> {
             TxEvent::SettledAsFailed(tx_id, ..) => tx_id,
             TxEvent::TimedOut(tx_id, ..) => tx_id,
             TxEvent::TxError(tx_id, _) => tx_id,
-            TxEvent::NewProof(tx_id, _, _, _, _) => tx_id,
-            TxEvent::BlobSettled(tx_id, _, _, _, _, _) => tx_id,
+            TxEvent::NewBlobProof(tx_id, ..) => tx_id,
+            TxEvent::BlobSettled(tx_id, ..) => tx_id,
             TxEvent::ContractDeleted(tx_id, _) => tx_id,
             TxEvent::ContractRegistered(tx_id, ..) => tx_id,
             TxEvent::ContractStateUpdated(tx_id, ..) => tx_id,
@@ -606,26 +604,11 @@ impl<'any> NodeStateProcessing<'any> {
             bail!("BlobTx {} not found", &blob_tx_hash);
         };
 
-        // TODO: add diverse verifications ? (without the inital state checks!).
-        // TODO: success to false is valid outcome and can be settled.
-
-        Self::verify_hyli_output(unsettled_tx, &blob_proof_data.hyli_output)?;
-
-        // If we arrived here, HyliOutput provided is OK and can now be saved
-        debug!(
-            "Saving a hyli_output for BlobTx {} index {}",
-            blob_proof_data.hyli_output.tx_hash.0, blob_proof_data.hyli_output.index
-        );
-
-        let (Some(blob), Some(possible_proofs)) = (
-            unsettled_tx
-                .tx
-                .blobs
-                .get(blob_proof_data.hyli_output.index.0),
-            unsettled_tx
-                .possible_proofs
-                .get_mut(&blob_proof_data.hyli_output.index),
-        ) else {
+        let Some(blob) = unsettled_tx
+            .tx
+            .blobs
+            .get(blob_proof_data.hyli_output.index.0)
+        else {
             bail!(
                 "blob at index {} not found in blob TX {}",
                 blob_proof_data.hyli_output.index.0,
@@ -640,14 +623,30 @@ impl<'any> NodeStateProcessing<'any> {
             blob_proof_data.hyli_output.clone(),
         );
 
-        self.callback.on_event(&TxEvent::NewProof(
+        self.callback.on_event(&TxEvent::NewBlobProof(
             &unsettled_tx.tx_id,
             blob,
             blob_proof_data.hyli_output.index,
             &blob_proof_output,
-            possible_proofs.len(),
         ));
 
+        // TODO: add diverse verifications ? (without the inital state checks!).
+        // TODO: success to false is valid outcome and can be settled.
+
+        Self::verify_hyli_output(unsettled_tx, &blob_proof_data.hyli_output)?;
+
+        // If we arrived here, HyliOutput provided is OK and can now be saved
+        debug!(
+            "Saving a hyli_output for BlobTx {} index {}",
+            blob_proof_data.hyli_output.tx_hash.0, blob_proof_data.hyli_output.index
+        );
+
+        let Some(possible_proofs) = unsettled_tx
+            .possible_proofs
+            .get_mut(&blob_proof_data.hyli_output.index)
+        else {
+            unreachable!("Proof vec should always exist for existing blobs");
+        };
         possible_proofs.push(blob_proof_output);
 
         Ok(match should_settle_tx {
@@ -1032,7 +1031,6 @@ impl<'any> NodeStateProcessing<'any> {
                 blob,
                 BlobIndex(blob_index),
                 possible_proofs.get(proof_index),
-                proof_index,
             ));
         }
 
@@ -1803,7 +1801,7 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     .or_default()
                     .push(TransactionStateEvent::Error(err.to_string()));
             }
-            TxEvent::NewProof(tx_id, blob, blob_index, proof_data, blob_proof_index) => {
+            TxEvent::NewBlobProof(tx_id, blob, blob_index, proof_data) => {
                 self.block_under_construction
                     .dp_parent_hashes
                     .insert(tx_id.1.clone(), tx_id.0.clone());
@@ -1829,15 +1827,9 @@ impl NodeStateCallback for BlockNodeStateCallback {
                         verifier: proof_data.1.clone(),
                         program_id: proof_data.0.clone(),
                         hyli_output: proof_data.3.clone(),
-                        blob_proof_output_index: blob_proof_index,
                     });
             }
-            TxEvent::BlobSettled(tx_id, tx, blob, blob_index, _, blob_proof_index) => {
-                self.block_under_construction.verified_blobs.push((
-                    tx_id.1.clone(),
-                    blob_index,
-                    Some(blob_proof_index),
-                ));
+            TxEvent::BlobSettled(_tx_id, tx, blob, ..) => {
                 // Keep track of all stakers
                 if blob.contract_name.0 == "staking" {
                     if let Ok(structured_blob) = StructuredBlob::try_from(blob.clone()) {

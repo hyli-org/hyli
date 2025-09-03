@@ -59,7 +59,7 @@ async fn happy_path_with_tx_context() {
 
     let block =
         state.craft_block_and_handle(1, vec![verified_proof_bad.into(), verified_proof.into()]);
-    assert_eq!(block.blob_proof_outputs.len(), 1);
+    assert_eq!(block.blob_proof_outputs.len(), 2);
     // We don't actually fail proof txs with blobs that fail
     assert_eq!(block.failed_txs.len(), 0);
     assert_eq!(block.successful_txs.len(), 1);
@@ -857,14 +857,6 @@ async fn dead_end_in_proving_settles_still() {
         ],
     );
 
-    assert_eq!(
-        block
-            .verified_blobs
-            .iter()
-            .map(|(_, _, idx)| idx.unwrap())
-            .collect::<Vec<_>>(),
-        vec![0, 1, 0]
-    );
     // Check that we did settled with the last state
     assert_eq!(state.contracts.get(&c1).unwrap().state.0, vec![5]);
 }
