@@ -148,6 +148,11 @@ Check status of devnet
 hy devnet status
 ```
 
+Export devnet env vars:
+```sh
+source <(hy devnet env)
+```
+
 #### Soon
 
 Want to fork a running network ?

@@ -1,6 +1,5 @@
 use clap::{Parser, Subcommand};
 use color_eyre::Result;
-use tracing::info;
 
 mod commands;
 mod config;
@@ -131,6 +130,9 @@ enum DevnetAction {
         /// Network endpoint to fork
         endpoint: String,
     },
+    /// Print environment variables for sourcing in bash
+    #[command(alias = "e")]
+    Env,
 }
 
 
@@ -168,6 +170,7 @@ async fn main() -> Result<()> {
                 DevnetAction::Status => commands::devnet::DevnetAction::Status,
                 DevnetAction::Fork { endpoint } => commands::devnet::DevnetAction::Fork { endpoint },
                 DevnetAction::Bake { profile } => commands::devnet::DevnetAction::Bake { profile },
+                DevnetAction::Env => commands::devnet::DevnetAction::Env,
             };
             commands::devnet::execute(devnet_action).await?;
         }
@@ -176,6 +179,5 @@ async fn main() -> Result<()> {
         }
     }
 
-    info!("Command completed successfully");
     Ok(())
 }

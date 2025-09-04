@@ -24,6 +24,7 @@ pub enum DevnetAction {
     Status,
     Fork { endpoint: String },
     Bake { profile: Option<String> },
+    Env,
 }
 
 /// Context struct containing client and config for devnet operations
@@ -80,6 +81,9 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
         DevnetAction::Bake { profile } => {
             let context_with_profile = DevnetContext::new_with_profile(context.config, profile)?;
             bake_devnet(&indicatif::MultiProgress::new(), &context_with_profile).await?;
+        }
+        DevnetAction::Env => {
+            print_devnet_env_vars(&context.config)?;
         }
     }
 
@@ -799,5 +803,45 @@ fn check_required_dependencies() -> HylixResult<()> {
         ));
     }
 
+    Ok(())
+}
+
+/// Print environment variables for sourcing in bash
+fn print_devnet_env_vars(config: &HylixConfig) -> HylixResult<()> {
+    let devnet = &config.devnet;
+    
+    println!("# Hyli devnet environment variables");
+    println!("# Source this file in your bash shell: source <(hy devnet env)");
+    println!();
+    
+    // Node and DA endpoints
+    println!("export HYLI_NODE_URL=\"http://localhost:{}\"", devnet.node_port);
+    println!("export HYLI_DA_READ_FROM=\"localhost:{}\"", devnet.da_port);
+    
+    // Indexer endpoint
+    println!("export HYLI_INDEXER_URL=\"http://localhost:{}\"", devnet.indexer_port);
+    
+    // Wallet endpoints
+    println!("export HYLI_WALLET_API_URL=\"http://localhost:{}\"", devnet.wallet_api_port);
+    println!("export HYLI_WALLET_WS_URL=\"ws://localhost:{}\"", devnet.wallet_ws_port);
+    println!("export HYLI_WALLET_UI_URL=\"http://localhost:{}\"", devnet.wallet_ui_port);
+    
+    // Database endpoint
+    println!("export HYLI_DATABASE_URL=\"postgresql://postgres:postgres@localhost:{}/hyli_indexer\"", devnet.postgres_port);
+    
+    // Explorer URL
+    println!("export HYLI_EXPLORER_URL=\"https://explorer.hyli.org/?network=localhost&indexer={}&node={}&wallet={}\"", 
+             devnet.indexer_port, devnet.node_port, devnet.wallet_api_port);
+    
+    // Development mode flags
+    println!("export RISC0_DEV_MODE=\"1\"");
+    println!("export SP1_PROVER=\"mock\"");
+    
+    println!();
+    println!("# Usage examples:");
+    println!("#   source <(hy devnet env)");
+    println!("#   echo $HYLI_NODE_URL");
+    println!("#   curl $HYLI_NODE_URL/swagger-ui");
+    
     Ok(())
 }

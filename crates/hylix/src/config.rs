@@ -177,10 +177,6 @@ impl HylixConfig {
                         config_path.display()
                     )
                 })?;
-            log_info(&format!(
-                "Loaded configuration from file {}",
-                config_path.display()
-            ));
             Ok(config)
         } else {
             let config = Self::default();
