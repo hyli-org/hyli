@@ -15,6 +15,8 @@ pub struct HylixConfig {
     pub devnet: DevnetConfig,
     /// Build configuration
     pub build: BuildConfig,
+    /// Bake profile configuration
+    pub bake_profile: String 
 }
 
 /// Backend type enumeration
@@ -91,6 +93,44 @@ pub struct BuildConfig {
     pub extra_flags: Vec<String>,
 }
 
+
+/// Bake profile configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BakeProfile {
+    /// Name of the profile
+    pub name: String,
+    /// Accounts to create
+    pub accounts: Vec<AccountConfig>,
+    /// Funds to send to accounts
+    pub funds: Vec<FundConfig>,
+}
+
+/// Account configuration for baking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountConfig {
+    /// Account name
+    pub name: String,
+    /// Account password
+    pub password: String,
+    /// Account type (e.g., "vip")
+    pub invite_code: String,
+}
+
+/// Fund configuration for baking
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FundConfig {
+    /// Source account name
+    pub from: String,
+    /// Source account password
+    pub from_password: String,
+    /// Amount to send
+    pub amount: u64,
+    /// Token type (e.g., "oranj", "oxygen")
+    pub token: String,
+    /// Destination account name
+    pub to: String,
+}
+
 impl Default for HylixConfig {
     fn default() -> Self {
         Self {
@@ -98,6 +138,7 @@ impl Default for HylixConfig {
             scaffold_repo: "https://github.com/hyli-org/app-scaffold".to_string(),
             devnet: DevnetConfig::default(),
             build: BuildConfig::default(),
+            bake_profile: "bobalice".to_string(),
         }
     }
 }
@@ -171,5 +212,105 @@ impl HylixConfig {
             .ok_or_else(|| crate::error::HylixError::config("Could not find config directory"))?;
 
         Ok(config_dir.join("hylix").join("config.toml"))
+    }
+
+    /// Get the profiles directory path
+    fn profiles_dir() -> crate::error::HylixResult<PathBuf> {
+        let config_dir = dirs::config_dir()
+            .ok_or_else(|| crate::error::HylixError::config("Could not find config directory"))?;
+
+        Ok(config_dir.join("hylix").join("profiles"))
+    }
+
+    /// Load a bake profile by name
+    pub fn load_bake_profile(&self, profile_name: &str) -> crate::error::HylixResult<BakeProfile> {
+        let profiles_dir = Self::profiles_dir()?;
+        let profile_path = profiles_dir.join(format!("{}.toml", profile_name));
+
+        if !profile_path.exists() {
+            return Err(crate::error::HylixError::config(format!(
+                "Profile '{}' not found at {}",
+                profile_name,
+                profile_path.display()
+            )));
+        }
+
+        let content = std::fs::read_to_string(&profile_path)?;
+        let profile: BakeProfile = toml::from_str(&content)
+            .map_err(crate::error::HylixError::Toml)
+            .with_context(|| {
+                format!(
+                    "Failed to load profile from file {}",
+                    profile_path.display()
+                )
+            })?;
+
+        Ok(profile)
+    }
+
+    /// Create default bobalice profile if it doesn't exist
+    pub fn create_default_profile(&self) -> crate::error::HylixResult<()> {
+        let profiles_dir = Self::profiles_dir()?;
+        std::fs::create_dir_all(&profiles_dir)?;
+
+        let profile_path = profiles_dir.join("bobalice.toml");
+        
+        if !profile_path.exists() {
+            let default_profile = BakeProfile {
+                name: "bobalice".to_string(),
+                accounts: vec![
+                    AccountConfig {
+                        name: "bob".to_string(),
+                        password: "hylisecure".to_string(),
+                        invite_code: "vip".to_string(),
+                    },
+                    AccountConfig {
+                        name: "alice".to_string(),
+                        password: "hylisecure".to_string(),
+                        invite_code: "vip".to_string(),
+                    },
+                ],
+                funds: vec![
+                    FundConfig {
+                        from: "hyli".to_string(),
+                        from_password: "hylisecure".to_string(),
+                        amount: 1000,
+                        token: "oranj".to_string(),
+                        to: "bob".to_string(),
+                    },
+                    FundConfig {
+                        from: "hyli".to_string(),
+                        from_password: "hylisecure".to_string(),
+                        amount: 1000,
+                        token: "oranj".to_string(),
+                        to: "alice".to_string(),
+                    },
+                    FundConfig {
+                        from: "hyli".to_string(),
+                        from_password: "hylisecure".to_string(),
+                        amount: 500,
+                        token: "oxygen".to_string(),
+                        to: "bob".to_string(),
+                    },
+                    FundConfig {
+                        from: "bob".to_string(),
+                        from_password: "hylisecure".to_string(),
+                        amount: 50,
+                        token: "oxygen".to_string(),
+                        to: "alice".to_string(),
+                    },
+                ],
+            };
+
+            let content = toml::to_string_pretty(&default_profile)?;
+            std::fs::write(&profile_path, content)?;
+            
+            log_info(&format!(
+                "Created default bobalice profile at {}",
+                profile_path.display()
+            ));
+        }
+
+        Ok(())
     }
 }

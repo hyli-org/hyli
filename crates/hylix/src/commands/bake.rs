@@ -1,4 +1,5 @@
 use crate::commands::devnet::DevnetContext;
+use crate::config::{BakeProfile, AccountConfig, FundConfig};
 use crate::error::{HylixError, HylixResult};
 use crate::logging::{create_progress_bar, execute_command_with_progress, log_info, log_success, log_warning};
 use client_sdk::rest_client::{NodeApiClient};
@@ -7,6 +8,12 @@ use std::time::Duration;
 
 /// Execute the `hy bake` command
 pub async fn bake_devnet(mpb: &indicatif::MultiProgress, context: &DevnetContext) -> HylixResult<()> {
+    // Create default profile if it doesn't exist
+    context.config.create_default_profile()?;
+            
+    // Load the profile
+    let profile = context.config.load_bake_profile(&context.config.bake_profile)?;
+
     // Check if devnet is running
     if !is_devnet_running(&context).await? {
         return Err(HylixError::devnet(
@@ -15,20 +22,23 @@ pub async fn bake_devnet(mpb: &indicatif::MultiProgress, context: &DevnetContext
     }
 
     // Create pre-funded test accounts
-    create_test_accounts(&mpb, &context).await?;
+    create_test_accounts(&mpb, &context, &profile.accounts).await?;
     log_success("[1/2] Test accounts created");
 
     // Send funds to test accounts
-    send_funds_to_test_accounts(&mpb, &context).await?;
+    send_funds_to_test_accounts(&mpb, &context, &profile.funds).await?;
     log_success("[2/2] Funds sent to test accounts");
 
     log_success("Bake process completed successfully!");
+    log_info(&format!("Using profile: {}", profile.name));
     log_info("Test accounts created:");
-    log_info("  - Bob (password: hylisecure)");
-    log_info("  - Alice (password: hylisecure)");
+    for account in &profile.accounts {
+        log_info(&format!("  - {} (password: {})", account.name, account.password));
+    }
     log_info("Test accounts funded:");
-    log_info("  - Bob (1000 oranj)");
-    log_info("  - Alice (1000 oranj)");
+    for fund in &profile.funds {
+        log_info(&format!("  - {} -> {} ({} {})", fund.from, fund.to, fund.amount, fund.token));
+    }
 
     Ok(())
 }
@@ -49,38 +59,29 @@ async fn is_devnet_running(context: &DevnetContext) -> HylixResult<bool> {
 pub async fn create_test_accounts(
     mpb: &indicatif::MultiProgress,
     _context: &DevnetContext,
+    accounts: &[AccountConfig],
 ) -> HylixResult<()> {
     // Add the main progress bar to the multi-progress
     let main_pb = mpb.add(create_progress_bar());
 
-    // Create Bob account
-    main_pb.set_message("Creating test account: Bob...");
-    let bob_success = execute_command_with_progress(
-        &mpb,
-        "Bob account creation",
-        "npx",
-        &["--yes", "hyli-wallet-cli", "register", "bob", "hylisecure", "vip"]
-    ).await?;
+    for account in accounts {
+        let message = format!("Creating test account: {}...", account.name);
+        main_pb.set_message(message);
+        let task_name = format!("{} account creation", account.name);
+        let success = execute_command_with_progress(
+            &mpb,
+            &task_name,
+            "npx",
+            &["--yes", "hyli-wallet-cli", "register", &account.name, &account.password, &account.invite_code]
+        ).await?;
 
-    if !bob_success {
-        log_warning("Bob account creation completed with warnings");
-    } else {
-        main_pb.set_message("Bob account created successfully");
-    }
-
-    // Create Alice account
-    main_pb.set_message("Creating test account: Alice...");
-    let alice_success = execute_command_with_progress(
-        &mpb,
-        "Alice account creation",
-        "npx",
-        &["hyli-wallet-cli", "register", "alice", "hylisecure", "vip"]
-    ).await?;
-
-    if !alice_success {
-        log_warning("Alice account creation completed with warnings");
-    } else {
-        main_pb.set_message("Alice account created successfully");
+        if !success {
+            let warning_msg = format!("{} account creation completed with warnings", account.name);
+            log_warning(&warning_msg);
+        } else {
+            let success_msg = format!("{} account created successfully", account.name);
+            main_pb.set_message(success_msg);
+        }
     }
 
     // Clear the main progress bar
@@ -93,36 +94,40 @@ pub async fn create_test_accounts(
 }
 
 /// Send funds to test accounts
-pub async fn send_funds_to_test_accounts(mpb: &indicatif::MultiProgress, _context: &DevnetContext) -> HylixResult<()> {
+pub async fn send_funds_to_test_accounts(mpb: &indicatif::MultiProgress, _context: &DevnetContext, funds: &[FundConfig]) -> HylixResult<()> {
     let pb = mpb.add(create_progress_bar());
     pb.set_message("Sending funds to test accounts...");
 
-    let bob_success = execute_command_with_progress(
-        &mpb,
-        "Bob account funding",
-        "npx",
-        &["hyli-wallet-cli", "transfer", "hyli", "hylisecure", "1000", "oranj", "bob@wallet"]
-    ).await?;
+    for fund in funds {
+        let message = format!("{} sending {} {} to {}...", fund.from, fund.amount, fund.token, fund.to);
+        pb.set_message(message);
+        
+        let task_name = format!("{} account funding", fund.to);
+        let destination = format!("{}@wallet", fund.to);
+        let amount_str = fund.amount.to_string();
+        
+        let success = execute_command_with_progress(
+            &mpb,
+            &task_name,
+            "npx",
+            &[
+                "hyli-wallet-cli", 
+                "transfer", 
+                &fund.from, 
+                &fund.from_password, 
+                &amount_str, 
+                &fund.token, 
+                &destination
+            ]
+        ).await?;
 
-    if !bob_success {
-        log_warning("Bob account funding completed with warnings");
-    } else {
-        pb.set_message("Bob account funded successfully");
-    }
-
-    pb.set_message("Sending funds to Alice account...");
-
-    let alice_success = execute_command_with_progress(
-        &mpb,
-        "Alice account funding",
-        "npx",
-        &["hyli-wallet-cli", "transfer", "hyli", "hylisecure", "1000", "oranj", "alice@wallet"]
-    ).await?;
-
-    if !alice_success {
-        log_warning("Alice account funding completed with warnings");
-    } else {
-        pb.set_message("Alice account funded successfully");
+        if !success {
+            let warning_msg = format!("{} account funding completed with warnings", fund.to);
+            log_warning(&warning_msg);
+        } else {
+            let success_msg = format!("{} account funded successfully", fund.to);
+            pb.set_message(success_msg);
+        }
     }
 
     mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
