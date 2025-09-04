@@ -1,3 +1,4 @@
+use crate::commands::bake::bake_devnet;
 use crate::config::HylixConfig;
 use crate::error::{HylixError, HylixResult};
 use crate::logging::{create_progress_bar, create_progress_bar_with_msg, execute_command_with_progress, log_info, log_success, log_warning};
@@ -17,11 +18,12 @@ fn build_env_args(env_vars: &[String]) -> Vec<String> {
 /// Devnet action enum
 #[derive(Debug, Clone)]
 pub enum DevnetAction {
-    Start { reset: bool },
+    Start { reset: bool, bake: bool },
     Stop,
-    Restart { reset: bool },
+    Restart { reset: bool, bake: bool },
     Status,
     Fork { endpoint: String },
+    Bake,
 }
 
 /// Context struct containing client and config for devnet operations
@@ -46,24 +48,27 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
     let context = DevnetContext::new(config)?;
 
     match action {
-        DevnetAction::Start { reset } => {
+        DevnetAction::Start { reset, bake } => {
             if is_devnet_running(&context).await? {
                 log_info("Devnet is already running");
                 return Ok(());
             }
-            start_devnet(reset, &context).await?;
+            start_devnet(reset, bake, &context).await?;
         }
         DevnetAction::Stop => {
             stop_devnet(&context).await?;
         }
-        DevnetAction::Restart { reset } => {
-            restart_devnet(reset, &context).await?;
+        DevnetAction::Restart { reset, bake } => {
+            restart_devnet(reset, bake, &context).await?;
         }
         DevnetAction::Status => {
             check_devnet_status(&context).await?;
         }
         DevnetAction::Fork { endpoint } => {
             fork_devnet(&endpoint).await?;
+        }
+        DevnetAction::Bake => {
+            bake_devnet(&indicatif::MultiProgress::new(), &context).await?;
         }
     }
 
@@ -139,7 +144,7 @@ async fn is_docker_container_running(
 }
 
 /// Start the local devnet
-async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
+async fn start_devnet(reset: bool, bake: bool, context: &DevnetContext) -> HylixResult<()> {
     // Check required dependencies before starting
     check_required_dependencies()?;
     
@@ -149,29 +154,29 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
     }
 
     create_docker_network(&mpb).await?;
-    log_success("[1/6] Docker network created");
+    log_success("[1/4] Docker network created");
 
     // Start the local node
     start_local_node(&mpb, context).await?;
-    log_success("[2/6] Local node started");
+    log_success("[2/4] Local node started");
 
     // Start indexer
     start_indexer(&mpb, context).await?;
-    log_success("[3/6] Indexer started");
+    log_success("[3/4] Indexer started");
 
     // Setup wallet app
     start_wallet_app(&mpb, context).await?;
-    log_success("[4/6] Wallet app started");
-
-    // Create pre-funded test accounts
-    create_test_accounts(&mpb, context).await?;
-    log_success("[5/6] Test accounts created");
-
-    // Send funds to test accounts
-    send_funds_to_test_accounts(&mpb, context).await?;
-    log_success("[6/6] Funds sent to test accounts");
+    log_success("[4/4] Wallet app started");
 
     check_devnet_status(context).await?;
+
+    if bake {
+        bake_devnet(&mpb, context).await?;
+    } else {
+        log_warning("Skipping test account creation and funding");
+        log_info(format!("  Use {} to create and fund test accounts while starting devnet", console::style("--bake").green()).as_str());
+        log_info(format!("  Run {} to create and fund test accounts later", console::style("hy devnet bake").green()).as_str());
+    }
 
     Ok(())
 }
@@ -202,9 +207,9 @@ async fn stop_devnet(_context: &DevnetContext) -> HylixResult<()> {
 }
 
 /// Restart the local devnet
-async fn restart_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
+async fn restart_devnet(reset: bool, bake: bool, context: &DevnetContext) -> HylixResult<()> {
     stop_devnet(context).await?;
-    start_devnet(reset, context).await?;
+    start_devnet(reset, bake, context).await?;
     Ok(())
 }
 
@@ -560,100 +565,6 @@ async fn start_indexer(mpb: &indicatif::MultiProgress, context: &DevnetContext) 
     }
 
     mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
-
-    Ok(())
-}
-
-
-/// Create pre-funded test accounts
-async fn create_test_accounts(
-    mpb: &indicatif::MultiProgress,
-    _context: &DevnetContext,
-) -> HylixResult<()> {
-    // Add the main progress bar to the multi-progress
-    let main_pb = mpb.add(create_progress_bar());
-
-    // Create Bob account
-    main_pb.set_message("Creating test account: Bob...");
-    let bob_success = execute_command_with_progress(
-        &mpb,
-        "Bob account creation",
-        "npx",
-        &["--yes", "hyli-wallet-cli", "register", "bob", "hylisecure", "vip"]
-    ).await?;
-
-    if !bob_success {
-        log_warning("Bob account creation completed with warnings");
-    } else {
-        main_pb.set_message("Bob account created successfully");
-    }
-
-    // Create Alice account
-    main_pb.set_message("Creating test account: Alice...");
-    let alice_success = execute_command_with_progress(
-        &mpb,
-        "Alice account creation",
-        "npx",
-        &["hyli-wallet-cli", "register", "alice", "hylisecure", "vip"]
-    ).await?;
-
-    if !alice_success {
-        log_warning("Alice account creation completed with warnings");
-    } else {
-        main_pb.set_message("Alice account created successfully");
-    }
-
-    // Clear the main progress bar
-    main_pb.finish_and_clear();
-
-    // Clear all progress bars from the multi-progress
-    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
-
-    log_info("Test accounts created:");
-    log_info("  - Bob (password: hylisecure)");
-    log_info("  - Alice (password: hylisecure)");
-
-    Ok(())
-}
-
-/// Send funds to test accounts
-async fn send_funds_to_test_accounts(mpb: &indicatif::MultiProgress, _context: &DevnetContext) -> HylixResult<()> {
-    let pb = mpb.add(create_progress_bar());
-    pb.set_message("Sending funds to test accounts...");
-
-    let bob_success = execute_command_with_progress(
-        &mpb,
-        "Bob account funding",
-        "npx",
-        &["hyli-wallet-cli", "transfer", "hyli", "hylisecure", "1000", "oranj", "bob@wallet"]
-    ).await?;
-
-    if !bob_success {
-        log_warning("Bob account funding completed with warnings");
-    } else {
-        pb.set_message("Bob account funded successfully");
-    }
-
-    pb.set_message("Sending funds to Alice account...");
-
-    let alice_success = execute_command_with_progress(
-        &mpb,
-        "Alice account funding",
-        "npx",
-        &["hyli-wallet-cli", "transfer", "hyli", "hylisecure", "1000", "oranj", "alice@wallet"]
-    ).await?;
-
-    if !alice_success {
-        log_warning("Alice account funding completed with warnings");
-    } else {
-        pb.set_message("Alice account funded successfully");
-    }
-
-    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
-
-    log_info("Test accounts funded:");
-    log_info("  - Bob (1000 oranj)");
-    log_info("  - Alice (1000 oranj)");
 
     Ok(())
 }

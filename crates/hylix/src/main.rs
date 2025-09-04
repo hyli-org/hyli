@@ -90,6 +90,9 @@ enum DevnetAction {
         /// Reset to fresh state
         #[arg(long)]
         reset: bool,
+        /// Create and fund test accounts after starting devnet
+        #[arg(long)]
+        bake: bool,
     },
     /// Stop the local devnet
     #[command(alias = "st")]
@@ -103,7 +106,13 @@ enum DevnetAction {
         /// Reset to fresh state
         #[arg(long)]
         reset: bool,
+        /// Create and fund test accounts after restarting devnet
+        #[arg(long)]
+        bake: bool,
     },
+    /// Create and fund test accounts
+    #[command(alias = "b")]
+    Bake,
     /// Fork a running network
     #[command(alias = "f")]
     Fork {
@@ -141,11 +150,12 @@ async fn main() -> Result<()> {
         }
         Commands::Devnet { action } => {
             let devnet_action = match action {
-                DevnetAction::Start { reset } => commands::devnet::DevnetAction::Start { reset },
+                DevnetAction::Start { reset, bake } => commands::devnet::DevnetAction::Start { reset, bake },
                 DevnetAction::Stop => commands::devnet::DevnetAction::Stop,
-                DevnetAction::Restart { reset } => commands::devnet::DevnetAction::Restart { reset },
+                DevnetAction::Restart { reset, bake } => commands::devnet::DevnetAction::Restart { reset, bake },
                 DevnetAction::Status => commands::devnet::DevnetAction::Status,
                 DevnetAction::Fork { endpoint } => commands::devnet::DevnetAction::Fork { endpoint },
+                DevnetAction::Bake => commands::devnet::DevnetAction::Bake,
             };
             commands::devnet::execute(devnet_action).await?;
         }
