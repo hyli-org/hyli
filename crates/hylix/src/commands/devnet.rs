@@ -149,23 +149,27 @@ async fn start_devnet(reset: bool, context: &DevnetContext) -> HylixResult<()> {
     }
 
     create_docker_network(&mpb).await?;
-    log_success("[1/5] Docker network created");
+    log_success("[1/6] Docker network created");
 
     // Start the local node
     start_local_node(&mpb, context).await?;
-    log_success("[2/5] Local node started");
+    log_success("[2/6] Local node started");
 
     // Start indexer
     start_indexer(&mpb, context).await?;
-    log_success("[3/5] Indexer started");
+    log_success("[3/6] Indexer started");
 
     // Setup wallet app
     start_wallet_app(&mpb, context).await?;
-    log_success("[4/5] Wallet app started");
+    log_success("[4/6] Wallet app started");
 
     // Create pre-funded test accounts
     create_test_accounts(&mpb, context).await?;
-    log_success("[5/5] Test accounts created");
+    log_success("[5/6] Test accounts created");
+
+    // Send funds to test accounts
+    send_funds_to_test_accounts(&mpb, context).await?;
+    log_success("[6/6] Funds sent to test accounts");
 
     check_devnet_status(context).await?;
 
@@ -575,7 +579,7 @@ async fn create_test_accounts(
         &mpb,
         "Bob account creation",
         "npx",
-        &["--yes", "hyli-wallet-cli", "bob", "hylisecure", "vip"]
+        &["--yes", "hyli-wallet-cli", "register", "bob", "hylisecure", "vip"]
     ).await?;
 
     if !bob_success {
@@ -590,7 +594,7 @@ async fn create_test_accounts(
         &mpb,
         "Alice account creation",
         "npx",
-        &["hyli-wallet-cli", "alice", "hylisecure", "vip"]
+        &["hyli-wallet-cli", "register", "alice", "hylisecure", "vip"]
     ).await?;
 
     if !alice_success {
@@ -608,6 +612,48 @@ async fn create_test_accounts(
     log_info("Test accounts created:");
     log_info("  - Bob (password: hylisecure)");
     log_info("  - Alice (password: hylisecure)");
+
+    Ok(())
+}
+
+/// Send funds to test accounts
+async fn send_funds_to_test_accounts(mpb: &indicatif::MultiProgress, _context: &DevnetContext) -> HylixResult<()> {
+    let pb = mpb.add(create_progress_bar());
+    pb.set_message("Sending funds to test accounts...");
+
+    let bob_success = execute_command_with_progress(
+        &mpb,
+        "Bob account funding",
+        "npx",
+        &["hyli-wallet-cli", "transfer", "hyli", "hylisecure", "1000", "oranj", "bob@wallet"]
+    ).await?;
+
+    if !bob_success {
+        log_warning("Bob account funding completed with warnings");
+    } else {
+        pb.set_message("Bob account funded successfully");
+    }
+
+    pb.set_message("Sending funds to Alice account...");
+
+    let alice_success = execute_command_with_progress(
+        &mpb,
+        "Alice account funding",
+        "npx",
+        &["hyli-wallet-cli", "transfer", "hyli", "hylisecure", "1000", "oranj", "alice@wallet"]
+    ).await?;
+
+    if !alice_success {
+        log_warning("Alice account funding completed with warnings");
+    } else {
+        pb.set_message("Alice account funded successfully");
+    }
+
+    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+
+    log_info("Test accounts funded:");
+    log_info("  - Bob (1000 oranj)");
+    log_info("  - Alice (1000 oranj)");
 
     Ok(())
 }
