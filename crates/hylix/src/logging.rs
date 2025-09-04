@@ -58,6 +58,7 @@ pub async fn execute_command_with_progress(
     command_name: &str,
     program: &str,
     args: &[&str],
+    current_dir: Option<&str>,
 ) -> HylixResult<bool> {
     use std::process::Command;
     use std::io::{BufRead, BufReader};
@@ -65,6 +66,7 @@ pub async fn execute_command_with_progress(
     use std::collections::VecDeque;
 
     let mut cmd = Command::new(program)
+        .current_dir(current_dir.unwrap_or("."))
         .args(args)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

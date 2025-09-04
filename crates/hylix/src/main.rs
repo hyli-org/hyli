@@ -51,6 +51,9 @@ enum Commands {
         /// Clean build artifacts before building
         #[arg(long)]
         clean: bool,
+        /// Build frontend
+        #[arg(long)]
+        front: bool,
     },
     /// Run end-to-end tests
     #[command(alias = "t")]
@@ -148,8 +151,8 @@ async fn main() -> Result<()> {
         Commands::New { name, backend } => {
             commands::new::execute(name, backend).await?;
         }
-        Commands::Build { clean } => {
-            commands::build::execute(clean).await?;
+        Commands::Build { clean, front } => {
+            commands::build::execute(clean, front).await?;
         }
         Commands::Test { keep_alive } => {
             commands::test::execute(keep_alive).await?;

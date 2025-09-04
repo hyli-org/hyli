@@ -77,7 +77,8 @@ pub async fn create_test_accounts(
             &mpb,
             &task_name,
             "npx",
-            &["--yes", "hyli-wallet-cli", "register", &account.name, &account.password, &account.invite_code]
+            &["--yes", "hyli-wallet-cli", "register", &account.name, &account.password, &account.invite_code],
+            None
         ).await?;
 
         if !success {
@@ -123,7 +124,8 @@ pub async fn send_funds_to_test_accounts(mpb: &indicatif::MultiProgress, _contex
                 &amount_str, 
                 &fund.token, 
                 &destination
-            ]
+            ],
+            None
         ).await?;
 
         if !success {

@@ -270,7 +270,13 @@ async fn create_docker_network(mpb: &indicatif::MultiProgress) -> HylixResult<()
     let pb = mpb.add(create_progress_bar());
     pb.set_message("Creating docker network...");
 
-    let success = execute_command_with_progress(mpb, "docker network create", "docker", &["network", "create", "hyli-devnet"]).await?;
+    let success = execute_command_with_progress(
+        mpb, 
+        "docker network create", 
+        "docker", 
+        &["network", "create", "hyli-devnet"],
+        None
+    ).await?;
 
     if !success {
         return Err(HylixError::process("Failed to create Docker network".to_string()));
@@ -320,7 +326,7 @@ async fn start_local_node(mpb: &indicatif::MultiProgress, context: &DevnetContex
 
     args.push(image.to_string());
 
-    let success = execute_command_with_progress(mpb, "docker run", "docker", &args.iter().map(|s| s.as_str()).collect::<Vec<&str>>()).await?;
+    let success = execute_command_with_progress(mpb, "docker run", "docker", &args.iter().map(|s| s.as_str()).collect::<Vec<&str>>(), None).await?;
     
     if success {
         pb.set_message("Hyli node started successfully");
@@ -707,7 +713,7 @@ async fn pull_docker_image(mpb: &indicatif::MultiProgress, image: &str) -> Hylix
     let pb = mpb.add(create_progress_bar());
     pb.set_message(format!("Pulling docker image: {}", image));
 
-    let success = execute_command_with_progress(mpb, "docker pull", "docker", &["pull", image]).await?;
+    let success = execute_command_with_progress(mpb, "docker pull", "docker", &["pull", image], None).await?;
 
     if !success {
         return Err(HylixError::process("Failed to pull Docker image".to_string()));
