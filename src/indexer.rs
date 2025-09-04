@@ -402,21 +402,19 @@ impl NodeStateCallback for IndexerHandlerStore {
             }
             TxEvent::TxError(..) => {}
             // Skip registering unproven blobs
-            TxEvent::NewProof(..) => {}
-            TxEvent::BlobSettled(tx_id, _tx, blob, blob_index, proof_data, blob_proof_index) => {
+            TxEvent::NewBlobProof(..) => {}
+            TxEvent::BlobSettled(tx_id, _tx, blob, blob_index, proof_data) => {
                 // Can be None for executed blobs
                 if let Some((_, _, proof_tx_id, hyli_output)) = proof_data {
                     self.blob_proof_outputs.0.push(format!(
-                        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+                        "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
                         tx_id.0,
                         tx_id.1,
                         proof_tx_id.0,
                         proof_tx_id.1,
                         blob_index,
-                        blob_proof_index, // blob_proof_output_index <- this needed?
                         blob.contract_name,
                         serde_json::to_string(hyli_output).unwrap_or_default(),
-                        true, // settled
                     ));
                 }
             }
@@ -671,7 +669,7 @@ impl Indexer {
         copy.read_from(&mut self.handler_store.blobs).await?;
         copy.finish().await?;
 
-        let mut copy = transaction.copy_in_raw("COPY blob_proof_outputs (blob_parent_dp_hash, blob_tx_hash, proof_parent_dp_hash, proof_tx_hash, blob_index, blob_proof_output_index, contract_name, hyli_output, settled) FROM STDIN WITH (FORMAT TEXT)").await?;
+        let mut copy = transaction.copy_in_raw("COPY blob_proof_outputs (blob_parent_dp_hash, blob_tx_hash, proof_parent_dp_hash, proof_tx_hash, blob_index, contract_name, hyli_output) FROM STDIN WITH (FORMAT TEXT)").await?;
         copy.read_from(&mut self.handler_store.blob_proof_outputs)
             .await?;
         copy.finish().await?;

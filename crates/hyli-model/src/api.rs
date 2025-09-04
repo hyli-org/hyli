@@ -180,7 +180,7 @@ pub struct APIProofDetails {
     pub transaction_status: TransactionStatusDb,   // Status of the transaction
     pub timestamp: Option<TimestampMs>,            // Timestamp of the transaction (block timestamp)
     pub lane_id: Option<LaneId>,                   // Lane ID where the transaction got disseminated
-    pub proof_outputs: Vec<(TxHash, u32, u32, serde_json::Value)>,
+    pub proof_outputs: Vec<(TxHash, u32, serde_json::Value)>,
 }
 
 #[serde_as]

@@ -80,7 +80,6 @@ pub struct HandledBlobProofOutput {
     pub verifier: Verifier,
     pub program_id: ProgramId,
     pub hyli_output: HyliOutput,
-    pub blob_proof_output_index: usize,
 }
 
 #[derive(

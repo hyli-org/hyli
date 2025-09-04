@@ -127,7 +127,6 @@ SELECT
     t.lane_id,
     array_remove(ARRAY_AGG(bpo.blob_tx_hash), NULL) AS blob_tx_hashes,
     array_remove(ARRAY_AGG(bpo.blob_index), NULL) AS blob_tx_indexes,
-    array_remove(ARRAY_AGG(bpo.blob_proof_output_index), NULL) AS blob_proof_output_indexes,
     array_remove(ARRAY_AGG(bpo.hyli_output), NULL) AS proof_outputs
 FROM transactions t
 LEFT JOIN blocks b 
@@ -151,17 +150,13 @@ LIMIT 1;
             let api_tx: TransactionDb = FromRow::from_row(&row)?;
             let blob_tx_hashes: Vec<String> = row.try_get("blob_tx_hashes")?;
             let blob_tx_indexes: Vec<i32> = row.try_get("blob_tx_indexes")?;
-            let blob_proof_output_indexes: Vec<i32> = row.try_get("blob_proof_output_indexes")?;
             let proof_outputs: Vec<serde_json::Value> = row.try_get("proof_outputs")?;
 
-            let proof_outputs: Vec<(TxHash, u32, u32, serde_json::Value)> = blob_tx_hashes
+            let proof_outputs: Vec<(TxHash, u32, serde_json::Value)> = blob_tx_hashes
                 .into_iter()
                 .zip(blob_tx_indexes)
-                .zip(blob_proof_output_indexes)
                 .zip(proof_outputs)
-                .map(|(((tx_hash, tx_idx), proof_idx), output)| {
-                    (tx_hash.into(), tx_idx as u32, proof_idx as u32, output)
-                })
+                .map(|((tx_hash, tx_idx), output)| (tx_hash.into(), tx_idx as u32, output))
                 .collect();
 
             Ok(APIProofDetails {

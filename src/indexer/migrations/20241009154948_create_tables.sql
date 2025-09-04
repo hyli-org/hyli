@@ -44,22 +44,20 @@ CREATE TABLE blobs (
 );
 create index idx_blobs_contract_name on blobs(contract_name);
 
--- This table stores one line for each hyli output in a VerifiedProof
+-- This table stores the blob proof used to settle a given transaction
 CREATE TABLE blob_proof_outputs (
     blob_parent_dp_hash  TEXT NOT NULL,         -- Foreign key linking to the BlobTransactions    
     blob_tx_hash  TEXT NOT NULL,         -- Foreign key linking to the BlobTransactions    
     proof_parent_dp_hash TEXT NOT NULL,
     proof_tx_hash TEXT NOT NULL,
     blob_index INT NOT NULL,            -- Index of the blob within the transaction
-    blob_proof_output_index INT NOT NULL, -- Index of the blob proof output within the proof
     contract_name TEXT NOT NULL,       -- Contract name associated with the blob
     hyli_output JSONB NOT NULL,        -- Additional metadata stored in JSONB format
-    settled BOOLEAN NOT NULL,       -- Was this blob proof output used in settlement ? 
-    PRIMARY KEY (proof_parent_dp_hash, proof_tx_hash, blob_parent_dp_hash, blob_tx_hash, blob_index, blob_proof_output_index),
+    PRIMARY KEY (proof_parent_dp_hash, proof_tx_hash, blob_parent_dp_hash, blob_tx_hash, blob_index),
     FOREIGN KEY (blob_parent_dp_hash, blob_tx_hash, blob_index) REFERENCES blobs(parent_dp_hash, tx_hash, blob_index) ON DELETE CASCADE,
     FOREIGN KEY (blob_tx_hash, blob_parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE,
     FOREIGN KEY (proof_tx_hash, proof_parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE,
-    UNIQUE (blob_parent_dp_hash, blob_tx_hash, blob_index, blob_proof_output_index)
+    UNIQUE (blob_parent_dp_hash, blob_tx_hash, blob_index)
 );
 
 CREATE TABLE contracts (
