@@ -1,5 +1,5 @@
 use crate::commands::devnet::DevnetContext;
-use crate::config::{BakeProfile, AccountConfig, FundConfig};
+use crate::config::{AccountConfig, FundConfig};
 use crate::error::{HylixError, HylixResult};
 use crate::logging::{create_progress_bar, execute_command_with_progress, log_info, log_success, log_warning};
 use client_sdk::rest_client::{NodeApiClient};
@@ -10,9 +10,14 @@ use std::time::Duration;
 pub async fn bake_devnet(mpb: &indicatif::MultiProgress, context: &DevnetContext) -> HylixResult<()> {
     // Create default profile if it doesn't exist
     context.config.create_default_profile()?;
+    
+    // Determine which profile to use: CLI argument, context profile, or default
+    let profile_name = context.profile
+        .as_ref()
+        .unwrap_or(&context.config.bake_profile);
             
     // Load the profile
-    let profile = context.config.load_bake_profile(&context.config.bake_profile)?;
+    let profile = context.config.load_bake_profile(profile_name)?;
 
     // Check if devnet is running
     if !is_devnet_running(&context).await? {

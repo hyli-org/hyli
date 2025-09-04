@@ -18,18 +18,19 @@ fn build_env_args(env_vars: &[String]) -> Vec<String> {
 /// Devnet action enum
 #[derive(Debug, Clone)]
 pub enum DevnetAction {
-    Start { reset: bool, bake: bool },
+    Start { reset: bool, bake: bool, profile: Option<String> },
     Stop,
-    Restart { reset: bool, bake: bool },
+    Restart { reset: bool, bake: bool, profile: Option<String> },
     Status,
     Fork { endpoint: String },
-    Bake,
+    Bake { profile: Option<String> },
 }
 
 /// Context struct containing client and config for devnet operations
 pub struct DevnetContext {
     pub client: NodeApiHttpClient,
     pub config: HylixConfig,
+    pub profile: Option<String>,
 }
 
 impl DevnetContext {
@@ -37,7 +38,14 @@ impl DevnetContext {
     pub fn new(config: HylixConfig) -> HylixResult<Self> {
         let node_url = format!("http://localhost:{}", config.devnet.node_port);
         let client = NodeApiHttpClient::new(node_url)?;
-        Ok(Self { client, config })
+        Ok(Self { client, config, profile: None })
+    }
+
+    /// Create a new DevnetContext with a specific profile
+    pub fn new_with_profile(config: HylixConfig, profile: Option<String>) -> HylixResult<Self> {
+        let node_url = format!("http://localhost:{}", config.devnet.node_port);
+        let client = NodeApiHttpClient::new(node_url)?;
+        Ok(Self { client, config, profile })
     }
 }
 
@@ -48,18 +56,20 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
     let context = DevnetContext::new(config)?;
 
     match action {
-        DevnetAction::Start { reset, bake } => {
+        DevnetAction::Start { reset, bake, profile } => {
             if is_devnet_running(&context).await? {
                 log_info("Devnet is already running");
                 return Ok(());
             }
-            start_devnet(reset, bake, &context).await?;
+            let context_with_profile = DevnetContext::new_with_profile(context.config, profile)?;
+            start_devnet(reset, bake, &context_with_profile).await?;
         }
         DevnetAction::Stop => {
             stop_devnet(&context).await?;
         }
-        DevnetAction::Restart { reset, bake } => {
-            restart_devnet(reset, bake, &context).await?;
+        DevnetAction::Restart { reset, bake, profile } => {
+            let context_with_profile = DevnetContext::new_with_profile(context.config, profile)?;
+            restart_devnet(reset, bake, &context_with_profile).await?;
         }
         DevnetAction::Status => {
             check_devnet_status(&context).await?;
@@ -67,8 +77,9 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
         DevnetAction::Fork { endpoint } => {
             fork_devnet(&endpoint).await?;
         }
-        DevnetAction::Bake => {
-            bake_devnet(&indicatif::MultiProgress::new(), &context).await?;
+        DevnetAction::Bake { profile } => {
+            let context_with_profile = DevnetContext::new_with_profile(context.config, profile)?;
+            bake_devnet(&indicatif::MultiProgress::new(), &context_with_profile).await?;
         }
     }
 

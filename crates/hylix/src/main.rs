@@ -93,6 +93,9 @@ enum DevnetAction {
         /// Create and fund test accounts after starting devnet
         #[arg(long)]
         bake: bool,
+        /// Profile to use for baking (e.g., --profile=bobalice)
+        #[arg(long, value_name = "PROFILE")]
+        profile: Option<String>,
     },
     /// Stop the local devnet
     #[command(alias = "st")]
@@ -109,10 +112,16 @@ enum DevnetAction {
         /// Create and fund test accounts after restarting devnet
         #[arg(long)]
         bake: bool,
+        /// Profile to use for baking (e.g., --profile=bobalice)
+        #[arg(long, value_name = "PROFILE")]
+        profile: Option<String>,
     },
     /// Create and fund test accounts
     #[command(alias = "b")]
-    Bake,
+    Bake {
+        /// Profile to use for baking
+        profile: Option<String>,
+    },
     /// Fork a running network
     #[command(alias = "f")]
     Fork {
@@ -150,12 +159,12 @@ async fn main() -> Result<()> {
         }
         Commands::Devnet { action } => {
             let devnet_action = match action {
-                DevnetAction::Start { reset, bake } => commands::devnet::DevnetAction::Start { reset, bake },
+                DevnetAction::Start { reset, bake, profile } => commands::devnet::DevnetAction::Start { reset, bake, profile },
                 DevnetAction::Stop => commands::devnet::DevnetAction::Stop,
-                DevnetAction::Restart { reset, bake } => commands::devnet::DevnetAction::Restart { reset, bake },
+                DevnetAction::Restart { reset, bake, profile } => commands::devnet::DevnetAction::Restart { reset, bake, profile },
                 DevnetAction::Status => commands::devnet::DevnetAction::Status,
                 DevnetAction::Fork { endpoint } => commands::devnet::DevnetAction::Fork { endpoint },
-                DevnetAction::Bake => commands::devnet::DevnetAction::Bake,
+                DevnetAction::Bake { profile } => commands::devnet::DevnetAction::Bake { profile },
             };
             commands::devnet::execute(devnet_action).await?;
         }
