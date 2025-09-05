@@ -32,24 +32,24 @@ color-eyre = { version = "0.6", features = ["issue-url"] }
 tokio = { version = "1.0", features = ["full"] }
 
 # File system and path handling
-dirs = "5.0"
+dirs = "6.0.0"
 
 # HTTP client for downloading scaffolds
-reqwest = { version = "0.11", features = ["json", "stream"] }
+reqwest = { version = "0.12.23", features = ["json", "stream"] }
 
 # Process execution
-which = "4.4"
+which = "8.0.0"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.8"
+toml = "0.9.5"
 
 # Utilities
 anyhow = "1.0"
-thiserror = "1.0"
-indicatif = "0.17"
-console = "0.15"
+thiserror = "2.0"
+indicatif = "0.18"
+console = "0.16"
 
 # Hyli client SDK for REST API calls
 client-sdk = { workspace = true, features = ["rest"] }
