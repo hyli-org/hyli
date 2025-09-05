@@ -1,8 +1,16 @@
 use anyhow::anyhow;
-use axum::{extract::State, http::StatusCode, response::IntoResponse, Json, Router};
+use axum::{
+    extract::{Multipart, State},
+    http::StatusCode,
+    response::IntoResponse,
+    Json, Router,
+};
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_contract_sdk::TxHash;
-use hyli_model::{api::APIRegisterContract, RegisterContractAction, StructuredBlobData};
+use hyli_model::{
+    api::APIRegisterContract, ContractName, ProgramId, RegisterContractAction, StructuredBlobData,
+    Verifier,
+};
 use hyli_modules::{
     bus::{BusMessage, SharedMessageBus},
     modules::SharedBuildApiCtx,
@@ -48,6 +56,7 @@ pub async fn api(bus: &SharedMessageBus, ctx: &SharedBuildApiCtx) -> Router<()> 
         .routes(routes!(register_contract))
         .routes(routes!(send_blob_transaction))
         .routes(routes!(send_proof_transaction))
+        .routes(routes!(send_proof_transaction_multipart))
         .split_for_parts();
 
     if let Ok(mut o) = ctx.openapi.lock() {
@@ -133,6 +142,86 @@ pub async fn send_proof_transaction(
     Json(payload): Json<ProofTransaction>,
 ) -> Result<impl IntoResponse, AppError> {
     info!("Got proof transaction {}", payload.hashed());
+    handle_send(state, TransactionData::Proof(payload)).await
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProofTxMetaJson {
+    contract_name: ContractName,
+    program_id: ProgramId,
+    verifier: Verifier,
+}
+
+#[utoipa::path(
+    post,
+    path = "/tx/send/proof/multipart",
+    tag = "Mempool",
+    responses(
+        (status = OK, description = "Send proof transaction via multipart", body = TxHash),
+        (status = BAD_REQUEST, description = "Invalid multipart payload"),
+    )
+)]
+/// Expects a multipart form with two parts:
+/// - "meta": JSON metadata for the proof transaction (without the proof bytes)
+/// - "proof": Raw proof bytes
+/// Both parts are required.
+/// Implemented because some clients take too long to send compressed data on the regular endpoint.
+pub async fn send_proof_transaction_multipart(
+    State(state): State<RouterState>,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse, AppError> {
+    use hyli_model::ProofData;
+
+    let mut meta: Option<ProofTxMetaJson> = None;
+    let mut proof: Option<ProofData> = None;
+
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, anyhow!(e)))?
+    {
+        match field.name() {
+            Some("meta") => {
+                let text = field
+                    .text()
+                    .await
+                    .map_err(|e| AppError(StatusCode::BAD_REQUEST, anyhow!(e)))?;
+                meta = serde_json::from_str(&text)
+                    .map_err(|e| AppError(StatusCode::BAD_REQUEST, anyhow!(e)))
+                    .ok();
+            }
+            Some("proof") => {
+                let bytes = field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError(StatusCode::BAD_REQUEST, anyhow!(e)))?;
+                proof = Some(ProofData(bytes.to_vec()));
+            }
+            Some(name) => {
+                return Err(AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow!("unexpected multipart field name: {}", name),
+                ));
+            }
+            None => continue,
+        }
+    }
+
+    let (Some(meta), Some(proof)) = (meta, proof) else {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow!("multipart must include 'meta' JSON and 'proof' bytes parts"),
+        ));
+    };
+
+    let payload = ProofTransaction {
+        contract_name: meta.contract_name,
+        program_id: meta.program_id,
+        verifier: meta.verifier,
+        proof,
+    };
+
+    info!("Got proof transaction {} (multipart)", payload.hashed());
     handle_send(state, TransactionData::Proof(payload)).await
 }
 
