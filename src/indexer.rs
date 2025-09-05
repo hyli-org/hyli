@@ -166,6 +166,7 @@ pub(crate) struct IndexerHandlerStore {
     >,
     block_height: BlockHeight,
     block_hash: BlockHash,
+    block_time: TimestampMs,
     last_update: TimestampMs,
 
     // Intended to be temporary, for CSI & co.
@@ -243,6 +244,7 @@ impl Indexer {
         {
             self.handler_store.block_height = block.height();
             self.handler_store.block_hash = block.hashed();
+            self.handler_store.block_time = block.consensus_proposal.timestamp.clone();
 
             self.handler_store.blocks.push(BlockStore {
                 block_hash: self.handler_store.block_hash.clone(),
@@ -268,10 +270,14 @@ impl Indexer {
             }))?;
         }
 
-        // if last block is newer than 5sec dump store to db
+        // Occasionally dump to DB:
+        // - if we have more than conf.indexer.query_buffer_size events
+        // - if it's been more than 5s since last dump
+        // - if the block is recent (less than 1min old) we stream as fast as we can (buffering is mostly useful when catching up)
         let now = TimestampMsClock::now();
         if self.handler_store.tx_events.0.len() > self.conf.indexer.query_buffer_size
             || self.handler_store.last_update.0 + 5000 < now.0
+            || now.0 - self.handler_store.block_time.0 < 60 * 1000
         {
             log_error!(self.dump_store_to_db().await, "dumping to DB")?;
             self.handler_store.last_update = now;
