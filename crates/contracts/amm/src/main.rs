@@ -3,15 +3,19 @@
 
 extern crate alloc;
 
-use hyle_amm::Amm;
-use sdk::guest::{execute, GuestEnv, Risc0Env};
+use alloc::vec::Vec;
+use hyli_amm::Amm;
+use sdk::{
+    guest::{execute, GuestEnv, Risc0Env},
+    Calldata,
+};
 
 risc0_zkvm::guest::entry!(main);
 
 fn main() {
     let env = Risc0Env {};
-    let contract_input = env.read();
+    let (commitment_metadata, calldatas): (Vec<u8>, Vec<Calldata>) = env.read();
 
-    let (_, output) = execute::<Amm>(&contract_input);
-    env.commit(&output);
+    let output = execute::<Amm>(&commitment_metadata, &calldatas);
+    env.commit(output);
 }

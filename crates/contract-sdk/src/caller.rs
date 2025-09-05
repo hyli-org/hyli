@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
-use hyle_model::{Blob, ContractName, Identity, StructuredBlob};
+use hyli_model::{Blob, ContractName, Identity, StructuredBlob};
 
 /// ExecutionContext provides an implementation of data for the CallerCallee trait
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, Default)]
@@ -47,8 +47,7 @@ impl ExecutionContext {
                 Ok(())
             }
             None => Err(alloc::format!(
-                "Blob with contract name {} not found in callees",
-                contract_name
+                "Blob with contract name {contract_name} not found in callees"
             )),
         }
     }

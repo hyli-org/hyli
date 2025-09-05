@@ -1,11 +1,11 @@
 use anyhow::Context;
 use borsh::{BorshDeserialize, BorshSerialize};
 use identity_provider::IdentityVerification;
-use sdk::{utils::parse_raw_contract_input, Blob, ContractAction, ContractInput, ContractName};
+use sdk::{utils::parse_raw_calldata, Blob, Calldata, ContractAction, ContractName};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-use sdk::{HyleContract, RunResult};
+use sdk::{RunResult, ZkContract};
 use sha2::{Digest, Sha256};
 
 #[cfg(feature = "client")]
@@ -15,16 +15,18 @@ pub mod indexer;
 
 pub mod identity_provider;
 
-impl HyleContract for Hydentity {
-    fn execute(&mut self, contract_input: &ContractInput) -> RunResult {
-        let (action, exec_ctx) = parse_raw_contract_input(contract_input)?;
-        let private_input = std::str::from_utf8(&contract_input.private_input)
-            .map_err(|_| "Invalid UTF-8 sequence")?;
+impl sdk::FullStateRevert for Hydentity {}
+
+impl ZkContract for Hydentity {
+    fn execute(&mut self, calldata: &Calldata) -> RunResult {
+        let (action, exec_ctx) = parse_raw_calldata(calldata)?;
+        let private_input =
+            std::str::from_utf8(&calldata.private_input).map_err(|_| "Invalid UTF-8 sequence")?;
         let output = self.execute_identity_action(action, private_input);
 
         match output {
             Err(e) => Err(e),
-            Ok(output) => Ok((output, exec_ctx, vec![])),
+            Ok(output) => Ok((output.into_bytes(), exec_ctx, vec![])),
         }
     }
 
@@ -66,7 +68,7 @@ impl Hydentity {
     pub fn get_nonce(&self, username: &str) -> Result<u32, &'static str> {
         let info = self.get_identity_info(username)?;
         let state: AccountInfo =
-            serde_json::from_str(&info).map_err(|_| "Failed to parse accounf info")?;
+            serde_json::from_str(&info).map_err(|_| "Failed to parse account info")?;
         Ok(state.nonce)
     }
 

@@ -1,20 +1,19 @@
-//! # Hylé
+//! # Hyli
 //!
 //! *A sequencing and settlement layer to help you build provable apps that are minimally, yet sufficiently, onchain.*
 //!
-//! Repository for the [Hylé](https://hyle.eu) chain. This repository is for the work-in-progress rust client.
-//! The older (but still maintained) Cosmos SDK based client can be found at [hyle-cosmos](https://github.com/Hyle-org/hyle-cosmos).
+//! Repository for the [Hyli](https://hyli.org) chain. This repository is for the work-in-progress rust client.
 //!
 //! **Current status**: Work in progress
 //!
 //! ## Shortcuts to important pages
 //!
-//! * [Hyle contract sdk](../hyle_contract_sdk)
+//! * [Hyli contract sdk](../hyli_contract_sdk)
 //!
 //! ## Useful links
 //!
-//! * [Hylé website](https://www.hyle.eu/)
-//! * [Hylé documentation](https://docs.hyle.eu)
+//! * [Hyli website](https://www.hyli.org/)
+//! * [Hyli documentation](https://docs.hyli.org)
 //!
 //!
 
@@ -22,10 +21,10 @@ pub mod bus;
 pub mod consensus;
 pub mod data_availability;
 pub mod entrypoint;
+pub mod explorer;
 pub mod genesis;
 pub mod indexer;
 pub mod mempool;
-pub mod node_state;
 pub mod p2p;
 pub mod rest;
 pub mod single_node_consensus;
@@ -36,4 +35,3 @@ pub mod utils;
 pub mod tests;
 
 pub mod model;
-pub mod tools;

@@ -1,4 +1,0 @@
-Config(
-  id: "leader-1",
-  run_indexer: false,
-)

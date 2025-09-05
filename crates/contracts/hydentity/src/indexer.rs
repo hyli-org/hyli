@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::{identity_provider::IdentityVerification, AccountInfo, Hydentity, HydentityAction};
 use anyhow::{anyhow, Context, Result};
 use client_sdk::contract_indexer::{
@@ -16,10 +18,11 @@ use client_sdk::contract_indexer::{
     utoipa::{self, ToSchema},
     AppError,
 };
-use sdk::{info, Blob, BlobIndex, BlobTransaction, Identity, TxContext};
+use sdk::{error, info, Blob, BlobIndex, BlobTransaction, Identity, TxContext};
 use serde::Serialize;
 
 use client_sdk::contract_indexer::axum;
+
 impl ContractHandler for Hydentity {
     async fn api(store: ContractHandlerStore<Self>) -> (Router<()>, OpenApi) {
         let (router, api) = OpenApiRouter::default()
@@ -30,36 +33,39 @@ impl ContractHandler for Hydentity {
         (router.with_state(store), api)
     }
 
-    fn handle(
+    fn handle_transaction_success(
+        &mut self,
         tx: &BlobTransaction,
         index: BlobIndex,
-        mut state: Self,
-        _tx_context: TxContext,
-    ) -> Result<Self> {
+        _tx_context: Arc<TxContext>,
+    ) -> Result<Option<()>> {
         let Blob {
             contract_name,
             data,
         } = tx.blobs.get(index.0).context("Failed to get blob")?;
 
-        let action: HydentityAction = borsh::from_slice(&data.0)?;
-
+        let action: HydentityAction = match borsh::from_slice(&data.0) {
+            Ok(act) => act,
+            Err(e) => {
+                error!("Failed to deserialize action as ab Hydentity action: {}", e);
+                // Could not process the action, but it should not fail the execution
+                return Ok(None);
+            }
+        };
         match action {
             HydentityAction::RegisterIdentity { account } => {
                 let (name, hash) = Hydentity::parse_id(&account)?;
                 info!("🚀 Executed {contract_name}: {name} registered");
-                state
-                    .identities
-                    .insert(name, AccountInfo { hash, nonce: 0 });
+                self.identities.insert(name, AccountInfo { hash, nonce: 0 });
             }
             HydentityAction::VerifyIdentity { account, nonce: _ } => {
-                if let Some(id) = state.identities.get_mut(&account) {
+                if let Some(id) = self.identities.get_mut(&account) {
                     id.nonce += 1;
                 }
             }
             _ => {}
         }
-
-        Ok(state)
+        Ok(None)
     }
 }
 

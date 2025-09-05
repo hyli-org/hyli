@@ -1,0 +1,12 @@
+[package]
+name = "hyli-noir-tools"
+version.workspace = true
+edition.workspace = true
+homepage.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+hyli-verifiers = { workspace = true }
+tracing = { workspace = true, features = ["log"] }
+tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }

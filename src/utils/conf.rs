@@ -1,29 +1,57 @@
 use anyhow::{Context, Result};
 use config::{Config, Environment, File};
+use hyli_modules::modules::gcs_uploader::GCSConf;
+use hyli_modules::modules::websocket::WebSocketConfig;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::Arc};
+use serde_with::serde_as;
+use serde_with::DurationMilliSeconds;
+use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::Arc, time::Duration};
+use strum_macros::IntoStaticStr;
 
+#[serde_as]
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Consensus {
-    pub slot_duration: u64,
+    #[serde_as(as = "DurationMilliSeconds")]
+    pub slot_duration: Duration,
+    #[serde_as(as = "DurationMilliSeconds")]
+    pub timeout_after: Duration,
+    /// Checks during consensus that blocks have legit timestamps
+    pub timestamp_checks: TimestampCheck,
     /// Whether the network runs as a single node or with a multi-node consensus.
     pub solo: bool,
+    /// The timestamp of the genesis block, in seconds since the Unix epoch.
+    pub genesis_timestamp: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, IntoStaticStr)]
+pub enum TimestampCheck {
+    /// Checks that timestamps are not in the future, and not too old.
+    #[default]
+    Full,
+    /// Checks that timestamps are growing
+    Monotonic,
+    /// Does not check timestamps
+    NoCheck,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct GenesisConf {
     /// Initial bonded stakers and their stakes
     pub stakers: HashMap<String, u64>,
-    /// Faucer configuration
-    pub faucet_password: String,
+    /// Used for testing - if true, token balance will remain in the faucet.
+    pub keep_tokens_in_faucet: bool,
 }
 
 /// Configuration for the P2P layer
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct P2pConf {
     pub mode: P2pMode,
-    /// Server address for the P2P layer
+    /// Public IP address of the p2p server
+    pub public_address: String,
+    /// Port to listen for incoming connections
     pub server_port: u16,
+    /// Max frame length
+    pub max_frame_length: usize,
     /// IPs of peers to connect to
     pub peers: Vec<String>,
     /// Time in milliseconds between pings to peers
@@ -41,6 +69,39 @@ pub enum P2pMode {
     None,
 }
 
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub struct NodeWebSocketConfig {
+    /// Wether the WebSocket server is enabled
+    pub enabled: bool,
+    /// The port number to bind the WebSocket server to
+    pub server_port: u16,
+    /// The endpoint path for WebSocket connections
+    pub ws_path: String,
+    /// The endpoint path for health checks
+    pub health_path: String,
+    /// The interval at which to check for new peers
+    pub peer_check_interval: u64,
+    /// List of events to stream on the websocket
+    pub events: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct IndexerConf {
+    pub query_buffer_size: usize,
+    pub persist_proofs: bool,
+}
+
+impl From<NodeWebSocketConfig> for WebSocketConfig {
+    fn from(config: NodeWebSocketConfig) -> Self {
+        Self {
+            port: config.server_port,
+            ws_path: config.ws_path,
+            health_path: config.health_path,
+            peer_check_interval: Duration::from_millis(config.peer_check_interval),
+        }
+    }
+}
+
 pub type SharedConf = Arc<Conf>;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -48,8 +109,6 @@ pub struct Conf {
     /// Human-readable identifier for this node.
     pub id: String,
 
-    // Network host name
-    pub hostname: String,
     /// The log format to use - "json", "node" or "full" (default)
     pub log_format: String,
     /// Directory name to store node state.
@@ -58,6 +117,15 @@ pub struct Conf {
     /// Peer-to-peer layer configuration
     pub p2p: P2pConf,
 
+    // FastCatchup option, from the admin API of a running node.
+    pub run_fast_catchup: bool,
+    /// If false, skip fast catchup if there are already files present. If true, always fast-catchup on startup.
+    pub fast_catchup_override: bool,
+    /// Whether to also download older blocks after catchup.
+    pub fast_catchup_backfill: bool,
+    /// IP address to use for fast catchup
+    pub fast_catchup_from: String,
+
     // Validator options
     /// Consensus configuration
     pub consensus: Consensus,
@@ -65,12 +133,12 @@ pub struct Conf {
     pub genesis: GenesisConf,
 
     // Module options below
-    /// If full node: server address for the DA layer, which streams historical & new blocks. It might be used by indexers.
-    /// If "None", this is instead the address to connect to.
+    /// Public IP address of the DA port of the node.
+    pub da_public_address: String,
+    /// Server port for the DA API
     pub da_server_port: u16,
-
-    /// For a Da client
-    pub da_address: String,
+    /// Server port for the DA API
+    pub da_max_frame_length: usize,
 
     pub run_rest_server: bool,
     /// Server port for the REST API
@@ -78,19 +146,41 @@ pub struct Conf {
     /// Maximum body size for REST requests
     pub rest_server_max_body_size: usize,
 
+    pub run_admin_server: bool,
+    /// Server port for the admin API
+    pub admin_server_port: u16,
+    /// Maximum body size for admin requests
+    pub admin_server_max_body_size: usize,
+
     pub run_tcp_server: bool,
     /// Server port for the TCP API
     pub tcp_server_port: u16,
 
-    /// Whether to run the indexer
+    /// Whether to run the indexer (write to db)
     pub run_indexer: bool,
+    /// Whether to run the explorer (read from db)
+    pub run_explorer: bool,
+
     /// If running the indexer, the postgres address to connect to
     pub database_url: String,
+    /// When running only the indexer, the address of the DA server to connect to
+    pub da_read_from: String,
+    /// Timeout for DA client requests, in seconds, before it tries to reconnect to stream blocks
+    pub da_timeout_client_secs: u64,
+
+    /// Websocket configuration
+    pub websocket: NodeWebSocketConfig,
+
+    /// Configuration for the indexer module
+    pub indexer: IndexerConf,
+
+    /// GCSUploader configuration
+    pub gcs: GCSConf,
 }
 
 impl Conf {
     pub fn new(
-        config_file: Option<String>,
+        config_files: Vec<String>,
         data_directory: Option<String>,
         run_indexer: Option<bool>,
     ) -> Result<Self, anyhow::Error> {
@@ -99,12 +189,12 @@ impl Conf {
             config::FileFormat::Toml,
         ));
         // Priority order: config file, then environment variables, then CLI
-        if let Some(config_file) = config_file {
+        for config_file in config_files {
             s = s.add_source(File::with_name(&config_file).required(false));
         }
         let mut conf: Self = s
             .add_source(
-                Environment::with_prefix("hyle")
+                Environment::with_prefix("hyli")
                     .separator("__")
                     .prefix_separator("_")
                     .list_separator(",")
@@ -112,41 +202,19 @@ impl Conf {
                     .try_parsing(true),
             )
             .set_override_option("data_directory", data_directory)?
-            .set_override_option(
-                "tcp_server_port",
-                std::env::var("HYLE_TCP__SERVER__PORT")
-                    .ok()
-                    .and_then(|port| port.parse::<u16>().ok()), // Convertir en u16 si possible
-            )?
-            .set_override_option(
-                "rest_server_port",
-                std::env::var("HYLE_REST__SERVER__PORT")
-                    .ok()
-                    .and_then(|port| port.parse::<u16>().ok()), // Convertir en u16 si possible
-            )?
-            .set_override_option(
-                "da_server_port",
-                std::env::var("HYLE_DA__SERVER__PORT")
-                    .ok()
-                    .and_then(|port| port.parse::<u16>().ok()), // Convertir en u16 si possible
-            )?
-            .set_override_option(
-                "da_server_port",
-                std::env::var("HYLE_DA__SERVER__PORT")
-                    .ok()
-                    .and_then(|port| port.parse::<u16>().ok()), // Convertir en u16 si possible
-            )?
-            .set_override(
-                "hostname",
-                std::env::var("HOSTNAME").unwrap_or("localhost".to_string()),
-            )?
             .set_override_option("run_indexer", run_indexer)?
+            .set_override_option("run_explorer", run_indexer)?
             .build()?
             .try_deserialize()?;
+        // Mostly for convenience, ignore ourself from the peers list
+        conf.p2p
+            .peers
+            .retain(|peer| peer != &conf.p2p.public_address);
+
         if conf.consensus.solo {
             conf.genesis.stakers.insert(
                 conf.id.clone(),
-                match std::env::var("HYLE_SINGLE_NODE_STAKE") {
+                match std::env::var("HYLI_SINGLE_NODE_STAKE") {
                     Ok(stake) => stake.parse::<u64>().context("Failed to parse stake"),
                     Err(e) => Err(Into::into(e)),
                 }
@@ -165,40 +233,25 @@ mod tests {
 
     #[test]
     fn test_load_default_conf() {
-        assert_ok!(Conf::new(None, None, None));
+        assert_ok!(Conf::new(vec![], None, None));
     }
 
     #[test]
-    fn test_override_tcp_server_port() {
-        let conf = Conf::new(None, None, None).unwrap();
-        assert_eq!(conf.tcp_server_port, 1414);
-
-        std::env::set_var("HYLE_TCP__SERVER__PORT", "9090");
-        let conf = Conf::new(None, None, None).unwrap();
-        assert_eq!(conf.tcp_server_port, 9090);
+    fn test_override_da_public_address() {
+        let conf = Conf::new(vec![], None, None).unwrap();
+        assert_eq!(conf.da_public_address, "127.0.0.1:4141");
+        // All single underscores as there is no nesting.
+        std::env::set_var("HYLI_DA_PUBLIC_ADDRESS", "127.0.0.1:9090");
+        let conf = Conf::new(vec![], None, None).unwrap();
+        assert_eq!(conf.da_public_address, "127.0.0.1:9090");
     }
     #[test]
-    fn test_override_rest_server_port() {
-        let conf = Conf::new(None, None, None).unwrap();
-        assert_eq!(conf.rest_server_port, 4321);
-        std::env::set_var("HYLE_REST__SERVER__PORT", "9090");
-        let conf = Conf::new(None, None, None).unwrap();
-        assert_eq!(conf.rest_server_port, 9090);
-    }
-    #[test]
-    fn test_override_da_server_port() {
-        let conf = Conf::new(None, None, None).unwrap();
-        assert_eq!(conf.da_server_port, 4141);
-        std::env::set_var("HYLE_DA__SERVER__PORT", "9090");
-        let conf = Conf::new(None, None, None).unwrap();
-        assert_eq!(conf.da_server_port, 9090);
-    }
-    #[test]
-    fn test_override_hostname() {
-        let conf = Conf::new(None, None, None).unwrap();
-        assert_eq!(conf.hostname, "localhost");
-        std::env::set_var("HOSTNAME", "hyli-node");
-        let conf = Conf::new(None, None, None).unwrap();
-        assert_eq!(conf.hostname, "hyli-node");
+    fn test_override_p2p_public_address() {
+        let conf = Conf::new(vec![], None, None).unwrap();
+        assert_eq!(conf.p2p.public_address, "127.0.0.1:1231");
+        // Note the double underscore
+        std::env::set_var("HYLI_P2P__PUBLIC_ADDRESS", "127.0.0.1:9090");
+        let conf = Conf::new(vec![], None, None).unwrap();
+        assert_eq!(conf.p2p.public_address, "127.0.0.1:9090");
     }
 }

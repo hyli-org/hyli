@@ -1,18 +1,27 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
-use crate::bus::command_response::{CmdRespClient, Query};
+use crate::bus::command_response::CmdRespClient;
 use crate::bus::BusClientSender;
+use crate::consensus::ConfirmAckMarker;
 use crate::consensus::{CommittedConsensusProposal, ConsensusEvent, QueryConsensusInfo};
 use crate::genesis::GenesisEvent;
 use crate::mempool::QueryNewCut;
-use crate::model::{utils::get_current_timestamp_ms, *};
-use crate::module_handle_messages;
+use crate::model::*;
 use crate::utils::conf::SharedConf;
-use crate::utils::crypto::SharedBlstCrypto;
-use crate::utils::modules::module_bus_client;
-use crate::{model::SharedRunContext, utils::modules::Module};
 use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_crypto::SharedBlstCrypto;
+use hyli_model::utils::TimestampMs;
+use hyli_modules::bus::command_response::Query;
+use hyli_modules::bus::SharedMessageBus;
+use hyli_modules::modules::admin::{
+    QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse,
+};
+use hyli_modules::modules::module_bus_client;
+use hyli_modules::modules::Module;
+use hyli_modules::{log_error, module_handle_messages};
+use hyli_net::clock::TimestampMsClock;
 use staking::state::Staking;
 use tracing::{debug, warn};
 
@@ -21,6 +30,7 @@ struct SingleNodeConsensusBusClient {
     sender(ConsensusEvent),
     sender(Query<QueryNewCut, Cut>),
     receiver(Query<QueryConsensusInfo, ConsensusInfo>),
+    receiver(Query<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse>),
     receiver(GenesisEvent),
 }
 }
@@ -32,6 +42,7 @@ struct SingleNodeConsensusStore {
     last_consensus_proposal_hash: ConsensusProposalHash,
     last_slot: u64,
     last_cut: Cut,
+    last_timestamp: TimestampMs,
 }
 
 pub struct SingleNodeConsensus {
@@ -51,9 +62,8 @@ pub struct SingleNodeConsensus {
 impl Module for SingleNodeConsensus {
     type Context = SharedRunContext;
 
-    async fn build(ctx: Self::Context) -> Result<Self> {
+    async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let file = ctx
-            .common
             .config
             .data_directory
             .clone()
@@ -61,19 +71,19 @@ impl Module for SingleNodeConsensus {
 
         let store: SingleNodeConsensusStore = Self::load_from_disk_or_default(file.as_path());
 
-        let bus = SingleNodeConsensusBusClient::new_from_bus(ctx.common.bus.new_handle()).await;
-
-        let api = super::consensus::api::api(&ctx.common).await;
-        if let Ok(mut guard) = ctx.common.router.lock() {
+        let api = super::consensus::api::api(&bus, &ctx).await;
+        if let Ok(mut guard) = ctx.api.router.lock() {
             if let Some(router) = guard.take() {
                 guard.replace(router.nest("/v1/consensus", api));
             }
         }
 
+        let bus = SingleNodeConsensusBusClient::new_from_bus(bus.new_handle()).await;
+
         Ok(SingleNodeConsensus {
             bus,
-            crypto: ctx.node.crypto.clone(),
-            config: ctx.common.config.clone(),
+            crypto: ctx.crypto.clone(),
+            config: ctx.config.clone(),
             store,
             file: Some(file),
         })
@@ -81,6 +91,17 @@ impl Module for SingleNodeConsensus {
 
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
         self.start()
+    }
+
+    async fn persist(&mut self) -> Result<()> {
+        if let Some(file) = &self.file {
+            _ = log_error!(
+                Self::save_on_disk(file.as_path(), &self.store),
+                "Persisting single node consensus state"
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -91,7 +112,7 @@ impl SingleNodeConsensus {
             tracing::trace!("Doing genesis");
 
             let should_shutdown = module_handle_messages! {
-                on_bus self.bus,
+                on_self self,
                 listen<GenesisEvent> msg => {
                     #[allow(clippy::expect_used, reason="We want to fail to start with misconfigured genesis block")]
                     match msg {
@@ -130,33 +151,32 @@ impl SingleNodeConsensus {
             tracing::trace!("Genesis block done");
         }
 
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(
+        self.store.last_timestamp = TimestampMsClock::now();
+
+        let mut interval = tokio::time::interval(std::cmp::min(
             self.config.consensus.slot_duration,
+            Duration::from_millis(250),
         ));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         interval.tick().await; // First tick is immediate
 
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
             command_response<QueryConsensusInfo, ConsensusInfo> _ => {
-                let slot = 0;
+                let slot = self.store.last_slot;
                 let view = 0;
                 let round_leader = self.crypto.validator_pubkey().clone();
+                let last_timestamp = TimestampMsClock::now();
                 let validators = vec![];
-                Ok(ConsensusInfo { slot, view, round_leader, validators })
+                Ok(ConsensusInfo { slot, view, round_leader, last_timestamp, validators })
+            },
+            command_response<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse> _ => {
+                Ok(QueryConsensusCatchupStoreResponse(vec![]))
             },
             _ = interval.tick() => {
                 self.handle_new_slot_tick().await?;
             },
         };
-        if let Some(file) = &self.file {
-            if let Err(e) = Self::save_on_disk(file.as_path(), &self.store) {
-                warn!(
-                    "Failed to save consensus single node storage on disk: {}",
-                    e
-                );
-            }
-        }
 
         Ok(())
     }
@@ -165,34 +185,44 @@ impl SingleNodeConsensus {
         // Query a new cut to Mempool in order to create a new CommitCut
         match self
             .bus
-            .request(QueryNewCut(self.store.staking.clone()))
+            .shutdown_aware_request::<Self>(QueryNewCut {
+                staking: self.store.staking.clone(),
+                full: true,
+            })
             .await
         {
             Ok(cut) => {
+                if cut == self.store.last_cut
+                    && TimestampMsClock::now()
+                        < self.store.last_timestamp.clone() + self.config.consensus.slot_duration
+                {
+                    debug!("No new cut, skipping commit");
+                    return Ok(());
+                }
                 self.store.last_cut = cut.clone();
             }
             Err(err) => {
-                // In case of an error, we reuse the last cut to avoid being considered byzantine
-                tracing::error!("Error while requesting new cut: {:?}", err);
+                tracing::warn!("Error while requesting new cut: {:?}", err);
             }
         };
+
         let new_slot = self.store.last_slot + 1;
         let consensus_proposal = ConsensusProposal {
             slot: new_slot,
-            timestamp: get_current_timestamp_ms(),
+            timestamp: TimestampMsClock::now(),
             cut: self.store.last_cut.clone(),
             staking_actions: vec![],
             parent_hash: std::mem::take(&mut self.store.last_consensus_proposal_hash),
         };
 
+        self.store.last_timestamp = consensus_proposal.timestamp.clone();
         self.store.last_consensus_proposal_hash = consensus_proposal.hashed();
 
-        let certificate = self.crypto.sign_aggregate(
-            ConsensusNetMessage::ConfirmAck(consensus_proposal.hashed()),
-            &[],
-        )?;
+        let certificate = self
+            .crypto
+            .sign_aggregate((consensus_proposal.hashed(), ConfirmAckMarker), &[])?;
 
-        _ = self.bus.send(ConsensusEvent::CommitConsensusProposal(
+        self.bus.send(ConsensusEvent::CommitConsensusProposal(
             CommittedConsensusProposal {
                 staking: Staking::default(),
                 consensus_proposal,
@@ -212,15 +242,19 @@ mod tests {
     use crate::bus::dont_use_this::get_receiver;
     use crate::bus::metrics::BusMetrics;
     use crate::bus::{bus_client, SharedMessageBus};
-    use crate::handle_messages;
     use crate::utils::conf::Conf;
-    use crate::utils::crypto::BlstCrypto;
     use anyhow::Result;
+    use hyli_crypto::BlstCrypto;
+    use hyli_modules::bus::dont_use_this::get_sender;
+    use hyli_modules::handle_messages;
+    use hyli_modules::modules::signal::ShutdownModule;
     use std::sync::Arc;
-    use tokio::sync::broadcast::Receiver;
+    use tokio::sync::broadcast::{Receiver, Sender};
 
     pub struct TestContext {
         consensus_event_receiver: Receiver<ConsensusEvent>,
+        #[allow(dead_code)]
+        shutdown_sender: Sender<ShutdownModule>,
         single_node_consensus: SingleNodeConsensus,
     }
 
@@ -238,6 +272,7 @@ mod tests {
             let store = SingleNodeConsensusStore::default();
 
             let consensus_event_receiver = get_receiver::<ConsensusEvent>(&shared_bus).await;
+            let shutdown_sender = get_sender::<ShutdownModule>(&shared_bus).await;
             let bus = SingleNodeConsensusBusClient::new_from_bus(shared_bus.new_handle()).await;
 
             // Initialize Mempool
@@ -261,6 +296,7 @@ mod tests {
 
             TestContext {
                 consensus_event_receiver,
+                shutdown_sender,
                 single_node_consensus,
             }
         }

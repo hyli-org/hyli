@@ -10,7 +10,7 @@ use client_sdk::contract_indexer::{
     utoipa_axum::{router::OpenApiRouter, routes},
     AppError, ContractHandler, ContractHandlerStore,
 };
-use sdk::*;
+use sdk::Identity;
 use serde::Serialize;
 
 use crate::*;

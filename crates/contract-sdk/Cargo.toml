@@ -1,27 +1,35 @@
 [package]
-name = "hyle-contract-sdk"
-description = "Hyle smart contract SDK"
+name = "hyli-contract-sdk"
+description = "Hyli smart contract SDK"
 license = "MIT"
 version = { workspace = true }
 edition = { workspace = true }
 homepage = { workspace = true }
 repository = { workspace = true }
-rust-version = "1.81"
+rust-version = "1.82"
+
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+unused_result_ok = "warn"
+indexing_slicing = "warn"
+undocumented_unsafe_blocks = "warn"
 
 [dependencies]
-hyle-model = { workspace = true, default-features = false }
-serde = { version = "1.0", default-features = false, features = [
-  "derive",
-  "alloc",
-] }
-borsh = "1.5.6"
-tracing = { version = "0.1", optional = true }
+hyli-model = { workspace = true, default-features = false }
+serde = { workspace = true, features = ["derive", "alloc"] }
+sha2 = { workspace = true }                                  # precompile patched at workspace root
+borsh = { workspace = true }
+tracing = { workspace = true, optional = true }
 
-risc0-zkvm = { version = "1.2.4", default-features = false, optional = true }
-sp1-zkvm = { version = "4.1.3", optional = true }
+sparse-merkle-tree = { workspace = true, optional = true }
+
+risc0-zkvm = { workspace = true, optional = true }
+sp1-zkvm = { workspace = true, optional = true, features = ["lib"] }
 
 [features]
 risc0 = ["dep:risc0-zkvm"]
 sp1 = ["dep:sp1-zkvm"]
+smt = ["dep:sparse-merkle-tree"]
 tracing = ["dep:tracing"]
-full-model = ["hyle-model/full"]
+full-model = ["hyli-model/full"]

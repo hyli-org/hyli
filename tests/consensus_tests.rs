@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use hyle::log_error;
+use hyli_modules::log_error;
 
 use anyhow::Result;
 use fixtures::ctx::E2ECtx;
@@ -10,21 +10,26 @@ mod fixtures;
 mod e2e_consensus {
 
     use client_sdk::helpers::risc0::Risc0Prover;
+    use client_sdk::rest_client::NodeApiClient;
     use client_sdk::transaction_builder::{ProvableBlobTx, TxExecutor, TxExecutorBuilder};
     use fixtures::test_helpers::send_transaction;
-    use hydentity::client::{register_identity, verify_identity};
+    use hydentity::client::tx_executor_handler::{register_identity, verify_identity};
     use hydentity::Hydentity;
-    use hyle::genesis::States;
-    use hyle_contract_sdk::HyleContract;
-    use hyle_contract_sdk::Identity;
-    use hyle_contracts::{HYDENTITY_ELF, HYLLAR_ELF, STAKING_ELF};
-    use hyle_model::{ContractName, StateCommitment};
-    use hyllar::client::transfer;
+    use hyli::genesis::States;
+    use hyli_contract_sdk::Identity;
+    use hyli_contract_sdk::ZkContract;
+    use hyli_contracts::{
+        HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID, STAKING_ELF, STAKING_ID,
+    };
+    use hyli_model::{ContractName, StateCommitment, TxHash};
+    use hyllar::client::tx_executor_handler::transfer;
     use hyllar::erc20::ERC20;
     use hyllar::{Hyllar, FAUCET_ID};
-    use staking::client::{delegate, stake};
+    use staking::client::tx_executor_handler::{delegate, stake};
     use staking::state::Staking;
     use tracing::{info, warn};
+
+    use crate::fixtures::test_helpers::wait_height;
 
     use super::*;
 
@@ -51,6 +56,7 @@ mod e2e_consensus {
         let joining_client = ctx.add_node().await?;
 
         let node_info = joining_client.get_node_info().await?;
+        wait_height(joining_client, 2).await?;
 
         assert!(node_info.pubkey.is_some());
 
@@ -89,12 +95,15 @@ mod e2e_consensus {
 
         let mut tx_ctx = TxExecutorBuilder::new(states)
             // Replace prover binaries for non-reproducible mode.
-            .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
-            .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF))
-            .with_prover("staking".into(), Risc0Prover::new(STAKING_ELF))
+            .with_prover(
+                "hydentity".into(),
+                Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+            )
+            .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
+            .with_prover("staking".into(), Risc0Prover::new(STAKING_ELF, STAKING_ID))
             .build();
 
-        let node_identity = Identity(format!("{}.hydentity", node_info.id));
+        let node_identity = Identity(format!("{}@hydentity", node_info.id));
         {
             let mut transaction = ProvableBlobTx::new(node_identity.clone());
 
@@ -173,8 +182,9 @@ mod e2e_consensus {
         tx_ctx: &mut TxExecutor<States>,
         id: String,
         amount: u128,
-    ) -> Result<()> {
-        let identity = Identity(format!("{}.hydentity", id));
+    ) -> Result<Vec<TxHash>> {
+        let mut tx_hashes = vec![];
+        let identity = Identity(format!("{id}@hydentity"));
         {
             let mut transaction = ProvableBlobTx::new(identity.clone());
 
@@ -185,7 +195,7 @@ mod e2e_consensus {
         }
 
         {
-            let mut transaction = ProvableBlobTx::new("faucet.hydentity".into());
+            let mut transaction = ProvableBlobTx::new("faucet@hydentity".into());
 
             verify_identity(
                 &mut transaction,
@@ -203,9 +213,10 @@ mod e2e_consensus {
 
             let tx_hash = send_transaction(ctx.client(), transaction, tx_ctx).await;
             tracing::warn!("Transfer TX Hash: {:?}", tx_hash);
+            tx_hashes.push(tx_hash);
         }
 
-        Ok(())
+        Ok(tx_hashes)
     }
 
     #[test_log::test(tokio::test)]
@@ -274,8 +285,11 @@ mod e2e_consensus {
 
         TxExecutorBuilder::new(states)
             // Replace prover binaries for non-reproducible mode.
-            .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
-            .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF))
+            .with_prover(
+                "hydentity".into(),
+                Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+            )
+            .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
             .build()
     }
 
@@ -283,13 +297,31 @@ mod e2e_consensus {
     async fn can_restart_single_node_after_txs() -> Result<()> {
         let mut ctx = E2ECtx::new_single_with_indexer(500).await?;
 
+        ctx.wait_indexer_height(1).await?;
+
         // Gen a few txs
         let mut tx_ctx = init_states(&mut ctx).await;
 
         warn!("Starting generating txs");
 
-        for i in 0..6 {
-            _ = gen_txs(&mut ctx, &mut tx_ctx, format!("alex{}", i), 100 + i).await;
+        for i in 0..2 {
+            _ = gen_txs(&mut ctx, &mut tx_ctx, format!("alex{i}"), 100 + i).await?;
+        }
+
+        // Wait until it's processed.
+        let mut state: Hyllar;
+        loop {
+            let s: Result<Hyllar> = ctx
+                .indexer_client()
+                .fetch_current_state(&ContractName::new("hyllar"))
+                .await;
+            if let Ok(s) = s {
+                state = s;
+                if state.balance_of("alex1@hydentity").is_ok() {
+                    break;
+                }
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         }
 
         ctx.stop_node(0).await?;
@@ -297,20 +329,28 @@ mod e2e_consensus {
 
         ctx.wait_height(0).await?;
 
-        for i in 6..10 {
-            _ = gen_txs(&mut ctx, &mut tx_ctx, format!("alex{}", i), 100 + i).await;
+        _ = gen_txs(&mut ctx, &mut tx_ctx, format!("alex{}", 2), 100 + 2).await?;
+
+        // Wait until it's processed.
+        let mut state: Hyllar;
+        loop {
+            let s: Result<Hyllar> = ctx
+                .indexer_client()
+                .fetch_current_state(&ContractName::new("hyllar"))
+                .await;
+            if let Ok(s) = s {
+                state = s;
+                if state.balance_of("alex2@hydentity").is_ok() {
+                    break;
+                }
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         }
 
-        ctx.wait_height(2).await?;
-
-        let state: Hyllar = ctx
-            .indexer_client()
-            .fetch_current_state(&ContractName::new("hyllar"))
-            .await?;
-
-        for i in 0..10 {
-            let balance = state.balance_of(&format!("alex{}.hydentity", i));
-            info!("Checking alex{}.hydentity balance: {:?}", i, balance);
+        // Check everything works out.
+        for i in 0..3 {
+            let balance = state.balance_of(&format!("alex{i}@hydentity"));
+            info!("Checking alex{}@hydentity balance: {:?}", i, balance);
             assert_eq!(balance.unwrap(), ((100 + i) as u128));
         }
 
@@ -319,20 +359,37 @@ mod e2e_consensus {
 
     #[test_log::test(tokio::test)]
     async fn can_restart_multi_node_after_txs() -> Result<()> {
-        let mut ctx = E2ECtx::new_multi_with_indexer(4, 500).await?;
+        let mut ctx = E2ECtx::new_multi_with_indexer_and_timestamp_checks(
+            4,
+            500,
+            hyli::utils::conf::TimestampCheck::Monotonic,
+        )
+        .await?;
 
-        _ = ctx.wait_height(1).await;
+        _ = ctx.wait_indexer_height(1).await;
 
         // Gen a few txs
         let mut tx_ctx = init_states(&mut ctx).await;
 
-        warn!("Starting generating txs");
-
         for i in 0..2 {
-            _ = gen_txs(&mut ctx, &mut tx_ctx, format!("alex{}", i), 100 + i).await;
+            _ = gen_txs(&mut ctx, &mut tx_ctx, format!("alex{i}"), 100 + i).await?;
         }
 
-        _ = ctx.wait_height(2).await;
+        // Wait until it's processed.
+        let mut state: Hyllar;
+        loop {
+            let s: Result<Hyllar> = ctx
+                .indexer_client()
+                .fetch_current_state(&ContractName::new("hyllar"))
+                .await;
+            if let Ok(s) = s {
+                state = s;
+                if state.balance_of("alex1@hydentity").is_ok() {
+                    break;
+                }
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        }
 
         ctx.stop_all().await;
 
@@ -346,24 +403,61 @@ mod e2e_consensus {
         ctx.restart_node(3)?;
         ctx.restart_node(4)?;
 
-        ctx.wait_height(2).await?;
+        ctx.wait_height(1).await?;
 
-        for i in 2..4 {
-            _ = gen_txs(&mut ctx, &mut tx_ctx, format!("alex{}", i), 100 + i).await;
+        _ = gen_txs(&mut ctx, &mut tx_ctx, format!("alex{}", 2), 100 + 2).await?;
+
+        // Wait until it's processed.
+        loop {
+            let s: Result<Hyllar> = ctx
+                .indexer_client()
+                .fetch_current_state(&ContractName::new("hyllar"))
+                .await;
+            if let Ok(s) = s {
+                state = s;
+                if state.balance_of("alex2@hydentity").is_ok() {
+                    break;
+                }
+            }
+            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         }
 
-        ctx.wait_height(3).await?;
-
-        let state: Hyllar = ctx
-            .indexer_client()
-            .fetch_current_state(&ContractName::new("hyllar"))
-            .await?;
-
-        for i in 0..4 {
-            let balance = state.balance_of(&format!("alex{}.hydentity", i));
-            info!("Checking alex{}.hydentity balance: {:?}", i, balance);
+        // Check everything works out.
+        for i in 0..3 {
+            let balance = state.balance_of(&format!("alex{i}@hydentity"));
+            info!("Checking alex{}@hydentity balance: {:?}", i, balance);
             assert_eq!(balance.unwrap(), ((100 + i) as u128));
         }
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn multiple_nonconsecutive_timeouts() -> Result<()> {
+        let mut ctx = E2ECtx::new_multi(8, 500).await?;
+        ctx.stop_node(7).await.unwrap();
+        ctx.stop_node(3).await.unwrap();
+
+        _ = ctx.wait_height(1).await;
+
+        warn!("Ready to go");
+
+        _ = ctx.wait_height(8).await;
+
+        Ok(())
+    }
+    #[test_log::test(tokio::test)]
+    async fn multiple_consecutive_timeouts() -> Result<()> {
+        let mut ctx = E2ECtx::new_multi(8, 500).await?;
+        // These end up being consecutive with crypto pubkey sorting.
+        ctx.stop_node(7).await.unwrap();
+        ctx.stop_node(1).await.unwrap();
+
+        _ = ctx.wait_height(1).await;
+
+        warn!("Ready to go");
+
+        _ = ctx.wait_height(8).await;
 
         Ok(())
     }

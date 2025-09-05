@@ -5,37 +5,40 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use crate::{
+    bus::{bus_client, metrics::BusMetrics, BusClientReceiver, SharedMessageBus},
+    consensus::Consensus,
+    data_availability::DataAvailability,
+    explorer::Explorer,
+    genesis::{Genesis, GenesisEvent},
+    indexer::Indexer,
+    mempool::Mempool,
+    model::SharedRunContext,
+    p2p::P2P,
+    rest::{RestApi, RestApiRunContext},
+    single_node_consensus::SingleNodeConsensus,
+    tcp_server::TcpServer,
+    utils::conf::Conf,
+};
 use anyhow::{bail, Context, Result};
 use axum::Router;
-use client_sdk::rest_client::NodeApiHttpClient;
-use hyle_model::api::NodeInfo;
-use hyle_model::TxHash;
-use prometheus::Registry;
+use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
+use hyli_crypto::BlstCrypto;
+use hyli_model::NodeStateEvent;
+use hyli_model::{api::NodeInfo, TxHash};
+use hyli_modules::node_state::module::NodeStateModule;
+use hyli_modules::{
+    module_bus_client, module_handle_messages,
+    modules::{BuildApiContextInner, Module, ModulesHandler},
+    node_state::module::NodeStateCtx,
+};
 use tracing::info;
-
-use crate::bus::metrics::BusMetrics;
-use crate::bus::{bus_client, BusClientReceiver, SharedMessageBus};
-use crate::consensus::Consensus;
-use crate::data_availability::DataAvailability;
-use crate::genesis::{Genesis, GenesisEvent};
-use crate::indexer::Indexer;
-use crate::mempool::Mempool;
-use crate::model::{CommonRunContext, NodeRunContext, SharedRunContext};
-use crate::module_handle_messages;
-use crate::node_state::module::{NodeStateEvent, NodeStateModule};
-use crate::p2p::P2P;
-use crate::rest::{RestApi, RestApiRunContext};
-use crate::single_node_consensus::SingleNodeConsensus;
-use crate::tcp_server::TcpServer;
-use crate::utils::conf::Conf;
-use crate::utils::crypto::BlstCrypto;
-use crate::utils::modules::ModulesHandler;
-
-use super::modules::{module_bus_client, Module};
 
 // Assume that we can reuse the OS-provided port.
 pub async fn find_available_port() -> u16 {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = hyli_net::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
     let addr = listener.local_addr().unwrap();
     addr.port()
 }
@@ -56,7 +59,7 @@ struct MockModule<T> {
     bus: MockModuleBusClient,
     _t: std::marker::PhantomData<T>,
 }
-impl<T> MockModule<T> {
+impl<T: 'static + Send> MockModule<T> {
     async fn new(bus: SharedMessageBus) -> Result<Self> {
         Ok(Self {
             bus: MockModuleBusClient::new_from_bus(bus).await,
@@ -65,15 +68,18 @@ impl<T> MockModule<T> {
     }
     async fn start(&mut self) -> Result<()> {
         module_handle_messages! {
-            on_bus self.bus,
+            on_self self,
         };
         Ok(())
     }
 }
-impl<T: Send> Module for MockModule<T> {
+impl<T: Send + 'static> Module for MockModule<T> {
     type Context = SharedRunContext;
-    fn build(ctx: Self::Context) -> impl futures::Future<Output = Result<Self>> + Send {
-        MockModule::new(ctx.common.bus.new_handle())
+    fn build(
+        bus: SharedMessageBus,
+        _ctx: Self::Context,
+    ) -> impl futures::Future<Output = Result<Self>> + Send {
+        MockModule::new(bus.new_handle())
     }
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
         self.start()
@@ -94,7 +100,7 @@ impl NodeIntegrationCtxBuilder {
         let bus = SharedMessageBus::new(BusMetrics::global("default".to_string()));
         let crypto = BlstCrypto::new("test").unwrap();
         let mut conf = Conf::new(
-            None,
+            vec![],
             tmpdir.path().to_str().map(|s| s.to_owned()),
             Some(false),
         )
@@ -103,6 +109,8 @@ impl NodeIntegrationCtxBuilder {
         conf.da_server_port = find_available_port().await;
         conf.tcp_server_port = find_available_port().await;
         conf.rest_server_port = find_available_port().await;
+        conf.p2p.public_address = format!("127.0.0.1:{}", conf.p2p.server_port);
+        conf.da_public_address = format!("127.0.0.1:{}", conf.da_server_port);
 
         Self {
             tmpdir,
@@ -248,14 +256,13 @@ impl NodeIntegrationCtx {
         std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
 
         let ctx = SharedRunContext {
-            common: CommonRunContext {
-                bus: bus.new_handle(),
-                config: config.clone(),
+            config: config.clone(),
+            api: Arc::new(BuildApiContextInner {
                 router: Mutex::new(Some(Router::new())),
                 openapi: Default::default(),
-            }
-            .into(),
-            node: NodeRunContext { crypto }.into(),
+            }),
+            crypto,
+            start_height: None,
         };
 
         let mut handler = ModulesHandler::new(&bus).await;
@@ -272,13 +279,36 @@ impl NodeIntegrationCtx {
         }
 
         if config.run_indexer {
-            Self::build_module::<Indexer>(&mut handler, &ctx, ctx.common.clone(), &mut mocks)
-                .await?;
+            Self::build_module::<Indexer>(
+                &mut handler,
+                &ctx,
+                (config.clone(), ctx.api.clone()),
+                &mut mocks,
+            )
+            .await?;
+        }
+        if config.run_explorer {
+            Self::build_module::<Explorer>(
+                &mut handler,
+                &ctx,
+                (config.clone(), ctx.api.clone()),
+                &mut mocks,
+            )
+            .await?;
         }
 
         Self::build_module::<DataAvailability>(&mut handler, &ctx, ctx.clone(), &mut mocks).await?;
-        Self::build_module::<NodeStateModule>(&mut handler, &ctx, ctx.common.clone(), &mut mocks)
-            .await?;
+        Self::build_module::<NodeStateModule>(
+            &mut handler,
+            &ctx,
+            NodeStateCtx {
+                node_id: config.id.clone(),
+                data_directory: config.data_directory.clone(),
+                api: ctx.api.clone(),
+            },
+            &mut mocks,
+        )
+        .await?;
 
         Self::build_module::<P2P>(&mut handler, &ctx, ctx.clone(), &mut mocks).await?;
 
@@ -286,7 +316,7 @@ impl NodeIntegrationCtx {
             // Should come last so the other modules have nested their own routes.
             #[allow(clippy::expect_used, reason = "Fail on misconfiguration")]
             let router = ctx
-                .common
+                .api
                 .router
                 .lock()
                 .expect("Context router should be available")
@@ -297,28 +327,30 @@ impl NodeIntegrationCtx {
             Self::build_module::<RestApi>(
                 &mut handler,
                 &ctx,
-                RestApiRunContext {
-                    port: config.rest_server_port,
-                    max_body_size: ctx.common.config.rest_server_max_body_size,
-                    info: NodeInfo {
+                RestApiRunContext::new(
+                    config.rest_server_port,
+                    NodeInfo {
                         id: config.id.clone(),
                         pubkey: Some(pubkey),
-                        da_address: format!("{}:{}", config.hostname, config.da_server_port),
+                        da_address: config.da_public_address.clone(),
                     },
-                    bus: ctx.common.bus.new_handle(),
-                    metrics_layer: None,
-                    registry: Registry::new(),
-                    router: router.clone(),
-                    openapi: Default::default(),
-                },
+                    router.clone(),
+                    ctx.config.rest_server_max_body_size,
+                    Default::default(),
+                ),
                 &mut mocks,
             )
             .await?;
         }
 
         if config.run_tcp_server {
-            Self::build_module::<TcpServer>(&mut handler, &ctx, ctx.common.clone(), &mut mocks)
-                .await?;
+            Self::build_module::<TcpServer>(
+                &mut handler,
+                &ctx,
+                ctx.config.tcp_server_port,
+                &mut mocks,
+            )
+            .await?;
         }
 
         // Ensure we didn't pass a Mock we didn't use
@@ -338,13 +370,11 @@ impl NodeIntegrationCtx {
         }
         Ok(())
     }
-    pub async fn wait_for_genesis_event(&mut self) -> Result<()> {
-        let _: GenesisEvent = self.bus_client.recv().await?;
-        Ok(())
+    pub async fn wait_for_genesis_event(&mut self) -> Result<GenesisEvent> {
+        Ok(self.bus_client.recv().await?)
     }
-    pub async fn wait_for_processed_genesis(&mut self) -> Result<()> {
-        let _: NodeStateEvent = self.bus_client.recv().await?;
-        Ok(())
+    pub async fn wait_for_processed_genesis(&mut self) -> Result<NodeStateEvent> {
+        Ok(self.bus_client.recv().await?)
     }
     pub async fn wait_for_n_blocks(&mut self, n: u32) -> Result<()> {
         for _ in 0..n {
@@ -356,7 +386,12 @@ impl NodeIntegrationCtx {
         loop {
             let event: NodeStateEvent = self.bus_client.recv().await?;
             let NodeStateEvent::NewBlock(block) = event;
-            if block.successful_txs.iter().any(|tx_hash| tx_hash == &tx) {
+            if block
+                .parsed_block
+                .successful_txs
+                .iter()
+                .any(|tx_hash| tx_hash == &tx)
+            {
                 break;
             }
         }

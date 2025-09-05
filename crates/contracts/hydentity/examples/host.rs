@@ -1,14 +1,16 @@
 use clap::{Parser, Subcommand};
 use client_sdk::contract_states;
 use client_sdk::rest_client::IndexerApiHttpClient;
+use client_sdk::rest_client::NodeApiClient;
 use client_sdk::rest_client::NodeApiHttpClient;
 use client_sdk::transaction_builder::ProvableBlobTx;
 use client_sdk::transaction_builder::TxExecutor;
 use client_sdk::transaction_builder::TxExecutorBuilder;
-use hyle_hydentity::Hydentity;
-use hyle_hydentity::HydentityAction;
+use client_sdk::transaction_builder::TxExecutorHandler;
+use hyli_hydentity::Hydentity;
+use hyli_hydentity::HydentityAction;
 use sdk::Hashed;
-use sdk::{guest, ContractInput, ContractName, HyleOutput};
+use sdk::{Blob, Calldata, ContractName, HyliOutput};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -75,7 +77,7 @@ async fn main() {
 
             let mut transaction = ProvableBlobTx::new(identity.clone().into());
 
-            hyle_hydentity::client::register_identity(
+            hyli_hydentity::client::tx_executor_handler::register_identity(
                 &mut transaction,
                 ContractName::new("hydentity"),
                 password,
@@ -85,20 +87,20 @@ async fn main() {
             let transaction = ctx.process(transaction).unwrap();
 
             // Send the blob transaction
-            let blob_tx_hash = node.send_tx_blob(&transaction.to_blob_tx()).await.unwrap();
-            println!("✅ Blob tx sent. Tx hash: {}", blob_tx_hash);
+            let blob_tx_hash = node.send_tx_blob(transaction.to_blob_tx()).await.unwrap();
+            println!("✅ Blob tx sent. Tx hash: {blob_tx_hash}");
 
             // ----
             // Prove the state transition
             // ----
             for proof in transaction.iter_prove() {
                 let tx = proof.await.unwrap();
-                node.send_tx_proof(&tx).await.unwrap();
-                println!(
-                    "✅ Proof tx sent for {}. Tx hash: {}",
-                    tx.contract_name,
-                    tx.hashed()
-                );
+
+                let tx_hash = tx.hashed();
+                let contract_name = tx.contract_name.clone();
+
+                node.send_tx_proof(tx).await.unwrap();
+                println!("✅ Proof tx sent for {contract_name}. Tx hash: {tx_hash}");
             }
         }
         Commands::VerifyIdentity {
@@ -128,20 +130,18 @@ async fn main() {
             let transaction = ctx.process(transaction).unwrap();
 
             // Send the blob transaction
-            let blob_tx_hash = node.send_tx_blob(&transaction.to_blob_tx()).await.unwrap();
-            println!("✅ Blob tx sent. Tx hash: {}", blob_tx_hash);
+            let blob_tx_hash = node.send_tx_blob(transaction.to_blob_tx()).await.unwrap();
+            println!("✅ Blob tx sent. Tx hash: {blob_tx_hash}");
 
             // ----
             // Prove the state transition
             // ----
             for proof in transaction.iter_prove() {
                 let tx = proof.await.unwrap();
-                node.send_tx_proof(&tx).await.unwrap();
-                println!(
-                    "✅ Proof tx sent for {}. Tx hash: {}",
-                    tx.contract_name,
-                    tx.hashed()
-                );
+                let tx_hash = tx.hashed();
+                let contract_name = tx.contract_name.clone();
+                node.send_tx_proof(tx).await.unwrap();
+                println!("✅ Proof tx sent for {contract_name}. Tx hash: {tx_hash}");
             }
         }
     }

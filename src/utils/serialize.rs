@@ -1,3 +1,11 @@
+use std::{
+    io::{Read, Write},
+    ops::{Deref, DerefMut},
+};
+
+use borsh::{BorshDeserialize, BorshSerialize};
+use indexmap::IndexMap;
+
 /// from <https://users.rust-lang.org/t/how-to-serialize-deserialize-an-async-std-rwlock-t-where-t-serialize-deserialize/37407>
 pub mod arc_rwlock_serde {
     use serde::de::Deserializer;
@@ -45,5 +53,44 @@ pub mod arc_rwlock_borsh {
         reader: &mut R,
     ) -> ::core::result::Result<Arc<RwLock<T>>, borsh::io::Error> {
         Ok(Arc::new(RwLock::new(T::deserialize_reader(reader)?)))
+    }
+}
+
+#[derive(Default)]
+pub struct BorshableIndexMap<K, V>(pub IndexMap<K, V>);
+
+impl<K, V> DerefMut for BorshableIndexMap<K, V> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl<K, V> Deref for BorshableIndexMap<K, V> {
+    type Target = IndexMap<K, V>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<K, V> BorshSerialize for BorshableIndexMap<K, V>
+where
+    K: BorshSerialize,
+    V: BorshSerialize,
+{
+    fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        let vec: Vec<(&K, &V)> = self.0.iter().collect();
+        vec.serialize(writer)
+    }
+}
+
+impl<K, V> BorshDeserialize for BorshableIndexMap<K, V>
+where
+    K: BorshDeserialize + Eq + std::hash::Hash,
+    V: BorshDeserialize,
+{
+    fn deserialize_reader<R: Read>(reader: &mut R) -> std::io::Result<Self> {
+        let vec: Vec<(K, V)> = Vec::deserialize_reader(reader)?;
+        let map: IndexMap<K, V> = vec.into_iter().collect();
+        Ok(BorshableIndexMap(map))
     }
 }

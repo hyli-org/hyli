@@ -1,17 +1,17 @@
 use anyhow::Context;
 use assert_cmd::prelude::*;
-use client_sdk::transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutor};
+use client_sdk::{
+    rest_client::{IndexerApiHttpClient, NodeApiClient},
+    transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutor},
+};
 
-use hyle::{
+use hyli::{
     model::BlobTransaction,
     rest::client::NodeApiHttpClient,
-    utils::{
-        conf::{Conf, P2pConf},
-        crypto::BlstCrypto,
-    },
+    utils::conf::{Conf, NodeWebSocketConfig, P2pConf, P2pMode, TimestampCheck},
 };
-use hyle_model::TxHash;
-use rand::Rng;
+use hyli_crypto::BlstCrypto;
+use hyli_model::TxHash;
 use signal_child::signal;
 use std::time::Duration;
 use tempfile::TempDir;
@@ -20,14 +20,22 @@ use tokio::{io::AsyncBufReadExt, time::timeout};
 use tracing::info;
 
 pub struct ConfMaker {
-    i: u32,
-    random_port: u32,
+    pub i: u16,
     pub default: Conf,
 }
 
 impl ConfMaker {
-    pub fn build(&mut self, prefix: &str) -> Conf {
+    pub async fn build(&mut self, prefix: &str) -> Conf {
         self.i += 1;
+
+        // Get separate random ports for each service
+        let p2p_port = find_available_port().await;
+        let da_port = find_available_port().await;
+        let tcp_port = find_available_port().await;
+        let rest_port = find_available_port().await;
+        let ws_port = find_available_port().await;
+        let admin_port = find_available_port().await;
+
         Conf {
             id: if prefix == "single-node" {
                 prefix.into()
@@ -35,12 +43,24 @@ impl ConfMaker {
                 format!("{}-{}", prefix, self.i)
             },
             p2p: P2pConf {
-                server_port: (self.random_port + self.i) as u16,
+                public_address: format!("127.0.0.1:{p2p_port}"),
+                server_port: p2p_port,
+                mode: if prefix == "indexer" {
+                    P2pMode::None
+                } else {
+                    P2pMode::FullValidator
+                },
                 ..self.default.p2p.clone()
             },
-            da_server_port: (self.random_port + 1000 + self.i) as u16,
-            tcp_server_port: (self.random_port + 2000 + self.i) as u16,
-            rest_server_port: (self.random_port + 3000 + self.i) as u16,
+            admin_server_port: admin_port,
+            da_server_port: da_port,
+            da_public_address: format!("127.0.0.1:{da_port}"),
+            tcp_server_port: tcp_port,
+            rest_server_port: rest_port,
+            websocket: NodeWebSocketConfig {
+                server_port: ws_port,
+                ..self.default.websocket.clone()
+            },
             ..self.default.clone()
         }
     }
@@ -48,13 +68,10 @@ impl ConfMaker {
 
 impl Default for ConfMaker {
     fn default() -> Self {
-        let mut default = Conf::new(None, None, None).unwrap();
-        let mut rng = rand::thread_rng();
-        let random_port: u32 = rng.gen_range(1024..(65536 - 4000));
+        let mut default = Conf::new(vec![], None, None).unwrap();
 
         default.log_format = "node".to_string(); // Activate node name in logs for convenience in tests.
-        default.p2p.server_port = random_port as u16;
-        default.p2p.mode = hyle::utils::conf::P2pMode::FullValidator;
+        default.p2p.mode = P2pMode::FullValidator;
         default.consensus.solo = false;
         default.genesis.stakers = {
             let mut stakers = std::collections::HashMap::new();
@@ -62,21 +79,18 @@ impl Default for ConfMaker {
             stakers.insert("node-2".to_owned(), 100);
             stakers
         };
-        default.genesis.faucet_password = "password".into();
-
-        default.da_server_port = (random_port + 1000) as u16;
-        default.tcp_server_port = (random_port + 2000) as u16;
-        default.rest_server_port = (random_port + 3000) as u16;
+        default.genesis.keep_tokens_in_faucet = true; // Keep faucet tokens for tests
+        default.indexer.persist_proofs = false; // Disable proof persistence for tests
+        default.indexer.query_buffer_size = 1; // Dump to DB often
 
         default.run_indexer = false; // disable indexer by default to avoid needed PG
+        default.run_explorer = false; // disable indexer by default to avoid needed PG
+
+        default.consensus.timestamp_checks = TimestampCheck::Monotonic;
 
         info!("Default conf: {:?}", default);
 
-        Self {
-            i: 0,
-            random_port,
-            default,
-        }
+        Self { i: 0, default }
     }
 }
 
@@ -95,7 +109,7 @@ pub struct TestProcess {
 async fn stream_output<R: tokio::io::AsyncRead + Unpin>(output: R) -> anyhow::Result<()> {
     let mut reader = tokio::io::BufReader::new(output).lines();
     while let Some(line) = reader.next_line().await? {
-        println!("{}", line);
+        println!("{line}");
     }
     Ok(())
 }
@@ -105,7 +119,7 @@ impl TestProcess {
         let mut cargo_bin: Command = std::process::Command::cargo_bin(command).unwrap().into();
 
         // Create a temporary directory for the node
-        let tmpdir = tempfile::Builder::new().prefix("hyle").tempdir().unwrap();
+        let tmpdir = tempfile::Builder::new().prefix("hyli").tempdir().unwrap();
         let cmd = cargo_bin.current_dir(&tmpdir);
         cmd.kill_on_drop(true);
         cmd.stdout(std::process::Stdio::piped());
@@ -120,7 +134,7 @@ impl TestProcess {
         cmd.env("RISC0_DEV_MODE", "1");
 
         let secret = BlstCrypto::secret_from_name(&conf.id);
-        cmd.env("HYLE_VALIDATOR_SECRET", hex::encode(secret));
+        cmd.env("HYLI_VALIDATOR_SECRET", hex::encode(secret));
 
         Self {
             conf,
@@ -171,18 +185,41 @@ impl TestProcess {
         }
     }
 }
+
+pub enum IndexerOrNodeHttpClient {
+    Node(NodeApiHttpClient),
+    Indexer(IndexerApiHttpClient),
+}
+
 pub async fn wait_height(client: &NodeApiHttpClient, heights: u64) -> anyhow::Result<()> {
-    wait_height_timeout(client, heights, 30).await
+    wait_height_timeout(&IndexerOrNodeHttpClient::Node(client.clone()), heights, 30).await
+}
+
+pub async fn wait_indexer_height(
+    client: &IndexerApiHttpClient,
+    heights: u64,
+) -> anyhow::Result<()> {
+    wait_height_timeout(
+        &IndexerOrNodeHttpClient::Indexer(client.clone()),
+        heights,
+        30,
+    )
+    .await
 }
 
 pub async fn wait_height_timeout(
-    client: &NodeApiHttpClient,
+    client: &IndexerOrNodeHttpClient,
     heights: u64,
     timeout_duration: u64,
 ) -> anyhow::Result<()> {
     timeout(Duration::from_secs(timeout_duration), async {
         loop {
-            if let Ok(mut current_height) = client.get_block_height().await {
+            let current_height = match client {
+                IndexerOrNodeHttpClient::Node(node) => node.get_block_height().await,
+                IndexerOrNodeHttpClient::Indexer(indexer) => indexer.get_block_height().await,
+            };
+
+            if let Ok(mut current_height) = current_height {
                 let target_height = current_height + heights;
                 while current_height.0 < target_height.0 {
                     info!(
@@ -190,7 +227,12 @@ pub async fn wait_height_timeout(
                         target_height, current_height
                     );
                     tokio::time::sleep(Duration::from_millis(250)).await;
-                    current_height = client.get_block_height().await?;
+                    current_height = match client {
+                        IndexerOrNodeHttpClient::Node(node) => node.get_block_height().await?,
+                        IndexerOrNodeHttpClient::Indexer(indexer) => {
+                            indexer.get_block_height().await?
+                        }
+                    };
                 }
                 return anyhow::Ok(());
             } else {
@@ -212,14 +254,22 @@ pub async fn send_transaction<S: StateUpdater>(
     let identity = transaction.identity.clone();
     let blobs = transaction.blobs.clone();
     let tx_hash = client
-        .send_tx_blob(&BlobTransaction::new(identity, blobs))
+        .send_tx_blob(BlobTransaction::new(identity, blobs))
         .await
         .unwrap();
 
     let provable_tx = ctx.process(transaction).unwrap();
     for proof in provable_tx.iter_prove() {
         let tx = proof.await.unwrap();
-        client.send_tx_proof(&tx).await.unwrap();
+        client.send_tx_proof(tx).await.unwrap();
     }
     tx_hash
+}
+
+pub async fn find_available_port() -> u16 {
+    let listener = hyli_net::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    addr.port()
 }

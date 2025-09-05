@@ -1,19 +1,16 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use hyle::{
+use hyli::{
     entrypoint::RunPg,
-    log_error,
-    utils::{
-        conf::{self, P2pMode},
-        logger::setup_tracing,
-    },
+    utils::conf::{self, P2pMode},
 };
+use hyli_modules::{log_error, utils::logger::setup_tracing};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Args {
     #[arg(long, default_value = "config.toml")]
-    pub config_file: Option<String>,
+    pub config_file: Vec<String>,
 
     #[clap(long, action)]
     pub pg: bool,
@@ -34,13 +31,13 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
     let mut config =
-        conf::Conf::new(args.config_file, None, Some(true)).context("reading config file")?;
+        conf::Conf::new(args.config_file, None, None).context("reading config file")?;
     // The indexer binary runs none of the consensus/p2p layer
     config.p2p.mode = P2pMode::None;
     // The indexer binary skips the TCP server
     config.run_tcp_server = false;
 
-    setup_tracing(&config, format!("{}(nopkey)", config.id.clone()))?;
+    setup_tracing(&config.log_format, format!("{}(nopkey)", config.id.clone()))?;
 
     let _pg = if args.pg {
         Some(RunPg::new(&mut config).await?)
@@ -49,8 +46,8 @@ async fn main() -> Result<()> {
     };
 
     log_error!(
-        hyle::entrypoint::main_process(config, None).await,
-        "Error running hyle indexer"
+        hyli::entrypoint::main_process(config, None).await,
+        "Error running hyli indexer"
     )?;
 
     Ok(())

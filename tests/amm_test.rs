@@ -2,7 +2,7 @@
 use fixtures::ctx::E2ECtx;
 use tracing::info;
 
-use hyle::model::ProofData;
+use hyli::model::ProofData;
 
 mod fixtures;
 
@@ -10,24 +10,25 @@ use anyhow::Result;
 
 mod e2e_amm {
     use amm::{
-        client::{new_pair, swap},
+        client::tx_executor_handler::{new_pair, swap},
         Amm,
     };
 
     use client_sdk::{
         contract_states,
         helpers::risc0::Risc0Prover,
-        transaction_builder::{ProvableBlobTx, TxExecutorBuilder},
+        transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
     };
     use fixtures::proofs::generate_recursive_proof;
     use hydentity::{
-        client::{register_identity, verify_identity},
+        client::tx_executor_handler::{register_identity, verify_identity},
         Hydentity,
     };
-    use hyle_contract_sdk::{guest, ContractInput, ContractName, HyleOutput};
-    use hyle_contracts::{AMM_ELF, HYDENTITY_ELF, HYLLAR_ELF};
+    use hyli_contract_sdk::{Blob, Calldata, ContractName, HyliOutput};
+    use hyli_contracts::{AMM_ELF, AMM_ID, HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
+    use hyli_model::api::TransactionStatusDb;
     use hyllar::{
-        client::{approve, transfer},
+        client::tx_executor_handler::{approve, transfer},
         erc20::ERC20,
         Hyllar, FAUCET_ID,
     };
@@ -70,8 +71,7 @@ mod e2e_amm {
             assert_eq!(
                 state.balance_of(account).expect("Account not found"),
                 *expected,
-                "Incorrect balance for {}",
-                account
+                "Incorrect balance for {account}"
             );
         }
         Ok(())
@@ -122,10 +122,13 @@ mod e2e_amm {
             amm: Amm::default(),
         })
         // Replace prover binaries for non-reproducible mode.
-        .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
-        .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF))
-        .with_prover("hyllar2".into(), Risc0Prover::new(HYLLAR_ELF))
-        .with_prover("amm".into(), Risc0Prover::new(AMM_ELF))
+        .with_prover(
+            "hydentity".into(),
+            Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+        )
+        .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
+        .with_prover("hyllar2".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
+        .with_prover("amm".into(), Risc0Prover::new(AMM_ELF, AMM_ID))
         .build();
 
         let hyllar_initial_total_amount: u128 = executor
@@ -143,14 +146,14 @@ mod e2e_amm {
         ///////////////////// hyllar2 contract registration /////////////////
         info!("➡️  Registring hyllar2 contract");
         const HYLLAR2_CONTRACT_NAME: &str = "hyllar2";
-        ctx.register_contract::<HyllarTestContract>("hyle.hyle".into(), HYLLAR2_CONTRACT_NAME)
+        ctx.register_contract::<HyllarTestContract>("hyli@hyli".into(), HYLLAR2_CONTRACT_NAME)
             .await?;
         /////////////////////////////////////////////////////////////////////
 
         ///////////////////// bob identity registration /////////////////////
         info!("➡️  Sending blob to register bob identity");
 
-        let mut tx = ProvableBlobTx::new("bob.hydentity".into());
+        let mut tx = ProvableBlobTx::new("bob@hydentity".into());
         register_identity(&mut tx, "hydentity".into(), "password".to_string())?;
         ctx.send_provable_blob_tx(&tx).await?;
         let tx = executor.process(tx)?;
@@ -173,9 +176,9 @@ mod e2e_amm {
             &executor.hydentity,
             "password".into(),
         )?;
-        transfer(&mut tx, "hyllar".into(), "bob.hydentity".into(), 25)?;
+        transfer(&mut tx, "hyllar".into(), "bob@hydentity".into(), 25)?;
 
-        ctx.send_provable_blob_tx(&tx).await?;
+        let tx_hash = ctx.send_provable_blob_tx(&tx).await?;
         let tx = executor.process(tx)?;
         let mut proofs = tx.iter_prove();
 
@@ -188,8 +191,23 @@ mod e2e_amm {
         info!("➡️  Sending proof for hyllar");
         ctx.send_proof_single(bob_transfer_proof).await?;
 
-        info!("➡️  Waiting for height 5");
-        ctx.wait_height(5).await?;
+        let mut tries = 0;
+        loop {
+            if let Ok(tx) = ctx
+                .indexer_client()
+                .get_transaction_with_hash(&tx_hash)
+                .await
+            {
+                if tx.transaction_status == TransactionStatusDb::Success {
+                    break;
+                }
+            }
+            tries += 1;
+            if tries >= 10 {
+                panic!("Failed to get transaction with hash {}", tx_hash);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
 
         let state: Hyllar = ctx
             .indexer_client()
@@ -198,7 +216,7 @@ mod e2e_amm {
 
         assert_eq!(
             state
-                .balance_of("bob.hydentity")
+                .balance_of("bob@hydentity")
                 .expect("bob identity not found"),
             25
         );
@@ -206,7 +224,7 @@ mod e2e_amm {
             &ctx,
             "hyllar",
             &[
-                ("bob.hydentity", 25),
+                ("bob@hydentity", 25),
                 (FAUCET_ID, hyllar_initial_total_amount - 25),
             ],
         )
@@ -222,7 +240,7 @@ mod e2e_amm {
             &executor.hydentity,
             "password".into(),
         )?;
-        transfer(&mut tx, "hyllar2".into(), "bob.hydentity".into(), 50)?;
+        transfer(&mut tx, "hyllar2".into(), "bob@hydentity".into(), 50)?;
 
         ctx.send_provable_blob_tx(&tx).await?;
         let tx = executor.process(tx)?;
@@ -237,14 +255,14 @@ mod e2e_amm {
         info!("➡️  Sending proof for hyllar");
         ctx.send_proof_single(bob_transfer_proof).await?;
 
-        info!("➡️  Waiting for height 5");
-        ctx.wait_height(5).await?;
+        info!("➡️  Waiting for height 5 on indexer");
+        ctx.wait_indexer_height(5).await?;
 
         assert_multiple_balances(
             &ctx,
             "hyllar2",
             &[
-                ("bob.hydentity", 50),
+                ("bob@hydentity", 50),
                 (FAUCET_ID, hyllar2_initial_total_amount - 50),
             ],
         )
@@ -254,13 +272,13 @@ mod e2e_amm {
         ///////////////////// amm contract registration /////////////////////
         info!("➡️  Registring amm contract");
         const AMM_CONTRACT_NAME: &str = "amm";
-        ctx.register_contract::<AmmTestContract>("hyle.hyle".into(), AMM_CONTRACT_NAME)
+        ctx.register_contract::<AmmTestContract>("hyli@hyli".into(), AMM_CONTRACT_NAME)
             .await?;
         /////////////////////////////////////////////////////////////////////
 
         //////////////////// Bob approves AMM on hyllar /////////////////////
         info!("➡️  Sending blob to approve amm on hyllar");
-        let mut tx = ProvableBlobTx::new("bob.hydentity".into());
+        let mut tx = ProvableBlobTx::new("bob@hydentity".into());
         verify_identity(
             &mut tx,
             "hydentity".into(),
@@ -282,16 +300,16 @@ mod e2e_amm {
         info!("➡️  Sending proof for approve hyllar");
         ctx.send_proof_single(bob_approve_hyllar_proof).await?;
 
-        info!("➡️  Waiting for height 5");
-        ctx.wait_height(5).await?;
+        info!("➡️  Waiting for height 5 on indexer");
+        ctx.wait_indexer_height(5).await?;
 
-        assert_account_allowance(&ctx, "hyllar", "bob.hydentity", AMM_CONTRACT_NAME, 100).await?;
+        assert_account_allowance(&ctx, "hyllar", "bob@hydentity", AMM_CONTRACT_NAME, 100).await?;
         /////////////////////////////////////////////////////////////////////
 
         //////////////////// Bob approves AMM on hyllar2 /////////////////////
         info!("➡️  Sending blob to approve amm on hyllar2");
 
-        let mut tx = ProvableBlobTx::new("bob.hydentity".into());
+        let mut tx = ProvableBlobTx::new("bob@hydentity".into());
         verify_identity(
             &mut tx,
             "hydentity".into(),
@@ -313,16 +331,16 @@ mod e2e_amm {
         info!("➡️  Sending proof for approve hyllar2");
         ctx.send_proof_single(bob_approve_hyllar2_proof).await?;
 
-        info!("➡️  Waiting for height 5");
-        ctx.wait_height(5).await?;
+        info!("➡️  Waiting for height 5 on indexer");
+        ctx.wait_indexer_height(5).await?;
 
-        assert_account_allowance(&ctx, "hyllar2", "bob.hydentity", AMM_CONTRACT_NAME, 100).await?;
+        assert_account_allowance(&ctx, "hyllar2", "bob@hydentity", AMM_CONTRACT_NAME, 100).await?;
         /////////////////////////////////////////////////////////////////////
 
         /////////////// Creating new pair hyllar/hyllar2 on amm ///////////////
         info!("➡️  Creating new pair hyllar/hyllar2 on amm");
 
-        let mut tx = ProvableBlobTx::new("bob.hydentity".into());
+        let mut tx = ProvableBlobTx::new("bob@hydentity".into());
         verify_identity(
             &mut tx,
             "hydentity".into(),
@@ -358,14 +376,14 @@ mod e2e_amm {
         info!("➡️  Sending proof for hyllar2");
         ctx.send_proof_single(bob_transfer_hyllar2_proof).await?;
 
-        info!("➡️  Waiting for height 5");
-        ctx.wait_height(5).await?;
+        info!("➡️  Waiting for height 5 on indexer");
+        ctx.wait_indexer_height(5).await?;
 
         assert_multiple_balances(
             &ctx,
             "hyllar",
             &[
-                ("bob.hydentity", 5),
+                ("bob@hydentity", 5),
                 (AMM_CONTRACT_NAME, 20),
                 (FAUCET_ID, hyllar_initial_total_amount - 25),
             ],
@@ -376,7 +394,7 @@ mod e2e_amm {
             &ctx,
             "hyllar2",
             &[
-                ("bob.hydentity", 0),
+                ("bob@hydentity", 0),
                 (AMM_CONTRACT_NAME, 50),
                 (FAUCET_ID, hyllar2_initial_total_amount - 50),
             ],
@@ -387,7 +405,7 @@ mod e2e_amm {
         /////////////////////// Bob actually swaps //////////////////////////
         info!("➡️ Bob actually swaps");
 
-        let mut tx = ProvableBlobTx::new("bob.hydentity".into());
+        let mut tx = ProvableBlobTx::new("bob@hydentity".into());
         verify_identity(
             &mut tx,
             "hydentity".into(),
@@ -413,10 +431,10 @@ mod e2e_amm {
 
         let recursive_proof = generate_recursive_proof(
             &[
-                hyle_contracts::HYDENTITY_ID,
-                hyle_contracts::AMM_ID,
-                hyle_contracts::HYLLAR_ID,
-                hyle_contracts::HYLLAR_ID,
+                hyli_contracts::HYDENTITY_ID,
+                hyli_contracts::AMM_ID,
+                hyli_contracts::HYLLAR_ID,
+                hyli_contracts::HYLLAR_ID,
             ],
             &[
                 &hydentity_proof,
@@ -430,6 +448,8 @@ mod e2e_amm {
         info!("➡️  Sending recursive proof for hydentity, amm, hyllar and hyllar2");
         ctx.send_proof(
             "risc0-recursion".into(),
+            hyli_model::ProgramId(hyli_contracts::RISC0_RECURSION_ID.to_vec()),
+            hyli_model::verifiers::RISC0_1.into(),
             ProofData(recursive_proof),
             vec![
                 blob_tx_hash.clone(),
@@ -440,14 +460,14 @@ mod e2e_amm {
         )
         .await?;
 
-        info!("➡️  Waiting for height 5");
-        ctx.wait_height(5).await?;
+        info!("➡️  Waiting for height 5 on indexer");
+        ctx.wait_indexer_height(5).await?;
 
         assert_multiple_balances(
             &ctx,
             "hyllar",
             &[
-                ("bob.hydentity", 0),
+                ("bob@hydentity", 0),
                 (AMM_CONTRACT_NAME, 25),
                 (FAUCET_ID, hyllar_initial_total_amount - 25),
             ],
@@ -458,7 +478,7 @@ mod e2e_amm {
             &ctx,
             "hyllar2",
             &[
-                ("bob.hydentity", 10),
+                ("bob@hydentity", 10),
                 (AMM_CONTRACT_NAME, 40),
                 (FAUCET_ID, hyllar2_initial_total_amount - 50),
             ],
@@ -468,10 +488,9 @@ mod e2e_amm {
         Ok(())
     }
 
-    #[ignore = "need new_single_with_indexer"]
     #[test_log::test(tokio::test)]
     async fn amm_single_node() -> Result<()> {
-        let ctx = E2ECtx::new_single(300).await?;
+        let ctx = E2ECtx::new_single_with_indexer(300).await?;
         scenario_amm(ctx).await
     }
 

@@ -8,12 +8,15 @@ pub mod metadata {
 
 extern crate alloc;
 
+#[cfg(feature = "client")]
+pub mod client;
+
 use alloc::vec::Vec;
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProofInput {
     pub image_id: [u8; 32],
-    pub journal: Vec<u8>, // Should be a serde::to_vec<sdk::HyleOutput>,
+    pub journal: Vec<u8>, // Should be a serde::to_vec<sdk::HyliOutput>,
 }
 
 pub type Risc0ProgramId = [u8; 32];

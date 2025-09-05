@@ -1,0 +1,35 @@
+name: Run Turmoil Tests
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test-turmoil:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Run turmoil tests - Basic
+        run: cargo test turmoil_simulation_basic --features turmoil
+      - name: Run turmoil tests - Add a node
+        run: cargo test turmoil_simulation_one_more_node --features turmoil
+      - name: Run turmoil tests - Hold traffic
+        run: cargo test turmoil_simulation_hold --features turmoil
+      - name: Run turmoil tests - Slow Network
+        run: cargo test turmoil_simulation_slow_network --features turmoil
+      - name: Run turmoil tests - Slow Node
+        run: cargo test turmoil_simulation_slow_node --features turmoil
+      - name: Run turmoil tests - 2 Slow Nodes
+        run: cargo test turmoil_simulation_two_slow_nodes --features turmoil
+

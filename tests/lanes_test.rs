@@ -3,20 +3,20 @@
 use anyhow::Result;
 use client_sdk::{
     helpers::risc0::Risc0Prover,
-    rest_client::NodeApiHttpClient,
+    rest_client::{NodeApiClient, NodeApiHttpClient},
     transaction_builder::{ProvableBlobTx, TxExecutorBuilder},
 };
 use fixtures::{ctx::E2ECtx, test_helpers::send_transaction};
 use hydentity::{
-    client::{register_identity, verify_identity},
+    client::tx_executor_handler::{register_identity, verify_identity},
     Hydentity,
 };
-use hyle::genesis::States;
-use hyle_contracts::{HYDENTITY_ELF, HYLLAR_ELF, STAKING_ELF};
-use hyle_model::{api::APIRegisterContract, ContractName, Identity, ProgramId, StateCommitment};
-use hyllar::{client::transfer, Hyllar, FAUCET_ID};
+use hyli::genesis::States;
+use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID, STAKING_ELF, STAKING_ID};
+use hyli_model::{api::APIRegisterContract, ContractName, Identity, ProgramId, StateCommitment};
+use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
 use staking::{
-    client::{delegate, deposit_for_fees, stake},
+    client::tx_executor_handler::{delegate, deposit_for_fees, stake},
     state::Staking,
 };
 
@@ -46,14 +46,17 @@ async fn faucet_and_delegate(
 
     let mut tx_ctx = TxExecutorBuilder::new(states)
         // Replace prover binaries for non-reproducible mode.
-        .with_prover("hydentity".into(), Risc0Prover::new(HYDENTITY_ELF))
-        .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF))
-        .with_prover("staking".into(), Risc0Prover::new(STAKING_ELF))
+        .with_prover(
+            "hydentity".into(),
+            Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+        )
+        .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
+        .with_prover("staking".into(), Risc0Prover::new(STAKING_ELF, STAKING_ID))
         .build();
 
     let node_info = client.get_node_info().await?;
 
-    let node_identity = Identity(format!("{}.hydentity", node_info.id));
+    let node_identity = Identity(format!("{}@hydentity", node_info.id));
     {
         let mut transaction = ProvableBlobTx::new(node_identity.clone());
 
@@ -127,10 +130,8 @@ async fn faucet_and_delegate(
 }
 
 async fn scenario_lane_manager_outside_consensus(mut ctx: E2ECtx, delegate: bool) -> Result<()> {
-    let mut conf = ctx.make_conf("lane_mgr");
-    conf.p2p.mode = hyle::utils::conf::P2pMode::LaneManager;
-    // Remove indexer
-    conf.p2p.peers.pop();
+    let mut conf = ctx.make_conf("lane_mgr").await;
+    conf.p2p.mode = hyli::utils::conf::P2pMode::LaneManager;
 
     ctx.add_node_with_conf(conf).await?;
     let lane_mgr_client = ctx.client_by_id("lane_mgr-1");
@@ -143,11 +144,12 @@ async fn scenario_lane_manager_outside_consensus(mut ctx: E2ECtx, delegate: bool
     let _ = ctx.wait_height(2).await;
 
     let tx_hash = lane_mgr_client
-        .register_contract(&APIRegisterContract {
+        .register_contract(APIRegisterContract {
             verifier: "test".into(),
             program_id: ProgramId(vec![1, 2, 3]),
             state_commitment: StateCommitment(vec![1, 2, 3]),
             contract_name: ContractName::new("test"),
+            ..Default::default()
         })
         .await?;
 

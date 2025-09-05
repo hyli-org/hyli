@@ -1,5 +1,2 @@
-[build]
-rustflags = ["--cfg", "tokio_unstable"]
-
 [alias]
 ntest = "nextest run --workspace"

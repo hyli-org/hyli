@@ -1,0 +1,47 @@
+[package]
+name = "hyli-smt-token"
+description = "Hyli Smart Contract"
+license = "MIT"
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = "1.85"
+
+[[bin]]
+name = "smt-token"
+path = "src/main.rs"
+required-features = ["risc0"]
+test = false
+
+[[example]]
+name = "smt-token-runner"
+path = "examples/host.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+sdk = { workspace = true, features = ["smt"] }
+sha2 = { workspace = true }
+borsh = { workspace = true, features = ["derive"] }
+sparse-merkle-tree = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["derive", "alloc"] }
+
+risc0-zkvm = { workspace = true, optional = true, features = ['std'] }
+client-sdk = { workspace = true, features = [
+  "rest",
+  "indexer",
+], optional = true }
+
+[dev-dependencies]
+# Active client feature for tests
+hyli-smt-token = { path = ".", features = ["client"] }
+tokio = { workspace = true, features = ["full", "tracing"] }
+
+risc0-zkvm = { workspace = true, features = ['std', 'prove'] }
+mockall = { workspace = true }
+test-log = { workspace = true, features = ["color", "trace"] }
+
+[features]
+default = []
+client = ["dep:client-sdk", "sdk/tracing"]
+risc0 = ["dep:risc0-zkvm", "sdk/risc0"]

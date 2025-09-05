@@ -1,29 +1,29 @@
 name: Custom Docker images
 
-on: 
+on:
   push:
-    paths: [".github/docker/Dockerfile.alpine"]
-    branches: 
+    paths: [".github/docker/Dockerfile.base"]
+    branches:
       - main
 
 jobs:
   build_and_push:
     if: ${{ github.actor != 'dependabot[bot]' }}
     permissions:
-      contents: 'read'
-      id-token: 'write'
-      packages: 'write'
+      contents: "read"
+      id-token: "write"
+      packages: "write"
 
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         mode:
-          - file: .github/docker/Dockerfile.alpine 
-            name: alpine
+          - file: .github/docker/Dockerfile.base
+            name: base
             context: .github/docker
             images: |
-              ghcr.io/hyle-org/alpine
+              ghcr.io/hyli-org/base
 
     name: ${{ matrix.mode.name }}
     steps:
@@ -36,19 +36,18 @@ jobs:
         with:
           images: ${{ matrix.mode.images }}
 
+      # Will produces tags given this table :
+      #
+      # | Event               | Ref                           | Docker Tags                |
+      # |---------------------|-------------------------------|----------------------------|
+      # | `pull_request`      | `refs/pull/2/merge`           | `pr-2`                     |
+      # | `push`              | `refs/heads/master`           | `master`                   |
+      # | `push`              | `refs/heads/releases/v1`      | `releases-v1`              |
+      # | `push tag`          | `refs/tags/v1.2.3`            | `v1.2.3`, `latest`         |
+      # | `push tag`          | `refs/tags/v2.0.8-beta.67`    | `v2.0.8-beta.67`, `latest` |
+      # | `workflow_dispatch` | `refs/heads/master`           | `master`                   |
 
-# Will produces tags given this table : 
-# 
-# | Event               | Ref                           | Docker Tags                |
-# |---------------------|-------------------------------|----------------------------|
-# | `pull_request`      | `refs/pull/2/merge`           | `pr-2`                     |
-# | `push`              | `refs/heads/master`           | `master`                   |
-# | `push`              | `refs/heads/releases/v1`      | `releases-v1`              |
-# | `push tag`          | `refs/tags/v1.2.3`            | `v1.2.3`, `latest`         |
-# | `push tag`          | `refs/tags/v2.0.8-beta.67`    | `v2.0.8-beta.67`, `latest` |
-# | `workflow_dispatch` | `refs/heads/master`           | `master`                   |
-
-      - name: 'Login to GitHub Container Registry'
+      - name: "Login to GitHub Container Registry"
         uses: docker/login-action@v1
         with:
           registry: ghcr.io
@@ -59,8 +58,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           push: true
-          file: ${{ matrix.mode.file }} 
-          context: ${{ matrix.mode.context }} 
+          file: ${{ matrix.mode.file }}
+          context: ${{ matrix.mode.context }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-

@@ -13,35 +13,35 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-      with:
-        ref: ci_cache
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: ci_cache
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '16'
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: "16"
 
-    - name: Install dependencies
-      run: npm install axios
+      - name: Install dependencies
+        run: npm install axios
 
-    - name: Run script
-      env:
-        GITHUB_REPOSITORY: ${{ github.repository }}
-        SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-      run: curl https://raw.githubusercontent.com/Hyle-org/hyle/refs/heads/main/.github/scripts/check-stars.js | node
+      - name: Run script
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        run: curl https://raw.githubusercontent.com/hyli-org/hyli/refs/heads/main/.github/scripts/check-stars.js | node
 
-    - name: Cache the new count 
-      run: | 
-        git config --global user.name "${GITHUB_ACTOR}"
-        git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
-        git add .
-        STAR_COUNT=$(cat stars_count.txt)
-        git commit -m "⭐ Update star count to ${STAR_COUNT}" || true
+      - name: Cache the new count
+        run: |
+          git config --global user.name "${GITHUB_ACTOR}"
+          git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
+          git add .
+          STAR_COUNT=$(cat stars_count.txt)
+          git commit -m "⭐ Update star count to ${STAR_COUNT}" || true
 
-    - name: Push changes
-      uses: ad-m/github-push-action@master
-      with:
-        github_token: ${{ secrets.GITHUB_TOKEN }}
-        branch: ci_cache
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ci_cache

@@ -59,29 +59,26 @@ pub trait IdentityVerification {
             HydentityAction::RegisterIdentity { account } => {
                 match self.register_identity(&account, private_input) {
                     Ok(()) => Ok(format!(
-                        "Successfully registered identity for account: {}",
-                        account
+                        "Successfully registered identity for account: {account}"
                     )),
-                    Err(err) => Err(format!("Failed to register identity: {}", err)),
+                    Err(err) => Err(format!("Failed to register identity: {err}")),
                 }
             }
             HydentityAction::VerifyIdentity { account, nonce } => {
                 match self.verify_identity(&account, nonce, private_input) {
-                    Ok(true) => Ok(format!("Identity verified for account: {}", account)),
+                    Ok(true) => Ok(format!("Identity verified for account: {account}")),
                     Ok(false) => Err(format!(
-                        "Identity verification failed for account: {}",
-                        account
+                        "Identity verification failed for account: {account}"
                     )),
-                    Err(err) => Err(format!("Error verifying identity: {}", err)),
+                    Err(err) => Err(format!("Error verifying identity: {err}")),
                 }
             }
             HydentityAction::GetIdentityInfo { account } => {
                 match self.get_identity_info(&account) {
                     Ok(info) => Ok(format!(
-                        "Retrieved identity info for account: {}: {}",
-                        account, info
+                        "Retrieved identity info for account: {account}: {info}"
                     )),
-                    Err(err) => Err(format!("Failed to get identity info: {}", err)),
+                    Err(err) => Err(format!("Failed to get identity info: {err}")),
                 }
             }
         }
@@ -90,7 +87,7 @@ pub trait IdentityVerification {
 
 #[cfg(test)]
 mod tests {
-    use crate::HyleContract;
+    use crate::ZkContract;
 
     use super::*;
     use mockall::{mock, predicate::*};
@@ -104,8 +101,8 @@ mod tests {
             fn get_identity_info(&self, account: &str) -> Result<String, &'static str>;
         }
 
-        impl HyleContract for IdentityVerification {
-            fn execute(&mut self, contract_input: &sdk::ContractInput) -> crate::RunResult {
+        impl ZkContract for IdentityVerification {
+            fn execute(&mut self, calldata: &sdk::Calldata) -> crate::RunResult {
                 unimplemented!()
             }
             fn commit(&self) -> sdk::StateCommitment;

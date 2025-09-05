@@ -1,0 +1,87 @@
+[package]
+repository = { workspace = true }
+name = "hyli-tools"
+license-file = { workspace = true }
+version = { workspace = true }
+edition = "2024"
+homepage = { workspace = true }
+rust-version = { workspace = true }
+
+[[bin]]
+name = "block_dbg"
+path = "src/bin/block_dbg.rs"
+required-features = ["ui"]
+
+[[bin]]
+name = "smt_auto_prover"
+path = "src/bin/smt_auto_prover.rs"
+required-features = ["risc0"]
+
+[[bin]]
+name = "health_check"
+path = "src/bin/health_check.rs"
+
+[[bin]]
+name = "rate_limiter_proxy"
+path = "src/bin/rate_limiter_proxy.rs"
+required-features = ["rate-proxy"]
+
+[dependencies]
+hyli-contract-sdk = { workspace = true }
+client-sdk = { workspace = true, features = ["rest"] }
+hyli-modules = { workspace = true }
+hyli-model = { workspace = true }
+smt-token = { workspace = true, features = ["client"] }
+
+anyhow = { workspace = true }
+clap = { workspace = true, features = ["std"] }
+config = { workspace = true, features = ["toml"] }
+serde = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+tracing-subscriber = { workspace = true }
+sha2 = { workspace = true }
+borsh = { workspace = true }
+serde_json = { workspace = true }
+
+# needs to match workspace
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-prometheus = { workspace = true }
+prometheus = { workspace = true }
+
+# Feature UI
+ratatui = { workspace = true, features = ["crossterm"], optional = true }
+crossterm = { workspace = true, optional = true }
+
+# Health check
+ureq = { workspace = true, features = ["json"] }
+
+# Rate limiting proxy (optional feature)
+axum = { workspace = true, optional = true }
+tower_governor = { workspace = true, optional = true }
+tower-http = { workspace = true, features = [
+  "trace",
+  "cors",
+  "catch-panic",
+], optional = true }
+hyper = { workspace = true, optional = true }
+hyper-util = { workspace = true, optional = true }
+dashmap = { workspace = true, optional = true }
+chrono = { workspace = true, features = ["clock"], optional = true }
+
+
+[features]
+risc0 = ["client-sdk/risc0"]
+rate-proxy = [
+  "dep:axum",
+  "dep:tower_governor",
+  "dep:tower-http",
+  "dep:hyper",
+  "dep:hyper-util",
+  "dep:dashmap",
+  "dep:chrono",
+]
+
+default = ["ui", "rate-proxy"]
+ui = ["dep:ratatui", "dep:crossterm"]

@@ -1,9 +1,12 @@
 use anyhow::anyhow;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json, Router};
 use borsh::{BorshDeserialize, BorshSerialize};
-use hyle_contract_sdk::TxHash;
-use hyle_model::{
-    api::APIRegisterContract, ContractAction, RegisterContractAction, StructuredBlobData,
+use hyli_contract_sdk::TxHash;
+use hyli_model::{api::APIRegisterContract, RegisterContractAction, StructuredBlobData};
+use hyli_modules::{
+    bus::{BusMessage, SharedMessageBus},
+    modules::SharedBuildApiCtx,
+    node_state::contract_registration::validate_contract_registration_metadata,
 };
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -11,11 +14,8 @@ use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::{
-    bus::{bus_client, metrics::BusMetrics, BusClientSender, BusMessage},
-    model::{
-        contract_registration::validate_contract_registration_metadata, BlobTransaction,
-        CommonRunContext, Hashed, ProofTransaction, Transaction, TransactionData,
-    },
+    bus::{bus_client, metrics::BusMetrics, BusClientSender},
+    model::{BlobTransaction, Hashed, ProofTransaction, Transaction, TransactionData},
     rest::AppError,
 };
 
@@ -23,6 +23,7 @@ use crate::{
 pub enum RestApiMessage {
     NewTx(Transaction),
 }
+
 impl BusMessage for RestApiMessage {}
 
 bus_client! {
@@ -38,9 +39,9 @@ pub struct RouterState {
 #[derive(OpenApi)]
 struct MempoolAPI;
 
-pub async fn api(ctx: &CommonRunContext) -> Router<()> {
+pub async fn api(bus: &SharedMessageBus, ctx: &SharedBuildApiCtx) -> Router<()> {
     let state = RouterState {
-        bus: RestBusClient::new_from_bus(ctx.bus.new_handle()).await,
+        bus: RestBusClient::new_from_bus(bus.new_handle()).await,
     };
 
     let (router, api) = OpenApiRouter::with_openapi(MempoolAPI::openapi())
@@ -85,13 +86,13 @@ pub async fn send_blob_transaction(
 
     // Filter out incorrect contract-registring transactions
     for blob in payload.blobs.iter() {
-        if blob.contract_name.0 != "hyle" {
+        if blob.contract_name.0 != "hyli" {
             continue;
         }
         if let Ok(tx) = StructuredBlobData::<RegisterContractAction>::try_from(blob.data.clone()) {
             let parameters = tx.parameters;
             validate_contract_registration_metadata(
-                &"hyle".into(),
+                &"hyli".into(),
                 &parameters.contract_name,
                 &parameters.verifier,
                 &parameters.program_id,
@@ -106,6 +107,14 @@ pub async fn send_blob_transaction(
         return Err(AppError(
             StatusCode::BAD_REQUEST,
             anyhow!("Invalid identity for blob tx: {}", e),
+        ));
+    }
+
+    // Filter out transactions with too many blobs
+    if payload.blobs.len() > 20 {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow!("Too many blobs in transaction"),
         ));
     }
     handle_send(state, TransactionData::Blob(payload)).await
@@ -139,7 +148,7 @@ pub async fn register_contract(
     State(state): State<RouterState>,
     Json(payload): Json<APIRegisterContract>,
 ) -> Result<impl IntoResponse, AppError> {
-    let owner = "hyle".into();
+    let owner = "hyli".into();
     validate_contract_registration_metadata(
         &owner,
         &payload.contract_name,
@@ -149,23 +158,14 @@ pub async fn register_contract(
     )
     .map_err(|err| AppError(StatusCode::BAD_REQUEST, anyhow!(err)))?;
 
-    let tx = BlobTransaction::new(
-        "hyle.hyle",
-        vec![RegisterContractAction {
-            verifier: payload.verifier,
-            program_id: payload.program_id,
-            state_commitment: payload.state_commitment,
-            contract_name: payload.contract_name,
-        }
-        .as_blob(owner, None, None)],
-    );
+    let tx = BlobTransaction::from(payload);
 
     handle_send(state, TransactionData::Blob(tx)).await
 }
 
 impl Clone for RouterState {
     fn clone(&self) -> Self {
-        use crate::utils::static_type_map::Pick;
+        use hyli_modules::utils::static_type_map::Pick;
         Self {
             bus: RestBusClient::new(
                 Pick::<BusMetrics>::get(&self.bus).clone(),

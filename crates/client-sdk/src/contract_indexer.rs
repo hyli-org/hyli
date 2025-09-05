@@ -1,30 +1,27 @@
 use anyhow::{Context, Result};
-use core::str;
-use reqwest::StatusCode;
-use std::{collections::BTreeMap, sync::Arc};
+use std::{ops::Deref, str, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::debug;
+use tracing::{debug, error};
 
 use axum::{
+    http::StatusCode,
     response::{IntoResponse, Response},
     Router,
 };
 use borsh::{BorshDeserialize, BorshSerialize};
-use sdk::{
-    guest, info, Blob, BlobIndex, BlobTransaction, ContractInput, ContractName, Hashed,
-    HyleContract, TxContext, TxId,
-};
+use sdk::*;
 use utoipa::openapi::OpenApi;
 
 pub use axum;
 pub use utoipa;
 pub use utoipa_axum;
 
+use crate::transaction_builder::TxExecutorHandler;
+
 #[derive(BorshSerialize, BorshDeserialize)]
 pub struct ContractStateStore<State> {
     pub state: Option<State>,
     pub contract_name: ContractName,
-    pub unsettled_blobs: BTreeMap<TxId, BlobTransaction>,
 }
 
 pub type ContractHandlerStore<T> = Arc<RwLock<ContractStateStore<T>>>;
@@ -34,49 +31,85 @@ impl<State> Default for ContractStateStore<State> {
         ContractStateStore {
             state: None,
             contract_name: Default::default(),
-            unsettled_blobs: BTreeMap::new(),
         }
     }
 }
 
-pub trait ContractHandler
+pub trait ContractHandler<Event = ()>
 where
-    Self: Sized + Default + HyleContract + BorshSerialize + BorshDeserialize + 'static,
+    Self: Sized + TxExecutorHandler + 'static,
 {
     fn api(
         store: ContractHandlerStore<Self>,
     ) -> impl std::future::Future<Output = (Router<()>, OpenApi)> + std::marker::Send;
 
-    fn handle(
+    fn handle_transaction_success(
+        &mut self,
         tx: &BlobTransaction,
         index: BlobIndex,
-        state: Self,
-        tx_context: TxContext,
-    ) -> Result<Self> {
+        tx_context: Arc<TxContext>,
+    ) -> Result<Option<Event>> {
         let Blob {
             contract_name,
             data: _,
         } = tx.blobs.get(index.0).context("Failed to get blob")?;
 
-        let serialized_state = borsh::to_vec(&state)?;
-        let contract_input = ContractInput {
-            state: serialized_state,
+        let calldata = Calldata {
             identity: tx.identity.clone(),
             index,
-            blobs: tx.blobs.clone(),
+            blobs: tx.blobs.clone().into(),
+            tx_blob_count: tx.blobs.len(),
             tx_hash: tx.hashed(),
-            tx_ctx: Some(tx_context),
+            tx_ctx: Some(tx_context.deref().clone()),
             private_input: vec![],
         };
 
-        let (state, hyle_output) = guest::execute::<Self>(&contract_input);
-        let res = str::from_utf8(&hyle_output.program_outputs).unwrap_or("no output");
-        info!("🚀 Executed {contract_name}: {}", res);
+        let hyli_output = match self.handle(&calldata) {
+            Ok(ho) => ho,
+            Err(e) => {
+                error!(
+                    "Failed to handle blob {index} for contract {contract_name}: {}",
+                    e
+                );
+                return Ok(None);
+            }
+        };
+
+        let program_outputs = str::from_utf8(&hyli_output.program_outputs).unwrap_or("no output");
+
+        info!("🚀 Executed {contract_name}: {}", program_outputs);
         debug!(
             handler = %contract_name,
-            "hyle_output: {:?}", hyle_output
+            "hyli_output: {:?}", hyli_output
         );
-        Ok(state)
+        Ok(None)
+    }
+
+    fn handle_transaction_failed(
+        &mut self,
+        _tx: &BlobTransaction,
+        _index: BlobIndex,
+        _tx_context: Arc<TxContext>,
+    ) -> Result<Option<Event>> {
+        Ok(None)
+    }
+
+    fn handle_transaction_timeout(
+        &mut self,
+        _tx: &BlobTransaction,
+        _index: BlobIndex,
+        _tx_context: Arc<TxContext>,
+    ) -> Result<Option<Event>> {
+        Ok(None)
+    }
+
+    fn handle_transaction_sequenced(
+        &mut self,
+        _tx: &BlobTransaction,
+        _index: BlobIndex,
+        _tx_context: Arc<TxContext>,
+    ) -> Result<Option<Event>> {
+        Ok(None)
     }
 }
 

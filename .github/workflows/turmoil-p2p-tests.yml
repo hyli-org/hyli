@@ -1,0 +1,25 @@
+name: Run Turmoil P2P Server Tests
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - "crates/hyli-net/**"
+
+jobs:
+  test-turmoil:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Run turmoil P2P tests - basic
+        run: cargo test -p hyli-net --features turmoil turmoil_p2p
+

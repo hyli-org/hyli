@@ -1,0 +1,60 @@
+name: Check Crates Compilation
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  check-crates:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - crate: hyli
+            features: sp1
+          - crate: hyli-client-sdk
+            features: rest,indexer,risc0,sp1,turmoil
+          - crate: hyli-contract-sdk
+            features: sp1
+          - crate: hyli-contract-sdk
+            features: risc0
+        crate: ${{ fromJson(needs.list-crates.outputs.crates) }}
+
+    needs: list-crates
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/install@cargo-docs-rs
+
+      - name: Compile crate '${{ matrix.crate }}' with no default features
+        run: cargo build -p ${{ matrix.crate }} --no-default-features
+      
+      - name: Compile crate '${{ matrix.crate }}' with default features
+        run: cargo build -p ${{ matrix.crate }}
+
+      - name: Compile crate '${{ matrix.crate }}' with specific features
+        if: matrix.features != ''
+        run: cargo build -p ${{ matrix.crate }} --features ${{ matrix.features }}
+      
+      - name: Build doc for crate '${{ matrix.crate }}'
+        if: matrix.crate != 'hyli-noir-tools'
+        run: cargo docs-rs -p ${{ matrix.crate }}
+
+  list-crates:
+    runs-on: ubuntu-latest
+    outputs:
+      crates: ${{ steps.crate-list.outputs.crates }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - id: crate-list
+        name: List workspace crates
+        run: |
+          CRATES=$(cargo metadata --no-deps --format-version=1 | jq -c '[.packages[].name]')
+          echo "crates=$CRATES" >> $GITHUB_OUTPUT
+

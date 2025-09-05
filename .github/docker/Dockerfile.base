@@ -1,0 +1,18 @@
+FROM --platform=linux/amd64 rust:slim-bookworm AS amd64-tools
+RUN apt-get update && apt-get install -y --no-install-recommends curl bash
+RUN curl -L https://risczero.com/install | bash
+RUN /root/.risc0/bin/rzup install r0vm 2.1.0
+
+# Barretenberg CLI
+RUN curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/refs/heads/master/barretenberg/bbup/install | bash \
+ && install -m 755 /root/.bb/bbup /usr/local/bin/bbup \
+ && bbup -v 0.82.2
+
+FROM ubuntu:noble
+COPY --from=amd64-tools /usr/local/cargo/bin/r0vm /usr/local/bin/r0vm
+COPY --from=amd64-tools /usr/local/bin/bbup        /usr/local/bin/bbup
+COPY --from=amd64-tools /root/.bb                  /root/.bb
+ENV PATH="/root/.bb:$PATH" 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl libssl-dev ca-certificates libc6 binutils \
+ && rm -rf /var/lib/apt/lists/*

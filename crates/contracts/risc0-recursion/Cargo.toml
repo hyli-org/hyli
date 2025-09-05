@@ -1,12 +1,12 @@
 [package]
-name = "hyle-risc0-recursion"
-description = "Hyle Smart Contract"
+name = "hyli-risc0-recursion"
+description = "Hyli Smart Contract"
+license-file = { workspace = true }
 version = { workspace = true }
 edition = { workspace = true }
-# license = { workspace = true }
 homepage = { workspace = true }
 repository = { workspace = true }
-rust-version = "1.81"
+rust-version = "1.85"
 
 [[bin]]
 name = "risc0-recursion"
@@ -20,34 +20,26 @@ path = "examples/host.rs"
 
 [dependencies]
 sdk = { workspace = true }
-serde = { version = "1.0.219", features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
 
-risc0-zkvm = { version = "1.2.4", default-features = false, optional = true, features = [
-    'std',
-] }
+risc0-zkvm = { workspace = true, optional = true, features = ['std'] }
 
 [dev-dependencies]
 # Activate client in examples.
-hyle-risc0-recursion = { path = ".", features = ["client"] }
+hyli-risc0-recursion = { path = ".", features = ["client"] }
 
 client-sdk = { workspace = true }
 sdk = { workspace = true, features = ["full-model"] }
 
-anyhow = "1.0.96"
-borsh = "1.5.6"
-hex = "0.4.3"
+anyhow = { workspace = true }
+borsh = { workspace = true }
+hex = { workspace = true }
 hydentity = { workspace = true, features = ["client"] }
-hyle-contracts = { path = ".." }
-tokio = { version = "1.42.0" }
-risc0-zkvm = { version = "1.2.4", default-features = false, features = [
-    'std',
-    'prove',
-] }
-tempfile = "3.19.1"
-test-log = { version = "0.2.17", features = [
-    "color",
-    "trace",
-], default-features = false }
+hyli-contracts = { path = ".." }
+tokio = { workspace = true }
+risc0-zkvm = { workspace = true, features = ['std', 'prove'] }
+tempfile = { workspace = true }
+test-log = { workspace = true, features = ["color", "trace"] }
 
 [features]
 default = []

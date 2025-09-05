@@ -7,12 +7,13 @@ use anyhow::Result;
 mod fixtures;
 
 mod e2e_indexer {
-    use hyle_model::BlockHeight;
+    use hyli_model::BlockHeight;
 
     use super::*;
 
     async fn scenario_indexer(ctx: E2ECtx) -> Result<()> {
-        ctx.wait_height(5).await?;
+        info!("➡️  Waiting for height 5 on indexer");
+        ctx.wait_indexer_height(5).await?;
 
         info!("➡️  Querying block at height 5");
         let start_block = ctx

@@ -1,26 +1,38 @@
 use opentelemetry::{
     metrics::{Counter, Gauge},
-    InstrumentationScope, KeyValue,
+    InstrumentationScope,
 };
 
 pub struct ConsensusMetrics {
-    signature_error: Counter<u64>,
-    start_new_round: Counter<u64>,
-    start_new_round_error: Counter<u64>,
-    prepare: Counter<u64>,
-    prepare_error: Counter<u64>,
-    prepare_vote: Counter<u64>,
-    prepare_vote_error: Counter<u64>,
-    confirm: Counter<u64>,
-    confirm_error: Counter<u64>,
-    confirm_ack: Counter<u64>,
-    confirm_ack_error: Counter<u64>,
+    current_slot: Gauge<u64>,
+    current_view: Gauge<u64>,
+
+    last_started_round: Gauge<u64>,
+
     commit: Counter<u64>,
-    commit_error: Counter<u64>,
-    confirm_ack_commit_aggregate: Counter<u64>,
-    confirmed_ack_gauge: Gauge<u64>,
-    prepare_votes_gauge: Gauge<u64>,
-    prepare_votes_aggregation: Counter<u64>,
+
+    pub on_prepare_ok: Counter<u64>,
+    pub on_prepare_err: Counter<u64>,
+    pub on_prepare_vote_ok: Counter<u64>,
+    pub on_prepare_vote_err: Counter<u64>,
+    pub on_confirm_ok: Counter<u64>,
+    pub on_confirm_err: Counter<u64>,
+    pub on_confirm_ack_ok: Counter<u64>,
+    pub on_confirm_ack_err: Counter<u64>,
+    pub on_timeout_ok: Counter<u64>,
+    pub on_timeout_err: Counter<u64>,
+    pub on_timeout_certificate_ok: Counter<u64>,
+    pub on_timeout_certificate_err: Counter<u64>,
+    pub on_sync_request_ok: Counter<u64>,
+    pub on_sync_request_err: Counter<u64>,
+    pub on_sync_reply_ok: Counter<u64>,
+    pub on_sync_reply_err: Counter<u64>,
+}
+
+macro_rules! build {
+    ($meter:ident, $type:ty, $name:expr) => {
+        paste::paste! { $meter.[<u64_ $type>](stringify!([<"consensus_" $name>])).build() }
+    };
 }
 
 impl ConsensusMetrics {
@@ -29,86 +41,39 @@ impl ConsensusMetrics {
         let my_meter = opentelemetry::global::meter_with_scope(scope);
 
         ConsensusMetrics {
-            signature_error: my_meter.u64_counter("signature_error").build(),
-            start_new_round: my_meter.u64_counter("start_new_round").build(),
-            start_new_round_error: my_meter.u64_counter("start_new_round_error").build(),
-            prepare: my_meter.u64_counter("prepare").build(),
-            prepare_error: my_meter.u64_counter("prepare_error").build(),
-            prepare_vote: my_meter.u64_counter("prepare_vote").build(),
-            prepare_vote_error: my_meter.u64_counter("prepare_vote_error").build(),
-            confirm: my_meter.u64_counter("confirm").build(),
-            confirm_error: my_meter.u64_counter("confirm_error").build(),
-            confirm_ack: my_meter.u64_counter("confirm_ack").build(),
-            confirm_ack_error: my_meter.u64_counter("confirm_ack_error").build(),
-            commit: my_meter.u64_counter("commit").build(),
-            commit_error: my_meter.u64_counter("commit_error").build(),
-            confirm_ack_commit_aggregate: my_meter
-                .u64_counter("confirm_ack_commit_aggregate")
-                .build(),
-            confirmed_ack_gauge: my_meter.u64_gauge("confirmed_ack_gauge").build(),
-            prepare_votes_gauge: my_meter.u64_gauge("prepare_votes_gauge").build(),
-            prepare_votes_aggregation: my_meter.u64_counter("prepare_votes_aggregation").build(),
+            current_slot: build!(my_meter, gauge, "current_slot"),
+            current_view: build!(my_meter, gauge, "current_view"),
+            last_started_round: build!(my_meter, gauge, "last_started_round"),
+            commit: build!(my_meter, counter, "commit"),
+            on_prepare_ok: build!(my_meter, counter, "on_prepare_ok"),
+            on_prepare_err: build!(my_meter, counter, "on_prepare_err"),
+            on_prepare_vote_ok: build!(my_meter, counter, "on_prepare_vote_ok"),
+            on_prepare_vote_err: build!(my_meter, counter, "on_prepare_vote_err"),
+            on_confirm_ok: build!(my_meter, counter, "on_confirm_ok"),
+            on_confirm_err: build!(my_meter, counter, "on_confirm_err"),
+            on_confirm_ack_ok: build!(my_meter, counter, "on_confirm_ack_ok"),
+            on_confirm_ack_err: build!(my_meter, counter, "on_confirm_ack_err"),
+            on_timeout_ok: build!(my_meter, counter, "on_timeout_ok"),
+            on_timeout_err: build!(my_meter, counter, "on_timeout_err"),
+            on_timeout_certificate_ok: build!(my_meter, counter, "on_timeout_certificate_ok"),
+            on_timeout_certificate_err: build!(my_meter, counter, "on_timeout_certificate_err"),
+            on_sync_request_ok: build!(my_meter, counter, "on_sync_request_ok"),
+            on_sync_request_err: build!(my_meter, counter, "on_sync_request_err"),
+            on_sync_reply_ok: build!(my_meter, counter, "on_sync_reply_ok"),
+            on_sync_reply_err: build!(my_meter, counter, "on_sync_reply_err"),
         }
     }
 
-    pub fn signature_error(&self, kind: &'static str) {
-        self.signature_error.add(1, &[KeyValue::new("kind", kind)]);
-    }
-
-    pub fn start_new_round(&self, kind: &'static str) {
-        self.start_new_round.add(1, &[KeyValue::new("kind", kind)]);
-    }
-    pub fn start_new_round_error(&self, kind: &'static str) {
-        self.start_new_round_error
-            .add(1, &[KeyValue::new("kind", kind)]);
-    }
-    pub fn prepare(&self) {
-        self.prepare.add(1, &[]);
-    }
-    pub fn prepare_error(&self, kind: &'static str) {
-        self.prepare_error.add(1, &[KeyValue::new("kind", kind)]);
-    }
-    pub fn prepare_vote(&self, kind: &'static str) {
-        self.prepare_vote.add(1, &[KeyValue::new("kind", kind)]);
-    }
-    pub fn prepare_vote_error(&self, kind: &'static str) {
-        self.prepare_vote_error
-            .add(1, &[KeyValue::new("kind", kind)]);
-    }
-
-    pub fn prepare_votes_aggregation(&self) {
-        self.prepare_votes_aggregation.add(1, &[]);
-    }
-
-    pub fn confirm(&self, kind: &'static str) {
-        self.confirm.add(1, &[KeyValue::new("kind", kind)]);
-    }
-    pub fn confirm_error(&self, kind: &'static str) {
-        self.confirm_error.add(1, &[KeyValue::new("kind", kind)]);
-    }
-    pub fn confirm_ack(&self, kind: &'static str) {
-        self.confirm_ack.add(1, &[KeyValue::new("kind", kind)]);
-    }
-    pub fn confirm_ack_error(&self, kind: &'static str) {
-        self.confirm_ack_error
-            .add(1, &[KeyValue::new("kind", kind)]);
-    }
-
-    pub fn confirm_ack_commit_aggregate(&self) {
-        self.confirm_ack_commit_aggregate.add(1, &[]);
-    }
-
-    pub fn confirmed_ack_gauge(&self, nb: u64) {
-        self.confirmed_ack_gauge.record(nb, &[])
-    }
-    pub fn prepare_votes_gauge(&self, nb: u64) {
-        self.prepare_votes_gauge.record(nb, &[])
-    }
-
+    // Stuff I'm keeping
     pub fn commit(&self) {
         self.commit.add(1, &[]);
     }
-    pub fn commit_error(&self, kind: &'static str) {
-        self.commit_error.add(1, &[KeyValue::new("kind", kind)]);
+    pub fn at_round(&self, slot: u64, view: u64) {
+        self.current_slot.record(slot, &[]);
+        self.current_view.record(view, &[]);
+    }
+
+    pub fn start_new_round(&self, slot: u64) {
+        self.last_started_round.record(slot, &[]);
     }
 }

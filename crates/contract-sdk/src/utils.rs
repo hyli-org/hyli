@@ -1,34 +1,31 @@
 use crate::{
     alloc::string::{String, ToString},
     caller::ExecutionContext,
-    guest::fail,
-    HyleContract, Identity, StructuredBlobData,
+    Identity, StructuredBlobData,
 };
 use alloc::{format, vec};
 use borsh::{BorshDeserialize, BorshSerialize};
 use core::result::Result;
 
-use hyle_model::{
-    flatten_blobs, Blob, BlobIndex, ContractInput, DropEndOfReader, HyleOutput, StateCommitment,
+use hyli_model::{
+    Blob, BlobIndex, Calldata, DropEndOfReader, HyliOutput, IndexedBlobs, StateCommitment,
     StructuredBlob,
 };
 
 /// This function is used to parse the contract input blob data into a given template `Action`
 /// It assumes that the blob data is the `Action` serialized with borsh.
 /// It returns a tuple with the parsed `Action` and an [ExecutionContext] that can be used
-/// by the contract, and will be needed by the sdk to build the [HyleOutput].
+/// by the contract, and will be needed by the sdk to build the [HyliOutput].
 ///
-/// Alternative: [parse_contract_input]
-pub fn parse_raw_contract_input<Action>(
-    input: &ContractInput,
-) -> Result<(Action, ExecutionContext), String>
+/// Alternative: [parse_calldata]
+pub fn parse_raw_calldata<Action>(calldata: &Calldata) -> Result<(Action, ExecutionContext), String>
 where
     Action: BorshDeserialize,
 {
-    let blobs = &input.blobs;
-    let index = &input.index;
+    let blobs = &calldata.blobs;
+    let index = &calldata.index;
 
-    let blob = match blobs.get(index.0) {
+    let blob = match blobs.get(index) {
         Some(v) => v,
         None => {
             return Err(format!("Could not find Blob at index {index}"));
@@ -39,37 +36,35 @@ where
         return Err(format!("Could not deserialize Blob at index {index}"));
     };
 
-    let exec_ctx = ExecutionContext::new(input.identity.clone(), blob.contract_name.clone());
+    let exec_ctx = ExecutionContext::new(calldata.identity.clone(), blob.contract_name.clone());
     Ok((parameters, exec_ctx))
 }
 
 /// This function is used to parse the contract input blob data.
 /// It assumes that the blob data is a [StructuredBlobData] serialized with borsh.
 /// It returns a tuple with the parsed `Action` and an [ExecutionContext] that can be used
-/// by the contract, and will be needed by the sdk to build the [HyleOutput].
+/// by the contract, and will be needed by the sdk to build the [HyliOutput].
 ///
 /// The [ExecutionContext] will holds the caller/callees information.
 /// See [StructuredBlobData] page for more information on caller/callees.
 ///
-/// Alternative: [parse_raw_contract_input]
-pub fn parse_contract_input<Action>(
-    input: &ContractInput,
-) -> Result<(Action, ExecutionContext), String>
+/// Alternative: [parse_raw_calldata]
+pub fn parse_calldata<Action>(calldata: &Calldata) -> Result<(Action, ExecutionContext), String>
 where
     Action: BorshSerialize + BorshDeserialize,
 {
-    let parsed_blob = parse_structured_blob::<Action>(&input.blobs, &input.index);
+    let parsed_blob = parse_structured_blob::<Action>(&calldata.blobs, &calldata.index);
 
     let parsed_blob = parsed_blob.ok_or("Failed to parse input blob".to_string())?;
 
-    let caller = check_caller_callees::<Action>(input, &parsed_blob)?;
+    let caller = check_caller_callees::<Action>(calldata, &parsed_blob)?;
 
     let mut callees_blobs = vec::Vec::new();
-    for blob in input.blobs.clone().into_iter() {
+    for (_, blob) in &calldata.blobs {
         if let Ok(structured_blob) = blob.data.clone().try_into() {
             let structured_blob: StructuredBlobData<DropEndOfReader> = structured_blob; // for type inference
-            if structured_blob.caller == Some(input.index) {
-                callees_blobs.push(blob);
+            if structured_blob.caller == Some(calldata.index) {
+                callees_blobs.push(blob.clone());
             }
         };
     }
@@ -102,13 +97,13 @@ where
 }
 
 pub fn parse_structured_blob<Action>(
-    blobs: &[Blob],
+    blobs: &IndexedBlobs,
     index: &BlobIndex,
 ) -> Option<StructuredBlob<Action>>
 where
     Action: BorshDeserialize,
 {
-    let blob = match blobs.get(index.0) {
+    let blob = match blobs.get(index) {
         Some(v) => v,
         None => {
             return None;
@@ -124,17 +119,39 @@ where
     Some(parsed_blob)
 }
 
-pub fn as_hyle_output<State: HyleContract + BorshDeserialize>(
+fn fail(
+    calldata: &Calldata,
     initial_state_commitment: StateCommitment,
-    nex_state_commitment: StateCommitment,
-    contract_input: ContractInput,
+    message: &str,
+) -> HyliOutput {
+    HyliOutput {
+        version: 1,
+        initial_state: initial_state_commitment.clone(),
+        next_state: initial_state_commitment,
+        identity: calldata.identity.clone(),
+        index: calldata.index,
+        blobs: calldata.blobs.clone(),
+        tx_blob_count: calldata.tx_blob_count,
+        success: false,
+        tx_hash: calldata.tx_hash.clone(),
+        state_reads: vec![],
+        tx_ctx: calldata.tx_ctx.clone(),
+        onchain_effects: vec![],
+        program_outputs: message.to_string().into_bytes(),
+    }
+}
+
+pub fn as_hyli_output(
+    initial_state_commitment: StateCommitment,
+    next_state_commitment: StateCommitment,
+    calldata: &Calldata,
     res: &mut crate::RunResult,
-) -> HyleOutput {
+) -> HyliOutput {
     match res {
         Ok((ref mut program_output, execution_context, ref mut onchain_effects)) => {
             if !execution_context.callees_blobs.is_empty() {
                 return fail(
-                    contract_input,
+                    calldata,
                     initial_state_commitment,
                     &format!(
                         "Execution context has not been fully consumed {:?}",
@@ -142,26 +159,31 @@ pub fn as_hyle_output<State: HyleContract + BorshDeserialize>(
                     ),
                 );
             }
-            HyleOutput {
+            HyliOutput {
                 version: 1,
                 initial_state: initial_state_commitment,
-                next_state: nex_state_commitment,
-                identity: contract_input.identity,
-                index: contract_input.index,
-                blobs: flatten_blobs(&contract_input.blobs),
+                next_state: next_state_commitment,
+                identity: calldata.identity.clone(),
+                index: calldata.index,
+                blobs: calldata.blobs.clone(),
+                tx_blob_count: calldata.tx_blob_count,
                 success: true,
-                tx_hash: contract_input.tx_hash,
-                tx_ctx: contract_input.tx_ctx,
+                tx_hash: calldata.tx_hash.clone(),
+                state_reads: vec![],
+                tx_ctx: calldata.tx_ctx.clone(),
                 onchain_effects: core::mem::take(onchain_effects),
-                program_outputs: core::mem::take(program_output).into_bytes(),
+                program_outputs: core::mem::take(program_output),
             }
         }
-        Err(message) => fail(contract_input, initial_state_commitment, message),
+        Err(message) => fail(calldata, initial_state_commitment, message),
     }
 }
 
+/// This function checks that the caller and callees of a blob are correct.
+/// It is written defensively, so it's both checking our callees and our caller.
+/// If another contract is written incorrectly, we still will reject incorrect blobs.
 pub fn check_caller_callees<Action>(
-    input: &ContractInput,
+    calldata: &Calldata,
     parameters: &StructuredBlob<Action>,
 ) -> Result<Identity, String>
 where
@@ -169,32 +191,375 @@ where
 {
     // Check that callees has this blob as caller
     if let Some(callees) = parameters.data.callees.as_ref() {
-        for callee_index in callees {
-            let callee_blob = input.blobs[callee_index.0].clone();
-            let callee_structured_blob: StructuredBlobData<DropEndOfReader> =
-                callee_blob.data.try_into().expect("Failed to decode blob");
-            if callee_structured_blob.caller != Some(input.index) {
-                return Err("One Callee does not have this blob as caller".to_string());
+        // Check that the number of callees matches the number of blobs that have this blob as caller
+        let blobs_with_this_as_caller = calldata.blobs.iter().filter_map(|(i, blob)| {
+            if let Ok(structured_blob) =
+                blob.data.clone().try_into() as Result<StructuredBlobData<DropEndOfReader>, _>
+            {
+                match structured_blob.caller == Some(calldata.index) {
+                    true => Some(i),
+                    false => None,
+                }
+            } else {
+                None
             }
+        });
+        if !callees.iter().eq(blobs_with_this_as_caller) {
+            return Err("Blob callees do not match actual callees".to_string());
         }
     }
     // Extract the correct caller
     if let Some(caller_index) = parameters.data.caller.as_ref() {
-        let caller_blob = input.blobs[caller_index.0].clone();
-        let caller_structured_blob: StructuredBlobData<DropEndOfReader> =
-            caller_blob.data.try_into().expect("Failed to decode blob");
-        // Check that caller has this blob as callee
-        if caller_structured_blob.callees.is_some()
-            && !caller_structured_blob
-                .callees
-                .unwrap()
-                .contains(&input.index)
-        {
-            return Err("Incorrect Caller for this blob".to_string());
+        if *caller_index == calldata.index {
+            return Err("Self-reference as callee is forbidden".to_string());
         }
-        return Ok(caller_blob.contract_name.0.clone().into());
+
+        // TODO: Have to clone to parse into StructuredBlobData
+        if let Some(caller_blob) = calldata.blobs.get(caller_index).cloned() {
+            let caller_structured_blob: StructuredBlobData<DropEndOfReader> = caller_blob
+                .data
+                .try_into()
+                .map_err(|_| format!("Could not parse blob {caller_index} as a StructuredBlob"))?;
+            // Check that caller has this blob as callee
+            let Some(caller_callees) = caller_structured_blob.callees else {
+                return Err("Caller does not have any callees".to_string());
+            };
+            if !caller_callees.contains(&calldata.index) {
+                return Err("Incorrect Caller for this blob".to_string());
+            }
+            return Ok(caller_blob.contract_name.0.clone().into());
+        } else {
+            return Err(format!("Caller index {caller_index} not found in blobs"));
+        }
+        // TODO: have to clone to parse into StructuredBlobData
+    } else if calldata.blobs.clone().into_iter().any(|(_, blob)| {
+        if let Ok(structured_blob) =
+            blob.data.clone().try_into() as Result<StructuredBlobData<DropEndOfReader>, _>
+        {
+            structured_blob.callees.is_some_and(|callees| {
+                // Check that this blob is not in callees
+                callees.contains(&calldata.index)
+            })
+        } else {
+            false
+        }
+    }) {
+        return Err("Blob has no caller but another blob claims it as a callee".to_string());
     }
 
     // No callers detected, use the identity
-    Ok(input.identity.clone())
+    Ok(calldata.identity.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyli_model::{Blob, BlobData, ContractName, TxHash};
+
+    fn make_calldata(
+        identity: Identity,
+        index: BlobIndex,
+        blobs: IndexedBlobs,
+        tx_blob_count: usize,
+    ) -> Calldata {
+        Calldata {
+            identity,
+            index,
+            blobs,
+            tx_blob_count,
+            tx_hash: TxHash::default(),
+            tx_ctx: None,
+            private_input: vec![],
+        }
+    }
+
+    fn make_blob(
+        contract: &str,
+        caller: Option<BlobIndex>,
+        callees: Option<Vec<BlobIndex>>,
+    ) -> Blob {
+        Blob {
+            contract_name: ContractName::new(contract),
+            data: BlobData(
+                borsh::to_vec(&StructuredBlobData {
+                    caller,
+                    callees,
+                    parameters: (),
+                })
+                .unwrap(),
+            ),
+        }
+    }
+
+    type TestCase<'a> = (
+        BlobIndex,
+        &'a str,
+        Option<BlobIndex>,
+        Option<Vec<BlobIndex>>,
+    );
+    fn make_test_case(
+        blob_specs: Vec<TestCase>,
+        test_index: BlobIndex,
+    ) -> (Calldata, StructuredBlob<()>) {
+        let blobs: Vec<(BlobIndex, Blob)> = blob_specs
+            .iter()
+            .map(|(idx, contract, caller, callees)| {
+                (*idx, make_blob(contract, *caller, callees.clone()))
+            })
+            .collect();
+        let calldata = make_calldata(Identity::new("user"), test_index, IndexedBlobs(blobs), 2);
+        // Find the blob spec for test_index
+        let (_, _, caller, callees) = blob_specs
+            .iter()
+            .find(|(idx, _, _, _)| *idx == test_index)
+            .expect("test_index must be present in blob_specs");
+        let parameters = StructuredBlob {
+            contract_name: ContractName::new("test"),
+            data: StructuredBlobData {
+                caller: *caller,
+                callees: callees.clone(),
+                parameters: (),
+            },
+        };
+        (calldata, parameters)
+    }
+
+    fn expect_error(blob_specs: Vec<TestCase>, test_index: BlobIndex, expected_error: &str) {
+        let (calldata, parameters) = make_test_case(blob_specs, test_index);
+        let result = check_caller_callees(&calldata, &parameters);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), expected_error);
+    }
+
+    fn expect_ok(blob_specs: Vec<TestCase>, test_index: BlobIndex) {
+        let (calldata, parameters) = make_test_case(blob_specs, test_index);
+        let result = check_caller_callees(&calldata, &parameters);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_valid_caller_and_callee() {
+        expect_ok(
+            vec![
+                (BlobIndex(0), "caller", None, Some(vec![BlobIndex(1)])),
+                (BlobIndex(1), "callee", Some(BlobIndex(0)), None),
+            ],
+            BlobIndex(0),
+        );
+        expect_ok(
+            vec![
+                (BlobIndex(0), "caller", None, Some(vec![BlobIndex(1)])),
+                (BlobIndex(1), "callee", Some(BlobIndex(0)), None),
+            ],
+            BlobIndex(1),
+        );
+    }
+    #[test]
+    fn test_valid_with_nothing() {
+        expect_ok(
+            vec![
+                (BlobIndex(0), "caller", None, None),
+                (BlobIndex(1), "callee", None, None),
+            ],
+            BlobIndex(0),
+        );
+        expect_ok(
+            vec![
+                (BlobIndex(0), "caller", None, None),
+                (BlobIndex(1), "callee", None, None),
+            ],
+            BlobIndex(1),
+        );
+    }
+
+    #[test]
+    fn test_callee_does_not_have_this_blob_as_caller() {
+        expect_error(
+            vec![
+                (BlobIndex(0), "caller", None, Some(vec![BlobIndex(1)])),
+                (BlobIndex(1), "callee", None, None),
+            ],
+            BlobIndex(0),
+            "Blob callees do not match actual callees",
+        );
+        // Inverse - check no-one claims to be our caller
+        expect_error(
+            vec![
+                (BlobIndex(0), "caller", None, Some(vec![BlobIndex(1)])),
+                (BlobIndex(1), "callee", None, None),
+            ],
+            BlobIndex(1),
+            "Blob has no caller but another blob claims it as a callee",
+        );
+    }
+
+    #[test]
+    fn test_caller_does_not_have_this_blob_as_callee() {
+        expect_error(
+            vec![
+                (BlobIndex(0), "caller", None, Some(vec![BlobIndex(2)])),
+                (BlobIndex(1), "callee", Some(BlobIndex(0)), None),
+            ],
+            BlobIndex(1),
+            "Incorrect Caller for this blob",
+        );
+    }
+
+    #[test]
+    fn test_callee_index_does_not_exist() {
+        expect_error(
+            vec![(BlobIndex(0), "caller", None, Some(vec![BlobIndex(1)]))],
+            BlobIndex(0),
+            "Blob callees do not match actual callees",
+        );
+    }
+
+    #[test]
+    fn test_caller_index_does_not_exist() {
+        expect_error(
+            vec![(BlobIndex(1), "callee", Some(BlobIndex(0)), None)],
+            BlobIndex(1),
+            "Caller index 0 not found in blobs",
+        );
+    }
+
+    #[test]
+    fn test_caller_has_no_callees() {
+        expect_error(
+            vec![
+                (BlobIndex(0), "caller", None, None),
+                (BlobIndex(1), "callee", Some(BlobIndex(0)), None),
+            ],
+            BlobIndex(1),
+            "Caller does not have any callees",
+        );
+    }
+
+    #[test]
+    fn test_caller_has_empty_callees() {
+        expect_error(
+            vec![
+                (BlobIndex(0), "caller", None, Some(vec![])),
+                (BlobIndex(1), "callee", Some(BlobIndex(0)), None),
+            ],
+            BlobIndex(1),
+            "Incorrect Caller for this blob",
+        );
+    }
+
+    #[test]
+    fn test_no_caller_no_callees_returns_identity() {
+        let (calldata, parameters) =
+            make_test_case(vec![(BlobIndex(0), "caller", None, None)], BlobIndex(0));
+        let result = check_caller_callees(&calldata, &parameters);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), calldata.identity);
+    }
+
+    #[test]
+    fn test_both_caller_and_callees_valid() {
+        // Blob 0 is caller, Blob 1 is callee, both reference each other, and Blob 1 also has a callee
+        expect_ok(
+            vec![
+                (BlobIndex(0), "caller", None, Some(vec![BlobIndex(1)])),
+                (
+                    BlobIndex(1),
+                    "callee",
+                    Some(BlobIndex(0)),
+                    Some(vec![BlobIndex(2)]),
+                ),
+                (BlobIndex(2), "next", Some(BlobIndex(1)), None),
+            ],
+            BlobIndex(1),
+        );
+    }
+
+    #[test]
+    fn test_self_reference_as_caller() {
+        // Blob references itself as caller / callee (forbidden)
+        expect_error(
+            vec![(
+                BlobIndex(0),
+                "self",
+                Some(BlobIndex(0)),
+                Some(vec![BlobIndex(0)]),
+            )],
+            BlobIndex(0),
+            "Self-reference as callee is forbidden",
+        );
+    }
+
+    #[test]
+    fn test_caller_has_callees_but_not_this_blob() {
+        // Caller exists, has callees, but not the current blob (forbidden)
+        expect_error(
+            vec![
+                (BlobIndex(0), "caller", None, Some(vec![BlobIndex(2)])),
+                (BlobIndex(1), "callee", Some(BlobIndex(0)), None),
+                (BlobIndex(2), "other", Some(BlobIndex(0)), None),
+            ],
+            BlobIndex(1),
+            "Incorrect Caller for this blob",
+        );
+        expect_error(
+            vec![
+                (BlobIndex(0), "caller", None, Some(vec![BlobIndex(2)])),
+                (BlobIndex(1), "callee", Some(BlobIndex(0)), None),
+                (BlobIndex(2), "other", Some(BlobIndex(0)), None),
+            ],
+            BlobIndex(0),
+            "Blob callees do not match actual callees",
+        );
+    }
+
+    #[test]
+    fn test_caller_has_callees_but_not_this_blob_2() {
+        // Caller exists, has callees, but not the current blob (forbidden)
+        expect_error(
+            vec![
+                (
+                    BlobIndex(0),
+                    "caller",
+                    None,
+                    Some(vec![BlobIndex(2), BlobIndex(3)]),
+                ),
+                (BlobIndex(1), "callee", None, None),
+                (BlobIndex(2), "other", Some(BlobIndex(0)), None),
+                (BlobIndex(3), "other3", None, None),
+                (BlobIndex(4), "other4", Some(BlobIndex(0)), None),
+            ],
+            BlobIndex(0),
+            "Blob callees do not match actual callees",
+        );
+    }
+
+    #[test]
+    fn test_incorrect_number_of_callees() {
+        // Blob 1 and Blob 2 both reference Blob 0 as their caller,
+        // but Blob 0 only lists one callee.
+        expect_error(
+            vec![
+                (BlobIndex(0), "main", None, Some(vec![BlobIndex(1)])), // Only one callee listed
+                (BlobIndex(1), "a", Some(BlobIndex(0)), None),
+                (BlobIndex(2), "b", Some(BlobIndex(0)), None),
+            ],
+            BlobIndex(0),
+            "Blob callees do not match actual callees",
+        );
+        // Inverse
+        expect_error(
+            vec![
+                (
+                    BlobIndex(0),
+                    "main",
+                    None,
+                    Some(vec![BlobIndex(1), BlobIndex(2)]),
+                ),
+                (BlobIndex(1), "a", Some(BlobIndex(0)), None),
+                (BlobIndex(2), "b", None, None),
+            ],
+            BlobIndex(0),
+            "Blob callees do not match actual callees",
+        );
+    }
 }

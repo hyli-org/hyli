@@ -1,33 +1,59 @@
-
 [package]
-name = "hyle-contracts"
-description = "Metadata of hyle built-in contracts"
+name = "hyli-contracts"
+description = "Metadata of hyli built-in contracts"
+license-file = { workspace = true }
 version = { workspace = true }
 edition = { workspace = true }
-# license = { workspace = true }
 homepage = { workspace = true }
 repository = { workspace = true }
-rust-version = "1.81"
+rust-version = "1.85"
 
 [lib]
 path = "metadata.rs"
 
 [dependencies]
 sdk = { workspace = true }
+amm = { workspace = true, features = ["client"] }
+hydentity = { workspace = true, features = ["client"] }
+hyllar = { workspace = true, features = ["client"] }
+smt-token = { workspace = true, features = ["client"] }
+risc0-recursion = { workspace = true, features = ["client"] }
+staking = { workspace = true, features = ["client"] }
+uuid-tld = { workspace = true, features = ["client"] }
+
 
 [build-dependencies]
-risc0-build = { version = "1.2.4", optional = true }
+risc0-build = { workspace = true, optional = true }
 
 [package.metadata.risc0]
 methods = [
-    "amm",
-    "hyllar",
-    "hydentity",
-    "staking",
-    "risc0-recursion",
-    "uuid-tld",
+  "amm",
+  "hyllar",
+  "smt-token",
+  "hydentity",
+  "staking",
+  "risc0-recursion",
+  "uuid-tld",
 ]
 
 [features]
 build = ["dep:risc0-build"]
-nonreproducible = ["build"]
+nonreproducible = ["build", "all"]
+
+# Following features are used to choose which contracts should be rebuild with docker
+all = [
+  "amm",
+  "hyllar",
+  "smt-token",
+  "hydentity",
+  "staking",
+  "risc0-recursion",
+  "uuid-tld",
+]
+amm = []
+hyllar = []
+smt-token = []
+hydentity = []
+staking = []
+risc0-recursion = []
+uuid-tld = []

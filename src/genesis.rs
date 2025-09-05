@@ -1,31 +1,36 @@
 use std::collections::{BTreeMap, HashMap};
 
-use crate::{
-    bus::{bus_client, BusClientSender, BusMessage},
-    handle_messages,
-    model::*,
-    p2p::network::PeerEvent,
-    utils::{conf::SharedConf, crypto::SharedBlstCrypto, modules::Module},
-};
+use crate::{model::*, p2p::network::PeerEvent, utils::conf::SharedConf};
 use anyhow::{Error, Result};
 use client_sdk::{
     contract_states,
-    helpers::register_hyle_contract,
-    transaction_builder::{ProofTxBuilder, ProvableBlobTx, TxExecutor, TxExecutorBuilder},
+    helpers::register_hyli_contract,
+    transaction_builder::{
+        ProofTxBuilder, ProvableBlobTx, TxExecutor, TxExecutorBuilder, TxExecutorHandler,
+    },
 };
 use hydentity::{
-    client::{register_identity, verify_identity},
+    client::tx_executor_handler::{register_identity, verify_identity},
     Hydentity,
 };
-use hyle_contract_sdk::{guest, Identity, StateCommitment};
-use hyle_contract_sdk::{ContractName, HyleContract, ProgramId};
-use hyllar::{client::transfer, Hyllar, FAUCET_ID};
+use hyli_contract_sdk::{
+    Blob, Calldata, ContractName, Identity, ProgramId, StateCommitment, ZkContract,
+};
+use hyli_crypto::SharedBlstCrypto;
+use hyli_modules::{
+    bus::{BusClientSender, BusMessage, SharedMessageBus},
+    bus_client, handle_messages, log_error,
+    modules::Module,
+};
+use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
 use serde::{Deserialize, Serialize};
+use smt_token::{account::AccountSMT, SmtTokenAction};
 use staking::{
-    client::{delegate, deposit_for_fees, stake},
+    client::tx_executor_handler::{delegate, deposit_for_fees, stake},
     state::Staking,
 };
 use tracing::{debug, error, info};
+use utils::TimestampMs;
 use verifiers::NativeVerifiers;
 
 #[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
@@ -33,6 +38,7 @@ pub enum GenesisEvent {
     NoGenesis,
     GenesisBlock(SignedBlock),
 }
+
 impl BusMessage for GenesisEvent {}
 
 bus_client! {
@@ -53,18 +59,24 @@ pub struct Genesis {
 
 impl Module for Genesis {
     type Context = SharedRunContext;
-    async fn build(ctx: Self::Context) -> Result<Self> {
-        let bus = GenesisBusClient::new_from_bus(ctx.common.bus.new_handle()).await;
+    async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
+        let bus = GenesisBusClient::new_from_bus(bus.new_handle()).await;
         Ok(Genesis {
-            config: ctx.common.config.clone(),
+            config: ctx.config.clone(),
             bus,
             peer_pubkey: BTreeMap::new(),
-            crypto: ctx.node.crypto.clone(),
+            crypto: ctx.crypto.clone(),
         })
     }
 
-    fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
-        self.start()
+    async fn run(&mut self) -> Result<()> {
+        self.start().await
+    }
+
+    async fn persist(&mut self) -> Result<()> {
+        // TODO: ideally we'd wait until everyone has processed it, as there's technically a data race.
+        let file = self.config.data_directory.clone().join("genesis.bin");
+        log_error!(Self::save_on_disk(&file, &true), "Persisting genesis state")
     }
 }
 
@@ -85,15 +97,11 @@ impl Genesis {
         if already_handled_genesis {
             debug!("🌿 Genesis block already handled, skipping");
             // TODO: do we need a different message?
-            _ = self.bus.send(GenesisEvent::NoGenesis {})?;
+            self.bus.send(GenesisEvent::NoGenesis {})?;
             return Ok(());
         }
 
         self.do_genesis().await?;
-
-        // TODO: ideally we'd wait until everyone has processed it, as there's technically a data race.
-
-        Self::save_on_disk(&file, &true)?;
 
         Ok(())
     }
@@ -123,18 +131,25 @@ impl Genesis {
                 on_bus self.bus,
                 listen<PeerEvent> msg => {
                     match msg {
-                        PeerEvent::NewPeer { name, pubkey, .. } => {
+                        PeerEvent::NewPeer { name, pubkey, height, .. } => {
                             if !self.config.genesis.stakers.contains_key(&name) {
                                 continue;
                             }
+
+                            if self.config.genesis.stakers.contains_key(&name) && height.0 > 0 {
+                                info!("🌱 Peer {}({}) has height {}, skipping genesis", &name, &pubkey, height.0);
+                                _ = self.bus.send(GenesisEvent::NoGenesis {});
+                                return Ok(());
+                            }
+
+
                             info!("🌱 New peer {}({}) added to genesis", &name, &pubkey);
-                            self.peer_pubkey
-                                .insert(name.clone(), pubkey.clone());
+                            self.peer_pubkey.insert(name.clone(), pubkey.clone());
 
                             // Once we know everyone in the initial quorum, craft & process the genesis block.
-                            if self.peer_pubkey.len()
-                                == self.config.genesis.stakers.len() {
-                                break
+                            if self.peer_pubkey.len() == self.config.genesis.stakers.len() {
+                                info!("🌱 All genesis peers joined, creating genesis block");
+                                break;
                             } else {
                                 info!("🌱 Waiting for {} more peers to join genesis", self.config.genesis.stakers.len() - self.peer_pubkey.len());
                             }
@@ -177,17 +192,24 @@ impl Genesis {
             .generate_register_txs(peer_pubkey, &mut tx_executor)
             .await?;
 
-        let faucet_txs = self
+        let faucet_txs: Vec<ProofTxBuilder> = self
             .generate_faucet_txs(peer_pubkey, &mut tx_executor, genesis_stake)
             .await?;
 
         let stake_txs =
             Self::generate_stake_txs(peer_pubkey, &mut tx_executor, genesis_stake).await?;
 
+        let token_txs = if self.config.genesis.keep_tokens_in_faucet {
+            vec![]
+        } else {
+            Self::generate_token_txs(&mut tx_executor)?
+        };
+
         let builders = register_txs
             .into_iter()
             .chain(faucet_txs.into_iter())
-            .chain(stake_txs.into_iter());
+            .chain(stake_txs.into_iter())
+            .chain(token_txs.into_iter());
 
         for ProofTxBuilder {
             identity,
@@ -209,20 +231,26 @@ impl Genesis {
             genesis_txs.push(
                 VerifiedProofTransaction {
                     contract_name: "risc0-recursion".into(),
+                    program_id: contract_program_ids
+                        .get(&ContractName("risc0-recursion".to_string()))
+                        .expect("Genesis TXes on unregistered contracts")
+                        .clone(),
+                    verifier: hyli_model::verifiers::RISC0_1.into(),
                     proven_blobs: outputs
                         .drain(..)
                         .map(|(contract_name, out)| BlobProofOutput {
-                            original_proof_hash: ProofData::default().hashed(),
+                            original_proof_hash: ProofDataHash(blob_tx_hash.0.clone()),
+                            verifier: hyli_model::verifiers::RISC0_1.into(),
                             program_id: contract_program_ids
                                 .get(&contract_name)
                                 .expect("Genesis TXes on unregistered contracts")
                                 .clone(),
                             blob_tx_hash: blob_tx_hash.clone(),
-                            hyle_output: out,
+                            hyli_output: out,
                         })
                         .collect(),
                     is_recursive: true,
-                    proof_hash: ProofData::default().hashed(),
+                    proof_hash: ProofDataHash(blob_tx_hash.0.clone()),
                     proof_size: 0,
                     proof: None,
                 }
@@ -251,14 +279,14 @@ impl Genesis {
         register_identity(
             &mut transaction,
             ContractName::new("hydentity"),
-            self.config.genesis.faucet_password.clone(),
+            "password".to_owned(),
         )?;
         txs.push(tx_executor.process(transaction)?);
 
         for peer in peer_pubkey.values() {
             info!("🌱  Registering identity {peer}");
 
-            let identity = Identity(format!("{peer}.hydentity"));
+            let identity = Identity(format!("{peer}@hydentity"));
             let mut transaction = ProvableBlobTx::new(identity.clone());
 
             // Register
@@ -287,7 +315,10 @@ impl Genesis {
                 .expect("Genesis stakers should be in the peer map")
                 as u128;
 
-            info!("🌱  Fauceting {genesis_faucet} hyllar to {peer}");
+            info!(
+                "🌱  Fauceting {} hyllar to {peer}",
+                genesis_faucet + 100_000_000_000
+            );
 
             let identity = Identity::new(FAUCET_ID);
             let mut transaction = ProvableBlobTx::new(identity.clone());
@@ -297,15 +328,15 @@ impl Genesis {
                 &mut transaction,
                 ContractName::new("hydentity"),
                 &tx_executor.hydentity,
-                self.config.genesis.faucet_password.clone(),
+                "password".to_string(),
             )?;
 
             // Transfer
             transfer(
                 &mut transaction,
                 ContractName::new("hyllar"),
-                format!("{peer}.hydentity"),
-                genesis_faucet + 1_000_000_000,
+                format!("{peer}@hydentity"),
+                genesis_faucet + 100_000_000_000,
             )?;
 
             txs.push(tx_executor.process(transaction)?);
@@ -328,7 +359,7 @@ impl Genesis {
 
             info!("🌱  Staking {genesis_stake} hyllar from {peer}");
 
-            let identity = Identity(format!("{peer}.hydentity").to_string());
+            let identity = Identity(format!("{peer}@hydentity").to_string());
             let mut transaction = ProvableBlobTx::new(identity.clone());
 
             // Verify identity
@@ -359,14 +390,14 @@ impl Genesis {
                 &mut transaction,
                 ContractName::new("staking"),
                 peer.clone(),
-                1_000_000_000, // 1 GB at 1 token/byte
+                100_000_000_000, // 100 GB at 1 token/byte
             )?;
 
             transfer(
                 &mut transaction,
                 ContractName::new("hyllar"),
                 "staking".to_string(),
-                1_000_000_000,
+                100_000_000_000,
             )?;
 
             // Delegate
@@ -378,6 +409,105 @@ impl Genesis {
         Ok(txs)
     }
 
+    // Needs to run last
+    fn generate_token_txs(tx_executor: &mut TxExecutor<States>) -> Result<Vec<ProofTxBuilder>> {
+        let mut txs: Vec<ProofTxBuilder> = vec![];
+        let identity = Identity::new(FAUCET_ID);
+
+        // Send tokens to the Hyli wallet for later distribution, and so hydentity can't be used.
+        let mut transaction = ProvableBlobTx::new(identity.clone());
+        // Verify identity
+        verify_identity(
+            &mut transaction,
+            ContractName::new("hydentity"),
+            &tx_executor.hydentity,
+            "password".to_string(),
+        )?;
+
+        // Transfer all tokens
+        let remaining_hyllar = hyllar::erc20::ERC20::balance_of(&tx_executor.hyllar, &identity.0)
+            .expect("Faucet should have hyllar balance");
+
+        info!("🌱  Transferring remaining {remaining_hyllar} hyllar to hyli@wallet");
+        transfer(
+            &mut transaction,
+            ContractName::new("hyllar"),
+            "hyli@wallet".to_string(),
+            remaining_hyllar,
+        )?;
+
+        txs.push(tx_executor.process(transaction)?);
+
+        let mut smt = AccountSMT::default();
+        let initial_root = *smt.0.root();
+        let transfer_blob = SmtTokenAction::Transfer {
+            sender: identity.clone(),
+            recipient: Identity::new("hyli@wallet"),
+            // Full supply
+            amount: 100_000_000_000_000,
+        };
+
+        smt.handle(&Calldata {
+            tx_hash: TxHash::default(),
+            identity: identity.clone(),
+            // Contract name doesn't matter here
+            blobs: IndexedBlobs::from(vec![transfer_blob.as_blob(
+                ContractName::new("smt"),
+                None,
+                None,
+            )]),
+            tx_blob_count: 1,
+            index: BlobIndex(0),
+            tx_ctx: None,
+            private_input: vec![],
+        })?;
+        let next_root = *smt.0.root();
+        let initial_state = StateCommitment(Into::<[u8; 32]>::into(initial_root).to_vec());
+        let next_state = StateCommitment(Into::<[u8; 32]>::into(next_root).to_vec());
+
+        #[allow(clippy::indexing_slicing, reason = "must exist")]
+        for token in ["oranj", "oxygen", "vitamin"] {
+            info!("🌱 Transferring all {token} tokens to 'hyli@wallet'");
+            let mut transaction = ProvableBlobTx::new(identity.clone());
+            // Verify identity
+            verify_identity(
+                &mut transaction,
+                ContractName::new("hydentity"),
+                &tx_executor.hydentity,
+                "password".to_string(),
+            )?;
+
+            let mut ptx = tx_executor.process(transaction)?;
+            ptx.blobs
+                .push(transfer_blob.as_blob(ContractName::new(token), None, None));
+
+            ptx.outputs[0].1.tx_hash = ptx.to_blob_tx().hashed();
+            ptx.outputs[0].1.blobs = IndexedBlobs::from(ptx.blobs.clone());
+
+            let tx_hash = ptx.to_blob_tx().hashed();
+            ptx.outputs.push((
+                token.into(),
+                HyliOutput {
+                    version: 1,
+                    initial_state: initial_state.clone(),
+                    next_state: next_state.clone(),
+                    identity: identity.clone(),
+                    index: BlobIndex(1),
+                    blobs: IndexedBlobs::from(ptx.blobs.clone()),
+                    tx_blob_count: 2,
+                    tx_hash,
+                    success: true,
+                    state_reads: vec![],
+                    tx_ctx: None,
+                    onchain_effects: vec![],
+                    program_outputs: vec![],
+                },
+            ));
+            txs.push(ptx);
+        }
+        Ok(txs)
+    }
+
     fn genesis_contracts_txs(
         &self,
     ) -> (
@@ -385,9 +515,10 @@ impl Genesis {
         Vec<Transaction>,
         TxExecutor<States>,
     ) {
-        let staking_program_id = hyle_contracts::STAKING_ID.to_vec();
-        let hyllar_program_id = hyle_contracts::HYLLAR_ID.to_vec();
-        let hydentity_program_id = hyle_contracts::HYDENTITY_ID.to_vec();
+        let staking_program_id = hyli_contracts::STAKING_ID.to_vec();
+        let hyllar_program_id = hyli_contracts::HYLLAR_ID.to_vec();
+        let smt_token_program_id = hyli_contracts::SMT_TOKEN_ID.to_vec();
+        let hydentity_program_id = hyli_contracts::HYDENTITY_ID.to_vec();
 
         let hydentity_state = hydentity::Hydentity::default();
         let staking_state = staking::state::Staking::new();
@@ -400,69 +531,113 @@ impl Genesis {
         .build();
 
         let mut map = BTreeMap::default();
+        map.insert("hyli".into(), ProgramId(vec![0, 0, 0, 0]));
         map.insert("blst".into(), NativeVerifiers::Blst.into());
         map.insert("sha3_256".into(), NativeVerifiers::Sha3_256.into());
+        map.insert("secp256k1".into(), NativeVerifiers::Secp256k1.into());
         map.insert("hyllar".into(), ProgramId(hyllar_program_id.clone()));
+        map.insert("oranj".into(), ProgramId(smt_token_program_id.clone()));
+        map.insert("oxygen".into(), ProgramId(smt_token_program_id.clone()));
+        map.insert("vitamin".into(), ProgramId(smt_token_program_id.clone()));
         map.insert("hydentity".into(), ProgramId(hydentity_program_id.clone()));
         map.insert("staking".into(), ProgramId(staking_program_id.clone()));
         map.insert(
             "risc0-recursion".into(),
-            ProgramId(hyle_contracts::RISC0_RECURSION_ID.to_vec()),
+            ProgramId(hyli_contracts::RISC0_RECURSION_ID.to_vec()),
         );
 
-        let mut register_tx = ProvableBlobTx::new("hyle.hyle".into());
+        let mut register_tx = ProvableBlobTx::new("hyli@hyli".into());
 
-        register_hyle_contract(
+        register_hyli_contract(
             &mut register_tx,
             "blst".into(),
             "blst".into(),
             NativeVerifiers::Blst.into(),
             StateCommitment::default(),
+            Some(TimeoutWindow::NoTimeout),
+            None,
         )
         .expect("register blst");
 
-        register_hyle_contract(
+        register_hyli_contract(
             &mut register_tx,
             "sha3_256".into(),
             "sha3_256".into(),
             NativeVerifiers::Sha3_256.into(),
             StateCommitment::default(),
+            Some(TimeoutWindow::NoTimeout),
+            None,
         )
         .expect("register sha3_256");
 
-        register_hyle_contract(
+        register_hyli_contract(
+            &mut register_tx,
+            "secp256k1".into(),
+            "secp256k1".into(),
+            NativeVerifiers::Secp256k1.into(),
+            StateCommitment::default(),
+            Some(TimeoutWindow::NoTimeout),
+            None,
+        )
+        .expect("register secp256k1");
+
+        register_hyli_contract(
             &mut register_tx,
             "staking".into(),
-            hyle_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_1.into(),
             staking_program_id.clone().into(),
             ctx.staking.commit(),
+            None,
+            None,
         )
         .expect("register staking");
 
-        register_hyle_contract(
+        register_hyli_contract(
             &mut register_tx,
             "hyllar".into(),
-            hyle_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_1.into(),
             hyllar_program_id.clone().into(),
             ctx.hyllar.commit(),
+            None,
+            None,
         )
         .expect("register hyllar");
 
-        register_hyle_contract(
+        let smt = AccountSMT::default();
+        let root = *smt.0.root();
+        for token in ["oranj", "oxygen", "vitamin"] {
+            info!("🌱 Registering SMT token {token}");
+            register_hyli_contract(
+                &mut register_tx,
+                token.into(),
+                hyli_model::verifiers::RISC0_1.into(),
+                smt_token_program_id.clone().into(),
+                StateCommitment(Into::<[u8; 32]>::into(root).to_vec()),
+                None,
+                None,
+            )
+            .expect("register SMT token");
+        }
+
+        register_hyli_contract(
             &mut register_tx,
             "hydentity".into(),
-            hyle_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_1.into(),
             hydentity_program_id.clone().into(),
             ctx.hydentity.commit(),
+            None,
+            None,
         )
         .expect("register hydentity");
 
-        register_hyle_contract(
+        register_hyli_contract(
             &mut register_tx,
             "risc0-recursion".into(),
-            hyle_model::verifiers::RISC0_1.into(),
-            hyle_contracts::RISC0_RECURSION_ID.to_vec().into(),
+            hyli_model::verifiers::RISC0_1.into(),
+            hyli_contracts::RISC0_RECURSION_ID.to_vec().into(),
             StateCommitment::default(),
+            None,
+            None,
         )
         .expect("register risc0-recursion");
 
@@ -493,7 +668,7 @@ impl Genesis {
             consensus_proposal: ConsensusProposal {
                 slot: 0,
                 // TODO: genesis block should have a consistent, up-to-date timestamp
-                timestamp: 1735689600000, // 1st of Jan 25 for now
+                timestamp: TimestampMs((self.config.consensus.genesis_timestamp * 1000) as u128),
                 // TODO: We aren't actually storing the data proposal above, so we cannot store it here,
                 // or we might mistakenly request data from that cut, but mempool hasn't seen it.
                 // This should be fixed by storing the data proposal in mempool or handling this whole thing differently.
@@ -506,17 +681,13 @@ impl Genesis {
                 staking_actions: initial_validators
                     .iter()
                     .map(|v| {
-                        NewValidatorCandidate {
-                            pubkey: v.clone(),
-                            msg: SignedByValidator {
-                                msg: ConsensusNetMessage::ValidatorCandidacy(ValidatorCandidacy {
-                                    pubkey: v.clone(),
-                                    peer_address: "".into(),
-                                }),
-                                signature: ValidatorSignature {
-                                    signature: Signature("".into()),
-                                    validator: v.clone(),
-                                },
+                        SignedByValidator {
+                            msg: ValidatorCandidacy {
+                                peer_address: "".into(),
+                            },
+                            signature: ValidatorSignature {
+                                signature: Signature("".into()),
+                                validator: v.clone(),
                             },
                         }
                         .into()
@@ -535,7 +706,7 @@ mod tests {
     use super::*;
     use crate::bus::{BusClientReceiver, SharedMessageBus};
     use crate::utils::conf::Conf;
-    use crate::utils::crypto::BlstCrypto;
+    use hyli_crypto::BlstCrypto;
     use std::sync::Arc;
 
     bus_client! {
@@ -566,7 +737,7 @@ mod tests {
         let tmpdir = tempfile::Builder::new().tempdir().unwrap();
 
         let mut config =
-            Conf::new(None, tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
         config.id = "node-4".to_string();
         config.consensus.solo = false;
         config.genesis.stakers = [("node-1".into(), 100)].into_iter().collect();
@@ -584,7 +755,7 @@ mod tests {
     async fn test_genesis_single() {
         let tmpdir = tempfile::Builder::new().tempdir().unwrap();
         let mut config =
-            Conf::new(None, tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
         config.id = "single-node".to_string();
         config.consensus.solo = true;
         config.genesis.stakers = [("single-node".into(), 100)].into_iter().collect();
@@ -609,7 +780,7 @@ mod tests {
         let tmpdir = tempfile::Builder::new().tempdir().unwrap();
 
         let mut config =
-            Conf::new(None, tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
         config.id = "node-1".to_string();
         config.consensus.solo = false;
         config.genesis.stakers = [("node-1".into(), 100), ("node-2".into(), 100)]
@@ -622,6 +793,7 @@ mod tests {
             name: "node-2".into(),
             pubkey: ValidatorPublicKey("aaa".into()),
             da_address: "".into(),
+            height: BlockHeight(0),
         })
         .expect("send");
 
@@ -643,7 +815,7 @@ mod tests {
         let tmpdir = tempfile::Builder::new().tempdir().unwrap();
 
         let mut config =
-            Conf::new(None, tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
         config.id = "node-2".to_string();
         config.consensus.solo = false;
         config.genesis.stakers = [("node-1".into(), 100), ("node-2".into(), 100)]
@@ -657,6 +829,7 @@ mod tests {
         bus.send(PeerEvent::NewPeer {
             name: "node-1".into(),
             pubkey: node_1_pubkey.clone(),
+            height: BlockHeight(0),
             da_address: "".into(),
         })
         .expect("send");
@@ -680,9 +853,8 @@ mod tests {
         let tmpdir = tempfile::Builder::new().tempdir().unwrap();
 
         let mut config =
-            Conf::new(None, tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
         config.id = "node-1".to_string();
-        config.consensus.solo = true;
         config.genesis.stakers = [
             ("node-1".into(), 100),
             ("node-2".into(), 100),
@@ -692,35 +864,17 @@ mod tests {
         .into_iter()
         .collect();
 
+        let build_new_peer = |name: &'static str, height: u64| PeerEvent::NewPeer {
+            name: name.into(),
+            pubkey: BlstCrypto::new(name).unwrap().validator_pubkey().clone(),
+            height: BlockHeight(height),
+            da_address: "".into(),
+        };
         let rec1 = {
             let (mut genesis, mut bus) = new(config.clone()).await;
-            bus.send(PeerEvent::NewPeer {
-                name: "node-2".into(),
-                pubkey: BlstCrypto::new("node-2")
-                    .unwrap()
-                    .validator_pubkey()
-                    .clone(),
-                da_address: "".into(),
-            })
-            .expect("send");
-            bus.send(PeerEvent::NewPeer {
-                name: "node-3".into(),
-                pubkey: BlstCrypto::new("node-3")
-                    .unwrap()
-                    .validator_pubkey()
-                    .clone(),
-                da_address: "".into(),
-            })
-            .expect("send");
-            bus.send(PeerEvent::NewPeer {
-                name: "node-4".into(),
-                pubkey: BlstCrypto::new("node-4")
-                    .unwrap()
-                    .validator_pubkey()
-                    .clone(),
-                da_address: "".into(),
-            })
-            .expect("send");
+            bus.send(build_new_peer("node-2", 0)).expect("send");
+            bus.send(build_new_peer("node-3", 0)).expect("send");
+            bus.send(build_new_peer("node-4", 0)).expect("send");
             let _ = genesis.start().await;
             bus.try_recv().expect("recv")
         };
@@ -728,37 +882,148 @@ mod tests {
         config.data_directory = tmpdir.path().to_path_buf();
         let rec2 = {
             let (mut genesis, mut bus) = new(config).await;
-            bus.send(PeerEvent::NewPeer {
-                name: "node-4".into(),
-                pubkey: BlstCrypto::new("node-4")
-                    .unwrap()
-                    .validator_pubkey()
-                    .clone(),
-                da_address: "".into(),
-            })
-            .expect("send");
-            bus.send(PeerEvent::NewPeer {
-                name: "node-2".into(),
-                pubkey: BlstCrypto::new("node-2")
-                    .unwrap()
-                    .validator_pubkey()
-                    .clone(),
-                da_address: "".into(),
-            })
-            .expect("send");
-            bus.send(PeerEvent::NewPeer {
-                name: "node-3".into(),
-                pubkey: BlstCrypto::new("node-3")
-                    .unwrap()
-                    .validator_pubkey()
-                    .clone(),
-                da_address: "".into(),
-            })
-            .expect("send");
+            bus.send(build_new_peer("node-2", 0)).expect("send");
+            bus.send(build_new_peer("node-3", 0)).expect("send");
+            bus.send(build_new_peer("node-4", 0)).expect("send");
             let _ = genesis.start().await;
             bus.try_recv().expect("recv")
         };
 
         assert_eq!(rec1, rec2);
+    }
+
+    // Test that if at least 2f+1 stakers have a height > 0, we skip the genesis
+    #[test_log::test(tokio::test)]
+    async fn test_skip_genesis_when_height_is_high() {
+        let tmpdir = tempfile::Builder::new().tempdir().unwrap();
+
+        let mut config =
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+        config.id = "node-1".to_string();
+        config.consensus.solo = false;
+        config.genesis.stakers = [
+            ("node-1".into(), 100),
+            ("node-2".into(), 100),
+            ("node-3".into(), 100),
+            ("node-4".into(), 100),
+        ]
+        .into_iter()
+        .collect();
+
+        let build_new_peer = |name: &'static str, height: u64| PeerEvent::NewPeer {
+            name: name.into(),
+            pubkey: BlstCrypto::new(name).unwrap().validator_pubkey().clone(),
+            height: BlockHeight(height),
+            da_address: "".into(),
+        };
+
+        let rec1 = {
+            let (mut genesis, mut bus) = new(config.clone()).await;
+            bus.send(build_new_peer("node-2", 1)).expect("send");
+            bus.send(build_new_peer("node-3", 1)).expect("send");
+            bus.send(build_new_peer("node-4", 1)).expect("send");
+            let _ = genesis.start().await;
+            bus.try_recv().expect("recv")
+        };
+        let tmpdir = tempfile::Builder::new().tempdir().unwrap();
+        config.data_directory = tmpdir.path().to_path_buf();
+        let rec2 = {
+            let (mut genesis, mut bus) = new(config).await;
+            bus.send(build_new_peer("node-2", 1)).expect("send");
+            bus.send(build_new_peer("node-3", 2)).expect("send");
+            bus.send(build_new_peer("node-4", 2)).expect("send");
+            let _ = genesis.start().await;
+            bus.try_recv().expect("recv")
+        };
+
+        assert_eq!(rec1, rec2);
+        assert_eq!(rec1, GenesisEvent::NoGenesis);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_emit_nogenesis_on_high_peer_height() {
+        let tmpdir = tempfile::Builder::new().tempdir().unwrap();
+
+        let mut config =
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+        config.id = "node-1".to_string();
+        config.consensus.solo = false;
+        config.genesis.stakers = [("node-1".into(), 100), ("node-2".into(), 100)]
+            .into_iter()
+            .collect();
+
+        let (mut genesis, mut bus) = new(config).await;
+
+        // Simuler la connexion d'un pair avec une height > 0
+        bus.send(PeerEvent::NewPeer {
+            name: "node-2".into(),
+            pubkey: BlstCrypto::new("node-2")
+                .unwrap()
+                .validator_pubkey()
+                .clone(),
+            height: BlockHeight(1),
+            da_address: "".into(),
+        })
+        .expect("send");
+
+        // Lancer le module Genesis
+        let result = genesis.start().await;
+
+        assert!(result.is_ok());
+
+        // Vérifier que l'événement reçu est NoGenesis
+        let rec = bus.try_recv().expect("recv");
+        assert_eq!(rec, GenesisEvent::NoGenesis);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_genesis_emitted_after_quorum_peers_at_zero_height() {
+        let tmpdir = tempfile::Builder::new().tempdir().unwrap();
+
+        let mut config =
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+        config.id = "node-1".to_string();
+        config.consensus.solo = false;
+        config.genesis.stakers = [
+            ("node-1".into(), 100),
+            ("node-2".into(), 100),
+            ("node-3".into(), 100),
+        ]
+        .into_iter()
+        .collect();
+
+        let (mut genesis, mut bus) = new(config).await;
+
+        // Envoyer le premier NewPeer à height = 0
+        bus.send(PeerEvent::NewPeer {
+            name: "node-2".into(),
+            pubkey: BlstCrypto::new("node-2")
+                .unwrap()
+                .validator_pubkey()
+                .clone(),
+            height: BlockHeight(0),
+            da_address: "".into(),
+        })
+        .expect("send");
+
+        // Ajouter un second peer à height = 0 (quorum 2f+1 atteint à ce stade : 3 sur 3)
+        bus.send(PeerEvent::NewPeer {
+            name: "node-3".into(),
+            pubkey: BlstCrypto::new("node-3")
+                .unwrap()
+                .validator_pubkey()
+                .clone(),
+            height: BlockHeight(0),
+            da_address: "".into(),
+        })
+        .expect("send");
+
+        // Lancer le module Genesis
+        let result = genesis.start().await;
+        assert!(result.is_ok());
+
+        // Vérifier que l’événement attendu est bien GenesisBlock
+        let rec = bus.try_recv().expect("Expected a GenesisBlock event");
+        assert_matches!(rec, GenesisEvent::GenesisBlock(..));
     }
 }
