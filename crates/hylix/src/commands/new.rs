@@ -1,6 +1,6 @@
 use crate::config::BackendType;
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{create_progress_bar_with_msg, log_success, log_info};
+use crate::logging::{create_progress_bar_with_msg, log_info, log_success};
 use std::path::Path;
 use std::process::Command;
 
@@ -59,17 +59,24 @@ fn validate_project_name(name: &str) -> HylixResult<()> {
     }
 
     if name.contains('/') || name.contains('\\') {
-        return Err(HylixError::validation("Project name cannot contain path separators"));
+        return Err(HylixError::validation(
+            "Project name cannot contain path separators",
+        ));
     }
 
     if name.starts_with('.') {
-        return Err(HylixError::validation("Project name cannot start with a dot"));
+        return Err(HylixError::validation(
+            "Project name cannot start with a dot",
+        ));
     }
 
     // Check if name is a valid Rust identifier
-    if !name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_') {
+    if !name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
         return Err(HylixError::validation(
-            "Project name can only contain alphanumeric characters, hyphens, and underscores"
+            "Project name can only contain alphanumeric characters, hyphens, and underscores",
         ));
     }
 
@@ -79,7 +86,7 @@ fn validate_project_name(name: &str) -> HylixResult<()> {
 /// Clone the scaffold repository
 async fn clone_scaffold(project_name: &str) -> HylixResult<()> {
     let scaffold_url = "https://github.com/hyli-org/app-scaffold.git";
-    
+
     let output = Command::new("git")
         .args(["clone", scaffold_url, project_name])
         .output()
@@ -118,10 +125,10 @@ async fn setup_sp1_backend(_project_name: &str) -> HylixResult<()> {
     // - Setting up SP1-specific build configuration
     // - Creating SP1-specific contract templates
     log_info("Setting up SP1 backend configuration...");
-    
+
     // Placeholder implementation
     std::thread::sleep(std::time::Duration::from_millis(500));
-    
+
     Ok(())
 }
 
@@ -133,10 +140,10 @@ async fn setup_risc0_backend(_project_name: &str) -> HylixResult<()> {
     // - Setting up Risc0-specific build configuration
     // - Creating Risc0-specific contract templates
     log_info("Setting up Risc0 backend configuration...");
-    
+
     // Placeholder implementation
     std::thread::sleep(std::time::Duration::from_millis(500));
-    
+
     Ok(())
 }
 

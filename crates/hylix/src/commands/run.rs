@@ -1,6 +1,6 @@
-use crate::error::{HylixError, HylixResult};
-use crate::logging::{log_success, log_info, log_error};
 use crate::config::HylixConfig;
+use crate::error::{HylixError, HylixResult};
+use crate::logging::{log_error, log_info, log_success};
 use std::process::Command;
 
 /// Execute the `hy run` command
@@ -37,7 +37,7 @@ pub async fn execute(testnet: bool, watch: bool) -> HylixResult<()> {
 fn validate_project_directory() -> HylixResult<()> {
     if !std::path::Path::new("server").exists() {
         return Err(HylixError::project(
-            "No 'server' directory found. Are you in a Hylix project directory?"
+            "No 'server' directory found. Are you in a Hylix project directory?",
         ));
     }
 
@@ -59,9 +59,18 @@ async fn run_backend(testnet: bool, config: &crate::config::HylixConfig) -> Hyli
 
     let mut backend = Command::new("cargo")
         .env("RISC0_DEV_MODE", "1")
-        .env("HYLI_NODE_URL", format!("http://localhost:{}", config.devnet.node_port))
-        .env("HYLI_INDEXER_URL", format!("http://localhost:{}", config.devnet.indexer_port))
-        .env("HYLI_DA_READ_FROM", format!("localhost:{}", config.devnet.da_port))
+        .env(
+            "HYLI_NODE_URL",
+            format!("http://localhost:{}", config.devnet.node_port),
+        )
+        .env(
+            "HYLI_INDEXER_URL",
+            format!("http://localhost:{}", config.devnet.indexer_port),
+        )
+        .env(
+            "HYLI_DA_READ_FROM",
+            format!("localhost:{}", config.devnet.da_port),
+        )
         .args(&args)
         .spawn()
         .map_err(|e| HylixError::backend(format!("Failed to start backend: {}", e)))?;
@@ -92,7 +101,7 @@ async fn run_backend(testnet: bool, config: &crate::config::HylixConfig) -> Hyli
 /// Run the backend with watch mode
 async fn run_with_watch(testnet: bool, config: &crate::config::HylixConfig) -> HylixResult<()> {
     log_info("Starting backend with watch mode...");
-    
+
     // Check if cargo-watch is available
     if which::which("cargo-watch").is_err() {
         log_info("Installing cargo-watch for watch mode...");
@@ -107,9 +116,18 @@ async fn run_with_watch(testnet: bool, config: &crate::config::HylixConfig) -> H
 
     let mut backend = Command::new("cargo")
         .env("RISC0_DEV_MODE", "1")
-        .env("HYLI_NODE_URL", format!("http://localhost:{}", config.devnet.node_port))
-        .env("HYLI_INDEXER_URL", format!("http://localhost:{}", config.devnet.indexer_port))
-        .env("HYLI_DA_READ_FROM", format!("localhost:{}", config.devnet.da_port))
+        .env(
+            "HYLI_NODE_URL",
+            format!("http://localhost:{}", config.devnet.node_port),
+        )
+        .env(
+            "HYLI_INDEXER_URL",
+            format!("http://localhost:{}", config.devnet.indexer_port),
+        )
+        .env(
+            "HYLI_DA_READ_FROM",
+            format!("localhost:{}", config.devnet.da_port),
+        )
         .args(&args)
         .spawn()
         .map_err(|e| HylixError::backend(format!("Failed to start backend with watch: {}", e)))?;

@@ -1,5 +1,5 @@
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{create_progress_bar_with_msg, log_success, log_info, log_error};
+use crate::logging::{create_progress_bar_with_msg, log_error, log_info, log_success};
 use std::process::Command;
 
 /// Execute the `hy test` command
@@ -46,13 +46,13 @@ pub async fn execute(keep_alive: bool) -> HylixResult<()> {
 fn validate_project_directory() -> HylixResult<()> {
     if !std::path::Path::new("contracts").exists() {
         return Err(HylixError::project(
-            "No 'contracts' directory found. Are you in a Hylix project directory?"
+            "No 'contracts' directory found. Are you in a Hylix project directory?",
         ));
     }
 
     if !std::path::Path::new("server").exists() {
         return Err(HylixError::project(
-            "No 'server' directory found. Are you in a Hylix project directory?"
+            "No 'server' directory found. Are you in a Hylix project directory?",
         ));
     }
 
@@ -67,9 +67,9 @@ fn validate_project_directory() -> HylixResult<()> {
 async fn start_devnet_if_needed() -> HylixResult<()> {
     // TODO: Check if devnet is already running
     // For now, we'll assume it needs to be started
-    
+
     log_info("Starting local devnet...");
-    
+
     // This would typically involve:
     // 1. Starting the local Hyli node
     // 2. Deploying the Oranj token contract
@@ -77,10 +77,10 @@ async fn start_devnet_if_needed() -> HylixResult<()> {
     // 4. Starting the indexer
     // 5. Starting the explorer
     // 6. Creating pre-funded test accounts
-    
+
     // Placeholder implementation
     std::thread::sleep(std::time::Duration::from_millis(1000));
-    
+
     Ok(())
 }
 
@@ -122,7 +122,7 @@ async fn build_project() -> HylixResult<()> {
 /// Start the backend service
 async fn start_backend() -> HylixResult<tokio::process::Child> {
     log_info("Starting backend service...");
-    
+
     // Start the backend in the background
     let mut backend = tokio::process::Command::new("cargo")
         .current_dir("server")
@@ -196,10 +196,7 @@ async fn run_tests() -> HylixResult<()> {
 
         if !output.status.success() {
             let error_msg = String::from_utf8_lossy(&output.stderr);
-            return Err(HylixError::test(format!(
-                "E2E tests failed: {}",
-                error_msg
-            )));
+            return Err(HylixError::test(format!("E2E tests failed: {}", error_msg)));
         }
     }
 
@@ -209,7 +206,7 @@ async fn run_tests() -> HylixResult<()> {
 /// Cleanup resources
 async fn cleanup(mut backend_handle: tokio::process::Child) -> HylixResult<()> {
     log_info("Stopping backend...");
-    
+
     // Kill the backend process
     if let Err(e) = backend_handle.kill().await {
         log_error(&format!("Failed to kill backend process: {}", e));
@@ -221,9 +218,9 @@ async fn cleanup(mut backend_handle: tokio::process::Child) -> HylixResult<()> {
     }
 
     log_info("Stopping devnet...");
-    
+
     // TODO: Stop the devnet
     // This would involve stopping all the services started in start_devnet_if_needed
-    
+
     Ok(())
 }

@@ -1,28 +1,34 @@
 use crate::commands::devnet::DevnetContext;
 use crate::config::{AccountConfig, FundConfig};
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{create_progress_bar, execute_command_with_progress, log_info, log_success, log_warning};
-use client_sdk::rest_client::{NodeApiClient};
+use crate::logging::{
+    create_progress_bar, execute_command_with_progress, log_info, log_success, log_warning,
+};
+use client_sdk::rest_client::NodeApiClient;
 use std::time::Duration;
 
-
 /// Execute the `hy bake` command
-pub async fn bake_devnet(mpb: &indicatif::MultiProgress, context: &DevnetContext) -> HylixResult<()> {
+pub async fn bake_devnet(
+    mpb: &indicatif::MultiProgress,
+    context: &DevnetContext,
+) -> HylixResult<()> {
     // Create default profile if it doesn't exist
     context.config.create_default_profile()?;
-    
+
     // Determine which profile to use: CLI argument, context profile, or default
-    let profile_name = context.profile
+    let profile_name = context
+        .profile
         .as_ref()
         .unwrap_or(&context.config.bake_profile);
-            
+
     // Load the profile
     let profile = context.config.load_bake_profile(profile_name)?;
 
     // Check if devnet is running
     if !is_devnet_running(context).await? {
         return Err(HylixError::devnet(
-            "Devnet is not running. Please start the devnet first with 'hy devnet start'.".to_string(),
+            "Devnet is not running. Please start the devnet first with 'hy devnet start'."
+                .to_string(),
         ));
     }
 
@@ -38,11 +44,17 @@ pub async fn bake_devnet(mpb: &indicatif::MultiProgress, context: &DevnetContext
     log_info(&format!("Using profile: {}", profile.name));
     log_info("Test accounts created:");
     for account in &profile.accounts {
-        log_info(&format!("  - {} (password: {})", account.name, account.password));
+        log_info(&format!(
+            "  - {} (password: {})",
+            account.name, account.password
+        ));
     }
     log_info("Test accounts funded:");
     for fund in &profile.funds {
-        log_info(&format!("  - {} -> {} ({} {})", fund.from, fund.to, fund.amount, fund.token));
+        log_info(&format!(
+            "  - {} -> {} ({} {})",
+            fund.from, fund.to, fund.amount, fund.token
+        ));
     }
 
     Ok(())
@@ -77,9 +89,17 @@ pub async fn create_test_accounts(
             mpb,
             &task_name,
             "npx",
-            &["--yes", "hyli-wallet-cli", "register", &account.name, &account.password, &account.invite_code],
-            None
-        ).await?;
+            &[
+                "--yes",
+                "hyli-wallet-cli",
+                "register",
+                &account.name,
+                &account.password,
+                &account.invite_code,
+            ],
+            None,
+        )
+        .await?;
 
         if !success {
             let warning_msg = format!("{} account creation completed with warnings", account.name);
@@ -94,39 +114,48 @@ pub async fn create_test_accounts(
     main_pb.finish_and_clear();
 
     // Clear all progress bars from the multi-progress
-    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+    mpb.clear()
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
 
     Ok(())
 }
 
 /// Send funds to test accounts
-pub async fn send_funds_to_test_accounts(mpb: &indicatif::MultiProgress, _context: &DevnetContext, funds: &[FundConfig]) -> HylixResult<()> {
+pub async fn send_funds_to_test_accounts(
+    mpb: &indicatif::MultiProgress,
+    _context: &DevnetContext,
+    funds: &[FundConfig],
+) -> HylixResult<()> {
     let pb = mpb.add(create_progress_bar());
     pb.set_message("Sending funds to test accounts...");
 
     for fund in funds {
-        let message = format!("{} sending {} {} to {}...", fund.from, fund.amount, fund.token, fund.to);
+        let message = format!(
+            "{} sending {} {} to {}...",
+            fund.from, fund.amount, fund.token, fund.to
+        );
         pb.set_message(message);
-        
+
         let task_name = format!("{} account funding", fund.to);
         let destination = format!("{}@wallet", fund.to);
         let amount_str = fund.amount.to_string();
-        
+
         let success = execute_command_with_progress(
             mpb,
             &task_name,
             "npx",
             &[
-                "hyli-wallet-cli", 
-                "transfer", 
-                &fund.from, 
-                &fund.from_password, 
-                &amount_str, 
-                &fund.token, 
-                &destination
+                "hyli-wallet-cli",
+                "transfer",
+                &fund.from,
+                &fund.from_password,
+                &amount_str,
+                &fund.token,
+                &destination,
             ],
-            None
-        ).await?;
+            None,
+        )
+        .await?;
 
         if !success {
             let warning_msg = format!("{} account funding completed with warnings", fund.to);
@@ -137,7 +166,8 @@ pub async fn send_funds_to_test_accounts(mpb: &indicatif::MultiProgress, _contex
         }
     }
 
-    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+    mpb.clear()
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
 
     Ok(())
 }

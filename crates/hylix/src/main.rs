@@ -9,7 +9,7 @@ mod logging;
 use config::BackendType as ConfigBackendType;
 
 /// Build, test & deploy verifiable apps on Hyli
-/// 
+///
 /// Hylix is a developer toolbox and CLI to build vApps on Hyli,
 /// the new proof-powered L1 to build the next generation of apps onchain.
 #[derive(Parser)]
@@ -82,8 +82,6 @@ enum Commands {
     Clean,
 }
 
-
-
 #[derive(Subcommand)]
 enum DevnetAction {
     /// Start the local devnet
@@ -135,8 +133,6 @@ enum DevnetAction {
     Env,
 }
 
-
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize error handling
@@ -164,11 +160,29 @@ async fn main() -> Result<()> {
         }
         Commands::Devnet { action } => {
             let devnet_action = match action {
-                DevnetAction::Start { reset, bake, profile } => commands::devnet::DevnetAction::Start { reset, bake, profile },
+                DevnetAction::Start {
+                    reset,
+                    bake,
+                    profile,
+                } => commands::devnet::DevnetAction::Start {
+                    reset,
+                    bake,
+                    profile,
+                },
                 DevnetAction::Stop => commands::devnet::DevnetAction::Stop,
-                DevnetAction::Restart { reset, bake, profile } => commands::devnet::DevnetAction::Restart { reset, bake, profile },
+                DevnetAction::Restart {
+                    reset,
+                    bake,
+                    profile,
+                } => commands::devnet::DevnetAction::Restart {
+                    reset,
+                    bake,
+                    profile,
+                },
                 DevnetAction::Status => commands::devnet::DevnetAction::Status,
-                DevnetAction::Fork { endpoint } => commands::devnet::DevnetAction::Fork { endpoint },
+                DevnetAction::Fork { endpoint } => {
+                    commands::devnet::DevnetAction::Fork { endpoint }
+                }
                 DevnetAction::Bake { profile } => commands::devnet::DevnetAction::Bake { profile },
                 DevnetAction::Env => commands::devnet::DevnetAction::Env,
             };

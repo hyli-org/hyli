@@ -20,7 +20,7 @@ mod tests {
     fn test_backend_type_serialization() {
         let sp1 = BackendType::Sp1;
         let risc0 = BackendType::Risc0;
-        
+
         assert_eq!(sp1, BackendType::Sp1);
         assert_eq!(risc0, BackendType::Risc0);
     }
@@ -38,7 +38,7 @@ mod tests {
     fn test_error_creation() {
         let error = HylixError::project("Test error");
         assert!(matches!(error, HylixError::Project(_)));
-        
+
         let error = HylixError::build("Build failed");
         assert!(matches!(error, HylixError::Build(_)));
     }

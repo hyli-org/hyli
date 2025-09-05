@@ -1,7 +1,10 @@
 use crate::commands::bake::bake_devnet;
 use crate::config::HylixConfig;
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{create_progress_bar, create_progress_bar_with_msg, execute_command_with_progress, log_info, log_success, log_warning};
+use crate::logging::{
+    create_progress_bar, create_progress_bar_with_msg, execute_command_with_progress, log_info,
+    log_success, log_warning,
+};
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use std::time::Duration;
 
@@ -18,12 +21,24 @@ fn build_env_args(env_vars: &[String]) -> Vec<String> {
 /// Devnet action enum
 #[derive(Debug, Clone)]
 pub enum DevnetAction {
-    Start { reset: bool, bake: bool, profile: Option<String> },
+    Start {
+        reset: bool,
+        bake: bool,
+        profile: Option<String>,
+    },
     Stop,
-    Restart { reset: bool, bake: bool, profile: Option<String> },
+    Restart {
+        reset: bool,
+        bake: bool,
+        profile: Option<String>,
+    },
     Status,
-    Fork { endpoint: String },
-    Bake { profile: Option<String> },
+    Fork {
+        endpoint: String,
+    },
+    Bake {
+        profile: Option<String>,
+    },
     Env,
 }
 
@@ -39,14 +54,22 @@ impl DevnetContext {
     pub fn new(config: HylixConfig) -> HylixResult<Self> {
         let node_url = format!("http://localhost:{}", config.devnet.node_port);
         let client = NodeApiHttpClient::new(node_url)?;
-        Ok(Self { client, config, profile: None })
+        Ok(Self {
+            client,
+            config,
+            profile: None,
+        })
     }
 
     /// Create a new DevnetContext with a specific profile
     pub fn new_with_profile(config: HylixConfig, profile: Option<String>) -> HylixResult<Self> {
         let node_url = format!("http://localhost:{}", config.devnet.node_port);
         let client = NodeApiHttpClient::new(node_url)?;
-        Ok(Self { client, config, profile })
+        Ok(Self {
+            client,
+            config,
+            profile,
+        })
     }
 }
 
@@ -57,7 +80,11 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
     let context = DevnetContext::new(config)?;
 
     match action {
-        DevnetAction::Start { reset, bake, profile } => {
+        DevnetAction::Start {
+            reset,
+            bake,
+            profile,
+        } => {
             if is_devnet_running(&context).await? {
                 log_info("Devnet is already running");
                 return Ok(());
@@ -68,7 +95,11 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
         DevnetAction::Stop => {
             stop_devnet(&context).await?;
         }
-        DevnetAction::Restart { reset, bake, profile } => {
+        DevnetAction::Restart {
+            reset,
+            bake,
+            profile,
+        } => {
             let context_with_profile = DevnetContext::new_with_profile(context.config, profile)?;
             restart_devnet(reset, bake, &context_with_profile).await?;
         }
@@ -162,7 +193,7 @@ async fn is_docker_container_running(
 async fn start_devnet(reset: bool, bake: bool, context: &DevnetContext) -> HylixResult<()> {
     // Check required dependencies before starting
     check_required_dependencies()?;
-    
+
     let mpb = indicatif::MultiProgress::new();
     if reset {
         reset_devnet_state(context).await?;
@@ -189,8 +220,20 @@ async fn start_devnet(reset: bool, bake: bool, context: &DevnetContext) -> Hylix
         bake_devnet(&mpb, context).await?;
     } else {
         log_warning("Skipping test account creation and funding");
-        log_info(format!("  Use {} to create and fund test accounts while starting devnet", console::style("--bake").green()).as_str());
-        log_info(format!("  Run {} to create and fund test accounts later", console::style("hy devnet bake").green()).as_str());
+        log_info(
+            format!(
+                "  Use {} to create and fund test accounts while starting devnet",
+                console::style("--bake").green()
+            )
+            .as_str(),
+        );
+        log_info(
+            format!(
+                "  Run {} to create and fund test accounts later",
+                console::style("hy devnet bake").green()
+            )
+            .as_str(),
+        );
     }
 
     Ok(())
@@ -275,24 +318,31 @@ async fn create_docker_network(mpb: &indicatif::MultiProgress) -> HylixResult<()
     pb.set_message("Creating docker network...");
 
     let success = execute_command_with_progress(
-        mpb, 
-        "docker network create", 
-        "docker", 
+        mpb,
+        "docker network create",
+        "docker",
         &["network", "create", "hyli-devnet"],
-        None
-    ).await?;
+        None,
+    )
+    .await?;
 
     if !success {
-        return Err(HylixError::process("Failed to create Docker network".to_string()));
+        return Err(HylixError::process(
+            "Failed to create Docker network".to_string(),
+        ));
     }
 
-    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+    mpb.clear()
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
 
     Ok(())
 }
 
 /// Start the local node
-async fn start_local_node(mpb: &indicatif::MultiProgress, context: &DevnetContext) -> HylixResult<()> {
+async fn start_local_node(
+    mpb: &indicatif::MultiProgress,
+    context: &DevnetContext,
+) -> HylixResult<()> {
     let image = &context.config.devnet.node_image;
 
     pull_docker_image(mpb, image).await?;
@@ -330,25 +380,38 @@ async fn start_local_node(mpb: &indicatif::MultiProgress, context: &DevnetContex
 
     args.push(image.to_string());
 
-    let success = execute_command_with_progress(mpb, "docker run", "docker", &args.iter().map(|s| s.as_str()).collect::<Vec<&str>>(), None).await?;
-    
+    let success = execute_command_with_progress(
+        mpb,
+        "docker run",
+        "docker",
+        &args.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+        None,
+    )
+    .await?;
+
     if success {
         pb.set_message("Hyli node started successfully");
     } else {
-        return Err(HylixError::process("Failed to start Docker container".to_string()));
+        return Err(HylixError::process(
+            "Failed to start Docker container".to_string(),
+        ));
     }
 
     // Wait for the node to be ready by checking block height
     pb.set_message("Waiting for node to be ready...");
     wait_for_block_height(&pb, context, 2).await?;
 
-    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+    mpb.clear()
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
 
     Ok(())
 }
 
 /// Setup wallet app
-async fn start_wallet_app(mpb: &indicatif::MultiProgress, context: &DevnetContext) -> HylixResult<()> {
+async fn start_wallet_app(
+    mpb: &indicatif::MultiProgress,
+    context: &DevnetContext,
+) -> HylixResult<()> {
     use tokio::process::Command;
 
     let image = &context.config.devnet.wallet_server_image;
@@ -409,7 +472,10 @@ async fn start_wallet_app(mpb: &indicatif::MultiProgress, context: &DevnetContex
     start_wallet_ui(mpb, context).await
 }
 
-async fn start_wallet_ui(mpb: &indicatif::MultiProgress, context: &DevnetContext) -> HylixResult<()> {
+async fn start_wallet_ui(
+    mpb: &indicatif::MultiProgress,
+    context: &DevnetContext,
+) -> HylixResult<()> {
     use tokio::process::Command;
 
     let image = &context.config.devnet.wallet_ui_image;
@@ -475,7 +541,8 @@ async fn start_wallet_ui(mpb: &indicatif::MultiProgress, context: &DevnetContext
         pb.set_message("Hyli wallet UI started successfully");
     }
 
-    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+    mpb.clear()
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
 
     Ok(())
 }
@@ -585,7 +652,8 @@ async fn start_indexer(mpb: &indicatif::MultiProgress, context: &DevnetContext) 
         pb.set_message("Hyli indexer started successfully");
     }
 
-    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+    mpb.clear()
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
 
     Ok(())
 }
@@ -717,13 +785,17 @@ async fn pull_docker_image(mpb: &indicatif::MultiProgress, image: &str) -> Hylix
     let pb = mpb.add(create_progress_bar());
     pb.set_message(format!("Pulling docker image: {}", image));
 
-    let success = execute_command_with_progress(mpb, "docker pull", "docker", &["pull", image], None).await?;
+    let success =
+        execute_command_with_progress(mpb, "docker pull", "docker", &["pull", image], None).await?;
 
     if !success {
-        return Err(HylixError::process("Failed to pull Docker image".to_string()));
+        return Err(HylixError::process(
+            "Failed to pull Docker image".to_string(),
+        ));
     }
 
-    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+    mpb.clear()
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
 
     Ok(())
 }
@@ -809,39 +881,57 @@ fn check_required_dependencies() -> HylixResult<()> {
 /// Print environment variables for sourcing in bash
 fn print_devnet_env_vars(config: &HylixConfig) -> HylixResult<()> {
     let devnet = &config.devnet;
-    
+
     println!("# Hyli devnet environment variables");
     println!("# Source this file in your bash shell: source <(hy devnet env)");
     println!();
-    
+
     // Node and DA endpoints
-    println!("export HYLI_NODE_URL=\"http://localhost:{}\"", devnet.node_port);
+    println!(
+        "export HYLI_NODE_URL=\"http://localhost:{}\"",
+        devnet.node_port
+    );
     println!("export HYLI_DA_READ_FROM=\"localhost:{}\"", devnet.da_port);
-    
+
     // Indexer endpoint
-    println!("export HYLI_INDEXER_URL=\"http://localhost:{}\"", devnet.indexer_port);
-    
+    println!(
+        "export HYLI_INDEXER_URL=\"http://localhost:{}\"",
+        devnet.indexer_port
+    );
+
     // Wallet endpoints
-    println!("export HYLI_WALLET_API_URL=\"http://localhost:{}\"", devnet.wallet_api_port);
-    println!("export HYLI_WALLET_WS_URL=\"ws://localhost:{}\"", devnet.wallet_ws_port);
-    println!("export HYLI_WALLET_UI_URL=\"http://localhost:{}\"", devnet.wallet_ui_port);
-    
+    println!(
+        "export HYLI_WALLET_API_URL=\"http://localhost:{}\"",
+        devnet.wallet_api_port
+    );
+    println!(
+        "export HYLI_WALLET_WS_URL=\"ws://localhost:{}\"",
+        devnet.wallet_ws_port
+    );
+    println!(
+        "export HYLI_WALLET_UI_URL=\"http://localhost:{}\"",
+        devnet.wallet_ui_port
+    );
+
     // Database endpoint
-    println!("export HYLI_DATABASE_URL=\"postgresql://postgres:postgres@localhost:{}/hyli_indexer\"", devnet.postgres_port);
-    
+    println!(
+        "export HYLI_DATABASE_URL=\"postgresql://postgres:postgres@localhost:{}/hyli_indexer\"",
+        devnet.postgres_port
+    );
+
     // Explorer URL
     println!("export HYLI_EXPLORER_URL=\"https://explorer.hyli.org/?network=localhost&indexer={}&node={}&wallet={}\"", 
              devnet.indexer_port, devnet.node_port, devnet.wallet_api_port);
-    
+
     // Development mode flags
     println!("export RISC0_DEV_MODE=\"1\"");
     println!("export SP1_PROVER=\"mock\"");
-    
+
     println!();
     println!("# Usage examples:");
     println!("#   source <(hy devnet env)");
     println!("#   echo $HYLI_NODE_URL");
     println!("#   curl $HYLI_NODE_URL/swagger-ui");
-    
+
     Ok(())
 }

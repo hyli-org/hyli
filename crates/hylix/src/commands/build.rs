@@ -37,13 +37,13 @@ pub async fn execute(clean: bool, frontend: bool) -> HylixResult<()> {
 fn validate_project_directory() -> HylixResult<()> {
     if !std::path::Path::new("contracts").exists() {
         return Err(HylixError::project(
-            "No 'contracts' directory found. Are you in a Hylix project directory?"
+            "No 'contracts' directory found. Are you in a Hylix project directory?",
         ));
     }
 
     if !std::path::Path::new("server").exists() {
         return Err(HylixError::project(
-            "No 'server' directory found. Are you in a Hylix project directory?"
+            "No 'server' directory found. Are you in a Hylix project directory?",
         ));
     }
 
@@ -112,9 +112,20 @@ async fn build_contracts(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
         mpb,
         "cargo build -p contracts --features build --features all --features nonreproducible",
         "cargo",
-        &["build", "-p", "contracts", "--features", "build", "--features", "all", "--features", "nonreproducible"],
-        None
-    ).await?;
+        &[
+            "build",
+            "-p",
+            "contracts",
+            "--features",
+            "build",
+            "--features",
+            "all",
+            "--features",
+            "nonreproducible",
+        ],
+        None,
+    )
+    .await?;
 
     if !success {
         return Err(HylixError::build("Failed to build contracts".to_string()));
@@ -122,7 +133,8 @@ async fn build_contracts(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
         pb.set_message("Contracts built successfully");
     }
 
-    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+    mpb.clear()
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
 
     Ok(())
 }
@@ -137,8 +149,9 @@ async fn build_server(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
         "cargo build -p server",
         "cargo",
         &["build", "-p", "server"],
-        None
-    ).await?;
+        None,
+    )
+    .await?;
 
     if !success {
         return Err(HylixError::build("Failed to build server".to_string()));
@@ -146,7 +159,8 @@ async fn build_server(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
         pb.set_message("Server built successfully");
     }
 
-    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+    mpb.clear()
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
 
     Ok(())
 }
@@ -162,17 +176,15 @@ async fn build_frontend(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
     let pb = mpb.add(create_progress_bar());
     pb.set_message("Building frontend...");
 
-    // bun install 
-    let success = execute_command_with_progress(
-        mpb,
-        "bun install",
-        "bun",
-        &["install"],
-        Some("front")
-    ).await?;
+    // bun install
+    let success =
+        execute_command_with_progress(mpb, "bun install", "bun", &["install"], Some("front"))
+            .await?;
 
     if !success {
-        return Err(HylixError::build("Failed to install frontend dependencies".to_string()));
+        return Err(HylixError::build(
+            "Failed to install frontend dependencies".to_string(),
+        ));
     } else {
         pb.set_message("Frontend dependencies installed successfully");
     }
@@ -183,8 +195,9 @@ async fn build_frontend(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
         "bun run build",
         "bun",
         &["run", "build"],
-        Some("front")
-    ).await?;
+        Some("front"),
+    )
+    .await?;
 
     if !success {
         return Err(HylixError::build("Failed to build frontend".to_string()));
@@ -192,7 +205,8 @@ async fn build_frontend(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
         pb.set_message("Frontend built successfully");
     }
 
-    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+    mpb.clear()
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
 
     Ok(())
 }

@@ -16,7 +16,7 @@ pub struct HylixConfig {
     /// Build configuration
     pub build: BuildConfig,
     /// Bake profile configuration
-    pub bake_profile: String 
+    pub bake_profile: String,
 }
 
 /// Backend type enumeration
@@ -56,8 +56,7 @@ pub struct DevnetConfig {
 }
 
 /// Container environment variables configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContainerEnvConfig {
     /// Custom environment variables for the node container
     pub node: Vec<String>,
@@ -71,7 +70,6 @@ pub struct ContainerEnvConfig {
     pub postgres: Vec<String>,
 }
 
-
 /// Build configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BuildConfig {
@@ -82,7 +80,6 @@ pub struct BuildConfig {
     /// Additional cargo build flags
     pub extra_flags: Vec<String>,
 }
-
 
 /// Bake profile configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,7 +237,7 @@ impl HylixConfig {
         std::fs::create_dir_all(&profiles_dir)?;
 
         let profile_path = profiles_dir.join("bobalice.toml");
-        
+
         if !profile_path.exists() {
             let default_profile = BakeProfile {
                 name: "bobalice".to_string(),
@@ -290,7 +287,7 @@ impl HylixConfig {
 
             let content = toml::to_string_pretty(&default_profile)?;
             std::fs::write(&profile_path, content)?;
-            
+
             log_info(&format!(
                 "Created default bobalice profile at {}",
                 profile_path.display()
