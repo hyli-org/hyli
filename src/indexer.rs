@@ -200,6 +200,7 @@ pub struct TxStore {
     pub lane_id: Option<LaneIdDb>,
     pub index: i32,
     pub identity: Option<String>,
+    pub contract_names: HashSet<ContractName>,
 }
 
 pub struct BlockStore {
@@ -304,6 +305,14 @@ impl Indexer {
                         TransactionData::Blob(ref blob_tx) => Some(blob_tx.identity.clone().0),
                         _ => None,
                     },
+                    contract_names: match tx.transaction_data {
+                        TransactionData::Blob(ref blob_tx) => blob_tx
+                            .blobs
+                            .iter()
+                            .map(|b| b.contract_name.clone())
+                            .collect(),
+                        _ => HashSet::new(),
+                    },
                 });
                 // We skip the blobs here or they'll conflict later and it's easier.
             }
@@ -344,6 +353,11 @@ impl NodeStateCallback for IndexerHandlerStore {
                     lane_id: Some(LaneIdDb(lane_id.clone())),
                     index: index as i32,
                     identity: Some(blob_tx.identity.clone().0),
+                    contract_names: blob_tx
+                        .blobs
+                        .iter()
+                        .map(|b| b.contract_name.clone())
+                        .collect(),
                 });
                 for (index, blob) in blob_tx.blobs.iter().enumerate() {
                     self.blobs.0.push(format!(
@@ -390,6 +404,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                     lane_id: Some(LaneIdDb(lane_id.clone())),
                     index: index as i32,
                     identity: None,
+                    contract_names: HashSet::new(),
                 });
                 self.tx_status_update
                     .insert(tx_id.clone(), TransactionStatusDb::Success);
@@ -541,14 +556,33 @@ impl Indexer {
             let mut query_builder = QueryBuilder::<Postgres>::new(
                     "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) VALUES ",
                 );
+            let mut query_builder_ctx = QueryBuilder::<Postgres>::new(
+                "INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name) VALUES ",
+            );
             // PG won't let us have the same TX twice in the insert into values, so do this as a workaround.
             let mut already_inserted: HashSet<TxId> = HashSet::new();
             let mut add_comma = false;
+            let mut add_comma_ctx = false;
             for tx in chunk.into_iter() {
                 if already_inserted.insert(TxId(tx.dp_hash.0.clone(), tx.tx_hash.0.clone())) {
                     if add_comma {
                         query_builder.push(",");
                     }
+
+                    for contract_name in tx.contract_names.into_iter() {
+                        if add_comma_ctx {
+                            query_builder_ctx.push(",");
+                        }
+                        query_builder_ctx.push("(");
+                        query_builder_ctx.push_bind(tx.dp_hash.clone());
+                        query_builder_ctx.push(",");
+                        query_builder_ctx.push_bind(tx.tx_hash.clone());
+                        query_builder_ctx.push(",");
+                        query_builder_ctx.push_bind(contract_name.0);
+                        query_builder_ctx.push(")");
+                        add_comma_ctx = true;
+                    }
+
                     query_builder.push("(");
                     query_builder.push_bind(tx.dp_hash);
                     query_builder.push(",");
@@ -570,6 +604,7 @@ impl Indexer {
                     query_builder.push(",");
                     query_builder.push_bind(tx.identity);
                     query_builder.push(")");
+
                     add_comma = true;
                 }
             }
@@ -589,6 +624,12 @@ impl Indexer {
                 query_builder.build().execute(&mut *transaction).await,
                 "Inserting transactions"
             )?;
+            if add_comma_ctx {
+                _ = log_error!(
+                    query_builder_ctx.build().execute(&mut *transaction).await,
+                    "Inserting txs_contracts"
+                )?;
+            }
         }
 
         // Then status updates
