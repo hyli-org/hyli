@@ -34,7 +34,7 @@ default-members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.13.0-rc.4"
+version = "0.14.0-rc2"
 edition = "2021"
 homepage = "https://hyli.org/"
 repository = "https://github.com/hyli-org/hyli/"
@@ -42,23 +42,23 @@ rust-version = "1.88"
 license-file = "LICENSE"
 
 [workspace.dependencies]
-bonsai-runner = { version = "0.13.0-rc.4", default-features = false, path = "crates/bonsai-runner", package = "hyli-bonsai-runner" }
-sdk = { version = "0.13.0-rc.4", default-features = false, path = "crates/contract-sdk", package = "hyli-contract-sdk" }
-hyli-contract-sdk = { version = "0.13.0-rc.4", default-features = false, path = "crates/contract-sdk", package = "hyli-contract-sdk" }
-client-sdk = { version = "0.13.0-rc.4", default-features = false, path = "crates/client-sdk", package = "hyli-client-sdk" }
-hyli-net = { version = "0.13.0-rc.4", default-features = false, path = "crates/hyli-net", package = "hyli-net" }
-hyli-model = { version = "0.13.0-rc.4", default-features = false, path = "crates/hyli-model", package = "hyli-model" }
-hyli-crypto = { version = "0.13.0-rc.4", default-features = false, path = "crates/hyli-crypto", package = "hyli-crypto" }
-hyli-verifiers = { version = "0.13.0-rc.4", default-features = false, path = "crates/hyli-verifiers", package = "hyli-verifiers" }
-risc0-recursion = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/risc0-recursion", package = "hyli-risc0-recursion" }
-hydentity = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/hydentity", package = "hyli-hydentity" }
-hyllar = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/hyllar", package = "hyli-hyllar" }
-smt-token = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/smt-token", package = "hyli-smt-token" }
-staking = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/staking", package = "hyli-staking" }
-amm = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/amm", package = "hyli-amm" }
-uuid-tld = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts/uuid-tld", package = "hyli-uuid-tld" }
-hyli-contracts = { version = "0.13.0-rc.4", default-features = false, path = "crates/contracts", package = "hyli-contracts" }
-hyli-modules = { version = "0.13.0-rc.4", default-features = false, path = "crates/hyli-modules", package = "hyli-modules" }
+bonsai-runner = { version = "0.14.0-rc2", default-features = false, path = "crates/bonsai-runner", package = "hyli-bonsai-runner" }
+sdk = { version = "0.14.0-rc2", default-features = false, path = "crates/contract-sdk", package = "hyli-contract-sdk" }
+hyli-contract-sdk = { version = "0.14.0-rc2", default-features = false, path = "crates/contract-sdk", package = "hyli-contract-sdk" }
+client-sdk = { version = "0.14.0-rc2", default-features = false, path = "crates/client-sdk", package = "hyli-client-sdk" }
+hyli-net = { version = "0.14.0-rc2", default-features = false, path = "crates/hyli-net", package = "hyli-net" }
+hyli-model = { version = "0.14.0-rc2", default-features = false, path = "crates/hyli-model", package = "hyli-model" }
+hyli-crypto = { version = "0.14.0-rc2", default-features = false, path = "crates/hyli-crypto", package = "hyli-crypto" }
+hyli-verifiers = { version = "0.14.0-rc2", default-features = false, path = "crates/hyli-verifiers", package = "hyli-verifiers" }
+risc0-recursion = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts/risc0-recursion", package = "hyli-risc0-recursion" }
+hydentity = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts/hydentity", package = "hyli-hydentity" }
+hyllar = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts/hyllar", package = "hyli-hyllar" }
+smt-token = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts/smt-token", package = "hyli-smt-token" }
+staking = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts/staking", package = "hyli-staking" }
+amm = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts/amm", package = "hyli-amm" }
+uuid-tld = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts/uuid-tld", package = "hyli-uuid-tld" }
+hyli-contracts = { version = "0.14.0-rc2", default-features = false, path = "crates/contracts", package = "hyli-contracts" }
+hyli-modules = { version = "0.14.0-rc2", default-features = false, path = "crates/hyli-modules", package = "hyli-modules" }
 
 # Common external dependencies
 alloc-metrics = { version = "0.1.1" }
