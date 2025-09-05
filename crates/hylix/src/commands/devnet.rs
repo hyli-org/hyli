@@ -21,12 +21,12 @@ fn build_env_args(env_vars: &[String]) -> Vec<String> {
 /// Devnet action enum
 #[derive(Debug, Clone)]
 pub enum DevnetAction {
-    Start {
+    Up {
         reset: bool,
         bake: bool,
         profile: Option<String>,
     },
-    Stop,
+    Down,
     Restart {
         reset: bool,
         bake: bool,
@@ -80,7 +80,7 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
     let context = DevnetContext::new(config)?;
 
     match action {
-        DevnetAction::Start {
+        DevnetAction::Up {
             reset,
             bake,
             profile,
@@ -92,7 +92,7 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
             let context_with_profile = DevnetContext::new_with_profile(context.config, profile)?;
             start_devnet(reset, bake, &context_with_profile).await?;
         }
-        DevnetAction::Stop => {
+        DevnetAction::Down => {
             stop_devnet(&context).await?;
         }
         DevnetAction::Restart {

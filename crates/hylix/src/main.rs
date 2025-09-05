@@ -85,8 +85,8 @@ enum Commands {
 #[derive(Subcommand)]
 enum DevnetAction {
     /// Start the local devnet
-    #[command(alias = "s")]
-    Start {
+    #[command(alias = "u")]
+    Up {
         /// Reset to fresh state
         #[arg(long)]
         reset: bool,
@@ -98,13 +98,13 @@ enum DevnetAction {
         profile: Option<String>,
     },
     /// Stop the local devnet
-    #[command(alias = "st")]
-    Stop,
+    #[command(alias = "d")]
+    Down,
     /// Check the status of the local devnet
-    #[command(alias = "stat")]
+    #[command(alias = "ps")]
     Status,
     /// Restart the local devnet
-    #[command(alias = "rs")]
+    #[command(alias = "r")]
     Restart {
         /// Reset to fresh state
         #[arg(long)]
@@ -160,16 +160,16 @@ async fn main() -> Result<()> {
         }
         Commands::Devnet { action } => {
             let devnet_action = match action {
-                DevnetAction::Start {
+                DevnetAction::Up {
                     reset,
                     bake,
                     profile,
-                } => commands::devnet::DevnetAction::Start {
+                } => commands::devnet::DevnetAction::Up {
                     reset,
                     bake,
                     profile,
                 },
-                DevnetAction::Stop => commands::devnet::DevnetAction::Stop,
+                DevnetAction::Down => commands::devnet::DevnetAction::Down,
                 DevnetAction::Restart {
                     reset,
                     bake,
