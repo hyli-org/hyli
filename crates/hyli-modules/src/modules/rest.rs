@@ -105,6 +105,7 @@ impl Module for RestApi {
             .layer(CatchPanicLayer::custom(handle_panic))
             .layer(DefaultBodyLimit::max(ctx.max_body_size)) // 10 MB
             .layer(tower_http::cors::CorsLayer::permissive())
+            .layer(tower_http::decompression::RequestDecompressionLayer::new())
             .layer(axum::middleware::from_fn(request_logger));
         Ok(RestApi {
             port: ctx.port,
