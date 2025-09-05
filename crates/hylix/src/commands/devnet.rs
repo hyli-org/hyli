@@ -295,7 +295,7 @@ async fn create_docker_network(mpb: &indicatif::MultiProgress) -> HylixResult<()
 async fn start_local_node(mpb: &indicatif::MultiProgress, context: &DevnetContext) -> HylixResult<()> {
     let image = &context.config.devnet.node_image;
 
-    pull_docker_image(&mpb, image).await?;
+    pull_docker_image(mpb, image).await?;
 
     let pb = mpb.add(create_progress_bar());
     pb.set_message("Starting Hyli node with Docker...");
@@ -353,7 +353,7 @@ async fn start_wallet_app(mpb: &indicatif::MultiProgress, context: &DevnetContex
 
     let image = &context.config.devnet.wallet_server_image;
 
-    pull_docker_image(&mpb, image).await?;
+    pull_docker_image(mpb, image).await?;
 
     let pb = mpb.add(create_progress_bar());
     pb.set_message("Starting wallet app...");
@@ -414,7 +414,7 @@ async fn start_wallet_ui(mpb: &indicatif::MultiProgress, context: &DevnetContext
 
     let image = &context.config.devnet.wallet_ui_image;
 
-    pull_docker_image(&mpb, image).await?;
+    pull_docker_image(mpb, image).await?;
 
     let pb = mpb.add(create_progress_bar());
     pb.set_message("Starting wallet UI...");
@@ -487,7 +487,7 @@ async fn start_postgres_server(
 ) -> HylixResult<()> {
     use tokio::process::Command;
 
-    pull_docker_image(&mpb, "postgres:17").await?;
+    pull_docker_image(mpb, "postgres:17").await?;
 
     let pb = mpb.add(create_progress_bar());
     pb.set_message("Starting postgres server...");
@@ -771,10 +771,10 @@ async fn stop_and_remove_container(
 fn check_required_dependencies() -> HylixResult<()> {
     let mut missing_deps = Vec::new();
 
-    if !which::which("docker").is_ok() {
+    if which::which("docker").is_err() {
         missing_deps.push("Docker");
     }
-    if !which::which("npx").is_ok() {
+    if which::which("npx").is_err() {
         missing_deps.push("npx (Node.js)");
     }
 

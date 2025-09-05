@@ -57,6 +57,7 @@ pub struct DevnetConfig {
 
 /// Container environment variables configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct ContainerEnvConfig {
     /// Custom environment variables for the node container
     pub node: Vec<String>,
@@ -70,17 +71,6 @@ pub struct ContainerEnvConfig {
     pub postgres: Vec<String>,
 }
 
-impl Default for ContainerEnvConfig {
-    fn default() -> Self {
-        Self {
-            node: Vec::new(),
-            indexer: Vec::new(),
-            wallet_server: Vec::new(),
-            wallet_ui: Vec::new(),
-            postgres: Vec::new(),
-        }
-    }
-}
 
 /// Build configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

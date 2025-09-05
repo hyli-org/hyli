@@ -14,19 +14,17 @@ pub fn init_logging(verbose: bool, quiet: bool) -> color_eyre::Result<()> {
         EnvFilter::new("info")
     };
 
-    let subscriber = Registry::default()
-        .with(filter)
-        .with(
-            fmt::layer()
-                .with_target(false)
-                .with_thread_ids(false)
-                .with_thread_names(false)
-                .with_file(false)
-                .with_line_number(false)
-                .with_ansi(false) // Disable ANSI in tracing-subscriber to avoid conflicts
-                .without_time()
-                .compact(),
-        );
+    let subscriber = Registry::default().with(filter).with(
+        fmt::layer()
+            .with_target(false)
+            .with_thread_ids(false)
+            .with_thread_names(false)
+            .with_file(false)
+            .with_line_number(false)
+            .with_ansi(false) // Disable ANSI in tracing-subscriber to avoid conflicts
+            .without_time()
+            .compact(),
+    );
 
     tracing::subscriber::set_global_default(subscriber)?;
 
@@ -60,10 +58,10 @@ pub async fn execute_command_with_progress(
     args: &[&str],
     current_dir: Option<&str>,
 ) -> HylixResult<bool> {
-    use std::process::Command;
-    use std::io::{BufRead, BufReader};
-    use tokio::sync::mpsc;
     use std::collections::VecDeque;
+    use std::io::{BufRead, BufReader};
+    use std::process::Command;
+    use tokio::sync::mpsc;
 
     let mut cmd = Command::new(program)
         .current_dir(current_dir.unwrap_or("."))
@@ -76,18 +74,18 @@ pub async fn execute_command_with_progress(
     // Create progress bars dynamically as output arrives
     let mut output_bars = Vec::new();
     let max_lines = 15;
-    
+
     // Create initial progress bar for the command name
     let initial_pb = multi_progress.add(indicatif::ProgressBar::new(1));
     let template = console::style("  {msg}").blue().to_string();
-    
+
     initial_pb.set_style(
         indicatif::ProgressStyle::default_bar()
             .template(&template)
             .unwrap()
-            .progress_chars("  ")
+            .progress_chars("  "),
     );
-    
+
     initial_pb.set_message(format!("{}: Starting...", command_name));
     output_bars.push(initial_pb);
 
@@ -100,10 +98,8 @@ pub async fn execute_command_with_progress(
     if let Some(stdout) = cmd.stdout.take() {
         tokio::spawn(async move {
             let reader = BufReader::new(stdout);
-            for line in reader.lines() {
-                if let Ok(line) = line {
-                    let _ = tx_stdout.send((line, false)).await;
-                }
+            for line in reader.lines().map_while(Result::ok) {
+                let _ = tx_stdout.send((line, false)).await;
             }
         });
     }
@@ -112,10 +108,8 @@ pub async fn execute_command_with_progress(
     if let Some(stderr) = cmd.stderr.take() {
         tokio::spawn(async move {
             let reader = BufReader::new(stderr);
-            for line in reader.lines() {
-                if let Ok(line) = line {
-                    let _ = tx_stderr.send((line, true)).await;
-                }
+            for line in reader.lines().map_while(Result::ok) {
+                let _ = tx_stderr.send((line, true)).await;
             }
         });
     }
@@ -123,32 +117,32 @@ pub async fn execute_command_with_progress(
     // Collect and display output in chronological order
     let mut output_buffer = VecDeque::new();
     let mut display_buffer = VecDeque::new();
-    
+
     // Process output as it comes in
     while let Some((line, is_stderr)) = rx.recv().await {
         output_buffer.push_back((line.clone(), is_stderr));
         display_buffer.push_back((line.clone(), is_stderr));
-        
+
         // Keep only the last 15 lines for display purposes
         if display_buffer.len() > max_lines {
             display_buffer.pop_front();
         }
-        
+
         // Create new progress bar if we have more output than progress bars
         while output_bars.len() < output_buffer.len() && output_bars.len() < max_lines {
             let new_pb = multi_progress.add(indicatif::ProgressBar::new(1));
             let template = console::style("  {msg}").blue().to_string();
-            
+
             new_pb.set_style(
                 indicatif::ProgressStyle::default_bar()
                     .template(&template)
                     .unwrap()
-                    .progress_chars("  ")
+                    .progress_chars("  "),
             );
-            
+
             output_bars.push(new_pb);
         }
-        
+
         // Update all progress bars to show the current output
         for (i, pb) in output_bars.iter().enumerate() {
             if i < display_buffer.len() {
@@ -166,7 +160,8 @@ pub async fn execute_command_with_progress(
     }
 
     // Wait for command to complete
-    let status = cmd.wait()
+    let status = cmd
+        .wait()
         .map_err(|e| HylixError::process(format!("Failed to wait for {}: {}", command_name, e)))?;
 
     // Give a moment to see the final output
@@ -179,7 +174,10 @@ pub async fn execute_command_with_progress(
 
     // If status is not success, print all logs with log_warning
     if !status.success() {
-        log_warning(&format!("Command '{}' failed with status: {}", command_name, status));
+        log_warning(&format!(
+            "Command '{}' failed with status: {}",
+            command_name, status
+        ));
         for (line, is_stderr) in &output_buffer {
             let prefix = if *is_stderr { "[stderr]" } else { "[stdout]" };
             log_warning(&format!("{} {}", prefix, line));

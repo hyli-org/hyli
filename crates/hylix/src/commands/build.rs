@@ -109,7 +109,7 @@ async fn build_contracts(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
     pb.set_message("Building contracts...");
 
     let success = execute_command_with_progress(
-        &mpb,
+        mpb,
         "cargo build -p contracts --features build --features all --features nonreproducible",
         "cargo",
         &["build", "-p", "contracts", "--features", "build", "--features", "all", "--features", "nonreproducible"],
@@ -133,7 +133,7 @@ async fn build_server(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
     pb.set_message("Building server...");
 
     let success = execute_command_with_progress(
-        &mpb,
+        mpb,
         "cargo build -p server",
         "cargo",
         &["build", "-p", "server"],
@@ -164,7 +164,7 @@ async fn build_frontend(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
 
     // bun install 
     let success = execute_command_with_progress(
-        &mpb,
+        mpb,
         "bun install",
         "bun",
         &["install"],
@@ -179,7 +179,7 @@ async fn build_frontend(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
 
     // bun run build
     let success = execute_command_with_progress(
-        &mpb,
+        mpb,
         "bun run build",
         "bun",
         &["run", "build"],

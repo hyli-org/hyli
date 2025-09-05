@@ -20,18 +20,18 @@ pub async fn bake_devnet(mpb: &indicatif::MultiProgress, context: &DevnetContext
     let profile = context.config.load_bake_profile(profile_name)?;
 
     // Check if devnet is running
-    if !is_devnet_running(&context).await? {
+    if !is_devnet_running(context).await? {
         return Err(HylixError::devnet(
             "Devnet is not running. Please start the devnet first with 'hy devnet start'.".to_string(),
         ));
     }
 
     // Create pre-funded test accounts
-    create_test_accounts(&mpb, &context, &profile.accounts).await?;
+    create_test_accounts(mpb, context, &profile.accounts).await?;
     log_success("[1/2] Test accounts created");
 
     // Send funds to test accounts
-    send_funds_to_test_accounts(&mpb, &context, &profile.funds).await?;
+    send_funds_to_test_accounts(mpb, context, &profile.funds).await?;
     log_success("[2/2] Funds sent to test accounts");
 
     log_success("Bake process completed successfully!");
@@ -74,7 +74,7 @@ pub async fn create_test_accounts(
         main_pb.set_message(message);
         let task_name = format!("{} account creation", account.name);
         let success = execute_command_with_progress(
-            &mpb,
+            mpb,
             &task_name,
             "npx",
             &["--yes", "hyli-wallet-cli", "register", &account.name, &account.password, &account.invite_code],
@@ -113,7 +113,7 @@ pub async fn send_funds_to_test_accounts(mpb: &indicatif::MultiProgress, _contex
         let amount_str = fund.amount.to_string();
         
         let success = execute_command_with_progress(
-            &mpb,
+            mpb,
             &task_name,
             "npx",
             &[

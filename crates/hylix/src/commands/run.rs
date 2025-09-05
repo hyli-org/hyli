@@ -59,9 +59,9 @@ async fn run_backend(testnet: bool, config: &crate::config::HylixConfig) -> Hyli
 
     let mut backend = Command::new("cargo")
         .env("RISC0_DEV_MODE", "1")
-        .env("HYLI_NODE_URL", &format!("http://localhost:{}", config.devnet.node_port))
-        .env("HYLI_INDEXER_URL", &format!("http://localhost:{}", config.devnet.indexer_port))
-        .env("HYLI_DA_READ_FROM", &format!("localhost:{}", config.devnet.da_port))
+        .env("HYLI_NODE_URL", format!("http://localhost:{}", config.devnet.node_port))
+        .env("HYLI_INDEXER_URL", format!("http://localhost:{}", config.devnet.indexer_port))
+        .env("HYLI_DA_READ_FROM", format!("localhost:{}", config.devnet.da_port))
         .args(&args)
         .spawn()
         .map_err(|e| HylixError::backend(format!("Failed to start backend: {}", e)))?;
@@ -107,9 +107,9 @@ async fn run_with_watch(testnet: bool, config: &crate::config::HylixConfig) -> H
 
     let mut backend = Command::new("cargo")
         .env("RISC0_DEV_MODE", "1")
-        .env("HYLI_NODE_URL", &format!("http://localhost:{}", config.devnet.node_port))
-        .env("HYLI_INDEXER_URL", &format!("http://localhost:{}", config.devnet.indexer_port))
-        .env("HYLI_DA_READ_FROM", &format!("localhost:{}", config.devnet.da_port))
+        .env("HYLI_NODE_URL", format!("http://localhost:{}", config.devnet.node_port))
+        .env("HYLI_INDEXER_URL", format!("http://localhost:{}", config.devnet.indexer_port))
+        .env("HYLI_DA_READ_FROM", format!("localhost:{}", config.devnet.da_port))
         .args(&args)
         .spawn()
         .map_err(|e| HylixError::backend(format!("Failed to start backend with watch: {}", e)))?;
