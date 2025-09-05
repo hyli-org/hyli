@@ -16,6 +16,9 @@ name = "hy"
 path = "src/main.rs"
 
 [dependencies]
+# Hyli client SDK for REST API calls
+client-sdk = { workspace = true, features = ["rest"] }
+
 # CLI and argument parsing
 clap = { workspace = true, features = ["derive", "color", "suggestions"] }
 
@@ -50,6 +53,3 @@ anyhow = { workspace = true }
 thiserror = "2.0"
 indicatif = "0.18"
 console = "0.16"
-
-# Hyli client SDK for REST API calls
-client-sdk = { workspace = true, features = ["rest"] }
