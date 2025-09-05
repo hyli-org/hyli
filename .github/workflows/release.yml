@@ -49,10 +49,9 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cargo publish -p hyle-model
-          cargo publish -p hyle-bonsai-runner
-          cargo publish -p hyle-contract-sdk
-          cargo publish -p hyle-client-sdk
-          cargo publish -p hyle-hyllar
-          cargo publish -p hyle-hydentity
-          cargo publish -p hyle-amm
+          cargo publish -p hyli-model
+          cargo publish -p hyli-crypto
+          cargo publish -p hyli-contract-sdk
+          cargo publish -p hyli-net
+          cargo publish -p hyli-bonsai-runner
+          cargo publish -p hyli-client-sdk
