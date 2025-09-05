@@ -7,7 +7,7 @@
   **Hyli** is the easiest way to build vApps. Powered by Risc0 & SP1. Designed for developers.
 </div>
 
-## :test_tube: Why Hylix?
+## 🚀 Why Hylix?
 
 Hylix is a developer toolbox and CLI (`hy`) to build vApps on [Hyli](https://hyli.org), the new proof-powered L1 to build the next generation of apps onchain.
 
@@ -123,6 +123,8 @@ Launch a local devnet with:
 * Explorer
 * Pre-funded test accounts
 
+See [Configuration](#configuration) section for customization.
+
 ```sh
 hy devnet
 ```
@@ -138,6 +140,17 @@ Want a fresh state?
 
 ```sh
 hy devnet --reset
+```
+
+Check status of devnet
+
+```sh
+hy devnet status
+```
+
+Export devnet env vars:
+```sh
+source <(hy devnet env)
 ```
 
 #### Soon
@@ -207,6 +220,33 @@ By default, `hy run` operates in local dev mode.
 * 📇 Launches a contract indexer to track state transitions
 * 🛠️ Wires everything together for a ready-to-use dev backend
 
+## Configuration
+
+Hylix stores its configuration in `~/.config/hylix/config.toml` (Linux). You can customize various aspects of the CLI behavior:
+
+### Custom Docker Images
+
+You can specify custom Docker images for different services in your devnet configuration:
+
+```toml
+[devnet]
+# Custom Docker images for each service
+custom_node_image = "ghcr.io/hyli-org/hyli:0.14.0-rc1"
+custom_wallet_server_image = "ghcr.io/hyli-org/wallet/wallet-server:main"
+custom_wallet_ui_image = "ghcr.io/hyli-org/wallet/wallet-ui:main"
+
+# Or use completely custom images:
+# custom_node_image = "my-registry.com/my-hyli-node:v1.0.0"
+# custom_wallet_server_image = "my-registry.com/my-wallet-server:latest"
+# custom_wallet_ui_image = "my-registry.com/my-wallet-ui:dev"
+```
+
+This allows you to:
+- Use specific versions of services
+- Test with custom-built images
+- Use images from private registries
+- Override default images for development/testing
+
 ## 🧠 Hylix components
 
 Hylix builds on top of:
@@ -224,7 +264,7 @@ Hylix builds on top of:
 * [ ] Upload to a prover network (`hy upload`): upload your compiled ELF to a prover network without setting up lovcal proving infrastructure
 * [ ] Testnet mode (`hy run --testnet`) to start a backend and deploy the contract on a prover network
 
-## :link: Links
+## 🔗 Links
 
 <div align="center">
     <p>
