@@ -7,7 +7,7 @@
   **Hyli** is the easiest way to build vApps. Powered by Risc0 & SP1. Designed for developers.
 </div>
 
-## :test_tube: Why Hylix?
+## 🚀 Why Hylix?
 
 Hylix is a developer toolbox and CLI (`hy`) to build vApps on [Hyli](https://hyli.org), the new proof-powered L1 to build the next generation of apps onchain.
 
@@ -264,7 +264,7 @@ Hylix builds on top of:
 * [ ] Upload to a prover network (`hy upload`): upload your compiled ELF to a prover network without setting up lovcal proving infrastructure
 * [ ] Testnet mode (`hy run --testnet`) to start a backend and deploy the contract on a prover network
 
-## :link: Links
+## 🔗 Links
 
 <div align="center">
     <p>
