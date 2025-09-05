@@ -3123,15 +3123,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "clap_complete"
-version = "4.5.57"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d9501bd3f5f09f7bbee01da9a511073ed30a80cd7a509f1214bb74eadea71ad"
-dependencies = [
- "clap",
-]
-
-[[package]]
 name = "clap_derive"
 version = "4.5.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5362,12 +5353,12 @@ dependencies = [
  "hex",
  "hyli-amm",
  "hyli-client-sdk",
- "hyli-contract-sdk 0.13.0-rc.4",
+ "hyli-contract-sdk",
  "hyli-contracts",
  "hyli-crypto",
  "hyli-hydentity",
  "hyli-hyllar",
- "hyli-model 0.13.0-rc.4",
+ "hyli-model",
  "hyli-modules",
  "hyli-net",
  "hyli-risc0-recursion",
@@ -5412,7 +5403,7 @@ dependencies = [
  "anyhow",
  "borsh",
  "hyli-client-sdk",
- "hyli-contract-sdk 0.13.0-rc.4",
+ "hyli-contract-sdk",
  "hyli-hyllar",
  "risc0-zkvm",
  "serde",
@@ -5448,8 +5439,8 @@ dependencies = [
  "bincode",
  "borsh",
  "hyli-bonsai-runner",
- "hyli-contract-sdk 0.13.0-rc.4",
- "hyli-model 0.13.0-rc.4",
+ "hyli-contract-sdk",
+ "hyli-model",
  "hyli-net",
  "risc0-zkvm",
  "serde",
@@ -5468,7 +5459,7 @@ name = "hyli-contract-sdk"
 version = "0.13.0-rc.4"
 dependencies = [
  "borsh",
- "hyli-model 0.13.0-rc.4",
+ "hyli-model",
  "risc0-zkvm",
  "serde",
  "sha2",
@@ -5478,24 +5469,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyli-contract-sdk"
-version = "0.13.0-rc.4"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#425551582a7670de62cae5340a2a85419afb1941"
-dependencies = [
- "borsh",
- "hyli-model 0.13.0-rc.4 (git+https://github.com/hyli-org/hyli.git?branch=main)",
- "serde",
- "sha2",
- "sparse-merkle-tree",
- "tracing",
-]
-
-[[package]]
 name = "hyli-contracts"
 version = "0.13.0-rc.4"
 dependencies = [
  "hyli-amm",
- "hyli-contract-sdk 0.13.0-rc.4",
+ "hyli-contract-sdk",
  "hyli-hydentity",
  "hyli-hyllar",
  "hyli-risc0-recursion",
@@ -5513,7 +5491,7 @@ dependencies = [
  "blst",
  "borsh",
  "hex",
- "hyli-model 0.13.0-rc.4",
+ "hyli-model",
  "keyring",
  "rand 0.9.2",
  "whoami",
@@ -5528,7 +5506,7 @@ dependencies = [
  "clap",
  "hex",
  "hyli-client-sdk",
- "hyli-contract-sdk 0.13.0-rc.4",
+ "hyli-contract-sdk",
  "hyli-hydentity",
  "mockall",
  "risc0-zkvm",
@@ -5546,7 +5524,7 @@ dependencies = [
  "anyhow",
  "borsh",
  "hyli-client-sdk",
- "hyli-contract-sdk 0.13.0-rc.4",
+ "hyli-contract-sdk",
  "hyli-hyllar",
  "mockall",
  "risc0-zkvm",
@@ -5564,7 +5542,7 @@ dependencies = [
  "borsh",
  "clap",
  "hyli-client-sdk",
- "hyli-contract-sdk 0.13.0-rc.4",
+ "hyli-contract-sdk",
  "hyli-contracts",
  "hyli-hydentity",
  "hyli-hyllar",
@@ -5598,19 +5576,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hyli-model"
-version = "0.13.0-rc.4"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#425551582a7670de62cae5340a2a85419afb1941"
-dependencies = [
- "borsh",
- "derive_more 2.0.1",
- "hex",
- "readonly",
- "serde",
- "strum 0.27.2",
-]
-
-[[package]]
 name = "hyli-modules"
 version = "0.13.0-rc.4"
 dependencies = [
@@ -5625,9 +5590,9 @@ dependencies = [
  "google-cloud-storage",
  "hex",
  "hyli-client-sdk",
- "hyli-contract-sdk 0.13.0-rc.4",
+ "hyli-contract-sdk",
  "hyli-hydentity",
- "hyli-model 0.13.0-rc.4",
+ "hyli-model",
  "hyli-net",
  "hyli-verifiers",
  "indexmap 2.11.0",
@@ -5665,7 +5630,7 @@ dependencies = [
  "futures",
  "hex",
  "http-body-util",
- "hyli-contract-sdk 0.13.0-rc.4",
+ "hyli-contract-sdk",
  "hyli-crypto",
  "hyper 1.7.0",
  "hyper-util",
@@ -5700,7 +5665,7 @@ dependencies = [
  "borsh",
  "hex",
  "hyli-client-sdk",
- "hyli-contract-sdk 0.13.0-rc.4",
+ "hyli-contract-sdk",
  "hyli-contracts",
  "hyli-hydentity",
  "hyli-risc0-recursion",
@@ -5718,7 +5683,7 @@ dependencies = [
  "anyhow",
  "borsh",
  "hyli-client-sdk",
- "hyli-contract-sdk 0.13.0-rc.4",
+ "hyli-contract-sdk",
  "hyli-smt-token",
  "mockall",
  "risc0-zkvm",
@@ -5736,7 +5701,7 @@ dependencies = [
  "anyhow",
  "borsh",
  "hyli-client-sdk",
- "hyli-contract-sdk 0.13.0-rc.4",
+ "hyli-contract-sdk",
  "hyli-hyllar",
  "risc0-zkvm",
  "serde",
@@ -5756,8 +5721,8 @@ dependencies = [
  "crossterm 0.29.0",
  "dashmap",
  "hyli-client-sdk",
- "hyli-contract-sdk 0.13.0-rc.4",
- "hyli-model 0.13.0-rc.4",
+ "hyli-contract-sdk",
+ "hyli-model",
  "hyli-modules",
  "hyli-smt-token",
  "hyper 1.7.0",
@@ -5784,7 +5749,7 @@ version = "0.13.0-rc.4"
 dependencies = [
  "borsh",
  "hyli-client-sdk",
- "hyli-contract-sdk 0.13.0-rc.4",
+ "hyli-contract-sdk",
  "rand 0.9.2",
  "rand_seeder",
  "risc0-zkvm",
@@ -5801,7 +5766,7 @@ dependencies = [
  "cairo-m-prover",
  "hex",
  "hyli-crypto",
- "hyli-model 0.13.0-rc.4",
+ "hyli-model",
  "once_cell",
  "rand 0.9.2",
  "risc0-zkvm",
@@ -5822,7 +5787,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "clap_complete",
  "color-eyre",
  "console",
  "dirs",
@@ -5831,15 +5795,11 @@ dependencies = [
  "reqwest 0.11.27",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror 1.0.69",
  "tokio",
  "toml 0.8.23",
  "tracing",
- "tracing-log",
  "tracing-subscriber 0.3.19",
- "walkdir",
- "wallet",
  "which",
 ]
 
@@ -12864,21 +12824,6 @@ checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
 dependencies = [
  "same-file",
  "winapi-util",
-]
-
-[[package]]
-name = "wallet"
-version = "0.0.0"
-source = "git+https://github.com/hyli-org/wallet.git#c0e4e3a26238124754a3ac1b63592101cc996149"
-dependencies = [
- "anyhow",
- "borsh",
- "hex",
- "hyli-contract-sdk 0.13.0-rc.4 (git+https://github.com/hyli-org/hyli.git?branch=main)",
- "serde",
- "serde_with",
- "sha2",
- "sparse-merkle-tree",
 ]
 
 [[package]]

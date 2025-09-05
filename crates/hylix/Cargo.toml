@@ -18,19 +18,20 @@ path = "src/main.rs"
 [dependencies]
 # CLI and argument parsing
 clap = { version = "4.4", features = ["derive", "color", "suggestions"] }
-clap_complete = "4.4"
 
 # Logging and tracing
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "ansi"] }
-tracing-log = "0.2"
+tracing-subscriber = { version = "0.3", features = [
+  "env-filter",
+  "json",
+  "ansi",
+] }
 color-eyre = { version = "0.6", features = ["issue-url"] }
 
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }
 
 # File system and path handling
-walkdir = "2.4"
 dirs = "5.0"
 
 # HTTP client for downloading scaffolds
@@ -38,7 +39,6 @@ reqwest = { version = "0.11", features = ["json", "stream"] }
 
 # Process execution
 which = "4.4"
-tempfile = "3.8"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -53,9 +53,3 @@ console = "0.15"
 
 # Hyli client SDK for REST API calls
 client-sdk = { workspace = true, features = ["rest"] }
-
-# Hyli wallet
-hyli-wallet = { git = "https://github.com/hyli-org/wallet.git", package = "wallet"}
-
-[dev-dependencies]
-tempfile = "3.8"
