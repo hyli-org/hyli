@@ -20,7 +20,12 @@ path = "src/main.rs"
 client-sdk = { workspace = true, features = ["rest"] }
 
 # CLI and argument parsing
-clap = { workspace = true, features = ["derive", "color", "suggestions"] }
+clap = { workspace = true, features = [
+  "std",
+  "derive",
+  "color",
+  "suggestions",
+] }
 
 # Logging and tracing
 tracing = { workspace = true }
@@ -46,7 +51,7 @@ which = "8.0.0"
 # Serialization
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-toml = { workspace = true }
+toml = { workspace = true, features = ["serde", "parse", "display"] }
 
 # Utilities
 anyhow = { workspace = true }
