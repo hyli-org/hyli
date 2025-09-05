@@ -114,6 +114,17 @@ hy clean
 
 ### `hy devnet`
 
+| Command  | Alias | Description                                               |
+|----------|-------|-----------------------------------------------------------|
+| `up`     | `u`   | Start the local devnet                                    |
+| `down`   | `d`   | Stop the local devnet                                     |
+| `status` | `ps`  | Check the status of the local devnet                      |
+| `restart`| `r`   | Restart the local devnet                                  |
+| `bake`   | `b`   | Create and fund test accounts                             |
+| `fork`   | `f`   | Fork a running network                                    |
+| `env`    |       | Print environment variables for sourcing in bash          |
+| `help`   |       | Print this message or the help of the given subcommand(s) |
+
 Launch a local devnet with:
 
 * Node
@@ -126,25 +137,16 @@ Launch a local devnet with:
 See [Configuration](#configuration) section for customization.
 
 ```sh
-hy devnet
-```
-
-Want to pause the network ?
-
-```sh
-hy devnet stop 
-hy devnet start
-```
-
-Want a fresh state?
-
-```sh
-hy devnet --reset
+hy devnet up
+# And to stop all services
+hy devnet down
 ```
 
 Check status of devnet
 
 ```sh
+hy devnet ps
+# Or
 hy devnet status
 ```
 
