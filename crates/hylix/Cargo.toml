@@ -17,11 +17,11 @@ path = "src/main.rs"
 
 [dependencies]
 # CLI and argument parsing
-clap = { version = "4.4", features = ["derive", "color", "suggestions"] }
+clap = { workspace = true, features = ["derive", "color", "suggestions"] }
 
 # Logging and tracing
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = [
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = [
   "env-filter",
   "json",
   "ansi",
@@ -29,7 +29,7 @@ tracing-subscriber = { version = "0.3", features = [
 color-eyre = { version = "0.6", features = ["issue-url"] }
 
 # Async runtime
-tokio = { version = "1.0", features = ["full"] }
+tokio = { workspace = true, features = ["full"] }
 
 # File system and path handling
 dirs = "6.0.0"
@@ -41,12 +41,12 @@ reqwest = { version = "0.12.23", features = ["json", "stream"] }
 which = "8.0.0"
 
 # Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-toml = "0.9.5"
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+toml = { workspace = true }
 
 # Utilities
-anyhow = "1.0"
+anyhow = { workspace = true }
 thiserror = "2.0"
 indicatif = "0.18"
 console = "0.16"
