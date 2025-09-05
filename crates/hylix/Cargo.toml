@@ -20,8 +20,7 @@ path = "src/main.rs"
 client-sdk = { workspace = true, features = ["rest"] }
 
 # CLI and argument parsing
-clap = { workspace = true, features = [
-  "std",
+clap = { workspace = true, default-features = true, features = [
   "derive",
   "color",
   "suggestions",
