@@ -200,6 +200,8 @@ impl Hashed<TxHash> for VerifiedProofTransaction {
     fn hashed(&self) -> TxHash {
         let mut hasher = Sha3_256::new();
         hasher.update(self.contract_name.0.as_bytes());
+        hasher.update(self.program_id.0.clone());
+        hasher.update(self.verifier.0.as_bytes());
         hasher.update(self.proof_hash.0.as_bytes());
         let hash_bytes = hasher.finalize();
         TxHash(hex::encode(hash_bytes))
