@@ -166,6 +166,7 @@ pub(crate) struct IndexerHandlerStore {
     >,
     block_height: BlockHeight,
     block_hash: BlockHash,
+    block_time: TimestampMs,
     last_update: TimestampMs,
 
     // Intended to be temporary, for CSI & co.
@@ -199,6 +200,7 @@ pub struct TxStore {
     pub lane_id: Option<LaneIdDb>,
     pub index: i32,
     pub identity: Option<String>,
+    pub contract_names: HashSet<ContractName>,
 }
 
 pub struct BlockStore {
@@ -243,6 +245,7 @@ impl Indexer {
         {
             self.handler_store.block_height = block.height();
             self.handler_store.block_hash = block.hashed();
+            self.handler_store.block_time = block.consensus_proposal.timestamp.clone();
 
             self.handler_store.blocks.push(BlockStore {
                 block_hash: self.handler_store.block_hash.clone(),
@@ -268,10 +271,14 @@ impl Indexer {
             }))?;
         }
 
-        // if last block is newer than 5sec dump store to db
+        // Occasionally dump to DB:
+        // - if we have more than conf.indexer.query_buffer_size events
+        // - if it's been more than 5s since last dump
+        // - if the block is recent (less than 1min old) we stream as fast as we can (buffering is mostly useful when catching up)
         let now = TimestampMsClock::now();
         if self.handler_store.tx_events.0.len() > self.conf.indexer.query_buffer_size
             || self.handler_store.last_update.0 + 5000 < now.0
+            || now.0 - self.handler_store.block_time.0 < 60 * 1000
         {
             log_error!(self.dump_store_to_db().await, "dumping to DB")?;
             self.handler_store.last_update = now;
@@ -297,6 +304,14 @@ impl Indexer {
                     identity: match tx.transaction_data {
                         TransactionData::Blob(ref blob_tx) => Some(blob_tx.identity.clone().0),
                         _ => None,
+                    },
+                    contract_names: match tx.transaction_data {
+                        TransactionData::Blob(ref blob_tx) => blob_tx
+                            .blobs
+                            .iter()
+                            .map(|b| b.contract_name.clone())
+                            .collect(),
+                        _ => HashSet::new(),
                     },
                 });
                 // We skip the blobs here or they'll conflict later and it's easier.
@@ -338,6 +353,11 @@ impl NodeStateCallback for IndexerHandlerStore {
                     lane_id: Some(LaneIdDb(lane_id.clone())),
                     index: index as i32,
                     identity: Some(blob_tx.identity.clone().0),
+                    contract_names: blob_tx
+                        .blobs
+                        .iter()
+                        .map(|b| b.contract_name.clone())
+                        .collect(),
                 });
                 for (index, blob) in blob_tx.blobs.iter().enumerate() {
                     self.blobs.0.push(format!(
@@ -384,6 +404,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                     lane_id: Some(LaneIdDb(lane_id.clone())),
                     index: index as i32,
                     identity: None,
+                    contract_names: HashSet::new(),
                 });
                 self.tx_status_update
                     .insert(tx_id.clone(), TransactionStatusDb::Success);
@@ -535,14 +556,44 @@ impl Indexer {
             let mut query_builder = QueryBuilder::<Postgres>::new(
                     "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) VALUES ",
                 );
+            let mut query_builder_ctx = QueryBuilder::<Postgres>::new(
+                "INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name) VALUES ",
+            );
             // PG won't let us have the same TX twice in the insert into values, so do this as a workaround.
             let mut already_inserted: HashSet<TxId> = HashSet::new();
             let mut add_comma = false;
+            let mut add_comma_ctx = false;
             for tx in chunk.into_iter() {
                 if already_inserted.insert(TxId(tx.dp_hash.0.clone(), tx.tx_hash.0.clone())) {
+                    tracing::warn!(
+                        "Inserting tx {:?} at height {}",
+                        TxId(tx.dp_hash.0.clone(), tx.tx_hash.0.clone()),
+                        tx.block_height.0
+                    );
                     if add_comma {
                         query_builder.push(",");
                     }
+
+                    for contract_name in tx.contract_names.into_iter() {
+                        if add_comma_ctx {
+                            query_builder_ctx.push(",");
+                        }
+                        tracing::warn!(
+                            "Inserting tx_contract {:?} for tx {:?} at height {}",
+                            contract_name,
+                            TxId(tx.dp_hash.0.clone(), tx.tx_hash.0.clone()),
+                            tx.block_height.0
+                        );
+                        query_builder_ctx.push("(");
+                        query_builder_ctx.push_bind(tx.dp_hash.clone());
+                        query_builder_ctx.push(",");
+                        query_builder_ctx.push_bind(tx.tx_hash.clone());
+                        query_builder_ctx.push(",");
+                        query_builder_ctx.push_bind(contract_name.0);
+                        query_builder_ctx.push(")");
+                        add_comma_ctx = true;
+                    }
+
                     query_builder.push("(");
                     query_builder.push_bind(tx.dp_hash);
                     query_builder.push(",");
@@ -564,6 +615,7 @@ impl Indexer {
                     query_builder.push(",");
                     query_builder.push_bind(tx.identity);
                     query_builder.push(")");
+
                     add_comma = true;
                 }
             }
@@ -583,6 +635,13 @@ impl Indexer {
                 query_builder.build().execute(&mut *transaction).await,
                 "Inserting transactions"
             )?;
+            if add_comma_ctx {
+                query_builder_ctx.push(" ON CONFLICT DO NOTHING");
+                _ = log_error!(
+                    query_builder_ctx.build().execute(&mut *transaction).await,
+                    "Inserting txs_contracts"
+                )?;
+            }
         }
 
         // Then status updates
