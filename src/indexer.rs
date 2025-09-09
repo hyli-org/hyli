@@ -565,6 +565,11 @@ impl Indexer {
             let mut add_comma_ctx = false;
             for tx in chunk.into_iter() {
                 if already_inserted.insert(TxId(tx.dp_hash.0.clone(), tx.tx_hash.0.clone())) {
+                    tracing::warn!(
+                        "Inserting tx {:?} at height {}",
+                        TxId(tx.dp_hash.0.clone(), tx.tx_hash.0.clone()),
+                        tx.block_height.0
+                    );
                     if add_comma {
                         query_builder.push(",");
                     }
@@ -573,6 +578,12 @@ impl Indexer {
                         if add_comma_ctx {
                             query_builder_ctx.push(",");
                         }
+                        tracing::warn!(
+                            "Inserting tx_contract {:?} for tx {:?} at height {}",
+                            contract_name,
+                            TxId(tx.dp_hash.0.clone(), tx.tx_hash.0.clone()),
+                            tx.block_height.0
+                        );
                         query_builder_ctx.push("(");
                         query_builder_ctx.push_bind(tx.dp_hash.clone());
                         query_builder_ctx.push(",");
@@ -625,6 +636,7 @@ impl Indexer {
                 "Inserting transactions"
             )?;
             if add_comma_ctx {
+                query_builder_ctx.push(" ON CONFLICT DO NOTHING");
                 _ = log_error!(
                     query_builder_ctx.build().execute(&mut *transaction).await,
                     "Inserting txs_contracts"
