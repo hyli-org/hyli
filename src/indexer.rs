@@ -278,7 +278,7 @@ impl Indexer {
         let now = TimestampMsClock::now();
         if self.handler_store.tx_events.0.len() > self.conf.indexer.query_buffer_size
             || self.handler_store.last_update.0 + 5000 < now.0
-            || now.0 - self.handler_store.block_time.0 < 60 * 1000
+            || now.0.saturating_sub(self.handler_store.block_time.0) < 60 * 1000
         {
             log_error!(self.dump_store_to_db().await, "dumping to DB")?;
             self.handler_store.last_update = now;
