@@ -9,7 +9,7 @@ use std::{
 use anyhow::{bail, Result};
 use sdk::{
     Blob, BlobIndex, BlobTransaction, Calldata, Contract, ContractAction, ContractName, Hashed,
-    HyliOutput, Identity, ProofTransaction, StateCommitment, TxContext,
+    HyliOutput, Identity, ProofTransaction, StateCommitment, TxContext, ZkContract,
 };
 
 use crate::helpers::ClientSdkProver;
@@ -374,6 +374,8 @@ impl ContractRunner {
 pub type TxExecutorHandlerResult<T> = Result<T>;
 pub use anyhow::Context as TxExecutorHandlerContext;
 pub trait TxExecutorHandler {
+    type Contract: ZkContract + sdk::TransactionalZkContract + borsh::BorshDeserialize + 'static;
+
     /// Entry point for contract execution for the SDK's TxExecutor tool
     /// This handler provides a way to execute contract logic with access to the full provable state,
     /// as opposed to the ZkContract trait which only works with commitment metadata.

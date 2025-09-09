@@ -3,7 +3,7 @@ use hyli_smt_token::{account::AccountSMT, SmtTokenAction, FAUCET_ID};
 use sdk::{BlobIndex, BlobTransaction, ContractAction};
 
 #[test]
-fn test_transfer() {
+fn e2e_test_transfer() {
     let mut contract1 = AccountSMT::default();
 
     let tx = BlobTransaction::new(
