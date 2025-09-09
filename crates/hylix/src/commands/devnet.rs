@@ -272,9 +272,7 @@ async fn restart_devnet(reset: bool, bake: bool, context: &DevnetContext) -> Hyl
 }
 
 /// Fork a running network
-async fn fork_devnet(endpoint: &str) -> HylixResult<()> {
-    let pb = create_progress_bar_with_msg(&format!("Forking network at: {}", endpoint));
-
+async fn fork_devnet(_endpoint: &str) -> HylixResult<()> {
     // TODO: Implement network forking
     // This would involve:
     // 1. Connecting to the specified endpoint
@@ -282,7 +280,7 @@ async fn fork_devnet(endpoint: &str) -> HylixResult<()> {
     // 3. Setting up a local node with that state
     // 4. Starting all the devnet services
 
-    pb.finish_with_message("Network forking is coming soon!");
+    log_warning("Forking is not yet implemented.");
     log_info("This feature will allow you to fork any running Hyli network for testing.");
 
     Ok(())

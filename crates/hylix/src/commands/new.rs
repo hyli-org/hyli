@@ -1,6 +1,6 @@
 use crate::config::BackendType;
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{create_progress_bar_with_msg, log_info, log_success};
+use crate::logging::{create_progress_bar_with_msg, log_info, log_success, log_warning};
 use std::path::Path;
 use std::process::Command;
 
@@ -20,10 +20,15 @@ pub async fn execute(project_name: String, backend: Option<BackendType>) -> Hyli
     }
 
     // Determine backend type
-    let backend_type = backend.unwrap_or_else(|| {
-        log_info("No backend specified, defaulting to SP1");
-        BackendType::Sp1
-    });
+    // let backend_type = backend.unwrap_or_else(|| {
+    //     log_info("No backend specified, defaulting to Risc0");
+    //     BackendType::Risc0
+    // });
+    // TODO: Enable SP1 backend when ready
+    if backend == Some(BackendType::Sp1) {
+        log_warning("SP1 backend is not available yet, switching to Risc0.");
+    }
+    let backend_type = BackendType::Risc0;
 
     log_info(&format!("Using backend: {:?}", backend_type));
 
@@ -124,7 +129,7 @@ async fn setup_sp1_backend(_project_name: &str) -> HylixResult<()> {
     // - Updating Cargo.toml with SP1 dependencies
     // - Setting up SP1-specific build configuration
     // - Creating SP1-specific contract templates
-    log_info("Setting up SP1 backend configuration...");
+    log_info("Setting up SP1 backend configuration... (not yet implemented)");
 
     // Placeholder implementation
     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -139,7 +144,7 @@ async fn setup_risc0_backend(_project_name: &str) -> HylixResult<()> {
     // - Updating Cargo.toml with Risc0 dependencies
     // - Setting up Risc0-specific build configuration
     // - Creating Risc0-specific contract templates
-    log_info("Setting up Risc0 backend configuration...");
+    log_info("Setting up Risc0 backend configuration... (not yet implemented)");
 
     // Placeholder implementation
     std::thread::sleep(std::time::Duration::from_millis(500));
