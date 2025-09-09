@@ -8,7 +8,7 @@ This folder contains some "official" Hyli Risc0 smart contracts :
 - `risc0-recursion`: A contract with special rights to do recursion on multiple contracts
 - `staking`: A contract used to hold partg of the staking logic for the consensus.
 
-This architecture is subject to change while sdk will be developped.
+This architecture is subject to change while sdk will be developed.
 
 To regenerate the _.img and _.txt files, you should run
 
