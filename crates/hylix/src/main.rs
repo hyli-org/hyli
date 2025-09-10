@@ -57,7 +57,8 @@ enum Commands {
     /// Run end-to-end tests
     #[command(alias = "t")]
     Test {
-        /// Keep devnet alive after tests complete
+        /// Keep backend alive after tests complete. 
+        /// Devnet is always kept alive. You can stop it with `hy devnet down` if needed.
         #[arg(long)]
         keep_alive: bool,
         /// Run e2e tests only

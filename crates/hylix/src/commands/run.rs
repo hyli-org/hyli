@@ -51,12 +51,16 @@ async fn build_project(_config: &crate::config::HylixConfig) -> HylixResult<()> 
 }
 
 /// Run the backend service
-pub async fn run_backend(testnet: bool, config: &crate::config::HylixConfig, print_logs: bool) -> HylixResult<tokio::process::Child> {
-    let mut args = vec!["run", "-p", "server"];
+pub async fn run_backend(testnet: bool, config: &crate::config::HylixConfig, for_testing: bool) -> HylixResult<tokio::process::Child> {
+    let mut args = vec!["run", "-p", "server", "--"];
     if testnet {
-        args.push("--");
         args.push("--testnet");
     }
+    if for_testing && config.test.clean_server_data {
+        args.push("--clean-data-directory");
+    }
+
+    let print_logs = if for_testing { config.test.print_server_logs } else { config.run.clean_server_data };
 
     let backend = tokio::process::Command::new("cargo")
         .env("RISC0_DEV_MODE", "1")

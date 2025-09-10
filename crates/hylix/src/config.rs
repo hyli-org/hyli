@@ -17,6 +17,26 @@ pub struct HylixConfig {
     pub build: BuildConfig,
     /// Bake profile configuration
     pub bake_profile: String,
+    /// Testing configuration
+    pub test: TestConfig,
+    /// Run configuration
+    pub run: RunConfig,
+}
+
+/// Testing configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestConfig {
+    /// Print logs to console
+    pub print_server_logs: bool,
+    /// Clean data directory before running tests
+    pub clean_server_data: bool,
+}
+
+/// Run configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunConfig {
+    /// Clean data directory before running
+    pub clean_server_data: bool,
 }
 
 /// Backend type enumeration
@@ -126,6 +146,8 @@ impl Default for HylixConfig {
             devnet: DevnetConfig::default(),
             build: BuildConfig::default(),
             bake_profile: "bobalice".to_string(),
+            test: TestConfig::default(),
+            run: RunConfig::default(),
         }
     }
 }
@@ -145,6 +167,23 @@ impl Default for DevnetConfig {
             wallet_ws_port: 8081,
             auto_start: true,
             container_env: ContainerEnvConfig::default(),
+        }
+    }
+}
+
+impl Default for TestConfig {
+    fn default() -> Self {
+        Self {
+            print_server_logs: true,
+            clean_server_data: true,
+        }
+    }
+}
+
+impl Default for RunConfig {
+    fn default() -> Self {
+        Self {
+            clean_server_data: false,
         }
     }
 }
