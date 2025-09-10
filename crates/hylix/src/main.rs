@@ -57,7 +57,7 @@ enum Commands {
     /// Run end-to-end tests
     #[command(alias = "t")]
     Test {
-        /// Keep backend alive after tests complete. 
+        /// Keep backend alive after tests complete.
         /// Devnet is always kept alive. You can stop it with `hy devnet down` if needed.
         #[arg(long)]
         keep_alive: bool,
@@ -179,7 +179,11 @@ async fn main() -> Result<()> {
         Commands::Build { clean, front } => {
             commands::build::execute(clean, front).await?;
         }
-        Commands::Test { keep_alive, e2e, unit } => {
+        Commands::Test {
+            keep_alive,
+            e2e,
+            unit,
+        } => {
             commands::test::execute(keep_alive, e2e, unit).await?;
         }
         Commands::Run { testnet, watch } => {

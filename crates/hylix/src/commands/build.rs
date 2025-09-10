@@ -112,13 +112,7 @@ async fn build_contracts(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
         mpb,
         "cargo build -p contracts --features nonreproducible",
         "cargo",
-        &[
-            "build",
-            "-p",
-            "contracts",
-            "--features",
-            "nonreproducible",
-        ],
+        &["build", "-p", "contracts", "--features", "nonreproducible"],
         None,
     )
     .await?;

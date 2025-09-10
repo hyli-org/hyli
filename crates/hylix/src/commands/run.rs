@@ -51,9 +51,22 @@ async fn build_project(_config: &crate::config::HylixConfig) -> HylixResult<()> 
 }
 
 /// Run the backend service
-pub async fn run_backend(testnet: bool, config: &crate::config::HylixConfig, for_testing: bool) -> HylixResult<tokio::process::Child> {
+pub async fn run_backend(
+    testnet: bool,
+    config: &crate::config::HylixConfig,
+    for_testing: bool,
+) -> HylixResult<tokio::process::Child> {
     let server_port = config.run.server_port.to_string();
-    let mut args = vec!["run", "-p", "server", "-F", "nonreproducible", "--", "--server-port", &server_port];
+    let mut args = vec![
+        "run",
+        "-p",
+        "server",
+        "-F",
+        "nonreproducible",
+        "--",
+        "--server-port",
+        &server_port,
+    ];
     if testnet {
         args.push("--testnet");
     }
@@ -61,9 +74,16 @@ pub async fn run_backend(testnet: bool, config: &crate::config::HylixConfig, for
         args.push("--clean-data-directory");
     }
 
-    let print_logs = if for_testing { config.test.print_server_logs } else { config.run.clean_server_data };
+    let print_logs = if for_testing {
+        config.test.print_server_logs
+    } else {
+        config.run.clean_server_data
+    };
 
-    log_info(&format!("{}", console::style(&format!("$ cargo {}", args.join(" "))).green()));
+    log_info(&format!(
+        "{}",
+        console::style(&format!("$ cargo {}", args.join(" "))).green()
+    ));
 
     let backend = tokio::process::Command::new("cargo")
         .env("RISC0_DEV_MODE", "1")
@@ -79,8 +99,16 @@ pub async fn run_backend(testnet: bool, config: &crate::config::HylixConfig, for
             "HYLI_DA_READ_FROM",
             format!("localhost:{}", config.devnet.da_port),
         )
-        .stdout(if print_logs { std::process::Stdio::inherit() } else { std::process::Stdio::piped() })
-        .stderr(if print_logs { std::process::Stdio::inherit() } else { std::process::Stdio::piped() })
+        .stdout(if print_logs {
+            std::process::Stdio::inherit()
+        } else {
+            std::process::Stdio::piped()
+        })
+        .stderr(if print_logs {
+            std::process::Stdio::inherit()
+        } else {
+            std::process::Stdio::piped()
+        })
         .args(&args)
         .spawn()
         .map_err(|e| HylixError::backend(format!("Failed to start backend: {}", e)))?;

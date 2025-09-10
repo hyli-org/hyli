@@ -272,7 +272,7 @@ fn set_config_value(config: &mut HylixConfig, key: &str, value: &str) -> HylixRe
                 crate::error::HylixError::config("Invalid boolean value. Use 'true' or 'false'")
             })?;
         }
-        
+
         // Run settings
         "run.clean_server_data" => {
             config.run.clean_server_data = value.parse().map_err(|_| {

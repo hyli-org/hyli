@@ -103,7 +103,7 @@ async fn build_project() -> HylixResult<()> {
 
 /// Start the backend service
 async fn start_backend(config: &crate::config::HylixConfig) -> HylixResult<tokio::process::Child> {
-    let mut backend = commands::run::run_backend(false, &config, true).await?;
+    let mut backend = commands::run::run_backend(false, config, true).await?;
 
     // Check if the backend is running by loop-polling /_health
     let mut attempts = 0;
@@ -111,7 +111,7 @@ async fn start_backend(config: &crate::config::HylixConfig) -> HylixResult<tokio
     let mpb = indicatif::MultiProgress::new();
     let pb = mpb.add(create_progress_bar());
     let pb2 = mpb.add(create_progress_bar());
-    while !is_backend_running(&config, &pb2).await {
+    while !is_backend_running(config, &pb2).await {
         attempts += 1;
         pb.set_message(format!(
             "Waiting for backend to start... (attempt {}/{})",
@@ -164,11 +164,11 @@ async fn is_backend_running(
     match response {
         Ok(response) => {
             pb.set_message("Backend is running");
-            return response.status() == 200;
+            response.status() == 200
         }
         Err(e) => {
             pb.set_message(format!("Backend not responding: {}", e));
-            return false;
+            false
         }
     }
 }
@@ -287,7 +287,7 @@ async fn save_backend_logs(backend_handle: &mut tokio::process::Child) -> HylixR
         pb.set_message(format!("Saving backend logs... ({} lines)", line_count));
         line_count += 1;
         logs.push_str(&line);
-        logs.push_str("\n");
+        logs.push('\n');
     }
 
     pb.set_message(format!(
