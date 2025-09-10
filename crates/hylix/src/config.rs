@@ -232,7 +232,7 @@ impl HylixConfig {
     }
 
     /// Backup configuration to file
-    pub fn backup(&self) -> crate::error::HylixResult<()> {
+    pub fn backup() -> crate::error::HylixResult<()> {
         let config_path = Self::config_path()?;
         let config_dir = config_path.parent().unwrap();
         let backup_path = config_dir.join(format!(

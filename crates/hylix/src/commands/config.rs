@@ -107,6 +107,16 @@ fn display_config(config: &HylixConfig) -> HylixResult<()> {
         }
     }
 
+    // Test configuration
+    println!("\n🧪 Test Configuration:");
+    println!("  Print Server Logs: {}", config.test.print_server_logs);
+    println!("  Clean Server Data: {}", config.test.clean_server_data);
+
+    // Run configuration
+    println!("\n🏃 Run Configuration:");
+    println!("  Clean Server Data: {}", config.run.clean_server_data);
+    println!("  Server Port: {}", config.run.server_port);
+
     // Configuration file path
     if let Ok(config_path) = get_config_path() {
         println!("\n📁 Configuration File:");
@@ -148,8 +158,7 @@ async fn edit_config(key: &str, value: &str) -> HylixResult<()> {
 /// Reset configuration to defaults
 async fn reset_config() -> HylixResult<()> {
     // Backup the current configuration
-    let config = HylixConfig::load()?;
-    config.backup()?;
+    HylixConfig::backup()?;
     log_info("Resetting configuration to defaults...");
 
     // Reset to defaults
@@ -250,6 +259,30 @@ fn set_config_value(config: &mut HylixConfig, key: &str, value: &str) -> HylixRe
                         .map_err(|_| crate::error::HylixError::config("Invalid number of jobs"))?,
                 );
             }
+        }
+
+        // Test settings
+        "test.print_server_logs" => {
+            config.test.print_server_logs = value.parse().map_err(|_| {
+                crate::error::HylixError::config("Invalid boolean value. Use 'true' or 'false'")
+            })?;
+        }
+        "test.clean_server_data" => {
+            config.test.clean_server_data = value.parse().map_err(|_| {
+                crate::error::HylixError::config("Invalid boolean value. Use 'true' or 'false'")
+            })?;
+        }
+        
+        // Run settings
+        "run.clean_server_data" => {
+            config.run.clean_server_data = value.parse().map_err(|_| {
+                crate::error::HylixError::config("Invalid boolean value. Use 'true' or 'false'")
+            })?;
+        }
+        "run.server_port" => {
+            config.run.server_port = value
+                .parse()
+                .map_err(|_| crate::error::HylixError::config("Invalid port number"))?;
         }
 
         _ => {
