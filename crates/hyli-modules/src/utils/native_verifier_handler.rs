@@ -1,25 +1,11 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::transaction_builder::TxExecutorHandler;
 use hyli_verifiers::native::verify;
-use sdk::{verifiers::NativeVerifiers, FullStateRevert, StateCommitment, ZkContract};
+use sdk::{verifiers::NativeVerifiers, StateCommitment};
 
 /// Convenience utility for verifying blobs for native verifiers.
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct NativeVerifierHandler;
-
-impl ZkContract for NativeVerifierHandler {
-    fn execute(&mut self, _calldata: &sdk::Calldata) -> sdk::RunResult {
-        // not relevant
-        unimplemented!()
-    }
-
-    fn commit(&self) -> StateCommitment {
-        // not relevant
-        unimplemented!()
-    }
-}
-
-impl FullStateRevert for NativeVerifierHandler {}
 
 impl TxExecutorHandler for NativeVerifierHandler {
     type Contract = NativeVerifierHandler;

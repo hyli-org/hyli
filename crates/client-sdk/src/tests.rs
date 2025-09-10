@@ -1,4 +1,4 @@
-use sdk::{BlobIndex, BlobTransaction, Calldata, Hashed, HyliOutput, TxContext};
+use sdk::{BlobIndex, BlobTransaction, Calldata, Hashed, HyliOutput, TxContext, ZkContract};
 
 use crate::transaction_builder::TxExecutorHandler;
 
@@ -6,11 +6,11 @@ use crate::transaction_builder::TxExecutorHandler;
 /// at the specified blob index. It constructs the necessary calldata and verifies that the outputs
 /// from the handler and contract execution match.
 #[track_caller]
-pub fn assert_handle<H: TxExecutorHandler>(
-    contract: &mut H,
-    tx: &BlobTransaction,
-    index: BlobIndex,
-) -> HyliOutput {
+pub fn assert_handle<H>(contract: &mut H, tx: &BlobTransaction, index: BlobIndex) -> HyliOutput
+where
+    H: TxExecutorHandler,
+    H::Contract: ZkContract + sdk::TransactionalZkContract + borsh::BorshDeserialize + 'static,
+{
     assert_handle_with_ctx::<H>(contract, tx, index, None)
 }
 
@@ -18,12 +18,16 @@ pub fn assert_handle<H: TxExecutorHandler>(
 /// at the specified blob index with an optional transaction context. It constructs the necessary calldata
 /// and verifies that the outputs from the handler and contract execution match.
 #[track_caller]
-pub fn assert_handle_with_ctx<H: TxExecutorHandler>(
+pub fn assert_handle_with_ctx<H>(
     contract: &mut H,
     tx: &BlobTransaction,
     index: BlobIndex,
     tx_ctx: Option<TxContext>,
-) -> HyliOutput {
+) -> HyliOutput
+where
+    H: TxExecutorHandler,
+    H::Contract: ZkContract + sdk::TransactionalZkContract + borsh::BorshDeserialize + 'static,
+{
     let calldata = Calldata {
         tx_hash: tx.hashed(),
         identity: tx.identity.clone(),
