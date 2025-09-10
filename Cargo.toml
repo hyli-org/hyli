@@ -133,7 +133,7 @@ tower_governor = { version = "0.7" }
 tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3.19", default-features = false }
 turmoil = { version = "0.6.6" }
-ureq = { version = "3.0.11", default-features = false }
+ureq = { version = "3.1.1", default-features = false }
 utoipa = { version = "5.4.0" }
 utoipa-axum = { version = "0.2.0" }
 utoipa-swagger-ui = { version = "9.0.2" }
@@ -198,7 +198,7 @@ strum_macros = { workspace = true }
 tracing = { workspace = true }
 
 assertables = { workspace = true }
-axum = { workspace = true, features = ["macros"] }
+axum = { workspace = true, features = ["macros", "multipart"] }
 bytes = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 config = { workspace = true, default-features = false, features = ["toml"] }

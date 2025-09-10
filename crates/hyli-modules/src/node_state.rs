@@ -606,7 +606,7 @@ impl<'any> NodeStateProcessing<'any> {
             bail!("BlobTx {} not found", &blob_tx_hash);
         };
 
-        // TODO: add diverse verifications ? (without the inital state checks!).
+        // TODO: add diverse verifications ? (without the initial state checks!).
         // TODO: success to false is valid outcome and can be settled.
 
         Self::verify_hyli_output(unsettled_tx, &blob_proof_data.hyli_output)?;
@@ -792,7 +792,7 @@ impl<'any> NodeStateProcessing<'any> {
         mut blob_proof_output_indices: Vec<usize>,
         callback: &mut (dyn NodeStateCallback + Send + Sync),
     ) -> SettlementResult {
-        // Recursion end-case: we succesfully settled all prior blobs, so success.
+        // Recursion end-case: we successfully settled all prior blobs, so success.
         let Some((blob, possible_proofs)) = blob_iter.next() else {
             // Sanity checks
             for (contract_name, (contract_status, _, _)) in contract_changes.iter() {

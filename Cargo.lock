@@ -2055,6 +2055,7 @@ dependencies = [
  "matchit 0.8.4",
  "memchr",
  "mime",
+ "multer",
  "percent-encoding",
  "pin-project-lite",
  "rustversion",
@@ -2728,7 +2729,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-common"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#495e91b1493ff459d20bfe29d28af67d4c5160be"
+source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
 dependencies = [
  "anyhow",
  "num-traits",
@@ -2743,7 +2744,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#495e91b1493ff459d20bfe29d28af67d4c5160be"
+source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
 dependencies = [
  "anyhow",
  "ariadne",
@@ -2770,7 +2771,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler-codegen"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#495e91b1493ff459d20bfe29d28af67d4c5160be"
+source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
 dependencies = [
  "cairo-m-common",
  "cairo-m-compiler-diagnostics",
@@ -2795,7 +2796,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler-diagnostics"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#495e91b1493ff459d20bfe29d28af67d4c5160be"
+source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
 dependencies = [
  "ariadne",
  "chumsky",
@@ -2804,7 +2805,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler-mir"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#495e91b1493ff459d20bfe29d28af67d4c5160be"
+source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
 dependencies = [
  "cairo-m-compiler-diagnostics",
  "cairo-m-compiler-parser",
@@ -2821,7 +2822,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler-parser"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#495e91b1493ff459d20bfe29d28af67d4c5160be"
+source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
 dependencies = [
  "ariadne",
  "cairo-m-compiler-diagnostics",
@@ -2840,7 +2841,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler-semantic"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#495e91b1493ff459d20bfe29d28af67d4c5160be"
+source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
 dependencies = [
  "anyhow",
  "ariadne",
@@ -2866,7 +2867,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-project"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#495e91b1493ff459d20bfe29d28af67d4c5160be"
+source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
 dependencies = [
  "anyhow",
  "ignore",
@@ -2880,7 +2881,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-prover"
 version = "0.1.1"
-source = "git+https://github.com/kkrt-labs/cairo-m#495e91b1493ff459d20bfe29d28af67d4c5160be"
+source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2908,7 +2909,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-runner"
 version = "0.1.1"
-source = "git+https://github.com/kkrt-labs/cairo-m#495e91b1493ff459d20bfe29d28af67d4c5160be"
+source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
 dependencies = [
  "anyhow",
  "cairo-m-common",
@@ -2930,7 +2931,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-test-utils"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#495e91b1493ff459d20bfe29d28af67d4c5160be"
+source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
 dependencies = [
  "once_cell",
  "pulldown-cmark",
@@ -3285,15 +3286,15 @@ dependencies = [
 
 [[package]]
 name = "console"
-version = "0.16.0"
+version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e09ced7ebbccb63b4c65413d821f2e00ce54c5ca4514ddc6b3c892fdbcbc69d"
+checksum = "b430743a6eb14e9764d4260d4c0d8123087d504eeb9c48f2b2a5e810dd369df4"
 dependencies = [
  "encode_unicode",
  "libc",
  "once_cell",
  "unicode-width 0.2.0",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -5887,12 +5888,12 @@ dependencies = [
 
 [[package]]
 name = "hylix"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "clap",
  "color-eyre",
- "console 0.16.0",
+ "console 0.16.1",
  "dirs 6.0.0",
  "hyli-client-sdk",
  "indicatif 0.18.0",
@@ -6305,7 +6306,7 @@ version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "70a646d946d06bedbbc4cac4c218acf4bbf2d87757a784857025f4d447e4e1cd"
 dependencies = [
- "console 0.16.0",
+ "console 0.16.1",
  "portable-atomic",
  "unicode-width 0.2.0",
  "unit-prefix",
@@ -7114,6 +7115,23 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.106",
+]
+
+[[package]]
+name = "multer"
+version = "3.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83e87776546dc87511aa5ee218730c92b666d7264ab6ed41f9d215af9cd5224b"
+dependencies = [
+ "bytes",
+ "encoding_rs",
+ "futures-util",
+ "http 1.3.1",
+ "httparse",
+ "memchr",
+ "mime",
+ "spin",
+ "version_check",
 ]
 
 [[package]]
@@ -12643,9 +12661,9 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "ureq"
-version = "3.1.0"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00432f493971db5d8e47a65aeb3b02f8226b9b11f1450ff86bb772776ebadd70"
+checksum = "9504c6ba73daec8a6541440ab9fb64f97320251582292265420e5587559c9095"
 dependencies = [
  "base64 0.22.1",
  "cookie_store",
@@ -13425,9 +13443,9 @@ checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
 
 [[package]]
 name = "wit-bindgen"
-version = "0.45.0"
+version = "0.45.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "052283831dbae3d879dc7f51f3d92703a316ca49f91540417d38591826127814"
+checksum = "5c573471f125075647d03df72e026074b7203790d41351cd6edc96f46bcccd36"
 
 [[package]]
 name = "writeable"

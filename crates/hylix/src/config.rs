@@ -228,6 +228,12 @@ impl HylixConfig {
                 )
             })?;
 
+        log_info(&format!(
+            "Loaded profile '{}' from {}",
+            profile_name,
+            profile_path.display()
+        ));
+
         Ok(profile)
     }
 

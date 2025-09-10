@@ -263,7 +263,7 @@ Hylix builds on top of:
 * [ ] Tool auto-upgrade
 * [ ] Plugins for custom commands
 * [ ] Test proc-macro for isolated E2E testing
-* [ ] Upload to a prover network (`hy upload`): upload your compiled ELF to a prover network without setting up lovcal proving infrastructure
+* [ ] Upload to a prover network (`hy upload`): upload your compiled ELF to a prover network without setting up local proving infrastructure
 * [ ] Testnet mode (`hy run --testnet`) to start a backend and deploy the contract on a prover network
 
 ## 🔗 Links
