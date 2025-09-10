@@ -60,6 +60,12 @@ enum Commands {
         /// Keep devnet alive after tests complete
         #[arg(long)]
         keep_alive: bool,
+        /// Run e2e tests only
+        #[arg(long)]
+        e2e: bool,
+        /// Run unit tests only
+        #[arg(long)]
+        unit: bool,
     },
     /// Start backend service
     #[command(alias = "r")]
@@ -172,8 +178,8 @@ async fn main() -> Result<()> {
         Commands::Build { clean, front } => {
             commands::build::execute(clean, front).await?;
         }
-        Commands::Test { keep_alive } => {
-            commands::test::execute(keep_alive).await?;
+        Commands::Test { keep_alive, e2e, unit } => {
+            commands::test::execute(keep_alive, e2e, unit).await?;
         }
         Commands::Run { testnet, watch } => {
             commands::run::execute(testnet, watch).await?;

@@ -27,7 +27,8 @@ pub async fn execute(testnet: bool, watch: bool) -> HylixResult<()> {
     if watch {
         run_with_watch(testnet, &config).await?;
     } else {
-        run_backend(testnet, &config).await?;
+        let backend = run_backend(testnet, &config, true).await?;
+        wait_backend(backend).await?;
     }
 
     Ok(())
@@ -50,14 +51,14 @@ async fn build_project(_config: &crate::config::HylixConfig) -> HylixResult<()> 
 }
 
 /// Run the backend service
-async fn run_backend(testnet: bool, config: &crate::config::HylixConfig) -> HylixResult<()> {
+pub async fn run_backend(testnet: bool, config: &crate::config::HylixConfig, print_logs: bool) -> HylixResult<tokio::process::Child> {
     let mut args = vec!["run", "-p", "server"];
     if testnet {
         args.push("--");
         args.push("--testnet");
     }
 
-    let mut backend = Command::new("cargo")
+    let backend = tokio::process::Command::new("cargo")
         .env("RISC0_DEV_MODE", "1")
         .env(
             "HYLI_NODE_URL",
@@ -71,6 +72,8 @@ async fn run_backend(testnet: bool, config: &crate::config::HylixConfig) -> Hyli
             "HYLI_DA_READ_FROM",
             format!("localhost:{}", config.devnet.da_port),
         )
+        .stdout(if print_logs { std::process::Stdio::inherit() } else { std::process::Stdio::piped() })
+        .stderr(if print_logs { std::process::Stdio::inherit() } else { std::process::Stdio::piped() })
         .args(&args)
         .spawn()
         .map_err(|e| HylixError::backend(format!("Failed to start backend: {}", e)))?;
@@ -78,8 +81,12 @@ async fn run_backend(testnet: bool, config: &crate::config::HylixConfig) -> Hyli
     log_success("Backend started successfully!");
     log_info("Backend is running. Press Ctrl+C to stop.");
 
-    // Wait for the backend process
-    match backend.wait() {
+    Ok(backend)
+}
+
+/// Wait for the backend process
+async fn wait_backend(mut backend: tokio::process::Child) -> HylixResult<()> {
+    match backend.wait().await {
         Ok(status) => {
             if status.success() {
                 log_info("Backend stopped gracefully");

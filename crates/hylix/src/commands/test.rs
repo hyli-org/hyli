@@ -1,41 +1,60 @@
+use tokio::fs::File;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
+
+use crate::commands;
+use crate::commands::devnet::DevnetAction;
 use crate::error::{HylixError, HylixResult};
 use crate::logging::{create_progress_bar_with_msg, log_error, log_info, log_success};
-use std::process::Command;
 
 /// Execute the `hy test` command
-pub async fn execute(keep_alive: bool) -> HylixResult<()> {
-    log_info("Running end-to-end tests...");
+pub async fn execute(keep_alive: bool, e2e: bool, unit: bool) -> HylixResult<()> {
+    // Validate flags - can't run both e2e and unit only at the same time
+    if e2e && unit {
+        return Err(HylixError::test(
+            "Cannot specify both --e2e and --unit flags. Use --e2e for e2e tests only, --unit for unit tests only, or neither for both.".to_string(),
+        ));
+    }
 
     // Check if we're in a valid project directory
     validate_project_directory()?;
 
-    // Start devnet if not already running
-    let pb = create_progress_bar_with_msg("Starting devnet...");
-    start_devnet_if_needed().await?;
-    pb.finish_with_message("Devnet ready");
-
     // Build the project
-    let pb = create_progress_bar_with_msg("Building project...");
     build_project().await?;
-    pb.finish_with_message("Project built");
 
-    // Start backend
-    let pb = create_progress_bar_with_msg("Starting backend...");
-    let backend_handle = start_backend().await?;
-    pb.finish_with_message("Backend started");
+    // Determine which tests to run
+    let run_unit = !e2e; // Run unit tests unless --e2e is specified
+    let run_e2e = !unit; // Run e2e tests unless --unit is specified
 
-    // Run tests
-    let pb = create_progress_bar_with_msg("Running tests...");
-    run_tests().await?;
-    pb.finish_with_message("Tests completed");
+    // Run unit tests if needed
+    if run_unit {
+        run_unit_tests().await?;
+    }
 
-    // Cleanup
-    if !keep_alive {
-        let pb = create_progress_bar_with_msg("Cleaning up...");
-        cleanup(backend_handle).await?;
-        pb.finish_with_message("Cleanup completed");
-    } else {
-        log_info("Keeping devnet and backend alive as requested");
+    // Run e2e tests if needed
+    if run_e2e {
+        // Start devnet if not already running
+        start_devnet_if_needed().await?;
+
+        // Start backend for e2e tests
+        let mut backend_handle = start_backend().await?;
+
+        // Run e2e tests
+        let result = run_e2e_tests().await;
+        if let Err(e) = result {
+            log_error(&format!("Failed to run e2e tests: {}", e));
+            if let Err(e) = save_backend_logs(&mut backend_handle).await {
+                log_error(&format!("Failed to save backend logs: {}", e));
+            }
+        }
+
+        // Cleanup if not keeping devnet and backend alive
+        if !keep_alive {
+            let pb = create_progress_bar_with_msg("Cleaning up...");
+            cleanup(backend_handle).await?;
+            pb.finish_with_message("Cleanup completed");
+        } else {
+            log_info("Keeping devnet and backend alive as requested");
+        }
     }
 
     log_success("All tests completed successfully!");
@@ -65,70 +84,23 @@ fn validate_project_directory() -> HylixResult<()> {
 
 /// Start devnet if not already running
 async fn start_devnet_if_needed() -> HylixResult<()> {
-    // TODO: Check if devnet is already running
-    // For now, we'll assume it needs to be started
-
-    log_info("Starting local devnet...");
-
-    // This would typically involve:
-    // 1. Starting the local Hyli node
-    // 2. Deploying the Oranj token contract
-    // 3. Setting up the wallet app
-    // 4. Starting the indexer
-    // 5. Starting the explorer
-    // 6. Creating pre-funded test accounts
-
-    // Placeholder implementation
-    std::thread::sleep(std::time::Duration::from_millis(1000));
-
-    Ok(())
+    commands::devnet::execute(DevnetAction::Up {
+        reset: false,
+        bake: true,
+        profile: None,
+    })
+    .await
 }
 
 /// Build the project
 async fn build_project() -> HylixResult<()> {
-    // Build contracts
-    let output = Command::new("cargo")
-        .current_dir("contracts")
-        .args(["build", "--release"])
-        .output()
-        .map_err(|e| HylixError::test(format!("Failed to build contracts: {}", e)))?;
-
-    if !output.status.success() {
-        let error_msg = String::from_utf8_lossy(&output.stderr);
-        return Err(HylixError::test(format!(
-            "Failed to build contracts: {}",
-            error_msg
-        )));
-    }
-
-    // Build server
-    let output = Command::new("cargo")
-        .current_dir("server")
-        .args(["build", "--release"])
-        .output()
-        .map_err(|e| HylixError::test(format!("Failed to build server: {}", e)))?;
-
-    if !output.status.success() {
-        let error_msg = String::from_utf8_lossy(&output.stderr);
-        return Err(HylixError::test(format!(
-            "Failed to build server: {}",
-            error_msg
-        )));
-    }
-
-    Ok(())
+    commands::build::execute(false, false).await
 }
 
 /// Start the backend service
 async fn start_backend() -> HylixResult<tokio::process::Child> {
-    log_info("Starting backend service...");
-
-    // Start the backend in the background
-    let mut backend = tokio::process::Command::new("cargo")
-        .current_dir("server")
-        .args(["run", "--release"])
-        .spawn()
-        .map_err(|e| HylixError::test(format!("Failed to start backend: {}", e)))?;
+    let mut backend =
+        commands::run::run_backend(false, &crate::config::HylixConfig::load()?, true).await?;
 
     // Give the backend time to start up
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
@@ -155,50 +127,113 @@ async fn start_backend() -> HylixResult<tokio::process::Child> {
     Ok(backend)
 }
 
-/// Run the tests
-async fn run_tests() -> HylixResult<()> {
+async fn run_unit_tests() -> HylixResult<()> {
     // Run unit tests in contracts
-    let output = Command::new("cargo")
-        .current_dir("contracts")
-        .args(["test"])
-        .output()
-        .map_err(|e| HylixError::test(format!("Failed to run contract tests: {}", e)))?;
+    log_info(&format!(
+        "{}",
+        console::style("-------------------- HYLIX CONTRACT TESTS --------------------").green()
+    ));
+    log_info(&format!(
+        "{}",
+        console::style("$ cargo test -p contracts").green()
+    ));
 
-    if !output.status.success() {
-        let error_msg = String::from_utf8_lossy(&output.stderr);
-        return Err(HylixError::test(format!(
-            "Contract tests failed: {}",
-            error_msg
-        )));
+    let status = std::process::Command::new("cargo")
+        .args(["test", "-p", "contracts"])
+        .status()
+        .map_err(|e| HylixError::process(format!("Failed to run contract tests: {}", e)))?;
+
+    if !status.success() {
+        return Err(HylixError::process(
+            "Failed to run contract tests".to_string(),
+        ));
     }
 
     // Run unit tests in server
-    let output = Command::new("cargo")
-        .current_dir("server")
-        .args(["test"])
-        .output()
-        .map_err(|e| HylixError::test(format!("Failed to run server tests: {}", e)))?;
+    log_info(&format!(
+        "{}",
+        console::style("-------------------- HYLIX SERVER TESTS --------------------").green()
+    ));
+    log_info(&format!(
+        "{}",
+        console::style("$ cargo test -p server").green()
+    ));
 
-    if !output.status.success() {
-        let error_msg = String::from_utf8_lossy(&output.stderr);
-        return Err(HylixError::test(format!(
-            "Server tests failed: {}",
-            error_msg
-        )));
+    let status = std::process::Command::new("cargo")
+        .args(["test", "-p", "server"])
+        .status()
+        .map_err(|e| HylixError::process(format!("Failed to run server tests: {}", e)))?;
+
+    if !status.success() {
+        return Err(HylixError::process(
+            "Failed to run server tests".to_string(),
+        ));
     }
 
-    // Run E2E tests if they exist
-    if std::path::Path::new("tests").exists() {
-        let output = Command::new("cargo")
-            .args(["test"])
-            .output()
-            .map_err(|e| HylixError::test(format!("Failed to run E2E tests: {}", e)))?;
+    Ok(())
+}
 
-        if !output.status.success() {
-            let error_msg = String::from_utf8_lossy(&output.stderr);
-            return Err(HylixError::test(format!("E2E tests failed: {}", error_msg)));
+/// Run the e2e tests
+async fn run_e2e_tests() -> HylixResult<()> {
+    // Run E2E tests if they exist
+    if std::path::Path::new("tests").exists() && std::path::Path::new("tests/package.json").exists()
+    {
+        log_info(&format!(
+            "{}",
+            console::style("-------------------- HYLIX E2E TESTS --------------------").green()
+        ));
+        log_info(&format!("{}", console::style("$ bun test").green()));
+
+        let status = std::process::Command::new("bun")
+            .args(["test"])
+            .status()
+            .map_err(|e| HylixError::process(format!("Failed to run E2E tests: {}", e)))?;
+
+        if !status.success() {
+            return Err(HylixError::process("Failed to run E2E tests".to_string()));
         }
     }
+
+    Ok(())
+}
+
+/// Write backend logs to a new temporary file with unique name in working directory
+async fn save_backend_logs(backend_handle: &mut tokio::process::Child) -> HylixResult<()> {
+    let mut logs = String::new();
+    let tmpdir = std::env::current_dir()
+        .map_err(|e| HylixError::process(format!("Failed to get current directory: {}", e)))?;
+    let file = tmpdir.join(format!(
+        "backend_logs_{}.txt",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    ));
+    let file_display = file.display().to_string();
+    let reader = BufReader::new(
+        backend_handle
+            .stdout
+            .take()
+            .ok_or(HylixError::process("Failed to get stdout"))?,
+    );
+    let mut writer = BufWriter::new(
+        File::create(file)
+            .await
+            .map_err(|e| HylixError::process(format!("Failed to create file: {}", e)))?,
+    );
+
+    let mut lines = reader.lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        logs.push_str(&line);
+        logs.push_str("\n");
+    }
+
+    writer
+        .write_all(logs.as_bytes())
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to write backend logs: {}", e)))?;
+
+    log_success(&format!("Backend logs saved to: {}", file_display));
 
     Ok(())
 }
@@ -216,11 +251,6 @@ async fn cleanup(mut backend_handle: tokio::process::Child) -> HylixResult<()> {
     if let Err(e) = backend_handle.wait().await {
         log_error(&format!("Error waiting for backend to exit: {}", e));
     }
-
-    log_info("Stopping devnet...");
-
-    // TODO: Stop the devnet
-    // This would involve stopping all the services started in start_devnet_if_needed
 
     Ok(())
 }
