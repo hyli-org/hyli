@@ -197,10 +197,10 @@ pub enum ConsensusNetMessage {
 impl<T> Hashed<QuorumCertificateHash> for QuorumCertificate<T> {
     fn hashed(&self) -> QuorumCertificateHash {
         let mut hasher = Sha3_256::new();
-        hasher.update(self.signature.0.clone());
+        hasher.update(self.signature.0.as_slice());
         hasher.update(self.validators.len().to_le_bytes());
         for validator in self.validators.iter() {
-            hasher.update(validator.0.clone());
+            hasher.update(validator.0.as_slice());
         }
         QuorumCertificateHash(hasher.finalize().as_slice().to_owned())
     }
