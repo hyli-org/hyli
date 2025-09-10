@@ -4,7 +4,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use crate::commands;
 use crate::commands::devnet::DevnetAction;
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{create_progress_bar_with_msg, log_error, log_info, log_success};
+use crate::logging::{
+    create_progress_bar, create_progress_bar_with_msg, log_error, log_info, log_success,
+};
 
 /// Execute the `hy test` command
 pub async fn execute(keep_alive: bool, e2e: bool, unit: bool) -> HylixResult<()> {
@@ -17,6 +19,8 @@ pub async fn execute(keep_alive: bool, e2e: bool, unit: bool) -> HylixResult<()>
 
     // Check if we're in a valid project directory
     validate_project_directory()?;
+
+    let config = crate::config::HylixConfig::load()?;
 
     // Build the project
     build_project().await?;
@@ -36,24 +40,24 @@ pub async fn execute(keep_alive: bool, e2e: bool, unit: bool) -> HylixResult<()>
         start_devnet_if_needed().await?;
 
         // Start backend for e2e tests
-        let mut backend_handle = start_backend().await?;
+        let mut backend_handle = start_backend(&config).await?;
 
         // Run e2e tests
-        let result = run_e2e_tests().await;
+        let result = run_e2e_tests(&config).await;
         if let Err(e) = result {
             log_error(&format!("Failed to run e2e tests: {}", e));
-            if let Err(e) = save_backend_logs(&mut backend_handle).await {
-                log_error(&format!("Failed to save backend logs: {}", e));
-            }
         }
 
         // Cleanup if not keeping devnet and backend alive
         if !keep_alive {
-            let pb = create_progress_bar_with_msg("Cleaning up...");
-            cleanup(backend_handle).await?;
-            pb.finish_with_message("Cleanup completed");
+            cleanup(&mut backend_handle).await?;
+            if !config.test.print_server_logs {
+                save_backend_logs(&mut backend_handle).await?;
+            } else {
+                log_info("Backend logs not saved to file (config test.print_server_logs is true)");
+            }
         } else {
-            log_info("Keeping devnet and backend alive as requested");
+            log_info("Keeping backend alive as requested");
         }
     }
 
@@ -98,33 +102,75 @@ async fn build_project() -> HylixResult<()> {
 }
 
 /// Start the backend service
-async fn start_backend() -> HylixResult<tokio::process::Child> {
-    let mut backend =
-        commands::run::run_backend(false, &crate::config::HylixConfig::load()?, true).await?;
+async fn start_backend(config: &crate::config::HylixConfig) -> HylixResult<tokio::process::Child> {
+    let mut backend = commands::run::run_backend(false, &config, true).await?;
 
-    // Give the backend time to start up
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+    // Check if the backend is running by loop-polling /_health
+    let mut attempts = 0;
+    const MAX_ATTEMPTS: u32 = 50;
+    let mpb = indicatif::MultiProgress::new();
+    let pb = mpb.add(create_progress_bar());
+    let pb2 = mpb.add(create_progress_bar());
+    while !is_backend_running(&config, &pb2).await {
+        attempts += 1;
+        pb.set_message(format!(
+            "Waiting for backend to start... (attempt {}/{})",
+            attempts, MAX_ATTEMPTS
+        ));
 
-    // Check if the backend is still running
-    match backend.try_wait() {
-        Ok(Some(status)) => {
-            return Err(HylixError::test(format!(
-                "Backend exited unexpectedly with status: {}",
-                status
-            )));
+        if attempts >= MAX_ATTEMPTS {
+            backend.kill().await?;
+            return Err(HylixError::backend(
+                "Backend failed to start under 50 seconds".to_string(),
+            ));
         }
-        Ok(None) => {
-            log_info("Backend started successfully");
-        }
-        Err(e) => {
-            return Err(HylixError::test(format!(
-                "Failed to check backend status: {}",
-                e
-            )));
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+        // Check if the backend process is still running
+        match backend.try_wait() {
+            Ok(Some(status)) => {
+                return Err(HylixError::backend(format!(
+                    "Backend exited unexpectedly with status: {}",
+                    status
+                )));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                return Err(HylixError::backend(format!(
+                    "Failed to check backend status: {}",
+                    e
+                )));
+            }
         }
     }
+    mpb.clear()
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
 
+    log_success("Backend is ready to accept requests");
     Ok(backend)
+}
+
+/// Check if the backend is running by polling /_health
+async fn is_backend_running(
+    config: &crate::config::HylixConfig,
+    pb: &indicatif::ProgressBar,
+) -> bool {
+    let response = reqwest::get(format!(
+        "http://localhost:{}/_health",
+        config.run.server_port
+    ))
+    .await;
+
+    match response {
+        Ok(response) => {
+            pb.set_message("Backend is running");
+            return response.status() == 200;
+        }
+        Err(e) => {
+            pb.set_message(format!("Backend not responding: {}", e));
+            return false;
+        }
+    }
 }
 
 async fn run_unit_tests() -> HylixResult<()> {
@@ -174,7 +220,7 @@ async fn run_unit_tests() -> HylixResult<()> {
 }
 
 /// Run the e2e tests
-async fn run_e2e_tests() -> HylixResult<()> {
+async fn run_e2e_tests(config: &crate::config::HylixConfig) -> HylixResult<()> {
     // Run E2E tests if they exist
     if std::path::Path::new("tests").exists() && std::path::Path::new("tests/package.json").exists()
     {
@@ -182,10 +228,21 @@ async fn run_e2e_tests() -> HylixResult<()> {
             "{}",
             console::style("-------------------- HYLIX E2E TESTS --------------------").green()
         ));
-        log_info(&format!("{}", console::style("$ bun test").green()));
+        log_info(&format!(
+            "{}",
+            console::style(&format!(
+                "$ API_BASE_URL=http://localhost:{} bun test",
+                config.run.server_port
+            ))
+            .green()
+        ));
 
         let status = std::process::Command::new("bun")
             .args(["test"])
+            .env(
+                "API_BASE_URL",
+                format!("http://localhost:{}", config.run.server_port),
+            )
             .status()
             .map_err(|e| HylixError::process(format!("Failed to run E2E tests: {}", e)))?;
 
@@ -199,6 +256,7 @@ async fn run_e2e_tests() -> HylixResult<()> {
 
 /// Write backend logs to a new temporary file with unique name in working directory
 async fn save_backend_logs(backend_handle: &mut tokio::process::Child) -> HylixResult<()> {
+    let pb = create_progress_bar_with_msg("Saving backend logs...");
     let mut logs = String::new();
     let tmpdir = std::env::current_dir()
         .map_err(|e| HylixError::process(format!("Failed to get current directory: {}", e)))?;
@@ -216,6 +274,7 @@ async fn save_backend_logs(backend_handle: &mut tokio::process::Child) -> HylixR
             .take()
             .ok_or(HylixError::process("Failed to get stdout"))?,
     );
+    pb.set_message(format!("Saving backend logs to: {}", file_display));
     let mut writer = BufWriter::new(
         File::create(file)
             .await
@@ -223,15 +282,24 @@ async fn save_backend_logs(backend_handle: &mut tokio::process::Child) -> HylixR
     );
 
     let mut lines = reader.lines();
+    let mut line_count = 0;
     while let Ok(Some(line)) = lines.next_line().await {
+        pb.set_message(format!("Saving backend logs... ({} lines)", line_count));
+        line_count += 1;
         logs.push_str(&line);
         logs.push_str("\n");
     }
 
+    pb.set_message(format!(
+        "Saved {} lines to buffer. Writing to file...",
+        line_count
+    ));
     writer
         .write_all(logs.as_bytes())
         .await
         .map_err(|e| HylixError::process(format!("Failed to write backend logs: {}", e)))?;
+
+    pb.finish_and_clear();
 
     log_success(&format!("Backend logs saved to: {}", file_display));
 
@@ -239,9 +307,7 @@ async fn save_backend_logs(backend_handle: &mut tokio::process::Child) -> HylixR
 }
 
 /// Cleanup resources
-async fn cleanup(mut backend_handle: tokio::process::Child) -> HylixResult<()> {
-    log_info("Stopping backend...");
-
+async fn cleanup(backend_handle: &mut tokio::process::Child) -> HylixResult<()> {
     // Kill the backend process
     if let Err(e) = backend_handle.kill().await {
         log_error(&format!("Failed to kill backend process: {}", e));
@@ -251,6 +317,8 @@ async fn cleanup(mut backend_handle: tokio::process::Child) -> HylixResult<()> {
     if let Err(e) = backend_handle.wait().await {
         log_error(&format!("Error waiting for backend to exit: {}", e));
     }
+
+    log_success("Backend stopped");
 
     Ok(())
 }
