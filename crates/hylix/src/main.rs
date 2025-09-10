@@ -80,6 +80,8 @@ enum Commands {
     /// Clean build artifacts
     #[command(alias = "c")]
     Clean,
+    /// Display current configuration
+    Config,
 }
 
 #[derive(Subcommand)]
@@ -190,6 +192,9 @@ async fn main() -> Result<()> {
         }
         Commands::Clean => {
             commands::clean::execute().await?;
+        }
+        Commands::Config => {
+            commands::config::execute().await?;
         }
     }
 
