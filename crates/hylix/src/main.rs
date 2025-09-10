@@ -214,7 +214,9 @@ async fn main() -> Result<()> {
         Commands::Config { action } => {
             let config_action = match action {
                 ConfigAction::Show => commands::config::ConfigAction::Show,
-                ConfigAction::Edit { key, value } => commands::config::ConfigAction::Edit { key, value },
+                ConfigAction::Edit { key, value } => {
+                    commands::config::ConfigAction::Edit { key, value }
+                }
                 ConfigAction::Reset => commands::config::ConfigAction::Reset,
             };
             commands::config::execute(config_action).await?;

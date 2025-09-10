@@ -253,7 +253,7 @@ fn set_config_value(config: &mut HylixConfig, key: &str, value: &str) -> HylixRe
         }
 
         _ => {
-            return Err(crate::error::HylixError::config(&format!(
+            return Err(crate::error::HylixError::config(format!(
                 "Unknown configuration key: {}. Use 'hy config show' to see available keys",
                 key
             )));
