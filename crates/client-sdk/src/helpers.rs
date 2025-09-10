@@ -385,7 +385,7 @@ pub mod test {
             calldata: Calldata,
         ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>> {
             Box::pin(async move {
-                let hyli_output = execute(commitment_metadata.clone(), calldata.clone())?;
+                let hyli_output = mock_execute(commitment_metadata.clone(), calldata.clone())?;
                 Ok(Proof {
                     data: ProofData(borsh::to_vec(&hyli_output).expect("Failed to encode proof")),
                     metadata: ProofMetadata {
@@ -422,7 +422,7 @@ pub mod test {
             Box::pin(async move {
                 let mut proofs = Vec::new();
                 for call in calldata {
-                    let hyli_output = test::execute(commitment_metadata.clone(), call)?;
+                    let hyli_output = mock_execute(commitment_metadata.clone(), call)?;
                     proofs.push(hyli_output);
                 }
                 Ok(Proof {
@@ -452,7 +452,7 @@ pub mod test {
         }
     }
 
-    pub fn execute(commitment_metadata: Vec<u8>, calldata: Calldata) -> Result<HyliOutput> {
+    fn mock_execute(commitment_metadata: Vec<u8>, calldata: Calldata) -> Result<HyliOutput> {
         // FIXME: this is a hack to make the test pass.
         let initial_state = StateCommitment(commitment_metadata);
         let hyli_output = HyliOutput {

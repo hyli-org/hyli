@@ -8,6 +8,8 @@ use sdk::{verifiers::NativeVerifiers, StateCommitment};
 pub struct NativeVerifierHandler;
 
 impl TxExecutorHandler for NativeVerifierHandler {
+    type Contract = NativeVerifierHandler;
+
     fn handle(&mut self, calldata: &sdk::Calldata) -> anyhow::Result<sdk::HyliOutput> {
         let Some(blob) = calldata.blobs.get(&calldata.index) else {
             return Err(anyhow::anyhow!(

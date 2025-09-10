@@ -21,6 +21,8 @@ pub mod metadata {
 use metadata::*;
 
 impl TxExecutorHandler for Staking {
+    type Contract = Staking;
+
     fn build_commitment_metadata(&self, _blob: &Blob) -> Result<Vec<u8>> {
         borsh::to_vec(self).map_err(Into::into)
     }

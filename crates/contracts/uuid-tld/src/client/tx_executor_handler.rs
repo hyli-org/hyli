@@ -27,6 +27,8 @@ impl UuidTld {
 }
 
 impl TxExecutorHandler for UuidTld {
+    type Contract = UuidTld;
+
     fn build_commitment_metadata(&self, _blob: &Blob) -> TxExecutorHandlerResult<Vec<u8>> {
         borsh::to_vec(self).context("Failed to serialize UuidTld")
     }

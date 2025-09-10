@@ -293,7 +293,11 @@ mod tests {
         }
     }
 
+    impl FullStateRevert for MockState {}
+
     impl TxExecutorHandler for MockState {
+        type Contract = MockState;
+
         fn handle(&mut self, _: &Calldata) -> Result<HyliOutput> {
             anyhow::bail!("not implemented");
         }
