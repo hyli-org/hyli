@@ -5436,7 +5436,7 @@ dependencies = [
 
 [[package]]
 name = "hyli"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "alloc-metrics",
  "alloc-track",
@@ -5503,7 +5503,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-amm"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "anyhow",
  "borsh",
@@ -5516,7 +5516,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-bonsai-runner"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "anyhow",
  "axum 0.8.4",
@@ -5537,7 +5537,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-client-sdk"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "anyhow",
  "axum 0.8.4",
@@ -5561,7 +5561,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-contract-sdk"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "borsh",
  "hyli-model",
@@ -5575,7 +5575,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-contracts"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "hyli-amm",
  "hyli-contract-sdk",
@@ -5590,7 +5590,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-crypto"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "anyhow",
  "blst",
@@ -5604,7 +5604,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-hydentity"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "anyhow",
  "borsh",
@@ -5624,7 +5624,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-hyllar"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "anyhow",
  "borsh",
@@ -5641,7 +5641,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-loadtest"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "anyhow",
  "borsh",
@@ -5659,7 +5659,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-model"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5682,7 +5682,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-modules"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "anyhow",
  "anymap",
@@ -5726,7 +5726,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-net"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "anyhow",
  "axum 0.8.4",
@@ -5755,7 +5755,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-noir-tools"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "hyli-verifiers",
  "tracing",
@@ -5764,7 +5764,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-risc0-recursion"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "anyhow",
  "borsh",
@@ -5783,7 +5783,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-smt-token"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "anyhow",
  "borsh",
@@ -5801,7 +5801,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-staking"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "anyhow",
  "borsh",
@@ -5815,7 +5815,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-tools"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "anyhow",
  "axum 0.8.4",
@@ -5850,7 +5850,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-uuid-tld"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "borsh",
  "hyli-client-sdk",
@@ -5863,7 +5863,7 @@ dependencies = [
 
 [[package]]
 name = "hyli-verifiers"
-version = "0.14.0-rc2"
+version = "0.14.0-rc3"
 dependencies = [
  "anyhow",
  "bincode",
