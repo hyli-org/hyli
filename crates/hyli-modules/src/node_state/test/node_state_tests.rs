@@ -137,7 +137,7 @@ async fn assert_two_transactions_with_different_contracts_using_same_native_cont
     assert_eq!(block.failed_txs.len(), 0);
     assert_eq!(block.successful_txs.len(), 1);
 
-    // Check state transitionned correctly
+    // Check state transitioned correctly
     assert_eq!(state.contracts.get(&d1).unwrap().state.0, vec![4, 5, 6]);
 
     // Now settle the first one

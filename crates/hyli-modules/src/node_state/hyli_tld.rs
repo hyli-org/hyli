@@ -131,7 +131,7 @@ fn handle_update_program_id_blob(
 ) -> Result<()> {
     // For now, Hyli is allowed to delete all contracts but itself
     if update.contract_name.0 == "hyli" {
-        bail!("Cannot udpate Hyli contract");
+        bail!("Cannot update Hyli contract");
     }
 
     let contract =
@@ -170,7 +170,7 @@ fn handle_update_timeout_window_blob(
 ) -> Result<()> {
     // For now, Hyli is allowed to delete all contracts but itself
     if update.contract_name.0 == "hyli" {
-        bail!("Cannot udpate Hyli contract");
+        bail!("Cannot update Hyli contract");
     }
 
     let contract =
