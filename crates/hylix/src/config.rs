@@ -121,7 +121,7 @@ pub struct FundConfig {
 impl Default for HylixConfig {
     fn default() -> Self {
         Self {
-            default_backend: BackendType::Sp1,
+            default_backend: BackendType::Risc0,
             scaffold_repo: "https://github.com/hyli-org/app-scaffold".to_string(),
             devnet: DevnetConfig::default(),
             build: BuildConfig::default(),
@@ -186,6 +186,25 @@ impl HylixConfig {
         let content = toml::to_string_pretty(self)?;
         std::fs::write(&config_path, content)?;
 
+        Ok(())
+    }
+
+    /// Backup configuration to file
+    pub fn backup(&self) -> crate::error::HylixResult<()> {
+        let config_path = Self::config_path()?;
+        let config_dir = config_path.parent().unwrap();
+        let backup_path = config_dir.join(format!(
+            "config.toml.{}.backup",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        ));
+        std::fs::copy(&config_path, &backup_path)?;
+        log_info(&format!(
+            "Backed up configuration to {}",
+            backup_path.display()
+        ));
         Ok(())
     }
 

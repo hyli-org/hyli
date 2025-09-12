@@ -80,6 +80,11 @@ enum Commands {
     /// Clean build artifacts
     #[command(alias = "c")]
     Clean,
+    /// Display and manage configuration
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -131,6 +136,21 @@ enum DevnetAction {
     /// Print environment variables for sourcing in bash
     #[command(alias = "e")]
     Env,
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Display current configuration
+    Show,
+    /// Edit configuration values
+    Edit {
+        /// Configuration key to edit (e.g., "default_backend", "devnet.node_port")
+        key: String,
+        /// New value for the configuration key
+        value: String,
+    },
+    /// Reset configuration to defaults
+    Reset,
 }
 
 #[tokio::main]
@@ -190,6 +210,16 @@ async fn main() -> Result<()> {
         }
         Commands::Clean => {
             commands::clean::execute().await?;
+        }
+        Commands::Config { action } => {
+            let config_action = match action {
+                ConfigAction::Show => commands::config::ConfigAction::Show,
+                ConfigAction::Edit { key, value } => {
+                    commands::config::ConfigAction::Edit { key, value }
+                }
+                ConfigAction::Reset => commands::config::ConfigAction::Reset,
+            };
+            commands::config::execute(config_action).await?;
         }
     }
 
