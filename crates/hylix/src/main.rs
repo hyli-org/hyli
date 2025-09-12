@@ -115,6 +115,9 @@ enum DevnetAction {
     /// Stop the local devnet
     #[command(alias = "d")]
     Down,
+    /// Pause the local devnet
+    #[command(alias = "p")]
+    Pause,
     /// Check the status of the local devnet
     #[command(alias = "ps")]
     Status,
@@ -146,6 +149,12 @@ enum DevnetAction {
     /// Print environment variables for sourcing in bash
     #[command(alias = "e")]
     Env,
+    /// Follow logs of a devnet service
+    #[command(alias = "l")]
+    Logs {
+        /// Service to follow logs for
+        service: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -205,6 +214,7 @@ async fn main() -> Result<()> {
                     profile,
                 },
                 DevnetAction::Down => commands::devnet::DevnetAction::Down,
+                DevnetAction::Pause => commands::devnet::DevnetAction::Pause,
                 DevnetAction::Restart {
                     reset,
                     bake,
@@ -220,6 +230,7 @@ async fn main() -> Result<()> {
                 }
                 DevnetAction::Bake { profile } => commands::devnet::DevnetAction::Bake { profile },
                 DevnetAction::Env => commands::devnet::DevnetAction::Env,
+                DevnetAction::Logs { service } => commands::devnet::DevnetAction::Logs { service },
             };
             commands::devnet::execute(devnet_action).await?;
         }
