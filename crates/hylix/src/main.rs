@@ -139,6 +139,12 @@ enum DevnetAction {
     /// Print environment variables for sourcing in bash
     #[command(alias = "e")]
     Env,
+    /// Follow logs of a devnet service
+    #[command(alias = "l")]
+    Logs {
+        /// Service to follow logs for
+        service: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -209,6 +215,7 @@ async fn main() -> Result<()> {
                 }
                 DevnetAction::Bake { profile } => commands::devnet::DevnetAction::Bake { profile },
                 DevnetAction::Env => commands::devnet::DevnetAction::Env,
+                DevnetAction::Logs { service } => commands::devnet::DevnetAction::Logs { service },
             };
             commands::devnet::execute(devnet_action).await?;
         }
