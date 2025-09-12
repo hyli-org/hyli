@@ -242,8 +242,8 @@ async fn get_docker_container_status(
 async fn start_containers(context: &DevnetContext) -> HylixResult<()> {
     let mpb = indicatif::MultiProgress::new();
     for container in CONTAINERS {
-        if get_docker_container_status(&context, container).await? == ContainerStatus::Stopped {
-            start_container(&mpb, &context, container).await?;
+        if get_docker_container_status(context, container).await? == ContainerStatus::Stopped {
+            start_container(&mpb, context, container).await?;
         }
     }
     Ok(())
@@ -257,7 +257,7 @@ async fn start_container(
     let pb = mpb.add(create_progress_bar());
     pb.set_message(format!("Starting container {}", container_name));
     let success = execute_command_with_progress(
-        &mpb,
+        mpb,
         "docker start",
         "docker",
         &["start", container_name],
@@ -333,13 +333,20 @@ async fn pause_devnet(_context: &DevnetContext) -> HylixResult<()> {
     let pb2 = mpb.add(create_progress_bar());
     pb.set_message("Pausing local devnet...");
     for container in CONTAINERS {
-        if get_docker_container_status(&_context, container).await? == ContainerStatus::Running {
+        if get_docker_container_status(_context, container).await? == ContainerStatus::Running {
             pb2.set_message(format!("Stopping container {}", container));
-            execute_command_with_progress(&mpb, "docker stop", "docker", &["stop", container], None)
-                .await?;
+            execute_command_with_progress(
+                &mpb,
+                "docker stop",
+                "docker",
+                &["stop", container],
+                None,
+            )
+            .await?;
         }
     }
-    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+    mpb.clear()
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
     log_success("Local devnet paused successfully!");
     log_info("Use `hy devnet up` to resume the local devnet");
     Ok(())
