@@ -9,7 +9,7 @@ use crate::logging::{
 };
 
 /// Execute the `hy test` command
-pub async fn execute(keep_alive: bool, e2e: bool, unit: bool) -> HylixResult<()> {
+pub async fn execute(keep_alive: bool, e2e: bool, unit: bool, extra_args: Vec<String>) -> HylixResult<()> {
     // Validate flags - can't run both e2e and unit only at the same time
     if e2e && unit {
         return Err(HylixError::test(
@@ -31,7 +31,7 @@ pub async fn execute(keep_alive: bool, e2e: bool, unit: bool) -> HylixResult<()>
 
     // Run unit tests if needed
     if run_unit {
-        run_unit_tests().await?;
+        run_unit_tests(&extra_args).await?;
     }
 
     // Run e2e tests if needed
@@ -173,46 +173,36 @@ async fn is_backend_running(
     }
 }
 
-async fn run_unit_tests() -> HylixResult<()> {
+async fn run_unit_tests(extra_args: &[String]) -> HylixResult<()> {
     // Run unit tests in contracts
     log_info(&format!(
         "{}",
-        console::style("-------------------- HYLIX CONTRACT TESTS --------------------").green()
+        console::style("-------------------- HYLIX UNIT TESTS --------------------").green()
     ));
-    log_info(&format!(
-        "{}",
-        console::style("$ cargo test -p contracts").green()
-    ));
-
-    let status = std::process::Command::new("cargo")
-        .args(["test", "-p", "contracts"])
-        .status()
-        .map_err(|e| HylixError::process(format!("Failed to run contract tests: {}", e)))?;
-
-    if !status.success() {
-        return Err(HylixError::process(
-            "Failed to run contract tests".to_string(),
-        ));
+    
+    // Build the command display string
+    let mut cmd_display = String::from("$ cargo test");
+    for arg in extra_args {
+        cmd_display.push(' ');
+        cmd_display.push_str(arg);
     }
-
-    // Run unit tests in server
     log_info(&format!(
         "{}",
-        console::style("-------------------- HYLIX SERVER TESTS --------------------").green()
-    ));
-    log_info(&format!(
-        "{}",
-        console::style("$ cargo test -p server").green()
+        console::style(&cmd_display).green()
     ));
 
-    let status = std::process::Command::new("cargo")
-        .args(["test", "-p", "server"])
+    // Build the cargo test command with extra arguments
+    let mut cmd = std::process::Command::new("cargo");
+    cmd.arg("test");
+    cmd.args(extra_args);
+
+    let status = cmd
         .status()
-        .map_err(|e| HylixError::process(format!("Failed to run server tests: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to run unit tests: {}", e)))?;
 
     if !status.success() {
         return Err(HylixError::process(
-            "Failed to run server tests".to_string(),
+            "Failed to run unit tests".to_string(),
         ));
     }
 

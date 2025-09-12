@@ -67,6 +67,9 @@ enum Commands {
         /// Run unit tests only
         #[arg(long)]
         unit: bool,
+        /// Extra arguments to pass to cargo test (e.g., --test-threads=1, --nocapture)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        extra_args: Vec<String>,
     },
     /// Start backend service
     #[command(alias = "r")]
@@ -183,8 +186,9 @@ async fn main() -> Result<()> {
             keep_alive,
             e2e,
             unit,
+            extra_args,
         } => {
-            commands::test::execute(keep_alive, e2e, unit).await?;
+            commands::test::execute(keep_alive, e2e, unit, extra_args).await?;
         }
         Commands::Run { testnet, watch } => {
             commands::run::execute(testnet, watch).await?;
