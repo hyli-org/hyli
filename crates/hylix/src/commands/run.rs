@@ -27,7 +27,8 @@ pub async fn execute(testnet: bool, watch: bool) -> HylixResult<()> {
     if watch {
         run_with_watch(testnet, &config).await?;
     } else {
-        run_backend(testnet, &config).await?;
+        let backend = run_backend(testnet, &config, false).await?;
+        wait_backend(backend).await?;
     }
 
     Ok(())
@@ -50,14 +51,37 @@ async fn build_project(_config: &crate::config::HylixConfig) -> HylixResult<()> 
 }
 
 /// Run the backend service
-async fn run_backend(testnet: bool, config: &crate::config::HylixConfig) -> HylixResult<()> {
-    let mut args = vec!["run", "-p", "server"];
+pub async fn run_backend(
+    testnet: bool,
+    config: &crate::config::HylixConfig,
+    for_testing: bool,
+) -> HylixResult<tokio::process::Child> {
+    let server_port = config.run.server_port.to_string();
+    let mut args = vec![
+        "run",
+        "-p",
+        "server",
+        "-F",
+        "nonreproducible",
+        "--",
+        "--server-port",
+        &server_port,
+    ];
     if testnet {
-        args.push("--");
         args.push("--testnet");
     }
+    if for_testing && config.test.clean_server_data {
+        args.push("--clean-data-directory");
+    }
 
-    let mut backend = Command::new("cargo")
+    let print_logs = !for_testing || (for_testing && config.test.print_server_logs);
+
+    log_info(&format!(
+        "{}",
+        console::style(&format!("$ cargo {}", args.join(" "))).green()
+    ));
+
+    let backend = tokio::process::Command::new("cargo")
         .env("RISC0_DEV_MODE", "1")
         .env(
             "HYLI_NODE_URL",
@@ -71,15 +95,36 @@ async fn run_backend(testnet: bool, config: &crate::config::HylixConfig) -> Hyli
             "HYLI_DA_READ_FROM",
             format!("localhost:{}", config.devnet.da_port),
         )
+        .stdout(if print_logs {
+            std::process::Stdio::inherit()
+        } else {
+            std::process::Stdio::piped()
+        })
+        .stderr(if print_logs {
+            std::process::Stdio::inherit()
+        } else {
+            std::process::Stdio::piped()
+        })
         .args(&args)
         .spawn()
         .map_err(|e| HylixError::backend(format!("Failed to start backend: {}", e)))?;
 
     log_success("Backend started successfully!");
     log_info("Backend is running. Press Ctrl+C to stop.");
+    if !print_logs {
+        log_info("Backend logs will not be printed to console. They will be saved to a file in the working directory.");
+        log_info(&format!("You can change this with `{}`.", console::style("hy config edit test.print_server_logs true").green()));
+    } else {
+        log_info("Backend logs will be printed to console.");
+        log_info(&format!("You can change this with `{}`.", console::style("hy config edit test.print_server_logs false").green()));
+    }
 
-    // Wait for the backend process
-    match backend.wait() {
+    Ok(backend)
+}
+
+/// Wait for the backend process
+async fn wait_backend(mut backend: tokio::process::Child) -> HylixResult<()> {
+    match backend.wait().await {
         Ok(status) => {
             if status.success() {
                 log_info("Backend stopped gracefully");

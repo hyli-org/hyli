@@ -57,9 +57,19 @@ enum Commands {
     /// Run end-to-end tests
     #[command(alias = "t")]
     Test {
-        /// Keep devnet alive after tests complete
+        /// Keep backend alive after tests complete.
+        /// Devnet is always kept alive. You can stop it with `hy devnet down` if needed.
         #[arg(long)]
         keep_alive: bool,
+        /// Run e2e tests only
+        #[arg(long)]
+        e2e: bool,
+        /// Run unit tests only
+        #[arg(long)]
+        unit: bool,
+        /// Extra arguments to pass to cargo test (e.g., --test-threads=1, --nocapture)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        extra_args: Vec<String>,
     },
     /// Start backend service
     #[command(alias = "r")]
@@ -181,8 +191,13 @@ async fn main() -> Result<()> {
         Commands::Build { clean, front } => {
             commands::build::execute(clean, front).await?;
         }
-        Commands::Test { keep_alive } => {
-            commands::test::execute(keep_alive).await?;
+        Commands::Test {
+            keep_alive,
+            e2e,
+            unit,
+            extra_args,
+        } => {
+            commands::test::execute(keep_alive, e2e, unit, extra_args).await?;
         }
         Commands::Run { testnet, watch } => {
             commands::run::execute(testnet, watch).await?;
