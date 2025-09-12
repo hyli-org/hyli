@@ -74,11 +74,7 @@ pub async fn run_backend(
         args.push("--clean-data-directory");
     }
 
-    let print_logs = if for_testing {
-        config.test.print_server_logs
-    } else {
-        config.run.clean_server_data
-    };
+    let print_logs = !for_testing || (for_testing && config.test.print_server_logs);
 
     log_info(&format!(
         "{}",
@@ -115,6 +111,13 @@ pub async fn run_backend(
 
     log_success("Backend started successfully!");
     log_info("Backend is running. Press Ctrl+C to stop.");
+    if !print_logs {
+        log_info("Backend logs will not be printed to console. They will be saved to a file in the working directory.");
+        log_info(&format!("You can change this with `{}`.", console::style("hy config edit test.print_server_logs true").green()));
+    } else {
+        log_info("Backend logs will be printed to console.");
+        log_info(&format!("You can change this with `{}`.", console::style("hy config edit test.print_server_logs false").green()));
+    }
 
     Ok(backend)
 }
