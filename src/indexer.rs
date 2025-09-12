@@ -296,7 +296,11 @@ impl Indexer {
                 self.handler_store.txs.push_front(TxStore {
                     tx_hash: TxHashDb(tx.hashed().clone()),
                     dp_hash: DataProposalHashDb(parent_data_proposal_hash.clone()),
-                    transaction_type: TransactionTypeDb::BlobTransaction,
+                    transaction_type: match tx.transaction_data {
+                        TransactionData::Blob(_) => TransactionTypeDb::BlobTransaction,
+                        TransactionData::Proof(_) => TransactionTypeDb::ProofTransaction,
+                        TransactionData::VerifiedProof(_) => TransactionTypeDb::ProofTransaction,
+                    },
                     block_hash: None,
                     block_height: BlockHeight(0),
                     lane_id: None, // TODO: we know the lane here so not sure why this used to be an option
