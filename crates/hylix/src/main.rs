@@ -105,6 +105,9 @@ enum DevnetAction {
     /// Stop the local devnet
     #[command(alias = "d")]
     Down,
+    /// Pause the local devnet
+    #[command(alias = "p")]
+    Pause,
     /// Check the status of the local devnet
     #[command(alias = "ps")]
     Status,
@@ -190,6 +193,7 @@ async fn main() -> Result<()> {
                     profile,
                 },
                 DevnetAction::Down => commands::devnet::DevnetAction::Down,
+                DevnetAction::Pause => commands::devnet::DevnetAction::Pause,
                 DevnetAction::Restart {
                     reset,
                     bake,
