@@ -14,6 +14,8 @@ pub mod metadata {
 use metadata::*;
 
 impl TxExecutorHandler for Hyllar {
+    type Contract = Hyllar;
+
     fn build_commitment_metadata(&self, _blob: &Blob) -> Result<Vec<u8>> {
         borsh::to_vec(self).context("Failed to serialize Hyllar")
     }

@@ -374,6 +374,8 @@ impl ContractRunner {
 pub type TxExecutorHandlerResult<T> = Result<T>;
 pub use anyhow::Context as TxExecutorHandlerContext;
 pub trait TxExecutorHandler {
+    type Contract;
+
     /// Entry point for contract execution for the SDK's TxExecutor tool
     /// This handler provides a way to execute contract logic with access to the full provable state,
     /// as opposed to the ZkContract trait which only works with commitment metadata.

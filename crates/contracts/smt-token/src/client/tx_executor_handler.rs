@@ -47,6 +47,8 @@ impl Clone for SmtTokenProvableState {
 }
 
 impl TxExecutorHandler for SmtTokenProvableState {
+    type Contract = SmtTokenContract;
+
     fn handle(&mut self, calldata: &Calldata) -> Result<HyliOutput> {
         let root = *self.0.root();
         let initial_state_commitment = StateCommitment(Into::<[u8; 32]>::into(root).to_vec());
