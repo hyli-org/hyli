@@ -155,15 +155,31 @@ async fn logs_devnet(service: &str) -> HylixResult<()> {
 
     log_info(&format!("Following logs for {}", container));
     log_info(&format!("Use Ctrl+C to stop following logs"));
-    log_info(&format!("{}", console::style(format!("$ docker logs -f {}", container)).green()));
+    log_info(&format!(
+        "{}",
+        console::style(format!("$ docker logs -f {}", container)).green()
+    ));
 
     use tokio::process::Command;
-    Command::new("docker")
-        .args(["logs", "-f", &container])
-        .status()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to get logs for {}: {}", container, e)))?;
-    Ok(())
+
+    loop {
+        let mut status = get_docker_container_status(&container).await?;
+        let pb = create_progress_bar();
+        while status != ContainerStatus::Running {
+            pb.set_message(format!("Waiting for container {} to be running", container));
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            status = get_docker_container_status(&container).await?;
+        }
+        pb.finish_and_clear();
+
+        Command::new("docker")
+            .args(["logs", "-f", &container])
+            .status()
+            .await
+            .map_err(|e| {
+                HylixError::process(format!("Failed to get logs for {}: {}", container, e))
+            })?;
+    }
 }
 
 /// Check the status of the local devnet
@@ -213,10 +229,10 @@ async fn check_devnet_status(context: &DevnetContext) -> HylixResult<()> {
 }
 
 async fn check_docker_container(
-    context: &DevnetContext,
+    _context: &DevnetContext,
     container_name: &str,
 ) -> HylixResult<ContainerStatus> {
-    let status = get_docker_container_status(context, container_name).await?;
+    let status = get_docker_container_status(container_name).await?;
     match status {
         ContainerStatus::Running => {
             log_success(&format!("Container {} is running", container_name));
@@ -231,10 +247,7 @@ async fn check_docker_container(
     Ok(status)
 }
 
-async fn get_docker_container_status(
-    _context: &DevnetContext,
-    container_name: &str,
-) -> HylixResult<ContainerStatus> {
+async fn get_docker_container_status(container_name: &str) -> HylixResult<ContainerStatus> {
     use tokio::process::Command;
 
     // First check if container exists at all (running or stopped)
@@ -265,7 +278,7 @@ async fn get_docker_container_status(
 async fn start_containers(context: &DevnetContext) -> HylixResult<()> {
     let mpb = indicatif::MultiProgress::new();
     for container in CONTAINERS {
-        if get_docker_container_status(context, container).await? == ContainerStatus::Stopped {
+        if get_docker_container_status(container).await? == ContainerStatus::Stopped {
             start_container(&mpb, context, container).await?;
         }
     }
@@ -356,7 +369,7 @@ async fn pause_devnet(_context: &DevnetContext) -> HylixResult<()> {
     let pb2 = mpb.add(create_progress_bar());
     pb.set_message("Pausing local devnet...");
     for container in CONTAINERS {
-        if get_docker_container_status(_context, container).await? == ContainerStatus::Running {
+        if get_docker_container_status(container).await? == ContainerStatus::Running {
             pb2.set_message(format!("Stopping container {}", container));
             execute_command_with_progress(
                 &mpb,
