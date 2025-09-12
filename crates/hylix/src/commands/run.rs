@@ -27,7 +27,7 @@ pub async fn execute(testnet: bool, watch: bool) -> HylixResult<()> {
     if watch {
         run_with_watch(testnet, &config).await?;
     } else {
-        let backend = run_backend(testnet, &config, true).await?;
+        let backend = run_backend(testnet, &config, false).await?;
         wait_backend(backend).await?;
     }
 
