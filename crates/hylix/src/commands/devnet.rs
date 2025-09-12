@@ -2,8 +2,8 @@ use crate::commands::bake::bake_devnet;
 use crate::config::HylixConfig;
 use crate::error::{HylixError, HylixResult};
 use crate::logging::{
-    create_progress_bar, create_progress_bar_with_msg, execute_command_with_progress, log_info,
-    log_success, log_warning,
+    create_progress_bar, create_progress_bar_with_msg, execute_command_with_progress, log_error,
+    log_info, log_success, log_warning,
 };
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use std::time::Duration;
@@ -18,6 +18,14 @@ fn build_env_args(env_vars: &[String]) -> Vec<String> {
     args
 }
 
+/// Container status enum
+#[derive(Debug, Clone, PartialEq)]
+enum ContainerStatus {
+    Running,
+    Stopped,
+    NotExisting,
+}
+
 /// Devnet action enum
 #[derive(Debug, Clone)]
 pub enum DevnetAction {
@@ -27,6 +35,7 @@ pub enum DevnetAction {
         profile: Option<String>,
     },
     Down,
+    Pause,
     Restart {
         reset: bool,
         bake: bool,
@@ -48,6 +57,14 @@ pub struct DevnetContext {
     pub config: HylixConfig,
     pub profile: Option<String>,
 }
+
+const CONTAINERS: [&str; 5] = [
+    "hyli-devnet-node",
+    "hyli-devnet-postgres",
+    "hyli-devnet-indexer",
+    "hyli-devnet-wallet",
+    "hyli-devnet-wallet-ui",
+];
 
 impl DevnetContext {
     /// Create a new DevnetContext
@@ -85,12 +102,17 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
             bake,
             profile,
         } => {
+            start_containers(&context).await?;
+
             if is_devnet_running(&context).await? {
-                log_info("Devnet is already running");
+                log_info("Devnet is running");
                 return Ok(());
             }
             let context_with_profile = DevnetContext::new_with_profile(context.config, profile)?;
             start_devnet(reset, bake, &context_with_profile).await?;
+        }
+        DevnetAction::Pause => {
+            pause_devnet(&context).await?;
         }
         DevnetAction::Down => {
             stop_devnet(&context).await?;
@@ -123,18 +145,24 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
 
 /// Check the status of the local devnet
 async fn check_devnet_status(context: &DevnetContext) -> HylixResult<()> {
-    let is_running = is_devnet_running(context).await?;
+    let node_status = check_docker_container(context, "hyli-devnet-node").await?;
+    let postgres_status = check_docker_container(context, "hyli-devnet-postgres").await?;
+    let indexer_status = check_docker_container(context, "hyli-devnet-indexer").await?;
+    let wallet_status = check_docker_container(context, "hyli-devnet-wallet").await?;
+    let wallet_ui_status = check_docker_container(context, "hyli-devnet-wallet-ui").await?;
+
+    let is_running = node_status == ContainerStatus::Running
+        && postgres_status == ContainerStatus::Running
+        && indexer_status == ContainerStatus::Running
+        && wallet_status == ContainerStatus::Running
+        && wallet_ui_status == ContainerStatus::Running;
+
     if is_running {
         log_success("Devnet is running");
 
         let block_height = context.client.get_block_height().await?;
         log_info(&format!("Block height: {}", block_height.0));
 
-        check_docker_container(context, "hyli-devnet-node").await?;
-        check_docker_container(context, "hyli-devnet-postgres").await?;
-        check_docker_container(context, "hyli-devnet-indexer").await?;
-        check_docker_container(context, "hyli-devnet-wallet").await?;
-        check_docker_container(context, "hyli-devnet-wallet-ui").await?;
         log_info("Services available at:");
         log_info(&format!(
             "  Node: http://localhost:{}/swagger-ui",
@@ -164,29 +192,91 @@ async fn check_devnet_status(context: &DevnetContext) -> HylixResult<()> {
     Ok(())
 }
 
-async fn check_docker_container(context: &DevnetContext, container_name: &str) -> HylixResult<()> {
-    let is_running = is_docker_container_running(context, container_name).await?;
-    if is_running {
-        log_success(&format!("Container {} is running", container_name));
-    } else {
-        log_warning(&format!("Container {} is not running", container_name));
+async fn check_docker_container(
+    context: &DevnetContext,
+    container_name: &str,
+) -> HylixResult<ContainerStatus> {
+    let status = get_docker_container_status(context, container_name).await?;
+    match status {
+        ContainerStatus::Running => {
+            log_success(&format!("Container {} is running", container_name));
+        }
+        ContainerStatus::Stopped => {
+            log_warning(&format!("Container {} is stopped", container_name));
+        }
+        ContainerStatus::NotExisting => {
+            log_error(&format!("Container {} does not exist", container_name));
+        }
     }
-    Ok(())
+    Ok(status)
 }
 
-async fn is_docker_container_running(
+async fn get_docker_container_status(
     _context: &DevnetContext,
     container_name: &str,
-) -> HylixResult<bool> {
+) -> HylixResult<ContainerStatus> {
     use tokio::process::Command;
 
+    // First check if container exists at all (running or stopped)
     let output = Command::new("docker")
+        .args(["ps", "-a", "-q", "-f", &format!("name={}", container_name)])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to check Docker container: {}", e)))?;
+
+    if output.stdout.is_empty() {
+        return Ok(ContainerStatus::NotExisting);
+    }
+
+    // If container exists, check if it's running
+    let running_output = Command::new("docker")
         .args(["ps", "-q", "-f", &format!("name={}", container_name)])
         .output()
         .await
         .map_err(|e| HylixError::process(format!("Failed to check Docker container: {}", e)))?;
 
-    Ok(!output.stdout.is_empty())
+    if running_output.stdout.is_empty() {
+        Ok(ContainerStatus::Stopped)
+    } else {
+        Ok(ContainerStatus::Running)
+    }
+}
+
+async fn start_containers(context: &DevnetContext) -> HylixResult<()> {
+    let mpb = indicatif::MultiProgress::new();
+    for container in CONTAINERS {
+        if get_docker_container_status(&context, container).await? == ContainerStatus::Stopped {
+            start_container(&mpb, &context, container).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn start_container(
+    mpb: &indicatif::MultiProgress,
+    _context: &DevnetContext,
+    container_name: &str,
+) -> HylixResult<()> {
+    let pb = mpb.add(create_progress_bar());
+    pb.set_message(format!("Starting container {}", container_name));
+    let success = execute_command_with_progress(
+        &mpb,
+        "docker start",
+        "docker",
+        &["start", container_name],
+        None,
+    )
+    .await?;
+    pb.finish_and_clear();
+    if success {
+        log_success(&format!("Started container {}", container_name));
+    } else {
+        return Err(HylixError::process(format!(
+            "Failed to start {}",
+            container_name
+        )));
+    }
+    Ok(())
 }
 
 /// Start the local devnet
@@ -236,6 +326,25 @@ async fn start_devnet(reset: bool, bake: bool, context: &DevnetContext) -> Hylix
         );
     }
 
+    Ok(())
+}
+
+/// Pause the local devnet
+async fn pause_devnet(_context: &DevnetContext) -> HylixResult<()> {
+    let mpb = indicatif::MultiProgress::new();
+    let pb = mpb.add(create_progress_bar());
+    let pb2 = mpb.add(create_progress_bar());
+    pb.set_message("Pausing local devnet...");
+    for container in containers {
+        if get_docker_container_status(&_context, container).await? == ContainerStatus::Running {
+            pb2.set_message(format!("Stopping container {}", container));
+            execute_command_with_progress(&mpb, "docker stop", "docker", &["stop", container], None)
+                .await?;
+        }
+    }
+    mpb.clear().map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+    log_success("Local devnet paused successfully!");
+    log_info("Use `hy devnet up` to resume the local devnet");
     Ok(())
 }
 
