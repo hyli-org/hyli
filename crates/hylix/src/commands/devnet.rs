@@ -49,6 +49,9 @@ pub enum DevnetAction {
         profile: Option<String>,
     },
     Env,
+    Logs {
+        service: String,
+    },
 }
 
 /// Context struct containing client and config for devnet operations
@@ -138,8 +141,28 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
         DevnetAction::Env => {
             print_devnet_env_vars(&context.config)?;
         }
+        DevnetAction::Logs { service } => {
+            logs_devnet(&service).await?;
+        }
     }
 
+    Ok(())
+}
+
+/// Logs the local devnet
+async fn logs_devnet(service: &str) -> HylixResult<()> {
+    let container = format!("hyli-devnet-{}", service);
+
+    log_info(&format!("Following logs for {}", container));
+    log_info(&format!("Use Ctrl+C to stop following logs"));
+    log_info(&format!("{}", console::style(format!("$ docker logs -f {}", container)).green()));
+
+    use tokio::process::Command;
+    Command::new("docker")
+        .args(["logs", "-f", &container])
+        .status()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to get logs for {}: {}", container, e)))?;
     Ok(())
 }
 
