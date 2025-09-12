@@ -145,17 +145,14 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
 
 /// Check the status of the local devnet
 async fn check_devnet_status(context: &DevnetContext) -> HylixResult<()> {
-    let node_status = check_docker_container(context, "hyli-devnet-node").await?;
-    let postgres_status = check_docker_container(context, "hyli-devnet-postgres").await?;
-    let indexer_status = check_docker_container(context, "hyli-devnet-indexer").await?;
-    let wallet_status = check_docker_container(context, "hyli-devnet-wallet").await?;
-    let wallet_ui_status = check_docker_container(context, "hyli-devnet-wallet-ui").await?;
-
-    let is_running = node_status == ContainerStatus::Running
-        && postgres_status == ContainerStatus::Running
-        && indexer_status == ContainerStatus::Running
-        && wallet_status == ContainerStatus::Running
-        && wallet_ui_status == ContainerStatus::Running;
+    let mut is_running = true;
+    for container in CONTAINERS {
+        let status = check_docker_container(context, container).await?;
+        if status != ContainerStatus::Running {
+            is_running = false;
+            break;
+        }
+    }
 
     if is_running {
         log_success("Devnet is running");
