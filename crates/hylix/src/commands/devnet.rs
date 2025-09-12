@@ -332,7 +332,7 @@ async fn pause_devnet(_context: &DevnetContext) -> HylixResult<()> {
     let pb = mpb.add(create_progress_bar());
     let pb2 = mpb.add(create_progress_bar());
     pb.set_message("Pausing local devnet...");
-    for container in containers {
+    for container in CONTAINERS {
         if get_docker_container_status(&_context, container).await? == ContainerStatus::Running {
             pb2.set_message(format!("Stopping container {}", container));
             execute_command_with_progress(&mpb, "docker stop", "docker", &["stop", container], None)
