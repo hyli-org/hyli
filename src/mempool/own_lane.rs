@@ -474,7 +474,8 @@ impl super::Mempool {
         tx.transaction_data = TransactionData::VerifiedProof(VerifiedProofTransaction {
             proof_hash: proof_transaction.proof.hashed(),
             proof_size: proof_transaction.estimate_size(),
-            proof: Some(proof_transaction.proof),
+            // Temporarily disable for fib-race -- too much data is stored.
+            proof: None, //Some(proof_transaction.proof),
             contract_name: proof_transaction.contract_name.clone(),
             program_id: proof_transaction.program_id.clone(),
             verifier: proof_transaction.verifier.clone(),
