@@ -38,6 +38,8 @@ pub struct GCSConf {
 
     pub save_proofs: bool,
     pub save_blocks: bool,
+
+    pub start_block: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -50,7 +52,6 @@ pub struct GcsUploader {
     ctx: GcsUploaderCtx,
     bus: GcsUploaderBusClient,
     gcs_client: Client,
-    testnet_genesis_timestamp: Option<u128>,
 }
 
 impl Module for GcsUploader {
@@ -60,29 +61,16 @@ impl Module for GcsUploader {
         let bus = GcsUploaderBusClient::new_from_bus(bus.new_handle()).await;
         let config = ClientConfig::default().with_auth().await.unwrap();
         let gcs_client = Client::new(config);
-        let testnet_genesis_timestamp: Option<u128> =
-            Self::load_from_disk_or_default(&ctx.data_directory.join("gcs_uploader.bin"));
         Ok(GcsUploader {
             ctx,
             bus,
             gcs_client,
-            testnet_genesis_timestamp,
         })
     }
 
     async fn run(&mut self) -> Result<()> {
         self.start().await?;
         Ok(())
-    }
-
-    async fn persist(&mut self) -> Result<()> {
-        log_error!(
-            Self::save_on_disk(
-                &self.ctx.data_directory.join("gcs_uploader.bin"),
-                &self.testnet_genesis_timestamp,
-            ),
-            "Persisting GCS uploader state"
-        )
     }
 }
 
@@ -121,19 +109,8 @@ impl GcsUploader {
     async fn handle_data_availability_event(&mut self, event: DataEvent) -> Result<()> {
         let DataEvent::OrderedSignedBlock(block) = event;
         let block_height = block.height().0;
-        let block_timestamp = block.consensus_proposal.timestamp.0;
-        if block_height == 0 {
-            self.testnet_genesis_timestamp = Some(block_timestamp);
-            tracing::info!("Testnet genesis timestamp set to {}", block_timestamp);
-        }
-
         let prefix = &self.ctx.gcs_config.gcs_prefix;
-        let object_name = format!(
-            "{}/{}/block_{}.bin",
-            prefix,
-            self.testnet_genesis_timestamp.expect("must be set"),
-            block_height
-        );
+        let object_name = format!("{}/block_{}.bin", prefix, block_height);
         let data = borsh::to_vec(&block)?;
         let req = UploadObjectRequest {
             bucket: self.ctx.gcs_config.gcs_bucket.clone(),
