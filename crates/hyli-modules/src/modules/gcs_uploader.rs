@@ -38,6 +38,8 @@ pub struct GCSConf {
 
     pub save_proofs: bool,
     pub save_blocks: bool,
+
+    pub start_block: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -15,3 +15,5 @@ gcs_prefix = "local"
 # GCS uploader options
 save_proofs = true
 save_blocks = true
+
+start_block = 0

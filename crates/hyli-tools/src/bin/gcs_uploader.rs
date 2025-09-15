@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
         .build_module::<SignedDAListener>(DAListenerConf {
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
-            start_block: Some(BlockHeight(0)),
+            start_block: Some(BlockHeight(config.gcs.start_block)),
             timeout_client_secs: 10,
         })
         .await?;
