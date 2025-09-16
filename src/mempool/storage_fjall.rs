@@ -215,9 +215,7 @@ impl Storage for LanesStorage {
         )?;
         self.dp_proofs.insert(
             format!("{lane_id}:{dp_hash}"),
-            borsh::to_vec(&proofs)
-                .map(Slice::from)
-                .map_err(Into::<anyhow::Error>::into)?,
+            Slice::from(borsh::to_vec(&proofs)?),
         )?;
         Ok(())
     }
