@@ -4,7 +4,7 @@ use crate::logging::{log_error, log_info, log_success};
 use std::process::Command;
 
 /// Execute the `hy run` command
-pub async fn execute(testnet: bool, watch: bool) -> HylixResult<()> {
+pub async fn execute(testnet: bool, watch: bool, extra_args: Vec<String>) -> HylixResult<()> {
     if testnet {
         log_info("Starting backend in testnet mode...");
     } else {
@@ -27,7 +27,7 @@ pub async fn execute(testnet: bool, watch: bool) -> HylixResult<()> {
     if watch {
         run_with_watch(testnet, &config).await?;
     } else {
-        let backend = run_backend(testnet, &config, false).await?;
+        let backend = run_backend(testnet, &config, false, &extra_args).await?;
         wait_backend(backend).await?;
     }
 
@@ -55,11 +55,12 @@ pub async fn run_backend(
     testnet: bool,
     config: &crate::config::HylixConfig,
     for_testing: bool,
+    extra_args: &[String],
 ) -> HylixResult<tokio::process::Child> {
     let server_port = config.run.server_port.to_string();
     let mut args = vec![
         "run",
-        "-p",
+        "--bin",
         "server",
         "-F",
         "nonreproducible",
@@ -73,6 +74,10 @@ pub async fn run_backend(
     if for_testing && config.test.clean_server_data {
         args.push("--clean-data-directory");
     }
+    if !for_testing && config.run.clean_server_data {
+        args.push("--clean-data-directory");
+    }
+    args.extend(extra_args.iter().map(String::as_str));
 
     let print_logs = !for_testing || (for_testing && config.test.print_server_logs);
 
@@ -113,10 +118,16 @@ pub async fn run_backend(
     log_info("Backend is running. Press Ctrl+C to stop.");
     if !print_logs {
         log_info("Backend logs will not be printed to console. They will be saved to a file in the working directory.");
-        log_info(&format!("You can change this with `{}`.", console::style("hy config edit test.print_server_logs true").green()));
+        log_info(&format!(
+            "You can change this with `{}`.",
+            console::style("hy config edit test.print_server_logs true").green()
+        ));
     } else {
         log_info("Backend logs will be printed to console.");
-        log_info(&format!("You can change this with `{}`.", console::style("hy config edit test.print_server_logs false").green()));
+        log_info(&format!(
+            "You can change this with `{}`.",
+            console::style("hy config edit test.print_server_logs false").green()
+        ));
     }
 
     Ok(backend)
