@@ -160,6 +160,14 @@ pub async fn send_funds_to_test_accounts(
         if !success {
             let warning_msg = format!("{} account funding completed with warnings", fund.to);
             log_warning(&warning_msg);
+            log_warning(&format!(
+                "Command was: {}",
+                console::style(format!(
+                    "npx hyli-wallet-cli transfer {} {} {} {} {}",
+                    fund.from, fund.from_password, amount_str, fund.token, destination
+                ))
+                .green()
+            ));
         } else {
             let success_msg = format!("{} account funded successfully", fund.to);
             pb.set_message(success_msg);
