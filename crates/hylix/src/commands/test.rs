@@ -9,7 +9,12 @@ use crate::logging::{
 };
 
 /// Execute the `hy test` command
-pub async fn execute(keep_alive: bool, e2e: bool, unit: bool, extra_args: Vec<String>) -> HylixResult<()> {
+pub async fn execute(
+    keep_alive: bool,
+    e2e: bool,
+    unit: bool,
+    extra_args: Vec<String>,
+) -> HylixResult<()> {
     // Validate flags - can't run both e2e and unit only at the same time
     if e2e && unit {
         return Err(HylixError::test(
@@ -179,17 +184,14 @@ async fn run_unit_tests(extra_args: &[String]) -> HylixResult<()> {
         "{}",
         console::style("-------------------- HYLIX UNIT TESTS --------------------").green()
     ));
-    
+
     // Build the command display string
     let mut cmd_display = String::from("$ cargo test");
     for arg in extra_args {
         cmd_display.push(' ');
         cmd_display.push_str(arg);
     }
-    log_info(&format!(
-        "{}",
-        console::style(&cmd_display).green()
-    ));
+    log_info(&format!("{}", console::style(&cmd_display).green()));
 
     // Build the cargo test command with extra arguments
     let mut cmd = std::process::Command::new("cargo");
@@ -201,9 +203,7 @@ async fn run_unit_tests(extra_args: &[String]) -> HylixResult<()> {
         .map_err(|e| HylixError::process(format!("Failed to run unit tests: {}", e)))?;
 
     if !status.success() {
-        return Err(HylixError::process(
-            "Failed to run unit tests".to_string(),
-        ));
+        return Err(HylixError::process("Failed to run unit tests".to_string()));
     }
 
     Ok(())
