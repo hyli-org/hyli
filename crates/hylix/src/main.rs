@@ -80,6 +80,9 @@ enum Commands {
         /// Automatically rebuild and re-register on file changes
         #[arg(long)]
         watch: bool,
+        /// Extra arguments to pass to cargo run (e.g., --bin server)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        extra_args: Vec<String>,
     },
     /// Manage local devnet
     #[command(alias = "d")]
@@ -199,8 +202,12 @@ async fn main() -> Result<()> {
         } => {
             commands::test::execute(keep_alive, e2e, unit, extra_args).await?;
         }
-        Commands::Run { testnet, watch } => {
-            commands::run::execute(testnet, watch).await?;
+        Commands::Run {
+            testnet,
+            watch,
+            extra_args,
+        } => {
+            commands::run::execute(testnet, watch, extra_args).await?;
         }
         Commands::Devnet { action } => {
             let devnet_action = match action {
