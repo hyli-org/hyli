@@ -119,7 +119,7 @@ impl super::Mempool {
         &mut self,
         buc: &BlockUnderConstruction,
     ) -> Result<()> {
-        let block_data = self
+        let mut block_data = self
             .try_get_full_data_for_signed_block(buc)
             .await
             .context("Processing queued committedConsensusProposal")?;
@@ -133,7 +133,7 @@ impl super::Mempool {
         );
 
         // Delete stored proofs for all committed DataProposals - we don't need them anymore
-        for (lane_id, dps) in &block_data {
+        for (lane_id, dps) in &mut block_data {
             for dp in dps {
                 self.lanes.delete_proofs(lane_id, &dp.hashed())?;
             }

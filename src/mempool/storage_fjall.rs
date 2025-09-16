@@ -6,7 +6,8 @@ use std::{
 use anyhow::{bail, Result};
 use async_stream::try_stream;
 use fjall::{
-    Config, Keyspace, KvSeparationOptions, PartitionCreateOptions, PartitionHandle, Slice,
+    Config, GarbageCollection, Keyspace, KvSeparationOptions, PartitionCreateOptions,
+    PartitionHandle, Slice,
 };
 use futures::Stream;
 use hyli_model::{LaneId, ProofData, TxHash};
@@ -165,10 +166,13 @@ impl Storage for LanesStorage {
         item.map(|s| borsh::from_slice(&s).map_err(Into::into))
             .transpose()
     }
+
     fn delete_proofs(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> Result<()> {
-        self.dp_proofs
-            .remove(format!("{lane_id}:{dp_hash}"))
-            .map_err(Into::into)
+        self.dp_proofs.remove(format!("{lane_id}:{dp_hash}"))?;
+        // TODO: this is probably not super super efficient.
+        self.dp_proofs.gc_scan()?;
+        self.dp_proofs.gc_drop_stale_segments()?;
+        Ok(())
     }
 
     fn pop(
