@@ -154,7 +154,7 @@ async fn logs_devnet(service: &str) -> HylixResult<()> {
     let container = format!("hyli-devnet-{}", service);
 
     log_info(&format!("Following logs for {}", container));
-    log_info(&format!("Use Ctrl+C to stop following logs"));
+    log_info("Use Ctrl+C to stop following logs");
     log_info(&format!(
         "{}",
         console::style(format!("$ docker logs -f {}", container)).green()
