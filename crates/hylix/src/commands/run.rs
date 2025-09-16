@@ -79,7 +79,7 @@ pub async fn run_backend(
     }
     args.extend(extra_args.iter().map(String::as_str));
 
-    let print_logs = !for_testing || (for_testing && config.test.print_server_logs);
+    let print_logs = !for_testing || config.test.print_server_logs;
 
     log_info(&format!(
         "{}",
