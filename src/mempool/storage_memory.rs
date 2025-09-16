@@ -6,7 +6,7 @@ use std::{
 use anyhow::{bail, Result};
 use async_stream::try_stream;
 use futures::Stream;
-use hyli_model::{LaneBytesSize, LaneId};
+use hyli_model::{LaneBytesSize, LaneId, ProofData, TxHash};
 use tracing::info;
 
 use super::{
@@ -23,6 +23,8 @@ pub struct LanesStorage {
     pub lanes_tip: BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>,
     // NB: do not iterate on these as they're unordered
     pub by_hash: HashMap<LaneId, HashMap<DataProposalHash, (LaneEntryMetadata, DataProposal)>>,
+    // Full proofs store: key = (dp_hash, tx_hash)
+    pub proofs: HashMap<LaneId, HashMap<DataProposalHash, HashMap<TxHash, ProofData>>>,
 }
 
 impl LanesStorage {
@@ -38,7 +40,11 @@ impl LanesStorage {
 
         info!("{} DP(s) available", by_hash.len());
 
-        Ok(LanesStorage { lanes_tip, by_hash })
+        Ok(LanesStorage {
+            lanes_tip,
+            by_hash,
+            proofs: HashMap::default(),
+        })
     }
 }
 
@@ -75,6 +81,25 @@ impl Storage for LanesStorage {
         bail!("Can't find validator {}", lane_id)
     }
 
+    fn get_proofs_by_hash(
+        &self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+    ) -> Result<Option<HashMap<TxHash, ProofData>>> {
+        Ok(self
+            .proofs
+            .get(lane_id)
+            .and_then(|dp_map| dp_map.get(dp_hash))
+            .cloned())
+    }
+
+    fn delete_proofs(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> Result<()> {
+        if let Some(dp_map) = self.proofs.get_mut(lane_id) {
+            dp_map.remove(dp_hash);
+        }
+        Ok(())
+    }
+
     fn pop(
         &mut self,
         validator: LaneId,
@@ -93,13 +118,19 @@ impl Storage for LanesStorage {
     fn put_no_verification(
         &mut self,
         lane_id: LaneId,
-        entry: (LaneEntryMetadata, DataProposal),
+        mut entry: (LaneEntryMetadata, DataProposal),
     ) -> Result<()> {
         let dp_hash = entry.1.hashed();
+        // Save full proofs separately and strip them from the stored DataProposal
+        let proofs = entry.1.take_proofs();
         self.by_hash
+            .entry(lane_id.clone())
+            .or_default()
+            .insert(dp_hash.clone(), entry);
+        self.proofs
             .entry(lane_id)
             .or_default()
-            .insert(dp_hash, entry);
+            .insert(dp_hash, proofs);
         Ok(())
     }
 

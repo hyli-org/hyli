@@ -132,6 +132,13 @@ impl super::Mempool {
             block_data.len()
         );
 
+        // Delete stored proofs for all committed DataProposals - we don't need them anymore
+        for (lane_id, dps) in &block_data {
+            for dp in dps {
+                self.lanes.delete_proofs(lane_id, &dp.hashed())?;
+            }
+        }
+
         self.bus
             .send(MempoolBlockEvent::BuiltSignedBlock(SignedBlock {
                 data_proposals: block_data,
@@ -291,6 +298,82 @@ pub mod test {
                     vec![(LaneId(key.clone()), vec![dp_orig])]
                 );
             }
+        );
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn proofs_deleted_after_commit() -> Result<()> {
+        use crate::model::{
+            BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, ProofDataHash,
+            Transaction, TransactionData, VerifiedProofTransaction, Verifier,
+        };
+
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+
+        // Create a DP with a VerifiedProof tx containing an inlined proof
+        let proof = ProofData(vec![1, 2, 3, 4, 5]);
+        let proof_hash = ProofDataHash(proof.hashed().0);
+        let vpt = VerifiedProofTransaction {
+            contract_name: ContractName::new("cleanup-proof"),
+            program_id: ProgramId(vec![]),
+            verifier: Verifier("test".into()),
+            proof: Some(proof.clone()),
+            proof_hash: proof_hash.clone(),
+            proof_size: proof.0.len(),
+            proven_blobs: vec![BlobProofOutput {
+                original_proof_hash: proof_hash,
+                blob_tx_hash: crate::model::TxHash("blob-tx".into()),
+                program_id: ProgramId(vec![]),
+                verifier: Verifier("test".into()),
+                hyli_output: HyliOutput::default(),
+            }],
+            is_recursive: false,
+        };
+        let dp = ctx.create_data_proposal(
+            None,
+            &[Transaction::from(TransactionData::VerifiedProof(vpt))],
+        );
+        let dp_hash = dp.hashed();
+        let cumul_size = LaneBytesSize(dp.estimate_size() as u64);
+
+        // Store it locally; this strips proofs into side-store
+        ctx.process_new_data_proposal(dp.clone())?;
+
+        let lane_id = LaneId(ctx.validator_pubkey().clone());
+        // Ensure proofs exist before commit
+        let proofs_before = ctx
+            .mempool
+            .lanes
+            .get_proofs_by_hash(&lane_id, &dp_hash)?
+            .expect("proofs should be present before commit");
+        assert_eq!(proofs_before.len(), 1);
+
+        // Process a cut committing this DP
+        let key = ctx.validator_pubkey().clone();
+        ctx.add_trusted_validator(&key);
+        let cut = ctx
+            .process_cut_with_dp(&key, &dp_hash, cumul_size, 1)
+            .await?;
+
+        // Wait for BuiltSignedBlock as a sanity check
+        assert_chanmsg_matches!(
+            ctx.mempool_event_receiver,
+            MempoolBlockEvent::StartedBuildingBlocks(_) => {}
+        );
+        assert_chanmsg_matches!(
+            ctx.mempool_event_receiver,
+            MempoolBlockEvent::BuiltSignedBlock(sb) => {
+                assert_eq!(sb.consensus_proposal.cut, cut);
+            }
+        );
+
+        // Proofs should be removed from storage after block build
+        let proofs_after = ctx.mempool.lanes.get_proofs_by_hash(&lane_id, &dp_hash)?;
+        assert!(
+            proofs_after.is_none(),
+            "proofs must be deleted after commit"
         );
 
         Ok(())

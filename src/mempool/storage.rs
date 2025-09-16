@@ -3,10 +3,10 @@ use async_stream::try_stream;
 use borsh::{BorshDeserialize, BorshSerialize};
 use futures::{Stream, StreamExt};
 use hyli_crypto::BlstCrypto;
-use hyli_model::{DataSized, LaneId};
+use hyli_model::{DataSized, LaneId, ProofData, TxHash};
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
-use std::{future::Future, vec};
+use std::{collections::HashMap, future::Future, vec};
 use tracing::{error, trace};
 
 use crate::model::{
@@ -57,7 +57,12 @@ pub trait Storage {
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
     ) -> Result<Option<DataProposal>>;
-
+    fn get_proofs_by_hash(
+        &self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+    ) -> Result<Option<HashMap<TxHash, ProofData>>>;
+    fn delete_proofs(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> Result<()>;
     fn pop(
         &mut self,
         lane_id: LaneId,
@@ -418,6 +423,7 @@ mod tests {
 
     use super::*;
     use crate::mempool::storage_memory::LanesStorage;
+    use crate::model::*;
     use assertables::assert_none;
     use futures::StreamExt;
     use hyli_model::{DataSized, Identity, Signature, Transaction, ValidatorSignature};
@@ -458,6 +464,79 @@ mod tests {
             storage.get_dp_by_hash(lane_id, &dp_hash).unwrap().unwrap(),
             data_proposal
         );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_store_proofs_separately_and_hydrate() {
+        let crypto = BlstCrypto::new("proofs").unwrap();
+        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let mut storage = setup_storage();
+
+        // Build a DataProposal with a VerifiedProof tx that includes an inlined proof
+        let proof = ProofData(vec![1, 2, 3, 4]);
+        let proof_hash = ProofDataHash(proof.hashed().0);
+        let vpt = VerifiedProofTransaction {
+            contract_name: ContractName::new("test-contract"),
+            program_id: ProgramId(vec![]),
+            verifier: Verifier("test".into()),
+            proof: Some(proof.clone()),
+            proof_hash: proof_hash.clone(),
+            proof_size: proof.0.len(),
+            proven_blobs: vec![BlobProofOutput {
+                original_proof_hash: proof_hash,
+                blob_tx_hash: crate::model::TxHash("blob-tx".into()),
+                program_id: ProgramId(vec![]),
+                verifier: Verifier("test".into()),
+                hyli_output: HyliOutput::default(),
+            }],
+            is_recursive: false,
+        };
+        let tx = Transaction::from(TransactionData::VerifiedProof(vpt.clone()));
+        let tx_hash = tx.hashed();
+
+        let dp = DataProposal::new(None, vec![tx]);
+        let cumul_size: LaneBytesSize = LaneBytesSize(dp.estimate_size() as u64);
+        let entry = LaneEntryMetadata {
+            parent_data_proposal_hash: None,
+            cumul_size,
+            signatures: vec![],
+        };
+        let dp_hash = dp.hashed();
+
+        // Store DP: implementation should strip proofs and store them separately
+        storage
+            .put_no_verification(lane_id.clone(), (entry.clone(), dp.clone()))
+            .unwrap();
+
+        // Stored DP must have proofs removed
+        let stored_dp = storage
+            .get_dp_by_hash(lane_id, &dp_hash)
+            .unwrap()
+            .expect("stored dp");
+        match &stored_dp.txs.first().unwrap().transaction_data {
+            TransactionData::VerifiedProof(v) => {
+                assert!(v.proof.is_none(), "proof should be stripped in storage");
+                assert_eq!(v.proof_size, proof.0.len());
+            }
+            _ => panic!("expected VerifiedProof tx"),
+        }
+
+        // Proofs must be available in the side-store
+        let proofs = storage
+            .get_proofs_by_hash(lane_id, &dp_hash)
+            .unwrap()
+            .expect("proofs stored");
+        assert_eq!(proofs.get(&tx_hash), Some(&proof));
+
+        // Hydration should restore proofs back into the DP for broadcasting
+        let mut to_broadcast = stored_dp.clone();
+        to_broadcast.hydrate_proofs(&proofs);
+        match &to_broadcast.txs.first().unwrap().transaction_data {
+            TransactionData::VerifiedProof(v) => {
+                assert_eq!(v.proof.as_ref(), Some(&proof));
+            }
+            _ => panic!("expected VerifiedProof tx"),
+        }
     }
 
     #[test_log::test(tokio::test)]
