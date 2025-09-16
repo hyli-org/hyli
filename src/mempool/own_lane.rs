@@ -686,7 +686,10 @@ pub mod test {
             }],
             is_recursive: false,
         };
-        let dp = ctx.create_data_proposal(None, &[Transaction::from(TransactionData::VerifiedProof(vpt))]);
+        let dp = ctx.create_data_proposal(
+            None,
+            &[Transaction::from(TransactionData::VerifiedProof(vpt))],
+        );
 
         // Store DP locally (will strip proofs and store them side-by-side)
         ctx.process_new_data_proposal(dp.clone())?;
