@@ -45,7 +45,7 @@ pub async fn execute(
         start_devnet_if_needed().await?;
 
         // Start backend for e2e tests
-        let mut backend_handle = start_backend(&config).await?;
+        let mut backend_handle = start_backend(&config, &[]).await?;
 
         // Run e2e tests
         let result = run_e2e_tests(&config).await;
@@ -107,8 +107,11 @@ async fn build_project() -> HylixResult<()> {
 }
 
 /// Start the backend service
-async fn start_backend(config: &crate::config::HylixConfig) -> HylixResult<tokio::process::Child> {
-    let mut backend = commands::run::run_backend(false, config, true).await?;
+async fn start_backend(
+    config: &crate::config::HylixConfig,
+    extra_args: &[String],
+) -> HylixResult<tokio::process::Child> {
+    let mut backend = commands::run::run_backend(false, config, true, extra_args).await?;
 
     // Check if the backend is running by loop-polling /_health
     let mut attempts = 0;

@@ -184,14 +184,13 @@ async fn logs_devnet(service: &str) -> HylixResult<()> {
 
 /// Check the status of the local devnet
 async fn check_devnet_status(context: &DevnetContext) -> HylixResult<()> {
-    let mut is_running = true;
     for container in CONTAINERS {
-        let status = check_docker_container(context, container).await?;
-        if status != ContainerStatus::Running {
-            is_running = false;
-            break;
-        }
+        check_docker_container(context, container).await?;
     }
+
+    let is_running = check_docker_container(context, "hyli-devnet-node").await?
+        == ContainerStatus::Running
+        && is_devnet_running(context).await?;
 
     if is_running {
         log_success("Devnet is running");
