@@ -61,6 +61,12 @@ pub struct DevnetContext {
     pub profile: Option<String>,
 }
 
+impl From<HylixConfig> for DevnetContext {
+    fn from(config: HylixConfig) -> Self {
+        DevnetContext::new(config).unwrap()
+    }
+}
+
 const CONTAINERS: [&str; 5] = [
     "hyli-devnet-node",
     "hyli-devnet-postgres",
@@ -107,7 +113,7 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
         } => {
             start_containers(&context).await?;
 
-            if is_devnet_running(&context).await? {
+            if is_devnet_responding(&context).await? {
                 log_info("Devnet is running");
                 return Ok(());
             }
@@ -190,7 +196,7 @@ async fn check_devnet_status(context: &DevnetContext) -> HylixResult<()> {
 
     let is_running = check_docker_container(context, "hyli-devnet-node").await?
         == ContainerStatus::Running
-        && is_devnet_running(context).await?;
+        && is_devnet_responding(context).await?;
 
     if is_running {
         log_success("Devnet is running");
@@ -435,7 +441,7 @@ async fn fork_devnet(_endpoint: &str) -> HylixResult<()> {
 }
 
 /// Check if devnet is already running
-async fn is_devnet_running(context: &DevnetContext) -> HylixResult<bool> {
+pub async fn is_devnet_responding(context: &DevnetContext) -> HylixResult<bool> {
     // Use tokio::time::timeout to add a timeout to the async call
     match tokio::time::timeout(Duration::from_secs(5), context.client.get_block_height()).await {
         Ok(result) => match result {

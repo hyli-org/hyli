@@ -7,6 +7,7 @@ mod error;
 mod logging;
 
 use config::BackendType as ConfigBackendType;
+use hylix::logging::log_error;
 
 /// Build, test & deploy verifiable apps on Hyli
 ///
@@ -186,29 +187,21 @@ async fn main() -> Result<()> {
     // Initialize logging
     logging::init_logging(cli.verbose, cli.quiet)?;
 
-    // Execute the command
-    match cli.command {
-        Commands::New { name, backend } => {
-            commands::new::execute(name, backend).await?;
-        }
-        Commands::Build { clean, front } => {
-            commands::build::execute(clean, front).await?;
-        }
+    // Execute the command and handle errors
+    let result = match cli.command {
+        Commands::New { name, backend } => commands::new::execute(name, backend).await,
+        Commands::Build { clean, front } => commands::build::execute(clean, front).await,
         Commands::Test {
             keep_alive,
             e2e,
             unit,
             extra_args,
-        } => {
-            commands::test::execute(keep_alive, e2e, unit, extra_args).await?;
-        }
+        } => commands::test::execute(keep_alive, e2e, unit, extra_args).await,
         Commands::Run {
             testnet,
             watch,
             extra_args,
-        } => {
-            commands::run::execute(testnet, watch, extra_args).await?;
-        }
+        } => commands::run::execute(testnet, watch, extra_args).await,
         Commands::Devnet { action } => {
             let devnet_action = match action {
                 DevnetAction::Up {
@@ -239,11 +232,9 @@ async fn main() -> Result<()> {
                 DevnetAction::Env => commands::devnet::DevnetAction::Env,
                 DevnetAction::Logs { service } => commands::devnet::DevnetAction::Logs { service },
             };
-            commands::devnet::execute(devnet_action).await?;
+            commands::devnet::execute(devnet_action).await
         }
-        Commands::Clean => {
-            commands::clean::execute().await?;
-        }
+        Commands::Clean => commands::clean::execute().await,
         Commands::Config { action } => {
             let config_action = match action {
                 ConfigAction::Show => commands::config::ConfigAction::Show,
@@ -252,8 +243,13 @@ async fn main() -> Result<()> {
                 }
                 ConfigAction::Reset => commands::config::ConfigAction::Reset,
             };
-            commands::config::execute(config_action).await?;
+            commands::config::execute(config_action).await
         }
+    };
+
+    if let Err(err) = result {
+        log_error(&format!("{:#}", err));
+        std::process::exit(1);
     }
 
     Ok(())

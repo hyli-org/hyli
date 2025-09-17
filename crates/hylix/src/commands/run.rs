@@ -20,6 +20,14 @@ pub async fn execute(testnet: bool, watch: bool, extra_args: Vec<String>) -> Hyl
     // Check if we're in a valid project directory
     validate_project_directory()?;
 
+    // Check if devnet is running if not in testnet #[cfg(test)]
+    if !testnet && !crate::commands::devnet::is_devnet_responding(&config.clone().into()).await? {
+        return Err(HylixError::devnet(format!(
+            "Devnet is not running. Please start the devnet first with '{}'.",
+            console::style("hy devnet up").green()
+        )));
+    }
+
     // Build the project first
     build_project(&config).await?;
 
