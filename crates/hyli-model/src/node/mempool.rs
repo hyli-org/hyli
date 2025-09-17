@@ -78,13 +78,13 @@ impl DataProposal {
             .collect()
     }
 
-    pub fn hydrate_proofs(&mut self, proofs: &HashMap<TxHash, ProofData>) {
+    pub fn hydrate_proofs(&mut self, mut proofs: HashMap<TxHash, ProofData>) {
         self.txs.iter_mut().for_each(|tx| {
             let tx_hash = tx.hashed();
             if let TransactionData::VerifiedProof(ref mut vpt) = tx.transaction_data {
                 if vpt.proof.is_none() {
-                    if let Some(proof) = proofs.get(&tx_hash) {
-                        vpt.proof = Some(proof.clone());
+                    if let Some(proof) = proofs.remove(&tx_hash) {
+                        vpt.proof = Some(proof);
                     }
                 }
             }

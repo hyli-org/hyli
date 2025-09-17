@@ -182,7 +182,7 @@ impl super::Mempool {
             let Some(proofs) = self.lanes.get_proofs_by_hash(&lane_id, dp_hash)? else {
                 anyhow::bail!("Can't find Proofs for DP {} in lane {}", dp_hash, lane_id);
             };
-            data_proposal.hydrate_proofs(&proofs);
+            data_proposal.hydrate_proofs(proofs);
 
             debug!(
                 "🚗 Broadcast DataProposal {} ({} validators, {} txs)",
@@ -227,7 +227,7 @@ impl super::Mempool {
             let Some(proofs) = self.lanes.get_proofs_by_hash(&lane_id, dp_hash)? else {
                 anyhow::bail!("Can't find Proofs for DP {} in lane {}", dp_hash, lane_id);
             };
-            data_proposal.hydrate_proofs(&proofs);
+            data_proposal.hydrate_proofs(proofs);
 
             debug!(
                 "🚗 Rebroadcast DataProposal {} (only for {} validators, {} txs)",
