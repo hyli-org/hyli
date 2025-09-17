@@ -530,7 +530,7 @@ mod tests {
 
         // Hydration should restore proofs back into the DP for broadcasting
         let mut to_broadcast = stored_dp.clone();
-        to_broadcast.hydrate_proofs(&proofs);
+        to_broadcast.hydrate_proofs(proofs);
         match &to_broadcast.txs.first().unwrap().transaction_data {
             TransactionData::VerifiedProof(v) => {
                 assert_eq!(v.proof.as_ref(), Some(&proof));
