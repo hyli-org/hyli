@@ -96,6 +96,7 @@ pub async fn run_backend(
 
     let backend = tokio::process::Command::new("cargo")
         .env("RISC0_DEV_MODE", "1")
+        .env("SP1_PROVER", "mock")
         .env(
             "HYLI_NODE_URL",
             format!("http://localhost:{}", config.devnet.node_port),
@@ -180,6 +181,7 @@ async fn run_with_watch(testnet: bool, config: &crate::config::HylixConfig) -> H
 
     let mut backend = Command::new("cargo")
         .env("RISC0_DEV_MODE", "1")
+        .env("SP1_PROVER", "mock")
         .env(
             "HYLI_NODE_URL",
             format!("http://localhost:{}", config.devnet.node_port),
