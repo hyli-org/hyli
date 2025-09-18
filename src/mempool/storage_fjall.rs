@@ -1,12 +1,16 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::Path,
+};
 
 use anyhow::{bail, Result};
 use async_stream::try_stream;
 use fjall::{
-    Config, Keyspace, KvSeparationOptions, PartitionCreateOptions, PartitionHandle, Slice,
+    Config, GarbageCollection, Keyspace, KvSeparationOptions, PartitionCreateOptions,
+    PartitionHandle, Slice,
 };
 use futures::Stream;
-use hyli_model::LaneId;
+use hyli_model::{LaneId, ProofData, TxHash};
 use tracing::info;
 
 use crate::{
@@ -28,6 +32,7 @@ pub struct LanesStorage {
     db: Keyspace,
     pub by_hash_metadata: PartitionHandle,
     pub by_hash_data: PartitionHandle,
+    pub dp_proofs: PartitionHandle,
 }
 
 impl LanesStorage {
@@ -38,6 +43,7 @@ impl LanesStorage {
             db: self.db.clone(),
             by_hash_metadata: self.by_hash_metadata.clone(),
             by_hash_data: self.by_hash_data.clone(),
+            dp_proofs: self.dp_proofs.clone(),
         }
     }
 
@@ -73,6 +79,17 @@ impl LanesStorage {
                 .max_memtable_size(128 * 1024 * 1024),
         )?;
 
+        let dp_proofs = db.open_partition(
+            "dp_proofs",
+            PartitionCreateOptions::default()
+                .with_kv_separation(
+                    KvSeparationOptions::default().file_target_size(256 * 1024 * 1024),
+                )
+                .block_size(32 * 1024)
+                .manual_journal_persist(true)
+                .max_memtable_size(64 * 1024 * 1024),
+        )?;
+
         info!("{} DP(s) available", by_hash_metadata.len()?);
 
         Ok(LanesStorage {
@@ -80,6 +97,7 @@ impl LanesStorage {
             db,
             by_hash_metadata,
             by_hash_data,
+            dp_proofs,
         })
     }
 }
@@ -134,6 +152,29 @@ impl Storage for LanesStorage {
         .transpose()
     }
 
+    fn get_proofs_by_hash(
+        &self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+    ) -> Result<Option<HashMap<TxHash, ProofData>>> {
+        let item = log_warn!(
+            self.dp_proofs.get(format!("{lane_id}:{dp_hash}")),
+            "Can't find DP proofs {} for validator {}",
+            dp_hash,
+            lane_id
+        )?;
+        item.map(|s| borsh::from_slice(&s).map_err(Into::into))
+            .transpose()
+    }
+
+    fn delete_proofs(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> Result<()> {
+        self.dp_proofs.remove(format!("{lane_id}:{dp_hash}"))?;
+        // TODO: this is probably not super super efficient.
+        self.dp_proofs.gc_scan()?;
+        self.dp_proofs.gc_drop_stale_segments()?;
+        Ok(())
+    }
+
     fn pop(
         &mut self,
         lane_id: LaneId,
@@ -165,13 +206,20 @@ impl Storage for LanesStorage {
         (lane_entry, data_proposal): (LaneEntryMetadata, DataProposal),
     ) -> Result<()> {
         let dp_hash = data_proposal.hashed();
+        let mut dp_to_store = data_proposal;
+        // Save full proofs separately and strip them from the stored DataProposal
+        let proofs = dp_to_store.take_proofs();
         self.by_hash_metadata.insert(
             format!("{lane_id}:{dp_hash}"),
             encode_metadata_to_item(lane_entry)?,
         )?;
         self.by_hash_data.insert(
             format!("{lane_id}:{dp_hash}"),
-            encode_data_proposal_to_item(data_proposal)?,
+            encode_data_proposal_to_item(dp_to_store)?,
+        )?;
+        self.dp_proofs.insert(
+            format!("{lane_id}:{dp_hash}"),
+            Slice::from(borsh::to_vec(&proofs)?),
         )?;
         Ok(())
     }

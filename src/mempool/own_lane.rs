@@ -173,14 +173,16 @@ impl super::Mempool {
         let there_are_other_validators = !self.staking.is_bonded(self.crypto.validator_pubkey())
             || self.staking.bonded().len() >= 2;
         if entry_metadata.signatures.len() == 1 && there_are_other_validators {
-            let Some(data_proposal) = self.lanes.get_dp_by_hash(&self.own_lane_id(), dp_hash)?
-            else {
-                bail!(
-                    "Can't find DataProposal {} in lane {}",
-                    dp_hash,
-                    &self.own_lane_id()
-                );
+            let lane_id = self.own_lane_id();
+            let Some(mut data_proposal) = self.lanes.get_dp_by_hash(&lane_id, dp_hash)? else {
+                bail!("Can't find DataProposal {} in lane {}", dp_hash, &lane_id);
             };
+
+            // Rehydrate proofs from side-store for broadcast
+            let Some(proofs) = self.lanes.get_proofs_by_hash(&lane_id, dp_hash)? else {
+                anyhow::bail!("Can't find Proofs for DP {} in lane {}", dp_hash, lane_id);
+            };
+            data_proposal.hydrate_proofs(proofs);
 
             debug!(
                 "🚗 Broadcast DataProposal {} ({} validators, {} txs)",
@@ -216,14 +218,16 @@ impl super::Mempool {
                 return Ok(false);
             }
 
-            let Some(data_proposal) = self.lanes.get_dp_by_hash(&self.own_lane_id(), dp_hash)?
-            else {
-                bail!(
-                    "Can't find DataProposal {} in lane {}",
-                    dp_hash,
-                    self.own_lane_id()
-                );
+            let lane_id = self.own_lane_id();
+            let Some(mut data_proposal) = self.lanes.get_dp_by_hash(&lane_id, dp_hash)? else {
+                bail!("Can't find DataProposal {} in lane {}", dp_hash, &lane_id);
             };
+
+            // Rehydrate proofs from side-store for broadcast
+            let Some(proofs) = self.lanes.get_proofs_by_hash(&lane_id, dp_hash)? else {
+                anyhow::bail!("Can't find Proofs for DP {} in lane {}", dp_hash, lane_id);
+            };
+            data_proposal.hydrate_proofs(proofs);
 
             debug!(
                 "🚗 Rebroadcast DataProposal {} (only for {} validators, {} txs)",
@@ -645,6 +649,83 @@ pub mod test {
             }
             _ => panic!("Expected PoDAUpdate message"),
         };
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_broadcast_rehydrates_proofs() -> Result<()> {
+        use crate::model::{
+            BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, ProofDataHash,
+            Transaction, TransactionData, VerifiedProofTransaction, Verifier,
+        };
+
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+
+        // Bond self and another validator so broadcast happens
+        let crypto2 = BlstCrypto::new("validator2").unwrap();
+        let self_crypto = (*ctx.mempool.crypto).clone();
+        ctx.setup_node(&[self_crypto, crypto2.clone()]);
+
+        // Build DP with a VerifiedProof tx including the proof
+        let proof = ProofData(vec![9, 9, 9, 9]);
+        let proof_hash = ProofDataHash(proof.hashed().0);
+        let vpt = VerifiedProofTransaction {
+            contract_name: ContractName::new("rehydrate"),
+            program_id: ProgramId(vec![]),
+            verifier: Verifier("test".into()),
+            proof: Some(proof.clone()),
+            proof_hash: proof_hash.clone(),
+            proof_size: proof.0.len(),
+            proven_blobs: vec![BlobProofOutput {
+                original_proof_hash: proof_hash,
+                blob_tx_hash: crate::model::TxHash("blob-tx".into()),
+                program_id: ProgramId(vec![]),
+                verifier: Verifier("test".into()),
+                hyli_output: HyliOutput::default(),
+            }],
+            is_recursive: false,
+        };
+        let dp = ctx.create_data_proposal(
+            None,
+            &[Transaction::from(TransactionData::VerifiedProof(vpt))],
+        );
+
+        // Store DP locally (will strip proofs and store them side-by-side)
+        ctx.process_new_data_proposal(dp.clone())?;
+
+        // Trigger dissemination flow
+        ctx.timer_tick().await?;
+
+        // We should broadcast a DataProposal with rehydrated proofs
+        let broadcast = ctx.assert_broadcast("DataProposal").await;
+        let dp_broadcast = match broadcast.msg {
+            MempoolNetMessage::DataProposal(_, dp) => dp,
+            _ => panic!("Expected DataProposal message"),
+        };
+
+        // The broadcasted DP must include the proof
+        match &dp_broadcast.txs[0].transaction_data {
+            TransactionData::VerifiedProof(v) => {
+                assert!(v.proof.is_some());
+                assert_eq!(v.proof.as_ref().unwrap().0, vec![9, 9, 9, 9]);
+            }
+            _ => panic!("expected VerifiedProof tx"),
+        }
+
+        // The stored DP should remain without proofs
+        let lane = LaneId(ctx.validator_pubkey().clone());
+        let (_, dp_hash) = ctx.last_lane_entry(&lane);
+        let stored_dp = ctx
+            .mempool
+            .lanes
+            .get_dp_by_hash(&lane, &dp_hash)
+            .unwrap()
+            .unwrap();
+        match &stored_dp.txs[0].transaction_data {
+            TransactionData::VerifiedProof(v) => assert!(v.proof.is_none()),
+            _ => panic!("expected VerifiedProof tx"),
+        }
 
         Ok(())
     }

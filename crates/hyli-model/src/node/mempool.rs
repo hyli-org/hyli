@@ -1,7 +1,7 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
-use std::{fmt::Display, sync::RwLock};
+use std::{collections::HashMap, fmt::Display, sync::RwLock};
 
 use crate::*;
 
@@ -55,6 +55,38 @@ impl DataProposal {
                     unreachable!();
                 }
                 TransactionData::Blob(_) => {}
+            }
+        });
+    }
+
+    pub fn take_proofs(&mut self) -> HashMap<TxHash, ProofData> {
+        self.txs
+            .iter_mut()
+            .filter_map(|tx| {
+                match &mut tx.transaction_data {
+                    TransactionData::VerifiedProof(proof_tx) => {
+                        proof_tx.proof.take().map(|proof| (tx.hashed(), proof))
+                    }
+                    TransactionData::Proof(_) => {
+                        // This can never happen.
+                        // A DataProposal that has been processed has turned all TransactionData::Proof into TransactionData::VerifiedProof
+                        unreachable!();
+                    }
+                    TransactionData::Blob(_) => None,
+                }
+            })
+            .collect()
+    }
+
+    pub fn hydrate_proofs(&mut self, mut proofs: HashMap<TxHash, ProofData>) {
+        self.txs.iter_mut().for_each(|tx| {
+            let tx_hash = tx.hashed();
+            if let TransactionData::VerifiedProof(ref mut vpt) = tx.transaction_data {
+                if vpt.proof.is_none() {
+                    if let Some(proof) = proofs.remove(&tx_hash) {
+                        vpt.proof = Some(proof);
+                    }
+                }
             }
         });
     }
