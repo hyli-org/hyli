@@ -28,17 +28,6 @@ pub fn verify(
     }
 }
 
-#[allow(unused_variables)]
-pub fn validate_program_id(verifier: &Verifier, program_id: &ProgramId) -> Result<(), Error> {
-    match verifier.0.as_str() {
-        #[cfg(feature = "risc0")]
-        hyli_model::verifiers::RISC0_1 => risc0_1::validate_program_id(program_id),
-        #[cfg(feature = "sp1")]
-        hyli_model::verifiers::SP1_4 => sp1_4::validate_program_id(program_id),
-        _ => Ok(()),
-    }
-}
-
 #[cfg(feature = "cairo-m")]
 pub mod cairo_m {
     use super::*;
@@ -134,12 +123,6 @@ pub mod risc0_1 {
         tracing::info!("✅ Risc0 proof verified.");
 
         Ok(receipt.journal)
-    }
-
-    pub fn validate_program_id(program_id: &ProgramId) -> Result<(), Error> {
-        std::convert::TryInto::<risc0_zkvm::sha::Digest>::try_into(program_id.0.as_slice())
-            .map_err(|e| anyhow::anyhow!("Invalid Risc0 image ID: {}", e))?;
-        Ok(())
     }
 }
 
@@ -274,12 +257,6 @@ pub mod sp1_4 {
 
         Ok(hyli_outputs)
     }
-
-    pub fn validate_program_id(program_id: &ProgramId) -> Result<(), Error> {
-        serde_json::from_slice::<SP1VerifyingKey>(program_id.0.as_slice())
-            .map_err(|e| anyhow::anyhow!("Invalid SP1 image ID: {}", e))?;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -292,8 +269,6 @@ mod tests {
     };
 
     use super::noir::verify as noir_proof_verifier;
-    #[cfg(feature = "risc0")]
-    use super::risc0_1::validate_program_id as validate_risc0_program_id;
 
     fn load_file_as_bytes(path: &str) -> Vec<u8> {
         let mut file = File::open(path).expect("Failed to open file");
@@ -377,15 +352,5 @@ mod tests {
             }
             Err(e) => panic!("Noir verification failed: {e:?}"),
         }
-    }
-
-    #[test]
-    #[cfg(feature = "risc0")]
-    fn test_check_risc0_program_id() {
-        let valid_program_id = ProgramId(vec![0; 32]); // Assuming a valid 32-byte ID
-        let invalid_program_id = ProgramId(vec![0; 31]); // Invalid length
-
-        assert!(validate_risc0_program_id(&valid_program_id).is_ok());
-        assert!(validate_risc0_program_id(&invalid_program_id).is_err());
     }
 }

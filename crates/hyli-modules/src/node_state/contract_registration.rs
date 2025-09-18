@@ -1,7 +1,38 @@
 use anyhow::{bail, Result};
 use sdk::{ContractName, ProgramId, StateCommitment, Verifier};
 
-use hyli_verifiers::validate_program_id;
+#[derive(serde::Deserialize)]
+pub struct SP1VK {
+    pub vk: SP1StarkVK,
+}
+#[derive(serde::Deserialize)]
+pub struct SP1StarkVK {
+    pub commit: serde_json::Value,
+    pub pc_start: serde_json::Value,
+    pub initial_global_cumulative_sum: serde_json::Value,
+    pub chip_information: serde_json::Value,
+    pub chip_ordering: serde_json::Value,
+}
+
+pub fn validate_program_id(
+    verifier: &Verifier,
+    program_id: &ProgramId,
+) -> Result<(), anyhow::Error> {
+    match verifier.0.as_str() {
+        sdk::verifiers::RISC0_1 => (!program_id.0.is_empty() && program_id.0.len() <= 32)
+            .then_some(())
+            .ok_or_else(|| {
+                anyhow::anyhow!("Invalid Risc0 image ID: length must be between 1 and 32 bytes")
+            }),
+        sdk::verifiers::SP1_4 => {
+            serde_json::from_slice::<SP1VK>(program_id.0.as_slice())
+                .map_err(|e| anyhow::anyhow!("Invalid SP1 image ID: {}", e))?;
+            Ok(())
+        }
+
+        _ => Ok(()),
+    }
+}
 
 /// Check that the contract name is:
 /// - a valid subdomain of the owner contract name.
