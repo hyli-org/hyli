@@ -20,6 +20,14 @@ pub async fn execute(testnet: bool, watch: bool, extra_args: Vec<String>) -> Hyl
     // Check if we're in a valid project directory
     validate_project_directory()?;
 
+    // Check if devnet is running if not in testnet
+    if !testnet && !crate::commands::devnet::is_devnet_responding(&config.clone().into()).await? {
+        return Err(HylixError::devnet(format!(
+            "Devnet is not running. Please start the devnet first with '{}'.",
+            console::style("hy devnet up").green()
+        )));
+    }
+
     // Build the project first
     build_project(&config).await?;
 
@@ -88,6 +96,7 @@ pub async fn run_backend(
 
     let backend = tokio::process::Command::new("cargo")
         .env("RISC0_DEV_MODE", "1")
+        .env("SP1_PROVER", "mock")
         .env(
             "HYLI_NODE_URL",
             format!("http://localhost:{}", config.devnet.node_port),
@@ -172,6 +181,7 @@ async fn run_with_watch(testnet: bool, config: &crate::config::HylixConfig) -> H
 
     let mut backend = Command::new("cargo")
         .env("RISC0_DEV_MODE", "1")
+        .env("SP1_PROVER", "mock")
         .env(
             "HYLI_NODE_URL",
             format!("http://localhost:{}", config.devnet.node_port),

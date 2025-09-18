@@ -157,7 +157,7 @@ impl Default for HylixConfig {
 impl Default for DevnetConfig {
     fn default() -> Self {
         Self {
-            node_image: "ghcr.io/hyli-org/hyli:0.14.0-rc1".to_string(),
+            node_image: "ghcr.io/hyli-org/hyli:0.14.0-rc3".to_string(),
             wallet_server_image: "ghcr.io/hyli-org/wallet/wallet-server:main".to_string(),
             wallet_ui_image: "ghcr.io/hyli-org/wallet/wallet-ui:main".to_string(),
             da_port: 4141,
