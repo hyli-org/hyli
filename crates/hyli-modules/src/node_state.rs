@@ -5,7 +5,6 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use contract_registration::validate_contract_registration_metadata;
 use contract_registration::{validate_contract_name_tld, validate_state_commitment_size};
 use hyli_tld::validate_hyli_contract_blobs;
-use hyli_verifiers::native_impl::verify_native_impl;
 use metrics::NodeStateMetrics;
 use ordered_tx_map::OrderedTxMap;
 use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
@@ -16,12 +15,14 @@ use timeouts::Timeouts;
 use tracing::{debug, error, info, trace};
 
 use crate::node_state::hyli_tld::handle_blob_for_hyli_tld;
+use crate::node_state::native_verifiers::verify_native_impl;
 
 mod api;
 pub mod contract_registration;
 mod hyli_tld;
 pub mod metrics;
 pub mod module;
+pub mod native_verifiers;
 mod ordered_tx_map;
 mod timeouts;
 

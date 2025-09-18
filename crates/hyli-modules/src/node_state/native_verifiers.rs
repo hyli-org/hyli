@@ -1,8 +1,52 @@
+use ::secp256k1::*;
 use hyli_crypto::BlstCrypto;
-use hyli_model::verifiers::*;
-use hyli_model::*;
-use secp256k1::{ecdsa::Signature, Message, PublicKey, Secp256k1};
+use sdk::{
+    verifiers::{BlstSignatureBlob, NativeVerifiers, Secp256k1Blob, ShaBlob},
+    *,
+};
 use sha3::Digest;
+
+pub fn verify(
+    tx_hash: TxHash,
+    index: BlobIndex,
+    blobs: &[Blob],
+    verifier: &NativeVerifiers,
+) -> HyliOutput {
+    #[allow(clippy::expect_used, reason = "Logic error in the code")]
+    let blob = blobs.get(index.0).expect("Invalid blob index");
+    let blobs: IndexedBlobs = blobs.iter().cloned().into();
+
+    let (identity, success) = match verify_native_impl(blob, verifier) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::trace!("Native blob verification failed: {:?}", e);
+            (Identity::default(), false)
+        }
+    };
+
+    if success {
+        tracing::debug!("✅ Native blob verified on {tx_hash}:{index}");
+    } else {
+        tracing::debug!("❌ Native blob verification failed on {tx_hash}:{index}.");
+        tracing::error!("Native blob verification failed: {verifier:?}");
+    }
+
+    HyliOutput {
+        version: 1,
+        initial_state: StateCommitment::default(),
+        next_state: StateCommitment::default(),
+        identity,
+        index,
+        tx_blob_count: blobs.len(),
+        blobs,
+        success,
+        tx_hash,
+        tx_ctx: None,
+        state_reads: vec![],
+        onchain_effects: vec![],
+        program_outputs: vec![],
+    }
+}
 
 pub fn verify_native_impl(
     blob: &Blob,
@@ -17,8 +61,8 @@ pub fn verify_native_impl(
             let msg = Signed {
                 msg,
                 signature: ValidatorSignature {
-                    signature: hyli_model::Signature(blst_blob.signature),
-                    validator: hyli_model::ValidatorPublicKey(blst_blob.public_key),
+                    signature: Signature(blst_blob.signature),
+                    validator: ValidatorPublicKey(blst_blob.public_key),
                 },
             };
             Ok((blst_blob.identity, BlstCrypto::verify(&msg)?))
@@ -40,7 +84,7 @@ pub fn verify_native_impl(
                 .map_err(|e| anyhow::anyhow!("Invalid public key: {}", e))?;
 
             // Convert the signature bytes to a secp256k1 Signature
-            let signature = Signature::from_compact(&secp256k1_blob.signature)
+            let signature = ecdsa::Signature::from_compact(&secp256k1_blob.signature)
                 .map_err(|e| anyhow::anyhow!("Invalid signature: {}", e))?;
 
             // Create a message from the data
