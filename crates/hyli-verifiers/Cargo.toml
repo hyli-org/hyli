@@ -16,7 +16,6 @@ anyhow = { workspace = true }
 borsh = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
 hex = { workspace = true }
-sha3 = { workspace = true }
 rand = { version = "0.9" }
 once_cell = { workspace = true, optional = true }
 

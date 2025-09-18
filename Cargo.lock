@@ -5869,7 +5869,6 @@ dependencies = [
  "risc0-zkvm",
  "serde",
  "serde_json",
- "sha3",
  "sonic-rs 0.5.4",
  "sp1-sdk",
  "stwo-prover",
