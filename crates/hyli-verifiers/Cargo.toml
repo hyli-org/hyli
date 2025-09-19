@@ -10,16 +10,13 @@ rust-version = { workspace = true }
 
 [dependencies]
 hyli-model = { workspace = true }
-hyli-crypto = { workspace = true }
 
 serde_json = { workspace = true, optional = true }
 anyhow = { workspace = true }
 borsh = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
 hex = { workspace = true }
-sha3 = { workspace = true }
 rand = { version = "0.9" }
-secp256k1 = { workspace = true, features = ["rand"] }
 once_cell = { workspace = true, optional = true }
 
 cairo-m-prover = { git = "https://github.com/kkrt-labs/cairo-m", optional = true }

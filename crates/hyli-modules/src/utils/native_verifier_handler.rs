@@ -1,7 +1,8 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::transaction_builder::TxExecutorHandler;
-use hyli_verifiers::native::verify;
 use sdk::{verifiers::NativeVerifiers, StateCommitment};
+
+use crate::node_state::native_verifiers::verify;
 
 /// Convenience utility for verifying blobs for native verifiers.
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
