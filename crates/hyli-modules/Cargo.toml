@@ -12,7 +12,6 @@ rust-version = { workspace = true }
 sdk = { workspace = true, features = ["full-model"] }
 client-sdk = { workspace = true, features = ["rest", "indexer"] }
 hyli-net = { workspace = true }
-hyli-verifiers = { workspace = true }
 
 config = { workspace = true, default-features = false, features = ["toml"] }
 sha3 = { workspace = true }
@@ -54,6 +53,10 @@ opentelemetry = { workspace = true }
 
 test-log = { workspace = true, features = ["color", "trace"], optional = true }
 indexmap = { workspace = true }
+
+# Native verifiers
+hyli-crypto = { workspace = true }
+secp256k1 = { workspace = true, features = ["rand"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

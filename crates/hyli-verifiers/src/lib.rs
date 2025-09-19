@@ -1,5 +1,3 @@
-#![warn(unused_crate_dependencies)]
-
 use std::fmt::Write;
 use std::io::Read;
 
@@ -11,7 +9,6 @@ use rand::Rng;
 use sp1_sdk::{ProverClient, SP1ProofWithPublicValues, SP1VerifyingKey};
 use tracing::debug;
 
-pub mod native_impl;
 pub mod noir_utils;
 
 pub fn verify(
@@ -28,17 +25,6 @@ pub fn verify(
         #[cfg(feature = "sp1")]
         hyli_model::verifiers::SP1_4 => sp1_4::verify(proof, program_id),
         _ => Err(anyhow::anyhow!("{} verifier not implemented yet", verifier)),
-    }
-}
-
-#[allow(unused_variables)]
-pub fn validate_program_id(verifier: &Verifier, program_id: &ProgramId) -> Result<(), Error> {
-    match verifier.0.as_str() {
-        #[cfg(feature = "risc0")]
-        hyli_model::verifiers::RISC0_1 => risc0_1::validate_program_id(program_id),
-        #[cfg(feature = "sp1")]
-        hyli_model::verifiers::SP1_4 => sp1_4::validate_program_id(program_id),
-        _ => Ok(()),
     }
 }
 
@@ -137,12 +123,6 @@ pub mod risc0_1 {
         tracing::info!("✅ Risc0 proof verified.");
 
         Ok(receipt.journal)
-    }
-
-    pub fn validate_program_id(program_id: &ProgramId) -> Result<(), Error> {
-        std::convert::TryInto::<risc0_zkvm::sha::Digest>::try_into(program_id.0.as_slice())
-            .map_err(|e| anyhow::anyhow!("Invalid Risc0 image ID: {}", e))?;
-        Ok(())
     }
 }
 
@@ -277,62 +257,6 @@ pub mod sp1_4 {
 
         Ok(hyli_outputs)
     }
-
-    pub fn validate_program_id(program_id: &ProgramId) -> Result<(), Error> {
-        serde_json::from_slice::<SP1VerifyingKey>(program_id.0.as_slice())
-            .map_err(|e| anyhow::anyhow!("Invalid SP1 image ID: {}", e))?;
-        Ok(())
-    }
-}
-
-pub mod native {
-    use super::*;
-    use hyli_model::{
-        verifiers::NativeVerifiers, Blob, BlobIndex, Identity, IndexedBlobs, StateCommitment,
-        TxHash,
-    };
-
-    pub fn verify(
-        tx_hash: TxHash,
-        index: BlobIndex,
-        blobs: &[Blob],
-        verifier: &NativeVerifiers,
-    ) -> HyliOutput {
-        #[allow(clippy::expect_used, reason = "Logic error in the code")]
-        let blob = blobs.get(index.0).expect("Invalid blob index");
-        let blobs: IndexedBlobs = blobs.iter().cloned().into();
-
-        let (identity, success) = match crate::native_impl::verify_native_impl(blob, verifier) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::trace!("Native blob verification failed: {:?}", e);
-                (Identity::default(), false)
-            }
-        };
-
-        if success {
-            tracing::debug!("✅ Native blob verified on {tx_hash}:{index}");
-        } else {
-            tracing::debug!("❌ Native blob verification failed on {tx_hash}:{index}.");
-            tracing::error!("Native blob verification failed: {verifier:?}");
-        }
-
-        HyliOutput {
-            version: 1,
-            initial_state: StateCommitment::default(),
-            next_state: StateCommitment::default(),
-            identity,
-            index,
-            tx_blob_count: blobs.len(),
-            blobs,
-            success,
-            tx_hash,
-            tx_ctx: None,
-            state_reads: vec![],
-            onchain_effects: vec![],
-            program_outputs: vec![],
-        }
-    }
 }
 
 #[cfg(test)]
@@ -345,8 +269,6 @@ mod tests {
     };
 
     use super::noir::verify as noir_proof_verifier;
-    #[cfg(feature = "risc0")]
-    use super::risc0_1::validate_program_id as validate_risc0_program_id;
 
     fn load_file_as_bytes(path: &str) -> Vec<u8> {
         let mut file = File::open(path).expect("Failed to open file");
@@ -430,15 +352,5 @@ mod tests {
             }
             Err(e) => panic!("Noir verification failed: {e:?}"),
         }
-    }
-
-    #[test]
-    #[cfg(feature = "risc0")]
-    fn test_check_risc0_program_id() {
-        let valid_program_id = ProgramId(vec![0; 32]); // Assuming a valid 32-byte ID
-        let invalid_program_id = ProgramId(vec![0; 31]); // Invalid length
-
-        assert!(validate_risc0_program_id(&valid_program_id).is_ok());
-        assert!(validate_risc0_program_id(&invalid_program_id).is_err());
     }
 }

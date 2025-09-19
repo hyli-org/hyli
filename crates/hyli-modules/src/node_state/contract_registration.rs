@@ -1,7 +1,5 @@
 use anyhow::{bail, Result};
-use sdk::{ContractName, ProgramId, StateCommitment, Verifier};
-
-use hyli_verifiers::validate_program_id;
+use sdk::{verifiers::validate_program_id, ContractName, ProgramId, StateCommitment, Verifier};
 
 /// Check that the contract name is:
 /// - a valid subdomain of the owner contract name.

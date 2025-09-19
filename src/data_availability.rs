@@ -693,7 +693,7 @@ impl DataAvailability {
 
         trace!("Block {} {}: {:#?}", block.height(), block.hashed(), block);
 
-        if block.height().0 % 10 == 0 || block.has_txs() {
+        if block.height().0.is_multiple_of(10) || block.has_txs() {
             info!(
                 "new block #{} 0x{} with {} txs",
                 block.height(),

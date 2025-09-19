@@ -62,7 +62,7 @@ impl sqlx::Encode<'_, sqlx::Postgres> for ConsensusProposalHash {
         buf: &mut sqlx::postgres::PgArgumentBuffer,
     ) -> std::result::Result<
         sqlx::encode::IsNull,
-        std::boxed::Box<(dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static)>,
+        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
         <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
     }
@@ -74,7 +74,7 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for ConsensusProposalHash {
         value: sqlx::postgres::PgValueRef<'r>,
     ) -> std::result::Result<
         ConsensusProposalHash,
-        std::boxed::Box<(dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static)>,
+        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
         let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
         Ok(ConsensusProposalHash(inner))

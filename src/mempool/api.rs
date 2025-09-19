@@ -8,8 +8,8 @@ use axum::{
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_contract_sdk::TxHash;
 use hyli_model::{
-    api::APIRegisterContract, ContractName, ProgramId, RegisterContractAction, StructuredBlobData,
-    Verifier,
+    api::APIRegisterContract, verifiers::validate_program_id, ContractName, ProgramId,
+    RegisterContractAction, StructuredBlobData, Verifier,
 };
 use hyli_modules::{
     bus::{BusMessage, SharedMessageBus},
@@ -246,6 +246,9 @@ pub async fn register_contract(
         &payload.state_commitment,
     )
     .map_err(|err| AppError(StatusCode::BAD_REQUEST, anyhow!(err)))?;
+
+    validate_program_id(&payload.verifier, &payload.program_id)
+        .map_err(|err| AppError(StatusCode::BAD_REQUEST, anyhow!(err)))?;
 
     let tx = BlobTransaction::from(payload);
 
