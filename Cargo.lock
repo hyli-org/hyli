@@ -2266,7 +2266,7 @@ dependencies = [
  "bitflags 2.9.4",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.11.0",
  "lazy_static",
  "lazycell",
  "log",
@@ -2289,7 +2289,7 @@ dependencies = [
  "bitflags 2.9.4",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.11.0",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2723,7 +2723,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-common"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
+source = "git+https://github.com/kkrt-labs/cairo-m#b6f5a405a083aa6cc65ab3b5d257c523182c8ff8"
 dependencies = [
  "anyhow",
  "num-traits",
@@ -2738,7 +2738,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
+source = "git+https://github.com/kkrt-labs/cairo-m#b6f5a405a083aa6cc65ab3b5d257c523182c8ff8"
 dependencies = [
  "anyhow",
  "ariadne",
@@ -2765,7 +2765,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler-codegen"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
+source = "git+https://github.com/kkrt-labs/cairo-m#b6f5a405a083aa6cc65ab3b5d257c523182c8ff8"
 dependencies = [
  "cairo-m-common",
  "cairo-m-compiler-diagnostics",
@@ -2790,7 +2790,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler-diagnostics"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
+source = "git+https://github.com/kkrt-labs/cairo-m#b6f5a405a083aa6cc65ab3b5d257c523182c8ff8"
 dependencies = [
  "ariadne",
  "chumsky",
@@ -2799,7 +2799,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler-mir"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
+source = "git+https://github.com/kkrt-labs/cairo-m#b6f5a405a083aa6cc65ab3b5d257c523182c8ff8"
 dependencies = [
  "cairo-m-compiler-diagnostics",
  "cairo-m-compiler-parser",
@@ -2816,7 +2816,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler-parser"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
+source = "git+https://github.com/kkrt-labs/cairo-m#b6f5a405a083aa6cc65ab3b5d257c523182c8ff8"
 dependencies = [
  "ariadne",
  "cairo-m-compiler-diagnostics",
@@ -2835,7 +2835,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-compiler-semantic"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
+source = "git+https://github.com/kkrt-labs/cairo-m#b6f5a405a083aa6cc65ab3b5d257c523182c8ff8"
 dependencies = [
  "anyhow",
  "ariadne",
@@ -2861,7 +2861,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-project"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
+source = "git+https://github.com/kkrt-labs/cairo-m#b6f5a405a083aa6cc65ab3b5d257c523182c8ff8"
 dependencies = [
  "anyhow",
  "ignore",
@@ -2875,7 +2875,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-prover"
 version = "0.1.1"
-source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
+source = "git+https://github.com/kkrt-labs/cairo-m#b6f5a405a083aa6cc65ab3b5d257c523182c8ff8"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2897,13 +2897,14 @@ dependencies = [
  "stwo-prover",
  "thiserror 2.0.16",
  "tracing",
+ "tracing-subscriber 0.3.20",
  "zkhash 0.2.0 (git+https://github.com/AntoineFONDEUR/poseidon2?branch=poseidon2-M31)",
 ]
 
 [[package]]
 name = "cairo-m-runner"
 version = "0.1.1"
-source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
+source = "git+https://github.com/kkrt-labs/cairo-m#b6f5a405a083aa6cc65ab3b5d257c523182c8ff8"
 dependencies = [
  "anyhow",
  "cairo-m-common",
@@ -2925,7 +2926,7 @@ dependencies = [
 [[package]]
 name = "cairo-m-test-utils"
 version = "0.1.0"
-source = "git+https://github.com/kkrt-labs/cairo-m#79940200219783e0598b6573617e9feb32184221"
+source = "git+https://github.com/kkrt-labs/cairo-m#b6f5a405a083aa6cc65ab3b5d257c523182c8ff8"
 dependencies = [
  "once_cell",
  "pulldown-cmark",
@@ -6657,7 +6658,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "07033963ba89ebaf1584d767badaa2e8fcec21aedea6b8c0346d487d49c28667"
 dependencies = [
  "cfg-if 1.0.3",
- "windows-targets 0.53.3",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -13072,7 +13073,7 @@ version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0978bf7171b3d90bac376700cb56d606feb40f251a475a5d6634613564460b22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
