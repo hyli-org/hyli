@@ -28,9 +28,6 @@ pub async fn execute(testnet: bool, watch: bool, extra_args: Vec<String>) -> Hyl
         )));
     }
 
-    // Build the project first
-    build_project(&config).await?;
-
     // Start the backend
     if watch {
         run_with_watch(testnet, &config).await?;
@@ -51,11 +48,6 @@ fn validate_project_directory() -> HylixResult<()> {
     }
 
     Ok(())
-}
-
-/// Build the project
-async fn build_project(_config: &crate::config::HylixConfig) -> HylixResult<()> {
-    crate::commands::build::execute(false, false).await
 }
 
 /// Run the backend service
