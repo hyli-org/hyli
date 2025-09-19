@@ -497,7 +497,7 @@ where
             "Handling processed block {}",
             block_height
         );
-        if block_height.0 % 1000 == 0 {
+        if block_height.0.is_multiple_of(1000) {
             info!(
                 cn =% self.ctx.contract_name,
                 block_height =% block_height,
