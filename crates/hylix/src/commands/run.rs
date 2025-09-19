@@ -194,6 +194,13 @@ async fn run_with_watch(testnet: bool, config: &crate::config::HylixConfig) -> H
             "HYLI_DA_READ_FROM",
             format!("localhost:{}", config.devnet.da_port),
         )
+        .env(
+            "HYLI_DATABASE_URL",
+            format!(
+                "postgresql://postgres:postgres@localhost:{}",
+                config.devnet.postgres_port
+            ),
+        )
         .args(&args)
         .spawn()
         .map_err(|e| HylixError::backend(format!("Failed to start backend with watch: {}", e)))?;

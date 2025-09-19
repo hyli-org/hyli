@@ -1067,7 +1067,7 @@ fn print_devnet_env_vars(config: &HylixConfig) -> HylixResult<()> {
 
     // Database endpoint
     println!(
-        "export HYLI_DATABASE_URL=\"postgresql://postgres:postgres@localhost:{}/hyli_indexer\"",
+        "export HYLI_DATABASE_URL=\"postgresql://postgres:postgres@localhost:{}\"",
         devnet.postgres_port
     );
 
