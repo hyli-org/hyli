@@ -48,38 +48,47 @@ impl From<NativeVerifiers> for Verifier {
     }
 }
 
-// Reconstruct the SP1 key structure partially so we can validate without needing the dependency
-#[derive(serde::Deserialize)]
-pub struct SP1VK {
-    pub vk: SP1StarkVK,
-}
-#[derive(serde::Deserialize)]
-pub struct SP1StarkVK {
-    pub commit: serde_json::Value,
-    pub pc_start: serde_json::Value,
-    pub initial_global_cumulative_sum: serde_json::Value,
-    pub chip_information: serde_json::Value,
-    pub chip_ordering: serde_json::Value,
-}
+#[cfg(feature = "full")]
+mod program_id {
+    use super::*;
+    // Reconstruct the SP1 key structure partially so we can validate without needing the dependency
+    #[derive(serde::Deserialize)]
+    #[allow(unused)]
+    struct SP1VK {
+        vk: SP1StarkVK,
+    }
+    #[derive(serde::Deserialize)]
+    #[allow(unused)]
+    struct SP1StarkVK {
+        commit: serde_json::Value,
+        pc_start: serde_json::Value,
+        initial_global_cumulative_sum: serde_json::Value,
+        chip_information: serde_json::Value,
+        chip_ordering: serde_json::Value,
+    }
 
-pub fn validate_program_id(
-    verifier: &Verifier,
-    program_id: &ProgramId,
-) -> Result<(), anyhow::Error> {
-    match verifier.0.as_str() {
-        RISC0_1 => (!program_id.0.is_empty() && program_id.0.len() <= 32)
-            .then_some(())
-            .ok_or_else(|| {
-                anyhow::anyhow!("Invalid Risc0 image ID: length must be between 1 and 32 bytes")
-            }),
-        SP1_4 => {
-            serde_json::from_slice::<SP1VK>(program_id.0.as_slice())
-                .map_err(|e| anyhow::anyhow!("Invalid SP1 image ID: {}", e))?;
-            Ok(())
+    pub fn validate_program_id(
+        verifier: &Verifier,
+        program_id: &ProgramId,
+    ) -> Result<(), anyhow::Error> {
+        match verifier.0.as_str() {
+            RISC0_1 => (!program_id.0.is_empty() && program_id.0.len() <= 32)
+                .then_some(())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Invalid Risc0 image ID: length must be between 1 and 32 bytes")
+                }),
+            SP1_4 => {
+                serde_json::from_slice::<SP1VK>(program_id.0.as_slice())
+                    .map_err(|e| anyhow::anyhow!("Invalid SP1 image ID: {}", e))?;
+                Ok(())
+            }
+            _ => Ok(()),
         }
-        _ => Ok(()),
     }
 }
+
+#[cfg(feature = "full")]
+pub use program_id::validate_program_id;
 
 /// Format of the BlobData for native contract "blst"
 #[derive(Debug, borsh::BorshSerialize, borsh::BorshDeserialize)]
