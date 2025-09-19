@@ -508,7 +508,7 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
             let now = get_current_timestamp_ms();
 
             // Create a new user
-            if now % 5 == 0 || users.len() < 2 {
+            if now.is_multiple_of(5) || users.len() < 2 {
                 let ident = Identity(format!("{}@{}", now, random_hydentity_contract.0));
                 users.push(now);
 

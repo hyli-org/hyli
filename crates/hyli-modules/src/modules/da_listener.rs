@@ -135,7 +135,7 @@ impl DAListener {
                 );
             }
             std::cmp::Ordering::Equal => {
-                if block_height.0 % 1000 == 0 {
+                if block_height.0.is_multiple_of(1000) {
                     info!(
                         "📦 Processing block: {} {}",
                         block.consensus_proposal.slot,
