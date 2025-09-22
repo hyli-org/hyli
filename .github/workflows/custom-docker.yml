@@ -5,6 +5,7 @@ on:
     paths: [".github/docker/Dockerfile.base"]
     branches:
       - main
+  workflow_dispatch: {}
 
 jobs:
   build_and_push:
@@ -35,6 +36,13 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ matrix.mode.images }}
+          tags: |
+            type=sha
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=ref,event=branch
+            type=ref,event=pr
 
       # Will produces tags given this table :
       #
