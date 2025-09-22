@@ -2,11 +2,19 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::logging::log_info;
+use crate::logging::{log_error, log_info};
+
+/// Default configuration version
+fn default_config_version() -> String {
+    "0.6.0".to_string()
+}
 
 /// Hylix configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HylixConfig {
+    /// Configuration schema version
+    #[serde(default = "default_config_version")]
+    pub version: String,
     /// Default backend type for new projects
     pub default_backend: BackendType,
     /// Default scaffold repository URL
@@ -145,6 +153,7 @@ pub struct FundConfig {
 impl Default for HylixConfig {
     fn default() -> Self {
         Self {
+            version: default_config_version(),
             default_backend: BackendType::Risc0,
             scaffold_repo: "https://github.com/hyli-org/app-scaffold".to_string(),
             devnet: DevnetConfig::default(),
@@ -201,7 +210,44 @@ impl HylixConfig {
 
         if config_path.exists() {
             let content = std::fs::read_to_string(&config_path)?;
-            let config: Self = toml::from_str(&content)
+
+            // Parse as TOML value to check version
+            let mut toml_value: toml::Value = toml::from_str(&content)
+                .map_err(crate::error::HylixError::Toml)
+                .with_context(|| {
+                    format!("Failed to parse TOML from file {}", config_path.display())
+                })?;
+
+            // Check version and migrate if needed
+            let file_version = toml_value
+                .get("version")
+                .and_then(|v| v.as_str())
+                .unwrap_or("legacy")
+                .to_string();
+
+            let current_version = default_config_version();
+
+            if file_version != current_version {
+                log_info(&format!(
+                    "Upgrading configuration from version '{}' to '{}'",
+                    file_version, current_version
+                ));
+
+                // Backup the old config before migration
+                Self::backup()?;
+
+                // Migrate the TOML value
+                toml_value = Self::migrate_toml(toml_value, file_version)?;
+
+                // Write the migrated config back to file
+                let migrated_content = toml::to_string_pretty(&toml_value)?;
+                std::fs::write(&config_path, migrated_content)?;
+
+                log_info("Configuration successfully upgraded and saved");
+            }
+
+            // Now parse the (possibly migrated) config
+            let config: Self = toml::from_str(&toml::to_string(&toml_value)?)
                 .map_err(crate::error::HylixError::Toml)
                 .with_context(|| {
                     format!(
@@ -209,6 +255,7 @@ impl HylixConfig {
                         config_path.display()
                     )
                 })?;
+
             Ok(config)
         } else {
             let config = Self::default();
@@ -219,6 +266,67 @@ impl HylixConfig {
             ));
             Ok(config)
         }
+    }
+
+    /// Migrate TOML configuration from previous versions
+    fn migrate_toml(
+        mut toml_value: toml::Value,
+        file_version: String,
+    ) -> crate::error::HylixResult<toml::Value> {
+        let current_version = default_config_version();
+
+        // Migration from legacy (no version field) to v1
+        match file_version.as_str() {
+            "legacy" => {
+                log_info("Migrating from legacy configuration");
+
+                if let Some(table) = toml_value.as_table_mut() {
+                    // Add version field
+                    table.insert(
+                        "version".to_string(),
+                        toml::Value::String(current_version.clone()),
+                    );
+
+                    // Add node_rust_log field if devnet section exists
+                    if let Some(devnet) = table.get_mut("devnet") {
+                        if let Some(devnet_table) = devnet.as_table_mut() {
+                            if !devnet_table.contains_key("node_rust_log") {
+                                devnet_table.insert(
+                                    "node_rust_log".to_string(),
+                                    toml::Value::String("info".to_string()),
+                                );
+                            }
+                        }
+                    } else {
+                        log_error("Devnet section not found in configuration");
+                        log_info("Failed to migrate configuration. Please check your configuration file.");
+                        log_info(&format!(
+                            "You can reset to default configuration by running `{}`",
+                            console::style("hy config reset").bold().green()
+                        ));
+                        return Err(crate::error::HylixError::config(
+                            "Devnet section not found in configuration".to_string(),
+                        ));
+                    }
+                }
+            }
+            _ => {
+                log_error(&format!(
+                    "Unsupported configuration version: {}",
+                    file_version
+                ));
+                log_info("Failed to migrate configuration. Please check your configuration file.");
+                log_info(&format!(
+                    "You can reset to default configuration by running `{}`",
+                    console::style("hy config reset").bold().green()
+                ));
+                return Err(crate::error::HylixError::config(
+                    "Unsupported configuration version".to_string(),
+                ));
+            }
+        }
+
+        Ok(toml_value)
     }
 
     /// Save configuration to file
