@@ -522,6 +522,8 @@ async fn start_local_node(
         "HYLI_RUN_INDEXER=false",
         "-e",
         "HYLI_RUN_EXPLORER=false",
+        "-e",
+        &format!("RUST_LOG={}", context.config.devnet.node_rust_log),
     ]
     .into_iter()
     .map(String::from)
@@ -779,6 +781,8 @@ async fn start_indexer(mpb: &indicatif::MultiProgress, context: &DevnetContext) 
         "HYLI_DATABASE_URL=postgresql://postgres:postgres@hyli-devnet-postgres:5432/hyli_indexer",
         "-e",
         "HYLI_DA_READ_FROM=hyli-devnet-node:4141",
+        "-e",
+        &format!("RUST_LOG={}", context.config.devnet.node_rust_log),
         "-p",
         &format!("{}:4321", context.config.devnet.indexer_port),
     ]

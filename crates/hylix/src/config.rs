@@ -61,6 +61,8 @@ pub struct DevnetConfig {
     pub node_port: u16,
     /// Default port for the DA server
     pub da_port: u16,
+    /// Default value for node'sRUST_LOG environment variable
+    pub node_rust_log: String,
     /// Default port for the wallet app
     pub wallet_api_port: u16,
     /// Default port for the wallet WS
@@ -161,6 +163,7 @@ impl Default for DevnetConfig {
             wallet_server_image: "ghcr.io/hyli-org/wallet/wallet-server:main".to_string(),
             wallet_ui_image: "ghcr.io/hyli-org/wallet/wallet-ui:main".to_string(),
             da_port: 4141,
+            node_rust_log: "info".to_string(),
             node_port: 4321,
             indexer_port: 4322,
             postgres_port: 5432,
