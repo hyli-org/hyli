@@ -196,6 +196,9 @@ fn set_config_value(config: &mut HylixConfig, key: &str, value: &str) -> HylixRe
         "devnet.node_image" => {
             config.devnet.node_image = value.to_string();
         }
+        "devnet.node_rust_log" => {
+            config.devnet.node_rust_log = value.to_string();
+        }
         "devnet.wallet_server_image" => {
             config.devnet.wallet_server_image = value.to_string();
         }

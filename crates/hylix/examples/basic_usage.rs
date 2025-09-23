@@ -19,6 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             wallet_ui_image: "ghcr.io/hyli-org/wallet/wallet-ui:main".to_string(),
             node_port: 8080,
             da_port: 4141,
+            node_rust_log: "info".to_string(),
             wallet_api_port: 3000,
             wallet_ws_port: 8081,
             wallet_ui_port: 8080,
