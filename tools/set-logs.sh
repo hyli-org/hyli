@@ -24,13 +24,15 @@ hyli_modules=(
 # Fonction pour extraire le niveau de log d'un module depuis RUST_LOG
 get_level_for_module() {
   module=$1
-  # Recherche du niveau de log pour le module dans RUST_LOG
-  # echo "$RUST_LOG" | grep -oP "(?<=^|\s)$module=\K[^,]*"
-  echo "$RUST_LOG" | sed -n "s/.*\b$module=\([^,]*\).*/\1/p"
+  echo "$RUST_LOG" | sed -n "s/.*\(^\|,\)$module=\([^,]*\).*/\2/p"
 }
 
 get_global_level() {
-  echo "$RUST_LOG" | sed 's/\([^,]*\).*/\1/'
+  if [[ "$RUST_LOG" == *=* ]]; then
+    echo "info"
+  else
+    echo "$RUST_LOG"
+  fi
 }
 
 # Fonction pour afficher la configuration actuelle de RUST_LOG
@@ -68,9 +70,9 @@ add_module() {
     new_level=$(echo -e "trace\ndebug\ninfo\nwarn\nerror\nfatal" | fzf --prompt="Select log level (current: $current_level): ")
 
     if [[ -n "$new_level" ]]; then
-      # Modifier la variable RUST_LOG avec le nouveau niveau pour ce module
+      escaped_module=$(printf '%s\n' "$module_name" | sed 's/[][\/.^$*]/\\&/g')
       if echo "$RUST_LOG" | grep -q "$module_name"; then
-        RUST_LOG=$(echo "$RUST_LOG" | sed "s|$module_name=[^,]*|$module_name=$new_level|")
+        RUST_LOG=$(echo "$RUST_LOG" | sed "s|$escaped_module=[^,]*|$module_name=$new_level|")
       else
         RUST_LOG="$RUST_LOG,$module_name=$new_level"
       fi
