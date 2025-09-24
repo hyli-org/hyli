@@ -945,9 +945,27 @@ async fn pull_docker_image(mpb: &indicatif::MultiProgress, image: &str) -> Hylix
         execute_command_with_progress(mpb, "docker pull", "docker", &["pull", image], None).await?;
 
     if !success {
-        return Err(HylixError::process(
-            "Failed to pull Docker image".to_string(),
+        // Check if the image already exists locally
+        pb.set_message(format!(
+            "Failed to pull image {}, checking if it exists locally...",
+            image
         ));
+
+        let success = execute_command_with_progress(
+            mpb,
+            "docker images",
+            "docker",
+            &["images", "-q", image],
+            None,
+        )
+        .await?;
+
+        if !success {
+            return Err(HylixError::process(
+                "Failed to pull Docker image and it does not exist locally".to_string(),
+            ));
+        }
+        log_info(&format!("Using existing local image: {}", image));
     }
 
     mpb.clear()
