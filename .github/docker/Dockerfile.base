@@ -1,17 +1,31 @@
-FROM --platform=linux/amd64 rust:slim-bookworm AS amd64-tools
-RUN apt-get update && apt-get install -y --no-install-recommends curl bash
-RUN curl -L https://risczero.com/install | bash
-RUN /root/.risc0/bin/rzup install r0vm 2.1.0
+# Use precompiled r0vm, which is faster but not available everywhere
+ARG WITH_R0VM=true
 
-# Barretenberg CLI
+FROM rust:slim-bookworm as base-tools
+RUN apt-get update && apt-get install -y --no-install-recommends curl bash
+
+RUN if [ "${WITH_R0VM}" = "true" ]; then \
+        curl -L https://risczero.com/install | bash && \
+        /root/.risc0/bin/rzup install r0vm 2.3.0; \
+    else \
+        touch /usr/local/cargo/bin/r0vm; \
+    fi
+
+# Barretenberg CLI for noir verifier
 RUN curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/refs/heads/master/barretenberg/bbup/install | bash \
  && install -m 755 /root/.bb/bbup /usr/local/bin/bbup \
  && bbup -v 0.82.2
 
 FROM ubuntu:noble
-COPY --from=amd64-tools /usr/local/cargo/bin/r0vm /usr/local/bin/r0vm
-COPY --from=amd64-tools /usr/local/bin/bbup        /usr/local/bin/bbup
-COPY --from=amd64-tools /root/.bb                  /root/.bb
+
+COPY --from=base-tools /usr/local/cargo/bin/r0vm /usr/local/bin/r0vm
+COPY --from=base-tools /usr/local/bin/bbup        /usr/local/bin/bbup
+COPY --from=base-tools /root/.bb                  /root/.bb
+
+RUN if [ "${WITH_R0VM}" != "true" ]; then \
+        rm /usr/local/bin/r0vm; \
+    fi
+
 ENV PATH="/root/.bb:$PATH" 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl libssl-dev ca-certificates libc6 binutils \
