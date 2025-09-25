@@ -25,7 +25,7 @@ rand = { version = "0.9" }
 rand_seeder = { workspace = true }
 
 [dev-dependencies]
-risc0-zkvm = { workspace = true, features = ['std', 'prove'] }
+risc0-zkvm = { workspace = true, features = ['std'] }
 
 [features]
 default = []
