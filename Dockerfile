@@ -1,6 +1,7 @@
 # Need full image for openSSL build
 ARG DEP_IMAGE=rust:bookworm
-ARG BASE_IMAGE=ubuntu:noble
+# Preloaded with bb and risc0 (on x86)
+ARG BASE_IMAGE=ghcr.io/hyli-org/base:main
 ARG ENABLE_CAIRO_M=false
 
 FROM ${DEP_IMAGE} AS builder
