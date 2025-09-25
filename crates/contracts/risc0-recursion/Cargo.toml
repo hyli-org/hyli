@@ -37,7 +37,7 @@ hex = { workspace = true }
 hydentity = { workspace = true, features = ["client"] }
 hyli-contracts = { path = ".." }
 tokio = { workspace = true }
-risc0-zkvm = { workspace = true, features = ['std', 'prove'] }
+risc0-zkvm = { workspace = true, features = ['std'] }
 tempfile = { workspace = true }
 test-log = { workspace = true, features = ["color", "trace"] }
 
