@@ -334,6 +334,7 @@ async fn common_main(
                 contract_name: "hyllar".into(),
                 data_directory: config.data_directory.clone(),
                 api: build_api_ctx.clone(),
+                default_state: None,
             })
             .await?;
         handler
@@ -341,6 +342,7 @@ async fn common_main(
                 contract_name: "hyllar2".into(),
                 data_directory: config.data_directory.clone(),
                 api: build_api_ctx.clone(),
+                default_state: None,
             })
             .await?;
         handler
@@ -348,29 +350,21 @@ async fn common_main(
                 contract_name: "hydentity".into(),
                 data_directory: config.data_directory.clone(),
                 api: build_api_ctx.clone(),
+                default_state: None,
             })
             .await?;
-        handler
-            .build_module::<ContractStateIndexer<AccountSMT>>(ContractStateIndexerCtx {
-                contract_name: "oranj".into(),
-                data_directory: config.data_directory.clone(),
-                api: build_api_ctx.clone(),
-            })
-            .await?;
-        handler
-            .build_module::<ContractStateIndexer<AccountSMT>>(ContractStateIndexerCtx {
-                contract_name: "oxygen".into(),
-                data_directory: config.data_directory.clone(),
-                api: build_api_ctx.clone(),
-            })
-            .await?;
-        handler
-            .build_module::<ContractStateIndexer<AccountSMT>>(ContractStateIndexerCtx {
-                contract_name: "vitamin".into(),
-                data_directory: config.data_directory.clone(),
-                api: build_api_ctx.clone(),
-            })
-            .await?;
+
+        for smt_contract in ["oranj", "oxygen", "vitamin"] {
+            handler
+                .build_module::<ContractStateIndexer<AccountSMT>>(ContractStateIndexerCtx {
+                    contract_name: (*smt_contract).into(),
+                    data_directory: config.data_directory.clone(),
+                    api: build_api_ctx.clone(),
+                    default_state: None,
+                })
+                .await?;
+        }
+        
         handler
             .build_module::<Indexer>((config.clone(), build_api_ctx.clone()))
             .await?;

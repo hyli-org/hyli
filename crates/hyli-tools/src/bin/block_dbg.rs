@@ -214,6 +214,7 @@ async fn main() -> Result<()> {
                 contract_name: "oranj".into(),
                 data_directory: dump_folder.clone(),
                 api: build_api_ctx.clone(),
+                default_state: None,
             })
             .await?;
 
