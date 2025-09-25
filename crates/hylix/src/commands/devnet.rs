@@ -951,16 +951,12 @@ async fn pull_docker_image(mpb: &indicatif::MultiProgress, image: &str) -> Hylix
             image
         ));
 
-        let success = execute_command_with_progress(
-            mpb,
-            "docker images",
-            "docker",
-            &["images", "-q", image],
-            None,
-        )
-        .await?;
+        let output = tokio::process::Command::new("docker")
+            .args(["images", "-q", image])
+            .output()
+            .await?;
 
-        if !success {
+        if !output.status.success() || output.stdout.is_empty() {
             return Err(HylixError::process(
                 "Failed to pull Docker image and it does not exist locally".to_string(),
             ));
