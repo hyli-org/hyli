@@ -1,6 +1,6 @@
 [package]
 name = "hylix"
-version = "0.6.1"
+version = "0.6.2"
 edition = "2021"
 authors = ["Hyli Team"]
 description = "Build, test & deploy verifiable apps on Hyli"
@@ -57,4 +57,3 @@ anyhow = { workspace = true }
 thiserror = "2.0"
 indicatif = "0.18"
 console = "0.16"
-
