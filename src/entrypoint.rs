@@ -364,7 +364,7 @@ async fn common_main(
                 })
                 .await?;
         }
-        
+
         handler
             .build_module::<Indexer>((config.clone(), build_api_ctx.clone()))
             .await?;
