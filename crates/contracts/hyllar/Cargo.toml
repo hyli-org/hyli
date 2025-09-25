@@ -39,7 +39,7 @@ client-sdk = { workspace = true, features = [
 hyli-hyllar = { path = ".", features = ["client"] }
 
 tokio = { workspace = true, features = ["full", "tracing"] }
-risc0-zkvm = { workspace = true, features = ['std', 'prove'] }
+risc0-zkvm = { workspace = true, features = ['std'] }
 mockall = { workspace = true }
 
 [features]

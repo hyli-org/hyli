@@ -55,7 +55,7 @@ jobs:
           tar xzvf cargo-risczero-x86_64-unknown-linux-gnu.tgz
           echo "$PWD" >> $GITHUB_PATH
       - run: cargo nextest run --cargo-profile ci --workspace --tests
-      - run: cargo test --doc --workspace
+      - run: cargo test --doc --workspace --profile ci
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
         uses: codecov/test-results-action@v1
