@@ -4,15 +4,11 @@ use hyli_model::{
     ProofData, ProofTransaction, RegisterContractAction, RegisterContractEffect, StateCommitment,
 };
 use hyli_modules::node_state::test::make_hyli_output_with_state;
-use testcontainers_modules::{
-    postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ImageExt},
-};
 use tracing::info;
 
 use crate::{
     model::{Blob, BlobData},
-    utils::integration_test::{NodeIntegrationCtx, NodeIntegrationCtxBuilder},
+    utils::integration_test::NodeIntegrationCtxBuilder,
 };
 
 use anyhow::Result;
@@ -40,26 +36,9 @@ fn make_register_blob_action(
 
 #[test_log::test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
 async fn test_full_settlement_flow() -> Result<()> {
-    // Start postgres DB with default settings for the indexer.
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .with_cmd(["postgres", "-c", "log_statement=all"])
-        .start()
-        .await
-        .unwrap();
-
-    let mut builder = NodeIntegrationCtxBuilder::new().await;
+    let builder = NodeIntegrationCtxBuilder::new_with_indexer().await;
     let rest_server_port = builder.conf.rest_server_port;
-    builder.conf.run_indexer = true;
-    builder.conf.run_explorer = true;
-    builder.conf.indexer.query_buffer_size = 10;
-    builder.conf.database_url = format!(
-        "postgres://postgres:postgres@localhost:{}/postgres",
-        pg.get_host_port_ipv4(5432).await.unwrap()
-    );
-
     let mut hyli_node = builder.build().await?;
-
     hyli_node.wait_for_genesis_event().await?;
     let client = NodeApiHttpClient::new(format!("http://localhost:{rest_server_port}/")).unwrap();
     hyli_node.wait_for_rest_api(&client).await?;
@@ -175,35 +154,13 @@ async fn test_full_settlement_flow() -> Result<()> {
     Ok(())
 }
 
-async fn build_hyli_node() -> Result<(String, NodeIntegrationCtx)> {
-    // Start postgres DB with default settings for the indexer.
-    let pg = Postgres::default()
-        .with_tag("17-alpine")
-        .with_cmd(["postgres", "-c", "log_statement=all"])
-        .start()
-        .await
-        .unwrap();
-
-    let mut builder = NodeIntegrationCtxBuilder::new().await;
-    let rest_port = builder.conf.rest_server_port;
-    builder.conf.run_indexer = true;
-    builder.conf.run_explorer = true;
-    builder.conf.database_url = format!(
-        "postgres://postgres:postgres@localhost:{}/postgres",
-        pg.get_host_port_ipv4(5432).await.unwrap()
-    );
-    Ok((
-        format!("http://localhost:{rest_port}/"),
-        builder.build().await?,
-    ))
-}
-
 #[test_log::test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
 async fn test_tx_settlement_duplicates() -> Result<()> {
-    let (rest_client, mut hyli_node) = build_hyli_node().await?;
-    let client = NodeApiHttpClient::new(rest_client).unwrap();
-
+    let builder = NodeIntegrationCtxBuilder::new_with_indexer().await;
+    let rest_server_port = builder.conf.rest_server_port;
+    let mut hyli_node = builder.build().await?;
     hyli_node.wait_for_genesis_event().await?;
+    let client = NodeApiHttpClient::new(format!("http://localhost:{rest_server_port}/")).unwrap();
     hyli_node.wait_for_rest_api(&client).await?;
 
     let b1 = make_register_blob_action("c1".into(), StateCommitment(vec![1, 2, 3]));
@@ -396,12 +353,10 @@ async fn test_tx_settlement_duplicates() -> Result<()> {
 
 #[test_log::test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
 async fn test_contract_upgrade() -> Result<()> {
-    let builder = NodeIntegrationCtxBuilder::new().await;
+    let builder = NodeIntegrationCtxBuilder::new_with_indexer().await;
     let rest_server_port = builder.conf.rest_server_port;
     let mut hyli_node = builder.build().await?;
-
     hyli_node.wait_for_genesis_event().await?;
-
     let client = NodeApiHttpClient::new(format!("http://localhost:{rest_server_port}/")).unwrap();
     hyli_node.wait_for_rest_api(&client).await?;
 

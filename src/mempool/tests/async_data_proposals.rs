@@ -36,7 +36,7 @@ async fn test_mempool_isnt_blocked_by_proof_verification() {
 }
 
 async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
-    let mut node_modules = NodeIntegrationCtxBuilder::new().await;
+    let mut node_modules = NodeIntegrationCtxBuilder::new_with_indexer().await;
     node_modules.conf.consensus.slot_duration = Duration::from_millis(400);
 
     let mut node_modules = node_modules

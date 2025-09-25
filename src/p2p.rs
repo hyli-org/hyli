@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::{bail, Context, Error, Result};
 use hyli_crypto::{BlstCrypto, SharedBlstCrypto};
-use hyli_model::{BlockHeight, NodeStateEvent, ValidatorPublicKey};
+use hyli_model::{BlockHeight, BlockStakingEvent, ValidatorPublicKey};
 use hyli_modules::{
     bus::{BusMessage, SharedMessageBus},
     log_warn, module_handle_messages,
@@ -42,7 +42,7 @@ struct P2PBusClient {
     sender(MsgWithHeader<ConsensusNetMessage>),
     sender(PeerEvent),
     receiver(P2PCommand),
-    receiver(NodeStateEvent),
+    receiver(BlockStakingEvent),
     receiver(OutboundMessage),
 }
 }
@@ -112,9 +112,9 @@ impl P2P {
 
         module_handle_messages! {
             on_self self,
-            listen<NodeStateEvent> NodeStateEvent::NewBlock(b) => {
-                if b.parsed_block.block_height.0 > p2p_server.current_height {
-                    p2p_server.current_height = b.parsed_block.block_height.0;
+            listen<BlockStakingEvent> block => {
+                if block.signed_block.height().0 > p2p_server.current_height {
+                    p2p_server.current_height = block.signed_block.height().0;
                 }
             }
             listen<P2PCommand> cmd => {

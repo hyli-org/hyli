@@ -32,6 +32,9 @@ use hyli_modules::{
     modules::{BuildApiContextInner, Module, ModulesHandler},
     node_state::module::NodeStateCtx,
 };
+use testcontainers_modules::postgres::Postgres;
+use testcontainers_modules::testcontainers::runners::AsyncRunner;
+use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt};
 use tracing::info;
 
 // Assume that we can reuse the OS-provided port.
@@ -92,6 +95,7 @@ pub struct NodeIntegrationCtxBuilder {
     pub bus: SharedMessageBus,
     pub crypto: BlstCrypto,
     mocks: HashMap<TypeId, MockBuilder>,
+    db: Option<ContainerAsync<Postgres>>,
 }
 
 impl NodeIntegrationCtxBuilder {
@@ -118,7 +122,29 @@ impl NodeIntegrationCtxBuilder {
             bus,
             crypto,
             mocks: HashMap::new(),
+            db: None,
         }
+    }
+
+    pub async fn new_with_indexer() -> Self {
+        // Start postgres DB with default settings for the indexer.
+        let pg = Postgres::default()
+            .with_tag("17-alpine")
+            .with_cmd(["postgres", "-c", "log_statement=all"])
+            .start()
+            .await
+            .unwrap();
+
+        let mut builder = NodeIntegrationCtxBuilder::new().await;
+        builder.conf.run_indexer = true;
+        builder.conf.run_explorer = true;
+        builder.conf.indexer.query_buffer_size = 10;
+        builder.conf.database_url = format!(
+            "postgres://postgres:postgres@localhost:{}/postgres",
+            pg.get_host_port_ipv4(5432).await.unwrap()
+        );
+        builder.db = Some(pg);
+        builder
     }
 
     pub fn with_mock<Original: 'static, Mock>(mut self) -> Self
@@ -176,6 +202,7 @@ impl NodeIntegrationCtxBuilder {
             node_task,
             shutdown_tx: Some(tx),
             bus_client,
+            db: self.db,
         })
     }
 }
@@ -197,6 +224,8 @@ pub struct NodeIntegrationCtx {
     node_task: Option<tokio::task::JoinHandle<Result<()>>>,
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     bus_client: IntegrationBusClient,
+    #[allow(dead_code)]
+    db: Option<ContainerAsync<Postgres>>,
 }
 
 /// Implement a custom Drop that shutdowns modules and returns, synchronously.

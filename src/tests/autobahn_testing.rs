@@ -1062,22 +1062,25 @@ async fn autobahn_rejoin_flow() {
         });
     }
 
-    let ns_event_sender = get_sender::<NodeStateEvent>(&joining_node.shared_bus).await;
-    let mut ns_event_receiver = get_receiver::<NodeStateEvent>(&joining_node.shared_bus).await;
+    let ns_event_sender = get_sender::<BlockStakingEvent>(&joining_node.shared_bus).await;
+    let mut ns_event_receiver = get_receiver::<BlockStakingEvent>(&joining_node.shared_bus).await;
     let mut commit_receiver = get_receiver::<ConsensusEvent>(&node1.shared_bus).await;
 
     // Catchup up to the last block, but don't actually process the last block message yet.
     for signed_block in blocks.get(0..blocks.len() - 1).unwrap() {
         let node_state_block = ns.handle_signed_block(signed_block.clone()).unwrap();
         ns_event_sender
-            .send(NodeStateEvent::NewBlock(node_state_block))
+            .send(BlockStakingEvent {
+                signed_block: node_state_block.signed_block,
+                staking_data: node_state_block.staking_data,
+            })
             .unwrap();
     }
     while let Ok(event) = ns_event_receiver.try_recv() {
         info!("{:?}", event);
         joining_node
             .consensus_ctx
-            .handle_node_state_event(event)
+            .handle_block_staking_event(event)
             .await
             .expect("should handle data event");
     }
@@ -1103,14 +1106,17 @@ async fn autobahn_rejoin_flow() {
     let signed_block = blocks.get(2).unwrap().clone();
     let node_state_block = ns.handle_signed_block(signed_block).unwrap();
     ns_event_sender
-        .send(NodeStateEvent::NewBlock(node_state_block))
+        .send(BlockStakingEvent {
+            signed_block: node_state_block.signed_block,
+            staking_data: node_state_block.staking_data,
+        })
         .unwrap();
 
     while let Ok(event) = ns_event_receiver.try_recv() {
         info!("{:?}", event);
         joining_node
             .consensus_ctx
-            .handle_node_state_event(event)
+            .handle_block_staking_event(event)
             .await
             .expect("should handle data event");
     }
@@ -1143,7 +1149,10 @@ async fn autobahn_rejoin_flow() {
                 };
                 let node_state_block = ns.handle_signed_block(signed_block.clone()).unwrap();
                 ns_event_sender
-                    .send(NodeStateEvent::NewBlock(node_state_block))
+                    .send(BlockStakingEvent {
+                        signed_block: node_state_block.signed_block,
+                        staking_data: node_state_block.staking_data,
+                    })
                     .unwrap();
 
                 blocks.push(signed_block);
@@ -1152,7 +1161,7 @@ async fn autobahn_rejoin_flow() {
         while let Ok(event) = ns_event_receiver.try_recv() {
             joining_node
                 .consensus_ctx
-                .handle_node_state_event(event)
+                .handle_block_staking_event(event)
                 .await
                 .expect("should handle data event");
         }

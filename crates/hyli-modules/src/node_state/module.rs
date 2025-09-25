@@ -42,6 +42,7 @@ module_bus_client! {
 #[derive(Debug)]
 pub struct NodeStateBusClient {
     sender(NodeStateEvent),
+    sender(BlockStakingEvent),
     receiver(DataEvent),
     receiver(Query<ContractName, (BlockHeight, Contract)>),
     receiver(Query<QuerySettledHeight, BlockHeight>),
@@ -131,9 +132,16 @@ impl Module for NodeStateModule {
                     DataEvent::OrderedSignedBlock(signed_block) => {
                         if let Ok(block) = log_warn!(self.inner.handle_signed_block(signed_block), "handling signed block in NodeStateModule") {
                             _ = log_error!(
-                                self.bus.send(NodeStateEvent::NewBlock(block)),
-                                "Sending DataEvent while processing SignedBlock"
+                                self.bus.send(BlockStakingEvent {
+                                    signed_block: block.signed_block.clone(),
+                                    staking_data: block.staking_data.clone()
+                                }),
+                                "Sending BlockStakingEvent while processing SignedBlock"
                             );
+                            //_ = log_error!(
+                            //    self.bus.send(NodeStateEvent::NewBlock(block)),
+                            //    "Sending NodeStateEvent while processing SignedBlock"
+                            //);
                         }
                     }
                 }
