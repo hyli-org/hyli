@@ -728,7 +728,7 @@ impl<S: Into<String>> From<S> for Verifier {
 }
 impl From<Vec<u8>> for ProgramId {
     fn from(v: Vec<u8>) -> Self {
-        ProgramId(v.clone())
+        ProgramId(v)
     }
 }
 impl From<&Vec<u8>> for ProgramId {
@@ -743,7 +743,7 @@ impl<const N: usize> From<&[u8; N]> for ProgramId {
 }
 impl From<&[u8]> for ProgramId {
     fn from(v: &[u8]) -> Self {
-        ProgramId(v.to_vec().clone())
+        ProgramId(v.to_vec())
     }
 }
 
