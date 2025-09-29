@@ -14,7 +14,7 @@ RUN if [ "${WITH_R0VM}" = "true" ]; then \
 # Barretenberg CLI for noir verifier
 RUN curl -L https://raw.githubusercontent.com/AztecProtocol/aztec-packages/refs/heads/master/barretenberg/bbup/install | bash \
  && install -m 755 /root/.bb/bbup /usr/local/bin/bbup \
- && bbup -v 0.82.2
+ && bbup -v 0.87.9
 
 FROM ubuntu:noble
 
