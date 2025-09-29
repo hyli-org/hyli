@@ -20,7 +20,7 @@ CREATE TABLE transactions (
     transaction_type transaction_type NOT NULL,      -- Field to identify the type of transaction (used for joins)
     transaction_status transaction_status NOT NULL,  -- Field to identify the status of the transaction
     block_hash TEXT REFERENCES blocks(hash) ON DELETE CASCADE,
-    block_height INT,
+    block_height BIGINT,
     lane_id TEXT,                           -- Lane ID
     index INT,                              -- Index of the transaction within the block
     identity TEXT,                          -- Identity (NULL except for blob transactions)
@@ -84,7 +84,7 @@ CREATE TABLE contract_state (
 
 CREATE TABLE transaction_state_events (
     block_hash TEXT NOT NULL REFERENCES blocks(hash) ON DELETE CASCADE,
-    block_height INT,
+    block_height BIGINT,
     tx_hash TEXT NOT NULL,
     parent_dp_hash TEXT NOT NULL,
     events JSONB NOT NULL,
