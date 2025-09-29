@@ -14,29 +14,19 @@ fn main() -> std::io::Result<()> {
         .init();
 
     let args: Vec<String> = std::env::args().collect();
-    let Some(proof) = args.get(1) else {
-        eprintln!("No Proof filepath provided.");
+    let Some(public_inputs_path) = args.get(1) else {
+        eprintln!("No public_inputs filepath provided.");
         return Ok(());
     };
 
-    let Some(vkey) = args.get(2) else {
-        eprintln!("No Vkey filepath provided.");
-        return Ok(());
-    };
+    let mut file = std::fs::File::open(public_inputs_path)?;
+    let mut public_inputs_data = Vec::new();
+    file.read_to_end(&mut public_inputs_data)?;
 
-    let mut proof = std::fs::File::open(proof)?;
-    let mut proof_data = Vec::new();
-    proof.read_to_end(&mut proof_data)?;
-
-    let mut vkey = std::fs::File::open(vkey)?;
-    let mut vkey_data = Vec::new();
-    vkey.read_to_end(&mut vkey_data)?;
-
-    let ho =
-        hyli_verifiers::noir_utils::parse_noir_output(&proof_data, &vkey_data).map_err(|e| {
-            eprintln!("Error parsing output: {e}");
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-        })?;
+    let ho = hyli_verifiers::noir_utils::parse_noir_output(&public_inputs_data).map_err(|e| {
+        eprintln!("Error parsing output: {e}");
+        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
+    })?;
 
     println!("Parsed output: {ho:?}");
 
