@@ -1,10 +1,11 @@
 # Use precompiled r0vm, which is faster but not available everywhere
+ARG TARGETARCH
 ARG WITH_R0VM=true
 
 FROM rust:slim-bookworm as base-tools
 RUN apt-get update && apt-get install -y --no-install-recommends curl bash
 
-RUN if [ "${WITH_R0VM}" = "true" ]; then \
+RUN if [ "${WITH_R0VM}" = "true" ] && [ "$TARGETARCH" != "arm64" ]; then \
         curl -L https://risczero.com/install | bash && \
         /root/.risc0/bin/rzup install r0vm 2.3.0; \
     else \
@@ -22,7 +23,7 @@ COPY --from=base-tools /usr/local/cargo/bin/r0vm /usr/local/bin/r0vm
 COPY --from=base-tools /usr/local/bin/bbup        /usr/local/bin/bbup
 COPY --from=base-tools /root/.bb                  /root/.bb
 
-RUN if [ "${WITH_R0VM}" != "true" ]; then \
+RUN if [ "${WITH_R0VM}" != "true" ] || [ "$TARGETARCH" = "arm64" ]; then \
         rm /usr/local/bin/r0vm; \
     fi
 
