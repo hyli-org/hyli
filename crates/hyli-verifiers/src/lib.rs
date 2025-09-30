@@ -135,6 +135,7 @@ pub mod noir {
         // Define a struct with Drop implementation for cleanup
         struct TempFiles {
             proof_path: String,
+            public_inputs_path: String,
             vk_path: String,
         }
 
@@ -144,6 +145,7 @@ pub mod noir {
                     != "true"
                 {
                     let _ = std::fs::remove_file(&self.proof_path);
+                    let _ = std::fs::remove_file(&self.public_inputs_path);
                     let _ = std::fs::remove_file(&self.vk_path);
                 }
             }
@@ -159,11 +161,18 @@ pub mod noir {
         // Create the temp files struct which will auto-clean on function exit
         let temp_files = TempFiles {
             proof_path: format!("/tmp/noir-proof-{salt_hex}"),
+            public_inputs_path: format!("/tmp/noir-public-inputs-{salt_hex}"),
             vk_path: format!("/tmp/noir-vk-{salt_hex}"),
         };
 
+        let Some((public_inputs, proof)) = noir_utils::split_public_inputs(&proof.0, &image_id.0)
+        else {
+            bail!("Failed to extract public inputs from proof");
+        };
+
         // Write proof and publicKey to files
-        std::fs::write(&temp_files.proof_path, &proof.0)?;
+        std::fs::write(&temp_files.proof_path, proof)?;
+        std::fs::write(&temp_files.public_inputs_path, public_inputs)?;
         std::fs::write(&temp_files.vk_path, &image_id.0)?;
 
         debug!(
@@ -176,6 +185,8 @@ pub mod noir {
             .arg("verify")
             .arg("-p")
             .arg(&temp_files.proof_path)
+            .arg("-i")
+            .arg(&temp_files.public_inputs_path)
             .arg("-k")
             .arg(&temp_files.vk_path)
             .output()?;
@@ -195,7 +206,13 @@ pub mod noir {
             .context("Failed to read proof file content")?;
 
         // TODO: support multi-output proofs.
-        let hyli_output = crate::noir_utils::parse_noir_output(&proof, &image_id.0)?;
+        let hyli_output = match crate::noir_utils::parse_noir_output(public_inputs) {
+            Ok(output) => output,
+            Err(e) => {
+                tracing::error!("Failed to parse Noir output: {e}");
+                bail!("Failed to parse Noir output: {e}");
+            }
+        };
 
         tracing::info!("✅ Noir proof verified.");
 

@@ -1,4 +1,6 @@
-ARG DEP_IMAGE=hyli-dep
+# Need full image for openSSL build
+ARG DEP_IMAGE=rust:bookworm
+# Preloaded with bb and risc0 (on x86)
 ARG BASE_IMAGE=ghcr.io/hyli-org/base:main
 ARG ENABLE_CAIRO_M=false
 

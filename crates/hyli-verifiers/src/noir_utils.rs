@@ -3,10 +3,10 @@ use hyli_model::{Blob, BlobIndex, HyliOutput, IndexedBlobs, StateCommitment, TxH
 use tracing::debug;
 
 /// Extracts the public inputs from the output of `reconstruct_honk_proof`.
-pub fn extract_public_inputs<'a>(
+pub fn split_public_inputs<'a>(
     proof_with_public_inputs: &'a [u8],
     vkey: &[u8],
-) -> Option<&'a [u8]> {
+) -> Option<(&'a [u8], &'a [u8])> {
     // We need to know the number of public inputs, and that's in the vkey.
     // See barretenberg/plonk/proof_system/verification_key/verification_key.hpp
     // This is msgpack encoded, but we can safely just parse the third u64 (for now anyways).
@@ -14,7 +14,7 @@ pub fn extract_public_inputs<'a>(
         .get(16..24)
         .map(|x| u64::from_be_bytes(x.try_into().unwrap()))?;
 
-    proof_with_public_inputs.get(4..(4 + num_public_inputs * 32) as usize)
+    proof_with_public_inputs.split_at_checked((num_public_inputs * 32) as usize)
 }
 
 /// Reverses the flattening process by splitting a `Vec<u8>` into a vector of sanitized hex-encoded strings
@@ -31,13 +31,8 @@ pub fn deflatten_fields(flattened_fields: &[u8]) -> Vec<String> {
     result
 }
 
-pub fn parse_noir_output(output: &[u8], vkey: &[u8]) -> Result<HyliOutput, Error> {
-    // let mut public_outputs: Vec<String> = serde_json::from_str(&output_json)?;
-    let Some(public_inputs) = extract_public_inputs(output, vkey) else {
-        return Err(anyhow::anyhow!("Failed to extract public inputs"));
-    };
+pub fn parse_noir_output(public_inputs: &[u8]) -> Result<HyliOutput, Error> {
     let mut vector = deflatten_fields(public_inputs);
-
     let version = u32::from_str_radix(&vector.remove(0), 16)?;
     debug!("Parsed version: {}", version);
     let initial_state = parse_array(&mut vector)?;

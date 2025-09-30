@@ -2,9 +2,10 @@
 
 <div align="center">
 
-  _Build, test & deploy verifiable apps on Hyli._
+_Build, test & deploy verifiable apps on Hyli._
 
-  **Hyli** is the easiest way to build vApps. Powered by Risc0 & SP1. Designed for developers.
+**Hyli** is the easiest way to build vApps. Powered by Risc0 & SP1. Designed for developers.
+
 </div>
 
 ## 🚀 Why Hylix?
@@ -17,18 +18,18 @@ Developers who are building vApps on the Hyli blockchain and have prior knowledg
 
 ### Main benefits
 
-* ✅ Zero-config project scaffolding
-* 🚀 Built-in SP1 and Risc0 support (with Noir and more soon)
-* 🧪 End-to-end testing made simple
-* 🧱 Easy local node setup with explorer
-* 🔐 No proving infra needed
+- ✅ Zero-config project scaffolding
+- 🚀 Built-in SP1 and Risc0 support (with Noir and more soon)
+- 🧪 End-to-end testing made simple
+- 🧱 Easy local node setup with explorer
+- 🔐 No proving infra needed
 
 ## 🧪 Trying this out
 
 We’re just getting started. If you're testing Hylix early:
 
-* Share [issues or ideas](https://github.com/hyli-org/hyli/issues) in this repository
-* [Ping the Hyli team](https://t.me/hyli_org) with feedback or questions
+- Share [issues or ideas](https://github.com/hyli-org/hyli/issues) in this repository
+- [Ping the Hyli team](https://t.me/hyli_org) with feedback or questions
 
 ## 🚀 Getting started
 
@@ -52,13 +53,13 @@ hy test
 
 ### Cheatsheet
 
-| Command   | Action           |
-|-----------|------------------|
-| [`hy new [PROJECT]`](#hy-new-project)    | Create a project using [the scaffold](https://github.com/hyli-org/app-scaffold). |
-| [`hy build`](#hy-build)  | Build contracts.  |
-| [`hy test`](#hy-test)   | Run E2E tests.    |
-| [`hy run`](#hy-run)    | Start backend.    |
-| [`hy devnet`](#hy-devnet) | Start local node.  |
+| Command                               | Action                                                                           |
+| ------------------------------------- | -------------------------------------------------------------------------------- |
+| [`hy new [PROJECT]`](#hy-new-project) | Create a project using [the scaffold](https://github.com/hyli-org/app-scaffold). |
+| [`hy build`](#hy-build)               | Build contracts.                                                                 |
+| [`hy test`](#hy-test)                 | Run E2E tests.                                                                   |
+| [`hy run`](#hy-run)                   | Start backend.                                                                   |
+| [`hy devnet`](#hy-devnet)             | Start local node.                                                                |
 
 ### `hy new [PROJECT]`
 
@@ -68,14 +69,14 @@ Generate a new project:
 hy new my-vapp
 ```
 
-* You will be asked to choose SP1 or Risc0 for your backend
-* Clone the default vApp scaffold
+- You will be asked to choose SP1 or Risc0 for your backend
+- Clone the default vApp scaffold
 
 <details>
   <summary>Coming soon:</summary>
 
-* More proving schemes
-* Validate & setup your local dev environment (Rust, risc0, sp1 toolchains...)
+- More proving schemes
+- Validate & setup your local dev environment (Rust, risc0, sp1 toolchains...)
 
 </details>
 
@@ -84,16 +85,17 @@ hy new my-vapp
 
 A Hylix vApp project is made of three main components:
 
-* 📜 **contracts/**: ZK program written in Rust (using SP1 or Risc0 SDK)
-* 🧠 **server/**: Your vApp’s backend, runs locally with `hy run`
-  * By default includes:
-    * 📝 Register contract at startup
-    * ✅ Proof auto-generation
-    * 📇 Contract-specific indexing
-    * 🧩 Optional custom logic & APIs
-* 🎨 **front/**: Frontend interface powered by **Bun** and **Vite** (optional)
+- 📜 **contracts/**: ZK program written in Rust (using SP1 or Risc0 SDK)
+- 🧠 **server/**: Your vApp’s backend, runs locally with `hy run`
+  - By default includes:
+    - 📝 Register contract at startup
+    - ✅ Proof auto-generation
+    - 📇 Contract-specific indexing
+    - 🧩 Optional custom logic & APIs
+- 🎨 **front/**: Frontend interface powered by **Bun** and **Vite** (optional)
 
 Each part is optional: you can build CLI-only vApps, headless backends, or full dApps.
+
 </details>
 
 Read more: [Scaffold repo](https://github.com/hyli-org/app-scaffold/) | [Quickstart in docs](https://docs.hyli.org/quickstart/edit/).
@@ -114,25 +116,25 @@ hy clean
 
 ### `hy devnet`
 
-| Command  | Alias | Description                                               |
-|----------|-------|-----------------------------------------------------------|
-| `up`     | `u`   | Start the local devnet                                    |
-| `down`   | `d`   | Stop the local devnet                                     |
-| `status` | `ps`  | Check the status of the local devnet                      |
-| `restart`| `r`   | Restart the local devnet                                  |
-| `bake`   | `b`   | Create and fund test accounts                             |
-| `fork`   | `f`   | Fork a running network                                    |
-| `env`    |       | Print environment variables for sourcing in bash          |
-| `help`   |       | Print this message or the help of the given subcommand(s) |
+| Command   | Alias | Description                                               |
+| --------- | ----- | --------------------------------------------------------- |
+| `up`      | `u`   | Start the local devnet                                    |
+| `down`    | `d`   | Stop the local devnet                                     |
+| `status`  | `ps`  | Check the status of the local devnet                      |
+| `restart` | `r`   | Restart the local devnet                                  |
+| `bake`    | `b`   | Create and fund test accounts                             |
+| `fork`    | `f`   | Fork a running network                                    |
+| `env`     |       | Print environment variables for sourcing in bash          |
+| `help`    |       | Print this message or the help of the given subcommand(s) |
 
 Launch a local devnet with:
 
-* Node
-* Oranj token contract & Auto-Provers
-* Wallet app & Auto-Provers
-* Indexer
-* Explorer
-* Pre-funded test accounts
+- Node
+- Oranj token contract & Auto-Provers
+- Wallet app & Auto-Provers
+- Indexer
+- Explorer
+- Pre-funded test accounts
 
 See [Configuration](#configuration) section for customization.
 
@@ -151,6 +153,7 @@ hy devnet status
 ```
 
 Export devnet env vars:
+
 ```sh
 source <(hy devnet env)
 ```
@@ -175,9 +178,9 @@ hy test
 
 #### Key Features
 
-* ✅ Contract unit tests
-* 🧪 Full E2E workflows (from proving to verification)
-* ⚙️ Full integration with `cargo test` or custom test runners
+- ✅ Contract unit tests
+- 🧪 Full E2E workflows (from proving to verification)
+- ⚙️ Full integration with `cargo test` or custom test runners
 
 #### What `hy test` does (under the hood)
 
@@ -212,15 +215,15 @@ By default, `hy run` operates in local dev mode.
 
 #### Options
 
-* `--testnet`: Register and interact with contracts on the public Hyli testnet.
-* `--watch`: Automatically rebuild and re-register on file changes (coming soon)
+- `--testnet`: Register and interact with contracts on the public Hyli testnet.
+- `--watch`: Automatically rebuild and re-register on file changes (coming soon)
 
 #### What `hy run` does (under the hood)
 
-* ✅ Registers your vApp contract on-chain
-* 🔁 Starts a local auto-prover (generates and posts proofs when needed)
-* 📇 Launches a contract indexer to track state transitions
-* 🛠️ Wires everything together for a ready-to-use dev backend
+- ✅ Registers your vApp contract on-chain
+- 🔁 Starts a local auto-prover (generates and posts proofs when needed)
+- 📇 Launches a contract indexer to track state transitions
+- 🛠️ Wires everything together for a ready-to-use dev backend
 
 ## Configuration
 
@@ -244,6 +247,7 @@ custom_wallet_ui_image = "ghcr.io/hyli-org/wallet/wallet-ui:main"
 ```
 
 This allows you to:
+
 - Use specific versions of services
 - Test with custom-built images
 - Use images from private registries
@@ -253,18 +257,18 @@ This allows you to:
 
 Hylix builds on top of:
 
-* **SP1/Risc0 zkVM** for fast, verifiable compute
-* **Rust** for native speed and tooling compatibility
-* **Bun**, **vite**, vue3 & tailwind for frontend application
+- **SP1/Risc0 zkVM** for fast, verifiable compute
+- **Rust** for native speed and tooling compatibility
+- **Bun**, **vite**, vue3 & tailwind for frontend application
 
 ## 🛤️ Roadmap
 
-* [ ] Noir + Cairo support
-* [ ] Tool auto-upgrade
-* [ ] Plugins for custom commands
-* [ ] Test proc-macro for isolated E2E testing
-* [ ] Upload to a prover network (`hy upload`): upload your compiled ELF to a prover network without setting up local proving infrastructure
-* [ ] Testnet mode (`hy run --testnet`) to start a backend and deploy the contract on a prover network
+- [ ] Noir + Cairo support
+- [ ] Tool auto-upgrade
+- [ ] Plugins for custom commands
+- [ ] Test proc-macro for isolated E2E testing
+- [ ] Upload to a prover network (`hy upload`): upload your compiled ELF to a prover network without setting up local proving infrastructure
+- [ ] Testnet mode (`hy run --testnet`) to start a backend and deploy the contract on a prover network
 
 ## 🔗 Links
 
