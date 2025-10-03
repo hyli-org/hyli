@@ -3,7 +3,7 @@ ARG DEP_IMAGE=rust:bookworm
 # Preloaded with bb and risc0 (on x86)
 ARG BASE_IMAGE=ghcr.io/hyli-org/base:main
 
-FROM ${DEP_IMAGE} AS builders
+FROM ${DEP_IMAGE} AS builder
 
 WORKDIR /usr/src/hyli
 
