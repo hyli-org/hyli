@@ -42,3 +42,4 @@ test-log = { workspace = true, features = ["color", "trace"] }
 [features]
 # default = ["turmoil"]
 turmoil = ["dep:turmoil"]
+instrumentation = []
