@@ -20,7 +20,10 @@ pub struct HttpClient {
     pub retry: Option<(usize, Duration)>,
 }
 impl HttpClient {
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    #[cfg_attr(
+        feature = "instrumentation",
+        tracing::instrument(skip(self, body, content_type))
+    )]
     pub async fn request<T>(
         &self,
         endpoint: &str,
@@ -174,7 +177,7 @@ impl HttpClient {
         Self::parse_response_text(response).await
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, body)))]
     pub async fn post_json<T, R>(&self, endpoint: &str, body: &T) -> anyhow::Result<R>
     where
         R: DeserializeOwned,
