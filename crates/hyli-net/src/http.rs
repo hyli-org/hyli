@@ -86,7 +86,7 @@ impl HttpClient {
         Ok(response)
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(response)))]
     async fn parse_response_text(response: Response<Incoming>) -> anyhow::Result<String> {
         let body = response.into_body();
 
@@ -98,7 +98,7 @@ impl HttpClient {
         Ok(str)
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(response)))]
     async fn parse_response_json<T: serde::de::DeserializeOwned>(
         response: Response<Incoming>,
     ) -> anyhow::Result<T> {
@@ -115,7 +115,10 @@ impl HttpClient {
         Ok(result)
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    #[cfg_attr(
+        feature = "instrumentation",
+        tracing::instrument(skip(self, do_request))
+    )]
     async fn retry<F, Fut, R>(&self, do_request: F) -> Result<R>
     where
         F: Fn() -> Fut,
