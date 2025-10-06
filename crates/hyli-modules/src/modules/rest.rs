@@ -19,6 +19,7 @@ use sdk::{api::NodeInfo, *};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tower_http::catch_panic::CatchPanicLayer;
+use tower_http::trace::TraceLayer;
 use tracing::info;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
@@ -105,6 +106,7 @@ impl Module for RestApi {
             .layer(CatchPanicLayer::custom(handle_panic))
             .layer(DefaultBodyLimit::max(ctx.max_body_size)) // 10 MB
             .layer(tower_http::cors::CorsLayer::permissive())
+            .layer(TraceLayer::new_for_http())
             .layer(tower_http::decompression::RequestDecompressionLayer::new())
             .layer(axum::middleware::from_fn(request_logger));
         Ok(RestApi {
