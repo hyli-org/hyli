@@ -5,6 +5,7 @@ on:
     paths: [".github/docker/Dockerfile.base"]
     branches:
       - main
+  workflow_dispatch: {}
 
 jobs:
   build_and_push:
@@ -58,6 +59,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           push: true
+          platforms: linux/amd64,linux/arm64
           file: ${{ matrix.mode.file }}
           context: ${{ matrix.mode.context }}
           tags: ${{ steps.meta.outputs.tags }}
