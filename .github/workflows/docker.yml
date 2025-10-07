@@ -28,7 +28,6 @@ jobs:
           - file: Dockerfile
             name: hyli
             push_ghcr: true
-            active: true
             platform: linux/amd64
             dep_image: europe-west3-docker.pkg.dev/hyle-413414/hyli-docker/hyli-dependencies:main
             images: |
@@ -39,29 +38,24 @@ jobs:
             push_ghcr: false
             platform: linux/arm64
             dep_image: rust:bookworm
-            active: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
             images: |
               europe-west3-docker.pkg.dev/hyle-413414/hyli-docker/hyli-arm
           - file: .github/docker/Dockerfile.dependencies
             name: hyli dependencies
             push_ghcr: false
-            active: true
             platform: linux/amd64
             dep_image: europe-west3-docker.pkg.dev/hyle-413414/hyli-docker/hyli-dependencies:main
             images: |
               europe-west3-docker.pkg.dev/hyle-413414/hyli-docker/hyli-dependencies
 
     name: ${{ matrix.mode.name }}
-    # The repeated `if matrix.mode.active` is a workaround to keep the dockerfile simple but run ARM only on main.
     steps:
       - name: Checkout
         uses: actions/checkout@v2
-        if: ${{ matrix.mode.active }}
 
       - name: Docker meta
         id: meta
         uses: docker/metadata-action@v5
-        if: ${{ matrix.mode.active }}
         with:
           images: ${{ matrix.mode.images }}
           tags: |
@@ -75,7 +69,6 @@ jobs:
       - name: Docker Auth
         id: docker-auth
         uses: "docker/login-action@v3"
-        if: ${{ matrix.mode.active }}
         with:
           username: _json_key
           password: ${{ secrets.GOOGLE_CREDENTIALS }}
@@ -83,7 +76,7 @@ jobs:
 
       - name: "Login to GitHub Container Registry"
         uses: docker/login-action@v3
-        if: ${{ matrix.mode.push_ghcr && matrix.mode.active }}
+        if: ${{ matrix.mode.push_ghcr }}
         with:
           registry: ghcr.io
           username: ${{github.actor}}
@@ -91,7 +84,6 @@ jobs:
 
       - name: Build and push
         uses: docker/build-push-action@v6
-        if: ${{ matrix.mode.active }}
         with:
           push: true
           platforms: ${{ matrix.mode.platform }}
