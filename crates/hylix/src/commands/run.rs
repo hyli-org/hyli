@@ -68,6 +68,9 @@ pub async fn run_backend(
         "--server-port",
         &server_port,
     ];
+    if config.build.release {
+        args.insert(1, "--release");
+    }
     if testnet {
         args.push("--testnet");
     }
