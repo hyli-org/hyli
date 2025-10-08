@@ -40,10 +40,11 @@ pub struct ContractStateIndexer<State, Event: Clone + Send + Sync + BusMessage +
     file: PathBuf,
 }
 
-pub struct ContractStateIndexerCtx {
+pub struct ContractStateIndexerCtx<State> {
     pub data_directory: PathBuf,
     pub contract_name: ContractName,
     pub api: SharedBuildApiCtx,
+    pub default_state: Option<State>,
 }
 
 impl<State, Event> Module for ContractStateIndexer<State, Event>
@@ -58,7 +59,7 @@ where
         + 'static,
     Event: std::fmt::Debug + Clone + Send + Sync + BusMessage + 'static,
 {
-    type Context = ContractStateIndexerCtx;
+    type Context = ContractStateIndexerCtx<State>;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus = CSIBusClient::new_from_bus(bus.new_handle()).await;
@@ -66,8 +67,13 @@ where
             .data_directory
             .join(format!("state_indexer_{}.bin", ctx.contract_name).as_str());
 
-        let mut store =
-            Self::load_from_disk_or_default::<ContractStateStore<State>>(file.as_path());
+        let mut store = Self::load_from_disk::<ContractStateStore<State>>(file.as_path())
+            .or(ctx.default_state.map(|s| ContractStateStore {
+                state: Some(s),
+                contract_name: ctx.contract_name.clone(),
+            }))
+            .unwrap_or_default();
+
         store.contract_name = ctx.contract_name.clone();
         let store = Arc::new(RwLock::new(store));
 
@@ -339,6 +345,7 @@ mod tests {
             contract_name,
             data_directory: PathBuf::from("test_data"),
             api: Default::default(),
+            default_state: None,
         };
 
         ContractStateIndexer::<MockState>::build(
