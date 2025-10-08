@@ -48,6 +48,7 @@ rest = []
 indexer = ["dep:utoipa", "dep:axum", "dep:utoipa-axum", "dep:tokio"]
 risc0 = ["dep:risc0-zkvm", "dep:bonsai-runner"]
 sp1 = ["dep:sp1-sdk", "dep:bincode"]
+instrumentation = ["hyli-net/instrumentation"]
 
 [package.metadata.docs.rs]
 all-features = true

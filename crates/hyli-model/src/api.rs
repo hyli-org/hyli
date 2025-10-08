@@ -36,7 +36,7 @@ pub struct ProofStat {
     pub proof_count: i64,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, ToSchema)]
 pub struct APIRegisterContract {
     pub verifier: Verifier,
     pub program_id: ProgramId,
