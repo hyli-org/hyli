@@ -91,8 +91,12 @@ enum Commands {
         #[command(subcommand)]
         action: DevnetAction,
     },
-    /// Clean build artifacts
+    /// Manage contracts
     #[command(alias = "c")]
+    Contract {
+        #[command(subcommand)]
+        action: ContractAction,
+    },
     Clean,
     /// Display and manage configuration
     Config {
@@ -166,6 +170,7 @@ enum ConfigAction {
     /// Display current configuration
     Show,
     /// Edit configuration values
+    #[command(alias = "set")]
     Edit {
         /// Configuration key to edit (e.g., "default_backend", "devnet.node_port")
         key: String,
@@ -174,6 +179,16 @@ enum ConfigAction {
     },
     /// Reset configuration to defaults
     Reset,
+}
+
+#[derive(Subcommand)]
+enum ContractAction {
+    /// Delete a contract
+    #[command(alias = "d")]
+    Delete {
+        /// Contract name
+        name: String,
+    },
 }
 
 #[tokio::main]
@@ -244,6 +259,14 @@ async fn main() -> Result<()> {
                 ConfigAction::Reset => commands::config::ConfigAction::Reset,
             };
             commands::config::execute(config_action).await
+        }
+        Commands::Contract { action } => {
+            let contract_action = match action {
+                ContractAction::Delete { name } => {
+                    commands::contract::ContractAction::Delete { name }
+                }
+            };
+            commands::contract::execute(contract_action).await
         }
     };
 
