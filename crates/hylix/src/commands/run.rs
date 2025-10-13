@@ -116,7 +116,7 @@ pub async fn run_backend(
         })
         .args(&args)
         .spawn()
-        .map_err(|e| HylixError::backend(format!("Failed to start backend: {}", e)))?;
+        .map_err(|e| HylixError::backend(format!("Failed to start backend: {e}")))?;
 
     log_success("Backend started successfully!");
     log_info("Backend is running. Press Ctrl+C to stop.");
@@ -144,13 +144,12 @@ async fn wait_backend(mut backend: tokio::process::Child) -> HylixResult<()> {
             if status.success() {
                 log_info("Backend stopped gracefully");
             } else {
-                log_error(&format!("Backend exited with error: {}", status));
+                log_error(&format!("Backend exited with error: {status}"));
             }
         }
         Err(e) => {
             return Err(HylixError::backend(format!(
-                "Error waiting for backend: {}",
-                e
+                "Error waiting for backend: {e}"
             )));
         }
     }
@@ -198,7 +197,7 @@ async fn run_with_watch(testnet: bool, config: &crate::config::HylixConfig) -> H
         )
         .args(&args)
         .spawn()
-        .map_err(|e| HylixError::backend(format!("Failed to start backend with watch: {}", e)))?;
+        .map_err(|e| HylixError::backend(format!("Failed to start backend with watch: {e}")))?;
 
     log_success("Backend started with watch mode!");
     log_info("Backend will automatically rebuild and restart on file changes.");
@@ -210,13 +209,12 @@ async fn run_with_watch(testnet: bool, config: &crate::config::HylixConfig) -> H
             if status.success() {
                 log_info("Backend stopped gracefully");
             } else {
-                log_error(&format!("Backend exited with error: {}", status));
+                log_error(&format!("Backend exited with error: {status}"));
             }
         }
         Err(e) => {
             return Err(HylixError::backend(format!(
-                "Error waiting for backend: {}",
-                e
+                "Error waiting for backend: {e}"
             )));
         }
     }
@@ -229,13 +227,12 @@ async fn install_cargo_watch() -> HylixResult<()> {
     let output = Command::new("cargo")
         .args(["install", "cargo-watch"])
         .output()
-        .map_err(|e| HylixError::backend(format!("Failed to install cargo-watch: {}", e)))?;
+        .map_err(|e| HylixError::backend(format!("Failed to install cargo-watch: {e}")))?;
 
     if !output.status.success() {
         let error_msg = String::from_utf8_lossy(&output.stderr);
         return Err(HylixError::backend(format!(
-            "Failed to install cargo-watch: {}",
-            error_msg
+            "Failed to install cargo-watch: {error_msg}"
         )));
     }
 

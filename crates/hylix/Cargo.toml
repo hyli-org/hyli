@@ -1,12 +1,13 @@
 [package]
 name = "hylix"
 version = "0.7.0"
-edition = "2021"
 authors = ["Hyli Team"]
+license-file = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
 description = "Build, test & deploy verifiable apps on Hyli"
-license = "MIT"
-repository = "https://github.com/hyli-org/hyli"
-homepage = "https://hyli.org"
 documentation = "https://docs.hyli.org"
 keywords = ["zk", "blockchain", "verifiable", "apps", "cli"]
 categories = ["command-line-utilities", "development-tools"]

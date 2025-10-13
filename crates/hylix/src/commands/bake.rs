@@ -115,7 +115,7 @@ pub async fn create_test_accounts(
 
     // Clear all progress bars from the multi-progress
     mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
 
     Ok(())
 }
@@ -175,7 +175,7 @@ pub async fn send_funds_to_test_accounts(
     }
 
     mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
 
     Ok(())
 }

@@ -69,7 +69,7 @@ pub async fn execute_command_with_progress(
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| HylixError::process(format!("Failed to spawn {}: {}", command_name, e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to spawn {command_name}: {e}")))?;
 
     // Create progress bars dynamically as output arrives
     let mut output_bars = Vec::new();
@@ -86,7 +86,7 @@ pub async fn execute_command_with_progress(
             .progress_chars("  "),
     );
 
-    initial_pb.set_message(format!("{}: Starting...", command_name));
+    initial_pb.set_message(format!("{command_name}: Starting..."));
     output_bars.push(initial_pb);
 
     // Create channels for stdout and stderr
@@ -148,7 +148,7 @@ pub async fn execute_command_with_progress(
             if i < display_buffer.len() {
                 let (buf_line, buf_is_stderr) = &display_buffer[i];
                 let message = if *buf_is_stderr {
-                    format!("[stderr] {}", buf_line)
+                    format!("[stderr] {buf_line}")
                 } else {
                     buf_line.clone()
                 };
@@ -162,7 +162,7 @@ pub async fn execute_command_with_progress(
     // Wait for command to complete
     let status = cmd
         .wait()
-        .map_err(|e| HylixError::process(format!("Failed to wait for {}: {}", command_name, e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to wait for {command_name}: {e}")))?;
 
     // Give a moment to see the final output
     tokio::time::sleep(Duration::from_millis(800)).await;
@@ -175,12 +175,11 @@ pub async fn execute_command_with_progress(
     // If status is not success, print all logs with log_warning
     if !status.success() {
         log_warning(&format!(
-            "Command '{}' failed with status: {}",
-            command_name, status
+            "Command '{command_name}' failed with status: {status}"
         ));
         for (line, is_stderr) in &output_buffer {
             let prefix = if *is_stderr { "[stderr]" } else { "[stdout]" };
-            log_warning(&format!("{} {}", prefix, line));
+            log_warning(&format!("{prefix} {line}"));
         }
     }
 
@@ -192,7 +191,7 @@ pub fn log_success(message: &str) {
     if console::Term::stdout().features().colors_supported() {
         println!("{} {}", console::style("✓").green(), message);
     } else {
-        println!("✓ {}", message);
+        println!("✓ {message}");
     }
 }
 
@@ -201,7 +200,7 @@ pub fn log_error(message: &str) {
     if console::Term::stdout().features().colors_supported() {
         eprintln!("{} {}", console::style("✗").red(), message);
     } else {
-        eprintln!("✗ {}", message);
+        eprintln!("✗ {message}");
     }
 }
 
@@ -210,7 +209,7 @@ pub fn log_warning(message: &str) {
     if console::Term::stdout().features().colors_supported() {
         println!("{} {}", console::style("⚠").yellow(), message);
     } else {
-        println!("⚠ {}", message);
+        println!("⚠ {message}");
     }
 }
 
@@ -219,6 +218,6 @@ pub fn log_info(message: &str) {
     if console::Term::stdout().features().colors_supported() {
         println!("{} {}", console::style("ℹ").blue(), message);
     } else {
-        println!("ℹ {}", message);
+        println!("ℹ {message}");
     }
 }

@@ -157,13 +157,13 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
 
 /// Logs the local devnet
 async fn logs_devnet(service: &str) -> HylixResult<()> {
-    let container = format!("hyli-devnet-{}", service);
+    let container = format!("hyli-devnet-{service}");
 
-    log_info(&format!("Following logs for {}", container));
+    log_info(&format!("Following logs for {container}"));
     log_info("Use Ctrl+C to stop following logs");
     log_info(&format!(
         "{}",
-        console::style(format!("$ docker logs -f {}", container)).green()
+        console::style(format!("$ docker logs -f {container}")).green()
     ));
 
     use tokio::process::Command;
@@ -172,7 +172,7 @@ async fn logs_devnet(service: &str) -> HylixResult<()> {
         let mut status = get_docker_container_status(&container).await?;
         let pb = create_progress_bar();
         while status != ContainerStatus::Running {
-            pb.set_message(format!("Waiting for container {} to be running", container));
+            pb.set_message(format!("Waiting for container {container} to be running"));
             tokio::time::sleep(Duration::from_secs(1)).await;
             status = get_docker_container_status(&container).await?;
         }
@@ -182,9 +182,7 @@ async fn logs_devnet(service: &str) -> HylixResult<()> {
             .args(["logs", "-f", &container])
             .status()
             .await
-            .map_err(|e| {
-                HylixError::process(format!("Failed to get logs for {}: {}", container, e))
-            })?;
+            .map_err(|e| HylixError::process(format!("Failed to get logs for {container}: {e}")))?;
     }
 }
 
@@ -240,13 +238,13 @@ async fn check_docker_container(
     let status = get_docker_container_status(container_name).await?;
     match status {
         ContainerStatus::Running => {
-            log_success(&format!("Container {} is running", container_name));
+            log_success(&format!("Container {container_name} is running"));
         }
         ContainerStatus::Stopped => {
-            log_warning(&format!("Container {} is stopped", container_name));
+            log_warning(&format!("Container {container_name} is stopped"));
         }
         ContainerStatus::NotExisting => {
-            log_error(&format!("Container {} does not exist", container_name));
+            log_error(&format!("Container {container_name} does not exist"));
         }
     }
     Ok(status)
@@ -257,10 +255,10 @@ async fn get_docker_container_status(container_name: &str) -> HylixResult<Contai
 
     // First check if container exists at all (running or stopped)
     let output = Command::new("docker")
-        .args(["ps", "-a", "-q", "-f", &format!("name={}", container_name)])
+        .args(["ps", "-a", "-q", "-f", &format!("name={container_name}")])
         .output()
         .await
-        .map_err(|e| HylixError::process(format!("Failed to check Docker container: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to check Docker container: {e}")))?;
 
     if output.stdout.is_empty() {
         return Ok(ContainerStatus::NotExisting);
@@ -268,10 +266,10 @@ async fn get_docker_container_status(container_name: &str) -> HylixResult<Contai
 
     // If container exists, check if it's running
     let running_output = Command::new("docker")
-        .args(["ps", "-q", "-f", &format!("name={}", container_name)])
+        .args(["ps", "-q", "-f", &format!("name={container_name}")])
         .output()
         .await
-        .map_err(|e| HylixError::process(format!("Failed to check Docker container: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to check Docker container: {e}")))?;
 
     if running_output.stdout.is_empty() {
         Ok(ContainerStatus::Stopped)
@@ -296,7 +294,7 @@ async fn start_container(
     container_name: &str,
 ) -> HylixResult<()> {
     let pb = mpb.add(create_progress_bar());
-    pb.set_message(format!("Starting container {}", container_name));
+    pb.set_message(format!("Starting container {container_name}"));
     let success = execute_command_with_progress(
         mpb,
         "docker start",
@@ -307,11 +305,10 @@ async fn start_container(
     .await?;
     pb.finish_and_clear();
     if success {
-        log_success(&format!("Started container {}", container_name));
+        log_success(&format!("Started container {container_name}"));
     } else {
         return Err(HylixError::process(format!(
-            "Failed to start {}",
-            container_name
+            "Failed to start {container_name}"
         )));
     }
     Ok(())
@@ -375,7 +372,7 @@ async fn pause_devnet(_context: &DevnetContext) -> HylixResult<()> {
     pb.set_message("Pausing local devnet...");
     for container in CONTAINERS {
         if get_docker_container_status(container).await? == ContainerStatus::Running {
-            pb2.set_message(format!("Stopping container {}", container));
+            pb2.set_message(format!("Stopping container {container}"));
             execute_command_with_progress(
                 &mpb,
                 "docker stop",
@@ -387,7 +384,7 @@ async fn pause_devnet(_context: &DevnetContext) -> HylixResult<()> {
         }
     }
     mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
     log_success("Local devnet paused successfully!");
     log_info("Use `hy devnet up` to resume the local devnet");
     Ok(())
@@ -485,7 +482,7 @@ async fn create_docker_network(mpb: &indicatif::MultiProgress) -> HylixResult<()
     }
 
     mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
 
     Ok(())
 }
@@ -556,7 +553,7 @@ async fn start_local_node(
     wait_for_block_height(&pb, context, 2).await?;
 
     mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
 
     Ok(())
 }
@@ -612,7 +609,7 @@ async fn start_wallet_app(
         .args(&args)
         .output()
         .await
-        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {e}")))?;
 
     if !output.status.success() {
         log_warning(&format!(
@@ -684,7 +681,7 @@ async fn start_wallet_ui(
         .args(&args)
         .output()
         .await
-        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {e}")))?;
 
     if !output.status.success() {
         log_warning(&format!(
@@ -696,7 +693,7 @@ async fn start_wallet_ui(
     }
 
     mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
 
     Ok(())
 }
@@ -742,7 +739,7 @@ async fn start_postgres_server(
         .args(&args)
         .output()
         .await
-        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {e}")))?;
 
     if !output.status.success() {
         log_warning(&format!(
@@ -797,7 +794,7 @@ async fn start_indexer(mpb: &indicatif::MultiProgress, context: &DevnetContext) 
     let output = Command::new("docker")
         .args(&args)
         .output()
-        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {e}")))?;
 
     if !output.status.success() {
         log_warning(&format!(
@@ -809,7 +806,7 @@ async fn start_indexer(mpb: &indicatif::MultiProgress, context: &DevnetContext) 
     }
 
     mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
 
     Ok(())
 }
@@ -850,7 +847,7 @@ async fn remove_docker_network(pb: &indicatif::ProgressBar) -> HylixResult<()> {
         .args(["network", "rm", "hyli-devnet"])
         .output()
         .await
-        .map_err(|e| HylixError::process(format!("Failed to remove Docker network: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to remove Docker network: {e}")))?;
 
     if !output.status.success() {
         log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
@@ -888,8 +885,7 @@ async fn wait_for_block_height(
             },
             Err(_) => {
                 pb.set_message(format!(
-                    "Timeout getting block height, retrying... (attempt {}/{})",
-                    attempts, max_attempts
+                    "Timeout getting block height, retrying... (attempt {attempts}/{max_attempts})"
                 ));
                 // Continue waiting
             }
@@ -902,8 +898,7 @@ async fn wait_for_block_height(
     }
 
     Err(HylixError::devnet(format!(
-        "Failed to reach block height {} after {} attempts",
-        target_height, max_attempts
+        "Failed to reach block height {target_height} after {max_attempts} attempts"
     )))
 }
 
@@ -919,7 +914,7 @@ async fn wait_for_postgres_server(pb: &indicatif::ProgressBar) -> HylixResult<()
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
-            .map_err(|e| HylixError::process(format!("Failed to start Docker container: {}", e)))?;
+            .map_err(|e| HylixError::process(format!("Failed to start Docker container: {e}")))?;
 
         if output.wait().await?.success() {
             return Ok(());
@@ -939,7 +934,7 @@ async fn wait_for_postgres_server(pb: &indicatif::ProgressBar) -> HylixResult<()
 /// Pull docker image
 async fn pull_docker_image(mpb: &indicatif::MultiProgress, image: &str) -> HylixResult<()> {
     let pb = mpb.add(create_progress_bar());
-    pb.set_message(format!("Pulling docker image: {}", image));
+    pb.set_message(format!("Pulling docker image: {image}"));
 
     let success =
         execute_command_with_progress(mpb, "docker pull", "docker", &["pull", image], None).await?;
@@ -947,8 +942,7 @@ async fn pull_docker_image(mpb: &indicatif::MultiProgress, image: &str) -> Hylix
     if !success {
         // Check if the image already exists locally
         pb.set_message(format!(
-            "Failed to pull image {}, checking if it exists locally...",
-            image
+            "Failed to pull image {image}, checking if it exists locally..."
         ));
 
         let output = tokio::process::Command::new("docker")
@@ -961,11 +955,11 @@ async fn pull_docker_image(mpb: &indicatif::MultiProgress, image: &str) -> Hylix
                 "Failed to pull Docker image and it does not exist locally".to_string(),
             ));
         }
-        log_info(&format!("Using existing local image: {}", image));
+        log_info(&format!("Using existing local image: {image}"));
     }
 
     mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
 
     Ok(())
 }
@@ -979,31 +973,31 @@ async fn stop_and_remove_container(
     use tokio::process::Command;
 
     // Stop the container
-    pb.set_message(format!("Stopping {}...", display_name));
+    pb.set_message(format!("Stopping {display_name}..."));
     let output = Command::new("docker")
         .args(["stop", container_name])
         .output()
         .await
-        .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to stop Docker container: {e}")))?;
 
     if !output.status.success() {
         log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
     } else {
-        pb.set_message(format!("{} stopped successfully", display_name));
+        pb.set_message(format!("{display_name} stopped successfully"));
     }
 
     // Remove the container
-    pb.set_message(format!("Removing {}...", display_name));
+    pb.set_message(format!("Removing {display_name}..."));
     let output = Command::new("docker")
         .args(["rm", container_name])
         .output()
         .await
-        .map_err(|e| HylixError::process(format!("Failed to remove Docker container: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to remove Docker container: {e}")))?;
 
     if !output.status.success() {
         log_warning(&format!("{}", String::from_utf8_lossy(&output.stderr)));
     } else {
-        pb.set_message(format!("{} removed successfully", display_name));
+        pb.set_message(format!("{display_name} removed successfully"));
     }
 
     Ok(())

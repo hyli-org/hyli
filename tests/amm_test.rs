@@ -204,7 +204,7 @@ mod e2e_amm {
             }
             tries += 1;
             if tries >= 10 {
-                panic!("Failed to get transaction with hash {}", tx_hash);
+                panic!("Failed to get transaction with hash {tx_hash}");
             }
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }

@@ -64,7 +64,7 @@ fn display_config(config: &HylixConfig) -> HylixResult<()> {
     println!("\n🔨 Build Configuration:");
     println!("  Release Mode: {}", config.build.release);
     if let Some(jobs) = config.build.jobs {
-        println!("  Parallel Jobs: {}", jobs);
+        println!("  Parallel Jobs: {jobs}");
     }
     if !config.build.extra_flags.is_empty() {
         println!("  Extra Flags: {}", config.build.extra_flags.join(" "));
@@ -151,7 +151,7 @@ async fn edit_config(key: &str, value: &str) -> HylixResult<()> {
     // Save the updated configuration
     config.save()?;
 
-    log_success(&format!("Configuration updated: {} = {}", key, value));
+    log_success(&format!("Configuration updated: {key} = {value}"));
     Ok(())
 }
 
@@ -290,8 +290,7 @@ fn set_config_value(config: &mut HylixConfig, key: &str, value: &str) -> HylixRe
 
         _ => {
             return Err(crate::error::HylixError::config(format!(
-                "Unknown configuration key: {}. Use 'hy config show' to see available keys",
-                key
+                "Unknown configuration key: {key}. Use 'hy config show' to see available keys"
             )));
         }
     }
