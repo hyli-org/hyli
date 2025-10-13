@@ -110,7 +110,7 @@ impl GcsUploader {
         let DataEvent::OrderedSignedBlock(block) = event;
         let block_height = block.height().0;
         let prefix = &self.ctx.gcs_config.gcs_prefix;
-        let object_name = format!("{}/block_{}.bin", prefix, block_height);
+        let object_name = format!("{prefix}/block_{block_height}.bin");
         let data = borsh::to_vec(&block)?;
         let req = UploadObjectRequest {
             bucket: self.ctx.gcs_config.gcs_bucket.clone(),

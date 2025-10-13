@@ -1271,8 +1271,7 @@ impl<'any> NodeStateProcessing<'any> {
                     Ok(v) => v,
                     Err(e) => {
                         return BlobProcessingResult::ProvenFailure(format!(
-                            "Native blob verification failed: {:?}",
-                            e
+                            "Native blob verification failed: {e:?}"
                         ));
                     }
                 };

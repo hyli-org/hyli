@@ -271,7 +271,7 @@ async fn main() -> Result<()> {
     };
 
     if let Err(err) = result {
-        log_error(&format!("{:#}", err));
+        log_error(&format!("{err:#}"));
         std::process::exit(1);
     }
 

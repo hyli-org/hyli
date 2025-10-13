@@ -41,14 +41,13 @@ where
     let blob = tx.blobs.get(index.0).expect("Blob index out of range");
 
     let cm = contract.build_commitment_metadata(blob);
-    assert!(cm.is_ok(), "Failed to build commitment metadata: {:#?}", cm);
+    assert!(cm.is_ok(), "Failed to build commitment metadata: {cm:#?}");
     let cm = cm.unwrap();
 
     let handle_result = contract.handle(&calldata);
     assert!(
         handle_result.is_ok(),
-        "TxExecutorHandler::handle() failed: {:#?}",
-        handle_result
+        "TxExecutorHandler::handle() failed: {handle_result:#?}"
     );
     let handle_result = handle_result.unwrap();
 

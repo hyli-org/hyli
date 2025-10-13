@@ -6,7 +6,7 @@ use std::process::Command;
 
 /// Execute the `hy new` command
 pub async fn execute(project_name: String, backend: Option<BackendType>) -> HylixResult<()> {
-    log_info(&format!("Creating new vApp project: {}", project_name));
+    log_info(&format!("Creating new vApp project: {project_name}"));
 
     // Validate project name
     validate_project_name(&project_name)?;
@@ -14,8 +14,7 @@ pub async fn execute(project_name: String, backend: Option<BackendType>) -> Hyli
     // Check if directory already exists
     if Path::new(&project_name).exists() {
         return Err(HylixError::project(format!(
-            "Directory '{}' already exists",
-            project_name
+            "Directory '{project_name}' already exists"
         )));
     }
 
@@ -30,7 +29,7 @@ pub async fn execute(project_name: String, backend: Option<BackendType>) -> Hyli
     }
     let backend_type = BackendType::Risc0;
 
-    log_info(&format!("Using backend: {:?}", backend_type));
+    log_info(&format!("Using backend: {backend_type:?}"));
 
     // Clone the scaffold repository
     let pb = create_progress_bar_with_msg("Cloning scaffold repository...");
@@ -47,9 +46,9 @@ pub async fn execute(project_name: String, backend: Option<BackendType>) -> Hyli
     init_git_repo(&project_name)?;
     pb.finish_with_message("Git repository initialized");
 
-    log_success(&format!("Project '{}' created successfully!", project_name));
+    log_success(&format!("Project '{project_name}' created successfully!"));
     log_info("Next steps:");
-    log_info(&format!("  cd {}", project_name));
+    log_info(&format!("  cd {project_name}"));
     log_info("  hy build");
     log_info("  hy devnet");
     log_info("  hy test");
@@ -95,13 +94,12 @@ async fn clone_scaffold(project_name: &str) -> HylixResult<()> {
     let output = Command::new("git")
         .args(["clone", scaffold_url, project_name])
         .output()
-        .map_err(|e| HylixError::process(format!("Failed to clone scaffold: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to clone scaffold: {e}")))?;
 
     if !output.status.success() {
         let error_msg = String::from_utf8_lossy(&output.stderr);
         return Err(HylixError::process(format!(
-            "Failed to clone scaffold repository: {}",
-            error_msg
+            "Failed to clone scaffold repository: {error_msg}"
         )));
     }
 
@@ -165,13 +163,12 @@ fn init_git_repo(project_name: &str) -> HylixResult<()> {
         .current_dir(project_name)
         .args(["init"])
         .output()
-        .map_err(|e| HylixError::process(format!("Failed to initialize git: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to initialize git: {e}")))?;
 
     if !output.status.success() {
         let error_msg = String::from_utf8_lossy(&output.stderr);
         return Err(HylixError::process(format!(
-            "Failed to initialize git repository: {}",
-            error_msg
+            "Failed to initialize git repository: {error_msg}"
         )));
     }
 
@@ -180,13 +177,12 @@ fn init_git_repo(project_name: &str) -> HylixResult<()> {
         .current_dir(project_name)
         .args(["add", "."])
         .output()
-        .map_err(|e| HylixError::process(format!("Failed to add files to git: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to add files to git: {e}")))?;
 
     if !output.status.success() {
         let error_msg = String::from_utf8_lossy(&output.stderr);
         return Err(HylixError::process(format!(
-            "Failed to add files to git: {}",
-            error_msg
+            "Failed to add files to git: {error_msg}"
         )));
     }
 
@@ -194,13 +190,12 @@ fn init_git_repo(project_name: &str) -> HylixResult<()> {
         .current_dir(project_name)
         .args(["commit", "-m", "Initial commit from Hylix scaffold"])
         .output()
-        .map_err(|e| HylixError::process(format!("Failed to create initial commit: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to create initial commit: {e}")))?;
 
     if !output.status.success() {
         let error_msg = String::from_utf8_lossy(&output.stderr);
         return Err(HylixError::process(format!(
-            "Failed to create initial commit: {}",
-            error_msg
+            "Failed to create initial commit: {error_msg}"
         )));
     }
 

@@ -38,15 +38,15 @@ async fn delete_contract(contract_name: &str) -> HylixResult<()> {
         ));
     }
 
-    log_info(&format!("Deleting contract '{}'...", contract_name));
+    log_info(&format!("Deleting contract '{contract_name}'..."));
 
     // Create a multi-progress bar for the command execution
     let mpb = indicatif::MultiProgress::new();
     let pb = mpb.add(create_progress_bar());
-    pb.set_message(format!("Deleting contract {}...", contract_name));
+    pb.set_message(format!("Deleting contract {contract_name}..."));
 
     // Execute the delete_contract command
-    let task_name = format!("Delete contract {}", contract_name);
+    let task_name = format!("Delete contract {contract_name}");
     let success = execute_command_with_progress(
         &mpb,
         &task_name,
@@ -64,26 +64,21 @@ async fn delete_contract(contract_name: &str) -> HylixResult<()> {
 
     // Clear progress bars
     mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {}", e)))?;
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
 
     if !success {
         log_warning(&format!(
-            "Contract '{}' deletion completed with warnings",
-            contract_name
+            "Contract '{contract_name}' deletion completed with warnings"
         ));
         log_warning(&format!(
             "Command was: {}",
             console::style(format!(
-                "npx hyli-wallet-cli delete_contract {} hylisecure",
-                contract_name
+                "npx hyli-wallet-cli delete_contract {contract_name} hylisecure"
             ))
             .green()
         ));
     } else {
-        log_success(&format!(
-            "Contract '{}' deleted successfully!",
-            contract_name
-        ));
+        log_success(&format!("Contract '{contract_name}' deleted successfully!"));
     }
 
     Ok(())

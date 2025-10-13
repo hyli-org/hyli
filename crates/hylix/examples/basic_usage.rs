@@ -8,7 +8,7 @@ use hylix::{config::ContainerEnvConfig, BackendType, HylixConfig};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load configuration
     let config = HylixConfig::load()?;
-    println!("Loaded config: {:?}", config);
+    println!("Loaded config: {config:?}");
 
     // Example of creating a new project configuration
     let new_config = HylixConfig {

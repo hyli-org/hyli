@@ -229,8 +229,7 @@ impl HylixConfig {
 
             if file_version != current_version {
                 log_info(&format!(
-                    "Upgrading configuration from version '{}' to '{}'",
-                    file_version, current_version
+                    "Upgrading configuration from version '{file_version}' to '{current_version}'"
                 ));
 
                 // Backup the old config before migration
@@ -312,8 +311,7 @@ impl HylixConfig {
             }
             _ => {
                 log_error(&format!(
-                    "Unsupported configuration version: {}",
-                    file_version
+                    "Unsupported configuration version: {file_version}"
                 ));
                 log_info("Failed to migrate configuration. Please check your configuration file.");
                 log_info(&format!(
@@ -380,7 +378,7 @@ impl HylixConfig {
     /// Load a bake profile by name
     pub fn load_bake_profile(&self, profile_name: &str) -> crate::error::HylixResult<BakeProfile> {
         let profiles_dir = Self::profiles_dir()?;
-        let profile_path = profiles_dir.join(format!("{}.toml", profile_name));
+        let profile_path = profiles_dir.join(format!("{profile_name}.toml"));
 
         if !profile_path.exists() {
             return Err(crate::error::HylixError::config(format!(

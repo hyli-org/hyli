@@ -68,13 +68,12 @@ async fn clean_contracts() -> HylixResult<()> {
         .current_dir("contracts")
         .args(["clean"])
         .output()
-        .map_err(|e| HylixError::build(format!("Failed to clean contracts: {}", e)))?;
+        .map_err(|e| HylixError::build(format!("Failed to clean contracts: {e}")))?;
 
     if !output.status.success() {
         let error_msg = String::from_utf8_lossy(&output.stderr);
         return Err(HylixError::build(format!(
-            "Failed to clean contracts: {}",
-            error_msg
+            "Failed to clean contracts: {error_msg}"
         )));
     }
 
@@ -90,13 +89,12 @@ async fn clean_server() -> HylixResult<()> {
         .current_dir("server")
         .args(["clean"])
         .output()
-        .map_err(|e| HylixError::build(format!("Failed to clean server: {}", e)))?;
+        .map_err(|e| HylixError::build(format!("Failed to clean server: {e}")))?;
 
     if !output.status.success() {
         let error_msg = String::from_utf8_lossy(&output.stderr);
         return Err(HylixError::build(format!(
-            "Failed to clean server: {}",
-            error_msg
+            "Failed to clean server: {error_msg}"
         )));
     }
 
@@ -114,7 +112,7 @@ async fn clean_frontend() -> HylixResult<()> {
             .current_dir("front")
             .args(["run", "clean"])
             .output()
-            .map_err(|e| HylixError::build(format!("Failed to clean frontend: {}", e)))?;
+            .map_err(|e| HylixError::build(format!("Failed to clean frontend: {e}")))?;
 
         if output.status.success() {
             return Ok(());
@@ -141,7 +139,7 @@ async fn clean_test_artifacts() -> HylixResult<()> {
     let _output = Command::new("cargo")
         .args(["test", "--", "--nocapture"])
         .output()
-        .map_err(|e| HylixError::build(format!("Failed to clean test artifacts: {}", e)))?;
+        .map_err(|e| HylixError::build(format!("Failed to clean test artifacts: {e}")))?;
 
     // Clean any test-specific directories
     let test_dirs = ["test-results", "coverage", ".nyc_output"];
