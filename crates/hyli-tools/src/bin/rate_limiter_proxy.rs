@@ -24,9 +24,9 @@ use opentelemetry::{
 };
 use prometheus::{Encoder, Registry, TextEncoder};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::RwLock;
+use std::{collections::HashMap, time::Duration};
 use std::{collections::HashSet, sync::Arc};
 use tower_governor::key_extractor::{KeyExtractor, SmartIpKeyExtractor};
 use tower_http::catch_panic::CatchPanicLayer;
@@ -505,7 +505,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::thread::spawn(move || {
         let (tx, rx) = std::sync::mpsc::channel::<Result<Event, notify::Error>>();
 
-        let mut watcher = match notify::recommended_watcher(tx) {
+        let mut watcher = match notify::PollWatcher::new(
+            tx,
+            notify::Config::default().with_poll_interval(Duration::from_secs(2)),
+        ) {
             Ok(w) => w,
             Err(e) => {
                 tracing::error!("Failed to create file watcher: {:?}", e);
