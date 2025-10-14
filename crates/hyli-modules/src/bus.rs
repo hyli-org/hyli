@@ -192,11 +192,29 @@ where
         Client: Send,
         Msg: Send,
     {
+        tracing::trace!(
+            "Receiver count: {}, type: {}, client: {}",
+            Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).receiver_count(),
+            type_name::<Msg>(),
+            type_name::<Client>()
+        );
+        tracing::trace!(
+            "Length: {}, type: {}, client: {}",
+            Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).len(),
+            type_name::<Msg>(),
+            type_name::<Client>()
+        );
         if Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).receiver_count() > 0 {
             let mut i = 0;
             const HIGH_NB_OF_ATTEMPTS: usize = 100; // 10s limit, we assume longer would indicate an error
             loop {
                 // We have a potential TOCTOU race here, so use a buffer.
+                tracing::trace!(
+                    "Length in loop: {}, type: {}, client: {}",
+                    Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).len(),
+                    type_name::<Msg>(),
+                    type_name::<Client>()
+                );
                 if Pick::<tokio::sync::broadcast::Sender<Msg>>::get(self).len()
                     >= <Msg as BusMessage>::CAPACITY_IF_WAITING
                 {
