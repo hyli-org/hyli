@@ -1,0 +1,17 @@
+# Rate Limiter Proxy Configuration
+
+# Proxy listen address
+listen_addr = "0.0.0.0:8080"
+
+# Target server URL to proxy to
+target_url = "http://localhost:4321"
+
+# Redis connection string (optional, uses in-memory store if not provided)
+# redis_url = "redis://localhost:6379"
+
+# Daily rate limit per IP+contract combination for blob transactions
+daily_limit = 500
+
+# Log format (json or pretty)
+log_format = "json"
+
