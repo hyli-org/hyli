@@ -1,9 +1,10 @@
 use anyhow::Context;
+use axum::http::header::CONNECTION;
 use axum::{
     Router,
     body::Body,
     extract::{Request, State},
-    http::{StatusCode, Uri},
+    http::{HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -411,7 +412,11 @@ async fn proxy_handler(
     let client = config.client.clone();
 
     // Convert axum body to hyper body
-    let (parts, body) = req.into_parts();
+    let (mut parts, body) = req.into_parts();
+    // Ensure upstream closes the connection after response
+    parts
+        .headers
+        .insert(CONNECTION, HeaderValue::from_static("close"));
     let hyper_req = hyper::Request::from_parts(parts, body);
 
     tracing::debug!("Forwarding request to target: {}", hyper_req.uri());
@@ -472,7 +477,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     opentelemetry::global::set_meter_provider(provider.clone());
 
-    let client = Arc::new(Client::builder(TokioExecutor::new()).build_http());
+    // Configure HTTP connector for better load balancing with headless k8s services
+    // Set idle timeout to force DNS re-resolution and distribute load across pods
+    let mut http_connector = HttpConnector::new();
+    // Disable connection pooling to force new connections (and DNS lookups) per request
+    http_connector.set_nodelay(true);
+    http_connector.set_keepalive(None);
+
+    let client = Arc::new(
+        Client::builder(TokioExecutor::new())
+            .pool_idle_timeout(Duration::from_secs(0))
+            .pool_max_idle_per_host(0)
+            .build(http_connector),
+    );
     let rate_limits = Arc::new(DashMap::new());
     let shared_config = Arc::new(RwLock::new(proxy_config.clone()));
 
