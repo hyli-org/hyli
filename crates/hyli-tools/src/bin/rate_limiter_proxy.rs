@@ -43,70 +43,30 @@ struct Args {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ProxyConfig {
     /// Proxy listen address
-    #[serde(default = "default_listen_addr")]
     pub listen_addr: String,
 
     /// Target server URL to proxy to
-    #[serde(default = "default_target_url")]
     pub target_url: String,
 
     /// Redis connection string (optional, uses in-memory store if not provided)
     pub redis_url: Option<String>,
 
     /// Daily rate limit per identity+contract combination for blob transactions
-    #[serde(default = "default_daily_limit")]
     pub daily_limit: u32,
 
     /// Log format
-    #[serde(default = "default_log_format")]
     pub log_format: String,
 
     /// Blacklisted contract patterns (supports * wildcard)
-    #[serde(default = "default_blacklist_contracts")]
     pub blacklist_contracts: Vec<String>,
 
     /// Blacklisted identity patterns (supports * wildcard)
-    #[serde(default = "default_blacklist_identities")]
     pub blacklist_identities: Vec<String>,
 
     /// Allowed contract patterns (supports * wildcard)
     /// If empty, all contracts are allowed (unless blacklisted)
     /// If not empty, only contracts matching these patterns are allowed
-    #[serde(default = "default_allowed_contracts")]
     pub allowed_contracts: Vec<String>,
-}
-
-fn default_listen_addr() -> String {
-    "0.0.0.0:8080".to_string()
-}
-
-fn default_target_url() -> String {
-    "http://localhost:4321".to_string()
-}
-
-fn default_daily_limit() -> u32 {
-    500
-}
-
-fn default_log_format() -> String {
-    "json".to_string()
-}
-
-fn default_blacklist_contracts() -> Vec<String> {
-    Vec::new()
-}
-
-fn default_blacklist_identities() -> Vec<String> {
-    Vec::new()
-}
-
-fn default_allowed_contracts() -> Vec<String> {
-    vec![
-        "secp256k1".to_string(),
-        "check_secret".to_string(),
-        "faucet".to_string(),
-        "wallet".to_string(),
-    ]
 }
 
 impl ProxyConfig {
