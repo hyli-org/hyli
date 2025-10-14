@@ -17,6 +17,7 @@ use hyper_util::{
     client::legacy::{Client, connect::HttpConnector},
     rt::TokioExecutor,
 };
+use notify::{Event, RecursiveMode, Watcher};
 use opentelemetry::{
     InstrumentationScope, KeyValue,
     metrics::{Counter, Gauge},
@@ -24,6 +25,8 @@ use opentelemetry::{
 use prometheus::{Encoder, Registry, TextEncoder};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::RwLock;
 use std::{collections::HashSet, sync::Arc};
 use tower_governor::key_extractor::{KeyExtractor, SmartIpKeyExtractor};
 use tower_http::catch_panic::CatchPanicLayer;
@@ -31,25 +34,62 @@ use tower_http::catch_panic::CatchPanicLayer;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    /// Path to configuration file
+    #[arg(long, default_value = "rate_limiter_proxy.toml")]
+    config: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ProxyConfig {
     /// Proxy listen address
-    #[arg(long, default_value = "0.0.0.0:8080")]
-    listen_addr: String,
+    #[serde(default = "default_listen_addr")]
+    pub listen_addr: String,
 
     /// Target server URL to proxy to
-    #[arg(long, default_value = "http://localhost:4321")]
-    target_url: String,
+    #[serde(default = "default_target_url")]
+    pub target_url: String,
 
     /// Redis connection string (optional, uses in-memory store if not provided)
-    #[arg(long)]
-    redis_url: Option<String>,
+    pub redis_url: Option<String>,
 
     /// Daily rate limit per IP+contract combination for blob transactions
-    #[arg(long, default_value_t = 500)]
-    daily_limit: u32,
+    #[serde(default = "default_daily_limit")]
+    pub daily_limit: u32,
 
     /// Log format
-    #[arg(long, default_value = "json")]
-    log_format: String,
+    #[serde(default = "default_log_format")]
+    pub log_format: String,
+}
+
+fn default_listen_addr() -> String {
+    "0.0.0.0:8080".to_string()
+}
+
+fn default_target_url() -> String {
+    "http://localhost:4321".to_string()
+}
+
+fn default_daily_limit() -> u32 {
+    500
+}
+
+fn default_log_format() -> String {
+    "json".to_string()
+}
+
+impl ProxyConfig {
+    fn load(config_file: &str) -> Result<Self, anyhow::Error> {
+        let s = config::Config::builder()
+            .add_source(config::File::from_str(
+                include_str!("../rate_limiter_proxy_conf_defaults.toml"),
+                config::FileFormat::Toml,
+            ))
+            .add_source(config::File::with_name(config_file).required(true))
+            .build()?;
+
+        let conf: Self = s.try_deserialize()?;
+        Ok(conf)
+    }
 }
 
 // Simplified versions of the structures we need to parse
@@ -124,6 +164,9 @@ async fn blob_proxy_handler(
     let mut limited = false;
     let mut limited_contracts = Vec::new();
 
+    // Get current daily limit from config
+    let daily_limit = config.config.read().unwrap().daily_limit;
+
     // Use DashMap entry API to avoid unnecessary cloning and locking
     match config.rate_limits.entry(identity.clone()) {
         Entry::Occupied(mut occ) => {
@@ -134,7 +177,7 @@ async fn blob_proxy_handler(
                     entry.0 = 0;
                     entry.1 = today;
                 }
-                if entry.0 >= config.daily_limit {
+                if entry.0 >= daily_limit {
                     limited = true;
                     limited_contracts.push(contract.clone());
                 } else {
@@ -160,7 +203,7 @@ async fn blob_proxy_handler(
             entry
                 .value()
                 .iter()
-                .filter(|(_, (count, date))| count >= &config.daily_limit && date == &today)
+                .filter(|(_, (count, date))| count >= &daily_limit && date == &today)
                 .count()
         })
         .sum::<usize>();
@@ -206,10 +249,13 @@ async fn proxy_handler(
     State(config): State<AppConfig>,
     mut req: Request<Body>,
 ) -> Result<Response<Incoming>, StatusCode> {
+    // Get current target URL from config
+    let target_url = config.config.read().unwrap().target_url.clone();
+
     // Build the target URL
     let target_uri = format!(
         "{}{}",
-        config.target_url,
+        target_url,
         req.uri()
             .path_and_query()
             .map(|pq| pq.as_str())
@@ -254,10 +300,9 @@ type RateLimitData = DashMap<String, HashMap<String, (u32, NaiveDate)>>;
 
 #[derive(Clone)]
 struct AppConfig {
-    target_url: String,
+    config: Arc<RwLock<ProxyConfig>>,
     client: Arc<Client<HttpConnector, Body>>,
     rate_limits: Arc<RateLimitData>,
-    daily_limit: u32,
     metrics: RateLimiterMetrics,
     registry: Registry,
 }
@@ -266,12 +311,16 @@ struct AppConfig {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    setup_tracing(&args.log_format, "rate-limiter-proxy".to_string())
+    // Load initial configuration
+    let proxy_config = ProxyConfig::load(&args.config)?;
+
+    setup_tracing(&proxy_config.log_format, "rate-limiter-proxy".to_string())
         .expect("Failed to set up tracing");
 
     tracing::info!("Starting rate-limiting proxy");
-    tracing::info!("Listen address: {}", args.listen_addr);
-    tracing::info!("Target URL: {}", args.target_url);
+    tracing::info!("Configuration file: {}", args.config);
+    tracing::info!("Listen address: {}", proxy_config.listen_addr);
+    tracing::info!("Target URL: {}", proxy_config.target_url);
 
     let registry = Registry::new();
     // Init global metrics meter we expose as an endpoint
@@ -288,14 +337,89 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let client = Arc::new(Client::builder(TokioExecutor::new()).build_http());
     let rate_limits = Arc::new(DashMap::new());
-    let config = AppConfig {
-        target_url: args.target_url.clone(),
+    let shared_config = Arc::new(RwLock::new(proxy_config.clone()));
+
+    let app_config = AppConfig {
+        config: shared_config.clone(),
         client,
         rate_limits,
-        daily_limit: args.daily_limit,
         metrics: RateLimiterMetrics::global("rate_limiter_proxy".to_string()),
         registry,
     };
+
+    // Set up file watcher
+    // Important: Don't canonicalize before getting parent directory to support
+    // Kubernetes ConfigMaps which use symlinks that are updated atomically
+    let config_path = PathBuf::from(&args.config);
+    let config_filename = config_path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let watch_dir = config_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    // Clone the original path for reloading (important for ConfigMap symlinks)
+    let config_path_for_reload = config_path;
+
+    let shared_config_clone = shared_config.clone();
+
+    std::thread::spawn(move || {
+        let (tx, rx) = std::sync::mpsc::channel::<Result<Event, notify::Error>>();
+
+        let mut watcher = match notify::recommended_watcher(tx) {
+            Ok(w) => w,
+            Err(e) => {
+                tracing::error!("Failed to create file watcher: {:?}", e);
+                return;
+            }
+        };
+
+        // Watch the parent directory to handle editors that replace files
+        if let Err(e) = watcher.watch(&watch_dir, RecursiveMode::NonRecursive) {
+            tracing::error!("Failed to watch config directory: {:?}", e);
+            return;
+        }
+
+        tracing::info!(
+            "Watching config file for changes: {}",
+            config_path_for_reload.display()
+        );
+
+        for res in rx {
+            match res {
+                Ok(event) => {
+                    // Filter events to only process our config file
+                    let is_our_file = event.paths.iter().any(|p| {
+                        p.file_name()
+                            .map(|n| n.to_string_lossy() == config_filename)
+                            .unwrap_or(false)
+                    });
+
+                    if is_our_file && (event.kind.is_modify() || event.kind.is_create()) {
+                        tracing::info!("Config file changed, reloading configuration...");
+
+                        match ProxyConfig::load(config_path_for_reload.to_str().unwrap()) {
+                            Ok(new_config) => {
+                                let mut config = shared_config_clone.write().unwrap();
+                                *config = new_config.clone();
+                                tracing::info!("Configuration reloaded successfully");
+                                tracing::info!("New target URL: {}", new_config.target_url);
+                                tracing::info!("New daily limit: {}", new_config.daily_limit);
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to reload configuration: {:?}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("File watcher error: {:?}", e);
+                }
+            }
+        }
+    });
 
     // Build the application
     let app = Router::new()
@@ -304,14 +428,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Blob transaction with custom rate limiting and contract parsing
         .route("/v1/tx/send/blob", post(blob_proxy_handler))
         .fallback(proxy_handler)
-        .with_state(config)
+        .with_state(app_config)
         .layer(CatchPanicLayer::custom(handle_panic))
         .layer(tower_http::cors::CorsLayer::permissive());
 
     // Parse listen address
-    let listener = tokio::net::TcpListener::bind(&args.listen_addr).await?;
+    let listen_addr = proxy_config.listen_addr.clone();
+    let listener = tokio::net::TcpListener::bind(&listen_addr).await?;
 
-    tracing::info!("Rate-limiting proxy listening on {}", args.listen_addr);
+    tracing::info!("Rate-limiting proxy listening on {}", listen_addr);
 
     // Start the server
     axum::serve(listener, app).await?;
