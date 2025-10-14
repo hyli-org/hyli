@@ -207,12 +207,9 @@ async fn blob_proxy_handler(
     let blacklist_identities = config.config.read().unwrap().blacklist_identities.clone();
     for pattern in &blacklist_identities {
         if matches_pattern(pattern, &identity) {
-            tracing::warn!(
-                "Blacklisted identity in blob transaction from IP: {}, identity: {}, pattern: {}",
-                ip,
-                identity,
-                pattern
-            );
+            config
+                .metrics
+                .increment_blacklisted_identity(&identity, pattern);
             return Err(StatusCode::FORBIDDEN);
         }
     }
@@ -222,13 +219,9 @@ async fn blob_proxy_handler(
     for contract in &contract_names {
         for pattern in &blacklist_contracts {
             if matches_pattern(pattern, contract) {
-                tracing::warn!(
-                    "Blacklisted contract in blob transaction from IP: {}, identity: {}, contract: {}, pattern: {}",
-                    ip,
-                    identity,
-                    contract,
-                    pattern
-                );
+                config
+                    .metrics
+                    .increment_blacklisted_contract(contract, pattern);
                 return Err(StatusCode::FORBIDDEN);
             }
         }
@@ -578,6 +571,8 @@ struct RateLimiterMetrics {
     fallback_counter: Counter<u64>,
     blob_tx_counter: Counter<u64>,
     currently_limited_gauge: Gauge<u64>,
+    blacklisted_identity_counter: Counter<u64>,
+    blacklisted_contract_counter: Counter<u64>,
 }
 
 impl RateLimiterMetrics {
@@ -596,6 +591,12 @@ impl RateLimiterMetrics {
                 .build(),
             currently_limited_gauge: my_meter
                 .u64_gauge(format!("{rate_limiter}_currently_limited_counter"))
+                .build(),
+            blacklisted_identity_counter: my_meter
+                .u64_counter(format!("{rate_limiter}_blacklisted_identity_counter"))
+                .build(),
+            blacklisted_contract_counter: my_meter
+                .u64_counter(format!("{rate_limiter}_blacklisted_contract_counter"))
                 .build(),
         }
     }
@@ -619,6 +620,26 @@ impl RateLimiterMetrics {
 
     pub fn set_currently_limited(&self, value: u64) {
         self.currently_limited_gauge.record(value, &[]);
+    }
+
+    pub fn increment_blacklisted_identity(&self, identity: &str, pattern: &str) {
+        self.blacklisted_identity_counter.add(
+            1,
+            &[
+                KeyValue::new("identity", identity.to_string()),
+                KeyValue::new("pattern", pattern.to_string()),
+            ],
+        );
+    }
+
+    pub fn increment_blacklisted_contract(&self, contract: &str, pattern: &str) {
+        self.blacklisted_contract_counter.add(
+            1,
+            &[
+                KeyValue::new("contract", contract.to_string()),
+                KeyValue::new("pattern", pattern.to_string()),
+            ],
+        );
     }
 }
 
