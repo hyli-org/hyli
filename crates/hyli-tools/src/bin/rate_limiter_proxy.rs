@@ -52,13 +52,27 @@ struct ProxyConfig {
     /// Redis connection string (optional, uses in-memory store if not provided)
     pub redis_url: Option<String>,
 
-    /// Daily rate limit per IP+contract combination for blob transactions
+    /// Daily rate limit per identity+contract combination for blob transactions
     #[serde(default = "default_daily_limit")]
     pub daily_limit: u32,
 
     /// Log format
     #[serde(default = "default_log_format")]
     pub log_format: String,
+
+    /// Blacklisted contract patterns (supports * wildcard)
+    #[serde(default = "default_blacklist_contracts")]
+    pub blacklist_contracts: Vec<String>,
+
+    /// Blacklisted identity patterns (supports * wildcard)
+    #[serde(default = "default_blacklist_identities")]
+    pub blacklist_identities: Vec<String>,
+
+    /// Allowed contract patterns (supports * wildcard)
+    /// If empty, all contracts are allowed (unless blacklisted)
+    /// If not empty, only contracts matching these patterns are allowed
+    #[serde(default = "default_allowed_contracts")]
+    pub allowed_contracts: Vec<String>,
 }
 
 fn default_listen_addr() -> String {
@@ -75,6 +89,23 @@ fn default_daily_limit() -> u32 {
 
 fn default_log_format() -> String {
     "json".to_string()
+}
+
+fn default_blacklist_contracts() -> Vec<String> {
+    Vec::new()
+}
+
+fn default_blacklist_identities() -> Vec<String> {
+    Vec::new()
+}
+
+fn default_allowed_contracts() -> Vec<String> {
+    vec![
+        "secp256k1".to_string(),
+        "check_secret".to_string(),
+        "faucet".to_string(),
+        "wallet".to_string(),
+    ]
 }
 
 impl ProxyConfig {
@@ -103,6 +134,71 @@ struct BlobTransaction {
 struct Blob {
     pub contract_name: String,
     pub data: Vec<u8>,
+}
+
+/// Simple pattern matching with * wildcard support
+/// Returns true if the value matches the pattern
+fn matches_pattern(pattern: &str, value: &str) -> bool {
+    // If no wildcard, do exact match
+    if !pattern.contains('*') {
+        return pattern == value;
+    }
+
+    // Convert pattern to regex-like matching
+    let parts: Vec<&str> = pattern.split('*').collect();
+
+    // Pattern starts with *
+    let starts_with_wildcard = pattern.starts_with('*');
+    // Pattern ends with *
+    let ends_with_wildcard = pattern.ends_with('*');
+
+    match (starts_with_wildcard, ends_with_wildcard, parts.len()) {
+        // Pattern is just "*"
+        (true, true, 2) if parts[0].is_empty() && parts[1].is_empty() => true,
+        // Pattern is "prefix*"
+        (false, true, 2) => value.starts_with(parts[0]),
+        // Pattern is "*suffix"
+        (true, false, 2) => value.ends_with(parts[1]),
+        // Pattern is "*middle*"
+        (true, true, 3) if parts[0].is_empty() && parts[2].is_empty() => value.contains(parts[1]),
+        // Pattern is "prefix*suffix"
+        (false, false, 2) => {
+            value.starts_with(parts[0])
+                && value.ends_with(parts[1])
+                && value.len() >= parts[0].len() + parts[1].len()
+        }
+        // Multiple wildcards - more complex matching
+        _ => {
+            let mut pos = 0;
+            for (i, part) in parts.iter().enumerate() {
+                if part.is_empty() {
+                    continue;
+                }
+
+                // For first part, check if it matches from the beginning
+                if i == 0 && !starts_with_wildcard {
+                    if !value[pos..].starts_with(part) {
+                        return false;
+                    }
+                    pos += part.len();
+                    continue;
+                }
+
+                // For last part, check if it matches at the end
+                if i == parts.len() - 1 && !ends_with_wildcard {
+                    return value[pos..].ends_with(part);
+                }
+
+                // For middle parts, find the next occurrence
+                if let Some(found_pos) = value[pos..].find(part) {
+                    pos += found_pos + part.len();
+                } else {
+                    return false;
+                }
+            }
+            true
+        }
+    }
 }
 
 /// Blob-specific handler with contract-level rate limiting
@@ -146,17 +242,58 @@ async fn blob_proxy_handler(
         }
     };
 
-    // Reject if contract names is not 'faucet' or 'wallet'.
-    if contract_names.iter().any(|name| {
-        name != "secp256k1" && name != "check_secret" && name != "faucet" && name != "wallet"
-    }) {
-        tracing::warn!(
-            "Invalid contract names in blob transaction from IP: {}, identity: {}, contracts: {:?}",
-            ip,
-            identity,
-            contract_names
-        );
-        return Err(StatusCode::BAD_REQUEST);
+    // Check if identity is blacklisted
+    let blacklist_identities = config.config.read().unwrap().blacklist_identities.clone();
+    for pattern in &blacklist_identities {
+        if matches_pattern(pattern, &identity) {
+            tracing::warn!(
+                "Blacklisted identity in blob transaction from IP: {}, identity: {}, pattern: {}",
+                ip,
+                identity,
+                pattern
+            );
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
+
+    // Check if any contract is blacklisted
+    let blacklist_contracts = config.config.read().unwrap().blacklist_contracts.clone();
+    for contract in &contract_names {
+        for pattern in &blacklist_contracts {
+            if matches_pattern(pattern, contract) {
+                tracing::warn!(
+                    "Blacklisted contract in blob transaction from IP: {}, identity: {}, contract: {}, pattern: {}",
+                    ip,
+                    identity,
+                    contract,
+                    pattern
+                );
+                return Err(StatusCode::FORBIDDEN);
+            }
+        }
+    }
+
+    // Check if contracts are in the allowed list (if configured)
+    let allowed_contracts = config.config.read().unwrap().allowed_contracts.clone();
+    if !allowed_contracts.is_empty() {
+        for contract in &contract_names {
+            let mut is_allowed = false;
+            for pattern in &allowed_contracts {
+                if matches_pattern(pattern, contract) {
+                    is_allowed = true;
+                    break;
+                }
+            }
+            if !is_allowed {
+                tracing::warn!(
+                    "Contract not in allowed list in blob transaction from IP: {}, identity: {}, contract: {}",
+                    ip,
+                    identity,
+                    contract
+                );
+                return Err(StatusCode::BAD_REQUEST);
+            }
+        }
     }
 
     // Rate limiting logic
@@ -502,5 +639,104 @@ impl RateLimiterMetrics {
 
     pub fn set_currently_limited(&self, value: u64) {
         self.currently_limited_gauge.record(value, &[]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pattern_matching_exact() {
+        assert!(matches_pattern("test", "test"));
+        assert!(!matches_pattern("test", "test2"));
+        assert!(!matches_pattern("test", "tes"));
+    }
+
+    #[test]
+    fn test_pattern_matching_prefix() {
+        assert!(matches_pattern("test_*", "test_contract"));
+        assert!(matches_pattern("test_*", "test_"));
+        assert!(!matches_pattern("test_*", "test"));
+        assert!(!matches_pattern("test_*", "other_test"));
+    }
+
+    #[test]
+    fn test_pattern_matching_suffix() {
+        assert!(matches_pattern("*_spam", "contract_spam"));
+        assert!(matches_pattern("*_spam", "_spam"));
+        assert!(!matches_pattern("*_spam", "spam"));
+        assert!(!matches_pattern("*_spam", "spam_contract"));
+    }
+
+    #[test]
+    fn test_pattern_matching_contains() {
+        assert!(matches_pattern("*bad*", "bad"));
+        assert!(matches_pattern("*bad*", "very_bad_contract"));
+        assert!(matches_pattern("*bad*", "badcontract"));
+        assert!(matches_pattern("*bad*", "contractbad"));
+        assert!(!matches_pattern("*bad*", "good_contract"));
+    }
+
+    #[test]
+    fn test_pattern_matching_prefix_suffix() {
+        assert!(matches_pattern("test_*_spam", "test_contract_spam"));
+        assert!(matches_pattern("test_*_spam", "test__spam"));
+        assert!(!matches_pattern("test_*_spam", "test_spam"));
+        assert!(!matches_pattern("test_*_spam", "other_test_contract_spam"));
+    }
+
+    #[test]
+    fn test_pattern_matching_wildcard_only() {
+        assert!(matches_pattern("*", "anything"));
+        assert!(matches_pattern("*", ""));
+        assert!(matches_pattern("*", "test_contract_123"));
+    }
+
+    #[test]
+    fn test_pattern_matching_multiple_wildcards() {
+        assert!(matches_pattern(
+            "test_*_middle_*_end",
+            "test_start_middle_center_end"
+        ));
+        assert!(matches_pattern("a*b*c", "abc"));
+        assert!(matches_pattern("a*b*c", "aXbYc"));
+        assert!(matches_pattern("a*b*c", "aXXXbYYYc"));
+        assert!(!matches_pattern("a*b*c", "ac"));
+        assert!(!matches_pattern("a*b*c", "abc2"));
+    }
+
+    #[test]
+    fn test_blacklist_identity_patterns() {
+        // Test exact match
+        assert!(matches_pattern("hyle1badactor", "hyle1badactor"));
+        assert!(!matches_pattern("hyle1badactor", "hyle1goodactor"));
+
+        // Test prefix match
+        assert!(matches_pattern("hyle1spam*", "hyle1spam123"));
+        assert!(matches_pattern("hyle1spam*", "hyle1spammer"));
+        assert!(!matches_pattern("hyle1spam*", "hyle1good"));
+
+        // Test suffix match
+        assert!(matches_pattern("*abuser", "testabuser"));
+        assert!(matches_pattern("*abuser", "hyle1abuser"));
+        assert!(!matches_pattern("*abuser", "hyle1good"));
+    }
+
+    #[test]
+    fn test_blacklist_contract_patterns() {
+        // Test exact match
+        assert!(matches_pattern("malicious_contract", "malicious_contract"));
+        assert!(!matches_pattern("malicious_contract", "good_contract"));
+
+        // Test prefix match
+        assert!(matches_pattern("test_*", "test_contract"));
+        assert!(matches_pattern("test_*", "test_123"));
+        assert!(!matches_pattern("test_*", "prod_contract"));
+
+        // Test contains match
+        assert!(matches_pattern("*bad*", "very_bad_contract"));
+        assert!(matches_pattern("*bad*", "bad"));
+        assert!(!matches_pattern("*bad*", "good_contract"));
     }
 }
