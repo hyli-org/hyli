@@ -12,6 +12,7 @@ use chrono::{Local, NaiveDate};
 use clap::Parser;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
+use hyli_model::RegisterContractAction;
 use hyli_modules::{modules::rest::handle_panic, utils::logger::setup_tracing};
 use hyper::body::Incoming;
 use hyper_util::{
@@ -186,11 +187,19 @@ async fn blob_proxy_handler(
     // Parse JSON to extract contract names and identity
     let (identity, contract_names) = match serde_json::from_slice::<BlobTransaction>(&body_bytes) {
         Ok(blob_tx) => {
-            let contracts: HashSet<String> = blob_tx
+            let mut contracts: HashSet<String> = blob_tx
                 .blobs
                 .iter()
                 .map(|blob| blob.contract_name.clone())
                 .collect();
+
+            if let Some(pos) = contracts.iter().position(|c| c == "hyli") {
+                if let Ok(action) =
+                    borsh::from_slice::<RegisterContractAction>(&blob_tx.blobs[pos].data)
+                {
+                    contracts.insert(action.contract_name.0);
+                }
+            }
             (blob_tx.identity, contracts.into_iter().collect::<Vec<_>>())
         }
         Err(e) => {
