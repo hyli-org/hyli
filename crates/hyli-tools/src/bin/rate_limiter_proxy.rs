@@ -193,12 +193,11 @@ async fn blob_proxy_handler(
                 .map(|blob| blob.contract_name.clone())
                 .collect();
 
-            if let Some(pos) = contracts.iter().position(|c| c == "hyli") {
-                if let Ok(action) =
+            if let Some(pos) = contracts.iter().position(|c| c == "hyli")
+                && let Ok(action) =
                     borsh::from_slice::<RegisterContractAction>(&blob_tx.blobs[pos].data)
-                {
-                    contracts.insert(action.contract_name.0);
-                }
+            {
+                contracts.insert(action.contract_name.0);
             }
             (blob_tx.identity, contracts.into_iter().collect::<Vec<_>>())
         }
