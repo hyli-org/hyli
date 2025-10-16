@@ -1,4 +1,4 @@
-use std::num::TryFromIntError;
+use std::{num::TryFromIntError, str::FromStr};
 
 use super::{BlockPagination, ExplorerApiState};
 use api::{
@@ -11,6 +11,7 @@ use axum::{
     Json,
 };
 use hyli_model::utils::TimestampMs;
+use serde::Deserialize;
 use sqlx::postgres::PgRow;
 use sqlx::types::chrono::NaiveDateTime;
 use sqlx::FromRow;
@@ -93,6 +94,23 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for TxHashDb {
     > {
         let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
         Ok(TxHashDb(TxHash(inner)))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TxIdDb(pub TxId);
+
+impl From<TxId> for TxIdDb {
+    fn from(tx_id: TxId) -> Self {
+        TxIdDb(tx_id)
+    }
+}
+
+impl<'r> FromRow<'r, PgRow> for TxIdDb {
+    fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
+        let tx_hash: TxHashDb = row.try_get("tx_hash")?;
+        let dp_hash: DataProposalHashDb = row.try_get("parent_dp_hash")?;
+        Ok(TxIdDb(TxId(dp_hash.0, tx_hash.0)))
     }
 }
 
@@ -318,6 +336,86 @@ pub async fn get_transactions_by_contract(
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(transactions))
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransactionStatusQuery {
+    pub status: Vec<TransactionStatusDb>,
+}
+
+impl<'de> Deserialize<'de> for TransactionStatusQuery {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawStatusQuery {
+            #[serde(default)]
+            status: String,
+        }
+
+        let raw = RawStatusQuery::deserialize(deserializer)?;
+        let status = raw
+            .status
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| TransactionStatusDb::from_str(s).map_err(serde::de::Error::custom))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(TransactionStatusQuery { status })
+    }
+}
+
+#[utoipa::path(
+    get,
+    tag = "Indexer",
+    params(
+        ("contract_name" = String, Path, description = "Contract name"),
+    ),
+    path = "/transactions/contract/{contract_name}/last_settled_tx_id",
+    responses(
+        (status = OK, body = TxId)
+    )
+)]
+#[axum::debug_handler]
+pub async fn get_last_settled_tx_by_contract(
+    Path(contract_name): Path<String>,
+    Query(status): Query<TransactionStatusQuery>,
+    State(state): State<ExplorerApiState>,
+) -> Result<Json<Option<TxId>>, StatusCode> {
+    let status = if status.status.is_empty() {
+        vec![
+            TransactionStatusDb::Success,
+            TransactionStatusDb::Failure,
+            TransactionStatusDb::TimedOut,
+        ]
+    } else {
+        status.status
+    };
+
+    let tx_id = log_error!(
+        sqlx::query_as::<_, TxIdDb>(
+            "
+            SELECT 
+                t.parent_dp_hash, t.tx_hash 
+            FROM 
+                transactions t
+            JOIN blobs b ON t.parent_dp_hash = b.parent_dp_hash AND t.tx_hash = b.tx_hash
+            WHERE b.contract_name = $1 
+            AND t.transaction_status = ANY($2) 
+            ORDER BY t.block_height DESC, t.index DESC LIMIT 1
+            "
+        )
+        .bind(contract_name)
+        .bind(status)
+        .fetch_optional(&state.db)
+        .await
+        .map(|db| db.map(|tx_id_db| tx_id_db.0)),
+        "Failed to fetch last settled tx by contract"
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(tx_id))
 }
 
 #[utoipa::path(
