@@ -121,15 +121,17 @@ impl IndexerApiHttpClient {
     pub async fn get_last_settled_txid_by_contract(
         &self,
         contract_name: &ContractName,
-        status: &[TransactionStatusDb],
+        status: Option<Vec<TransactionStatusDb>>,
     ) -> Result<Option<TxId>> {
         self.get(&format!(
             "v1/indexer/transactions/contract/{contract_name}/last_settled_tx_id?status={}",
             status
-                .iter()
-                .map(|s| s.to_string())
-                .collect::<Vec<String>>()
-                .join(","),
+                .map(|s| s
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<String>>()
+                    .join(","))
+                .unwrap_or_default(),
         ))
         .await
         .context(format!(
