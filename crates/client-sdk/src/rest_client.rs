@@ -10,10 +10,10 @@ use hyli_net::http::HttpClient;
 use sdk::{
     api::{
         APIBlob, APIBlock, APIContract, APINodeContract, APIRegisterContract, APIStaking,
-        APITransaction, NodeInfo, TransactionWithBlobs,
+        APITransaction, NodeInfo, TransactionStatusDb, TransactionWithBlobs,
     },
     BlobIndex, BlobTransaction, BlockHash, BlockHeight, ConsensusInfo, Contract, ContractName,
-    ProofTransaction, TxHash, UnsettledBlobTransaction, ValidatorPublicKey,
+    ProofTransaction, TxHash, TxId, UnsettledBlobTransaction, ValidatorPublicKey,
 };
 
 #[derive(Clone)]
@@ -115,6 +115,26 @@ impl IndexerApiHttpClient {
         self.get(&format!("v1/indexer/transactions/contract/{contract_name}"))
             .await
             .context(format!("getting transactions for contract {contract_name}"))
+    }
+
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    pub async fn get_last_settled_txid_by_contract(
+        &self,
+        contract_name: &ContractName,
+        status: &[TransactionStatusDb],
+    ) -> Result<Option<TxId>> {
+        self.get(&format!(
+            "v1/indexer/transactions/contract/{contract_name}/last_settled_tx_id?status={}",
+            status
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<String>>()
+                .join(","),
+        ))
+        .await
+        .context(format!(
+            "getting last settled tx by contract {contract_name}"
+        ))
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]

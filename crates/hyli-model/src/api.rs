@@ -129,6 +129,19 @@ impl std::str::FromStr for TransactionStatusDb {
     }
 }
 
+impl ToString for TransactionStatusDb {
+    fn to_string(&self) -> String {
+        String::from(match self {
+            TransactionStatusDb::WaitingDissemination => "waiting_dissemination",
+            TransactionStatusDb::DataProposalCreated => "data_proposal_created",
+            TransactionStatusDb::Success => "success",
+            TransactionStatusDb::Failure => "failure",
+            TransactionStatusDb::Sequenced => "sequenced",
+            TransactionStatusDb::TimedOut => "timed_out",
+        })
+    }
+}
+
 impl TransactionTypeDb {
     pub fn from(transaction: &Transaction) -> Self {
         transaction.transaction_data.discriminant().into()
