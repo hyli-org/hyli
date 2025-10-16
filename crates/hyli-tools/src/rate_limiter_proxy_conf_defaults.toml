@@ -15,3 +15,24 @@ daily_limit = 500
 # Log format (json or pretty)
 log_format = "json"
 
+# Blacklisted contract patterns (supports * wildcard)
+# Examples:
+#   "malicious_contract" - exact match
+#   "test_*" - matches any contract starting with "test_"
+#   "*_spam" - matches any contract ending with "_spam"
+#   "*bad*" - matches any contract containing "bad"
+blacklist_contracts = []
+
+# Blacklisted identity patterns (supports * wildcard)
+# Examples:
+#   "hyle1badactor" - exact match
+#   "hyle1spam*" - matches any identity starting with "hyle1spam"
+#   "*abuser" - matches any identity ending with "abuser"
+blacklist_identities = []
+
+# Allowed contract patterns (supports * wildcard)
+# If empty, all contracts are allowed (unless blacklisted)
+# If not empty, only contracts matching these patterns are allowed
+# Default: Only allow specific contracts for security
+allowed_contracts = ["secp256k1", "check_secret", "faucet", "wallet"]
+
