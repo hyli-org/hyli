@@ -117,6 +117,8 @@ impl IndexerApiHttpClient {
             .context(format!("getting transactions for contract {contract_name}"))
     }
 
+    /// Get the last settled tx id by contract name and status
+    /// If status is not provided, it will return the last settled tx id for all statuses (success, failure, timed_out)
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_last_settled_txid_by_contract(
         &self,
