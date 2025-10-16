@@ -12,7 +12,7 @@ use chrono::{Local, NaiveDate};
 use clap::Parser;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
-use hyli_model::RegisterContractAction;
+use hyli_model::{BlobData, RegisterContractAction};
 use hyli_modules::{modules::rest::handle_panic, utils::logger::setup_tracing};
 use hyper::body::Incoming;
 use hyper_util::{
@@ -95,7 +95,7 @@ struct BlobTransaction {
 #[derive(Debug, Serialize, Deserialize)]
 struct Blob {
     pub contract_name: String,
-    pub data: Vec<u8>,
+    pub data: BlobData,
 }
 
 /// Simple pattern matching with * wildcard support
@@ -195,7 +195,7 @@ async fn blob_proxy_handler(
 
             if let Some(pos) = contracts.iter().position(|c| c == "hyli")
                 && let Ok(action) =
-                    borsh::from_slice::<RegisterContractAction>(&blob_tx.blobs[pos].data)
+                    borsh::from_slice::<RegisterContractAction>(&blob_tx.blobs[pos].data.0)
             {
                 contracts.insert(action.contract_name.0);
             }
