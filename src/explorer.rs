@@ -218,6 +218,7 @@ impl Explorer {
             .routes(routes!(api::get_transactions))
             .routes(routes!(api::get_transactions_by_height))
             .routes(routes!(api::get_transactions_by_contract))
+            .routes(routes!(api::get_last_settled_tx_by_contract))
             .routes(routes!(api::get_transaction_with_hash))
             .routes(routes!(api::get_transaction_events))
             .routes(routes!(api::get_blob_transactions_by_contract))

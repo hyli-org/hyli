@@ -10,10 +10,10 @@ use hyli_net::http::HttpClient;
 use sdk::{
     api::{
         APIBlob, APIBlock, APIContract, APINodeContract, APIRegisterContract, APIStaking,
-        APITransaction, NodeInfo, TransactionWithBlobs,
+        APITransaction, NodeInfo, TransactionStatusDb, TransactionWithBlobs,
     },
     BlobIndex, BlobTransaction, BlockHash, BlockHeight, ConsensusInfo, Contract, ContractName,
-    ProofTransaction, TxHash, UnsettledBlobTransaction, ValidatorPublicKey,
+    ProofTransaction, TxHash, TxId, UnsettledBlobTransaction, ValidatorPublicKey,
 };
 
 #[derive(Clone)]
@@ -115,6 +115,30 @@ impl IndexerApiHttpClient {
         self.get(&format!("v1/indexer/transactions/contract/{contract_name}"))
             .await
             .context(format!("getting transactions for contract {contract_name}"))
+    }
+
+    /// Get the last settled tx id by contract name and status
+    /// If status is not provided, it will return the last settled tx id for all statuses (success, failure, timed_out)
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    pub async fn get_last_settled_txid_by_contract(
+        &self,
+        contract_name: &ContractName,
+        status: Option<Vec<TransactionStatusDb>>,
+    ) -> Result<Option<TxId>> {
+        self.get(&format!(
+            "v1/indexer/transactions/contract/{contract_name}/last_settled_tx_id?status={}",
+            status
+                .map(|s| s
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<String>>()
+                    .join(","))
+                .unwrap_or_default(),
+        ))
+        .await
+        .context(format!(
+            "getting last settled tx by contract {contract_name}"
+        ))
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
