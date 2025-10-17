@@ -129,16 +129,17 @@ impl std::str::FromStr for TransactionStatusDb {
     }
 }
 
-impl ToString for TransactionStatusDb {
-    fn to_string(&self) -> String {
-        String::from(match self {
+impl std::fmt::Display for TransactionStatusDb {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
             TransactionStatusDb::WaitingDissemination => "waiting_dissemination",
             TransactionStatusDb::DataProposalCreated => "data_proposal_created",
             TransactionStatusDb::Success => "success",
             TransactionStatusDb::Failure => "failure",
             TransactionStatusDb::Sequenced => "sequenced",
             TransactionStatusDb::TimedOut => "timed_out",
-        })
+        };
+        write!(f, "{}", str)
     }
 }
 
