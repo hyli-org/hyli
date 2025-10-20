@@ -72,7 +72,6 @@ impl Default for LongTasksRuntime {
 impl Drop for LongTasksRuntime {
     fn drop(&mut self) {
         // Shut down the hashing runtime.
-        // TODO: serialize?
         // Safety: We'll manually drop the runtime below and it won't be double-dropped as we use ManuallyDrop.
         let rt = unsafe { std::mem::ManuallyDrop::take(&mut self.0) };
         // This has to be done outside the current runtime.
