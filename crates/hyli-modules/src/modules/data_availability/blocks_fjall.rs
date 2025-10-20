@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use fjall::{
-    Config, Keyspace, KvSeparationOptions, PartitionCreateOptions, PartitionHandle, Slice,
+    Config, GarbageCollection, Keyspace, KvSeparationOptions, PartitionCreateOptions,
+    PartitionHandle, Slice,
 };
 use sdk::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock};
 use std::{fmt::Debug, path::Path};
@@ -115,7 +116,27 @@ impl Blocks {
         let by_height =
             db.open_partition("block_hashes_by_height", PartitionCreateOptions::default())?;
 
-        info!("{} block(s) available", by_hash.len()?);
+        info!("{} block(s) loaded", by_hash.len()?);
+
+        if by_hash.len()? > 1000 {
+            let mut cleaned = 0;
+            for i in 0..(by_hash.len()? - 10) {
+                let height = BlockHeight(i as u64);
+                let item = by_height.get(FjallHeightKey::new(height).as_ref())?;
+                let block = item.map(Self::decode_block_hash).transpose()?;
+                if let Some(block) = block {
+                    by_height.remove(FjallHeightKey::new(height).as_ref())?;
+                    by_hash.remove(FjallHashKey(block).as_ref())?;
+                    cleaned += 1;
+                }
+            }
+            // TODO: this is probably not super super efficient.
+            by_height.gc_scan()?;
+            by_height.gc_drop_stale_segments()?;
+            by_hash.gc_scan()?;
+            by_hash.gc_drop_stale_segments()?;
+            info!("Cleaned {cleaned} blocks from storage.");
+        }
 
         Ok(Blocks {
             db,
