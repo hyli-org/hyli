@@ -154,6 +154,7 @@ macro_rules! bus_client {
         }
         impl $(< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? Clone for $name $(< $( $lt ),+ >)? {
             fn clone(&self) -> Self {
+                tracing::debug!("Cloning bus client {}", stringify!($name));
                 use $crate::utils::static_type_map::Pick;
                 $name::new(
                     Pick::<$crate::bus::metrics::BusMetrics>::get(self).clone(),
