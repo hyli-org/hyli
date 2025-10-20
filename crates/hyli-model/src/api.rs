@@ -113,6 +113,36 @@ pub enum TransactionStatusDb {
     TimedOut,
 }
 
+impl std::str::FromStr for TransactionStatusDb {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "waiting_dissemination" => Ok(TransactionStatusDb::WaitingDissemination),
+            "data_proposal_created" => Ok(TransactionStatusDb::DataProposalCreated),
+            "success" => Ok(TransactionStatusDb::Success),
+            "failure" => Ok(TransactionStatusDb::Failure),
+            "sequenced" => Ok(TransactionStatusDb::Sequenced),
+            "timed_out" => Ok(TransactionStatusDb::TimedOut),
+            _ => Err(format!("Invalid transaction status: {}", s)),
+        }
+    }
+}
+
+impl std::fmt::Display for TransactionStatusDb {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
+            TransactionStatusDb::WaitingDissemination => "waiting_dissemination",
+            TransactionStatusDb::DataProposalCreated => "data_proposal_created",
+            TransactionStatusDb::Success => "success",
+            TransactionStatusDb::Failure => "failure",
+            TransactionStatusDb::Sequenced => "sequenced",
+            TransactionStatusDb::TimedOut => "timed_out",
+        };
+        write!(f, "{}", str)
+    }
+}
+
 impl TransactionTypeDb {
     pub fn from(transaction: &Transaction) -> Self {
         transaction.transaction_data.discriminant().into()
