@@ -51,17 +51,53 @@ impl LanesStorage {
         path: &Path,
         lanes_tip: BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>,
     ) -> Result<Self> {
+        let cache_size = std::env::var("HYLI_FJALL_CACHE_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(256)
+            * 1024
+            * 1024;
+        info!("Setting fjall cache size to {} bytes", cache_size);
+        let write_buffer_size = std::env::var("HYLI_FJALL_WRITE_BUFFER_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(512)
+            * 1024
+            * 1024;
+        info!(
+            "Setting fjall write buffer size to {} bytes",
+            write_buffer_size
+        );
+        let journaling_size = std::env::var("HYLI_FJALL_JOURNALING_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(512)
+            * 1024
+            * 1024;
+        info!("Setting fjall journaling size to {} bytes", journaling_size);
+
+        let file_target_size = std::env::var("HYLI_FJALL_FILE_TARGET_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(256)
+            * 1024
+            * 1024;
+        info!(
+            "Setting fjall file target size to {} bytes",
+            file_target_size
+        );
+
         let db = Config::new(path)
-            .cache_size(256 * 1024 * 1024)
-            .max_journaling_size(512 * 1024 * 1024)
-            .max_write_buffer_size(512 * 1024 * 1024)
+            .cache_size(cache_size)
+            .max_journaling_size(journaling_size)
+            .max_write_buffer_size(write_buffer_size)
             .open()?;
 
         let by_hash_metadata = db.open_partition(
             "dp_metadata",
             PartitionCreateOptions::default()
                 .with_kv_separation(
-                    KvSeparationOptions::default().file_target_size(256 * 1024 * 1024),
+                    KvSeparationOptions::default().file_target_size(file_target_size),
                 )
                 .block_size(32 * 1024)
                 .manual_journal_persist(true)
@@ -72,7 +108,7 @@ impl LanesStorage {
             "dp_data",
             PartitionCreateOptions::default()
                 .with_kv_separation(
-                    KvSeparationOptions::default().file_target_size(256 * 1024 * 1024),
+                    KvSeparationOptions::default().file_target_size(file_target_size),
                 )
                 .block_size(32 * 1024)
                 .manual_journal_persist(true)
@@ -83,7 +119,7 @@ impl LanesStorage {
             "dp_proofs",
             PartitionCreateOptions::default()
                 .with_kv_separation(
-                    KvSeparationOptions::default().file_target_size(256 * 1024 * 1024),
+                    KvSeparationOptions::default().file_target_size(file_target_size),
                 )
                 .block_size(32 * 1024)
                 .manual_journal_persist(true)
