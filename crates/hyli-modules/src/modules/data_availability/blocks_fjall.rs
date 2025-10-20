@@ -130,11 +130,6 @@ impl Blocks {
                     cleaned += 1;
                 }
             }
-            // TODO: this is probably not super super efficient.
-            by_height.gc_scan()?;
-            by_height.gc_drop_stale_segments()?;
-            by_hash.gc_scan()?;
-            by_hash.gc_drop_stale_segments()?;
             info!("Cleaned {cleaned} blocks from storage.");
         }
 
