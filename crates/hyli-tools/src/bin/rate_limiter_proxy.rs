@@ -12,7 +12,7 @@ use chrono::{Local, NaiveDate};
 use clap::Parser;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
-use hyli_model::{BlobData, RegisterContractAction};
+use hyli_model::{BlobData, BlobTransaction, ContractName, Identity, RegisterContractAction};
 use hyli_modules::{modules::rest::handle_panic, utils::logger::setup_tracing};
 use hyper::body::Incoming;
 use hyper_util::{
@@ -83,19 +83,6 @@ impl ProxyConfig {
         let conf: Self = s.try_deserialize()?;
         Ok(conf)
     }
-}
-
-// Simplified versions of the structures we need to parse
-#[derive(Debug, Serialize, Deserialize)]
-struct BlobTransaction {
-    pub identity: String,
-    pub blobs: Vec<Blob>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Blob {
-    pub contract_name: String,
-    pub data: BlobData,
 }
 
 /// Simple pattern matching with * wildcard support
@@ -186,21 +173,7 @@ async fn blob_proxy_handler(
 
     // Parse JSON to extract contract names and identity
     let (identity, contract_names) = match serde_json::from_slice::<BlobTransaction>(&body_bytes) {
-        Ok(blob_tx) => {
-            let mut contracts: HashSet<String> = blob_tx
-                .blobs
-                .iter()
-                .map(|blob| blob.contract_name.clone())
-                .collect();
-
-            if let Some(pos) = contracts.iter().position(|c| c == "hyli")
-                && let Ok(action) =
-                    borsh::from_slice::<RegisterContractAction>(&blob_tx.blobs[pos].data.0)
-            {
-                contracts.insert(action.contract_name.0);
-            }
-            (blob_tx.identity, contracts.into_iter().collect::<Vec<_>>())
-        }
+        Ok(blob_tx) => extract_parts(blob_tx),
         Err(e) => {
             tracing::warn!(
                 "Failed to parse blob transaction JSON from IP {}: {}",
@@ -214,10 +187,10 @@ async fn blob_proxy_handler(
     // Check if identity is blacklisted
     let blacklist_identities = config.config.read().unwrap().blacklist_identities.clone();
     for pattern in &blacklist_identities {
-        if matches_pattern(pattern, &identity) {
+        if matches_pattern(pattern, &identity.0) {
             config
                 .metrics
-                .increment_blacklisted_identity(&identity, pattern);
+                .increment_blacklisted_identity(&identity.0, pattern);
             return Err(StatusCode::FORBIDDEN);
         }
     }
@@ -226,10 +199,10 @@ async fn blob_proxy_handler(
     let blacklist_contracts = config.config.read().unwrap().blacklist_contracts.clone();
     for contract in &contract_names {
         for pattern in &blacklist_contracts {
-            if matches_pattern(pattern, contract) {
+            if matches_pattern(pattern, &contract.0) {
                 config
                     .metrics
-                    .increment_blacklisted_contract(contract, pattern);
+                    .increment_blacklisted_contract(&contract.0, pattern);
                 return Err(StatusCode::FORBIDDEN);
             }
         }
@@ -241,7 +214,7 @@ async fn blob_proxy_handler(
         for contract in &contract_names {
             let mut is_allowed = false;
             for pattern in &allowed_contracts {
-                if matches_pattern(pattern, contract) {
+                if matches_pattern(pattern, &contract.0) {
                     is_allowed = true;
                     break;
                 }
@@ -267,11 +240,11 @@ async fn blob_proxy_handler(
     let daily_limit = config.config.read().unwrap().daily_limit;
 
     // Use DashMap entry API to avoid unnecessary cloning and locking
-    match config.rate_limits.entry(identity.clone()) {
+    match config.rate_limits.entry(identity.0.clone()) {
         Entry::Occupied(mut occ) => {
             let contract_map = occ.get_mut();
             for contract in &contract_names {
-                let entry = contract_map.entry(contract.clone()).or_insert((0, today));
+                let entry = contract_map.entry(contract.0.clone()).or_insert((0, today));
                 if entry.1 != today {
                     entry.0 = 0;
                     entry.1 = today;
@@ -287,7 +260,7 @@ async fn blob_proxy_handler(
         Entry::Vacant(vac) => {
             let mut contract_map = HashMap::with_capacity(contract_names.len());
             for contract in &contract_names {
-                contract_map.insert(contract.clone(), (1, today));
+                contract_map.insert(contract.0.clone(), (1, today));
             }
             vac.insert(contract_map);
         }
@@ -313,7 +286,7 @@ async fn blob_proxy_handler(
         // Update metrics
 
         for contract in &limited_contracts {
-            config.metrics.increment_blob_tx(contract, true);
+            config.metrics.increment_blob_tx(&contract.0, true);
         }
         tracing::warn!(
             identity = %identity,
@@ -326,7 +299,7 @@ async fn blob_proxy_handler(
 
     // Update metrics for successful blob transactions
     for contract in &contract_names {
-        config.metrics.increment_blob_tx(contract, false);
+        config.metrics.increment_blob_tx(&contract.0, false);
     }
 
     tracing::info!(
@@ -341,6 +314,51 @@ async fn blob_proxy_handler(
 
     // Forward to the actual handler
     proxy_handler(State(config), req).await
+}
+
+fn extract_parts(blob_tx: BlobTransaction) -> (Identity, Vec<ContractName>) {
+    let mut contracts: HashSet<ContractName> = blob_tx
+        .blobs
+        .iter()
+        .map(|blob| blob.contract_name.clone())
+        .collect();
+
+    if let Some(pos) = contracts.iter().position(|c| c.0 == "hyli")
+        && let Ok(action) = borsh::from_slice::<RegisterContractAction>(&blob_tx.blobs[pos].data.0)
+    {
+        contracts.insert(action.contract_name);
+    }
+    (
+        blob_tx.identity.clone(),
+        contracts.into_iter().collect::<Vec<_>>(),
+    )
+}
+
+#[cfg(test)]
+mod test {
+
+    #[test]
+    fn test_extract_parts() {
+        use hyli_model::{Blob, BlobData, BlobTransaction, RegisterContractAction};
+
+        let register_action = RegisterContractAction {
+            contract_name: "new_contract".into(),
+            ..Default::default()
+        };
+        let register_blob = register_action.as_blob("new_contract".into());
+        let other_blob = Blob {
+            contract_name: "other_contract".into(),
+            data: BlobData(vec![1, 2, 3]),
+        };
+
+        let blob_tx = BlobTransaction::new("test_identity", vec![register_blob, other_blob]);
+
+        let (identity, contracts) = crate::extract_parts(blob_tx);
+
+        assert_eq!(identity.0, "test_identity");
+        assert!(contracts.contains(&"new_contract".into()));
+        assert!(contracts.contains(&"other_contract".into()));
+    }
 }
 
 /// Regular proxy handler for non-blob requests
