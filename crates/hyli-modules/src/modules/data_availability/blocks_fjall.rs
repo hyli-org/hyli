@@ -76,11 +76,31 @@ impl Blocks {
     }
 
     pub fn new(path: &Path) -> Result<Self> {
+        let cache_size = std::env::var("HYLI_FJALL_CACHE_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(256 * 1024 * 1024);
+        info!("Setting fjall cache size to {} bytes", cache_size);
+        let write_buffer_size = std::env::var("HYLI_FJALL_WRITE_BUFFER_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(512 * 1024 * 1024);
+        info!(
+            "Setting fjall write buffer size to {} bytes",
+            write_buffer_size
+        );
+        let journaling_size = std::env::var("HYLI_FJALL_JOURNALING_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(512 * 1024 * 1024);
+        info!("Setting fjall journaling size to {} bytes", journaling_size);
+
         let db = Config::new(path)
-            .cache_size(256 * 1024 * 1024)
-            .max_journaling_size(512 * 1024 * 1024)
-            .max_write_buffer_size(512 * 1024 * 1024)
+            .cache_size(cache_size)
+            .max_journaling_size(journaling_size)
+            .max_write_buffer_size(write_buffer_size)
             .open()?;
+
         let by_hash = db.open_partition(
             "blocks_by_hash",
             PartitionCreateOptions::default()
