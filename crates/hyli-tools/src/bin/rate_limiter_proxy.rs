@@ -12,7 +12,7 @@ use chrono::{Local, NaiveDate};
 use clap::Parser;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
-use hyli_model::{BlobData, BlobTransaction, ContractName, Identity, RegisterContractAction};
+use hyli_model::{BlobTransaction, ContractName, Identity, RegisterContractAction};
 use hyli_modules::{modules::rest::handle_panic, utils::logger::setup_tracing};
 use hyper::body::Incoming;
 use hyper_util::{
