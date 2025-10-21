@@ -1,5 +1,4 @@
 use anyhow::Context;
-use axum::Json;
 use axum::http::header::CONNECTION;
 use axum::{
     Router,
