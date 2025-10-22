@@ -119,6 +119,9 @@ enum DevnetAction {
         /// Profile to use for baking (e.g., --profile=bobalice)
         #[arg(long, value_name = "PROFILE")]
         profile: Option<String>,
+        /// No pull docker images (use existing local)
+        #[arg(long)]
+        no_pull: bool,
     },
     /// Stop the local devnet
     #[command(alias = "d")]
@@ -141,6 +144,9 @@ enum DevnetAction {
         /// Profile to use for baking (e.g., --profile=bobalice)
         #[arg(long, value_name = "PROFILE")]
         profile: Option<String>,
+        /// No pull docker images (use existing local)
+        #[arg(long)]
+        no_pull: bool,
     },
     /// Create and fund test accounts
     #[command(alias = "b")]
@@ -223,10 +229,12 @@ async fn main() -> Result<()> {
                     reset,
                     bake,
                     profile,
+                    no_pull,
                 } => commands::devnet::DevnetAction::Up {
                     reset,
                     bake,
                     profile,
+                    no_pull,
                 },
                 DevnetAction::Down => commands::devnet::DevnetAction::Down,
                 DevnetAction::Pause => commands::devnet::DevnetAction::Pause,
@@ -234,10 +242,12 @@ async fn main() -> Result<()> {
                     reset,
                     bake,
                     profile,
+                    no_pull,
                 } => commands::devnet::DevnetAction::Restart {
                     reset,
                     bake,
                     profile,
+                    no_pull,
                 },
                 DevnetAction::Status => commands::devnet::DevnetAction::Status,
                 DevnetAction::Fork { endpoint } => {

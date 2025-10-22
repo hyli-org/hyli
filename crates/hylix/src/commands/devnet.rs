@@ -33,6 +33,7 @@ pub enum DevnetAction {
         reset: bool,
         bake: bool,
         profile: Option<String>,
+        no_pull: bool,
     },
     Down,
     Pause,
@@ -40,6 +41,7 @@ pub enum DevnetAction {
         reset: bool,
         bake: bool,
         profile: Option<String>,
+        no_pull: bool,
     },
     Status,
     Fork {
@@ -59,6 +61,7 @@ pub struct DevnetContext {
     pub client: NodeApiHttpClient,
     pub config: HylixConfig,
     pub profile: Option<String>,
+    pub pull: bool,
 }
 
 impl From<HylixConfig> for DevnetContext {
@@ -84,6 +87,7 @@ impl DevnetContext {
             client,
             config,
             profile: None,
+            pull: true,
         })
     }
 
@@ -95,7 +99,12 @@ impl DevnetContext {
             client,
             config,
             profile,
+            pull: true,
         })
+    }
+
+    pub fn without_pull(&mut self) {
+        self.pull = false;
     }
 }
 
@@ -110,6 +119,7 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
             reset,
             bake,
             profile,
+            no_pull,
         } => {
             start_containers(&context).await?;
 
@@ -117,7 +127,11 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
                 log_info("Devnet is running");
                 return Ok(());
             }
-            let context_with_profile = DevnetContext::new_with_profile(context.config, profile)?;
+            let mut context_with_profile =
+                DevnetContext::new_with_profile(context.config, profile)?;
+            if no_pull {
+                context_with_profile.without_pull();
+            }
             start_devnet(reset, bake, &context_with_profile).await?;
         }
         DevnetAction::Pause => {
@@ -130,8 +144,13 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
             reset,
             bake,
             profile,
+            no_pull,
         } => {
-            let context_with_profile = DevnetContext::new_with_profile(context.config, profile)?;
+            let mut context_with_profile =
+                DevnetContext::new_with_profile(context.config, profile)?;
+            if no_pull {
+                context_with_profile.without_pull();
+            }
             restart_devnet(reset, bake, &context_with_profile).await?;
         }
         DevnetAction::Status => {
@@ -494,8 +513,9 @@ async fn start_local_node(
 ) -> HylixResult<()> {
     let image = &context.config.devnet.node_image;
 
-    pull_docker_image(mpb, image).await?;
-
+    if context.pull {
+        pull_docker_image(mpb, image).await?;
+    }
     let pb = mpb.add(create_progress_bar());
     pb.set_message("Starting Hyli node with Docker...");
 
@@ -567,7 +587,9 @@ async fn start_wallet_app(
 
     let image = &context.config.devnet.wallet_server_image;
 
-    pull_docker_image(mpb, image).await?;
+    if context.pull {
+        pull_docker_image(mpb, image).await?;
+    }
 
     let pb = mpb.add(create_progress_bar());
     pb.set_message("Starting wallet app...");
@@ -631,8 +653,9 @@ async fn start_wallet_ui(
 
     let image = &context.config.devnet.wallet_ui_image;
 
-    pull_docker_image(mpb, image).await?;
-
+    if context.pull {
+        pull_docker_image(mpb, image).await?;
+    }
     let pb = mpb.add(create_progress_bar());
     pb.set_message("Starting wallet UI...");
 
@@ -705,8 +728,9 @@ async fn start_postgres_server(
 ) -> HylixResult<()> {
     use tokio::process::Command;
 
-    pull_docker_image(mpb, "postgres:17").await?;
-
+    if context.pull {
+        pull_docker_image(mpb, "postgres:17").await?;
+    }
     let pb = mpb.add(create_progress_bar());
     pb.set_message("Starting postgres server...");
 
