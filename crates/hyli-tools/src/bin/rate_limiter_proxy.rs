@@ -12,6 +12,7 @@ use chrono::{Local, NaiveDate};
 use clap::Parser;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
+use hyli_model::api::APIRegisterContract;
 use hyli_model::{BlobTransaction, ContractName, Identity, RegisterContractAction};
 use hyli_modules::{modules::rest::handle_panic, utils::logger::setup_tracing};
 use hyper::body::Incoming;
@@ -148,6 +149,49 @@ fn matches_pattern(pattern: &str, value: &str) -> bool {
             true
         }
     }
+}
+
+async fn contract_register_handler(
+    State(config): State<AppConfig>,
+    req: Request<Body>,
+) -> Result<Response<Incoming>, StatusCode> {
+    let ip = SmartIpKeyExtractor
+        .extract(&req)
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    let (parts, body) = req.into_parts();
+    let body_bytes = match axum::body::to_bytes(body, 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            tracing::warn!("Failed to read request body from IP: {}", ip);
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+
+    let contract_name = match serde_json::from_slice::<APIRegisterContract>(&body_bytes) {
+        Ok(register_contract) => register_contract.contract_name,
+        Err(e) => {
+            tracing::warn!("Failed to parse register contract JSON: {}", e);
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
+
+    let blacklist_contracts = config.config.read().unwrap().blacklist_contracts.clone();
+    for pattern in &blacklist_contracts {
+        if matches_pattern(pattern, &contract_name.0) {
+            config
+                .metrics
+                .increment_blacklisted_contract(&contract_name.0, pattern);
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
+
+    proxy_handler(
+        State(config),
+        Request::from_parts(parts, Body::from(body_bytes)),
+    )
+    .await
 }
 
 /// Blob-specific handler with contract-level rate limiting
@@ -563,6 +607,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/metrics", get(get_metrics))
         // Blob transaction with custom rate limiting and contract parsing
         .route("/v1/tx/send/blob", post(blob_proxy_handler))
+        .route("/v1/contract/register", post(contract_register_handler))
         .fallback(proxy_handler)
         .with_state(app_config)
         .layer(CatchPanicLayer::custom(handle_panic))
