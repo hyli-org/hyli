@@ -65,6 +65,7 @@ impl sqlx::Encode<'_, sqlx::Postgres> for ConsensusProposalHash {
         std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
         <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
+            .map_err(|e| anyhow::anyhow!("Failed to encode ConsensusProposalHash: {}", e).into())
     }
 }
 
@@ -76,7 +77,8 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for ConsensusProposalHash {
         ConsensusProposalHash,
         std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
-        let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)
+            .map_err(|e| anyhow::anyhow!("Failed to decode ConsensusProposalHash: {}", e))?;
         Ok(ConsensusProposalHash(inner))
     }
 }
