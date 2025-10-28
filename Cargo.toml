@@ -103,6 +103,7 @@ rand = { version = "=0.8.5" }
 rand_seeder = { version = "0.4.0" }
 ratatui = { version = "0.29.0", default-features = false }
 readonly = { version = "0.2.12", default-features = false }
+# When upgrading risc0, remember to update the CI installs, dockerfiles, and potentially the hyli-verifiers constant.
 risc0-build = { version = "3.0", default-features = false }
 risc0-zkvm = { version = "3.0", default-features = false }
 secp256k1 = { version = "0.31.1" }
