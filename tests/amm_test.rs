@@ -449,7 +449,7 @@ mod e2e_amm {
         ctx.send_proof(
             "risc0-recursion".into(),
             hyli_model::ProgramId(hyli_contracts::RISC0_RECURSION_ID.to_vec()),
-            hyli_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_3.into(),
             ProofData(recursive_proof),
             vec![
                 blob_tx_hash.clone(),

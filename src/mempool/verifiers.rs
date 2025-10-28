@@ -38,7 +38,7 @@ pub fn verify_recursive_proof(
 ) -> Result<(Vec<ProgramId>, Vec<HyliOutput>)> {
     let outputs: (Vec<ProgramId>, Vec<HyliOutput>) = match verifier.0.as_str() {
         #[cfg(feature = "risc0")]
-        hyli_model::verifiers::RISC0_1 => {
+        hyli_model::verifiers::RISC0_3 => {
             hyli_verifiers::risc0_1::verify_recursive(proof, program_id)
         }
         _ => Err(anyhow::anyhow!(

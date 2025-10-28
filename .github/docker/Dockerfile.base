@@ -3,7 +3,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl bash
 
 RUN if [ "$(uname -m)" = "x86_64" ]; then \
         curl -L https://risczero.com/install | bash && \
-        /root/.risc0/bin/rzup install r0vm 2.3.0; \
+        /root/.risc0/bin/rzup install r0vm 3.0.3; \
     else \
         touch /usr/local/cargo/bin/r0vm; \
     fi

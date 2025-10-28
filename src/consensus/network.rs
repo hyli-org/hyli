@@ -202,6 +202,7 @@ impl<T> Hashed<QuorumCertificateHash> for QuorumCertificate<T> {
         for validator in self.validators.iter() {
             hasher.update(validator.0.clone());
         }
+        #[expect(deprecated, reason = "sha3 needs to update generic-array")]
         QuorumCertificateHash(hasher.finalize().as_slice().to_owned())
     }
 }

@@ -423,7 +423,7 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
 
         let verifier = match use_test_verifier {
             true => hyli_contract_sdk::Verifier("test".to_string()),
-            false => hyli_contract_sdk::Verifier("risc0-1".to_string()),
+            false => hyli_contract_sdk::Verifier("risc0-3".to_string()),
         };
         let tx = BlobTransaction::new(
             Identity::new("hyli@hyli"),

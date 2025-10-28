@@ -162,7 +162,7 @@ pub mod risc0 {
             }
         }
         fn verifier(&self) -> Verifier {
-            hyli_model::verifiers::RISC0_1.into()
+            hyli_model::verifiers::RISC0_3.into()
         }
 
         fn program_id(&self) -> ProgramId {
