@@ -181,8 +181,7 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<ProofResul
                 // slashed.
                 .with_timeout(timeout)
                 .with_lock_timeout(lock_timeout)
-                .with_ramp_up_period(ramp_up_period)
-                .with_bidding_start(get_current_timestamp_secs()),
+                .with_ramp_up_period(ramp_up_period),
         );
 
     // Send the request and wait for it to be completed.
@@ -195,10 +194,21 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<ProofResul
     tracing::info!("https://explorer.beboundless.xyz/orders/0x{request_id:x}");
 
     // Wait for the request to be fulfilled by the market, returning the journal and seal.
-    let (journal, seal) = boundless_client
+    let fullfillment = boundless_client
         .wait_for_request_fulfillment(request_id, Duration::from_secs(3), expires_at)
         .await?;
     tracing::info!("Request 0x{request_id:x} fulfilled");
+
+    let journal = fullfillment
+        .data()?
+        .journal()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Failed to get journal from fulfillment, this is likely a bug in the SDK"
+            )
+        })?
+        .clone();
+    let seal = fullfillment.seal;
 
     // write journal & seal to disk for debugging purposes
     std::fs::write("journal.bin", bincode::serialize(&journal)?)?;
