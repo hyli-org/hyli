@@ -87,10 +87,9 @@ where
         match tokio::time::timeout(Duration::from_secs(CLIENT_TIMEOUT_SECONDS), rx).await {
             Ok(Ok(res)) => res,
             Ok(Err(e)) => bail!("Error while calling topic: {}", e),
-            Err(timeouterror) => bail!(
-                "Timeout triggered while calling topic with query: {}",
-                timeouterror.to_string()
-            ),
+            Err(timeouterror) => {
+                bail!("Timeout triggered while calling topic with query: {timeouterror}",)
+            }
         }
     }
     async fn shutdown_aware_request<M: 'static>(&mut self, cmd: Cmd) -> Result<Res>
@@ -110,10 +109,9 @@ where
         {
             Ok(Ok(res)) => res,
             Ok(Err(e)) => bail!("Error while calling topic: {}", e),
-            Err(timeouterror) => bail!(
-                "Timeout triggered while calling topic with query: {}",
-                timeouterror.to_string()
-            ),
+            Err(timeouterror) => {
+                bail!("Timeout triggered while calling topic with query: {timeouterror}",)
+            }
         }
     }
 }
