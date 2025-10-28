@@ -20,7 +20,7 @@ pub fn verify(
         #[cfg(feature = "cairo-m")]
         hyli_model::verifiers::CAIRO_M => cairo_m::verify(proof, program_id),
         #[cfg(feature = "risc0")]
-        hyli_model::verifiers::RISC0_1 => risc0_1::verify(proof, program_id),
+        hyli_model::verifiers::RISC0_3 => risc0_1::verify(proof, program_id),
         hyli_model::verifiers::NOIR => noir::verify(proof, program_id),
         #[cfg(feature = "sp1")]
         hyli_model::verifiers::SP1_4 => sp1_4::verify(proof, program_id),

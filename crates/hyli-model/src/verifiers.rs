@@ -3,7 +3,7 @@ use crate::{
 };
 
 pub const CAIRO_M: &str = "cairo-m";
-pub const RISC0_1: &str = "risc0-1";
+pub const RISC0_3: &str = "risc0-3";
 pub const NOIR: &str = "noir";
 pub const SP1_4: &str = "sp1-4";
 
@@ -72,7 +72,7 @@ mod program_id {
         program_id: &ProgramId,
     ) -> Result<(), anyhow::Error> {
         match verifier.0.as_str() {
-            RISC0_1 => (!program_id.0.is_empty() && program_id.0.len() <= 32)
+            RISC0_3 => (!program_id.0.is_empty() && program_id.0.len() <= 32)
                 .then_some(())
                 .ok_or_else(|| {
                     anyhow::anyhow!("Invalid Risc0 image ID: length must be between 1 and 32 bytes")

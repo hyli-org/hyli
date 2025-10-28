@@ -235,12 +235,12 @@ impl Genesis {
                         .get(&ContractName("risc0-recursion".to_string()))
                         .expect("Genesis TXes on unregistered contracts")
                         .clone(),
-                    verifier: hyli_model::verifiers::RISC0_1.into(),
+                    verifier: hyli_model::verifiers::RISC0_3.into(),
                     proven_blobs: outputs
                         .drain(..)
                         .map(|(contract_name, out)| BlobProofOutput {
                             original_proof_hash: ProofDataHash(blob_tx_hash.0.clone()),
-                            verifier: hyli_model::verifiers::RISC0_1.into(),
+                            verifier: hyli_model::verifiers::RISC0_3.into(),
                             program_id: contract_program_ids
                                 .get(&contract_name)
                                 .expect("Genesis TXes on unregistered contracts")
@@ -584,7 +584,7 @@ impl Genesis {
         register_hyli_contract(
             &mut register_tx,
             "staking".into(),
-            hyli_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_3.into(),
             staking_program_id.clone().into(),
             ctx.staking.commit(),
             None,
@@ -595,7 +595,7 @@ impl Genesis {
         register_hyli_contract(
             &mut register_tx,
             "hyllar".into(),
-            hyli_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_3.into(),
             hyllar_program_id.clone().into(),
             ctx.hyllar.commit(),
             None,
@@ -610,7 +610,7 @@ impl Genesis {
             register_hyli_contract(
                 &mut register_tx,
                 token.into(),
-                hyli_model::verifiers::RISC0_1.into(),
+                hyli_model::verifiers::RISC0_3.into(),
                 smt_token_program_id.clone().into(),
                 StateCommitment(Into::<[u8; 32]>::into(root).to_vec()),
                 None,
@@ -622,7 +622,7 @@ impl Genesis {
         register_hyli_contract(
             &mut register_tx,
             "hydentity".into(),
-            hyli_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_3.into(),
             hydentity_program_id.clone().into(),
             ctx.hydentity.commit(),
             None,
@@ -633,7 +633,7 @@ impl Genesis {
         register_hyli_contract(
             &mut register_tx,
             "risc0-recursion".into(),
-            hyli_model::verifiers::RISC0_1.into(),
+            hyli_model::verifiers::RISC0_3.into(),
             hyli_contracts::RISC0_RECURSION_ID.to_vec().into(),
             StateCommitment::default(),
             None,
