@@ -234,8 +234,13 @@ zip = "=3.0.0"
 seq-macro = "0.3.6"
 async-stream = "0.3.6"
 
+# For linux ARM cross compilation CI
+native-tls = { version = "0.2", optional = true, default-features = false, features = [
+  "vendored",
+] }
+
 [package.metadata.cargo-machete]
-ignored = ["zip", "bytes", "tokio-util"]
+ignored = ["zip", "bytes", "tokio-util", "native-tls"]
 
 [patch.crates-io]
 sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.9-risczero.0" }
@@ -294,6 +299,9 @@ alloc-track = ["dep:alloc-track"]
 # Activate this feature to recompile contracts locally (mostly useful for iterating on tests)
 nonreproducible = ["hyli-contracts/nonreproducible"]
 node_local_proving = ["risc0-zkvm/client"]
+
+# Exists purely to trigger for native-tls to build with vendored OpenSSL
+vendored = ["dep:native-tls"]
 
 [profile.release]
 # Turn off LTO, takes too long

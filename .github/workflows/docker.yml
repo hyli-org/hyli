@@ -28,12 +28,23 @@ jobs:
           - file: Dockerfile
             name: hyli
             push_ghcr: true
+            platform: linux/amd64
+            dep_image: europe-west3-docker.pkg.dev/hyle-413414/hyli-docker/hyli-dependencies:main
             images: |
               europe-west3-docker.pkg.dev/hyle-413414/hyli-docker/hyli
               ghcr.io/hyli-org/hyli
+          - file: .github/docker/Dockerfile.arm64
+            name: hyli (arm64)
+            push_ghcr: false
+            platform: linux/arm64
+            dep_image: rust:bookworm
+            images: |
+              europe-west3-docker.pkg.dev/hyle-413414/hyli-docker/hyli-arm
           - file: .github/docker/Dockerfile.dependencies
             name: hyli dependencies
             push_ghcr: false
+            platform: linux/amd64
+            dep_image: europe-west3-docker.pkg.dev/hyle-413414/hyli-docker/hyli-dependencies:main
             images: |
               europe-west3-docker.pkg.dev/hyle-413414/hyli-docker/hyli-dependencies
 
@@ -64,7 +75,7 @@ jobs:
           registry: ${{ env.AR_REPO_LOCATION }}
 
       - name: "Login to GitHub Container Registry"
-        uses: docker/login-action@v1
+        uses: docker/login-action@v3
         if: ${{ matrix.mode.push_ghcr }}
         with:
           registry: ghcr.io
@@ -75,10 +86,64 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           push: true
+          platforms: ${{ matrix.mode.platform }}
           file: ${{ matrix.mode.file }}
           context: .
           build-args: |
-            DEP_IMAGE=europe-west3-docker.pkg.dev/hyle-413414/hyli-docker/hyli-dependencies:main
+            DEP_IMAGE=${{ matrix.mode.dep_image }}
             BASE_IMAGE=ghcr.io/hyli-org/base:main
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  multiplatform_image:
+    needs: build_and_push
+    runs-on: ubuntu-latest
+    if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+    permissions:
+      contents: "read"
+      id-token: "write"
+      packages: "write"
+    steps:
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: europe-west3-docker.pkg.dev/hyle-413414/hyli-docker/hyli
+          tags: |
+            type=sha
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=ref,event=branch
+            type=ref,event=pr
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker Auth
+        id: docker-auth
+        uses: "docker/login-action@v3"
+        with:
+          username: _json_key
+          password: ${{ secrets.GOOGLE_CREDENTIALS }}
+          registry: ${{ env.AR_REPO_LOCATION }}
+
+      - name: "Login to GitHub Container Registry"
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{github.actor}}
+          password: ${{secrets.GITHUB_TOKEN}}
+
+      - name: Create multi-arch manifest
+        run: |
+          tags_raw="${{ steps.meta.outputs.tags }}"
+          # convert newline-separated list into a bash array (tags_array) and also a space-separated string (tags) for compatibility
+          mapfile -t tags_array <<< "$tags_raw"
+          for tag in "${tags_array[@]}"; do
+            echo "Creating manifest for $tag"
+            docker buildx imagetools create -t $tag $tag $(echo "$tag" | sed 's/\/hyli:/\/hyli-arm:/g')
+            ghcr_tag=$(echo "$tag" | sed 's/europe-west3-docker.pkg.dev\/hyle-413414\/hyli-docker\/hyli/ghcr.io\/hyli-org\/hyli/g')
+            echo "Tagging and pushing to GHCR: $ghcr_tag"
+            docker buildx imagetools create -t $ghcr_tag $tag
+          done
