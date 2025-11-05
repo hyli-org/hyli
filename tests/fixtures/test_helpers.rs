@@ -1,5 +1,4 @@
 use anyhow::Context;
-use assert_cmd::prelude::*;
 use client_sdk::{
     rest_client::{IndexerApiHttpClient, NodeApiClient},
     transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutor},
@@ -13,7 +12,7 @@ use hyli::{
 use hyli_crypto::BlstCrypto;
 use hyli_model::TxHash;
 use signal_child::signal;
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 use tempfile::TempDir;
 use tokio::process::{Child, Command};
 use tokio::{io::AsyncBufReadExt, time::timeout};
@@ -114,9 +113,9 @@ async fn stream_output<R: tokio::io::AsyncRead + Unpin>(output: R) -> anyhow::Re
     Ok(())
 }
 impl TestProcess {
-    pub fn new(command: &str, mut conf: Conf) -> Self {
+    pub fn new(command: &Path, mut conf: Conf) -> Self {
         info!("🚀 Starting process with conf: {:?}", conf);
-        let mut cargo_bin: Command = std::process::Command::cargo_bin(command).unwrap().into();
+        let mut cargo_bin = tokio::process::Command::new(command);
 
         // Create a temporary directory for the node
         let tmpdir = tempfile::Builder::new().prefix("hyli").tempdir().unwrap();

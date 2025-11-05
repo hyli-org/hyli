@@ -36,7 +36,7 @@ mod e2e_fast_catchup {
         );
         conf.fast_catchup_backfill = true;
 
-        let process = test_helpers::TestProcess::new("hyli", conf);
+        let process = test_helpers::TestProcess::new(assert_cmd::cargo::cargo_bin!("hyli"), conf);
         process.start();
 
         let client = ctx.client_by_id("node-3");
@@ -70,7 +70,7 @@ mod e2e_fast_catchup {
         );
         conf.fast_catchup_backfill = false;
 
-        let process = test_helpers::TestProcess::new("hyli", conf);
+        let process = test_helpers::TestProcess::new(assert_cmd::cargo::cargo_bin!("hyli"), conf);
         process.start();
 
         let client = ctx.client_by_id("node-3");
