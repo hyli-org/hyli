@@ -240,14 +240,14 @@ You can specify custom Docker images for different services in your devnet confi
 ```toml
 [devnet]
 # Custom Docker images for each service
-custom_node_image = "ghcr.io/hyli-org/hyli:0.14.0-rc3"
-custom_wallet_server_image = "ghcr.io/hyli-org/wallet/wallet-server:main"
-custom_wallet_ui_image = "ghcr.io/hyli-org/wallet/wallet-ui:main"
+node_image = "ghcr.io/hyli-org/hyli:0.14.0-rc3"
+wallet_server_image = "ghcr.io/hyli-org/wallet/wallet-server:main"
+wallet_ui_image = "ghcr.io/hyli-org/wallet/wallet-ui:main"
 
 # Or use completely custom images:
-# custom_node_image = "my-registry.com/my-hyli-node:v1.0.0"
-# custom_wallet_server_image = "my-registry.com/my-wallet-server:latest"
-# custom_wallet_ui_image = "my-registry.com/my-wallet-ui:dev"
+# node_image = "my-registry.com/my-hyli-node:v1.0.0"
+# wallet_server_image = "my-registry.com/my-wallet-server:latest"
+# wallet_ui_image = "my-registry.com/my-wallet-ui:dev"
 ```
 
 This allows you to:
