@@ -60,6 +60,15 @@ amm = { version = "0.14.0-rc3", default-features = false, path = "crates/contrac
 uuid-tld = { version = "0.14.0-rc3", default-features = false, path = "crates/contracts/uuid-tld", package = "hyli-uuid-tld" }
 hyli-contracts = { version = "0.14.0-rc3", default-features = false, path = "crates/contracts", package = "hyli-contracts" }
 hyli-modules = { version = "0.14.0-rc3", default-features = false, path = "crates/hyli-modules", package = "hyli-modules" }
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", rev = "e969262c7ec48f073b8ea7920a75161e7130a98e", default-features = false }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "e969262c7ec48f073b8ea7920a75161e7130a98e", default-features = false }
+reth-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "e969262c7ec48f073b8ea7920a75161e7130a98e", default-features = false }
+reth-stateless = { git = "https://github.com/paradigmxyz/reth", rev = "e969262c7ec48f073b8ea7920a75161e7130a98e", default-features = false }
+alloy-genesis = { version = "1.0.42", default-features = false }
+alloy-consensus = { version = "1.0.42", default-features = false }
+alloy-eips = { version = "1.0.42", default-features = false }
+alloy-primitives = { version = "1.4.1", default-features = false }
+k256 = { version = "0.13", default-features = false, features = ["ecdsa", "arithmetic"] }
 
 # Common external dependencies
 alloc-metrics = { version = "0.1.1" }
@@ -283,6 +292,7 @@ turmoil = ["hyli-net/turmoil", "client-sdk/turmoil"]
 cairo-m = ["hyli-verifiers/cairo-m"]
 risc0 = ["hyli-verifiers/risc0", "client-sdk/risc0"]
 sp1 = ["hyli-verifiers/sp1", "client-sdk/sp1"]
+reth = ["hyli-verifiers/reth"]
 
 # Disable dependency keyring by default, as it requires libdbus
 keyring = ["hyli-crypto/keyring"]

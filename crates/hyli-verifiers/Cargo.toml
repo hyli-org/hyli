@@ -29,6 +29,15 @@ stwo-prover = { git = "https://github.com/starkware-libs/stwo", features = [
 sp1-sdk = { workspace = true, features = ["network"], optional = true }
 risc0-zkvm = { workspace = true, features = ["std"], optional = true }
 bincode = { workspace = true, optional = true }
+reth-stateless = { workspace = true, optional = true, features = ["k256"] }
+reth-ethereum = { workspace = true, optional = true, features = ["evm"] }
+reth-ethereum-primitives = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true, optional = true }
+alloy-genesis = { workspace = true, optional = true }
+alloy-consensus = { workspace = true, optional = true }
+alloy-eips = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, optional = true }
+k256 = { workspace = true, optional = true }
 
 [dev-dependencies]
 test-log = { workspace = true, features = ["color", "trace"] }
@@ -38,3 +47,17 @@ default = []
 risc0 = ["dep:risc0-zkvm"]
 sp1 = ["dep:sp1-sdk", "dep:bincode", "dep:serde_json", "dep:once_cell"]
 cairo-m = ["dep:cairo-m-prover", "dep:stwo-prover", "dep:sonic-rs", "dep:serde"]
+reth = [
+  "dep:reth-stateless",
+  "dep:reth-ethereum",
+  "dep:reth-ethereum-primitives",
+  "dep:reth-primitives-traits",
+  "dep:alloy-genesis",
+  "dep:alloy-consensus",
+  "dep:alloy-eips",
+  "dep:alloy-primitives",
+  "dep:serde",
+  "dep:serde_json",
+  "dep:bincode",
+  "dep:k256",
+]
