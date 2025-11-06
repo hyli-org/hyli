@@ -2,7 +2,6 @@ use anyhow::Result;
 use tracing::{level_filters::LevelFilter, Subscriber};
 use tracing_subscriber::{
     fmt::{format, FormatEvent, FormatFields},
-    prelude::*,
     registry::LookupSpan,
     EnvFilter,
 };
