@@ -29,8 +29,6 @@ pub fn verify(
         hyli_model::verifiers::SP1_4 => sp1_4::verify(proof, program_id),
         #[cfg(feature = "reth")]
         hyli_model::verifiers::RETH => reth::verify(proof, program_id),
-        #[cfg(not(feature = "reth"))]
-        hyli_model::verifiers::RETH => Err(anyhow::anyhow!("reth verifier not implemented yet")),
         _ => Err(anyhow::anyhow!("{} verifier not implemented yet", verifier)),
     }
 }
