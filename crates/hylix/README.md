@@ -4,7 +4,7 @@
 
 _Build, test & deploy verifiable apps on Hyli._
 
-**Hyli** is the easiest way to build vApps. Powered by Risc0 & SP1. Designed for developers.
+**Hyli** is a high-performance blockchain with built-in privacy. It enables builders and institutions to design private, compliant, and high-performance systems.
 
 </div>
 
@@ -53,13 +53,16 @@ hy test
 
 ### Cheatsheet
 
-| Command                               | Action                                                                           |
-| ------------------------------------- | -------------------------------------------------------------------------------- |
-| [`hy new [PROJECT]`](#hy-new-project) | Create a project using [the scaffold](https://github.com/hyli-org/app-scaffold). |
-| [`hy build`](#hy-build)               | Build contracts.                                                                 |
-| [`hy test`](#hy-test)                 | Run E2E tests.                                                                   |
-| [`hy run`](#hy-run)                   | Start backend.                                                                   |
-| [`hy devnet`](#hy-devnet)             | Start local node.                                                                |
+| Command | Shortcut | Action |
+| --- | --- | --- |
+| `hy new [PROJECT]` | n | Create a project using [the scaffold](https://github.com/hyli-org/app-scaffold), choosing SP1 or Risc0 for your backend. |
+| `hy build` | b | Build frontend. |
+| `hy test` | t | Run unit or end-to-end tests. |
+| `hy run` | r | Start backend service. |
+| `hy devnet` | d | Start and manage local node. |
+| `hy contract` | c | Manage contracts. |
+| `hy clean`|  | Delete build artifacts. (This is done automatically on `build`.) |
+| `hy config`|  | Manage project configuration. |
 
 ### `hy new [PROJECT]`
 
@@ -71,14 +74,6 @@ hy new my-vapp
 
 - You will be asked to choose SP1 or Risc0 for your backend
 - Clone the default vApp scaffold
-
-<details>
-  <summary>Coming soon:</summary>
-
-- More proving schemes
-- Validate & setup your local dev environment (Rust, risc0, sp1 toolchains...)
-
-</details>
 
 <details>
   <summary>Scaffold structure</summary>
@@ -99,6 +94,14 @@ Each part is optional: you can build CLI-only vApps, headless backends, or full 
 </details>
 
 Read more: [Scaffold repo](https://github.com/hyli-org/app-scaffold/) | [Quickstart in docs](https://docs.hyli.org/quickstart/edit/).
+
+<details>
+  <summary>Upcoming features</summary>
+
+- More proving schemes
+- Validate & setup your local dev environment (Rust, risc0, sp1 toolchains...)
+
+</details>
 
 ### `hy build`
 
@@ -124,10 +127,11 @@ hy clean
 | `restart` | `r`   | Restart the local devnet                                  |
 | `bake`    | `b`   | Create and fund test accounts                             |
 | `fork`    | `f`   | Fork a running network                                    |
-| `env`     |       | Print environment variables for sourcing in bash          |
+| `env`     |  `e`    | Print environment variables for sourcing in bash          |
+| `logs`     |  `l`     | Follow logs of a devnet service          |
 | `help`    |       | Print this message or the help of the given subcommand(s) |
 
-Launch a local devnet with:
+`hy devnet up` launches a local devnet with:
 
 - Node
 - Oranj token contract & Auto-Provers
