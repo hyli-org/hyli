@@ -2,7 +2,6 @@ use anyhow::Result;
 use tracing::{level_filters::LevelFilter, Subscriber};
 use tracing_subscriber::{
     fmt::{format, FormatEvent, FormatFields},
-    prelude::*,
     registry::LookupSpan,
     EnvFilter,
 };
@@ -167,31 +166,19 @@ pub fn setup_tracing(log_format: &str, node_name: String) -> Result<()> {
         _ => TracingMode::Full,
     };
     match mode {
-        TracingMode::Full => register_global_subscriber(filter, tracing_subscriber::fmt::layer()),
-        TracingMode::Json => register_global_subscriber(
-            filter,
-            tracing_subscriber::fmt::layer().event_format(tracing_subscriber::fmt::format().json()),
-        ),
-        TracingMode::NodeName => register_global_subscriber(
-            filter,
-            tracing_subscriber::fmt::layer().event_format(NodeNameFormatter {
+        TracingMode::Full => tracing_subscriber::fmt().with_env_filter(filter).init(),
+        TracingMode::Json => tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .json()
+            .init(),
+        TracingMode::NodeName => tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .event_format(NodeNameFormatter {
                 node_name,
                 base_formatter: tracing_subscriber::fmt::format(),
-            }),
-        ),
+            })
+            .init(),
     };
 
     Ok(())
-}
-
-fn register_global_subscriber<T, S>(filter: EnvFilter, fmt_layer: T)
-where
-    S: Subscriber,
-    T: tracing_subscriber::Layer<S> + Send + Sync,
-    tracing_subscriber::filter::Filtered<T, tracing_subscriber::EnvFilter, S>:
-        tracing_subscriber::Layer<tracing_subscriber::Registry>,
-{
-    tracing_subscriber::registry()
-        .with(fmt_layer.with_filter(filter))
-        .init();
 }
