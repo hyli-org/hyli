@@ -3,6 +3,7 @@ use crate::node_state::{
     ModifiedContractData, ModifiedContractFields, NodeStateProcessing,
 };
 use anyhow::{bail, Result};
+use borsh::BorshDeserialize;
 use sdk::*;
 use std::collections::{BTreeMap, HashMap};
 
@@ -15,18 +16,13 @@ pub fn handle_blob_for_hyli_tld(
     contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
     current_blob: &Blob,
 ) -> Result<()> {
-    // TODO: check the identity of the caller here.
-
-    if let Ok(reg) = borsh::from_slice::<RegisterContractAction>(&current_blob.data.0) {
+    if let Ok(reg) = RegisterContractAction::try_from_slice(&current_blob.data.0) {
         handle_register_blob(contracts, contract_changes, &reg)?;
-    } else if let Ok(del) = borsh::from_slice::<DeleteContractAction>(&current_blob.data.0) {
+    } else if let Ok(del) = DeleteContractAction::try_from_slice(&current_blob.data.0) {
         handle_delete_blob(contracts, contract_changes, &del)?;
-    } else if let Ok(updt) =
-        borsh::from_slice::<UpdateContractProgramIdAction>(&current_blob.data.0)
-    {
+    } else if let Ok(updt) = UpdateContractProgramIdAction::try_from_slice(&current_blob.data.0) {
         handle_update_program_id_blob(contracts, contract_changes, &updt)?;
-    } else if let Ok(updt) =
-        borsh::from_slice::<UpdateContractTimeoutWindowAction>(&current_blob.data.0)
+    } else if let Ok(updt) = UpdateContractTimeoutWindowAction::try_from_slice(&current_blob.data.0)
     {
         handle_update_timeout_window_blob(contracts, contract_changes, &updt)?;
     } else {
@@ -216,9 +212,9 @@ pub fn validate_hyli_contract_blobs(
     for blob in tx.blobs.iter() {
         if blob.contract_name.0 == "hyli" {
             // Check identity authorization for privileged actions
-            if borsh::from_slice::<DeleteContractAction>(&blob.data.0).is_ok()
-                || borsh::from_slice::<UpdateContractProgramIdAction>(&blob.data.0).is_ok()
-                || borsh::from_slice::<UpdateContractTimeoutWindowAction>(&blob.data.0).is_ok()
+            if DeleteContractAction::try_from_slice(&blob.data.0).is_ok()
+                || UpdateContractProgramIdAction::try_from_slice(&blob.data.0).is_ok()
+                || UpdateContractTimeoutWindowAction::try_from_slice(&blob.data.0).is_ok()
             {
                 if tx.identity.0 != HYLI_TLD_ID {
                     return Err(format!(
@@ -227,7 +223,7 @@ pub fn validate_hyli_contract_blobs(
                     ));
                 }
             } else if let Ok(registration_blob) =
-                borsh::from_slice::<RegisterContractAction>(&blob.data.0)
+                RegisterContractAction::try_from_slice(&blob.data.0)
             {
                 if contracts.contains_key(&registration_blob.contract_name) {
                     return Err(format!(
