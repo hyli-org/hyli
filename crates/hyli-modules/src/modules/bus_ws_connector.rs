@@ -121,6 +121,7 @@ impl NodeWebsocketConnector {
                 transaction_type,
                 transaction_status,
                 block_hash: Some(block.hash.clone()),
+                block_height: Some(block.block_height),
                 index: Some(idx as u32),
                 timestamp: Some(block.block_timestamp.clone()),
                 lane_id,

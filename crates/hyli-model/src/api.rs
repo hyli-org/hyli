@@ -165,6 +165,7 @@ pub struct APITransaction {
     pub tx_hash: TxHash,                           // Transaction hash
     pub parent_dp_hash: DataProposalHash,          // Data proposal hash
     pub block_hash: Option<ConsensusProposalHash>, // Corresponds to the block hash
+    pub block_height: Option<BlockHeight>,         // Corresponds to the block height
     pub index: Option<u32>,                        // Index of the transaction within the block
     pub version: u32,                              // Transaction version
     pub transaction_type: TransactionTypeDb,       // Type of transaction
