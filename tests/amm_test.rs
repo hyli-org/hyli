@@ -81,7 +81,7 @@ mod e2e_amm {
         struct States {
             hydentity: Hydentity,
             hyllar: Hyllar,
-            hyllar2: Hyllar,
+            oranj: Hyllar,
             amm: Amm,
         }
     );
@@ -91,20 +91,20 @@ mod e2e_amm {
         // Register bob in hydentity
 
         // Send 25 hyllar from faucet to bob
-        // Send 50 hyllar2 from faucet to bob
+        // Send 50 oranj from faucet to bob
 
         // Register new amm contract "amm"
 
         // Bob approves 100 hyllar to amm2
-        // Bob approves 100 hyllar2 to amm2
+        // Bob approves 100 oranj to amm2
 
         // Bob registers a new pair in amm
         //    By sending 20 hyllar to amm
-        //    By sending 50 hyllar2 to amm
+        //    By sending 50 oranj to amm
 
-        // Bob swaps 5 hyllar for 10 hyllar2
+        // Bob swaps 5 hyllar for 10 oranj
         //    By sending 5 hyllar to amm
-        //    By sending 10 hyllar2 to bob (from amm)
+        //    By sending 10 oranj to bob (from amm)
 
         let hydentity: Hydentity = ctx
             .indexer_client()
@@ -118,7 +118,7 @@ mod e2e_amm {
         let mut executor = TxExecutorBuilder::new(States {
             hydentity,
             hyllar,
-            hyllar2: HyllarTestContract::init_state(),
+            oranj: HyllarTestContract::init_state(),
             amm: Amm::default(),
         })
         // Replace prover binaries for non-reproducible mode.
@@ -127,7 +127,7 @@ mod e2e_amm {
             Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
         )
         .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
-        .with_prover("hyllar2".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
+        .with_prover("oranj".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
         .with_prover("amm".into(), Risc0Prover::new(AMM_ELF, AMM_ID))
         .build();
 
@@ -136,17 +136,17 @@ mod e2e_amm {
             .balance_of(FAUCET_ID)
             .expect("faucet identity not found");
 
-        let hyllar2_initial_total_amount: u128 = executor
-            .hyllar2
+        let oranj_initial_total_amount: u128 = executor
+            .oranj
             .balance_of(FAUCET_ID)
             .expect("faucet identity not found");
 
         /////////////////////////////////////////////////////////////////////
 
-        ///////////////////// hyllar2 contract registration /////////////////
-        info!("➡️  Registring hyllar2 contract");
-        const HYLLAR2_CONTRACT_NAME: &str = "hyllar2";
-        ctx.register_contract::<HyllarTestContract>("hyli@hyli".into(), HYLLAR2_CONTRACT_NAME)
+        ///////////////////// oranj contract registration /////////////////
+        info!("➡️  Registring oranj contract");
+        const ORANJ_CONTRACT_NAME: &str = "oranj";
+        ctx.register_contract::<HyllarTestContract>("hyli@hyli".into(), ORANJ_CONTRACT_NAME)
             .await?;
         /////////////////////////////////////////////////////////////////////
 
@@ -231,8 +231,8 @@ mod e2e_amm {
         .await?;
         /////////////////////////////////////////////////////////////////////
 
-        ///////////////// sending hyllar2 from faucet to bob /////////////////
-        info!("➡️  Sending blob to transfer 50 hyllar2 from faucet to bob");
+        ///////////////// sending oranj from faucet to bob /////////////////
+        info!("➡️  Sending blob to transfer 50 oranj from faucet to bob");
         let mut tx = ProvableBlobTx::new(FAUCET_ID.into());
         verify_identity(
             &mut tx,
@@ -240,7 +240,7 @@ mod e2e_amm {
             &executor.hydentity,
             "password".into(),
         )?;
-        transfer(&mut tx, "hyllar2".into(), "bob@hydentity".into(), 50)?;
+        transfer(&mut tx, "oranj".into(), "bob@hydentity".into(), 50)?;
 
         ctx.send_provable_blob_tx(&tx).await?;
         let tx = executor.process(tx)?;
@@ -260,10 +260,10 @@ mod e2e_amm {
 
         assert_multiple_balances(
             &ctx,
-            "hyllar2",
+            "oranj",
             &[
                 ("bob@hydentity", 50),
-                (FAUCET_ID, hyllar2_initial_total_amount - 50),
+                (FAUCET_ID, oranj_initial_total_amount - 50),
             ],
         )
         .await?;
@@ -306,8 +306,8 @@ mod e2e_amm {
         assert_account_allowance(&ctx, "hyllar", "bob@hydentity", AMM_CONTRACT_NAME, 100).await?;
         /////////////////////////////////////////////////////////////////////
 
-        //////////////////// Bob approves AMM on hyllar2 /////////////////////
-        info!("➡️  Sending blob to approve amm on hyllar2");
+        //////////////////// Bob approves AMM on oranj /////////////////////
+        info!("➡️  Sending blob to approve amm on oranj");
 
         let mut tx = ProvableBlobTx::new("bob@hydentity".into());
         verify_identity(
@@ -316,29 +316,29 @@ mod e2e_amm {
             &executor.hydentity,
             "password".into(),
         )?;
-        approve(&mut tx, "hyllar2".into(), AMM_CONTRACT_NAME.into(), 100)?;
+        approve(&mut tx, "oranj".into(), AMM_CONTRACT_NAME.into(), 100)?;
 
         ctx.send_provable_blob_tx(&tx).await?;
         let tx = executor.process(tx)?;
         let mut proofs = tx.iter_prove();
 
         let hydentity_proof = proofs.next().unwrap().await?;
-        let bob_approve_hyllar2_proof = proofs.next().unwrap().await?;
+        let bob_approve_oranj_proof = proofs.next().unwrap().await?;
 
         info!("➡️  Sending proof for hydentity");
         ctx.send_proof_single(hydentity_proof).await?;
 
-        info!("➡️  Sending proof for approve hyllar2");
-        ctx.send_proof_single(bob_approve_hyllar2_proof).await?;
+        info!("➡️  Sending proof for approve oranj");
+        ctx.send_proof_single(bob_approve_oranj_proof).await?;
 
         info!("➡️  Waiting for height 5 on indexer");
         ctx.wait_indexer_height(5).await?;
 
-        assert_account_allowance(&ctx, "hyllar2", "bob@hydentity", AMM_CONTRACT_NAME, 100).await?;
+        assert_account_allowance(&ctx, "oranj", "bob@hydentity", AMM_CONTRACT_NAME, 100).await?;
         /////////////////////////////////////////////////////////////////////
 
-        /////////////// Creating new pair hyllar/hyllar2 on amm ///////////////
-        info!("➡️  Creating new pair hyllar/hyllar2 on amm");
+        /////////////// Creating new pair hyllar/oranj on amm ///////////////
+        info!("➡️  Creating new pair hyllar/oranj on amm");
 
         let mut tx = ProvableBlobTx::new("bob@hydentity".into());
         verify_identity(
@@ -351,7 +351,7 @@ mod e2e_amm {
         new_pair(
             &mut tx,
             AMM_CONTRACT_NAME.into(),
-            ("hyllar".into(), "hyllar2".into()),
+            ("hyllar".into(), "oranj".into()),
             (20, 50),
         )?;
 
@@ -362,7 +362,7 @@ mod e2e_amm {
         let hydentity_proof = proofs.next().unwrap().await?;
         let bob_new_pair_proof = proofs.next().unwrap().await?;
         let bob_transfer_hyllar_proof = proofs.next().unwrap().await?;
-        let bob_transfer_hyllar2_proof = proofs.next().unwrap().await?;
+        let bob_transfer_oranj_proof = proofs.next().unwrap().await?;
 
         info!("➡️  Sending proof for hydentity");
         ctx.send_proof_single(hydentity_proof).await?;
@@ -373,8 +373,8 @@ mod e2e_amm {
         info!("➡️  Sending proof for hyllar");
         ctx.send_proof_single(bob_transfer_hyllar_proof).await?;
 
-        info!("➡️  Sending proof for hyllar2");
-        ctx.send_proof_single(bob_transfer_hyllar2_proof).await?;
+        info!("➡️  Sending proof for oranj");
+        ctx.send_proof_single(bob_transfer_oranj_proof).await?;
 
         info!("➡️  Waiting for height 5 on indexer");
         ctx.wait_indexer_height(5).await?;
@@ -392,11 +392,11 @@ mod e2e_amm {
 
         assert_multiple_balances(
             &ctx,
-            "hyllar2",
+            "oranj",
             &[
                 ("bob@hydentity", 0),
                 (AMM_CONTRACT_NAME, 50),
-                (FAUCET_ID, hyllar2_initial_total_amount - 50),
+                (FAUCET_ID, oranj_initial_total_amount - 50),
             ],
         )
         .await?;
@@ -416,7 +416,7 @@ mod e2e_amm {
         swap(
             &mut tx,
             AMM_CONTRACT_NAME.into(),
-            ("hyllar".into(), "hyllar2".into()),
+            ("hyllar".into(), "oranj".into()),
             (5, 10),
         )?;
 
@@ -445,7 +445,7 @@ mod e2e_amm {
         )
         .await;
 
-        info!("➡️  Sending recursive proof for hydentity, amm, hyllar and hyllar2");
+        info!("➡️  Sending recursive proof for hydentity, amm, hyllar and oranj");
         ctx.send_proof(
             "risc0-recursion".into(),
             hyli_model::ProgramId(hyli_contracts::RISC0_RECURSION_ID.to_vec()),
@@ -476,11 +476,11 @@ mod e2e_amm {
 
         assert_multiple_balances(
             &ctx,
-            "hyllar2",
+            "oranj",
             &[
                 ("bob@hydentity", 10),
                 (AMM_CONTRACT_NAME, 40),
-                (FAUCET_ID, hyllar2_initial_total_amount - 50),
+                (FAUCET_ID, oranj_initial_total_amount - 50),
             ],
         )
         .await?;
