@@ -37,6 +37,7 @@ alloy-genesis = { workspace = true, optional = true }
 alloy-consensus = { workspace = true, optional = true }
 alloy-eips = { workspace = true, optional = true }
 alloy-primitives = { workspace = true, optional = true }
+alloy-rlp = { workspace = true, optional = true }
 k256 = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -56,6 +57,7 @@ reth = [
   "dep:alloy-consensus",
   "dep:alloy-eips",
   "dep:alloy-primitives",
+  "dep:alloy-rlp",
   "dep:serde",
   "dep:serde_json",
   "dep:bincode",

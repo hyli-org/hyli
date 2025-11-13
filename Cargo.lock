@@ -5877,6 +5877,7 @@ dependencies = [
  "alloy-eips",
  "alloy-genesis",
  "alloy-primitives",
+ "alloy-rlp",
  "anyhow",
  "bincode",
  "borsh",

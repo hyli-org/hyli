@@ -17,7 +17,7 @@ use hyli_modules::{
     node_state::contract_registration::validate_contract_registration_metadata,
 };
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
@@ -91,7 +91,19 @@ pub async fn send_blob_transaction(
     State(state): State<RouterState>,
     Json(payload): Json<BlobTransaction>,
 ) -> Result<impl IntoResponse, AppError> {
-    info!("Got blob transaction {}", payload.hashed());
+    let tx_hash = payload.hashed();
+    let blob_contracts: Vec<_> = payload
+        .blobs
+        .iter()
+        .map(|blob| blob.contract_name.0.clone())
+        .collect();
+    info!(
+        tx_hash = %tx_hash.0,
+        identity = %payload.identity.0,
+        blob_count = payload.blobs.len(),
+        contracts = ?blob_contracts,
+        "received blob transaction"
+    );
 
     // Filter out incorrect contract-registring transactions
     for blob in payload.blobs.iter() {
@@ -100,19 +112,33 @@ pub async fn send_blob_transaction(
         }
         if let Ok(tx) = StructuredBlobData::<RegisterContractAction>::try_from(blob.data.clone()) {
             let parameters = tx.parameters;
-            validate_contract_registration_metadata(
+            if let Err(err) = validate_contract_registration_metadata(
                 &"hyli".into(),
                 &parameters.contract_name,
                 &parameters.verifier,
                 &parameters.program_id,
                 &parameters.state_commitment,
-            )
-            .map_err(|err| AppError(StatusCode::BAD_REQUEST, anyhow!(err)))?;
+            ) {
+                warn!(
+                    tx_hash = %tx_hash.0,
+                    contract = %parameters.contract_name.0,
+                    verifier = %parameters.verifier.0,
+                    error = ?err,
+                    "rejecting blob transaction due to invalid contract registration metadata"
+                );
+                return Err(AppError(StatusCode::BAD_REQUEST, anyhow!(err)));
+            }
         }
     }
 
     // Filter out transactions with incorrect identity
     if let Err(e) = payload.validate_identity() {
+        warn!(
+            tx_hash = %tx_hash.0,
+            identity = %payload.identity.0,
+            error = %e,
+            "rejecting blob transaction due to invalid identity"
+        );
         return Err(AppError(
             StatusCode::BAD_REQUEST,
             anyhow!("Invalid identity for blob tx: {}", e),
@@ -121,12 +147,25 @@ pub async fn send_blob_transaction(
 
     // Filter out transactions with too many blobs
     if payload.blobs.len() > 20 {
+        warn!(
+            tx_hash = %tx_hash.0,
+            blob_count = payload.blobs.len(),
+            "rejecting blob transaction due to blob count limit"
+        );
         return Err(AppError(
             StatusCode::BAD_REQUEST,
             anyhow!("Too many blobs in transaction"),
         ));
     }
-    handle_send(state, TransactionData::Blob(payload)).await
+    handle_send(state, TransactionData::Blob(payload))
+        .await
+        .map(|response| {
+            info!(
+                tx_hash = %tx_hash.0,
+                "blob transaction accepted and forwarded to bus"
+            );
+            response
+        })
 }
 
 #[utoipa::path(
