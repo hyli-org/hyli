@@ -158,6 +158,7 @@ pub struct TransactionDb {
     pub tx_hash: TxHashDb,                         // Transaction hash
     pub parent_dp_hash: DataProposalHash,          // Corresponds to the data proposal hash
     pub block_hash: Option<ConsensusProposalHash>, // Corresponds to the block hash
+    pub block_height: Option<BlockHeight>,         // Corresponds to the block height
     pub index: Option<u32>,                        // Index of the transaction within the block
     pub version: u32,                              // Transaction version
     pub transaction_type: TransactionTypeDb,       // Type of transaction
@@ -171,6 +172,14 @@ impl<'r> FromRow<'r, PgRow> for TransactionDb {
     fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
         let tx_hash = row.try_get("tx_hash")?;
         let block_hash = row.try_get("block_hash")?;
+        let block_height: Option<i64> = row.try_get("block_height")?;
+        let block_height = block_height
+            .map(|h| {
+                h.try_into()
+                    .map(BlockHeight)
+                    .map_err(|e: TryFromIntError| sqlx::Error::Decode(e.into()))
+            })
+            .transpose()?;
         let dp_hash_db: DataProposalHashDb = row.try_get("parent_dp_hash")?;
         let parent_dp_hash = dp_hash_db.0;
         let index: Option<i32> = row.try_get("index")?;
@@ -196,6 +205,7 @@ impl<'r> FromRow<'r, PgRow> for TransactionDb {
             tx_hash,
             parent_dp_hash,
             block_hash,
+            block_height,
             index,
             version,
             transaction_type,
@@ -216,6 +226,7 @@ impl From<TransactionDb> for APITransaction {
             tx_hash: val.tx_hash.0,
             parent_dp_hash: val.parent_dp_hash,
             block_hash: val.block_hash,
+            block_height: val.block_height,
             index: val.index,
             version: val.version,
             transaction_type: val.transaction_type,
@@ -472,17 +483,7 @@ pub async fn get_transaction_with_hash(
     let transaction = log_error!(
         sqlx::query_as::<_, TransactionDb>(
             r#"
-SELECT
-    tx_hash,
-    version,
-    transaction_type,
-    transaction_status,
-    parent_dp_hash,
-    block_hash,
-    index,
-    b.timestamp,
-    lane_id,
-    identity
+SELECT t.*, b.timestamp
 FROM transactions t
 LEFT JOIN blocks b ON t.block_hash = b.hash
 WHERE t.tx_hash = $1 AND transaction_type='blob_transaction'
@@ -614,6 +615,7 @@ pub async fn get_blob_transactions_by_contract(
             t.tx_hash,
             t.parent_dp_hash,
             t.block_hash,
+            t.block_height,
             t.index,
             t.version,
             t.transaction_type,
@@ -626,6 +628,7 @@ pub async fn get_blob_transactions_by_contract(
             t.tx_hash,
             t.parent_dp_hash,
             t.block_hash,
+            t.block_height,
             t.index,
             t.version,
             t.transaction_type,
@@ -645,6 +648,9 @@ pub async fn get_blob_transactions_by_contract(
             let Some(block_hash) = api_tx.block_hash else {
                 return Err(sqlx::Error::RowNotFound);
             };
+            let Some(block_height) = api_tx.block_height else {
+                return Err(sqlx::Error::RowNotFound);
+            };
             let blobs: Vec<(String, Vec<u8>, Vec<serde_json::Value>)> = row.try_get("blobs")?;
             let blobs = blobs
                 .into_iter()
@@ -662,6 +668,7 @@ pub async fn get_blob_transactions_by_contract(
                 tx_hash: api_tx.tx_hash.0,
                 parent_dp_hash: api_tx.parent_dp_hash,
                 block_hash,
+                block_height,
                 index: api_tx.index.unwrap_or(0),
                 version: api_tx.version,
                 transaction_type: api_tx.transaction_type,
