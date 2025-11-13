@@ -87,8 +87,16 @@ CREATE TABLE transaction_state_events (
     block_height BIGINT,
     tx_hash TEXT NOT NULL,
     parent_dp_hash TEXT NOT NULL,
-    events JSONB NOT NULL,
-    index INT,
+    tx_event JSONB NOT NULL,
+    event_index INT,
+    FOREIGN KEY (tx_hash, parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE
+);
+
+CREATE TABLE transaction_events_counter (
+    tx_hash TEXT NOT NULL,
+    parent_dp_hash TEXT NOT NULL,
+    events_counter integer NOT NULL,
+    PRIMARY KEY (tx_hash, parent_dp_hash),
     FOREIGN KEY (tx_hash, parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE
 );
 
@@ -117,4 +125,3 @@ create table txs_contracts (
     PRIMARY KEY (parent_dp_hash, tx_hash, contract_name)
 );
 create index idx_txs_contracts_name on txs_contracts(contract_name);
-

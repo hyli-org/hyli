@@ -957,15 +957,28 @@ async fn test_indexer_api_doubles() -> Result<()> {
     let result = transactions_response.json::<Vec<APITransactionEvents>>();
     assert_eq!(
         result,
-        vec![APITransactionEvents {
-            block_hash: ConsensusProposalHash(
-                "block3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()
-            ),
-            block_height: BlockHeight(3),
-            events: vec![serde_json::json!({
-                "name": "Success"
-            })]
-        }]
+        vec![
+            APITransactionEvents {
+                block_hash: ConsensusProposalHash(
+                    "block2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()
+                ),
+                block_height: BlockHeight(2),
+                events: vec![serde_json::json!({
+                    "event_index": 0,
+                    "name": "Sequenced"
+                })]
+            },
+            APITransactionEvents {
+                block_hash: ConsensusProposalHash(
+                    "block3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()
+                ),
+                block_height: BlockHeight(3),
+                events: vec![serde_json::json!({
+                    "event_index": 1,
+                    "name": "Success"
+                })]
+            }
+        ]
     );
 
     Ok(())
