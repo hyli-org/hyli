@@ -1038,10 +1038,10 @@ impl<'any> NodeStateProcessing<'any> {
         }
 
         // Update contract states
-        for (contract_name, (mc, fields, side_effects)) in
+        for (contract_name, (contract_status, fields, side_effects)) in
             settlement_result.contract_changes.into_iter()
         {
-            match mc {
+            match contract_status {
                 ContractStatus::UnknownState => {
                     unreachable!(
                         "Contract status should not be UnknownState when trying to settle a blob tx"
@@ -1243,7 +1243,7 @@ impl<'any> NodeStateProcessing<'any> {
             .or_else(|| contracts.get(contract_name))
             .ok_or_else(|| {
                 Error::msg(format!(
-                    "Cannot settle blob, contract '{contract_name}' no longer exists"
+                    "Cannot settle blob, contract '{contract_name}' does not exist"
                 ))
             })?;
         Ok(contract)
