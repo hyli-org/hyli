@@ -1618,7 +1618,7 @@ async fn test_early_settle_as_failed_when_proof_has_success_false() {
     let events = &block.transactions_events[&blob_tx_hash];
     assert!(events
         .iter()
-        .any(|e| matches!(e, TransactionStateEvent::SettledAsFailed)));
+        .any(|e| matches!(e, TransactionStateEvent::SettledAsFailed(_))));
 }
 
 #[test_log::test(tokio::test)]
@@ -1723,7 +1723,7 @@ async fn test_failure_proof_must_wait_for_previous_blobs() {
     let events = &block_3.transactions_events[&blob_tx.hashed()];
     assert!(events
         .iter()
-        .any(|e| matches!(e, TransactionStateEvent::SettledAsFailed)));
+        .any(|e| matches!(e, TransactionStateEvent::SettledAsFailed(_))));
 }
 
 #[test_log::test(tokio::test)]
@@ -1814,7 +1814,7 @@ async fn test_invalid_onchain_effect_causes_immediate_failure() {
     let events = &block.transactions_events[&blob_tx_hash];
     assert!(events
         .iter()
-        .any(|e| matches!(e, TransactionStateEvent::SettledAsFailed)));
+        .any(|e| matches!(e, TransactionStateEvent::SettledAsFailed(_))));
 
     // Check that we have an Error with the validation error message
     assert!(
