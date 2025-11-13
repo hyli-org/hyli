@@ -173,14 +173,13 @@ impl<'r> FromRow<'r, PgRow> for TransactionDb {
         let tx_hash = row.try_get("tx_hash")?;
         let block_hash = row.try_get("block_hash")?;
         let block_height: Option<i64> = row.try_get("block_height")?;
-        let block_height = match block_height {
-            Some(height) => {
-                Some(BlockHeight(height.try_into().map_err(
-                    |e: TryFromIntError| sqlx::Error::Decode(e.into()),
-                )?))
-            }
-            None => None,
-        };
+         let block_height = block_height
+            .map(|h| {
+                h.try_into()
+                    .map(BlockHeight)
+                    .map_err(|e: TryFromIntError| sqlx::Error::Decode(e.into()))
+            })
+            .transpose()?;
         let dp_hash_db: DataProposalHashDb = row.try_get("parent_dp_hash")?;
         let parent_dp_hash = dp_hash_db.0;
         let index: Option<i32> = row.try_get("index")?;
