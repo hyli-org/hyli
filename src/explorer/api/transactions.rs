@@ -523,36 +523,17 @@ pub async fn get_transaction_events(
     let rows = log_error!(
         sqlx::query(
             r#"
-with filtered as (
-    SELECT 
-        t.block_hash,
-        b.height,
-        t.tx_hash,
-        t.parent_dp_hash,
-        t.events,
-        t.index
-    FROM transaction_state_events t
-    LEFT JOIN blocks b 
-        ON t.block_hash = b.hash
-    WHERE 
-        t.tx_hash = $1
-        AND t.block_height = b.height
-),
-parsed as(
 SELECT
-    block_hash,
-    height,
-    parent_dp_hash,
-    tx_hash,
-    events
-FROM
-    (SELECT filtered.*, parent_dp_hash = FIRST_VALUE(parent_dp_hash) OVER (ORDER BY height DESC, index DESC) as first_res FROM filtered)
-WHERE first_res = TRUE
-ORDER BY 
-    height DESC,
-    index DESC
-)
-select block_hash, height, parent_dp_hash, tx_hash, jsonb_agg(events) as events from parsed group by 1,2,3,4;
+    t.block_hash,
+    t.block_height,
+    JSON_AGG(
+        JSONB_BUILD_OBJECT('index', t.index) || t.event
+        ORDER BY t.index
+    ) as events
+FROM transaction_state_events t
+WHERE t.tx_hash = $1
+GROUP BY t.block_hash, t.block_height
+ORDER BY t.block_height ASC;
 "#,
         )
         .bind(tx_hash)
@@ -566,7 +547,7 @@ select block_hash, height, parent_dp_hash, tx_hash, jsonb_agg(events) as events 
         .into_iter()
         .map(|row| {
             let block_hash = row.try_get("block_hash")?;
-            let block_height: i64 = row.try_get("height")?;
+            let block_height: i64 = row.try_get("block_height")?;
             let block_height = BlockHeight(block_height.try_into()?);
             let events: serde_json::Value = row.try_get("events")?;
             let events: Vec<serde_json::Value> = serde_json::from_value(events)?;

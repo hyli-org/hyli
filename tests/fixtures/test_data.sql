@@ -42,7 +42,7 @@ VALUES
     ('contract_1', 'block1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', convert_to('state_commitment_1', 'UTF-8')),     -- State for Contract 1
     ('contract_1', 'block2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', convert_to('state_commitment_1Bis', 'UTF-8'));  -- State for Contract 2
 
-INSERT INTO transaction_state_events (block_hash, block_height, index, tx_hash, parent_dp_hash, events)
+INSERT INTO transaction_state_events (block_hash, block_height, index, tx_hash, parent_dp_hash, event)
 VALUES
 	('block2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 2, 1, 'test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'dp_hashaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '{"name": "Sequenced"}'::jsonb),
 	('block3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 3, 1, 'test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'dp_hashbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', '{"name": "Success"}'::jsonb);
