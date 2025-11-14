@@ -175,7 +175,7 @@ pub(crate) struct IndexerHandlerStore {
     blocks: Vec<BlockStore>,
     txs: VecDeque<TxStore>,
     tx_status_update: HashMap<TxId, TransactionStatusDb>,
-    tx_events: VecDeque<(BlockHash, BlockHeight, TxId, String)>,
+    tx_events: StreamableData,
     blobs: StreamableData,
     blob_proof_outputs: StreamableData,
     contract_inserts: Vec<ContractInsertStore>,
@@ -276,7 +276,7 @@ impl Indexer {
         // - if it's been more than 5s since last dump
         // - if the block is recent (less than 1min old) we stream as fast as we can (buffering is mostly useful when catching up)
         let now = TimestampMsClock::now();
-        if self.handler_store.tx_events.len() > self.conf.indexer.query_buffer_size
+        if self.handler_store.tx_events.0.len() > self.conf.indexer.query_buffer_size
             || self.handler_store.last_update.0 + 5000 < now.0
             || now.0.saturating_sub(self.handler_store.block_time.0) < 60 * 1000
         {
@@ -513,14 +513,17 @@ impl NodeStateCallback for IndexerHandlerStore {
                 return;
             }
         }
-
-        self.tx_events.push_back((
-            self.block_hash.clone(),
+        self.tx_events.0.push(format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            self.block_hash,
             self.block_height,
-            event.tx_id().clone(),
+            event.tx_id().0,
+            event.tx_id().1,
+            self.tx_events.0.len(),
             serde_json::to_value(event)
                 .unwrap_or(serde_json::Value::Null)
-                .to_string(),
+                .to_string()
+                .replace("\\", "\\\\"),
         ));
     }
 }
@@ -711,33 +714,11 @@ impl Indexer {
                 .await?;
         }
 
-        // Then events
-        for (block_hash, block_height, tx_id, event) in self.handler_store.tx_events.drain(..) {
-            let TxId(parent_dp_hash, tx_hash) = tx_id;
-            let new_counter: i32 = sqlx::query_scalar(
-                "INSERT INTO transaction_events_counter (tx_hash, parent_dp_hash, events_counter)
-                VALUES ($1, $2, 1)
-                ON CONFLICT (tx_hash, parent_dp_hash)
-                DO UPDATE SET events_counter = transaction_events_counter.events_counter + 1
-                RETURNING events_counter",
-            )
-            .bind(TxHashDb(tx_hash.clone()))
-            .bind(DataProposalHashDb(parent_dp_hash.clone()))
-            .fetch_one(&mut *transaction)
-            .await?;
-            let event_index = new_counter - 1;
-            sqlx::query("INSERT INTO transaction_state_events (block_hash, block_height, tx_hash, parent_dp_hash, tx_event, event_index) VALUES ($1, $2, $3, $4, $5::jsonb, $6)")
-                .bind(block_hash.clone())
-                .bind(block_height.0 as i64)
-                .bind(TxHashDb(tx_hash))
-                .bind(DataProposalHashDb(parent_dp_hash))
-                .bind(event)
-                .bind(event_index)
-                .execute(&mut *transaction)
-                .await?;
-        }
-
         // COPY seems about 2x faster than INSERT
+        let mut copy = transaction.copy_in_raw("COPY transaction_state_events (block_hash, block_height, parent_dp_hash, tx_hash, index, events) FROM STDIN WITH (FORMAT TEXT)").await?;
+        copy.read_from(&mut self.handler_store.tx_events).await?;
+        copy.finish().await?;
+
         let mut copy = transaction.copy_in_raw("COPY blobs (parent_dp_hash, tx_hash, blob_index, identity, contract_name, data) FROM STDIN WITH (FORMAT TEXT)").await?;
         copy.read_from(&mut self.handler_store.blobs).await?;
         copy.finish().await?;
