@@ -150,7 +150,7 @@ pub enum TransactionStateEvent {
         program_output: Vec<u8>,
     },
     Settled,
-    SettledAsFailed(String),
+    SettledAsFailed,
     TimedOut,
     DroppedAsDuplicate,
 }

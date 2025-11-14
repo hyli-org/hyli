@@ -147,7 +147,7 @@ pub enum TxEvent<'a> {
     ),
     SequencedProofTransaction(&'a TxId, &'a LaneId, u32, &'a VerifiedProofTransaction),
     Settled(&'a TxId, &'a UnsettledBlobTransaction),
-    SettledAsFailed(&'a TxId, &'a UnsettledBlobTransaction, &'a str),
+    SettledAsFailed(&'a TxId, &'a UnsettledBlobTransaction),
     TimedOut(&'a TxId, &'a UnsettledBlobTransaction),
     TxError(&'a TxId, &'a str),
     NewProof(
@@ -726,13 +726,7 @@ impl<'any> NodeStateProcessing<'any> {
                     .iter()
                     .any(|possible_proof| !possible_proof.3.success)
         }) {
-            let msg = "Settling fast as failed because native blob was failed";
-            debug!("{msg}");
-            self.callback.on_event(&TxEvent::SettledAsFailed(
-                &unsettled_tx.tx_id,
-                unsettled_tx,
-                msg,
-            ));
+            debug!("Settling fast as failed because native blob was failed");
             SettlementResult {
                 settlement_status: SettlementStatus::SettleAsFailed,
                 contract_changes: BTreeMap::new(),
@@ -877,11 +871,7 @@ impl<'any> NodeStateProcessing<'any> {
                 // Fatal error - settle as failed immediately
                 let msg = format!("On-chain execution failed: {msg}");
                 debug!("{msg}");
-                callback.on_event(&TxEvent::SettledAsFailed(
-                    &unsettled_tx.tx_id,
-                    unsettled_tx,
-                    &msg,
-                ));
+                callback.on_event(&TxEvent::TxError(&unsettled_tx.tx_id, &msg));
                 return SettlementResult {
                     settlement_status: SettlementStatus::SettleAsFailed,
                     contract_changes,
@@ -942,11 +932,7 @@ impl<'any> NodeStateProcessing<'any> {
                         "Fatal error processing blob proof output #{i} for contract '{contract_name}': {msg}"
                     );
                     debug!("{msg}");
-                    callback.on_event(&TxEvent::SettledAsFailed(
-                        &unsettled_tx.tx_id,
-                        unsettled_tx,
-                        &msg,
-                    ));
+                    callback.on_event(&TxEvent::TxError(&unsettled_tx.tx_id, &msg));
                     return SettlementResult {
                         settlement_status: SettlementStatus::SettleAsFailed,
                         contract_changes,
@@ -1012,6 +998,9 @@ impl<'any> NodeStateProcessing<'any> {
         match settlement_result.settlement_status {
             SettlementStatus::SettleAsFailed => {
                 // If it's a failed settlement, mark it so and move on.
+                self.callback
+                    .on_event(&TxEvent::SettledAsFailed(&settled_tx.tx_id, &settled_tx));
+
                 self.this.metrics.add_failed_transactions(1);
                 info!("⛈️ Settled tx {} as failed", &bth);
 
@@ -1774,7 +1763,7 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     StatefulEvent::SettledTx(unsettled_tx.clone()),
                 ));
             }
-            TxEvent::SettledAsFailed(tx_id, unsettled_tx, msg) => {
+            TxEvent::SettledAsFailed(tx_id, unsettled_tx) => {
                 self.block_under_construction
                     .failed_txs
                     .push(tx_id.1.clone());
@@ -1785,7 +1774,7 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     .transactions_events
                     .entry(tx_id.1.clone())
                     .or_default()
-                    .push(TransactionStateEvent::SettledAsFailed(msg.to_string()));
+                    .push(TransactionStateEvent::SettledAsFailed);
                 self.stateful_events
                     .events
                     .push((tx_id.clone(), StatefulEvent::FailedTx(unsettled_tx.clone())));
