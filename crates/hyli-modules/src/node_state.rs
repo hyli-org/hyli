@@ -726,7 +726,10 @@ impl<'any> NodeStateProcessing<'any> {
                     .iter()
                     .any(|possible_proof| !possible_proof.3.success)
         }) {
-            debug!("Settling fast as failed because native blob was failed");
+            let msg = "Settling fast as failed because native blob was failed";
+            debug!("{msg}");
+            self.callback
+                .on_event(&TxEvent::TxError(&unsettled_tx.tx_id, msg));
             SettlementResult {
                 settlement_status: SettlementStatus::SettleAsFailed,
                 contract_changes: BTreeMap::new(),
@@ -806,6 +809,7 @@ impl<'any> NodeStateProcessing<'any> {
                             "Contract '{contract_name}' is in RegisterWithConstructor state at settlement end; constructor blob missing.",
                         );
                     debug!("{msg}");
+                    callback.on_event(&TxEvent::TxError(&unsettled_tx.tx_id, &msg));
                     return SettlementResult {
                         settlement_status: SettlementStatus::SettleAsFailed,
                         contract_changes,
@@ -818,6 +822,7 @@ impl<'any> NodeStateProcessing<'any> {
                             "Contract '{contract_name}' is in WaitingDeletion state at settlement end; deletion blob missing.",
                         );
                     debug!("{msg}");
+                    callback.on_event(&TxEvent::TxError(&unsettled_tx.tx_id, &msg));
                     return SettlementResult {
                         settlement_status: SettlementStatus::SettleAsFailed,
                         contract_changes,

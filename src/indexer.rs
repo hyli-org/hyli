@@ -715,7 +715,7 @@ impl Indexer {
         }
 
         // COPY seems about 2x faster than INSERT
-        let mut copy = transaction.copy_in_raw("COPY transaction_state_events (block_hash, block_height, parent_dp_hash, tx_hash, index, events) FROM STDIN WITH (FORMAT TEXT)").await?;
+        let mut copy = transaction.copy_in_raw("COPY transaction_state_events (block_hash, block_height, parent_dp_hash, tx_hash, index, event) FROM STDIN WITH (FORMAT TEXT)").await?;
         copy.read_from(&mut self.handler_store.tx_events).await?;
         copy.finish().await?;
 
