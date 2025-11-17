@@ -467,19 +467,7 @@ impl<'any> NodeStateProcessing<'any> {
             // For each transaction that could not be settled, if it is the next one to be settled, set its timeout
             for unsettled_tx in next_unsettled_txs.iter() {
                 if self.unsettled_transactions.is_next_to_settle(unsettled_tx) {
-                    // Get the contract's timeout window
-                    #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
-                    let timeout_window = self
-                        .unsettled_transactions
-                        .get(unsettled_tx)
-                        .map(|tx| self.get_tx_timeout_window(&tx.tx.blobs))
-                        .unwrap();
-                    if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
-                        // Update timeouts
-                        let current_height = self.current_height;
-                        self.timeouts
-                            .set(unsettled_tx.clone(), current_height, timeout_window);
-                    }
+                    self.set_timeout(unsettled_tx);
                 }
             }
             next_unsettled_txs.clear();
@@ -575,13 +563,7 @@ impl<'any> NodeStateProcessing<'any> {
         };
 
         if self.unsettled_transactions.is_next_to_settle(&blob_tx_hash) {
-            let block_height = self.current_height;
-            // Update timeouts
-            let timeout_window = self.get_tx_timeout_window(&tx.blobs);
-            if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
-                self.timeouts
-                    .set(blob_tx_hash.clone(), block_height, timeout_window);
-            }
+            self.set_timeout(&blob_tx_hash);
         }
 
         if should_try_and_settle {
@@ -1638,16 +1620,7 @@ impl<'any> NodeStateProcessing<'any> {
                 // For each transaction that could not be settled, if it is the next one to be settled, reset its timeout
                 for unsettled_tx in next_unsettled_txs {
                     if self.unsettled_transactions.is_next_to_settle(&unsettled_tx) {
-                        let block_height = self.current_height;
-                        #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
-                        let tx = self.unsettled_transactions.get(&unsettled_tx).unwrap();
-                        // Get the contract's timeout window
-                        let timeout_window = self.get_tx_timeout_window(&tx.tx.blobs);
-                        if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
-                            // Set the timeout for the transaction
-                            self.timeouts
-                                .set(unsettled_tx.clone(), block_height, timeout_window);
-                        }
+                        self.set_timeout(&unsettled_tx);
                     }
                 }
 
@@ -1656,6 +1629,20 @@ impl<'any> NodeStateProcessing<'any> {
                 false
             }
         });
+    }
+
+    fn set_timeout(&mut self, unsettled_tx_hash: &TxHash) {
+        #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
+        let unsettled_tx = self.unsettled_transactions.get(unsettled_tx_hash).unwrap();
+
+        // Get the contract's timeout window
+        let timeout_window = self.get_tx_timeout_window(&unsettled_tx.tx.blobs);
+        if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
+            // Update timeouts
+            let current_height = self.current_height;
+            self.timeouts
+                .set(unsettled_tx_hash.clone(), current_height, timeout_window);
+        }
     }
 }
 
