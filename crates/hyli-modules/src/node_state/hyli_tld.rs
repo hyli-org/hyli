@@ -78,12 +78,16 @@ fn handle_register_blob(
 
     contract_changes
         .entry(reg.contract_name.clone())
-        .and_modify(|c| {
-            c.0 = contract_status.clone();
-            c.1 = ModifiedContractFields::all();
-            c.2.extend(side_effects.clone());
+        .and_modify(|mcd| {
+            mcd.contract_status = contract_status.clone();
+            mcd.modified_fields = ModifiedContractFields::all();
+            mcd.side_effects.extend(side_effects.clone());
         })
-        .or_insert_with(|| (contract_status, ModifiedContractFields::all(), side_effects));
+        .or_insert_with(|| ModifiedContractData {
+            contract_status,
+            modified_fields: ModifiedContractFields::all(),
+            side_effects,
+        });
     Ok(())
 }
 
@@ -103,16 +107,14 @@ fn handle_delete_blob(
     {
         contract_changes
             .entry(delete.contract_name.clone())
-            .and_modify(|c| {
-                c.0 = ContractStatus::WaitingDeletion;
-                c.1 = ModifiedContractFields::all();
+            .and_modify(|mcd| {
+                mcd.contract_status = ContractStatus::WaitingDeletion;
+                mcd.modified_fields = ModifiedContractFields::all();
             })
-            .or_insert_with(|| {
-                (
-                    ContractStatus::WaitingDeletion,
-                    ModifiedContractFields::all(),
-                    vec![],
-                )
+            .or_insert_with(|| ModifiedContractData {
+                contract_status: ContractStatus::WaitingDeletion,
+                modified_fields: ModifiedContractFields::all(),
+                side_effects: vec![],
             });
         Ok(())
     } else {
@@ -136,25 +138,23 @@ fn handle_update_program_id_blob(
 
     contract_changes
         .entry(update.contract_name.clone())
-        .and_modify(|c| {
-            if let ContractStatus::Updated(ref mut contract) = c.0 {
+        .and_modify(|mcd| {
+            if let ContractStatus::Updated(ref mut contract) = mcd.contract_status {
                 contract.program_id = update.program_id.clone();
             }
-            c.1.program_id = true;
-            c.2.push(SideEffect::UpdateProgramId);
+            mcd.modified_fields.program_id = true;
+            mcd.side_effects.push(SideEffect::UpdateProgramId);
         })
-        .or_insert_with(|| {
-            (
-                ContractStatus::Updated(Contract {
-                    program_id: update.program_id.clone(),
-                    ..contract
-                }),
-                ModifiedContractFields {
-                    program_id: true,
-                    ..ModifiedContractFields::default()
-                },
-                vec![SideEffect::UpdateProgramId],
-            )
+        .or_insert_with(|| ModifiedContractData {
+            contract_status: ContractStatus::Updated(Contract {
+                program_id: update.program_id.clone(),
+                ..contract
+            }),
+            modified_fields: ModifiedContractFields {
+                program_id: true,
+                ..ModifiedContractFields::default()
+            },
+            side_effects: vec![SideEffect::UpdateProgramId],
         });
     Ok(())
 }
@@ -176,25 +176,23 @@ fn handle_update_timeout_window_blob(
     let new_update = SideEffect::UpdateTimeoutWindow;
     contract_changes
         .entry(update.contract_name.clone())
-        .and_modify(|c| {
-            if let ContractStatus::Updated(ref mut contract) = c.0 {
+        .and_modify(|mcd| {
+            if let ContractStatus::Updated(ref mut contract) = mcd.contract_status {
                 contract.timeout_window = update.timeout_window.clone();
             }
-            c.1.timeout_window = true;
-            c.2.push(new_update.clone());
+            mcd.modified_fields.timeout_window = true;
+            mcd.side_effects.push(new_update.clone());
         })
-        .or_insert_with(|| {
-            (
-                ContractStatus::Updated(Contract {
-                    timeout_window: update.timeout_window.clone(),
-                    ..contract
-                }),
-                ModifiedContractFields {
-                    timeout_window: true,
-                    ..ModifiedContractFields::default()
-                },
-                vec![new_update],
-            )
+        .or_insert_with(|| ModifiedContractData {
+            contract_status: ContractStatus::Updated(Contract {
+                timeout_window: update.timeout_window.clone(),
+                ..contract
+            }),
+            modified_fields: ModifiedContractFields {
+                timeout_window: true,
+                ..ModifiedContractFields::default()
+            },
+            side_effects: vec![new_update],
         });
     Ok(())
 }
