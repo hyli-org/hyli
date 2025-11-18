@@ -1517,6 +1517,7 @@ async fn test_auto_prover_catchup_mixed_pending_and_failures() -> Result<()> {
                     tx_context: data.2.clone(),
                     blobs_hash: BlobsHashes::default(),
                     possible_proofs: BTreeMap::new(),
+                    settleable_contracts: vec![],
                 }),
             )
         };

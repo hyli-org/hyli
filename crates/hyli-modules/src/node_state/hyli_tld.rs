@@ -87,6 +87,8 @@ fn handle_register_blob(
             contract_status,
             modified_fields: ModifiedContractFields::all(),
             side_effects,
+            can_settle_independently: true,
+            is_fully_proved: false,
         });
     Ok(())
 }
@@ -115,6 +117,8 @@ fn handle_delete_blob(
                 contract_status: ContractStatus::WaitingDeletion,
                 modified_fields: ModifiedContractFields::all(),
                 side_effects: vec![],
+                can_settle_independently: true,
+                is_fully_proved: false,
             });
         Ok(())
     } else {
@@ -155,6 +159,8 @@ fn handle_update_program_id_blob(
                 ..ModifiedContractFields::default()
             },
             side_effects: vec![SideEffect::UpdateProgramId],
+            can_settle_independently: true,
+            is_fully_proved: false,
         });
     Ok(())
 }
@@ -193,6 +199,8 @@ fn handle_update_timeout_window_blob(
                 ..ModifiedContractFields::default()
             },
             side_effects: vec![new_update],
+            can_settle_independently: true,
+            is_fully_proved: false,
         });
     Ok(())
 }
