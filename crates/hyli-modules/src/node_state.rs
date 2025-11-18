@@ -828,6 +828,8 @@ impl<'any> NodeStateProcessing<'any> {
             };
         };
 
+        let mut bubbled_contract_flags: BTreeMap<ContractName, (bool, bool)> = BTreeMap::new();
+
         tracing::trace!(
             "Recursion on blob #{blob_index} (contract: {:?})",
             blob.contract_name
@@ -935,27 +937,13 @@ impl<'any> NodeStateProcessing<'any> {
                             return settlement_result;
                         }
                         SettlementStatus::NotReadyToSettle | SettlementStatus::TryingToSettle => {
-                            // Bubbles up for each contracts, if it is fully proved or can settle independently
                             for (cn, mcd) in settlement_result.contract_changes.into_iter() {
-                                contract_changes
-                                    .entry(cn)
-                                    .and_modify(|existing_mcd| {
-                                        if mcd.is_fully_proved {
-                                            existing_mcd.is_fully_proved = mcd.is_fully_proved;
-                                        }
-
-                                        if mcd.can_settle_independently {
-                                            existing_mcd.can_settle_independently =
-                                                mcd.can_settle_independently;
-                                        }
-                                    })
-                                    .or_insert(ModifiedContractData {
-                                        contract_status: ContractStatus::UnknownState,
-                                        modified_fields: ModifiedContractFields::all(),
-                                        side_effects: vec![],
-                                        can_settle_independently: mcd.can_settle_independently,
-                                        is_fully_proved: mcd.is_fully_proved,
-                                    });
+                                Self::record_bubbled_contract_flags(
+                                    &mut contract_changes,
+                                    &mut bubbled_contract_flags,
+                                    cn,
+                                    mcd,
+                                );
                             }
                             continue;
                         }
@@ -1020,6 +1008,8 @@ impl<'any> NodeStateProcessing<'any> {
         if remaining_settlement.settlement_status == SettlementStatus::SettleAsFailed {
             return remaining_settlement;
         }
+
+        Self::flush_bubbled_contract_flags(&mut contract_changes, bubbled_contract_flags);
 
         // If we end up here, the TX isn't ready yet.
         SettlementResult {
@@ -1677,6 +1667,62 @@ impl<'any> NodeStateProcessing<'any> {
             });
 
         ProofProcessingResult::Success
+    }
+
+    fn record_bubbled_contract_flags(
+        contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
+        bubbled_contract_flags: &mut BTreeMap<ContractName, (bool, bool)>,
+        contract_name: ContractName,
+        mcd: ModifiedContractData,
+    ) {
+        if let Some(existing_mcd) = contract_changes.get_mut(&contract_name) {
+            if mcd.is_fully_proved {
+                existing_mcd.is_fully_proved = true;
+            }
+
+            if mcd.can_settle_independently {
+                existing_mcd.can_settle_independently = true;
+            }
+            return;
+        }
+
+        if !mcd.is_fully_proved && !mcd.can_settle_independently {
+            return;
+        }
+
+        let entry = bubbled_contract_flags
+            .entry(contract_name)
+            .or_insert((false, false));
+        entry.0 |= mcd.is_fully_proved;
+        entry.1 |= mcd.can_settle_independently;
+    }
+
+    fn flush_bubbled_contract_flags(
+        contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
+        bubbled_contract_flags: BTreeMap<ContractName, (bool, bool)>,
+    ) {
+        for (contract_name, (is_fully_proved, can_settle_independently)) in bubbled_contract_flags {
+            if let Some(existing_mcd) = contract_changes.get_mut(&contract_name) {
+                if is_fully_proved {
+                    existing_mcd.is_fully_proved = true;
+                }
+                if can_settle_independently {
+                    existing_mcd.can_settle_independently = true;
+                }
+                continue;
+            }
+
+            contract_changes.insert(
+                contract_name,
+                ModifiedContractData {
+                    contract_status: ContractStatus::UnknownState,
+                    modified_fields: ModifiedContractFields::all(),
+                    side_effects: vec![],
+                    can_settle_independently,
+                    is_fully_proved,
+                },
+            );
+        }
     }
 
     fn is_last_blob_of_contract_in_tx(
