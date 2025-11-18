@@ -828,6 +828,11 @@ impl<'any> NodeStateProcessing<'any> {
             };
         };
 
+        tracing::trace!(
+            "Recursion on blob #{blob_index} (contract: {:?})",
+            blob.contract_name
+        );
+
         let contract_name = &blob.contract_name;
 
         // Need a placeholder for executed blobs, and otherwise we do use 0 anyways.
@@ -887,6 +892,14 @@ impl<'any> NodeStateProcessing<'any> {
 
             // TODO: ideally make this CoW
             let mut current_contracts = contract_changes.clone();
+
+            tracing::trace!(
+                "Processing proof #{} for blob index {} (contract {})",
+                i,
+                blob_index,
+                contract_name
+            );
+
             let proof_result = Self::process_proof(
                 contracts,
                 &mut current_contracts,
@@ -922,7 +935,28 @@ impl<'any> NodeStateProcessing<'any> {
                             return settlement_result;
                         }
                         SettlementStatus::NotReadyToSettle | SettlementStatus::TryingToSettle => {
-                            // TODO: y'a un truc à faire ici non ?
+                            // Bubbles up for each contracts, if it is fully proved or can settle independently
+                            for (cn, mcd) in settlement_result.contract_changes.into_iter() {
+                                contract_changes
+                                    .entry(cn)
+                                    .and_modify(|existing_mcd| {
+                                        if mcd.is_fully_proved {
+                                            existing_mcd.is_fully_proved = mcd.is_fully_proved;
+                                        }
+
+                                        if mcd.can_settle_independently {
+                                            existing_mcd.can_settle_independently =
+                                                mcd.can_settle_independently;
+                                        }
+                                    })
+                                    .or_insert(ModifiedContractData {
+                                        contract_status: ContractStatus::UnknownState,
+                                        modified_fields: ModifiedContractFields::all(),
+                                        side_effects: vec![],
+                                        can_settle_independently: mcd.can_settle_independently,
+                                        is_fully_proved: mcd.is_fully_proved,
+                                    });
+                            }
                             continue;
                         }
                     }
@@ -975,6 +1009,11 @@ impl<'any> NodeStateProcessing<'any> {
             blob_iter,
             blob_proof_output_indices.clone(),
             callback,
+        );
+
+        tracing::trace!(
+            "Finalizing recursion on blob #{blob_index} (contract: {:?})",
+            blob.contract_name
         );
 
         // If we found a failure in remaining blobs, return it
@@ -1405,11 +1444,7 @@ impl<'any> NodeStateProcessing<'any> {
             Err(e) => return ProofProcessingResult::Invalid(e.to_string()),
         };
 
-        tracing::trace!(
-            "Processing proof for contract {} with state {:?}",
-            contract.name,
-            contract.state
-        );
+        tracing::trace!("Contract {} with state {:?}", contract.name, contract.state);
 
         if proof_metadata.3.initial_state != contract.state {
             return ProofProcessingResult::Invalid(format!(
