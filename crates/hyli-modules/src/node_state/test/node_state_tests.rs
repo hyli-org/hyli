@@ -1842,7 +1842,7 @@ async fn test_tx_timeout_chooses_unproven_contract_timeout() {
     register_c1_effect.timeout_window = Some(TimeoutWindow::Timeout(BlockHeight(50)));
     state.handle_register_contract_effect(&register_c1_effect);
 
-    // Register c2 with timeout window of 150 blocks (supérieur à c1)
+    // Register c2 with timeout window of 150 blocks (greater than c1)
     let mut register_c2_effect = make_register_contract_effect(c2.clone());
     register_c2_effect.timeout_window = Some(TimeoutWindow::Timeout(BlockHeight(150)));
     state.handle_register_contract_effect(&register_c2_effect);

@@ -1494,12 +1494,12 @@ impl<'any> NodeStateProcessing<'any> {
                     state_read, other_contract.state
                 ));
             }
-            // If the execution read another contract state, then this contract is not independant anymore
+            // If the execution read another contract state, then this contract is not independent anymore
             contract_flags
                 .entry(contract_name.clone())
                 .or_default()
                 .can_settle_independently = false;
-            // TODO: investigate if we should flag as not-independant the read contract as well
+            // TODO: investigate if we should flag as not-independent the read contract as well
         }
 
         for effect in &proof_metadata.3.onchain_effects {
@@ -1708,8 +1708,8 @@ impl<'any> NodeStateProcessing<'any> {
     ) {
         for (contract_name, flags) in source {
             let entry = target.entry(contract_name).or_default();
-            entry.is_fully_proved |= flags.is_fully_proved;
-            entry.can_settle_independently |= flags.can_settle_independently;
+            entry.is_fully_proved = flags.is_fully_proved;
+            entry.can_settle_independently = flags.can_settle_independently;
         }
     }
 
@@ -1728,10 +1728,8 @@ impl<'any> NodeStateProcessing<'any> {
             .tx
             .blobs
             .iter()
-            .enumerate()
-            .rev()
-            .take_while(|(i, _)| *i > blob_index)
-            .any(|(_, blob)| blob.contract_name == *current_contract_name)
+            .skip(blob_index + 1)
+            .any(|blob| blob.contract_name == *current_contract_name)
     }
 
     /// Clear timeouts for transactions that have timed out.
