@@ -62,6 +62,10 @@ struct ModifiedContractData {
     contract_status: ContractStatus,
     modified_fields: ModifiedContractFields,
     side_effects: Vec<SideEffect>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ContractSettlementFlags {
     // to determine if the contract can be settled independently of the rest of the transaction's blobs
     can_settle_independently: bool,
     // to determine if the contract has received all the proofs for each of its blobs
@@ -116,6 +120,7 @@ enum SettlementStatus {
 struct SettlementResult {
     settlement_status: SettlementStatus,
     contract_changes: BTreeMap<ContractName, ModifiedContractData>,
+    contract_flags: BTreeMap<ContractName, ContractSettlementFlags>,
     blob_proof_output_indices: Vec<usize>,
 }
 
@@ -710,6 +715,7 @@ impl<'any> NodeStateProcessing<'any> {
             SettlementResult {
                 settlement_status: SettlementStatus::SettleAsFailed,
                 contract_changes: BTreeMap::new(),
+                contract_flags: BTreeMap::new(),
                 blob_proof_output_indices: vec![],
             }
         } else {
@@ -718,6 +724,7 @@ impl<'any> NodeStateProcessing<'any> {
                 &self.this.store.contracts,
                 SettlementStatus::TryingToSettle,
                 updated_contracts,
+                BTreeMap::new(),
                 unsettled_tx.iter_blobs().enumerate(),
                 vec![],
                 self.callback,
@@ -737,8 +744,8 @@ impl<'any> NodeStateProcessing<'any> {
                 };
             }
             SettlementStatus::NotReadyToSettle => {
-                for (contract_name, mcd) in settlement_result.contract_changes.into_iter() {
-                    if mcd.is_fully_proved && mcd.can_settle_independently {
+                for (contract_name, flags) in settlement_result.contract_flags.into_iter() {
+                    if flags.is_fully_proved && flags.can_settle_independently {
                         // Keep track of contracts that can be settled independently in the transaction. This will be specifically for settings transaction timeout
                         unsettled_tx.settleable_contracts.push(contract_name);
                     }
@@ -770,11 +777,13 @@ impl<'any> NodeStateProcessing<'any> {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn settle_blobs_recursively<'a>(
         unsettled_tx: &UnsettledBlobTransaction,
         contracts: &HashMap<ContractName, Contract>,
         mut settlement_status: SettlementStatus,
         mut contract_changes: BTreeMap<ContractName, ModifiedContractData>,
+        mut contract_flags: BTreeMap<ContractName, ContractSettlementFlags>,
         mut blob_iter: impl Iterator<Item = (usize, (&'a Blob, &'a Vec<BlobProof>))> + Clone,
         mut blob_proof_output_indices: Vec<usize>,
         callback: &mut (dyn NodeStateCallback + Send + Sync),
@@ -797,6 +806,7 @@ impl<'any> NodeStateProcessing<'any> {
                     return SettlementResult {
                         settlement_status: SettlementStatus::SettleAsFailed,
                         contract_changes,
+                        contract_flags,
                         blob_proof_output_indices,
                     };
                 }
@@ -810,6 +820,7 @@ impl<'any> NodeStateProcessing<'any> {
                     return SettlementResult {
                         settlement_status: SettlementStatus::SettleAsFailed,
                         contract_changes,
+                        contract_flags,
                         blob_proof_output_indices,
                     };
                 }
@@ -824,11 +835,10 @@ impl<'any> NodeStateProcessing<'any> {
             return SettlementResult {
                 settlement_status,
                 contract_changes,
+                contract_flags,
                 blob_proof_output_indices,
             };
         };
-
-        let mut bubbled_contract_flags: BTreeMap<ContractName, (bool, bool)> = BTreeMap::new();
 
         tracing::trace!(
             "Recursion on blob #{blob_index} (contract: {:?})",
@@ -856,11 +866,10 @@ impl<'any> NodeStateProcessing<'any> {
                 // We detect if the current blob is the last blob of the contract in this transaction.
                 // If yes we can consider this contract as settlable independently of other blobs.
                 if Self::is_last_blob_of_contract_in_tx(unsettled_tx, blob_index) {
-                    contract_changes.entry(contract_name.clone()).and_modify(
-                        |modified_contract_data| {
-                            modified_contract_data.is_fully_proved = true;
-                        },
-                    );
+                    contract_flags
+                        .entry(contract_name.clone())
+                        .or_default()
+                        .is_fully_proved = true;
                 }
 
                 return Self::settle_blobs_recursively(
@@ -868,6 +877,7 @@ impl<'any> NodeStateProcessing<'any> {
                     contracts,
                     settlement_status.clone(),
                     contract_changes,
+                    contract_flags,
                     blob_iter.clone(),
                     blob_proof_output_indices.clone(),
                     callback,
@@ -881,6 +891,7 @@ impl<'any> NodeStateProcessing<'any> {
                 return SettlementResult {
                     settlement_status: SettlementStatus::SettleAsFailed,
                     contract_changes,
+                    contract_flags,
                     blob_proof_output_indices,
                 };
             }
@@ -894,6 +905,7 @@ impl<'any> NodeStateProcessing<'any> {
 
             // TODO: ideally make this CoW
             let mut current_contracts = contract_changes.clone();
+            let mut current_flags = contract_flags.clone();
 
             tracing::trace!(
                 "Processing proof #{} for blob index {} (contract {})",
@@ -905,6 +917,7 @@ impl<'any> NodeStateProcessing<'any> {
             let proof_result = Self::process_proof(
                 contracts,
                 &mut current_contracts,
+                &mut current_flags,
                 contract_name,
                 proof_metadata,
             );
@@ -914,11 +927,10 @@ impl<'any> NodeStateProcessing<'any> {
                     // We detect if the current blob is the last blob of the contract in this transaction.
                     // If yes we can consider this contract as settlable independently of other blobs.
                     if Self::is_last_blob_of_contract_in_tx(unsettled_tx, blob_index) {
-                        current_contracts.entry(contract_name.clone()).and_modify(
-                            |modified_contract_data| {
-                                modified_contract_data.is_fully_proved = true;
-                            },
-                        );
+                        current_flags
+                            .entry(contract_name.clone())
+                            .or_default()
+                            .is_fully_proved = true;
                     }
 
                     tracing::trace!("Settlement - OK blob");
@@ -927,6 +939,7 @@ impl<'any> NodeStateProcessing<'any> {
                         contracts,
                         settlement_status.clone(),
                         current_contracts,
+                        current_flags,
                         blob_iter.clone(),
                         blob_proof_output_indices.clone(),
                         callback,
@@ -937,14 +950,10 @@ impl<'any> NodeStateProcessing<'any> {
                             return settlement_result;
                         }
                         SettlementStatus::NotReadyToSettle | SettlementStatus::TryingToSettle => {
-                            for (cn, mcd) in settlement_result.contract_changes.into_iter() {
-                                Self::record_bubbled_contract_flags(
-                                    &mut contract_changes,
-                                    &mut bubbled_contract_flags,
-                                    cn,
-                                    mcd,
-                                );
-                            }
+                            Self::merge_contract_flags(
+                                &mut contract_flags,
+                                settlement_result.contract_flags,
+                            );
                             continue;
                         }
                     }
@@ -968,6 +977,7 @@ impl<'any> NodeStateProcessing<'any> {
                     return SettlementResult {
                         settlement_status: SettlementStatus::SettleAsFailed,
                         contract_changes,
+                        contract_flags,
                         blob_proof_output_indices,
                     };
                 }
@@ -985,8 +995,12 @@ impl<'any> NodeStateProcessing<'any> {
                 contract_status: ContractStatus::UnknownState,
                 modified_fields: ModifiedContractFields::all(),
                 side_effects: vec![],
+            });
+        contract_flags
+            .entry(contract_name.clone())
+            .or_insert_with(|| ContractSettlementFlags {
                 can_settle_independently: true,
-                is_fully_proved: false,
+                ..ContractSettlementFlags::default()
             });
 
         let remaining_settlement = Self::settle_blobs_recursively(
@@ -994,6 +1008,7 @@ impl<'any> NodeStateProcessing<'any> {
             contracts,
             SettlementStatus::NotReadyToSettle,
             contract_changes.clone(),
+            contract_flags.clone(),
             blob_iter,
             blob_proof_output_indices.clone(),
             callback,
@@ -1009,12 +1024,13 @@ impl<'any> NodeStateProcessing<'any> {
             return remaining_settlement;
         }
 
-        Self::flush_bubbled_contract_flags(&mut contract_changes, bubbled_contract_flags);
+        Self::merge_contract_flags(&mut contract_flags, remaining_settlement.contract_flags);
 
         // If we end up here, the TX isn't ready yet.
         SettlementResult {
             settlement_status: remaining_settlement.settlement_status,
             contract_changes,
+            contract_flags,
             blob_proof_output_indices,
         }
     }
@@ -1422,6 +1438,7 @@ impl<'any> NodeStateProcessing<'any> {
     fn process_proof(
         contracts: &HashMap<ContractName, Contract>,
         contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
+        contract_flags: &mut BTreeMap<ContractName, ContractSettlementFlags>,
         contract_name: &ContractName,
         proof_metadata: &(ProgramId, Verifier, TxId, HyliOutput),
     ) -> ProofProcessingResult {
@@ -1478,9 +1495,11 @@ impl<'any> NodeStateProcessing<'any> {
                 ));
             }
             // If the execution read another contract state, then this contract is not independant anymore
-            if let Some(mcd) = contract_changes.get_mut(contract_name) {
-                mcd.can_settle_independently = false;
-            }
+            contract_flags
+                .entry(contract_name.clone())
+                .or_default()
+                .can_settle_independently = false;
+            // TODO: investigate if we should flag as not-independant the read contract as well
         }
 
         for effect in &proof_metadata.3.onchain_effects {
@@ -1514,10 +1533,12 @@ impl<'any> NodeStateProcessing<'any> {
                             }),
                             modified_fields: ModifiedContractFields::all(),
                             side_effects: vec![],
-                            can_settle_independently: false,
-                            is_fully_proved: false,
                         },
                     );
+                    contract_flags
+                        .entry(effect.contract_name.clone())
+                        .or_default()
+                        .can_settle_independently = false;
                 }
                 OnchainEffect::RegisterContract(effect) => {
                     // Validation of contract registration metadata should cause immediate failure
@@ -1548,10 +1569,12 @@ impl<'any> NodeStateProcessing<'any> {
                             }),
                             modified_fields: ModifiedContractFields::all(),
                             side_effects: vec![SideEffect::Register(None)],
-                            can_settle_independently: false,
-                            is_fully_proved: false,
                         },
                     );
+                    contract_flags
+                        .entry(effect.contract_name.clone())
+                        .or_default()
+                        .can_settle_independently = false;
                 }
                 OnchainEffect::DeleteContract(cn) => {
                     // Contract name validation for deletion should also cause immediate failure
@@ -1570,9 +1593,11 @@ impl<'any> NodeStateProcessing<'any> {
                             contract_status: ContractStatus::WaitingDeletion,
                             modified_fields: ModifiedContractFields::all(),
                             side_effects: vec![SideEffect::Delete],
-                            can_settle_independently: false,
-                            is_fully_proved: false,
                         });
+                    contract_flags
+                        .entry(cn.clone())
+                        .or_default()
+                        .can_settle_independently = false;
                 }
                 OnchainEffect::UpdateContractProgramId(cn, program_id) => {
                     // Only hyli and the contract itself can update its programId
@@ -1601,9 +1626,11 @@ impl<'any> NodeStateProcessing<'any> {
                                 ..ModifiedContractFields::default()
                             },
                             side_effects: vec![SideEffect::UpdateProgramId],
-                            can_settle_independently: false,
-                            is_fully_proved: false,
                         });
+                    contract_flags
+                        .entry(cn.clone())
+                        .or_default()
+                        .can_settle_independently = false;
                 }
                 OnchainEffect::UpdateTimeoutWindow(cn, timeout_window) => {
                     // Only hyli and the contract itself can update its TimeoutWindow
@@ -1632,9 +1659,11 @@ impl<'any> NodeStateProcessing<'any> {
                                 ..ModifiedContractFields::default()
                             },
                             side_effects: vec![SideEffect::UpdateTimeoutWindow],
-                            can_settle_independently: false,
-                            is_fully_proved: false,
                         });
+                    contract_flags
+                        .entry(cn.clone())
+                        .or_default()
+                        .can_settle_independently = false;
                 }
             }
         }
@@ -1642,7 +1671,7 @@ impl<'any> NodeStateProcessing<'any> {
         // Apply the generic state updates
         let contract_name = contract.name.clone();
         contract_changes
-            .entry(contract_name)
+            .entry(contract_name.clone())
             .and_modify(|modified_contract_data| {
                 if let ContractStatus::Updated(ref mut c) = modified_contract_data.contract_status {
                     c.state = proof_metadata.3.next_state.clone();
@@ -1662,66 +1691,25 @@ impl<'any> NodeStateProcessing<'any> {
                     ..ModifiedContractFields::default()
                 },
                 side_effects: vec![SideEffect::UpdateState],
+            });
+        contract_flags
+            .entry(contract_name)
+            .or_insert_with(|| ContractSettlementFlags {
                 can_settle_independently: true,
-                is_fully_proved: false,
+                ..ContractSettlementFlags::default()
             });
 
         ProofProcessingResult::Success
     }
 
-    fn record_bubbled_contract_flags(
-        contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
-        bubbled_contract_flags: &mut BTreeMap<ContractName, (bool, bool)>,
-        contract_name: ContractName,
-        mcd: ModifiedContractData,
+    fn merge_contract_flags(
+        target: &mut BTreeMap<ContractName, ContractSettlementFlags>,
+        source: BTreeMap<ContractName, ContractSettlementFlags>,
     ) {
-        if let Some(existing_mcd) = contract_changes.get_mut(&contract_name) {
-            if mcd.is_fully_proved {
-                existing_mcd.is_fully_proved = true;
-            }
-
-            if mcd.can_settle_independently {
-                existing_mcd.can_settle_independently = true;
-            }
-            return;
-        }
-
-        if !mcd.is_fully_proved && !mcd.can_settle_independently {
-            return;
-        }
-
-        let entry = bubbled_contract_flags
-            .entry(contract_name)
-            .or_insert((false, false));
-        entry.0 |= mcd.is_fully_proved;
-        entry.1 |= mcd.can_settle_independently;
-    }
-
-    fn flush_bubbled_contract_flags(
-        contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
-        bubbled_contract_flags: BTreeMap<ContractName, (bool, bool)>,
-    ) {
-        for (contract_name, (is_fully_proved, can_settle_independently)) in bubbled_contract_flags {
-            if let Some(existing_mcd) = contract_changes.get_mut(&contract_name) {
-                if is_fully_proved {
-                    existing_mcd.is_fully_proved = true;
-                }
-                if can_settle_independently {
-                    existing_mcd.can_settle_independently = true;
-                }
-                continue;
-            }
-
-            contract_changes.insert(
-                contract_name,
-                ModifiedContractData {
-                    contract_status: ContractStatus::UnknownState,
-                    modified_fields: ModifiedContractFields::all(),
-                    side_effects: vec![],
-                    can_settle_independently,
-                    is_fully_proved,
-                },
-            );
+        for (contract_name, flags) in source {
+            let entry = target.entry(contract_name).or_default();
+            entry.is_fully_proved |= flags.is_fully_proved;
+            entry.can_settle_independently |= flags.can_settle_independently;
         }
     }
 
