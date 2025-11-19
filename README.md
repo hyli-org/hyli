@@ -15,7 +15,8 @@ This repository hosts the **Rust node client** for the [Hyli](https://hyli.org) 
 
 </div>
 
-> [!IMPORTANT] > `main` is the development branch.
+> [!IMPORTANT]
+> `main` is the development branch.
 > When building applications or running examples, use the [latest release](https://github.com/hyli-org/hyli/releases) instead.
 
 ## :tangerine: What is Hyli?

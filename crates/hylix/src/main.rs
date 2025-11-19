@@ -11,8 +11,8 @@ use hylix::logging::log_error;
 
 /// Build, test & deploy verifiable apps on Hyli
 ///
-/// Hylix is a developer toolbox and CLI to build vApps on Hyli,
-/// the new proof-powered L1 to build the next generation of apps onchain.
+/// Hylix is a developer toolbox and CLI to build apps on Hyli,
+/// a high-performance blockchain with built-in privacy. 
 #[derive(Parser)]
 #[command(
     name = "hy",

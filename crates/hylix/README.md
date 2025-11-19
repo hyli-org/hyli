@@ -10,11 +10,11 @@ _Build, test & deploy verifiable apps on Hyli._
 
 ## 🚀 Why Hylix?
 
-Hylix is a developer toolbox and CLI (`hy`) to build vApps on [Hyli](https://hyli.org), the new proof-powered L1 to build the next generation of apps onchain.
+Hylix is a developer toolbox and CLI (`hy`) to build verifiable apps on [Hyli](https://hyli.org), a high-performance blockchain with built-in privacy. 
 
 ### Who is this for?
 
-Developers who are building vApps on the Hyli blockchain and have prior knowledge of Rust and CLI usage.
+Developers who are building apps on the Hyli blockchain and have prior knowledge of Rust and CLI usage.
 
 ### Main benefits
 
