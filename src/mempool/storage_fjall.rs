@@ -346,22 +346,26 @@ impl Storage for LanesStorage {
     }
 }
 
-fn decode_metadata_from_item(item: Slice) -> Result<LaneEntryMetadata> {
+fn decode_from_slice<T: borsh::BorshDeserialize>(item: Slice) -> Result<T> {
     borsh::from_slice(&item).map_err(Into::into)
+}
+
+fn encode_to_slice<T: borsh::BorshSerialize>(value: &T) -> Result<Slice> {
+    borsh::to_vec(value).map(Slice::from).map_err(Into::into)
+}
+
+fn decode_metadata_from_item(item: Slice) -> Result<LaneEntryMetadata> {
+    decode_from_slice(item)
 }
 
 fn encode_metadata_to_item(metadata: LaneEntryMetadata) -> Result<Slice> {
-    borsh::to_vec(&metadata)
-        .map(Slice::from)
-        .map_err(Into::into)
+    encode_to_slice(&metadata)
 }
 
 fn decode_data_proposal_from_item(item: Slice) -> Result<DataProposal> {
-    borsh::from_slice(&item).map_err(Into::into)
+    decode_from_slice(item)
 }
 
 fn encode_data_proposal_to_item(data_proposal: DataProposal) -> Result<Slice> {
-    borsh::to_vec(&data_proposal)
-        .map(Slice::from)
-        .map_err(Into::into)
+    encode_to_slice(&data_proposal)
 }
