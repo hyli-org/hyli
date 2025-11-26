@@ -68,7 +68,8 @@ struct ModifiedContractData {
 enum BlobSettlementStatus {
     #[default]
     Unknown,
-    Settleable,
+    SettleableIndependent,
+    SettleableDependent,
     NotSettleable,
 }
 
@@ -97,7 +98,7 @@ enum ProofProcessingResult {
 #[derive(Debug)]
 enum BlobProcessingResult {
     /// The blob was processed successfully
-    Success,
+    Success(BlobSettlementStatus),
     /// The blob failed with a fatal error - should settle as failed immediately
     ProvenFailure(String),
     /// The blob cannot be executed on-chain.
@@ -862,9 +863,9 @@ impl<'any> NodeStateProcessing<'any> {
             BlobProcessingResult::NotApplicable => {
                 // This isn't a blob that needs onchain execution. Continue with normal processing
             }
-            BlobProcessingResult::Success => {
+            BlobProcessingResult::Success(status) => {
                 tracing::trace!("OnChainExecution Settlement - OK");
-                blob_settleable_statuses[blob_index] = BlobSettlementStatus::Settleable;
+                blob_settleable_statuses[blob_index] = status;
 
                 return Self::settle_blobs_recursively(
                     unsettled_tx,
@@ -1344,7 +1345,7 @@ impl<'any> NodeStateProcessing<'any> {
 
                 tracing::trace!("NativeVerifier Settlement - OK blob");
                 // Native verifiers don't change state, so we return success without updating contract_changes
-                return BlobProcessingResult::Success;
+                return BlobProcessingResult::Success(BlobSettlementStatus::SettleableIndependent);
             }
         }
 
@@ -1354,7 +1355,9 @@ impl<'any> NodeStateProcessing<'any> {
         if contract_name.0 == "hyli" {
             tracing::trace!("Settlement - processing for Hyli");
             return match handle_blob_for_hyli_tld(contracts, contract_changes, blob) {
-                Ok(()) => BlobProcessingResult::Success,
+                Ok(()) => {
+                    BlobProcessingResult::Success(BlobSettlementStatus::SettleableIndependent)
+                }
                 Err(err) => {
                     // We have a valid proof of failure, we short-circuit.
                     BlobProcessingResult::ProvenFailure(format!(
@@ -1382,7 +1385,7 @@ impl<'any> NodeStateProcessing<'any> {
                 se.push(SideEffect::Register(Some(blob.data.0.clone())));
 
                 tracing::trace!("Registration Settlement - OK blob");
-                return BlobProcessingResult::Success;
+                return BlobProcessingResult::Success(BlobSettlementStatus::SettleableIndependent);
             }
             // Special case for contract deletion from TLD
             if current_status == &mut ContractStatus::WaitingDeletion {
@@ -1395,7 +1398,7 @@ impl<'any> NodeStateProcessing<'any> {
                 se.push(SideEffect::Delete);
 
                 tracing::trace!("Deletion Settlement - OK blob");
-                return BlobProcessingResult::Success;
+                return BlobProcessingResult::Success(BlobSettlementStatus::SettleableIndependent);
             }
             // Special case for contract deletion
             if current_status == &mut ContractStatus::Deleted {
@@ -1466,9 +1469,9 @@ impl<'any> NodeStateProcessing<'any> {
         }
 
         let blob_status = if proof_metadata.3.state_reads.is_empty() {
-            BlobSettlementStatus::Settleable
+            BlobSettlementStatus::SettleableIndependent
         } else {
-            BlobSettlementStatus::NotSettleable
+            BlobSettlementStatus::SettleableDependent
         };
 
         for state_read in &proof_metadata.3.state_reads {
@@ -1665,15 +1668,8 @@ impl<'any> NodeStateProcessing<'any> {
     ) {
         for (index, status) in source.into_iter().enumerate() {
             if let Some(current_status) = target.get_mut(index) {
-                match (*current_status, status) {
-                    (BlobSettlementStatus::Settleable, _) => {}
-                    (_, BlobSettlementStatus::Settleable) => {
-                        *current_status = BlobSettlementStatus::Settleable;
-                    }
-                    (BlobSettlementStatus::Unknown, BlobSettlementStatus::NotSettleable) => {
-                        *current_status = BlobSettlementStatus::NotSettleable;
-                    }
-                    _ => {}
+                if Self::blob_status_rank(status) > Self::blob_status_rank(*current_status) {
+                    *current_status = status;
                 }
             }
         }
@@ -1683,7 +1679,7 @@ impl<'any> NodeStateProcessing<'any> {
         blobs: &[Blob],
         blob_settleable_statuses: &[BlobSettlementStatus],
     ) -> Vec<ContractName> {
-        let mut readiness = BTreeMap::new();
+        let mut readiness: BTreeMap<ContractName, BlobSettlementStatus> = BTreeMap::new();
 
         for (idx, blob) in blobs.iter().enumerate() {
             let status = blob_settleable_statuses
@@ -1692,23 +1688,33 @@ impl<'any> NodeStateProcessing<'any> {
                 .unwrap_or_default();
             let entry = readiness
                 .entry(blob.contract_name.clone())
-                .or_insert(BlobSettlementStatus::Settleable);
+                .or_insert(BlobSettlementStatus::SettleableIndependent);
 
-            if status != BlobSettlementStatus::Settleable {
-                *entry = BlobSettlementStatus::NotSettleable;
+            if Self::blob_status_rank(status) < Self::blob_status_rank(*entry) {
+                *entry = status;
             }
         }
 
         readiness
             .into_iter()
             .filter_map(|(contract_name, status)| {
-                if status == BlobSettlementStatus::Settleable {
+                if status == BlobSettlementStatus::SettleableIndependent {
                     Some(contract_name)
                 } else {
                     None
                 }
             })
             .collect()
+    }
+
+    #[inline]
+    fn blob_status_rank(status: BlobSettlementStatus) -> u8 {
+        match status {
+            BlobSettlementStatus::NotSettleable => 0,
+            BlobSettlementStatus::Unknown => 1,
+            BlobSettlementStatus::SettleableDependent => 2,
+            BlobSettlementStatus::SettleableIndependent => 3,
+        }
     }
 
     /// Clear timeouts for transactions that have timed out.
