@@ -6,7 +6,7 @@
     <img src="https://github.com/hyli-org/hyli-assets/blob/main/Logos/Logo/HYLI_WORDMARK_ORANGE.png?raw=true" width="320" alt="Hyli">
   </a>
 
-_**Hyli** is the new proof-powered L1 to build the next generation of apps onchain._
+_**Hyli** is a high-performance blockchain with built-in privacy._
 
 This repository hosts the **Rust node client** for the [Hyli](https://hyli.org) chain.
 
@@ -15,7 +15,8 @@ This repository hosts the **Rust node client** for the [Hyli](https://hyli.org) 
 
 </div>
 
-> [!IMPORTANT] > `main` is the development branch.
+> [!IMPORTANT]
+> `main` is the development branch.
 > When building applications or running examples, use the [latest release](https://github.com/hyli-org/hyli/releases) instead.
 
 ## :tangerine: What is Hyli?
