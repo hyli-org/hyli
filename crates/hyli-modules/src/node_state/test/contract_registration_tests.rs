@@ -603,6 +603,69 @@ async fn test_hyli_contract_update_timeout_window() {
 }
 
 #[test_log::test(tokio::test)]
+async fn test_hyli_contract_update_program_id() {
+    let mut state = new_node_state().await;
+    let register_wallet =
+        make_register_tx_with_constructor("hyli@hyli".into(), "hyli".into(), "wallet".into());
+    let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
+
+    let mut output = make_hyli_output(register_hyli_at_wallet.clone(), BlobIndex(0));
+    let register_hyli_at_wallet_proof =
+        new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
+
+    let register_contract =
+        make_register_tx_with_constructor("hyli@hyli".into(), "hyli".into(), "contract".into());
+
+    state.craft_block_and_handle(
+        1,
+        vec![
+            register_wallet.into(),
+            register_hyli_at_wallet.into(),
+            register_hyli_at_wallet_proof.into(),
+            register_contract.into(),
+        ],
+    );
+
+    assert_eq!(state.contracts.len(), 3);
+    assert_eq!(
+        state
+            .contracts
+            .get(&ContractName::new("contract"))
+            .unwrap()
+            .program_id,
+        ProgramId(vec![])
+    );
+
+    let program_id_update_tx = make_update_program_id_tx_with_hyli(
+        "hyli".into(),
+        "contract".into(),
+        ProgramId(vec![1, 2, 3, 4]),
+    );
+
+    let mut output = make_hyli_output_bis(program_id_update_tx.clone(), BlobIndex(0));
+    let verify_hyli_proof = new_proof_tx(&"wallet".into(), &output, &program_id_update_tx.hashed());
+
+    let block = state.craft_block_and_handle(
+        2,
+        vec![
+            program_id_update_tx.into(),
+            verify_hyli_proof.clone().into(),
+        ],
+    );
+
+    assert_eq!(block.deleted_contracts.len(), 0);
+    assert_eq!(state.contracts.len(), 3);
+    assert_eq!(
+        state
+            .contracts
+            .get(&ContractName::new("contract"))
+            .unwrap()
+            .program_id,
+        ProgramId(vec![1, 2, 3, 4])
+    );
+}
+
+#[test_log::test(tokio::test)]
 async fn test_hyli_sub_delete() {
     let mut state = new_node_state().await;
 

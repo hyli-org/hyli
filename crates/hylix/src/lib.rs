@@ -1,7 +1,7 @@
 //! Hylix - Build, test & deploy verifiable apps on Hyli
 //!
 //! Hylix is a developer toolbox and CLI to build vApps on Hyli,
-//! the new proof-powered L1 to build the next generation of apps onchain.
+//! a high-performance blockchain with built-in privacy. 
 
 pub mod commands;
 pub mod config;

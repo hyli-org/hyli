@@ -87,7 +87,7 @@ CREATE TABLE transaction_state_events (
     block_height BIGINT,
     tx_hash TEXT NOT NULL,
     parent_dp_hash TEXT NOT NULL,
-    events JSONB NOT NULL,
+    event JSONB NOT NULL,
     index INT,
     FOREIGN KEY (tx_hash, parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE
 );

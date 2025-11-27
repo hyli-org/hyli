@@ -57,7 +57,12 @@ impl ModifiedContractFields {
 
 // When processing blobs, maintain an up-to-date status of the contract,
 // and keep track of which fields changed and the list of side effects we processed.
-type ModifiedContractData = (ContractStatus, ModifiedContractFields, Vec<SideEffect>);
+#[derive(Debug, Clone)]
+struct ModifiedContractData {
+    contract_status: ContractStatus,
+    modified_fields: ModifiedContractFields,
+    side_effects: Vec<SideEffect>,
+}
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum ContractStatus {
@@ -467,19 +472,7 @@ impl<'any> NodeStateProcessing<'any> {
             // For each transaction that could not be settled, if it is the next one to be settled, set its timeout
             for unsettled_tx in next_unsettled_txs.iter() {
                 if self.unsettled_transactions.is_next_to_settle(unsettled_tx) {
-                    // Get the contract's timeout window
-                    #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
-                    let timeout_window = self
-                        .unsettled_transactions
-                        .get(unsettled_tx)
-                        .map(|tx| self.get_tx_timeout_window(&tx.tx.blobs))
-                        .unwrap();
-                    if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
-                        // Update timeouts
-                        let current_height = self.current_height;
-                        self.timeouts
-                            .set(unsettled_tx.clone(), current_height, timeout_window);
-                    }
+                    self.set_timeout(unsettled_tx);
                 }
             }
             next_unsettled_txs.clear();
@@ -575,13 +568,7 @@ impl<'any> NodeStateProcessing<'any> {
         };
 
         if self.unsettled_transactions.is_next_to_settle(&blob_tx_hash) {
-            let block_height = self.current_height;
-            // Update timeouts
-            let timeout_window = self.get_tx_timeout_window(&tx.blobs);
-            if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
-                self.timeouts
-                    .set(blob_tx_hash.clone(), block_height, timeout_window);
-            }
+            self.set_timeout(&blob_tx_hash);
         }
 
         if should_try_and_settle {
@@ -726,7 +713,10 @@ impl<'any> NodeStateProcessing<'any> {
                     .iter()
                     .any(|possible_proof| !possible_proof.3.success)
         }) {
-            debug!("Settling fast as failed because native blob was failed");
+            let msg = "Settling fast as failed because native blob was failed";
+            debug!("{msg}");
+            self.callback
+                .on_event(&TxEvent::TxError(&unsettled_tx.tx_id, msg));
             SettlementResult {
                 settlement_status: SettlementStatus::SettleAsFailed,
                 contract_changes: BTreeMap::new(),
@@ -796,7 +786,8 @@ impl<'any> NodeStateProcessing<'any> {
         // Recursion end-case: we successfully settled all prior blobs, so success.
         let Some((blob, possible_proofs)) = blob_iter.next() else {
             // Sanity checks
-            for (contract_name, (contract_status, _, _)) in contract_changes.iter() {
+            for (contract_name, modified_contract_data) in contract_changes.iter() {
+                let contract_status = &modified_contract_data.contract_status;
                 tracing::trace!(
                     "sanity check - contract {contract_name:?} is in state {contract_status:?}"
                 );
@@ -806,6 +797,7 @@ impl<'any> NodeStateProcessing<'any> {
                             "Contract '{contract_name}' is in RegisterWithConstructor state at settlement end; constructor blob missing.",
                         );
                     debug!("{msg}");
+                    callback.on_event(&TxEvent::TxError(&unsettled_tx.tx_id, &msg));
                     return SettlementResult {
                         settlement_status: SettlementStatus::SettleAsFailed,
                         contract_changes,
@@ -818,6 +810,7 @@ impl<'any> NodeStateProcessing<'any> {
                             "Contract '{contract_name}' is in WaitingDeletion state at settlement end; deletion blob missing.",
                         );
                     debug!("{msg}");
+                    callback.on_event(&TxEvent::TxError(&unsettled_tx.tx_id, &msg));
                     return SettlementResult {
                         settlement_status: SettlementStatus::SettleAsFailed,
                         contract_changes,
@@ -946,14 +939,14 @@ impl<'any> NodeStateProcessing<'any> {
         // We update the status of the contract in contract_changes; so that we can move on in recursion to find valid failing blobs.
         contract_changes
             .entry(contract_name.clone())
-            .and_modify(|(contract_status, ..)| {
-                *contract_status = ContractStatus::UnknownState;
+            .and_modify(|modified_contract_data| {
+                modified_contract_data.contract_status = ContractStatus::UnknownState;
             })
-            .or_insert((
-                ContractStatus::UnknownState,
-                ModifiedContractFields::all(),
-                vec![],
-            ));
+            .or_insert(ModifiedContractData {
+                contract_status: ContractStatus::UnknownState,
+                modified_fields: ModifiedContractFields::all(),
+                side_effects: vec![],
+            });
 
         let remaining_settlement = Self::settle_blobs_recursively(
             unsettled_tx,
@@ -1038,10 +1031,16 @@ impl<'any> NodeStateProcessing<'any> {
         }
 
         // Update contract states
-        for (contract_name, (mc, fields, side_effects)) in
-            settlement_result.contract_changes.into_iter()
+        for (
+            contract_name,
+            ModifiedContractData {
+                contract_status,
+                modified_fields,
+                side_effects,
+            },
+        ) in settlement_result.contract_changes.into_iter()
         {
-            match mc {
+            match contract_status {
                 ContractStatus::UnknownState => {
                     unreachable!(
                         "Contract status should not be UnknownState when trying to settle a blob tx"
@@ -1122,7 +1121,7 @@ impl<'any> NodeStateProcessing<'any> {
                     self.contracts
                         .insert(contract.name.clone(), contract.clone());
 
-                    if fields.state {
+                    if modified_fields.state {
                         debug!(
                             "✍️  Modify '{}' state to {}",
                             &contract_name,
@@ -1136,7 +1135,7 @@ impl<'any> NodeStateProcessing<'any> {
                             &contract.state,
                         ));
                     }
-                    if fields.program_id {
+                    if modified_fields.program_id {
                         debug!(
                             "✍️  Modify '{}' program_id to {}",
                             &contract_name,
@@ -1150,7 +1149,7 @@ impl<'any> NodeStateProcessing<'any> {
                             &contract.program_id,
                         ));
                     }
-                    if fields.timeout_window {
+                    if modified_fields.timeout_window {
                         debug!(
                             "✍️  Modify '{}' timeout window to {}",
                             &contract_name, &contract.timeout_window
@@ -1233,17 +1232,21 @@ impl<'any> NodeStateProcessing<'any> {
     ) -> Result<&'a Contract, Error> {
         let contract = contract_changes
             .get(contract_name)
-            .and_then(|(contract_status, ..)| match contract_status {
-                ContractStatus::Updated(contract) => Some(contract),
-                ContractStatus::RegisterWithConstructor(contract) => Some(contract),
-                ContractStatus::Deleted
-                | ContractStatus::WaitingDeletion
-                | ContractStatus::UnknownState => None,
-            })
+            .and_then(
+                |ModifiedContractData {
+                     contract_status, ..
+                 }| match contract_status {
+                    ContractStatus::Updated(contract) => Some(contract),
+                    ContractStatus::RegisterWithConstructor(contract) => Some(contract),
+                    ContractStatus::Deleted
+                    | ContractStatus::WaitingDeletion
+                    | ContractStatus::UnknownState => None,
+                },
+            )
             .or_else(|| contracts.get(contract_name))
             .ok_or_else(|| {
                 Error::msg(format!(
-                    "Cannot settle blob, contract '{contract_name}' no longer exists"
+                    "Cannot settle blob, contract '{contract_name}' does not exist"
                 ))
             })?;
         Ok(contract)
@@ -1312,7 +1315,12 @@ impl<'any> NodeStateProcessing<'any> {
             };
         }
 
-        if let Some((current_status, _, se)) = contract_changes.get_mut(contract_name) {
+        if let Some(ModifiedContractData {
+            contract_status: current_status,
+            modified_fields: _,
+            side_effects: se,
+        }) = contract_changes.get_mut(contract_name)
+        {
             // Special case for contract registration
             // Two case scenario:
             // 1. The contract is created with metadata, so we expect the next blob to be a constructor blob.
@@ -1443,8 +1451,8 @@ impl<'any> NodeStateProcessing<'any> {
 
                     contract_changes.insert(
                         effect.contract_name.clone(),
-                        (
-                            ContractStatus::RegisterWithConstructor(Contract {
+                        ModifiedContractData {
+                            contract_status: ContractStatus::RegisterWithConstructor(Contract {
                                 name: effect.contract_name.clone(),
                                 program_id: effect.program_id.clone(),
                                 state: effect.state_commitment.clone(),
@@ -1454,9 +1462,9 @@ impl<'any> NodeStateProcessing<'any> {
                                     .clone()
                                     .unwrap_or(contract.timeout_window.clone()),
                             }),
-                            ModifiedContractFields::all(),
-                            vec![],
-                        ),
+                            modified_fields: ModifiedContractFields::all(),
+                            side_effects: vec![],
+                        },
                     );
                 }
                 OnchainEffect::RegisterContract(effect) => {
@@ -1475,8 +1483,8 @@ impl<'any> NodeStateProcessing<'any> {
 
                     contract_changes.insert(
                         effect.contract_name.clone(),
-                        (
-                            ContractStatus::Updated(Contract {
+                        ModifiedContractData {
+                            contract_status: ContractStatus::Updated(Contract {
                                 name: effect.contract_name.clone(),
                                 program_id: effect.program_id.clone(),
                                 state: effect.state_commitment.clone(),
@@ -1486,9 +1494,9 @@ impl<'any> NodeStateProcessing<'any> {
                                     .clone()
                                     .unwrap_or(contract.timeout_window.clone()),
                             }),
-                            ModifiedContractFields::all(),
-                            vec![SideEffect::Register(None)],
-                        ),
+                            modified_fields: ModifiedContractFields::all(),
+                            side_effects: vec![SideEffect::Register(None)],
+                        },
                     );
                 }
                 OnchainEffect::DeleteContract(cn) => {
@@ -1500,16 +1508,14 @@ impl<'any> NodeStateProcessing<'any> {
                     }
                     contract_changes
                         .entry(cn.clone())
-                        .and_modify(|c| {
-                            c.0 = ContractStatus::WaitingDeletion;
-                            c.2.push(SideEffect::Delete);
+                        .and_modify(|mcd| {
+                            mcd.contract_status = ContractStatus::WaitingDeletion;
+                            mcd.side_effects.push(SideEffect::Delete);
                         })
-                        .or_insert_with(|| {
-                            (
-                                ContractStatus::WaitingDeletion,
-                                ModifiedContractFields::all(),
-                                vec![SideEffect::Delete],
-                            )
+                        .or_insert_with(|| ModifiedContractData {
+                            contract_status: ContractStatus::WaitingDeletion,
+                            modified_fields: ModifiedContractFields::all(),
+                            side_effects: vec![SideEffect::Delete],
                         });
                 }
                 OnchainEffect::UpdateContractProgramId(cn, program_id) => {
@@ -1521,26 +1527,24 @@ impl<'any> NodeStateProcessing<'any> {
                     }
                     contract_changes
                         .entry(cn.clone())
-                        .and_modify(|c| {
-                            c.0 = ContractStatus::Updated(Contract {
+                        .and_modify(|mcd| {
+                            mcd.contract_status = ContractStatus::Updated(Contract {
                                 program_id: program_id.clone(),
                                 ..contract.clone()
                             });
-                            c.1.program_id = true;
-                            c.2.push(SideEffect::UpdateProgramId);
+                            mcd.modified_fields.program_id = true;
+                            mcd.side_effects.push(SideEffect::UpdateProgramId);
                         })
-                        .or_insert_with(|| {
-                            (
-                                ContractStatus::Updated(Contract {
-                                    program_id: program_id.clone(),
-                                    ..contract.clone()
-                                }),
-                                ModifiedContractFields {
-                                    program_id: true,
-                                    ..ModifiedContractFields::default()
-                                },
-                                vec![SideEffect::UpdateProgramId],
-                            )
+                        .or_insert_with(|| ModifiedContractData {
+                            contract_status: ContractStatus::Updated(Contract {
+                                program_id: program_id.clone(),
+                                ..contract.clone()
+                            }),
+                            modified_fields: ModifiedContractFields {
+                                program_id: true,
+                                ..ModifiedContractFields::default()
+                            },
+                            side_effects: vec![SideEffect::UpdateProgramId],
                         });
                 }
                 OnchainEffect::UpdateTimeoutWindow(cn, timeout_window) => {
@@ -1552,26 +1556,24 @@ impl<'any> NodeStateProcessing<'any> {
                     }
                     contract_changes
                         .entry(cn.clone())
-                        .and_modify(|c| {
-                            c.0 = ContractStatus::Updated(Contract {
+                        .and_modify(|mcd| {
+                            mcd.contract_status = ContractStatus::Updated(Contract {
                                 timeout_window: timeout_window.clone(),
                                 ..contract.clone()
                             });
-                            c.1.timeout_window = true;
-                            c.2.push(SideEffect::UpdateTimeoutWindow);
+                            mcd.modified_fields.timeout_window = true;
+                            mcd.side_effects.push(SideEffect::UpdateTimeoutWindow);
                         })
-                        .or_insert_with(|| {
-                            (
-                                ContractStatus::Updated(Contract {
-                                    timeout_window: timeout_window.clone(),
-                                    ..contract.clone()
-                                }),
-                                ModifiedContractFields {
-                                    timeout_window: true,
-                                    ..ModifiedContractFields::default()
-                                },
-                                vec![SideEffect::UpdateTimeoutWindow],
-                            )
+                        .or_insert_with(|| ModifiedContractData {
+                            contract_status: ContractStatus::Updated(Contract {
+                                timeout_window: timeout_window.clone(),
+                                ..contract.clone()
+                            }),
+                            modified_fields: ModifiedContractFields {
+                                timeout_window: true,
+                                ..ModifiedContractFields::default()
+                            },
+                            side_effects: vec![SideEffect::UpdateTimeoutWindow],
                         });
                 }
             }
@@ -1581,25 +1583,25 @@ impl<'any> NodeStateProcessing<'any> {
         let contract_name = contract.name.clone();
         contract_changes
             .entry(contract_name)
-            .and_modify(|u| {
-                if let ContractStatus::Updated(ref mut c) = u.0 {
+            .and_modify(|modified_contract_data| {
+                if let ContractStatus::Updated(ref mut c) = modified_contract_data.contract_status {
                     c.state = proof_metadata.3.next_state.clone();
-                    u.1.state = true;
-                    u.2.push(SideEffect::UpdateState);
+                    modified_contract_data.modified_fields.state = true;
+                    modified_contract_data
+                        .side_effects
+                        .push(SideEffect::UpdateState);
                 }
             })
-            .or_insert_with(|| {
-                (
-                    ContractStatus::Updated(Contract {
-                        state: proof_metadata.3.next_state.clone(),
-                        ..contract
-                    }),
-                    ModifiedContractFields {
-                        state: true,
-                        ..ModifiedContractFields::default()
-                    },
-                    vec![SideEffect::UpdateState],
-                )
+            .or_insert_with(|| ModifiedContractData {
+                contract_status: ContractStatus::Updated(Contract {
+                    state: proof_metadata.3.next_state.clone(),
+                    ..contract
+                }),
+                modified_fields: ModifiedContractFields {
+                    state: true,
+                    ..ModifiedContractFields::default()
+                },
+                side_effects: vec![SideEffect::UpdateState],
             });
 
         ProofProcessingResult::Success
@@ -1633,16 +1635,7 @@ impl<'any> NodeStateProcessing<'any> {
                 // For each transaction that could not be settled, if it is the next one to be settled, reset its timeout
                 for unsettled_tx in next_unsettled_txs {
                     if self.unsettled_transactions.is_next_to_settle(&unsettled_tx) {
-                        let block_height = self.current_height;
-                        #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
-                        let tx = self.unsettled_transactions.get(&unsettled_tx).unwrap();
-                        // Get the contract's timeout window
-                        let timeout_window = self.get_tx_timeout_window(&tx.tx.blobs);
-                        if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
-                            // Set the timeout for the transaction
-                            self.timeouts
-                                .set(unsettled_tx.clone(), block_height, timeout_window);
-                        }
+                        self.set_timeout(&unsettled_tx);
                     }
                 }
 
@@ -1651,6 +1644,20 @@ impl<'any> NodeStateProcessing<'any> {
                 false
             }
         });
+    }
+
+    fn set_timeout(&mut self, unsettled_tx_hash: &TxHash) {
+        #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
+        let unsettled_tx = self.unsettled_transactions.get(unsettled_tx_hash).unwrap();
+
+        // Get the contract's timeout window
+        let timeout_window = self.get_tx_timeout_window(&unsettled_tx.tx.blobs);
+        if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
+            // Update timeouts
+            let current_height = self.current_height;
+            self.timeouts
+                .set(unsettled_tx_hash.clone(), current_height, timeout_window);
+        }
     }
 }
 
