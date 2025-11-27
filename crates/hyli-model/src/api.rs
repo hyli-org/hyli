@@ -42,7 +42,7 @@ pub struct APIRegisterContract {
     pub program_id: ProgramId,
     pub state_commitment: StateCommitment,
     pub contract_name: ContractName,
-    pub timeout_window: Option<u64>,
+    pub timeout_window: Option<(u64, u64)>,
     pub constructor_metadata: Option<Vec<u8>>,
 }
 
@@ -243,12 +243,12 @@ pub struct APIContract {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub struct APINodeContract {
-    pub contract_name: ContractName,       // Name of the contract
-    pub state_block_height: BlockHeight,   // Block height where the state is captured
-    pub state_commitment: StateCommitment, // The contract state stored in JSON format
-    pub program_id: ProgramId,             // Program ID of the contract
-    pub verifier: Verifier,                // Verifier of the contract
-    pub timeout_window: Option<u64>,       // Timeout window for the contract
+    pub contract_name: ContractName,        // Name of the contract
+    pub state_block_height: BlockHeight,    // Block height where the state is captured
+    pub state_commitment: StateCommitment,  // The contract state stored in JSON format
+    pub program_id: ProgramId,              // Program ID of the contract
+    pub verifier: Verifier,                 // Verifier of the contract
+    pub timeout_window: Option<(u64, u64)>, // Timeout window for the contract
 }
 
 impl<'de> Deserialize<'de> for APINodeContract {
@@ -266,7 +266,7 @@ impl<'de> Deserialize<'de> for APINodeContract {
                 state_commitment: StateCommitment,
                 program_id: ProgramId,
                 verifier: Verifier,
-                timeout_window: Option<u64>,
+                timeout_window: Option<(u64, u64)>,
             },
         }
 
@@ -278,7 +278,16 @@ impl<'de> Deserialize<'de> for APINodeContract {
                 program_id: c.program_id,
                 verifier: c.verifier,
                 timeout_window: match c.timeout_window {
-                    TimeoutWindow::Timeout(timeout) => Some(timeout.0),
+                    TimeoutWindow::Timeout {
+                        hard_timeout,
+                        soft_timeout,
+                    } => match TimeoutWindow::timeout(hard_timeout, soft_timeout) {
+                        TimeoutWindow::Timeout {
+                            hard_timeout,
+                            soft_timeout,
+                        } => Some((hard_timeout.0, soft_timeout.0)),
+                        TimeoutWindow::NoTimeout => None,
+                    },
                     TimeoutWindow::NoTimeout => None,
                 },
             }),
@@ -309,7 +318,7 @@ fn test_deserialize_api_node_contract() {
         program_id: ProgramId(vec![4, 5, 6]),
         state: StateCommitment(vec![1, 2, 3]),
         verifier: Verifier("verifier1".to_string()),
-        timeout_window: TimeoutWindow::Timeout(BlockHeight(32)),
+        timeout_window: TimeoutWindow::timeout(BlockHeight(32), BlockHeight(32)),
     })
     .unwrap();
     let old_contract: APINodeContract = serde_json::from_value(old_json).unwrap();
@@ -318,7 +327,7 @@ fn test_deserialize_api_node_contract() {
     assert_eq!(old_contract.state_commitment.0, vec![1, 2, 3]);
     assert_eq!(old_contract.program_id.0, vec![4, 5, 6]);
     assert_eq!(old_contract.verifier.0, "verifier1");
-    assert_eq!(old_contract.timeout_window, Some(32));
+    assert_eq!(old_contract.timeout_window, Some((32, 32)));
     // Test new format
     let new_json = serde_json::to_value(&APINodeContract {
         contract_name: ContractName("new_contract".to_string()),
@@ -326,7 +335,7 @@ fn test_deserialize_api_node_contract() {
         state_commitment: StateCommitment(vec![7, 8, 9]),
         program_id: ProgramId(vec![10, 11, 12]),
         verifier: Verifier("verifier2".to_string()),
-        timeout_window: Some(123),
+        timeout_window: Some((123, 123)),
     })
     .unwrap();
     let new_contract: APINodeContract = serde_json::from_value(new_json).unwrap();
@@ -335,7 +344,7 @@ fn test_deserialize_api_node_contract() {
     assert_eq!(new_contract.state_commitment.0, vec![7, 8, 9]);
     assert_eq!(new_contract.program_id.0, vec![10, 11, 12]);
     assert_eq!(new_contract.verifier.0, "verifier2");
-    assert_eq!(new_contract.timeout_window, Some(123));
+    assert_eq!(new_contract.timeout_window, Some((123, 123)));
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]

@@ -1,5 +1,4 @@
 use std::{
-    cmp::Ordering,
     fmt::Display,
     ops::{Add, Deref, DerefMut, Sub},
 };
@@ -588,7 +587,13 @@ impl Hashed<OnchainEffectHash> for OnchainEffect {
                 hasher.update(cn.0.as_bytes());
                 match timeout_window {
                     TimeoutWindow::NoTimeout => hasher.update(0u8.to_le_bytes()),
-                    TimeoutWindow::Timeout(bh) => hasher.update(bh.0.to_le_bytes()),
+                    TimeoutWindow::Timeout {
+                        hard_timeout,
+                        soft_timeout,
+                    } => {
+                        hasher.update(hard_timeout.0.to_le_bytes());
+                        hasher.update(soft_timeout.0.to_le_bytes());
+                    }
                 }
             }
         };
@@ -829,38 +834,42 @@ impl Add<BlockHeight> for BlockHeight {
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub enum TimeoutWindow {
     NoTimeout,
-    Timeout(BlockHeight),
+    Timeout {
+        // This is the timeout value that will be used to set transaction's timeout when the blobs for the contract with this timeout are not proved
+        hard_timeout: BlockHeight,
+        // This is the timeout value that will be used to set transaction's timeout when the blobs for the contract with this timeout are proved
+        soft_timeout: BlockHeight,
+    },
 }
-
-impl PartialOrd for TimeoutWindow {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for TimeoutWindow {
-    fn cmp(&self, other: &Self) -> Ordering {
-        match (self, other) {
-            (TimeoutWindow::NoTimeout, TimeoutWindow::NoTimeout) => Ordering::Equal,
-            (TimeoutWindow::Timeout(_), TimeoutWindow::NoTimeout) => Ordering::Less,
-            (TimeoutWindow::NoTimeout, TimeoutWindow::Timeout(_)) => Ordering::Greater,
-            (TimeoutWindow::Timeout(a), TimeoutWindow::Timeout(b)) => a.cmp(b),
-        }
-    }
-}
-
 impl Display for TimeoutWindow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self {
             TimeoutWindow::NoTimeout => write!(f, "NoTimeout"),
-            TimeoutWindow::Timeout(height) => write!(f, "Timeout({})", height.0),
+            TimeoutWindow::Timeout {
+                hard_timeout,
+                soft_timeout,
+            } => write!(f, "Timeout({},{})", hard_timeout.0, soft_timeout.0),
         }
     }
 }
 
 impl Default for TimeoutWindow {
     fn default() -> Self {
-        TimeoutWindow::Timeout(BlockHeight(100))
+        TimeoutWindow::timeout(BlockHeight(100), BlockHeight(100))
+    }
+}
+
+impl TimeoutWindow {
+    pub fn timeout(hard_timeout: BlockHeight, soft_timeout: BlockHeight) -> Self {
+        let (hard_timeout, soft_timeout) = if hard_timeout <= soft_timeout {
+            (hard_timeout, soft_timeout)
+        } else {
+            (soft_timeout, hard_timeout)
+        };
+        TimeoutWindow::Timeout {
+            hard_timeout,
+            soft_timeout,
+        }
     }
 }
 
@@ -900,7 +909,13 @@ impl Hashed<TxHash> for RegisterContractAction {
         if let Some(timeout_window) = &self.timeout_window {
             match timeout_window {
                 TimeoutWindow::NoTimeout => hasher.update(0u8.to_le_bytes()),
-                TimeoutWindow::Timeout(bh) => hasher.update(bh.0.to_le_bytes()),
+                TimeoutWindow::Timeout {
+                    hard_timeout,
+                    soft_timeout,
+                } => {
+                    hasher.update(hard_timeout.0.to_le_bytes());
+                    hasher.update(soft_timeout.0.to_le_bytes());
+                }
             }
         }
         // We don't hash the constructor metadata.
@@ -1064,7 +1079,13 @@ impl Hashed<TxHash> for RegisterContractEffect {
         if let Some(timeout_window) = &self.timeout_window {
             match timeout_window {
                 TimeoutWindow::NoTimeout => hasher.update(0u8.to_le_bytes()),
-                TimeoutWindow::Timeout(bh) => hasher.update(bh.0.to_le_bytes()),
+                TimeoutWindow::Timeout {
+                    hard_timeout,
+                    soft_timeout,
+                } => {
+                    hasher.update(hard_timeout.0.to_le_bytes());
+                    hasher.update(soft_timeout.0.to_le_bytes());
+                }
             }
         }
         let hash_bytes = hasher.finalize();
@@ -1091,92 +1112,5 @@ pub mod base64_field {
     {
         let s = String::deserialize(deserializer)?;
         BASE64_STANDARD.decode(&s).map_err(serde::de::Error::custom)
-    }
-}
-
-#[cfg(test)]
-mod tests_timeout_order {
-    use super::*;
-
-    #[test]
-    fn test_timeout_vs_timeout() {
-        let a = TimeoutWindow::Timeout(BlockHeight(5));
-        let b = TimeoutWindow::Timeout(BlockHeight(10));
-        assert!(a < b);
-        assert!(b > a);
-        assert_eq!(a.partial_cmp(&b), Some(Ordering::Less));
-        assert_eq!(b.partial_cmp(&a), Some(Ordering::Greater));
-    }
-
-    #[test]
-    fn test_timeout_vs_same_timeout() {
-        let a = TimeoutWindow::Timeout(BlockHeight(7));
-        let b = TimeoutWindow::Timeout(BlockHeight(7));
-        assert_eq!(a, b);
-        assert_eq!(a.cmp(&b), Ordering::Equal);
-        assert_eq!(a.partial_cmp(&b), Some(Ordering::Equal));
-    }
-
-    #[test]
-    fn test_timeout_vs_no_timeout() {
-        let a = TimeoutWindow::Timeout(BlockHeight(15));
-        let b = TimeoutWindow::NoTimeout;
-        assert!(a < b);
-        assert_eq!(a.cmp(&b), Ordering::Less);
-        assert_eq!(a.partial_cmp(&b), Some(Ordering::Less));
-    }
-
-    #[test]
-    fn test_no_timeout_vs_timeout() {
-        let a = TimeoutWindow::NoTimeout;
-        let b = TimeoutWindow::Timeout(BlockHeight(1));
-        assert!(a > b);
-        assert_eq!(a.cmp(&b), Ordering::Greater);
-        assert_eq!(a.partial_cmp(&b), Some(Ordering::Greater));
-    }
-
-    #[test]
-    fn test_no_timeout_vs_no_timeout() {
-        let a = TimeoutWindow::NoTimeout;
-        let b = TimeoutWindow::NoTimeout;
-        assert_eq!(a, b);
-        assert_eq!(a.cmp(&b), Ordering::Equal);
-        assert_eq!(a.partial_cmp(&b), Some(Ordering::Equal));
-    }
-
-    #[test]
-    fn test_min_timeout_is_always_selected() {
-        let timeout = TimeoutWindow::Timeout(BlockHeight(42));
-        let no_timeout = TimeoutWindow::NoTimeout;
-
-        // min(NoTimeout, Timeout(42)) == Timeout(42)
-        assert_eq!(std::cmp::min(no_timeout.clone(), timeout.clone()), timeout);
-
-        // min(Timeout(42), NoTimeout) == Timeout(42)
-        assert_eq!(std::cmp::min(timeout.clone(), no_timeout.clone()), timeout);
-    }
-
-    #[test]
-    fn test_min_among_multiple_timeout_windows() {
-        use TimeoutWindow::{NoTimeout, Timeout};
-
-        let timeouts = [
-            NoTimeout,
-            Timeout(BlockHeight(100)),
-            Timeout(BlockHeight(50)),
-            NoTimeout,
-            Timeout(BlockHeight(200)),
-            Timeout(BlockHeight(10)),
-        ];
-
-        // Utiliser min avec Iterator
-        let actual_min = timeouts
-            .iter()
-            .min()
-            .expect("La liste ne doit pas être vide");
-
-        let expected_min = &Timeout(BlockHeight(10));
-
-        assert_eq!(actual_min, expected_min);
     }
 }

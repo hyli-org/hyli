@@ -566,13 +566,13 @@ async fn test_hyli_contract_update_timeout_window() {
             .get(&ContractName::new("contract"))
             .unwrap()
             .timeout_window,
-        TimeoutWindow::Timeout(BlockHeight(100))
+        TimeoutWindow::timeout(BlockHeight(100), BlockHeight(100))
     );
 
     let timeout_window_update_tx = make_update_timeout_window_tx_with_hyli(
         "hyli".into(),
         "contract".into(),
-        TimeoutWindow::Timeout(BlockHeight(45)),
+        TimeoutWindow::timeout(BlockHeight(45), BlockHeight(45)),
     );
 
     let mut output = make_hyli_output_bis(timeout_window_update_tx.clone(), BlobIndex(0));
@@ -598,7 +598,7 @@ async fn test_hyli_contract_update_timeout_window() {
             .get(&ContractName::new("contract"))
             .unwrap()
             .timeout_window,
-        TimeoutWindow::Timeout(BlockHeight(45))
+        TimeoutWindow::timeout(BlockHeight(45), BlockHeight(45))
     );
 }
 
@@ -943,7 +943,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
             program_id: ProgramId(vec![]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name: c1.clone(),
-            timeout_window: Some(TimeoutWindow::Timeout(custom_timeout)),
+            timeout_window: Some(TimeoutWindow::timeout(custom_timeout, custom_timeout)),
             ..Default::default()
         };
         let upgrade_with_timeout = BlobTransaction::new(
@@ -1011,7 +1011,10 @@ async fn test_custom_timeout_then_upgrade_with_none() {
             program_id: ProgramId(vec![]),
             state_commitment: StateCommitment(vec![4, 5, 6]),
             contract_name: c1.clone(),
-            timeout_window: Some(TimeoutWindow::Timeout(another_custom_timeout)),
+            timeout_window: Some(TimeoutWindow::timeout(
+                another_custom_timeout,
+                another_custom_timeout,
+            )),
             ..Default::default()
         };
         let upgrade_with_another_timeout = BlobTransaction::new(
@@ -1137,7 +1140,7 @@ async fn domino_settlement_after_contract_delete() {
             program_id: ProgramId(vec![]),
             state: StateCommitment(vec![0, 1, 2, 3]),
             verifier: Verifier("test".into()),
-            timeout_window: TimeoutWindow::Timeout(BlockHeight(100)),
+            timeout_window: TimeoutWindow::timeout(BlockHeight(100), BlockHeight(100)),
         },
     );
     let a = ContractName::new("a");
