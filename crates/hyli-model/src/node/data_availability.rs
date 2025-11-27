@@ -51,6 +51,8 @@ pub struct UnsettledBlobTransaction {
     pub tx_context: Arc<TxContext>,
     pub blobs_hash: BlobsHashes,
     pub possible_proofs: BTreeMap<BlobIndex, Vec<(ProgramId, Verifier, TxId, HyliOutput)>>, // ToSchema doesn't like the alias
+    // The list of contracts whose settlement can be guaranteed, independently of the rest of the transaction's blobs
+    pub settleable_contracts: Vec<ContractName>,
 }
 
 pub type BlobProof = (ProgramId, Verifier, TxId, HyliOutput);

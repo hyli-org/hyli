@@ -1828,3 +1828,86 @@ async fn test_invalid_onchain_effect_causes_immediate_failure() {
         "Should have an Error with validation error message"
     );
 }
+
+#[test_log::test(tokio::test)]
+async fn test_tx_timeout_chooses_unproven_contract_timeout() {
+    let mut state = new_node_state().await;
+
+    // Create two contracts with different timeout windows
+    let c1 = ContractName::new("c1");
+    let c2 = ContractName::new("c2");
+
+    // Register c1 with hard_timeout window of 50 blocks, and soft_timeout window of 200 blocks
+    let mut register_c1_effect = make_register_contract_effect(c1.clone());
+    register_c1_effect.timeout_window =
+        Some(TimeoutWindow::timeout(BlockHeight(50), BlockHeight(200)));
+    state.handle_register_contract_effect(&register_c1_effect);
+
+    // Register c2 with hard_timeout window of 100 blocks, and soft_timeout window of 150 blocks
+    let mut register_c2_effect = make_register_contract_effect(c2.clone());
+    register_c2_effect.timeout_window =
+        Some(TimeoutWindow::timeout(BlockHeight(100), BlockHeight(150)));
+    state.handle_register_contract_effect(&register_c2_effect);
+
+    // First transaction on contract c1
+    let tx1 = BlobTransaction::new(Identity::new("test@c1"), vec![new_blob(&c1.0)]);
+    let tx1_hash = tx1.hashed();
+
+    // Second transaction with 3 blobs: c1, c1, c2
+    let tx2 = BlobTransaction::new(
+        Identity::new("test2@c1"),
+        vec![new_blob(&c1.0), new_blob(&c1.0), new_blob(&c2.0)],
+    );
+    let tx2_hash = tx2.hashed();
+
+    // Submit both transactions
+    state.craft_block_and_handle(1, vec![tx1.clone().into(), tx2.clone().into()]);
+
+    // tx1 should have timeout based on c1 (50 blocks)
+    assert_eq!(
+        timeouts::tests::get(&state.timeouts, &tx1_hash),
+        Some(BlockHeight(1 + 50))
+    );
+
+    // tx2 should not have timeout
+    assert_eq!(timeouts::tests::get(&state.timeouts, &tx2_hash), None);
+
+    // Prove the two blobs on c1 for tx2 (BlobIndex 0 and 1)
+    let hyli_output_tx2_c1_blob0 =
+        make_hyli_output_with_state(tx2.clone(), BlobIndex(0), &[4, 5, 6], &[7, 8, 9]);
+    let verified_proof_tx2_c1_blob0 = new_proof_tx(&c1, &hyli_output_tx2_c1_blob0, &tx2_hash);
+
+    let hyli_output_tx2_c1_blob1 =
+        make_hyli_output_with_state(tx2.clone(), BlobIndex(1), &[7, 8, 9], &[10, 11, 12]);
+    let verified_proof_tx2_c1_blob1 = new_proof_tx(&c1, &hyli_output_tx2_c1_blob1, &tx2_hash);
+
+    state.craft_block_and_handle(
+        2,
+        vec![
+            verified_proof_tx2_c1_blob0.into(),
+            verified_proof_tx2_c1_blob1.into(),
+        ],
+    );
+
+    // Prove tx1's blob on c1
+    let hyli_output_tx1 = make_hyli_output(tx1.clone(), BlobIndex(0));
+    let verified_proof_tx1 = new_proof_tx(&c1, &hyli_output_tx1, &tx1_hash);
+
+    // Settle tx1
+    let block = state.craft_block_and_handle(3, vec![verified_proof_tx1.into()]);
+
+    // tx1 should be settled
+    assert_eq!(block.successful_txs, vec![tx1_hash.clone()]);
+
+    // tx1 should be removed from timeouts after settlement
+    // assert_eq!(timeouts::tests::get(&state.timeouts, &tx1_hash), None);
+
+    // At that point:
+    // c1 is fully proven --> soft_timeout of 200 blocks
+    // c2 is unproven --> hard_timeout of 100 blocks
+    // Therefore, tx2 should have timeout based on c2 (100 blocks)
+    assert_eq!(
+        timeouts::tests::get(&state.timeouts, &tx2_hash),
+        Some(BlockHeight(3 + 100))
+    );
+}
