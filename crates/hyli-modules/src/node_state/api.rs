@@ -89,7 +89,10 @@ pub async fn get_contract(
             verifier: contract.verifier,
             timeout_window: match contract.timeout_window {
                 TimeoutWindow::NoTimeout => None,
-                TimeoutWindow::Timeout(window) => Some(window.0),
+                TimeoutWindow::Timeout {
+                    hard_timeout,
+                    soft_timeout,
+                } => Some((hard_timeout.0, soft_timeout.0)),
             },
         })),
         err => {

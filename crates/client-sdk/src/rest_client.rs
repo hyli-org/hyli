@@ -554,7 +554,10 @@ pub mod test {
                     verifier: contract.verifier,
                     timeout_window: match contract.timeout_window {
                         TimeoutWindow::NoTimeout => None,
-                        TimeoutWindow::Timeout(window) => Some(window.0),
+                        TimeoutWindow::Timeout {
+                            hard_timeout,
+                            soft_timeout,
+                        } => Some((soft_timeout.0, hard_timeout.0)),
                     },
                 })
             })

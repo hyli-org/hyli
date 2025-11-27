@@ -66,7 +66,8 @@ CREATE TABLE contracts (
     contract_name TEXT PRIMARY KEY NOT NULL,
     verifier TEXT NOT NULL,
     program_id BYTEA NOT NULL,
-    timeout_window BIGINT, -- should we use 0 or NULL for null?
+    soft_timeout BIGINT,
+    hard_timeout BIGINT,
     state_commitment BYTEA NOT NULL,
     parent_dp_hash TEXT NOT NULL,
     tx_hash TEXT NOT NULL,
@@ -117,4 +118,3 @@ create table txs_contracts (
     PRIMARY KEY (parent_dp_hash, tx_hash, contract_name)
 );
 create index idx_txs_contracts_name on txs_contracts(contract_name);
-

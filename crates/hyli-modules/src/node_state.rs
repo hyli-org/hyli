@@ -499,21 +499,6 @@ impl<'any> NodeStateProcessing<'any> {
         Ok(())
     }
 
-    fn get_tx_timeout_window<'a, T: IntoIterator<Item = &'a Blob>>(
-        &self,
-        blobs: T,
-    ) -> TimeoutWindow {
-        blobs
-            .into_iter()
-            .filter_map(|blob| {
-                self.contracts
-                    .get(&blob.contract_name)
-                    .map(|c| c.timeout_window.clone())
-            })
-            .min()
-            .unwrap_or(TimeoutWindow::NoTimeout)
-    }
-
     fn handle_blob_tx(
         &mut self,
         parent_dp_hash: DataProposalHash,
@@ -1650,13 +1635,34 @@ impl<'any> NodeStateProcessing<'any> {
         #[allow(clippy::unwrap_used, reason = "must exist because of above checks")]
         let unsettled_tx = self.unsettled_transactions.get(unsettled_tx_hash).unwrap();
 
-        // Get the contract's timeout window
-        let timeout_window = self.get_tx_timeout_window(&unsettled_tx.tx.blobs);
-        if let TimeoutWindow::Timeout(timeout_window) = timeout_window {
-            // Update timeouts
+        let min_timeout = unsettled_tx
+            .tx
+            .blobs
+            .iter()
+            .filter_map(|blob| {
+                let contract_name = &blob.contract_name;
+                let contract = self.contracts.get(contract_name)?;
+
+                let TimeoutWindow::Timeout {
+                    hard_timeout,
+                    soft_timeout: _,
+                } = contract.timeout_window
+                else {
+                    // If the timeout_window is not a classic timeout, we ignore this contract
+                    return None;
+                };
+
+                let timeout_value = hard_timeout;
+
+                Some(timeout_value)
+            })
+            .min();
+
+        // Set the timeout if we found a valid timeout value
+        if let Some(timeout_value) = min_timeout {
             let current_height = self.current_height;
             self.timeouts
-                .set(unsettled_tx_hash.clone(), current_height, timeout_window);
+                .set(unsettled_tx_hash.clone(), current_height, timeout_value);
         }
     }
 }

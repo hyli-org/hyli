@@ -2,7 +2,7 @@
 
 use crate::{
     explorer::{
-        api::{DataProposalHashDb, LaneIdDb, TimeoutWindowDb, TxHashDb},
+        api::{DataProposalHashDb, LaneIdDb, TxHashDb},
         WsExplorerBlobTx,
     },
     model::*,
@@ -215,7 +215,7 @@ struct ContractInsertStore {
     pub contract_name: ContractName,
     pub verifier: String,
     pub program_id: Vec<u8>,
-    pub timeout_window: TimeoutWindowDb,
+    pub timeout_window: TimeoutWindow,
     pub state_commitment: Vec<u8>,
     pub parent_dp_hash: DataProposalHashDb,
     pub tx_hash: TxHashDb,
@@ -226,7 +226,7 @@ struct ContractInsertStore {
 struct ContractUpdateStore {
     pub verifier: Option<String>,
     pub program_id: Option<Vec<u8>>,
-    pub timeout_window: Option<TimeoutWindowDb>,
+    pub timeout_window: Option<TimeoutWindow>,
     pub state_commitment: Option<Vec<u8>>,
     pub deleted_at_height: Option<i32>,
 }
@@ -450,7 +450,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                     contract_name: contract_name.clone(),
                     verifier: contract.verifier.0.clone(),
                     program_id: contract.program_id.0.clone(),
-                    timeout_window: TimeoutWindowDb(contract.timeout_window.clone()),
+                    timeout_window: contract.timeout_window.clone(),
                     state_commitment: contract.state.0.clone(),
                     parent_dp_hash: DataProposalHashDb(tx_id.0.clone()),
                     tx_hash: TxHashDb(tx_id.1.clone()),
@@ -503,10 +503,10 @@ impl NodeStateCallback for IndexerHandlerStore {
                 self.contract_updates
                     .entry(contract_name.clone())
                     .and_modify(|e| {
-                        e.timeout_window = Some(TimeoutWindowDb(timeout_window.clone()));
+                        e.timeout_window = Some(timeout_window.clone());
                     })
                     .or_insert(ContractUpdateStore {
-                        timeout_window: Some(TimeoutWindowDb(timeout_window.clone())),
+                        timeout_window: Some(timeout_window.clone()),
                         ..Default::default()
                     });
                 // Don't push events
@@ -693,10 +693,12 @@ impl Indexer {
 
         // Contracts, annoyingly, can be added-deleted-added and so on, so we'll insert them one at a time for simplicity.
         for contract in self.handler_store.contract_inserts.drain(..) {
-            sqlx::query("INSERT INTO contracts (contract_name, verifier, program_id, timeout_window, state_commitment, parent_dp_hash, tx_hash, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (contract_name) DO UPDATE SET
+            let (soft_timeout, hard_timeout) = timeout_columns(&contract.timeout_window)?;
+            sqlx::query("INSERT INTO contracts (contract_name, verifier, program_id, soft_timeout, hard_timeout, state_commitment, parent_dp_hash, tx_hash, metadata) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) ON CONFLICT (contract_name) DO UPDATE SET
                 verifier = EXCLUDED.verifier,
                 program_id = EXCLUDED.program_id,
-                timeout_window = EXCLUDED.timeout_window,
+                soft_timeout = EXCLUDED.soft_timeout,
+                hard_timeout = EXCLUDED.hard_timeout,
                 state_commitment = EXCLUDED.state_commitment,
                 parent_dp_hash = EXCLUDED.parent_dp_hash,
                 tx_hash = EXCLUDED.tx_hash,
@@ -705,7 +707,8 @@ impl Indexer {
                 .bind(contract.contract_name.0)
                 .bind(contract.verifier)
                 .bind(contract.program_id)
-                .bind(contract.timeout_window)
+                .bind(soft_timeout)
+                .bind(hard_timeout)
                 .bind(contract.state_commitment)
                 .bind(contract.parent_dp_hash)
                 .bind(contract.tx_hash)
@@ -731,39 +734,46 @@ impl Indexer {
         // Then contract updates
         {
             // Create a temporary table to insert updates
-            sqlx::query("CREATE TEMPORARY TABLE IF NOT EXISTS contract_updates (contract_name TEXT PRIMARY KEY NOT NULL, verifier TEXT, program_id BYTEA, timeout_window BIGINT, state_commitment BYTEA, deleted_at_height INT)")
+            sqlx::query("CREATE TEMPORARY TABLE IF NOT EXISTS contract_updates (contract_name TEXT PRIMARY KEY NOT NULL, verifier TEXT, program_id BYTEA, soft_timeout BIGINT, hard_timeout BIGINT, state_commitment BYTEA, deleted_at_height INT)")
                 .execute(&mut *transaction)
                 .await?;
 
-            let batch_size = calculate_optimal_batch_size(6);
+            let batch_size = calculate_optimal_batch_size(7);
             while !self.handler_store.contract_updates.is_empty() {
                 let mut entries = vec![];
                 #[allow(clippy::unwrap_used, reason = "Must exist from check above")]
                 for _ in 0..std::cmp::min(batch_size, self.handler_store.contract_updates.len()) {
-                    let key = self
+                    let contract_name = self
                         .handler_store
                         .contract_updates
                         .keys()
                         .next()
                         .unwrap()
                         .clone();
-                    entries.push((
-                        self.handler_store.contract_updates.remove(&key).unwrap(),
-                        key,
-                    ));
+                    let update = self
+                        .handler_store
+                        .contract_updates
+                        .remove(&contract_name)
+                        .unwrap();
+                    let timeouts = timeout_columns_opt(&update.timeout_window)?;
+                    entries.push((update, contract_name, timeouts));
                 }
                 // Insert contract updates into the temporary table
                 let mut query_builder = QueryBuilder::<Postgres>::new(
-                    "INSERT INTO contract_updates (contract_name, verifier, program_id, timeout_window, state_commitment, deleted_at_height) ",
+                    "INSERT INTO contract_updates (contract_name, verifier, program_id, soft_timeout, hard_timeout, state_commitment, deleted_at_height) ",
                 );
-                query_builder.push_values(entries.into_iter(), |mut b, (update, contract_name)| {
-                    b.push_bind(contract_name.0)
-                        .push_bind(update.verifier)
-                        .push_bind(update.program_id)
-                        .push_bind(update.timeout_window)
-                        .push_bind(update.state_commitment)
-                        .push_bind(update.deleted_at_height);
-                });
+                query_builder.push_values(
+                    entries.into_iter(),
+                    |mut b, (update, contract_name, (soft_timeout, hard_timeout))| {
+                        b.push_bind(contract_name.0)
+                            .push_bind(update.verifier)
+                            .push_bind(update.program_id)
+                            .push_bind(soft_timeout)
+                            .push_bind(hard_timeout)
+                            .push_bind(update.state_commitment)
+                            .push_bind(update.deleted_at_height);
+                    },
+                );
                 _ = log_error!(
                     query_builder.build().execute(&mut *transaction).await,
                     "Inserting contract updates into temporary table"
@@ -775,7 +785,8 @@ impl Indexer {
                 "UPDATE contracts SET
                     verifier = COALESCE(contract_updates.verifier, contracts.verifier),
                     program_id = COALESCE(contract_updates.program_id, contracts.program_id),
-                    timeout_window = COALESCE(contract_updates.timeout_window, contracts.timeout_window),
+                    soft_timeout = COALESCE(contract_updates.soft_timeout, contracts.soft_timeout),
+                    hard_timeout = COALESCE(contract_updates.hard_timeout, contracts.hard_timeout),
                     state_commitment = COALESCE(contract_updates.state_commitment, contracts.state_commitment),
                     deleted_at_height = COALESCE(contract_updates.deleted_at_height, contracts.deleted_at_height)
                 FROM contract_updates
@@ -791,6 +802,36 @@ impl Indexer {
         }
 
         Ok(())
+    }
+}
+
+fn timeout_columns(tw: &TimeoutWindow) -> Result<(Option<i64>, Option<i64>)> {
+    match tw {
+        TimeoutWindow::NoTimeout => Ok((None, None)),
+        TimeoutWindow::Timeout {
+            hard_timeout,
+            soft_timeout,
+        } => Ok((
+            Some(
+                soft_timeout
+                    .0
+                    .try_into()
+                    .context("soft_timeout overflows i64")?,
+            ),
+            Some(
+                hard_timeout
+                    .0
+                    .try_into()
+                    .context("hard_timeout overflows i64")?,
+            ),
+        )),
+    }
+}
+
+fn timeout_columns_opt(tw: &Option<TimeoutWindow>) -> Result<(Option<i64>, Option<i64>)> {
+    match tw {
+        None => Ok((None, None)),
+        Some(tw) => timeout_columns(tw),
     }
 }
 
