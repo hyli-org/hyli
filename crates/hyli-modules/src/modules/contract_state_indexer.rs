@@ -396,6 +396,7 @@ mod tests {
                     blobs_hash: tx.blobs_hash(),
                     possible_proofs: BTreeMap::new(),
                     tx_context,
+                    settleable_contracts: std::collections::HashSet::new(),
                 },
                 |state, tx, index, ctx| state.handle_transaction_success(tx, index, ctx),
             )
