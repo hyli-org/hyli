@@ -336,6 +336,16 @@ async fn common_main(
                 api: build_api_ctx.clone(),
             })
             .await?;
+        // Used in amm_tests for now.
+        if std::env::var("RUN_HYLLAR2_CSI").is_ok() {
+            handler
+                .build_module::<ContractStateIndexer<Hyllar>>(ContractStateIndexerCtx {
+                    contract_name: "hyllar2".into(),
+                    data_directory: config.data_directory.clone(),
+                    api: build_api_ctx.clone(),
+                })
+                .await?;
+        }
         handler
             .build_module::<ContractStateIndexer<Hydentity>>(ContractStateIndexerCtx {
                 contract_name: "hydentity".into(),

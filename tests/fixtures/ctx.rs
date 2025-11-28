@@ -130,6 +130,7 @@ impl E2ECtx {
 
     pub async fn new_single_with_indexer(slot_duration_ms: u64) -> Result<E2ECtx> {
         std::env::set_var("RISC0_DEV_MODE", "1");
+        std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let pg = Self::init().await;
 
