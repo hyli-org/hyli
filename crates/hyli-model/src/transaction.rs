@@ -346,11 +346,9 @@ impl From<APIRegisterContract> for BlobTransaction {
             program_id: payload.program_id,
             state_commitment: payload.state_commitment,
             contract_name: payload.contract_name.clone(),
-            timeout_window: match payload.timeout_window {
-                Some(0) => Some(TimeoutWindow::NoTimeout),
-                Some(timeout) => Some(TimeoutWindow::Timeout(BlockHeight(timeout))),
-                None => None,
-            },
+            timeout_window: payload
+                .timeout_window
+                .map(|(a, b)| TimeoutWindow::timeout(BlockHeight(a), BlockHeight(b))),
             constructor_metadata: payload.constructor_metadata.clone(),
         }
         .as_blob("hyli".into())];
