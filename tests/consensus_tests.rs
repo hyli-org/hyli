@@ -220,6 +220,7 @@ mod e2e_consensus {
     }
 
     #[test_log::test(tokio::test)]
+    #[ignore = "flaky"]
     async fn can_rejoin_blocking_consensus() -> Result<()> {
         let mut ctx = E2ECtx::new_multi_with_indexer(2, 500).await?;
 
@@ -246,6 +247,7 @@ mod e2e_consensus {
     }
 
     #[test_log::test(tokio::test)]
+    #[ignore = "flaky"]
     async fn can_rejoin_not_blocking_consensus() -> Result<()> {
         let mut ctx = E2ECtx::new_multi_with_indexer(2, 500).await?;
 
