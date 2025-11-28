@@ -557,7 +557,7 @@ pub mod test {
                         TimeoutWindow::Timeout {
                             hard_timeout,
                             soft_timeout,
-                        } => Some((soft_timeout.0, hard_timeout.0)),
+                        } => Some((hard_timeout.0, soft_timeout.0)),
                     },
                 })
             })

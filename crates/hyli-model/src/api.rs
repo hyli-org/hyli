@@ -281,13 +281,7 @@ impl<'de> Deserialize<'de> for APINodeContract {
                     TimeoutWindow::Timeout {
                         hard_timeout,
                         soft_timeout,
-                    } => match TimeoutWindow::timeout(hard_timeout, soft_timeout) {
-                        TimeoutWindow::Timeout {
-                            hard_timeout,
-                            soft_timeout,
-                        } => Some((hard_timeout.0, soft_timeout.0)),
-                        TimeoutWindow::NoTimeout => None,
-                    },
+                    } => Some((hard_timeout.0, soft_timeout.0)),
                     TimeoutWindow::NoTimeout => None,
                 },
             }),

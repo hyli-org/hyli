@@ -835,9 +835,11 @@ impl Add<BlockHeight> for BlockHeight {
 pub enum TimeoutWindow {
     NoTimeout,
     Timeout {
-        // This is the timeout value that will be used to set transaction's timeout when the blobs for the contract with this timeout are not proved
+        // The hard_timeout is the timeout value used to set a transaction's timeout when the blobs for the contract are NOT proved.
+        // It is expected that hard_timeout <= soft_timeout.
         hard_timeout: BlockHeight,
-        // This is the timeout value that will be used to set transaction's timeout when the blobs for the contract with this timeout are proved
+        // The soft_timeout is the timeout value used when the blobs for the contract ARE proved.
+        // In other words, if blobs are proved, soft_timeout is used; if not proved, hard_timeout is used.
         soft_timeout: BlockHeight,
     },
 }
@@ -859,6 +861,22 @@ impl Default for TimeoutWindow {
     }
 }
 
+/// Creates a new timeout window with hard and soft timeout block heights.
+///
+/// This function automatically ensures that `hard_timeout <= soft_timeout` by
+/// swapping the parameters if they are provided in the wrong order. If the
+/// `hard_timeout` is greater than `soft_timeout`, the values will be swapped
+/// internally to maintain the invariant that hard timeout should occur before
+/// or at the same time as the soft timeout.
+///
+/// # Parameters
+///
+/// * `hard_timeout` - The block height for the hard timeout (will be the earlier timeout)
+/// * `soft_timeout` - The block height for the soft timeout (will be the later timeout)
+///
+/// # Returns
+///
+/// A `TimeoutWindow::Timeout` variant with properly ordered timeout values.
 impl TimeoutWindow {
     pub fn timeout(hard_timeout: BlockHeight, soft_timeout: BlockHeight) -> Self {
         let (hard_timeout, soft_timeout) = if hard_timeout <= soft_timeout {
