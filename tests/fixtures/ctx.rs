@@ -97,6 +97,7 @@ impl E2ECtx {
 
     pub async fn new_single(slot_duration_ms: u64) -> Result<E2ECtx> {
         std::env::set_var("RISC0_DEV_MODE", "1");
+        std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let mut conf_maker = ConfMaker::default();
         conf_maker.default.consensus.slot_duration = Duration::from_millis(slot_duration_ms);
@@ -189,6 +190,7 @@ impl E2ECtx {
     }
     pub async fn new_multi(count: usize, slot_duration_ms: u64) -> Result<E2ECtx> {
         std::env::set_var("RISC0_DEV_MODE", "1");
+        std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let mut conf_maker = ConfMaker::default();
         conf_maker.default.consensus.slot_duration = Duration::from_millis(slot_duration_ms);
@@ -276,6 +278,7 @@ impl E2ECtx {
         timestamp_checks: TimestampCheck,
     ) -> Result<E2ECtx> {
         std::env::set_var("RISC0_DEV_MODE", "1");
+        std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let pg = Self::init().await;
 
