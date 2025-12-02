@@ -98,7 +98,7 @@ opentelemetry-prometheus = { version = "0.28.0" }
 opentelemetry_sdk = { version = "0.28.0" }
 paste = { version = "1.0.15", default-features = false }
 prometheus = { version = "0.13.4" }
-quote = { version = "1.0.39", default-features = false }
+quote = { version = "1.0.42", default-features = false }
 rand = { version = "=0.8.5" }
 rand_seeder = { version = "0.4.0" }
 ratatui = { version = "0.29.0", default-features = false }
