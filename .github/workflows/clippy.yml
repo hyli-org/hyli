@@ -18,11 +18,10 @@ jobs:
       - uses: actions/checkout@v4
       # For keyring dependencies
       - run: sudo apt install libdbus-1-dev pkg-config
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           components: clippy, rustfmt
-          override: true
+      - uses: Swatinem/rust-cache@v2
       - uses: LoliGothick/clippy-check@master
         with:
           deny: warnings
