@@ -43,6 +43,16 @@ impl BorshSerialize for BorshableMerkleProof {
                     writer.write_all(zero_bits.as_slice())?;
                     BorshSerialize::serialize(&zero_count, writer)?;
                 }
+                MergeValue::ShortCut {
+                    key,
+                    value,
+                    height,
+                } => {
+                    BorshSerialize::serialize(&2u8, writer)?;
+                    writer.write_all(key.as_slice())?;
+                    writer.write_all(value.as_slice())?;
+                    BorshSerialize::serialize(height, writer)?;
+                }
             }
         }
         Ok(())
@@ -81,6 +91,20 @@ impl BorshDeserialize for BorshableMerkleProof {
                         base_node: H256::from(base_node_buf),
                         zero_bits: H256::from(zero_bits_buf),
                         zero_count,
+                    });
+                }
+                2 => {
+                    let mut key = [0u8; 32];
+                    reader.read_exact(&mut key)?;
+
+                    let mut value = [0u8; 32];
+                    reader.read_exact(&mut value)?;
+
+                    let height = u8::deserialize_reader(reader)?;
+                    merkle_path.push(MergeValue::ShortCut {
+                        key: H256::from(key),
+                        value: H256::from(value),
+                        height,
                     });
                 }
                 _ => {
@@ -131,6 +155,11 @@ mod tests {
                 base_node: H256::from([4u8; 32]),
                 zero_bits: H256::from([5u8; 32]),
                 zero_count: 2,
+            },
+            MergeValue::ShortCut {
+                key: H256::from([6u8; 32]),
+                value: H256::from([7u8; 32]),
+                height: 3,
             },
         ];
         let original_proof = MerkleProof::new(leaves_bitmap.clone(), merkle_path.clone());
