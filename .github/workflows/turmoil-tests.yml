@@ -18,6 +18,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run turmoil tests - Basic
         run: cargo test turmoil_simulation_basic --features turmoil
