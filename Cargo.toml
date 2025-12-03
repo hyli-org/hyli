@@ -315,6 +315,8 @@ strip = "none"
 
 [profile.ci]
 inherits = "dev"
+debug = 0
+lto = "off"
 incremental = false # Turn incremental off to lower artefact size
 
 # Optimize the following crates for development builds so tests are faster
