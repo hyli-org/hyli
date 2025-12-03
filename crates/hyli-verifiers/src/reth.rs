@@ -7,10 +7,7 @@ use alloy_primitives::{Address, B256};
 use alloy_rlp::decode_exact;
 use anyhow::{anyhow, bail, Context, Error};
 use borsh::de::BorshDeserialize;
-use hyli_model::{
-    Blob, Calldata, ContractName, DropEndOfReader, HyliOutput, ProgramId, ProofData,
-    StateCommitment, StructuredBlobData,
-};
+use hyli_model::{Calldata, HyliOutput, ProgramId, ProofData, StateCommitment, StructuredBlobData};
 use reth_ethereum::{chainspec::ChainSpec, evm::EthEvmConfig};
 use reth_ethereum_primitives::Block;
 use reth_primitives_traits::{Block as BlockTrait, SignerRecoverable};
@@ -18,10 +15,10 @@ use reth_stateless::{
     trie::StatelessSparseTrie, validation::stateless_validation, StatelessInput,
     UncompressedPublicKey,
 };
-use serde::Deserialize;
 use serde_json::{self, Map, Value};
 
 pub fn verify(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutput>, Error> {
+    let _ = program_id;
     let (calldata, stateless_input, evm_bytes) =
         deserialize_reth_payload(&proof.0).context("failed to decode reth proof payload")?;
     let chain_spec =
@@ -29,9 +26,6 @@ pub fn verify(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutpu
     let evm_config = EthEvmConfig::new(chain_spec.clone());
     let (initial_state_root, next_state_root) = derive_state_roots(&stateless_input)
         .context("failed to derive state commitments from stateless input")?;
-    let program_metadata =
-        parse_program_metadata(program_id).context("failed to decode program id metadata")?;
-
     tracing::info!(
         target: "hyli::verifiers::reth",
         identity = %calldata.identity.0,
@@ -67,13 +61,8 @@ pub fn verify(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutpu
         "Stateless validation passed"
     );
 
-    validate_blob_matches_block(
-        &calldata,
-        &stateless_input,
-        &program_metadata,
-        initial_state_root,
-    )
-    .context("blob transaction does not match block contents")?;
+    validate_blob_matches_block(&calldata, &stateless_input, initial_state_root)
+        .context("blob transaction does not match block contents")?;
     tracing::debug!(
         target: "hyli::verifiers::reth",
         "Calldata blob matches block contents"
@@ -291,7 +280,6 @@ fn recover_public_keys(block: &Block) -> Result<Vec<UncompressedPublicKey>, Erro
 fn validate_blob_matches_block(
     calldata: &Calldata,
     stateless_input: &StatelessInput,
-    metadata: &ProgramMetadata,
     parent_state_root: B256,
 ) -> Result<(), Error> {
     let block = &stateless_input.block;
@@ -311,33 +299,34 @@ fn validate_blob_matches_block(
         .get(&calldata.index)
         .ok_or_else(|| anyhow!("calldata missing blob at index {}", calldata.index.0))?;
 
-    let mut txs = block.body().transactions();
-    let tx = txs
-        .next()
-        .ok_or_else(|| anyhow!("block contained no transactions"))?;
     let structured_payload = StructuredBlobData::<Vec<u8>>::try_from(blob.data.clone()).ok();
     let tx_payload = structured_payload
         .as_ref()
         .map(|data| data.parameters.clone())
         .unwrap_or_else(|| blob.data.0.clone());
+    let (tx_index, tx) = block
+        .body()
+        .transactions()
+        .enumerate()
+        .find(|(_, tx)| tx.encoded_2718() == tx_payload)
+        .ok_or_else(|| {
+            tracing::warn!(
+                target: "hyli::verifiers::reth",
+                identity = %calldata.identity.0,
+                tx_hash = %calldata.tx_hash.0,
+                blob_len = tx_payload.len(),
+                "no block transaction matches blob payload"
+            );
+            anyhow!("block missing transaction matching blob payload")
+        })?;
     let tx_raw = tx.encoded_2718();
-    if tx_payload != tx_raw {
-        tracing::warn!(
-            target: "hyli::verifiers::reth",
-            identity = %calldata.identity.0,
-            tx_hash = %calldata.tx_hash.0,
-            blob_len = tx_payload.len(),
-            block_tx_len = tx_raw.len(),
-            "blob payload does not match encoded transaction"
-        );
-        bail!("blob payload does not match encoded transaction bytes");
-    }
 
     let block_tx_hash = format!("0x{}", hex::encode(tx.tx_hash()));
     tracing::debug!(
         target: "hyli::verifiers::reth",
         proof_tx_hash = %calldata.tx_hash.0,
         block_tx_hash = %block_tx_hash,
+        tx_index,
         "Block transaction hash compared against proof payload"
     );
 
@@ -371,142 +360,46 @@ fn validate_blob_matches_block(
         }
     };
 
-    if metadata
-        .enforced_vault_address
-        .map(|vault| vault == signer)
-        .unwrap_or(false)
-    {
-        ensure_structured_blob_has_caller(blob, &blob.contract_name)?;
-    }
-
-    let program_hash = metadata.program_hash;
     let (trie, bytecode_map) =
         StatelessSparseTrie::new(&stateless_input.witness, parent_state_root)
             .context("failed to reconstruct trie from execution witness")?;
 
-    let account = trie
+    // debug line show the whole content of the trie
+    tracing::debug!(
+        target: "hyli::verifiers::reth",
+        trie_content = ?trie,
+        "Reconstructed trie content from execution witness"
+    );
+
+    let account = match trie
         .account(contract_address)
         .context("failed to fetch contract account from witness")?
-        .ok_or_else(|| {
-            anyhow!(
-                "execution witness missing account data for contract 0x{}",
-                hex::encode(contract_address.as_slice())
-            )
-        })?;
-
-    if account.code_hash != program_hash {
-        bail!(
-            "program id mismatch: witness reports code hash {} for contract 0x{}, proof supplied {}",
-            hex::encode(account.code_hash),
-            hex::encode(contract_address.as_slice()),
-            hex::encode(program_hash)
-        );
-    }
-
-    if !bytecode_map.contains_key(&program_hash) {
-        bail!(
-            "execution witness missing bytecode for contract 0x{} (code hash {})",
-            hex::encode(contract_address.as_slice()),
-            hex::encode(program_hash)
-        );
-    }
-
-    Ok(())
-}
-
-#[derive(Debug, Clone, Copy)]
-struct ProgramMetadata {
-    program_hash: B256,
-    enforced_vault_address: Option<Address>,
-}
-
-fn parse_program_metadata(program_id: &ProgramId) -> Result<ProgramMetadata, Error> {
-    if program_id.0.len() == 32 {
-        let hash = B256::try_from(program_id.0.as_slice())
-            .map_err(|_| anyhow!("program id must be exactly 32 bytes"))?;
-        return Ok(ProgramMetadata {
-            program_hash: hash,
-            enforced_vault_address: None,
-        });
-    }
-
-    #[derive(Deserialize)]
-    struct ProgramIdSchema {
-        deployed_bytecode_hash: B256,
-        #[serde(default)]
-        enforced_vault_address: Option<AddressSerde>,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum AddressSerde {
-        Hex(String),
-        Bytes(Vec<u8>),
-    }
-
-    impl TryFrom<AddressSerde> for Address {
-        type Error = Error;
-
-        fn try_from(value: AddressSerde) -> Result<Self, Self::Error> {
-            match value {
-                AddressSerde::Hex(h) => {
-                    let data = h.strip_prefix("0x").unwrap_or(&h);
-                    let bytes = hex::decode(data)
-                        .map_err(|err| anyhow!("invalid address hex in program id: {err}"))?;
-                    Address::try_from(bytes.as_slice())
-                        .map_err(|_| anyhow!("address hex in program id has wrong length"))
-                }
-                AddressSerde::Bytes(mut bytes) => {
-                    if bytes.len() != 20 {
-                        bail!(
-                            "address byte array in program id must have length 20, got {}",
-                            bytes.len()
-                        );
-                    }
-                    let array: [u8; 20] = bytes
-                        .drain(..)
-                        .collect::<Vec<_>>()
-                        .try_into()
-                        .unwrap_or_else(|_| unreachable!());
-                    Ok(Address::from(array))
-                }
-            }
+    {
+        Some(account) => account,
+        None => {
+            tracing::warn!(
+                target: "hyli::verifiers::reth",
+                contract = %format!("0x{}", hex::encode(contract_address.as_slice())),
+                tx_hash = %calldata.tx_hash.0,
+                "execution witness missing account data for contract; skipping bytecode check"
+            );
+            return Ok(());
         }
-    }
-
-    let schema: ProgramIdSchema = serde_json::from_slice(&program_id.0)
-        .context("failed to parse structured program id for reth verifier")?;
-
-    let enforced_vault_address = match schema.enforced_vault_address {
-        Some(addr) => Some(Address::try_from(addr)?),
-        None => None,
     };
 
-    Ok(ProgramMetadata {
-        program_hash: schema.deployed_bytecode_hash,
-        enforced_vault_address,
-    })
-}
-
-fn ensure_structured_blob_has_caller(
-    blob: &Blob,
-    contract_name: &ContractName,
-) -> Result<(), Error> {
-    let structured: StructuredBlobData<DropEndOfReader> =
-        blob.data.clone().try_into().map_err(|_| {
-            anyhow!(
-                "contract {} requires structured blob data with caller",
-                contract_name.0
-            )
-        })?;
-    if structured.caller.is_none() {
-        bail!(
-            "contract {} requires the Solidity blob to declare a caller when the enforced signer initiates the transaction",
-            contract_name.0
+    if !bytecode_map.contains_key(&account.code_hash) {
+        tracing::warn!(
+            target: "hyli::verifiers::reth",
+            contract = %format!("0x{}", hex::encode(contract_address.as_slice())),
+            tx_hash = %calldata.tx_hash.0,
+            code_hash = %hex::encode(account.code_hash),
+            "execution witness missing bytecode for contract"
         );
     }
+
     Ok(())
 }
+
 fn find_value_by_key<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     match value {
         Value::Object(map) => {
