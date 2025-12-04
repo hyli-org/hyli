@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use client_sdk::rest_client::NodeApiHttpClient;
+use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
+use hex;
 use hyli::{entrypoint::main_process, utils::conf::Conf};
 use hyli_crypto::BlstCrypto;
 use hyli_net::net::Sim;
@@ -218,5 +219,85 @@ impl TurmoilCtx {
         };
 
         (from, to)
+    }
+
+    /// Check that all nodes converge to the same height and commit root.
+    pub async fn assert_cluster_converged(&self, min_height: u64) -> anyhow::Result<()> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
+        let mut stable_checks = 0;
+        let mut next_diag = tokio::time::Instant::now();
+
+        loop {
+            let mut heights = Vec::new();
+            for node in self.nodes.iter() {
+                let height = node.client.get_block_height().await?;
+                heights.push((node.conf.id.clone(), height.0));
+            }
+
+            let min = heights.iter().map(|(_, h)| *h).min().unwrap();
+            let max = heights.iter().map(|(_, h)| *h).max().unwrap();
+
+            if max > min && tokio::time::Instant::now() >= next_diag {
+                match self.node_snapshots().await {
+                    Ok(snaps) => {
+                        info!(
+                            "Cluster divergence min {} max {} ({:?}) :: {:?}",
+                            min, max, heights, snaps
+                        );
+                    }
+                    Err(e) => {
+                        info!(
+                            "Cluster divergence min {} max {} ({:?}); snapshot error: {}",
+                            min, max, heights, e
+                        );
+                    }
+                };
+                next_diag = tokio::time::Instant::now() + Duration::from_secs(3);
+            }
+
+            if min >= min_height {
+                if min == max {
+                    stable_checks += 1;
+
+                    if stable_checks >= 3 {
+                        return Ok(());
+                    }
+                } else {
+                    stable_checks = 0;
+                }
+            }
+
+            if tokio::time::Instant::now() >= deadline {
+                let snapshots = self.node_snapshots().await.unwrap_or_default();
+                anyhow::bail!(
+                    "Cluster did not converge: min height {}, max height {}, expected >= {} ({:?}); snapshots {:?}",
+                    min,
+                    max,
+                    min_height,
+                    heights,
+                    snapshots
+                );
+            }
+
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
+    /// Snapshot last block hash/parent for all nodes to help understand divergence.
+    pub async fn node_snapshots(&self) -> anyhow::Result<Vec<String>> {
+        let mut out = Vec::with_capacity(self.nodes.len());
+        for node in self.nodes.iter() {
+            let height = node.client.get_block_height().await?;
+            let info = node.client.get_consensus_info().await?;
+            out.push(format!(
+                "{} h={} slot={} view={} leader={}",
+                node.conf.id,
+                height.0,
+                info.slot,
+                info.view,
+                hex::encode(&info.round_leader.0)
+            ));
+        }
+        Ok(out)
     }
 }
