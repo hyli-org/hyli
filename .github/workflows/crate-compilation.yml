@@ -29,6 +29,7 @@ jobs:
       - uses: dtolnay/install@cargo-docs-rs
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: linux-nightly
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Compile crate '${{ matrix.crate }}' with no default features
