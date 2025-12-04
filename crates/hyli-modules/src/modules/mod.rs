@@ -14,11 +14,40 @@ use crate::{
 };
 use anyhow::{bail, Error, Result};
 use axum::Router;
-use rand::{distributions::Alphanumeric, Rng};
+use rand::{distributions::Alphanumeric, rngs::StdRng, Rng, SeedableRng};
+#[cfg(feature = "turmoil")]
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    OnceLock,
+};
 use tokio::task::JoinHandle;
 use tracing::{debug, info};
 
 const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(feature = "turmoil")]
+const SEED_ENV: &str = "HYLI_TURMOIL_SEED";
+#[cfg(feature = "turmoil")]
+static MODULE_SEED_COUNTER: AtomicU64 = AtomicU64::new(0);
+#[cfg(feature = "turmoil")]
+static MODULE_BASE_SEED: OnceLock<Option<u64>> = OnceLock::new();
+
+fn deterministic_rng() -> StdRng {
+    #[cfg(feature = "turmoil")]
+    {
+        let base_seed = MODULE_BASE_SEED.get_or_init(|| {
+            std::env::var(SEED_ENV)
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+        });
+
+        if let Some(seed) = base_seed {
+            let offset = MODULE_SEED_COUNTER.fetch_add(1, Ordering::Relaxed);
+            return StdRng::seed_from_u64(seed.wrapping_add(offset));
+        }
+    }
+
+    StdRng::from_entropy()
+}
 
 pub mod admin;
 pub mod bus_ws_connector;
@@ -104,7 +133,7 @@ where
         // State 2 starts creating a tmp file data.state2.tmp
         // rename data.state2.tmp into store (atomic override)
         // rename data.state1.tmp into
-        let salt: String = rand::thread_rng()
+        let salt: String = deterministic_rng()
             .sample_iter(&Alphanumeric)
             .take(8)
             .map(char::from)

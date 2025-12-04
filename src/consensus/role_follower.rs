@@ -10,6 +10,7 @@ use crate::{
     model::{Hashed, Signed, ValidatorPublicKey},
     p2p::P2PCommand,
     utils::conf::TimestampCheck,
+    utils::deterministic_rng::deterministic_rng,
 };
 use hyli_crypto::BlstCrypto;
 use hyli_model::{
@@ -789,7 +790,7 @@ impl Consensus {
             if bonded.is_empty() {
                 None
             } else {
-                let mut rng = rand::thread_rng();
+                let mut rng = deterministic_rng();
                 bonded
                     .iter()
                     .filter(|pk| pk != &self.crypto.validator_pubkey())
