@@ -17,7 +17,7 @@ use hyli_modules::{
     node_state::contract_registration::validate_contract_registration_metadata,
 };
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
