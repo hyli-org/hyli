@@ -12,8 +12,9 @@ use client_sdk::{contract_states, transaction_builder};
 use hydentity::client::tx_executor_handler::{register_identity, verify_identity};
 use hydentity::Hydentity;
 use hyli_contract_sdk::{
-    Blob, BlobData, BlobTransaction, Calldata, ContractName, Hashed, HyliOutput, Identity,
-    RegisterContractAction, StateCommitment, TimeoutWindow, Transaction, TxHash, ZkContract,
+    Blob, BlobData, BlobTransaction, BlockHeight, Calldata, ContractName, Hashed, HyliOutput,
+    Identity, RegisterContractAction, StateCommitment, TimeoutWindow, Transaction, TxHash,
+    ZkContract,
 };
 use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
 use hyllar::client::tx_executor_handler::transfer;
@@ -642,7 +643,7 @@ pub async fn send_massive_blob(users: u32, url: String) -> Result<()> {
             verifier: "test".into(),
             program_id: hyli_contracts::HYLLAR_ID.to_vec().into(),
             state_commitment: StateCommitment(vec![1]),
-            timeout_window: Some(TimeoutWindow::Timeout(hyli_contract_sdk::BlockHeight(2))),
+            timeout_window: Some(TimeoutWindow::timeout(BlockHeight(2), BlockHeight(2))),
             ..Default::default()
         }
         .as_blob("hyli".into())],

@@ -566,13 +566,13 @@ async fn test_hyli_contract_update_timeout_window() {
             .get(&ContractName::new("contract"))
             .unwrap()
             .timeout_window,
-        TimeoutWindow::Timeout(BlockHeight(100))
+        TimeoutWindow::timeout(BlockHeight(100), BlockHeight(100))
     );
 
     let timeout_window_update_tx = make_update_timeout_window_tx_with_hyli(
         "hyli".into(),
         "contract".into(),
-        TimeoutWindow::Timeout(BlockHeight(45)),
+        TimeoutWindow::timeout(BlockHeight(45), BlockHeight(45)),
     );
 
     let mut output = make_hyli_output_bis(timeout_window_update_tx.clone(), BlobIndex(0));
@@ -598,7 +598,70 @@ async fn test_hyli_contract_update_timeout_window() {
             .get(&ContractName::new("contract"))
             .unwrap()
             .timeout_window,
-        TimeoutWindow::Timeout(BlockHeight(45))
+        TimeoutWindow::timeout(BlockHeight(45), BlockHeight(45))
+    );
+}
+
+#[test_log::test(tokio::test)]
+async fn test_hyli_contract_update_program_id() {
+    let mut state = new_node_state().await;
+    let register_wallet =
+        make_register_tx_with_constructor("hyli@hyli".into(), "hyli".into(), "wallet".into());
+    let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
+
+    let mut output = make_hyli_output(register_hyli_at_wallet.clone(), BlobIndex(0));
+    let register_hyli_at_wallet_proof =
+        new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
+
+    let register_contract =
+        make_register_tx_with_constructor("hyli@hyli".into(), "hyli".into(), "contract".into());
+
+    state.craft_block_and_handle(
+        1,
+        vec![
+            register_wallet.into(),
+            register_hyli_at_wallet.into(),
+            register_hyli_at_wallet_proof.into(),
+            register_contract.into(),
+        ],
+    );
+
+    assert_eq!(state.contracts.len(), 3);
+    assert_eq!(
+        state
+            .contracts
+            .get(&ContractName::new("contract"))
+            .unwrap()
+            .program_id,
+        ProgramId(vec![])
+    );
+
+    let program_id_update_tx = make_update_program_id_tx_with_hyli(
+        "hyli".into(),
+        "contract".into(),
+        ProgramId(vec![1, 2, 3, 4]),
+    );
+
+    let mut output = make_hyli_output_bis(program_id_update_tx.clone(), BlobIndex(0));
+    let verify_hyli_proof = new_proof_tx(&"wallet".into(), &output, &program_id_update_tx.hashed());
+
+    let block = state.craft_block_and_handle(
+        2,
+        vec![
+            program_id_update_tx.into(),
+            verify_hyli_proof.clone().into(),
+        ],
+    );
+
+    assert_eq!(block.deleted_contracts.len(), 0);
+    assert_eq!(state.contracts.len(), 3);
+    assert_eq!(
+        state
+            .contracts
+            .get(&ContractName::new("contract"))
+            .unwrap()
+            .program_id,
+        ProgramId(vec![1, 2, 3, 4])
     );
 }
 
@@ -880,7 +943,7 @@ async fn test_custom_timeout_then_upgrade_with_none() {
             program_id: ProgramId(vec![]),
             state_commitment: StateCommitment(vec![0, 1, 2, 3]),
             contract_name: c1.clone(),
-            timeout_window: Some(TimeoutWindow::Timeout(custom_timeout)),
+            timeout_window: Some(TimeoutWindow::timeout(custom_timeout, custom_timeout)),
             ..Default::default()
         };
         let upgrade_with_timeout = BlobTransaction::new(
@@ -948,7 +1011,10 @@ async fn test_custom_timeout_then_upgrade_with_none() {
             program_id: ProgramId(vec![]),
             state_commitment: StateCommitment(vec![4, 5, 6]),
             contract_name: c1.clone(),
-            timeout_window: Some(TimeoutWindow::Timeout(another_custom_timeout)),
+            timeout_window: Some(TimeoutWindow::timeout(
+                another_custom_timeout,
+                another_custom_timeout,
+            )),
             ..Default::default()
         };
         let upgrade_with_another_timeout = BlobTransaction::new(
@@ -1074,7 +1140,7 @@ async fn domino_settlement_after_contract_delete() {
             program_id: ProgramId(vec![]),
             state: StateCommitment(vec![0, 1, 2, 3]),
             verifier: Verifier("test".into()),
-            timeout_window: TimeoutWindow::Timeout(BlockHeight(100)),
+            timeout_window: TimeoutWindow::timeout(BlockHeight(100), BlockHeight(100)),
         },
     );
     let a = ContractName::new("a");

@@ -77,7 +77,11 @@ impl E2ECtx {
 
         for node_conf in confs.iter_mut() {
             node_conf.genesis.stakers = genesis_stakers.clone();
-            let node = test_helpers::TestProcess::new("hyli", node_conf.clone()).start();
+            let node = test_helpers::TestProcess::new(
+                assert_cmd::cargo::cargo_bin!("hyli"),
+                node_conf.clone(),
+            )
+            .start();
 
             // Request something on node1 to be sure it's alive and working
             let client = NodeApiHttpClient::new(format!(
@@ -93,6 +97,7 @@ impl E2ECtx {
 
     pub async fn new_single(slot_duration_ms: u64) -> Result<E2ECtx> {
         std::env::set_var("RISC0_DEV_MODE", "1");
+        std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let mut conf_maker = ConfMaker::default();
         conf_maker.default.consensus.slot_duration = Duration::from_millis(slot_duration_ms);
@@ -101,7 +106,8 @@ impl E2ECtx {
             vec![("single-node".to_string(), 100)].into_iter().collect();
 
         let node_conf = conf_maker.build("single-node").await;
-        let node = test_helpers::TestProcess::new("hyli", node_conf).start();
+        let node = test_helpers::TestProcess::new(assert_cmd::cargo::cargo_bin!("hyli"), node_conf)
+            .start();
 
         // Request something on node1 to be sure it's alive and working
         let client =
@@ -125,6 +131,7 @@ impl E2ECtx {
 
     pub async fn new_single_with_indexer(slot_duration_ms: u64) -> Result<E2ECtx> {
         std::env::set_var("RISC0_DEV_MODE", "1");
+        std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let pg = Self::init().await;
 
@@ -139,7 +146,11 @@ impl E2ECtx {
         );
 
         let node_conf = conf_maker.build("single-node").await;
-        let node = test_helpers::TestProcess::new("hyli", node_conf.clone()).start();
+        let node = test_helpers::TestProcess::new(
+            assert_cmd::cargo::cargo_bin!("hyli"),
+            node_conf.clone(),
+        )
+        .start();
 
         // Request something on node1 to be sure it's alive and working
         let client =
@@ -151,7 +162,11 @@ impl E2ECtx {
         indexer_conf.da_read_from = node_conf.da_public_address.clone();
         indexer_conf.run_indexer = true;
         indexer_conf.run_explorer = true;
-        let indexer = test_helpers::TestProcess::new("indexer", indexer_conf.clone()).start();
+        let indexer = test_helpers::TestProcess::new(
+            assert_cmd::cargo::cargo_bin!("indexer"),
+            indexer_conf.clone(),
+        )
+        .start();
 
         let url = format!("http://localhost:{}/", &indexer_conf.rest_server_port);
         let indexer_client = IndexerApiHttpClient::new(url).unwrap();
@@ -175,6 +190,7 @@ impl E2ECtx {
     }
     pub async fn new_multi(count: usize, slot_duration_ms: u64) -> Result<E2ECtx> {
         std::env::set_var("RISC0_DEV_MODE", "1");
+        std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let mut conf_maker = ConfMaker::default();
         conf_maker.default.consensus.slot_duration = Duration::from_millis(slot_duration_ms);
@@ -235,7 +251,8 @@ impl E2ECtx {
     }
 
     pub async fn add_node_with_conf(&mut self, node_conf: Conf) -> Result<&NodeApiHttpClient> {
-        let node = test_helpers::TestProcess::new("hyli", node_conf).start();
+        let node = test_helpers::TestProcess::new(assert_cmd::cargo::cargo_bin!("hyli"), node_conf)
+            .start();
         // Request something on node1 to be sure it's alive and working
         let client =
             NodeApiHttpClient::new(format!("http://localhost:{}/", &node.conf.rest_server_port))
@@ -261,6 +278,7 @@ impl E2ECtx {
         timestamp_checks: TimestampCheck,
     ) -> Result<E2ECtx> {
         std::env::set_var("RISC0_DEV_MODE", "1");
+        std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let pg = Self::init().await;
 
@@ -279,7 +297,11 @@ impl E2ECtx {
         indexer_conf.run_indexer = true;
         indexer_conf.run_explorer = true;
         indexer_conf.da_read_from = nodes.last().unwrap().conf.da_public_address.clone();
-        let indexer = test_helpers::TestProcess::new("indexer", indexer_conf.clone()).start();
+        let indexer = test_helpers::TestProcess::new(
+            assert_cmd::cargo::cargo_bin!("indexer"),
+            indexer_conf.clone(),
+        )
+        .start();
 
         nodes.push(indexer);
         let url = format!("http://localhost:{}/", &indexer_conf.rest_server_port);

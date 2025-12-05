@@ -91,7 +91,10 @@ async fn setup_with_timeout(
         program_id: ProgramId(vec![]),
         state_commitment: TestContract::default().commit(),
         contract_name: "test".into(),
-        timeout_window: Some(TimeoutWindow::Timeout(BlockHeight(timeout))),
+        timeout_window: Some(TimeoutWindow::timeout(
+            BlockHeight(timeout),
+            BlockHeight(timeout),
+        )),
     };
     node_state.handle_register_contract_effect(&register);
 
@@ -101,7 +104,7 @@ async fn setup_with_timeout(
         state: TestContract::default().commit(),
         verifier: "test".into(),
         program_id: ProgramId(vec![]),
-        timeout_window: TimeoutWindow::Timeout(BlockHeight(timeout)),
+        timeout_window: TimeoutWindow::timeout(BlockHeight(timeout), BlockHeight(timeout)),
     });
 
     let auto_prover = new_simple_auto_prover(api_client.clone()).await?;
@@ -1257,7 +1260,7 @@ async fn scenario_auto_prover_artificial_middle_blob_failure_setup(
         program_id: ProgramId(vec![]),
         state_commitment: TestContract::default().commit(),
         contract_name: "test".into(),
-        timeout_window: Some(TimeoutWindow::Timeout(BlockHeight(20))),
+        timeout_window: Some(TimeoutWindow::timeout(BlockHeight(20), BlockHeight(20))),
     };
     node_state.handle_register_contract_effect(&register);
     api_client.add_contract(Contract {
@@ -1265,7 +1268,7 @@ async fn scenario_auto_prover_artificial_middle_blob_failure_setup(
         state: TestContract::default().commit(),
         program_id: ProgramId(vec![]),
         verifier: "test".into(),
-        timeout_window: TimeoutWindow::Timeout(BlockHeight(20)),
+        timeout_window: TimeoutWindow::timeout(BlockHeight(20), BlockHeight(20)),
     });
 
     let register = RegisterContractEffect {
@@ -1273,7 +1276,7 @@ async fn scenario_auto_prover_artificial_middle_blob_failure_setup(
         program_id: ProgramId(vec![]),
         state_commitment: TestContract::default().commit(),
         contract_name: "test2".into(),
-        timeout_window: Some(TimeoutWindow::Timeout(BlockHeight(20))),
+        timeout_window: Some(TimeoutWindow::timeout(BlockHeight(20), BlockHeight(20))),
     };
     node_state.handle_register_contract_effect(&register);
     api_client.add_contract(Contract {
@@ -1281,7 +1284,7 @@ async fn scenario_auto_prover_artificial_middle_blob_failure_setup(
         state: TestContract::default().commit(),
         program_id: ProgramId(vec![]),
         verifier: "test".into(),
-        timeout_window: TimeoutWindow::Timeout(BlockHeight(20)),
+        timeout_window: TimeoutWindow::timeout(BlockHeight(20), BlockHeight(20)),
     });
     (node_state, Arc::new(api_client))
 }
@@ -1469,7 +1472,7 @@ async fn test_auto_prover_catchup_mixed_pending_and_failures() -> Result<()> {
         program_id: ProgramId(vec![4]),
         state: StateCommitment(vec![2, 0, 0, 0]),
         verifier: "test".into(),
-        timeout_window: TimeoutWindow::Timeout(BlockHeight(20)),
+        timeout_window: TimeoutWindow::timeout(BlockHeight(20), BlockHeight(20)),
     });
 
     let mut auto_prover = new_buffering_auto_prover(api_client.clone(), 0, 20).await?;
@@ -1517,6 +1520,7 @@ async fn test_auto_prover_catchup_mixed_pending_and_failures() -> Result<()> {
                     tx_context: data.2.clone(),
                     blobs_hash: BlobsHashes::default(),
                     possible_proofs: BTreeMap::new(),
+                    settleable_contracts: std::collections::HashSet::new(),
                 }),
             )
         };

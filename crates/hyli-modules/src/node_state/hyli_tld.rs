@@ -3,6 +3,7 @@ use crate::node_state::{
     ModifiedContractData, ModifiedContractFields, NodeStateProcessing,
 };
 use anyhow::{bail, Result};
+use borsh::BorshDeserialize;
 use sdk::*;
 use std::collections::{BTreeMap, HashMap};
 
@@ -15,18 +16,13 @@ pub fn handle_blob_for_hyli_tld(
     contract_changes: &mut BTreeMap<ContractName, ModifiedContractData>,
     current_blob: &Blob,
 ) -> Result<()> {
-    // TODO: check the identity of the caller here.
-
-    if let Ok(reg) = borsh::from_slice::<RegisterContractAction>(&current_blob.data.0) {
+    if let Ok(reg) = RegisterContractAction::try_from_slice(&current_blob.data.0) {
         handle_register_blob(contracts, contract_changes, &reg)?;
-    } else if let Ok(del) = borsh::from_slice::<DeleteContractAction>(&current_blob.data.0) {
+    } else if let Ok(del) = DeleteContractAction::try_from_slice(&current_blob.data.0) {
         handle_delete_blob(contracts, contract_changes, &del)?;
-    } else if let Ok(updt) =
-        borsh::from_slice::<UpdateContractProgramIdAction>(&current_blob.data.0)
-    {
+    } else if let Ok(updt) = UpdateContractProgramIdAction::try_from_slice(&current_blob.data.0) {
         handle_update_program_id_blob(contracts, contract_changes, &updt)?;
-    } else if let Ok(updt) =
-        borsh::from_slice::<UpdateContractTimeoutWindowAction>(&current_blob.data.0)
+    } else if let Ok(updt) = UpdateContractTimeoutWindowAction::try_from_slice(&current_blob.data.0)
     {
         handle_update_timeout_window_blob(contracts, contract_changes, &updt)?;
     } else {
@@ -82,12 +78,16 @@ fn handle_register_blob(
 
     contract_changes
         .entry(reg.contract_name.clone())
-        .and_modify(|c| {
-            c.0 = contract_status.clone();
-            c.1 = ModifiedContractFields::all();
-            c.2.extend(side_effects.clone());
+        .and_modify(|mcd| {
+            mcd.contract_status = contract_status.clone();
+            mcd.modified_fields = ModifiedContractFields::all();
+            mcd.side_effects.extend(side_effects.clone());
         })
-        .or_insert_with(|| (contract_status, ModifiedContractFields::all(), side_effects));
+        .or_insert_with(|| ModifiedContractData {
+            contract_status,
+            modified_fields: ModifiedContractFields::all(),
+            side_effects,
+        });
     Ok(())
 }
 
@@ -107,16 +107,14 @@ fn handle_delete_blob(
     {
         contract_changes
             .entry(delete.contract_name.clone())
-            .and_modify(|c| {
-                c.0 = ContractStatus::WaitingDeletion;
-                c.1 = ModifiedContractFields::all();
+            .and_modify(|mcd| {
+                mcd.contract_status = ContractStatus::WaitingDeletion;
+                mcd.modified_fields = ModifiedContractFields::all();
             })
-            .or_insert_with(|| {
-                (
-                    ContractStatus::WaitingDeletion,
-                    ModifiedContractFields::all(),
-                    vec![],
-                )
+            .or_insert_with(|| ModifiedContractData {
+                contract_status: ContractStatus::WaitingDeletion,
+                modified_fields: ModifiedContractFields::all(),
+                side_effects: vec![],
             });
         Ok(())
     } else {
@@ -140,25 +138,23 @@ fn handle_update_program_id_blob(
 
     contract_changes
         .entry(update.contract_name.clone())
-        .and_modify(|c| {
-            if let ContractStatus::Updated(ref mut contract) = c.0 {
+        .and_modify(|mcd| {
+            if let ContractStatus::Updated(ref mut contract) = mcd.contract_status {
                 contract.program_id = update.program_id.clone();
             }
-            c.1.program_id = true;
-            c.2.push(SideEffect::UpdateProgramId);
+            mcd.modified_fields.program_id = true;
+            mcd.side_effects.push(SideEffect::UpdateProgramId);
         })
-        .or_insert_with(|| {
-            (
-                ContractStatus::Updated(Contract {
-                    program_id: update.program_id.clone(),
-                    ..contract
-                }),
-                ModifiedContractFields {
-                    program_id: true,
-                    ..ModifiedContractFields::default()
-                },
-                vec![SideEffect::UpdateProgramId],
-            )
+        .or_insert_with(|| ModifiedContractData {
+            contract_status: ContractStatus::Updated(Contract {
+                program_id: update.program_id.clone(),
+                ..contract
+            }),
+            modified_fields: ModifiedContractFields {
+                program_id: true,
+                ..ModifiedContractFields::default()
+            },
+            side_effects: vec![SideEffect::UpdateProgramId],
         });
     Ok(())
 }
@@ -180,25 +176,23 @@ fn handle_update_timeout_window_blob(
     let new_update = SideEffect::UpdateTimeoutWindow;
     contract_changes
         .entry(update.contract_name.clone())
-        .and_modify(|c| {
-            if let ContractStatus::Updated(ref mut contract) = c.0 {
+        .and_modify(|mcd| {
+            if let ContractStatus::Updated(ref mut contract) = mcd.contract_status {
                 contract.timeout_window = update.timeout_window.clone();
             }
-            c.1.timeout_window = true;
-            c.2.push(new_update.clone());
+            mcd.modified_fields.timeout_window = true;
+            mcd.side_effects.push(new_update.clone());
         })
-        .or_insert_with(|| {
-            (
-                ContractStatus::Updated(Contract {
-                    timeout_window: update.timeout_window.clone(),
-                    ..contract
-                }),
-                ModifiedContractFields {
-                    timeout_window: true,
-                    ..ModifiedContractFields::default()
-                },
-                vec![new_update],
-            )
+        .or_insert_with(|| ModifiedContractData {
+            contract_status: ContractStatus::Updated(Contract {
+                timeout_window: update.timeout_window.clone(),
+                ..contract
+            }),
+            modified_fields: ModifiedContractFields {
+                timeout_window: true,
+                ..ModifiedContractFields::default()
+            },
+            side_effects: vec![new_update],
         });
     Ok(())
 }
@@ -216,9 +210,9 @@ pub fn validate_hyli_contract_blobs(
     for blob in tx.blobs.iter() {
         if blob.contract_name.0 == "hyli" {
             // Check identity authorization for privileged actions
-            if borsh::from_slice::<DeleteContractAction>(&blob.data.0).is_ok()
-                || borsh::from_slice::<UpdateContractProgramIdAction>(&blob.data.0).is_ok()
-                || borsh::from_slice::<UpdateContractTimeoutWindowAction>(&blob.data.0).is_ok()
+            if DeleteContractAction::try_from_slice(&blob.data.0).is_ok()
+                || UpdateContractProgramIdAction::try_from_slice(&blob.data.0).is_ok()
+                || UpdateContractTimeoutWindowAction::try_from_slice(&blob.data.0).is_ok()
             {
                 if tx.identity.0 != HYLI_TLD_ID {
                     return Err(format!(
@@ -227,7 +221,7 @@ pub fn validate_hyli_contract_blobs(
                     ));
                 }
             } else if let Ok(registration_blob) =
-                borsh::from_slice::<RegisterContractAction>(&blob.data.0)
+                RegisterContractAction::try_from_slice(&blob.data.0)
             {
                 if contracts.contains_key(&registration_blob.contract_name) {
                     return Err(format!(
