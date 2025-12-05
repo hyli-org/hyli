@@ -1,4 +1,5 @@
 pub mod da_codec;
+pub mod deterministic_rng;
 pub mod logger;
 pub mod native_verifier_handler;
 pub mod profiling;
