@@ -159,12 +159,11 @@ pub async fn send_blob_transaction(
     }
     handle_send(state, TransactionData::Blob(payload))
         .await
-        .map(|response| {
+        .inspect(|_| {
             info!(
                 tx_hash = %tx_hash.0,
                 "blob transaction accepted and forwarded to bus"
             );
-            response
         })
 }
 
