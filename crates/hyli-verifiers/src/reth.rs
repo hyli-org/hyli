@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use alloy_consensus::{Header};
+use alloy_consensus::Header;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_genesis::{ChainConfig, Genesis};
 use alloy_primitives::{keccak256, B256};
@@ -415,7 +415,7 @@ fn derive_program_pubkey(contract_name: &ContractName) -> ProgramId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::{SignableTransaction, TxEip1559, TxEnvelope, Header as AlloyHeader};
+    use alloy_consensus::{Header as AlloyHeader, SignableTransaction, TxEip1559, TxEnvelope};
     use alloy_primitives::{Address, Bytes, ChainId, FixedBytes, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
@@ -431,7 +431,10 @@ mod tests {
         let name = ContractName("test/contract".to_string());
         let first = derive_program_pubkey(&name);
         let second = derive_program_pubkey(&name);
-        assert_eq!(first, second, "program id derivation should be deterministic");
+        assert_eq!(
+            first, second,
+            "program id derivation should be deterministic"
+        );
         assert_eq!(
             first.0.len(),
             65,
@@ -540,7 +543,10 @@ mod tests {
 
         let block = EthBlock {
             header,
-            body: BlockBody { transactions: vec![tx_signed.clone()], ..Default::default() },
+            body: BlockBody {
+                transactions: vec![tx_signed.clone()],
+                ..Default::default()
+            },
         };
 
         // Stateless input placeholder: empty witness is OK for this check path.
@@ -570,7 +576,10 @@ mod tests {
             data: BlobData(Vec::new()),
         };
         let bad_blobs: IndexedBlobs = vec![program_blob, bad_caller_blob].into();
-        let bad_calldata = Calldata { blobs: bad_blobs, ..calldata };
+        let bad_calldata = Calldata {
+            blobs: bad_blobs,
+            ..calldata
+        };
         let err = validate_blob_matches_block(&bad_calldata, &stateless_input, &program_id)
             .expect_err("validation should fail when caller-derived program id mismatches");
         assert!(err
