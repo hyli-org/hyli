@@ -2,6 +2,7 @@ use crate::{
     Blob, BlobData, BlobIndex, ContractAction, ContractName, Identity, ProgramId, Verifier,
 };
 
+pub const RETH: &str = "reth";
 pub const CAIRO_M: &str = "cairo-m";
 pub const RISC0_3: &str = "risc0-3";
 pub const NOIR: &str = "noir";
