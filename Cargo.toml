@@ -297,7 +297,7 @@ risc0-zkvm = { workspace = true, default-features = false, features = [
 signal-child = "1.0.6"
 
 [features]
-default = ["sp1", "reth"]
+default = ["risc0"]
 
 turmoil = ["hyli-net/turmoil", "client-sdk/turmoil"]
 
