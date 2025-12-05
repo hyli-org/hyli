@@ -34,6 +34,8 @@ tracing-subscriber = { workspace = true, features = [
 paste = { workspace = true }
 hex = { workspace = true }
 fjall = { workspace = true }
+chrono = { workspace = true }
+sqlx = { workspace = true }
 
 # GCS
 google-cloud-storage = { workspace = true }
