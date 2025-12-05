@@ -1,20 +1,21 @@
 use std::sync::Arc;
 
-use alloy_consensus::{Header, Transaction as _};
+use alloy_consensus::{Header};
 use alloy_eips::eip2718::Encodable2718;
 use alloy_genesis::{ChainConfig, Genesis};
-use alloy_primitives::{Address, B256};
+use alloy_primitives::{keccak256, B256};
 use alloy_rlp::decode_exact;
 use anyhow::{anyhow, bail, Context, Error};
 use borsh::de::BorshDeserialize;
-use hyli_model::{Calldata, HyliOutput, ProgramId, ProofData, StateCommitment, StructuredBlobData};
+use hyli_model::{
+    Blob, Calldata, ContractName, HyliOutput, ProgramId, ProofData, StateCommitment,
+    StructuredBlobData,
+};
+use k256::ecdsa::SigningKey;
 use reth_ethereum::{chainspec::ChainSpec, evm::EthEvmConfig};
 use reth_ethereum_primitives::Block;
 use reth_primitives_traits::{Block as BlockTrait, SignerRecoverable};
-use reth_stateless::{
-    trie::StatelessSparseTrie, validation::stateless_validation, StatelessInput,
-    UncompressedPublicKey,
-};
+use reth_stateless::{validation::stateless_validation, StatelessInput, UncompressedPublicKey};
 use serde_json::{self, Map, Value};
 
 pub fn verify(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutput>, Error> {
@@ -61,7 +62,7 @@ pub fn verify(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutpu
         "Stateless validation passed"
     );
 
-    validate_blob_matches_block(&calldata, &stateless_input, initial_state_root)
+    validate_blob_matches_block(&calldata, &stateless_input, program_id)
         .context("blob transaction does not match block contents")?;
     tracing::debug!(
         target: "hyli::verifiers::reth",
@@ -280,7 +281,7 @@ fn recover_public_keys(block: &Block) -> Result<Vec<UncompressedPublicKey>, Erro
 fn validate_blob_matches_block(
     calldata: &Calldata,
     stateless_input: &StatelessInput,
-    parent_state_root: B256,
+    program_id: &ProgramId,
 ) -> Result<(), Error> {
     let block = &stateless_input.block;
     if calldata.tx_blob_count == 0 {
@@ -319,7 +320,7 @@ fn validate_blob_matches_block(
             );
             anyhow!("block missing transaction matching blob payload")
         })?;
-    let tx_raw = tx.encoded_2718();
+    let _tx_raw = tx.encoded_2718();
 
     let block_tx_hash = format!("0x{}", hex::encode(tx.tx_hash()));
     tracing::debug!(
@@ -330,71 +331,28 @@ fn validate_blob_matches_block(
         "Block transaction hash compared against proof payload"
     );
 
-    let signer = tx
+    let signer_public_key = tx
+        .signature()
+        .recover_from_prehash(&tx.signature_hash())
+        .map_err(|err| anyhow!("failed to recover signer public key: {err}"))?;
+    let signer_public_key = signer_public_key.to_encoded_point(false);
+    let signer_public_key = signer_public_key.as_bytes();
+
+    let _signer = tx
         .recover_signer()
         .map_err(|err| anyhow!("failed to recover signer address: {err}"))?;
-    let expected_identity = format!(
-        "0x{}@{}",
-        hex::encode(signer.as_slice()),
-        blob.contract_name.0
-    );
-    // if calldata.identity.0 != expected_identity {
-    // tracing::warn!(
-    //         target: "hyli::verifiers::reth",
-    //         expected_identity = %expected_identity,
-    //         provided_identity = %calldata.identity.0,
-    //         tx_hash = %calldata.tx_hash.0,
-    //         "identity mismatch while validating reth blob"
-    //     );
-    //     bail!(
-    //         "identity mismatch: expected {}, got {}",
-    //         expected_identity,
-    //         calldata.identity.0
-    //     );
-    // }
 
-    let contract_address: Address = match tx.kind() {
-        alloy_primitives::TxKind::Call(address) => address,
-        alloy_primitives::TxKind::Create => {
-            bail!("transaction must target an existing contract, found contract creation")
-        }
-    };
-
-    let (trie, bytecode_map) =
-        StatelessSparseTrie::new(&stateless_input.witness, parent_state_root)
-            .context("failed to reconstruct trie from execution witness")?;
-
-    // debug line show the whole content of the trie
-    tracing::debug!(
-        target: "hyli::verifiers::reth",
-        trie_content = ?trie,
-        "Reconstructed trie content from execution witness"
-    );
-
-    let account = match trie
-        .account(contract_address)
-        .context("failed to fetch contract account from witness")?
-    {
-        Some(account) => account,
-        None => {
-            tracing::warn!(
-                target: "hyli::verifiers::reth",
-                contract = %format!("0x{}", hex::encode(contract_address.as_slice())),
-                tx_hash = %calldata.tx_hash.0,
-                "execution witness missing account data for contract; skipping bytecode check"
-            );
-            return Ok(());
-        }
-    };
-
-    if !bytecode_map.contains_key(&account.code_hash) {
-        tracing::warn!(
-            target: "hyli::verifiers::reth",
-            contract = %format!("0x{}", hex::encode(contract_address.as_slice())),
-            tx_hash = %calldata.tx_hash.0,
-            code_hash = %hex::encode(account.code_hash),
-            "execution witness missing bytecode for contract"
-        );
+    if signer_public_key == program_id.0.as_slice() {
+        let structured_payload = structured_payload
+            .ok_or_else(|| anyhow!("structured blob required when tx signer matches program id"))?;
+        let caller_index = structured_payload
+            .caller
+            .ok_or_else(|| anyhow!("caller blob required when tx signer matches program id"))?;
+        let caller_blob = calldata
+            .blobs
+            .get(&caller_index)
+            .ok_or_else(|| anyhow!("calldata missing caller blob at index {}", caller_index.0))?;
+        validate_program_signer_caller(caller_blob, program_id)?;
     }
 
     Ok(())
@@ -422,4 +380,201 @@ fn find_value_by_key<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
         _ => {}
     }
     None
+}
+
+fn validate_program_signer_caller(caller_blob: &Blob, program_id: &ProgramId) -> Result<(), Error> {
+    let derived_program_id = derive_program_pubkey(&caller_blob.contract_name);
+    if derived_program_id != *program_id {
+        bail!(
+            "program id does not match derived caller program id: expected {}, got {}",
+            hex::encode(&derived_program_id.0),
+            hex::encode(&program_id.0)
+        );
+    }
+    Ok(())
+}
+
+fn derive_program_pubkey(contract_name: &ContractName) -> ProgramId {
+    let mut seed: [u8; 32] = keccak256(contract_name.0.as_bytes()).into();
+    let signing_key = loop {
+        match SigningKey::from_slice(&seed) {
+            Ok(key) => break key,
+            Err(_) => {
+                seed = keccak256(seed).into();
+            }
+        }
+    };
+    let encoded = signing_key
+        .verifying_key()
+        .to_encoded_point(false)
+        .as_bytes()
+        .to_vec();
+    ProgramId(encoded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::{SignableTransaction, TxEip1559, TxEnvelope, Header as AlloyHeader};
+    use alloy_primitives::{Address, Bytes, ChainId, FixedBytes, TxKind, U256};
+    use alloy_signer::SignerSync;
+    use alloy_signer_local::PrivateKeySigner;
+    use borsh::to_vec;
+    use hyli_model::{
+        Blob, BlobData, BlobIndex, Calldata, ContractName, Identity, IndexedBlobs, TxHash,
+    };
+    use reth_ethereum_primitives::{Block as EthBlock, BlockBody, TransactionSigned};
+    use reth_stateless::{ExecutionWitness, StatelessInput};
+
+    #[test]
+    fn derive_program_pubkey_is_deterministic_and_uncompressed() {
+        let name = ContractName("test/contract".to_string());
+        let first = derive_program_pubkey(&name);
+        let second = derive_program_pubkey(&name);
+        assert_eq!(first, second, "program id derivation should be deterministic");
+        assert_eq!(
+            first.0.len(),
+            65,
+            "expected uncompressed secp256k1 public key (65 bytes)"
+        );
+    }
+
+    #[test]
+    fn validate_program_signer_caller_accepts_matching_program_id() {
+        let caller_blob = Blob {
+            contract_name: ContractName("caller-contract".to_string()),
+            data: BlobData(Vec::new()),
+        };
+        let program_id = derive_program_pubkey(&caller_blob.contract_name);
+        validate_program_signer_caller(&caller_blob, &program_id)
+            .expect("matching program id should succeed");
+    }
+
+    #[test]
+    fn validate_program_signer_caller_rejects_mismatching_program_id() {
+        let caller_blob = Blob {
+            contract_name: ContractName("caller-contract".to_string()),
+            data: BlobData(Vec::new()),
+        };
+        let correct_program_id = derive_program_pubkey(&caller_blob.contract_name);
+        let wrong_program_id = derive_program_pubkey(&ContractName("other".to_string()));
+        assert_ne!(correct_program_id, wrong_program_id);
+        let err = validate_program_signer_caller(&caller_blob, &wrong_program_id)
+            .expect_err("mismatched program id should fail");
+        assert!(
+            err.to_string()
+                .contains("program id does not match derived caller program id"),
+            "unexpected error message: {err:?}"
+        );
+    }
+
+    #[test]
+    fn verify_enforces_caller_when_program_signs() {
+        // Set up a caller blob and derive the program id from it.
+        let caller_contract = ContractName("caller-contract".to_string());
+        let program_id = derive_program_pubkey(&caller_contract);
+
+        // Craft a tx signed with the program_id-derived key.
+        let signing_key =
+            SigningKey::from_slice(keccak256(caller_contract.0.as_bytes()).as_slice()).unwrap();
+        let signer = PrivateKeySigner::from(signing_key);
+        let tx = TxEip1559 {
+            chain_id: ChainId::from(1u64),
+            nonce: 0,
+            max_fee_per_gas: 1u128.into(),
+            max_priority_fee_per_gas: 1u128.into(),
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::ZERO),
+            value: U256::ZERO,
+            input: Bytes::new(),
+            access_list: Default::default(),
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let envelope: TxEnvelope = tx.into_signed(signature).into();
+        let tx_bytes = envelope.encoded_2718();
+        let tx_signed: TransactionSigned = envelope.clone().try_into().unwrap();
+
+        // Build a structured blob for the program signer (index 0) that points to caller index 1.
+        let structured = StructuredBlobData {
+            caller: Some(BlobIndex(1)),
+            callees: None,
+            parameters: tx_bytes.clone(),
+        };
+        let program_blob = Blob {
+            contract_name: ContractName("program-contract".to_string()),
+            data: BlobData(to_vec(&structured).unwrap()),
+        };
+
+        // Caller blob that determines the program id.
+        let caller_blob = Blob {
+            contract_name: caller_contract.clone(),
+            data: BlobData(Vec::new()),
+        };
+
+        let blobs: IndexedBlobs = vec![program_blob.clone(), caller_blob.clone()].into();
+
+        // Minimal block with the signed tx.
+        let header = AlloyHeader {
+            parent_hash: B256::ZERO,
+            ommers_hash: B256::ZERO,
+            beneficiary: Address::ZERO,
+            state_root: B256::ZERO,
+            transactions_root: B256::ZERO,
+            receipts_root: B256::ZERO,
+            withdrawals_root: None,
+            logs_bloom: Default::default(),
+            difficulty: U256::ZERO,
+            number: 0,
+            gas_limit: 30_000_000,
+            gas_used: 0,
+            timestamp: 0,
+            extra_data: Default::default(),
+            mix_hash: B256::ZERO,
+            nonce: FixedBytes::ZERO,
+            base_fee_per_gas: Some(0),
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            parent_beacon_block_root: None,
+            requests_hash: None,
+        };
+
+        let block = EthBlock {
+            header,
+            body: BlockBody { transactions: vec![tx_signed.clone()], ..Default::default() },
+        };
+
+        // Stateless input placeholder: empty witness is OK for this check path.
+        let stateless_input = StatelessInput {
+            block: block.clone(),
+            witness: ExecutionWitness::default(),
+        };
+
+        // Calldata referencing the program blob (index 0) with correct blob data.
+        let calldata = Calldata {
+            tx_hash: TxHash(format!("0x{}", hex::encode(tx_signed.tx_hash()))),
+            identity: Identity("id".to_string()),
+            blobs: blobs.clone(),
+            tx_blob_count: blobs.len(),
+            index: BlobIndex(0),
+            tx_ctx: None,
+            private_input: Vec::new(),
+        };
+
+        // Should succeed because caller blob derives the same program id as the signer.
+        validate_blob_matches_block(&calldata, &stateless_input, &program_id)
+            .expect("validation should accept matching caller/program_id");
+
+        // Now tamper the caller contract name so derivation mismatches.
+        let bad_caller_blob = Blob {
+            contract_name: ContractName("different".to_string()),
+            data: BlobData(Vec::new()),
+        };
+        let bad_blobs: IndexedBlobs = vec![program_blob, bad_caller_blob].into();
+        let bad_calldata = Calldata { blobs: bad_blobs, ..calldata };
+        let err = validate_blob_matches_block(&bad_calldata, &stateless_input, &program_id)
+            .expect_err("validation should fail when caller-derived program id mismatches");
+        assert!(err
+            .to_string()
+            .contains("program id does not match derived caller program id"));
+    }
 }

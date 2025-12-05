@@ -62,6 +62,13 @@ hyli-contracts = { version = "0.14.0", default-features = false, path = "crates/
 hyli-modules = { version = "0.14.0", default-features = false, path = "crates/hyli-modules", package = "hyli-modules" }
 
 # Common external dependencies
+alloy-consensus = { version = "1.1.0", default-features = false }
+alloy-eips = { version = "1.1.0", default-features = false }
+alloy-genesis = { version = "1.1.0", default-features = false }
+alloy-primitives = { version = "1.4.1", default-features = false }
+alloy-rlp = { version = "0.3.12", default-features = false }
+alloy-serde = { version = "1.1.0", default-features = false }
+alloy-trie = { version = "0.9.0", default-features = false }
 alloc-metrics = { version = "0.1.1" }
 anyhow = { version = "1.0.98" }
 anymap = { version = "0.12.1", default-features = false }
@@ -75,6 +82,8 @@ borsh = { version = "1.5.6" }
 boundless-market = { version = "1.0.0", default-features = false }
 bytemuck = { version = "1.23.1", default-features = false }
 bytes = { version = "1.10.0", default-features = false }
+alloy-signer = { version = "1.0.41", default-features = false }
+alloy-signer-local = { version = "1.0.41", default-features = false, features = ["mnemonic"] }
 chrono = { version = "0.4", default-features = false }
 clap = { version = "4.5.48", default-features = false, features = ["derive"] }
 config = { version = "0.15.13", default-features = false }
@@ -91,6 +100,7 @@ hyper = { version = "1.6.0", default-features = false }
 hyper-util = { version = "0.1.18", default-features = false }
 indexmap = { version = "2.11.0", default-features = false }
 keyring = { version = "3", default-features = false }
+k256 = { version = "0.13", default-features = false, features = ["ecdsa", "arithmetic"] }
 mockall = { version = "0.13.0", default-features = false }
 once_cell = { version = "1.19.0", default-features = false }
 opentelemetry = { version = "0.28.0" }
@@ -140,6 +150,12 @@ utoipa-axum = { version = "0.2.0" }
 utoipa-swagger-ui = { version = "9.0.2" }
 uuid = { version = "1.18.0", default-features = false }
 whoami = { version = "1.6.1", default-features = false }
+
+# Reth dependencies
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", rev = "e969262c7ec48f073b8ea7920a75161e7130a98e", default-features = false }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "e969262c7ec48f073b8ea7920a75161e7130a98e", default-features = false }
+reth-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "e969262c7ec48f073b8ea7920a75161e7130a98e", default-features = false }
+reth-stateless = { git = "https://github.com/paradigmxyz/reth", rev = "e969262c7ec48f073b8ea7920a75161e7130a98e", default-features = false }
 
 [package]
 name = "hyli"

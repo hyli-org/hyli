@@ -18,6 +18,8 @@ tracing = { workspace = true }
 hex = { workspace = true }
 rand = { version = "0.9" }
 once_cell = { workspace = true, optional = true }
+alloy-signer = { workspace = true, optional = true }
+alloy-signer-local = { workspace = true, optional = true }
 
 cairo-m-prover = { git = "https://github.com/kkrt-labs/cairo-m", optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
@@ -58,6 +60,8 @@ reth = [
   "dep:alloy-eips",
   "dep:alloy-primitives",
   "dep:alloy-rlp",
+  "dep:alloy-signer",
+  "dep:alloy-signer-local",
   "dep:serde",
   "dep:serde_json",
   "dep:bincode",
