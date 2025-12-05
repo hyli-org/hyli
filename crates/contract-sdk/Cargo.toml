@@ -22,7 +22,7 @@ sha2 = { workspace = true }                                  # precompile patche
 borsh = { workspace = true }
 tracing = { workspace = true, optional = true }
 
-sparse-merkle-tree = { workspace = true, optional = true }
+sparse-merkle-tree = { workspace = true, optional = true, features = ["trie"] }
 
 risc0-zkvm = { workspace = true, optional = true }
 sp1-zkvm = { workspace = true, optional = true, features = ["lib"] }
