@@ -39,6 +39,7 @@ use hyli_modules::{
         module::{NodeStateCtx, NodeStateModule},
         NodeStateStore,
     },
+    utils::db::use_fresh_db,
 };
 use hyllar::Hyllar;
 use prometheus::Registry;
@@ -199,59 +200,6 @@ pub async fn main_process(config: conf::Conf, crypto: Option<SharedBlstCrypto>) 
     Ok(())
 }
 
-async fn use_fresh_db(config: &mut conf::Conf) -> Result<()> {
-    if (config.run_indexer || config.run_explorer) && config.database_url.contains("{db}") {
-        // Check for pre-existing DB name
-        let db_file_path = config.data_directory.join("database_name.txt");
-        if let Ok(name) = std::fs::read_to_string(&db_file_path) {
-            config.database_url = config.database_url.replace("{db}", name.trim());
-            tracing::info!(
-                "Reusing existing database '{}' for the indexer and explorer.",
-                name.trim()
-            );
-            return Ok(());
-        }
-
-        // Generate a probably unique db name based on timestamp
-        let timestamp = chrono::Utc::now().timestamp();
-        let name = format!("hyli_{timestamp}");
-        config.database_url = config.database_url.replace("{db}", &name);
-
-        #[allow(clippy::unwrap_used, reason = "definitely should never fail")]
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(20)
-            .acquire_timeout(std::time::Duration::from_secs(1))
-            .connect(config.database_url.rsplit_once('/').unwrap().0)
-            .await
-            .context("Failed to connect to Postgres to create a new database")?;
-
-        sqlx::query(
-            format!(
-                "CREATE DATABASE {}",
-                config
-                    .database_url
-                    .split('/')
-                    .next_back()
-                    .unwrap_or("postgres")
-            )
-            .as_str(),
-        )
-        .execute(&pool)
-        .await
-        .context("Failed to create new database")?;
-
-        // Store file with db name to persist between restarts
-        std::fs::write(&db_file_path, &name).context("writing database name to file")?;
-
-        tracing::warn!(
-            "Using new database '{}' for the indexer and explorer.",
-            name
-        );
-    }
-
-    Ok(())
-}
-
 async fn common_main(
     mut config: conf::Conf,
     crypto: Option<SharedBlstCrypto>,
@@ -260,7 +208,7 @@ async fn common_main(
 
     // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.
     // Handle this configuration rewrite before we print anything.
-    use_fresh_db(&mut config).await?;
+    use_fresh_db(&config.data_directory, &mut config.database_url).await?;
 
     let config = Arc::new(config);
 
