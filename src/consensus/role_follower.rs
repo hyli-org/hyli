@@ -10,8 +10,10 @@ use crate::{
     model::{Hashed, Signed, ValidatorPublicKey},
     p2p::P2PCommand,
     utils::conf::TimestampCheck,
-    utils::deterministic_rng::deterministic_rng,
 };
+#[cfg(not(test))]
+use crate::utils::deterministic_rng::deterministic_rng;
+
 use hyli_crypto::BlstCrypto;
 use hyli_model::{
     utils::TimestampMs, AggregateSignature, ConsensusProposal, ConsensusProposalHash,
