@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use tracing::{debug, info, trace, warn};
 
 use super::*;
+#[cfg(not(test))]
+use crate::utils::deterministic_rng::deterministic_rng;
 use crate::{
     bus::BusClientSender,
     consensus::StateTag,
@@ -11,8 +13,6 @@ use crate::{
     p2p::P2PCommand,
     utils::conf::TimestampCheck,
 };
-#[cfg(not(test))]
-use crate::utils::deterministic_rng::deterministic_rng;
 
 use hyli_crypto::BlstCrypto;
 use hyli_model::{
