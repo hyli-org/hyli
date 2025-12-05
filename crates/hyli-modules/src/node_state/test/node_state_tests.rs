@@ -551,6 +551,155 @@ async fn two_proof_for_one_blob_tx() {
 }
 
 #[test_log::test(tokio::test)]
+async fn blob_tx_sequences_immediately_when_all_contracts_allow() {
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
+
+    let c1 = ContractName::new("c1");
+    let c2 = ContractName::new("c2");
+
+    state.handle_register_contract_effect(&make_register_contract_effect(c1.clone()));
+    state.handle_register_contract_effect(&make_register_contract_effect(c2.clone()));
+
+    state.set_contract_sequencing_rule(c1.clone(), SequencingRule::Immediate);
+    state.set_contract_sequencing_rule(c2.clone(), SequencingRule::Immediate);
+
+    let blob_tx = BlobTransaction::new(
+        Identity::new("test@c1"),
+        vec![new_blob(&c1.0), new_blob(&c2.0)],
+    );
+    let tx_hash = blob_tx.hashed();
+
+    let block = state.craft_block_and_handle(1, vec![blob_tx.clone().into()]);
+    assert!(block.successful_txs.is_empty());
+    assert!(block.failed_txs.is_empty());
+    assert!(state.unsequenced_transactions.is_empty());
+    assert!(state.unsettled_transactions.get(&tx_hash).is_some());
+
+    let proof_c1 = new_proof_tx(
+        &c1,
+        &make_hyli_output(blob_tx.clone(), BlobIndex(0)),
+        &tx_hash,
+    );
+    let proof_c2 = new_proof_tx(
+        &c2,
+        &make_hyli_output(blob_tx.clone(), BlobIndex(1)),
+        &tx_hash,
+    );
+
+    let block = state.craft_block_and_handle(2, vec![proof_c1.into(), proof_c2.into()]);
+    assert_eq!(block.successful_txs, vec![tx_hash.clone()]);
+    assert!(block.failed_txs.is_empty());
+    assert!(state.unsequenced_transactions.is_empty());
+    assert!(state.unsettled_transactions.get(&tx_hash).is_none());
+}
+
+#[test_log::test(tokio::test)]
+async fn blob_tx_waits_for_required_proof_before_sequencing() {
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
+
+    let require_contract = ContractName::new("require");
+    let immediate_contract = ContractName::new("immediate");
+
+    state.handle_register_contract_effect(&make_register_contract_effect(require_contract.clone()));
+    state.handle_register_contract_effect(&make_register_contract_effect(
+        immediate_contract.clone(),
+    ));
+
+    state.set_contract_sequencing_rule(require_contract.clone(), SequencingRule::RequireAllProofs);
+    state.set_contract_sequencing_rule(immediate_contract.clone(), SequencingRule::Immediate);
+
+    let blob_tx = BlobTransaction::new(
+        Identity::new("test@require"),
+        vec![
+            new_blob(&require_contract.0),
+            new_blob(&immediate_contract.0),
+        ],
+    );
+    let tx_hash = blob_tx.hashed();
+
+    let block = state.craft_block_and_handle(1, vec![blob_tx.clone().into()]);
+    assert!(block.successful_txs.is_empty());
+    assert!(block.failed_txs.is_empty());
+    assert!(state.unsettled_transactions.get(&tx_hash).is_none());
+    assert!(state.unsequenced_transactions.contains_key(&tx_hash));
+
+    // Proof for the immediate contract should not unblock sequencing.
+    let proof_immediate = new_proof_tx(
+        &immediate_contract,
+        &make_hyli_output(blob_tx.clone(), BlobIndex(1)),
+        &tx_hash,
+    );
+    let block = state.craft_block_and_handle(2, vec![proof_immediate.into()]);
+    assert!(block.successful_txs.is_empty());
+    assert!(block.failed_txs.is_empty());
+    assert!(state.unsettled_transactions.get(&tx_hash).is_none());
+    assert!(state.unsequenced_transactions.contains_key(&tx_hash));
+
+    // Required proof unlocks sequencing and settlement.
+    let proof_required = new_proof_tx(
+        &require_contract,
+        &make_hyli_output(blob_tx.clone(), BlobIndex(0)),
+        &tx_hash,
+    );
+    let block = state.craft_block_and_handle(3, vec![proof_required.into()]);
+    assert_eq!(block.successful_txs, vec![tx_hash.clone()]);
+    assert!(block.failed_txs.is_empty());
+    assert!(!state.unsequenced_transactions.contains_key(&tx_hash));
+    assert!(state.unsettled_transactions.get(&tx_hash).is_none());
+}
+
+#[test_log::test(tokio::test)]
+async fn blob_tx_waits_for_all_required_proofs_before_settling() {
+    let mut node_state = new_node_state().await;
+    let mut state = node_state.for_testing();
+
+    let c1 = ContractName::new("c1");
+    let c2 = ContractName::new("c2");
+
+    state.handle_register_contract_effect(&make_register_contract_effect(c1.clone()));
+    state.handle_register_contract_effect(&make_register_contract_effect(c2.clone()));
+
+    state.set_contract_sequencing_rule(c1.clone(), SequencingRule::RequireAllProofs);
+    state.set_contract_sequencing_rule(c2.clone(), SequencingRule::RequireAllProofs);
+
+    let blob_tx = BlobTransaction::new(
+        Identity::new("test@c1"),
+        vec![new_blob(&c1.0), new_blob(&c2.0)],
+    );
+    let tx_hash = blob_tx.hashed();
+
+    let block = state.craft_block_and_handle(1, vec![blob_tx.clone().into()]);
+    assert!(block.successful_txs.is_empty());
+    assert!(block.failed_txs.is_empty());
+    assert!(state.unsettled_transactions.get(&tx_hash).is_none());
+    assert!(state.unsequenced_transactions.contains_key(&tx_hash));
+
+    let proof_c1 = new_proof_tx(
+        &c1,
+        &make_hyli_output(blob_tx.clone(), BlobIndex(0)),
+        &tx_hash,
+    );
+    let block = state.craft_block_and_handle(2, vec![proof_c1.into()]);
+    assert!(block.successful_txs.is_empty());
+    assert!(block.failed_txs.is_empty());
+    assert!(state.unsettled_transactions.get(&tx_hash).is_none());
+    assert!(state.unsequenced_transactions.contains_key(&tx_hash));
+
+    let proof_c2 = new_proof_tx(
+        &c2,
+        &make_hyli_output(blob_tx.clone(), BlobIndex(1)),
+        &tx_hash,
+    );
+    let block = state.craft_block_and_handle(3, vec![proof_c2.into()]);
+    assert_eq!(block.successful_txs, vec![tx_hash.clone()]);
+    assert!(block.failed_txs.is_empty());
+    assert!(!state.unsequenced_transactions.contains_key(&tx_hash));
+    assert!(state.unsettled_transactions.get(&tx_hash).is_none());
+}
+
+#[test_log::test(tokio::test)]
 async fn multiple_failing_proofs() {
     let mut state = new_node_state().await;
     let c1 = ContractName::new("c1");

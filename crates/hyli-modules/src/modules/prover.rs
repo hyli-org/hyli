@@ -477,6 +477,7 @@ where
                     }
                 }
                 StatefulEvent::ContractDelete(..)
+                | StatefulEvent::WaitingSequencingTx(..)
                 | StatefulEvent::ContractRegistration(..)
                 | StatefulEvent::ContractUpdate(..) => {
                     // Ignore
@@ -528,7 +529,9 @@ where
                 StatefulEvent::SettledTx(_tx) => {
                     self.settle_tx_success(tx_id)?;
                 }
-                StatefulEvent::ContractDelete(..) | StatefulEvent::ContractRegistration(..) => {
+                StatefulEvent::ContractDelete(..)
+                | StatefulEvent::ContractRegistration(..)
+                | StatefulEvent::WaitingSequencingTx(..) => {
                     // Ignore
                 }
                 StatefulEvent::ContractUpdate(contract_name, contract) => {
