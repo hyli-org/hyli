@@ -160,7 +160,7 @@ pub async fn send_blob_transaction(
     handle_send(state, TransactionData::Blob(payload))
         .await
         .inspect(|_| {
-            info!(
+            debug!(
                 tx_hash = %tx_hash.0,
                 "blob transaction accepted and forwarded to bus"
             );
