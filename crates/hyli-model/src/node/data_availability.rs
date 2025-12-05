@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     sync::Arc,
 };
 
@@ -33,6 +33,44 @@ pub struct Contract {
     pub state: StateCommitment,
     pub verifier: Verifier,
     pub timeout_window: TimeoutWindow,
+    // pub sequencing_rule: SequencingRule,
+}
+
+/// Sequencing rule for a contract
+#[derive(
+    Default,
+    ToSchema,
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    BorshSerialize,
+    BorshDeserialize,
+)]
+pub enum SequencingRule {
+    /// The transaction must wait for all proofs before being sequenced
+    RequireAllProofs,
+    /// The transaction can be sequenced immediately
+    #[default]
+    Immediate,
+    /// Custom rule: TBD
+    Custom(String),
+}
+
+/// Transaction pending sequencing with received proofs
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+pub struct UnsequencedTransaction {
+    pub tx: BlobTransaction,
+    pub tx_id: TxId,
+    pub tx_context: Arc<TxContext>,
+    /// Blobs that have received their required proofs
+    pub blobs_with_proofs: BTreeSet<BlobIndex>,
+    /// Proofs received per blob
+    pub received_proofs: BTreeMap<BlobIndex, Vec<(ProgramId, Verifier, TxId, HyliOutput)>>,
+    /// Creation timestamp
+    pub created_at: BlockHeight,
 }
 
 #[derive(
@@ -174,6 +212,7 @@ pub struct StatefulEvents {
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
 pub enum StatefulEvent {
     SequencedTx(BlobTransaction, Arc<TxContext>),
+    WaitingSequencingTx(BlobTransaction, Arc<TxContext>),
     SettledTx(UnsettledBlobTransaction),
     FailedTx(UnsettledBlobTransaction),
     TimedOutTx(UnsettledBlobTransaction),

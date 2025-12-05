@@ -346,6 +346,9 @@ impl NodeStateCallback for IndexerHandlerStore {
                 // Return early, we want to skip events or it will violate the foreign key
                 return;
             }
+            TxEvent::WaitingSequencingBlobTransaction(_, _, _, _, _) => {
+                // TODO
+            }
             TxEvent::SequencedBlobTransaction(tx_id, lane_id, index, blob_tx, _tx_context)
             | TxEvent::RejectedBlobTransaction(tx_id, lane_id, index, blob_tx, _tx_context) => {
                 self.txs.push_front(TxStore {
