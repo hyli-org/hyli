@@ -23,6 +23,7 @@ use super::{
     MempoolNetMessage,
 };
 
+#[derive(Clone)]
 pub struct SyncRequest {
     pub from: Option<DataProposalHash>,
     pub to: DataProposalHash,
@@ -224,5 +225,160 @@ impl MempoolSync {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        mempool::storage::Storage,
+        model::{DataProposal, Transaction},
+    };
+    use anyhow::Result;
+    use hyli_crypto::BlstCrypto;
+    use std::{collections::BTreeMap, sync::Arc};
+    use tokio::time::{timeout, Duration};
+
+    struct SyncTestHarness {
+        mempool_sync: MempoolSync,
+        validator: ValidatorPublicKey,
+        dp_hash: DataProposalHash,
+        data_proposal: DataProposal,
+        receiver: tokio::sync::broadcast::Receiver<OutboundMessage>,
+    }
+
+    fn setup_sync_harness() -> Result<SyncTestHarness> {
+        let crypto = BlstCrypto::new("mempool-sync")?;
+        let validator = BlstCrypto::new("requester")?.validator_pubkey().clone();
+        let lane_id = LaneId(crypto.validator_pubkey().clone());
+
+        let mut lanes = LanesStorage::new(tempfile::tempdir()?.path(), BTreeMap::default())?;
+
+        let data_proposal = DataProposal::new(None, vec![Transaction::default()]);
+        let (dp_hash, _) = lanes.store_data_proposal(&crypto, &lane_id, data_proposal.clone())?;
+
+        let metrics = MempoolMetrics::global("mempool-sync-test".to_string());
+        let (net_sender, receiver) = tokio::sync::broadcast::channel(8);
+        let (_sync_request_sender, sync_request_receiver) = tokio::sync::mpsc::channel(8);
+
+        let mempool_sync = MempoolSync::create(
+            lane_id,
+            lanes,
+            Arc::new(crypto),
+            metrics,
+            net_sender,
+            sync_request_receiver,
+        );
+
+        Ok(SyncTestHarness {
+            mempool_sync,
+            validator,
+            dp_hash,
+            data_proposal,
+            receiver,
+        })
+    }
+
+    fn assert_sync_reply(
+        outbound: OutboundMessage,
+        expected_validator: &ValidatorPublicKey,
+        expected_dp: &DataProposal,
+    ) {
+        match outbound {
+            OutboundMessage::SendMessage { validator_id, msg } => {
+                assert_eq!(&validator_id, expected_validator);
+                match msg {
+                    crate::p2p::network::NetMessage::MempoolMessage(msg) => {
+                        match msg.msg {
+                            MempoolNetMessage::SyncReply(_, dp) => {
+                                assert_eq!(&dp, expected_dp);
+                            }
+                            other => panic!("Expected SyncReply message, got {other:?}"),
+                        }
+                    }
+                    other => panic!("Expected mempool message, got {other:?}"),
+                }
+            }
+            other => panic!("Expected direct send, got {other:?}"),
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn throttles_repeated_requests_for_same_dp() -> Result<()> {
+        let mut harness = setup_sync_harness()?;
+        let mut receiver = harness.receiver.resubscribe();
+        let request = SyncRequest {
+            from: None,
+            to: harness.dp_hash.clone(),
+            validator: harness.validator.clone(),
+        };
+
+        harness
+            .mempool_sync
+            .unfold_sync_request_interval(request.clone())
+            .await?;
+        harness.mempool_sync.send_replies().await;
+
+        let first = receiver.recv().await?;
+        assert_sync_reply(first, &harness.validator, &harness.data_proposal);
+
+        harness
+            .mempool_sync
+            .unfold_sync_request_interval(request)
+            .await?;
+        harness.mempool_sync.send_replies().await;
+
+        assert!(timeout(Duration::from_millis(200), receiver.recv())
+            .await
+            .is_err());
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn sends_again_after_throttle_window_expires() -> Result<()> {
+        let mut harness = setup_sync_harness()?;
+        let mut receiver = harness.receiver.resubscribe();
+        let request = SyncRequest {
+            from: None,
+            to: harness.dp_hash.clone(),
+            validator: harness.validator.clone(),
+        };
+
+        harness
+            .mempool_sync
+            .unfold_sync_request_interval(request.clone())
+            .await?;
+        harness.mempool_sync.send_replies().await;
+        let _ = receiver.recv().await?;
+
+        harness
+            .mempool_sync
+            .unfold_sync_request_interval(request.clone())
+            .await?;
+        harness.mempool_sync.send_replies().await;
+        assert!(timeout(Duration::from_millis(200), receiver.recv())
+            .await
+            .is_err());
+
+        let past = TimestampMsClock::now() - Duration::from_secs(11);
+        harness
+            .mempool_sync
+            .by_pubkey_by_dp_hash
+            .entry(harness.validator.clone())
+            .or_default()
+            .insert(harness.dp_hash.clone(), past);
+
+        harness
+            .mempool_sync
+            .unfold_sync_request_interval(request)
+            .await?;
+        harness.mempool_sync.send_replies().await;
+
+        let second = receiver.recv().await?;
+        assert_sync_reply(second, &harness.validator, &harness.data_proposal);
+
+        Ok(())
     }
 }
