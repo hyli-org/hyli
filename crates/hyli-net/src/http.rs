@@ -1,6 +1,8 @@
 use std::{future::Future, time::Duration};
 
 use anyhow::{Context, Result};
+#[cfg(feature = "instrumentation")]
+use axum::http;
 use bytes::Buf;
 use http_body_util::BodyExt;
 use hyper::{body::Incoming, client::conn::http1, Method, Request, Response, Uri};
@@ -66,6 +68,15 @@ impl HttpClient {
 
         if let Some(ref key) = self.api_key {
             req_builder = req_builder.header("X-API-KEY", key);
+        }
+
+        #[cfg(feature = "instrumentation")]
+        if let Some(headers) = req_builder.headers_mut() {
+            opentelemetry::global::get_text_map_propagator(|propagator| {
+                use tracing_opentelemetry::OpenTelemetrySpanExt;
+                let context = tracing::Span::current().context();
+                propagator.inject_context(&context, &mut HeaderMapInjector(headers))
+            });
         }
 
         let request = if let Some(b) = body {
@@ -189,5 +200,27 @@ impl HttpClient {
         };
         let response = self.retry(do_request).await?;
         Self::parse_response_json(response).await
+    }
+}
+
+#[cfg(feature = "instrumentation")]
+struct HeaderMapInjector<'a>(&'a mut http::HeaderMap);
+
+#[cfg(feature = "instrumentation")]
+impl opentelemetry::propagation::Injector for HeaderMapInjector<'_> {
+    fn set(&mut self, key: &str, value: String) {
+        use axum::http::{HeaderName, HeaderValue};
+
+        match HeaderName::from_bytes(key.as_bytes()) {
+            Ok(key) => match HeaderValue::try_from(&value) {
+                Ok(value) => {
+                    self.0.insert(key, value);
+                }
+
+                Err(error) => warn!(value, error =? error, "parse metadata value"),
+            },
+
+            Err(error) => warn!(key, error =? error, "parse metadata key"),
+        }
     }
 }
