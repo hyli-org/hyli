@@ -327,44 +327,40 @@ fn validate_blob_matches_block(
         .as_ref()
         .map(|data| data.parameters.clone())
         .unwrap_or_else(|| blob.data.0.clone());
-    let (tx_index, tx) = block
-        .body()
-        .transactions()
-        .enumerate()
-        .find(|(_, tx)| tx.encoded_2718() == tx_payload)
-        .ok_or_else(|| {
-            tracing::warn!(
-                target: "hyli::verifiers::reth",
-                identity = %calldata.identity.0,
-                tx_hash = %calldata.tx_hash.0,
-                blob_len = tx_payload.len(),
-                "no block transaction matches blob payload"
-            );
-            anyhow!("block missing transaction matching blob payload")
-        })?;
-    let _tx_raw = tx.encoded_2718();
 
-    let block_tx_hash = format!("0x{}", hex::encode(tx.tx_hash()));
-    tracing::debug!(
-        target: "hyli::verifiers::reth",
-        proof_tx_hash = %calldata.tx_hash.0,
-        block_tx_hash = %block_tx_hash,
-        tx_index,
-        "Block transaction hash compared against proof payload"
-    );
+    let block_txs = block.body().transactions().collect::<Vec<_>>();
 
-    let signer_public_key = tx
+    let tx_count = block_txs.len();
+    if tx_count != 1 {
+        bail!("block must contain exactly one transaction, found {tx_count}");
+    }
+
+    let Some(eth_block_tx) = block_txs.first().filter(|t| t.encoded_2718() == tx_payload) else {
+        tracing::warn!(
+            target: "hyli::verifiers::reth",
+            identity = %calldata.identity.0,
+            tx_hash = %calldata.tx_hash.0,
+            blob_len = tx_payload.len(),
+            "no block transaction matches blob payload"
+        );
+        bail!("block missing transaction matching blob payload");
+    };
+
+    // Recovers the block tx signer public key and compares it against the caller blob's derived program id
+    let signer_public_key = eth_block_tx
         .signature()
-        .recover_from_prehash(&tx.signature_hash())
+        .recover_from_prehash(&eth_block_tx.signature_hash())
         .map_err(|err| anyhow!("failed to recover signer public key: {err}"))?;
-    let signer_public_key = signer_public_key.to_encoded_point(false);
-    let signer_public_key = signer_public_key.as_bytes();
+    let signer_program_id =
+        program_id_from_uncompressed_bytes(signer_public_key.to_encoded_point(false).as_bytes())?;
 
-    let _signer = tx
+    // program_id stores the full uncompressed pubkey (65 bytes); recover_signer returns only the
+    // 20-byte address, so we compare against the recovered public key instead.
+    let _ = eth_block_tx
         .recover_signer()
         .map_err(|err| anyhow!("failed to recover signer address: {err}"))?;
 
-    if signer_public_key == program_id.0.as_slice() {
+    if signer_program_id == *program_id {
         let structured_payload = structured_payload
             .ok_or_else(|| anyhow!("structured blob required when tx signer matches program id"))?;
         let caller_index = structured_payload
@@ -426,12 +422,20 @@ fn derive_program_pubkey(contract_name: &ContractName) -> ProgramId {
             }
         }
     };
-    let encoded = signing_key
-        .verifying_key()
-        .to_encoded_point(false)
-        .as_bytes()
-        .to_vec();
-    ProgramId(encoded)
+    program_id_from_uncompressed_bytes(
+        signing_key
+            .verifying_key()
+            .to_encoded_point(false)
+            .as_bytes(),
+    )
+    .expect("derived program public key should be uncompressed (65 bytes)")
+}
+
+fn program_id_from_uncompressed_bytes(bytes: &[u8]) -> Result<ProgramId, Error> {
+    if bytes.len() != 65 {
+        bail!("unexpected public key length: {}", bytes.len());
+    }
+    Ok(ProgramId(bytes.to_vec()))
 }
 
 #[cfg(test)]
@@ -675,6 +679,58 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("transaction matching blob payload"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn block_must_contain_single_transaction() {
+        let signer = PrivateKeySigner::random();
+        let tx_a = sample_tx(&signer);
+        let tx_b = sample_tx(&signer);
+
+        let block = EthBlock {
+            header: Default::default(),
+            body: BlockBody {
+                transactions: vec![tx_a.clone(), tx_b],
+                ..Default::default()
+            },
+        };
+
+        let stateless_input = StatelessInput {
+            block,
+            witness: ExecutionWitness::default(),
+            chain_config: ChainConfig::default(),
+        };
+
+        let program_blob = Blob {
+            contract_name: ContractName("program".into()),
+            data: BlobData(tx_a.encoded_2718()),
+        };
+        let caller_blob = Blob {
+            contract_name: ContractName("caller".into()),
+            data: BlobData(Vec::new()),
+        };
+        let blobs: IndexedBlobs = vec![program_blob, caller_blob].into();
+        let calldata = Calldata {
+            tx_hash: TxHash(format!("0x{}", hex::encode(tx_a.tx_hash()))),
+            identity: Identity("id".to_string()),
+            blobs,
+            tx_blob_count: 2,
+            index: BlobIndex(0),
+            tx_ctx: None,
+            private_input: Vec::new(),
+        };
+
+        let err = validate_blob_matches_block(
+            &calldata,
+            &stateless_input,
+            &derive_program_pubkey(&ContractName("program".into())),
+        )
+        .expect_err("blocks with multiple transactions should be rejected");
+        assert!(
+            err.to_string()
+                .contains("block must contain exactly one transaction"),
             "unexpected error: {err}"
         );
     }
