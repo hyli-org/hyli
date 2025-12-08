@@ -100,7 +100,6 @@ impl HttpClient {
         Ok(response)
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(response)))]
     async fn parse_response_text(response: Response<Incoming>) -> anyhow::Result<String> {
         let body = response.into_body();
 
@@ -112,7 +111,6 @@ impl HttpClient {
         Ok(str)
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(response)))]
     async fn parse_response_json<T: serde::de::DeserializeOwned>(
         response: Response<Incoming>,
     ) -> anyhow::Result<T> {
@@ -129,10 +127,6 @@ impl HttpClient {
         Ok(result)
     }
 
-    #[cfg_attr(
-        feature = "instrumentation",
-        tracing::instrument(skip(self, do_request))
-    )]
     async fn retry<F, Fut, R>(&self, do_request: F) -> Result<R>
     where
         F: Fn() -> Fut,
@@ -165,7 +159,6 @@ impl HttpClient {
         }
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get<R>(&self, endpoint: &str) -> anyhow::Result<R>
     where
         R: DeserializeOwned,
@@ -178,7 +171,6 @@ impl HttpClient {
         Self::parse_response_json(response).await
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_str(&self, endpoint: &str) -> anyhow::Result<String> {
         let do_request = async || {
             self.request::<String>(endpoint, Method::GET, ContentType::Text, None)
@@ -188,7 +180,6 @@ impl HttpClient {
         Self::parse_response_text(response).await
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, body)))]
     pub async fn post_json<T, R>(&self, endpoint: &str, body: &T) -> anyhow::Result<R>
     where
         R: DeserializeOwned,
