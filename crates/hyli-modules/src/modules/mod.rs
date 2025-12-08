@@ -14,7 +14,7 @@ use crate::{
 };
 use anyhow::{bail, Error, Result};
 use axum::Router;
-use rand::{distributions::Alphanumeric, Rng};
+use rand::{distr::Alphanumeric, Rng};
 use tokio::task::JoinHandle;
 use tracing::{debug, info};
 
