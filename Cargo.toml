@@ -152,10 +152,10 @@ uuid = { version = "1.18.0", default-features = false }
 whoami = { version = "1.6.1", default-features = false }
 
 # Reth dependencies
-reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", rev = "e969262c7ec48f073b8ea7920a75161e7130a98e", default-features = false }
-reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", rev = "e969262c7ec48f073b8ea7920a75161e7130a98e", default-features = false }
-reth-ethereum = { git = "https://github.com/paradigmxyz/reth", rev = "e969262c7ec48f073b8ea7920a75161e7130a98e", default-features = false }
-reth-stateless = { git = "https://github.com/paradigmxyz/reth", rev = "e969262c7ec48f073b8ea7920a75161e7130a98e", default-features = false }
+reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", default-features = false }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", default-features = false }
+reth-ethereum = { git = "https://github.com/paradigmxyz/reth", default-features = false }
+reth-stateless = { git = "https://github.com/paradigmxyz/reth", default-features = false }
 
 [package]
 name = "hyli"
@@ -297,7 +297,7 @@ risc0-zkvm = { workspace = true, default-features = false, features = [
 signal-child = "1.0.6"
 
 [features]
-default = ["risc0"]
+default = ["risc0", "reth"]
 
 turmoil = ["hyli-net/turmoil", "client-sdk/turmoil"]
 

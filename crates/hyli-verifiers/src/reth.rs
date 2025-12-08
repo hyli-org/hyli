@@ -13,7 +13,7 @@ use hyli_model::{
 };
 use k256::ecdsa::SigningKey;
 use reth_ethereum::{chainspec::ChainSpec, evm::EthEvmConfig};
-use reth_ethereum_primitives::Block;
+use reth_ethereum_primitives::{Block, EthereumReceipt};
 use reth_primitives_traits::{Block as BlockTrait, SignerRecoverable};
 use reth_stateless::{validation::stateless_validation, StatelessInput, UncompressedPublicKey};
 use serde_json::{self, Map, Value};
@@ -49,7 +49,7 @@ pub fn verify(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutpu
         "Recovered transaction public keys"
     );
 
-    stateless_validation(
+    let (block_hash, block_execution_output) = stateless_validation(
         stateless_input.block.clone(),
         public_keys,
         stateless_input.witness.clone(),
@@ -57,6 +57,7 @@ pub fn verify(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutpu
         evm_config,
     )
     .context("stateless validation failed")?;
+    ensure_successful_receipts(block_hash, &block_execution_output.result.receipts)?;
     tracing::debug!(
         target: "hyli::verifiers::reth",
         "Stateless validation passed"
@@ -273,9 +274,30 @@ fn recover_public_keys(block: &Block) -> Result<Vec<UncompressedPublicKey>, Erro
                 .as_bytes()
                 .try_into()
                 .map_err(|_| anyhow!("unexpected public key length"))?;
-            Ok(bytes)
+            Ok(UncompressedPublicKey(bytes))
         })
         .collect()
+}
+
+fn ensure_successful_receipts(block_hash: B256, receipts: &[EthereumReceipt]) -> Result<(), Error> {
+    if let Some((index, receipt)) = receipts
+        .iter()
+        .enumerate()
+        .find(|(_, receipt)| !receipt.success)
+    {
+        tracing::warn!(
+            target: "hyli::verifiers::reth",
+            block_hash = %block_hash,
+            tx_index = index,
+            cumulative_gas_used = receipt.cumulative_gas_used,
+            "stateless validation produced a failing receipt"
+        );
+        bail!(
+            "stateless validation returned failing receipt for tx #{index} in block {block_hash}: status=false cumulative_gas_used={}",
+            receipt.cumulative_gas_used
+        );
+    }
+    Ok(())
 }
 
 fn validate_blob_matches_block(
@@ -416,15 +438,33 @@ fn derive_program_pubkey(contract_name: &ContractName) -> ProgramId {
 mod tests {
     use super::*;
     use alloy_consensus::{Header as AlloyHeader, SignableTransaction, TxEip1559, TxEnvelope};
-    use alloy_primitives::{Address, Bytes, ChainId, FixedBytes, TxKind, U256};
+    use alloy_genesis::ChainConfig;
+    use alloy_primitives::{Address, Bytes, ChainId, FixedBytes, Signature, TxKind, U256};
     use alloy_signer::SignerSync;
     use alloy_signer_local::PrivateKeySigner;
     use borsh::to_vec;
     use hyli_model::{
         Blob, BlobData, BlobIndex, Calldata, ContractName, Identity, IndexedBlobs, TxHash,
     };
-    use reth_ethereum_primitives::{Block as EthBlock, BlockBody, TransactionSigned};
+    use reth_ethereum_primitives::{Block as EthBlock, BlockBody, TransactionSigned, TxType};
     use reth_stateless::{ExecutionWitness, StatelessInput};
+
+    fn sample_tx(signer: &PrivateKeySigner) -> TransactionSigned {
+        let tx = TxEip1559 {
+            chain_id: ChainId::from(1u64),
+            nonce: 0,
+            max_fee_per_gas: 1u128,
+            max_priority_fee_per_gas: 1u128,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::ZERO),
+            value: U256::ZERO,
+            input: Bytes::new(),
+            access_list: Default::default(),
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let envelope: TxEnvelope = tx.into_signed(signature).into();
+        envelope.clone().into()
+    }
 
     #[test]
     fn derive_program_pubkey_is_deterministic_and_uncompressed() {
@@ -484,8 +524,8 @@ mod tests {
         let tx = TxEip1559 {
             chain_id: ChainId::from(1u64),
             nonce: 0,
-            max_fee_per_gas: 1u128.into(),
-            max_priority_fee_per_gas: 1u128.into(),
+            max_fee_per_gas: 1u128,
+            max_priority_fee_per_gas: 1u128,
             gas_limit: 21_000,
             to: TxKind::Call(Address::ZERO),
             value: U256::ZERO,
@@ -495,7 +535,7 @@ mod tests {
         let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
         let envelope: TxEnvelope = tx.into_signed(signature).into();
         let tx_bytes = envelope.encoded_2718();
-        let tx_signed: TransactionSigned = envelope.clone().try_into().unwrap();
+        let tx_signed: TransactionSigned = envelope.clone().into();
 
         // Build a structured blob for the program signer (index 0) that points to caller index 1.
         let structured = StructuredBlobData {
@@ -553,6 +593,7 @@ mod tests {
         let stateless_input = StatelessInput {
             block: block.clone(),
             witness: ExecutionWitness::default(),
+            chain_config: ChainConfig::default(),
         };
 
         // Calldata referencing the program blob (index 0) with correct blob data.
@@ -585,5 +626,118 @@ mod tests {
         assert!(err
             .to_string()
             .contains("program id does not match derived caller program id"));
+    }
+
+    #[test]
+    fn blob_payload_must_match_transaction() {
+        let signer = PrivateKeySigner::random();
+        let tx_signed = sample_tx(&signer);
+
+        let block = EthBlock {
+            header: Default::default(),
+            body: BlockBody {
+                transactions: vec![tx_signed.clone()],
+                ..Default::default()
+            },
+        };
+
+        let stateless_input = StatelessInput {
+            block,
+            witness: ExecutionWitness::default(),
+            chain_config: ChainConfig::default(),
+        };
+
+        let wrong_blob = Blob {
+            contract_name: ContractName("program".into()),
+            data: BlobData(vec![0u8; tx_signed.encoded_2718().len()]), // incorrect payload
+        };
+        let caller_blob = Blob {
+            contract_name: ContractName("caller".into()),
+            data: BlobData(Vec::new()),
+        };
+        let blobs: IndexedBlobs = vec![wrong_blob, caller_blob].into();
+        let calldata = Calldata {
+            tx_hash: TxHash(format!("0x{}", hex::encode(tx_signed.tx_hash()))),
+            identity: Identity("id".to_string()),
+            blobs,
+            tx_blob_count: 2,
+            index: BlobIndex(0),
+            tx_ctx: None,
+            private_input: Vec::new(),
+        };
+
+        let err = validate_blob_matches_block(
+            &calldata,
+            &stateless_input,
+            &derive_program_pubkey(&ContractName("program".into())),
+        )
+        .expect_err("blob payload not matching tx should fail");
+        assert!(
+            err.to_string()
+                .contains("transaction matching blob payload"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn invalid_signature_recovery_fails() {
+        let signer = PrivateKeySigner::random();
+        let tx_signed = sample_tx(&signer);
+
+        // Use an obviously invalid signature so recovery fails.
+        let invalid_sig = Signature::new(U256::ZERO, U256::ZERO, false);
+        let transaction = tx_signed.clone().into_typed_transaction();
+        let tx_invalid = TransactionSigned::new_unchecked(transaction, invalid_sig, B256::ZERO);
+
+        let block = EthBlock {
+            header: Default::default(),
+            body: BlockBody {
+                transactions: vec![tx_invalid],
+                ..Default::default()
+            },
+        };
+
+        let err = recover_public_keys(&block)
+            .expect_err("invalid signatures should not recover to public keys");
+        assert!(
+            err.to_string().contains("failed to recover signer"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn receipts_with_failure_error() {
+        let receipts = vec![
+            EthereumReceipt {
+                tx_type: TxType::Legacy,
+                success: true,
+                cumulative_gas_used: 1,
+                logs: Vec::new(),
+            },
+            EthereumReceipt {
+                tx_type: TxType::Legacy,
+                success: false,
+                cumulative_gas_used: 2,
+                logs: Vec::new(),
+            },
+        ];
+
+        let err = ensure_successful_receipts(B256::ZERO, &receipts).unwrap_err();
+        assert!(
+            err.to_string().contains("failing receipt"),
+            "expected failing receipt error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn receipts_all_success_ok() {
+        let receipts = vec![EthereumReceipt {
+            tx_type: TxType::Legacy,
+            success: true,
+            cumulative_gas_used: 1,
+            logs: Vec::new(),
+        }];
+
+        ensure_successful_receipts(B256::ZERO, &receipts).expect("all receipts succeeded");
     }
 }

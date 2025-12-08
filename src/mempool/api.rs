@@ -91,17 +91,15 @@ pub async fn send_blob_transaction(
     State(state): State<RouterState>,
     Json(payload): Json<BlobTransaction>,
 ) -> Result<impl IntoResponse, AppError> {
-    let tx_hash = payload.hashed();
-    let blob_contracts: Vec<_> = payload
+    info!(
+        tx_hash = %payload.hashed().0,
+        identity = %payload.identity.0,
+        blob_count = payload.blobs.len(),
+       contracts = ?payload
         .blobs
         .iter()
         .map(|blob| blob.contract_name.0.clone())
-        .collect();
-    info!(
-        tx_hash = %tx_hash.0,
-        identity = %payload.identity.0,
-        blob_count = payload.blobs.len(),
-        contracts = ?blob_contracts,
+        .collect::<Vec<_>>(),
         "received blob transaction"
     );
 
@@ -120,7 +118,7 @@ pub async fn send_blob_transaction(
                 &parameters.state_commitment,
             ) {
                 warn!(
-                    tx_hash = %tx_hash.0,
+                    tx_hash = %payload.hashed().0,
                     contract = %parameters.contract_name.0,
                     verifier = %parameters.verifier.0,
                     error = ?err,
@@ -134,7 +132,7 @@ pub async fn send_blob_transaction(
     // Filter out transactions with incorrect identity
     if let Err(e) = payload.validate_identity() {
         warn!(
-            tx_hash = %tx_hash.0,
+            tx_hash = %payload.hashed().0,
             identity = %payload.identity.0,
             error = %e,
             "rejecting blob transaction due to invalid identity"
@@ -148,7 +146,7 @@ pub async fn send_blob_transaction(
     // Filter out transactions with too many blobs
     if payload.blobs.len() > 20 {
         warn!(
-            tx_hash = %tx_hash.0,
+            tx_hash = %payload.hashed().0,
             blob_count = payload.blobs.len(),
             "rejecting blob transaction due to blob count limit"
         );
@@ -159,9 +157,9 @@ pub async fn send_blob_transaction(
     }
     handle_send(state, TransactionData::Blob(payload))
         .await
-        .inspect(|_| {
+        .inspect(|payload_hash| {
             debug!(
-                tx_hash = %tx_hash.0,
+                tx_hash = %payload_hash.0,
                 "blob transaction accepted and forwarded to bus"
             );
         })
