@@ -46,7 +46,7 @@ k256 = { workspace = true, optional = true }
 test-log = { workspace = true, features = ["color", "trace"] }
 
 [features]
-default = ["reth"]
+default = []
 risc0 = ["dep:risc0-zkvm"]
 sp1 = ["dep:sp1-sdk", "dep:bincode", "dep:serde_json", "dep:once_cell"]
 cairo-m = ["dep:cairo-m-prover", "dep:stwo-prover", "dep:sonic-rs", "dep:serde"]
