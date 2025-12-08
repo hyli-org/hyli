@@ -16,6 +16,9 @@ use crate::{
     p2p::network::{HeaderSigner, OutboundMessage},
 };
 
+const REPLY_THROTTLE_WINDOW: Duration = Duration::from_secs(5);
+const REPLY_DISPATCH_INTERVAL: Duration = Duration::from_millis(400);
+
 use super::{
     metrics::MempoolMetrics,
     storage::{LaneEntryMetadata, Storage},
@@ -73,7 +76,7 @@ impl MempoolSync {
     pub async fn start(&mut self) -> anyhow::Result<()> {
         info!("Starting MempoolSync");
 
-        let mut batched_replies_interval = tokio::time::interval(Duration::from_millis(200));
+        let mut batched_replies_interval = tokio::time::interval(REPLY_DISPATCH_INTERVAL);
         loop {
             tokio::select! {
                 Some(sync_request) = self.sync_request_receiver.recv() => {
@@ -92,13 +95,11 @@ impl MempoolSync {
     /// Reply can be emitted because
     /// - it has never been emitted before
     /// - it was emitted a long time ago
-    fn should_throttle(
+fn should_throttle(
         &self,
         validator: &ValidatorPublicKey,
         data_proposal_hash: &DataProposalHash,
     ) -> bool {
-        let now = TimestampMsClock::now();
-
         let Some(data_proposal_record) = self
             .by_pubkey_by_dp_hash
             .get(validator)
@@ -107,11 +108,10 @@ impl MempoolSync {
             return false;
         };
 
-        if now - data_proposal_record.clone() > Duration::from_secs(10) {
-            return false;
-        }
-
-        true
+        should_throttle_since(
+            Some(data_proposal_record.clone()),
+            TimestampMsClock::now(),
+        )
     }
 
     /// Fetches metadata from storage for the given interval, and populate the todo hashmap with it. Called everytime we get a new SyncRequest
@@ -175,16 +175,6 @@ impl MempoolSync {
                     self.metrics
                         .mempool_sync_throttled(&self.lane_id, &validator);
                 } else {
-                    self.metrics
-                        .mempool_sync_processed(&self.lane_id, &validator);
-
-                    // Update last dissemination time
-                    let now = TimestampMsClock::now();
-                    self.by_pubkey_by_dp_hash
-                        .entry(validator.clone())
-                        .or_default()
-                        .insert(dp_hash.clone(), now);
-
                     if let Ok(Some(data_proposal)) = log_error!(
                         self.lanes.get_dp_by_hash(&self.lane_id, &dp_hash),
                         "Getting data proposal for to prepare a SyncReply"
@@ -205,6 +195,15 @@ impl MempoolSync {
                             .is_ok()
                             {
                                 debug!("Sent reply for DP Hash: {} to: {}", &dp_hash, &validator);
+                                self.metrics
+                                    .mempool_sync_processed(&self.lane_id, &validator);
+                                // Update last dissemination time only after a successful send so we
+                                // do not throttle retries that failed to go out.
+                                let now = TimestampMsClock::now();
+                                self.by_pubkey_by_dp_hash
+                                    .entry(validator.clone())
+                                    .or_default()
+                                    .insert(dp_hash.clone(), now);
                                 // In case of success, we don't put back this reply in the todo map
                                 continue;
                             }
@@ -225,6 +224,13 @@ impl MempoolSync {
                 }
             }
         }
+    }
+}
+
+fn should_throttle_since(last_sent: Option<TimestampMs>, now: TimestampMs) -> bool {
+    match last_sent {
+        Some(last) => now - last < REPLY_THROTTLE_WINDOW,
+        None => false,
     }
 }
 
@@ -305,6 +311,29 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
+    async fn throttle_helper_respects_window() {
+        let now = TimestampMs(10_000);
+        let within_window =
+            now.clone() - (REPLY_THROTTLE_WINDOW - Duration::from_millis(1));
+        assert!(
+            should_throttle_since(Some(within_window), now.clone()),
+            "should throttle when last send is within window"
+        );
+
+        let outside_window =
+            now.clone() - (REPLY_THROTTLE_WINDOW + Duration::from_millis(1));
+        assert!(
+            !should_throttle_since(Some(outside_window), now.clone()),
+            "should not throttle when outside window"
+        );
+
+        assert!(
+            !should_throttle_since(None, now),
+            "no prior send should not throttle"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
     async fn throttles_repeated_requests_for_same_dp() -> Result<()> {
         let mut harness = setup_sync_harness()?;
         let mut receiver = harness.receiver.resubscribe();
@@ -362,7 +391,8 @@ mod tests {
             .await
             .is_err());
 
-        let past = TimestampMsClock::now() - Duration::from_secs(11);
+        let past =
+            TimestampMsClock::now() - REPLY_THROTTLE_WINDOW - Duration::from_millis(1);
         harness
             .mempool_sync
             .by_pubkey_by_dp_hash
