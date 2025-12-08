@@ -1,4 +1,5 @@
 use anyhow::{Context, Ok};
+use hyli_net::clock::TimestampMsClock;
 use sqlx::Connection;
 
 /// Ensures that `database_url` points to a usable Postgres database.
@@ -24,10 +25,7 @@ pub async fn use_fresh_db(
         }
 
         // Generate a probably unique db name based on timestamp
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
+        let timestamp = TimestampMsClock::now().0;
         let name = format!("hyli_{timestamp}");
         *database_url = database_url.replace("{db}", &name);
 
