@@ -116,10 +116,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: linux-stable
-          save-if: ${{ github.ref == 'refs/heads/main' }}
       # For keyring dependencies
       - run: sudo apt install libdbus-1-dev pkg-config
       - name: Build model
