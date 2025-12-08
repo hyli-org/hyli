@@ -208,7 +208,9 @@ async fn common_main(
 
     // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.
     // Handle this configuration rewrite before we print anything.
-    use_fresh_db(&config.data_directory, &mut config.database_url).await?;
+    if config.run_explorer || config.run_indexer {
+        use_fresh_db(&config.data_directory, &mut config.database_url).await?;
+    }
 
     let config = Arc::new(config);
 
