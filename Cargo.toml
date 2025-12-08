@@ -277,6 +277,7 @@ client-sdk = { workspace = true, default-features = false, features = [
 ] }
 hyli-modules = { workspace = true, default-features = false, features = [
   "test",
+  "db",
 ] }
 
 assert_cmd = "2.0.17"
