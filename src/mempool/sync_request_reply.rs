@@ -16,7 +16,8 @@ use crate::{
     p2p::network::{HeaderSigner, OutboundMessage},
 };
 
-const REPLY_THROTTLE_WINDOW: Duration = Duration::from_secs(5);
+const REPLY_BACKOFF_INITIAL: Duration = Duration::from_secs(1);
+const REPLY_BACKOFF_MAX: Duration = Duration::from_secs(8);
 const REPLY_DISPATCH_INTERVAL: Duration = Duration::from_millis(400);
 
 use super::{
@@ -44,13 +45,19 @@ pub struct MempoolSync {
     /// Metrics handle
     metrics: MempoolMetrics,
     /// Keeping track of last time we sent a reply to the validator and the data proposal hash
-    by_pubkey_by_dp_hash: HashMap<ValidatorPublicKey, HashMap<DataProposalHash, TimestampMs>>,
+    by_pubkey_by_dp_hash: HashMap<ValidatorPublicKey, HashMap<DataProposalHash, ThrottleState>>,
     /// Map containing per data proposal, which validators are interested in a sync reply
     todo: HashMap<DataProposalHash, (LaneEntryMetadata, HashSet<ValidatorPublicKey>)>,
     /// Network message channel
     net_sender: tokio::sync::broadcast::Sender<OutboundMessage>,
     /// Chan where Mempool puts received Sync Requests to handle
     sync_request_receiver: tokio::sync::mpsc::Receiver<SyncRequest>,
+}
+
+#[derive(Clone)]
+struct ThrottleState {
+    last_sent: TimestampMs,
+    backoff: Duration,
 }
 
 impl MempoolSync {
@@ -95,7 +102,7 @@ impl MempoolSync {
     /// Reply can be emitted because
     /// - it has never been emitted before
     /// - it was emitted a long time ago
-fn should_throttle(
+    fn should_throttle(
         &self,
         validator: &ValidatorPublicKey,
         data_proposal_hash: &DataProposalHash,
@@ -109,7 +116,7 @@ fn should_throttle(
         };
 
         should_throttle_since(
-            Some(data_proposal_record.clone()),
+            data_proposal_record,
             TimestampMsClock::now(),
         )
     }
@@ -199,11 +206,7 @@ fn should_throttle(
                                     .mempool_sync_processed(&self.lane_id, &validator);
                                 // Update last dissemination time only after a successful send so we
                                 // do not throttle retries that failed to go out.
-                                let now = TimestampMsClock::now();
-                                self.by_pubkey_by_dp_hash
-                                    .entry(validator.clone())
-                                    .or_default()
-                                    .insert(dp_hash.clone(), now);
+                                self.record_success(&validator, &dp_hash);
                                 // In case of success, we don't put back this reply in the todo map
                                 continue;
                             }
@@ -215,6 +218,7 @@ fn should_throttle(
                         &dp_hash, &validator
                     );
                     self.metrics.mempool_sync_failure(&self.lane_id, &validator);
+                    self.record_failure(&validator, &dp_hash);
 
                     self.todo
                         .entry(dp_hash.clone())
@@ -225,12 +229,62 @@ fn should_throttle(
             }
         }
     }
+
+    fn record_success(
+        &mut self,
+        validator: &ValidatorPublicKey,
+        dp_hash: &DataProposalHash,
+    ) {
+        let now = TimestampMsClock::now();
+        self.by_pubkey_by_dp_hash
+            .entry(validator.clone())
+            .or_default()
+            .insert(
+                dp_hash.clone(),
+                ThrottleState {
+                    last_sent: now,
+                    backoff: REPLY_BACKOFF_INITIAL,
+                },
+            );
+    }
+
+    fn record_failure(
+        &mut self,
+        validator: &ValidatorPublicKey,
+        dp_hash: &DataProposalHash,
+    ) {
+        let now = TimestampMsClock::now();
+        let prev_backoff = self
+            .by_pubkey_by_dp_hash
+            .get(validator)
+            .and_then(|m| m.get(dp_hash))
+            .map(|s| s.backoff);
+        let backoff = next_backoff(prev_backoff);
+        self.by_pubkey_by_dp_hash
+            .entry(validator.clone())
+            .or_default()
+            .insert(
+                dp_hash.clone(),
+                ThrottleState {
+                    last_sent: now,
+                    backoff,
+                },
+            );
+    }
 }
 
-fn should_throttle_since(last_sent: Option<TimestampMs>, now: TimestampMs) -> bool {
-    match last_sent {
-        Some(last) => now - last < REPLY_THROTTLE_WINDOW,
-        None => false,
+fn should_throttle_since(state: &ThrottleState, now: TimestampMs) -> bool {
+    now - state.last_sent.clone() < state.backoff
+}
+
+fn next_backoff(prev: Option<Duration>) -> Duration {
+    match prev {
+        None => REPLY_BACKOFF_INITIAL,
+        Some(current) => {
+            let doubled_ms = current.as_millis().saturating_mul(2);
+            let capped_ms = doubled_ms.min(REPLY_BACKOFF_MAX.as_millis());
+            Duration::from_millis(capped_ms as u64)
+        }
     }
 }
 
@@ -313,24 +367,100 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn throttle_helper_respects_window() {
         let now = TimestampMs(10_000);
-        let within_window =
-            now.clone() - (REPLY_THROTTLE_WINDOW - Duration::from_millis(1));
+        let state_initial = ThrottleState {
+            last_sent: now.clone() - (REPLY_BACKOFF_INITIAL - Duration::from_millis(1)),
+            backoff: REPLY_BACKOFF_INITIAL,
+        };
         assert!(
-            should_throttle_since(Some(within_window), now.clone()),
-            "should throttle when last send is within window"
+            should_throttle_since(&state_initial, now.clone()),
+            "should throttle when last send is within initial window"
         );
 
-        let outside_window =
-            now.clone() - (REPLY_THROTTLE_WINDOW + Duration::from_millis(1));
+        let state_outside = ThrottleState {
+            last_sent: now.clone() - (REPLY_BACKOFF_INITIAL + Duration::from_millis(1)),
+            backoff: REPLY_BACKOFF_INITIAL,
+        };
         assert!(
-            !should_throttle_since(Some(outside_window), now.clone()),
-            "should not throttle when outside window"
+            !should_throttle_since(&state_outside, now.clone()),
+            "should not throttle when outside initial window"
         );
 
+        let state_custom_backoff = ThrottleState {
+            last_sent: now.clone() - Duration::from_secs(3),
+            backoff: Duration::from_secs(4),
+        };
         assert!(
-            !should_throttle_since(None, now),
-            "no prior send should not throttle"
+            should_throttle_since(&state_custom_backoff, now.clone()),
+            "should throttle when within custom backoff"
         );
+
+        let state_custom_backoff_ok = ThrottleState {
+            last_sent: now.clone() - Duration::from_secs(5),
+            backoff: Duration::from_secs(4),
+        };
+        assert!(
+            !should_throttle_since(&state_custom_backoff_ok, now),
+            "should not throttle when past custom backoff"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn exponential_backoff_doubles_and_caps() -> Result<()> {
+        let mut harness = setup_sync_harness()?;
+        let v = harness.validator.clone();
+        let dp = harness.dp_hash.clone();
+
+        harness.mempool_sync.record_failure(&v, &dp);
+        let state = harness
+            .mempool_sync
+            .by_pubkey_by_dp_hash
+            .get(&v)
+            .and_then(|m| m.get(&dp))
+            .cloned()
+            .expect("state should exist");
+        assert_eq!(state.backoff, REPLY_BACKOFF_INITIAL);
+
+        harness.mempool_sync.record_failure(&v, &dp);
+        let state = harness
+            .mempool_sync
+            .by_pubkey_by_dp_hash
+            .get(&v)
+            .and_then(|m| m.get(&dp))
+            .cloned()
+            .expect("state should exist");
+        assert_eq!(state.backoff, Duration::from_secs(2));
+
+        harness.mempool_sync.record_failure(&v, &dp);
+        let state = harness
+            .mempool_sync
+            .by_pubkey_by_dp_hash
+            .get(&v)
+            .and_then(|m| m.get(&dp))
+            .cloned()
+            .expect("state should exist");
+        assert_eq!(state.backoff, Duration::from_secs(4));
+
+        harness.mempool_sync.record_failure(&v, &dp);
+        let state = harness
+            .mempool_sync
+            .by_pubkey_by_dp_hash
+            .get(&v)
+            .and_then(|m| m.get(&dp))
+            .cloned()
+            .expect("state should exist");
+        assert_eq!(state.backoff, REPLY_BACKOFF_MAX);
+
+        harness.mempool_sync.record_success(&v, &dp);
+        let state = harness
+            .mempool_sync
+            .by_pubkey_by_dp_hash
+            .get(&v)
+            .and_then(|m| m.get(&dp))
+            .cloned()
+            .expect("state should exist");
+        assert_eq!(state.backoff, REPLY_BACKOFF_INITIAL);
+
+        Ok(())
     }
 
     #[test_log::test(tokio::test)]
@@ -392,13 +522,19 @@ mod tests {
             .is_err());
 
         let past =
-            TimestampMsClock::now() - REPLY_THROTTLE_WINDOW - Duration::from_millis(1);
+            TimestampMsClock::now() - REPLY_BACKOFF_MAX - Duration::from_millis(1);
         harness
             .mempool_sync
             .by_pubkey_by_dp_hash
             .entry(harness.validator.clone())
             .or_default()
-            .insert(harness.dp_hash.clone(), past);
+            .insert(
+                harness.dp_hash.clone(),
+                ThrottleState {
+                    last_sent: past,
+                    backoff: REPLY_BACKOFF_INITIAL,
+                },
+            );
 
         harness
             .mempool_sync
