@@ -115,10 +115,7 @@ impl MempoolSync {
             return false;
         };
 
-        should_throttle_since(
-            data_proposal_record,
-            TimestampMsClock::now(),
-        )
+        should_throttle_since(data_proposal_record, TimestampMsClock::now())
     }
 
     /// Fetches metadata from storage for the given interval, and populate the todo hashmap with it. Called everytime we get a new SyncRequest
@@ -230,11 +227,7 @@ impl MempoolSync {
         }
     }
 
-    fn record_success(
-        &mut self,
-        validator: &ValidatorPublicKey,
-        dp_hash: &DataProposalHash,
-    ) {
+    fn record_success(&mut self, validator: &ValidatorPublicKey, dp_hash: &DataProposalHash) {
         let now = TimestampMsClock::now();
         self.by_pubkey_by_dp_hash
             .entry(validator.clone())
@@ -248,11 +241,7 @@ impl MempoolSync {
             );
     }
 
-    fn record_failure(
-        &mut self,
-        validator: &ValidatorPublicKey,
-        dp_hash: &DataProposalHash,
-    ) {
+    fn record_failure(&mut self, validator: &ValidatorPublicKey, dp_hash: &DataProposalHash) {
         let now = TimestampMsClock::now();
         let prev_backoff = self
             .by_pubkey_by_dp_hash
@@ -349,14 +338,12 @@ mod tests {
             OutboundMessage::SendMessage { validator_id, msg } => {
                 assert_eq!(&validator_id, expected_validator);
                 match msg {
-                    crate::p2p::network::NetMessage::MempoolMessage(msg) => {
-                        match msg.msg {
-                            MempoolNetMessage::SyncReply(_, dp) => {
-                                assert_eq!(&dp, expected_dp);
-                            }
-                            other => panic!("Expected SyncReply message, got {other:?}"),
+                    crate::p2p::network::NetMessage::MempoolMessage(msg) => match msg.msg {
+                        MempoolNetMessage::SyncReply(_, dp) => {
+                            assert_eq!(&dp, expected_dp);
                         }
-                    }
+                        other => panic!("Expected SyncReply message, got {other:?}"),
+                    },
                     other => panic!("Expected mempool message, got {other:?}"),
                 }
             }
@@ -521,8 +508,7 @@ mod tests {
             .await
             .is_err());
 
-        let past =
-            TimestampMsClock::now() - REPLY_BACKOFF_MAX - Duration::from_millis(1);
+        let past = TimestampMsClock::now() - REPLY_BACKOFF_MAX - Duration::from_millis(1);
         harness
             .mempool_sync
             .by_pubkey_by_dp_hash
