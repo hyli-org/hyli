@@ -1,4 +1,4 @@
-use rand::{rngs::StdRng, SeedableRng};
+use rand::{rng, rngs::StdRng, SeedableRng};
 #[cfg(feature = "turmoil")]
 use std::sync::{
     atomic::{AtomicU64, Ordering},
@@ -26,5 +26,7 @@ pub fn deterministic_rng() -> StdRng {
         }
     }
 
-    StdRng::from_entropy()
+    // Fall back to OS randomness for non-deterministic runs.
+    let mut rng = rng();
+    StdRng::from_rng(&mut rng)
 }

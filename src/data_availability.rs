@@ -24,7 +24,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use core::str;
-use rand::seq::SliceRandom;
+use rand::seq::IndexedRandom;
 use std::{collections::BTreeSet, time::Duration};
 use tokio::{
     task::JoinSet,

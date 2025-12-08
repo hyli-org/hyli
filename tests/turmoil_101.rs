@@ -13,7 +13,6 @@ use hyli_model::{
 };
 use hyli_modules::log_error;
 use hyli_net::net::Sim;
-use rand::{rngs::StdRng, SeedableRng};
 
 use crate::fixtures::{test_helpers::wait_height, turmoil::TurmoilCtx};
 
@@ -41,14 +40,14 @@ macro_rules! turmoil_simple {
         #[test_log::test]
             fn [<turmoil_ $simulation _ $seed _ $test>]() -> anyhow::Result<()> {
                 tracing::info!("Starting test {} with seed {}", stringify!([<turmoil_ $simulation _ $seed _ $test>]), $seed);
-                let rng = StdRng::seed_from_u64($seed);
                 let mut sim = hyli_net::turmoil::Builder::new()
                     .simulation_duration(Duration::from_secs(120))
                     .tick_duration(Duration::from_millis(20))
                     .min_message_latency(Duration::from_millis(20))
                 .tcp_capacity(256)
                 .enable_tokio_io()
-                    .build_with_rng(Box::new(rng));
+                    .rng_seed($seed)
+                    .build();
 
                 let mut ctx = TurmoilCtx::new_multi(4, 500, $seed, &mut sim)?;
 
