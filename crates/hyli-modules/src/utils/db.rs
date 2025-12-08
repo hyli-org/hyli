@@ -1,5 +1,12 @@
 use anyhow::{Context, Ok};
+use sqlx::Connection;
 
+/// Ensures that `database_url` points to a usable Postgres database.
+///
+/// If `database_url` contains the literal placeholder `{db}`, this function will:
+/// - Check `data_directory/database_name.txt` for a persisted database name to reuse.
+/// - If no persisted name is found, generate a new unique DB name and create it, then
+///   persist that to `data_directory/database_name.txt`.
 pub async fn use_fresh_db(
     data_directory: &std::path::Path,
     database_url: &mut String,
@@ -17,17 +24,18 @@ pub async fn use_fresh_db(
         }
 
         // Generate a probably unique db name based on timestamp
-        let timestamp = chrono::Utc::now().timestamp();
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
         let name = format!("hyli_{timestamp}");
         *database_url = database_url.replace("{db}", &name);
 
         #[allow(clippy::unwrap_used, reason = "definitely should never fail")]
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(20)
-            .acquire_timeout(std::time::Duration::from_secs(1))
-            .connect(database_url.rsplit_once('/').unwrap().0)
-            .await
-            .context("Failed to connect to Postgres to create a new database")?;
+        let mut conn =
+            sqlx::postgres::PgConnection::connect(database_url.rsplit_once('/').unwrap().0)
+                .await
+                .context("Failed to connect to Postgres to create a new database")?;
 
         sqlx::query(
             format!(
@@ -36,7 +44,7 @@ pub async fn use_fresh_db(
             )
             .as_str(),
         )
-        .execute(&pool)
+        .execute(&mut conn)
         .await
         .context("Failed to create new database")?;
 

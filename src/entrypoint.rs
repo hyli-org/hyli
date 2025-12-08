@@ -80,7 +80,7 @@ impl RunPg {
             .await?;
 
         config.database_url = format!(
-            "postgres://postgres:postgres@localhost:{}/postgres",
+            "postgres://postgres:postgres@localhost:{}/{{db}}",
             pg.get_host_port_ipv4(5432).await?
         );
         config.run_indexer = true;

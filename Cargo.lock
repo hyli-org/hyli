@@ -5817,7 +5817,6 @@ dependencies = [
  "assertables",
  "axum 0.8.7",
  "borsh",
- "chrono",
  "config",
  "fjall",
  "futures",

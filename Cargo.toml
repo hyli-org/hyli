@@ -200,7 +200,7 @@ smt-token = { workspace = true, features = ["client"] }
 risc0-recursion = { workspace = true }
 hyli-verifiers = { workspace = true }
 hyli-contracts = { workspace = true }
-hyli-modules = { workspace = true }
+hyli-modules = { workspace = true, features = ["db"] }
 
 
 anyhow = { workspace = true }
