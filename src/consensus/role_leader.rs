@@ -1,5 +1,6 @@
 use anyhow::{anyhow, bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_modules::bus::BusEnvelope;
 use std::collections::HashSet;
 
 use crate::{
@@ -10,7 +11,6 @@ use crate::{
 };
 use hyli_model::{utils::TimestampMs, ConsensusProposal, ConsensusStakingAction};
 use staking::state::MIN_STAKE;
-use tokio::sync::broadcast;
 use tracing::{debug, error, trace};
 
 use super::Consensus;
@@ -32,6 +32,7 @@ pub struct LeaderState {
 }
 
 impl Consensus {
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub(super) async fn start_round(
         &mut self,
         current_timestamp: TimestampMs,
@@ -132,7 +133,7 @@ impl Consensus {
                         debug!("⏳ Delaying slot start");
                         self.bft_round_state.leader.pending_ticket = Some(ticket);
                         let command_sender = hyli_modules::utils::static_type_map::Pick::<
-                            broadcast::Sender<ConsensusCommand>,
+                            hyli_modules::bus::BusSender<ConsensusCommand>,
                         >::get(&self.bus)
                         .clone();
                         let max_delay = may_delay.unwrap_or_else(|| {
@@ -144,8 +145,9 @@ impl Consensus {
                         );
                         tokio::spawn(async move {
                             tokio::time::sleep(sleep_for).await;
-                            let _ = command_sender
-                                .send(ConsensusCommand::StartNewSlot(Some(max_delay)));
+                            let _ = command_sender.send(BusEnvelope::from_message(
+                                ConsensusCommand::StartNewSlot(Some(max_delay)),
+                            ));
                         });
                         return Ok(());
                     }

@@ -7,8 +7,7 @@ use opentelemetry::InstrumentationScope;
 use opentelemetry::KeyValue;
 use tokio::sync::Mutex;
 
-use crate::bus::BusClientSender;
-use crate::bus::BusMessage;
+use crate::bus::{BusClientSender, BusMessage, BusReceiver};
 use crate::modules::signal::shutdown_aware_timeout;
 use crate::utils::profiling::LatencyMetricSink;
 use crate::utils::static_type_map::Pick;
@@ -67,7 +66,7 @@ where
         cmd: Cmd,
     ) -> impl std::future::Future<Output = Result<Res>> + Send
     where
-        Self: Pick<tokio::sync::broadcast::Receiver<crate::modules::signal::ShutdownModule>>;
+        Self: Pick<BusReceiver<crate::modules::signal::ShutdownModule>>;
 }
 
 impl<Cmd, Res, T: BusClientSender<Query<Cmd, Res>> + Send> CmdRespClient<Cmd, Res> for T
@@ -94,7 +93,7 @@ where
     }
     async fn shutdown_aware_request<M: 'static>(&mut self, cmd: Cmd) -> Result<Res>
     where
-        Self: Pick<tokio::sync::broadcast::Receiver<crate::modules::signal::ShutdownModule>>,
+        Self: Pick<BusReceiver<crate::modules::signal::ShutdownModule>>,
     {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let query_cmd = Query(Arc::new(Mutex::new(Some(InnerQuery {
@@ -168,12 +167,12 @@ macro_rules! handle_messages {
     (
         $(processed $bind:pat = $fut:expr $(, if $cond:expr)? => $handle:block,)*
         metrics($metrics:expr) bus($bus:expr) index($index:ident) $(,)?
-        command_response<$command:ty, $response:ty> $res:pat => $handler:block
+        command_response<$command:ty, $response:ty> $res:pat $(, span($ctx:ident))? => $handler:block
         $($rest:tt)*
     ) => {
         // Create a receiver with a unique variable $index
         // Safety: this is disjoint.
-        let $index = unsafe { &mut *Pick::<tokio::sync::broadcast::Receiver<$crate::bus::command_response::Query<$command, $response>>>::splitting_get_mut(&mut $bus) };
+        let $index = unsafe { &mut *Pick::<$crate::bus::BusReceiver<$crate::bus::command_response::Query<$command, $response>>>::splitting_get_mut(&mut $bus) };
         $crate::utils::static_type_map::paste::paste! {
         let [<branch_ $index>] = [opentelemetry::KeyValue::new("branch", $crate::bus::metrics::BusMetrics::simplified_name::<$crate::bus::command_response::Query<$command, $response>>())];
         $crate::handle_messages! {
@@ -181,7 +180,11 @@ macro_rules! handle_messages {
             processed Ok(_raw_query) = #[allow(clippy::macro_metavars_in_unsafe)] $index.recv() => {
                 receive_bus_metrics::<$crate::bus::command_response::Query<$command, $response>,_>(&mut $bus);
                 let _latency = $crate::utils::profiling::LatencyTimer::new(&$metrics, &[<branch_ $index>]);
-                if let Ok(mut _value) = _raw_query.take() {
+                $(
+                    #[cfg(feature = "instrumentation")]
+                    let $ctx = __envelope.context();
+                )?
+                if let Ok(mut _value) = _raw_query.into_message().take() {
                     let $res = &mut _value.data;
                     let res: Result<$response> = $handler;
                     match res {
@@ -208,18 +211,25 @@ macro_rules! handle_messages {
     (
         $(processed $bind:pat = $fut:expr $(, if $cond:expr)? => $handle:block,)*
         metrics($metrics:expr) bus($bus:expr) index($index:ident) $(,)?
-        listen<$message:ty> $res:pat => $handler:block
+        listen<$message:ty> $res:pat $(, span($ctx:ident))? => $handler:block
         $($rest:tt)*
     ) => {
         // Safety: this is disjoint.
-        let $index = unsafe { &mut *Pick::<tokio::sync::broadcast::Receiver<$message>>::splitting_get_mut(&mut $bus) };
+        let $index = unsafe { &mut *Pick::<$crate::bus::BusReceiver<$message>>::splitting_get_mut(&mut $bus) };
         $crate::utils::static_type_map::paste::paste! {
         let [<branch_ $index>] = [opentelemetry::KeyValue::new("branch", $crate::bus::metrics::BusMetrics::simplified_name::<$message>())];
         $crate::handle_messages! {
             $(processed $bind = $fut $(, if $cond)? => $handle,)*
-            processed Ok($res) = $index.recv() => {
+            processed Ok(mut __envelope) = $index.recv() => {
                 receive_bus_metrics::<$message, _>(&mut $bus);
                 let _latency = $crate::utils::profiling::LatencyTimer::new(&$metrics, &[<branch_ $index>]);
+                $(
+                    #[cfg(feature = "instrumentation")]
+                    let $ctx = __envelope.context();
+                    #[cfg(not(feature = "instrumentation"))]
+                    let $ctx = ();
+                )?
+                let $res = __envelope.into_message();
                 $handler
             },
             metrics($metrics) bus($bus) index([<$index a>]) $($rest)*

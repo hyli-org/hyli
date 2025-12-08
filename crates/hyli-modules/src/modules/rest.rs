@@ -98,6 +98,8 @@ impl Module for RestApi {
                 .make_span_with(make_span)
                 .on_response(close_span),
         );
+        #[cfg(not(feature = "instrumentation"))]
+        let app = ctx.router;
 
         #[cfg(not(feature = "instrumentation"))]
         let app = ctx.router;

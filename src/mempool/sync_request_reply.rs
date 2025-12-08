@@ -6,7 +6,10 @@ use std::{
 use futures::StreamExt;
 use hyli_crypto::SharedBlstCrypto;
 use hyli_model::{utils::TimestampMs, DataProposalHash, LaneId, ValidatorPublicKey};
-use hyli_modules::{log_error, log_warn};
+use hyli_modules::{
+    bus::{BusEnvelope, BusSender},
+    log_error, log_warn,
+};
 use hyli_net::clock::TimestampMsClock;
 use tokio::pin;
 use tracing::{debug, info, warn};
@@ -49,7 +52,7 @@ pub struct MempoolSync {
     /// Map containing per data proposal, which validators are interested in a sync reply
     todo: HashMap<DataProposalHash, (LaneEntryMetadata, HashSet<ValidatorPublicKey>)>,
     /// Network message channel
-    net_sender: tokio::sync::broadcast::Sender<OutboundMessage>,
+    net_sender: BusSender<OutboundMessage>,
     /// Chan where Mempool puts received Sync Requests to handle
     sync_request_receiver: tokio::sync::mpsc::Receiver<SyncRequest>,
 }
@@ -66,7 +69,7 @@ impl MempoolSync {
         lanes: LanesStorage,
         crypto: SharedBlstCrypto,
         metrics: MempoolMetrics,
-        net_sender: tokio::sync::broadcast::Sender<OutboundMessage>,
+        net_sender: BusSender<OutboundMessage>,
         sync_request_receiver: tokio::sync::mpsc::Receiver<SyncRequest>,
     ) -> MempoolSync {
         MempoolSync {
@@ -192,8 +195,9 @@ impl MempoolSync {
 
                         if let Ok(signed_reply) = signed_reply {
                             if log_error!(
-                                self.net_sender
-                                    .send(OutboundMessage::send(validator.clone(), signed_reply)),
+                                self.net_sender.send(BusEnvelope::from_message(
+                                    OutboundMessage::send(validator.clone(), signed_reply)
+                                )),
                                 "Sending MempoolNetMessage::SyncReply msg on the bus"
                             )
                             .is_ok()
