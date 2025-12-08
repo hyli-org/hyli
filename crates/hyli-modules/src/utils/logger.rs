@@ -1,7 +1,9 @@
 use anyhow::Result;
 use tracing::level_filters::LevelFilter;
+use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{layer::SubscriberExt, registry::LookupSpan, EnvFilter, Layer};
 
+#[cfg(feature = "instrumentation")]
 use opentelemetry::trace::TracerProvider;
 
 // Direct logging macros
@@ -130,6 +132,7 @@ pub fn setup_tracing(log_format: &str, node_name: String) -> Result<()> {
 
 /// Setup tracing - stdout subscriber
 /// stdout defaults to INFO to INFO even if RUST_LOG is set to e.g. debug
+#[cfg_attr(not(feature = "instrumentation"), allow(unused_variables))]
 pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) -> Result<()> {
     let mut filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::INFO.into())
@@ -173,7 +176,6 @@ pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) ->
     #[cfg(feature = "instrumentation")]
     if tracing_enabled {
         use opentelemetry_sdk::propagation::TraceContextPropagator;
-        use tracing_subscriber::util::SubscriberInitExt;
 
         let endpoint =
             std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".to_string());
@@ -203,12 +205,14 @@ pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) ->
     #[cfg(not(feature = "instrumentation"))]
     match mode {
         TracingMode::Full => tracing.init(),
-        TracingMode::Json => tracing.json().init(),
+        TracingMode::Json => tracing.with(tracing_subscriber::fmt::layer().json()).init(),
         TracingMode::NodeName => tracing
-            .event_format(NodeNameFormatter {
-                node_name,
-                base_formatter: tracing_subscriber::fmt::format(),
-            })
+            .with(
+                tracing_subscriber::fmt::layer().event_format(NodeNameFormatter {
+                    node_name,
+                    base_formatter: tracing_subscriber::fmt::format(),
+                }),
+            )
             .init(),
     };
 
