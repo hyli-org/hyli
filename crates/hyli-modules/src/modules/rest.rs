@@ -92,7 +92,14 @@ impl Module for RestApi {
     type Context = RestApiRunContext;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let app = ctx.router.merge(
+        #[cfg(feature = "instrumentation")]
+        let app = ctx.router.layer(
+            TraceLayer::new_for_http()
+                .make_span_with(make_span)
+                .on_response(close_span),
+        );
+
+        let app = app.merge(
             Router::new()
                 .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ctx.openapi))
                 .route("/v1/info", get(get_info))
@@ -109,13 +116,6 @@ impl Module for RestApi {
             .layer(TraceLayer::new_for_http())
             .layer(tower_http::decompression::RequestDecompressionLayer::new())
             .layer(axum::middleware::from_fn(request_logger));
-
-        #[cfg(feature = "instrumentation")]
-        let app = app.layer(
-            TraceLayer::new_for_http()
-                .make_span_with(make_span)
-                .on_response(close_span),
-        );
 
         Ok(RestApi {
             port: ctx.port,
