@@ -69,4 +69,5 @@ hydentity = { workspace = true, features = ["client"] }
 [features]
 risc0 = ["client-sdk/risc0"]
 sp1 = ["client-sdk/sp1"]
+turmoil = []
 test = ["dep:test-log"]
