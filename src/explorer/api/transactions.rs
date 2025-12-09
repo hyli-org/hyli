@@ -1,4 +1,4 @@
-use std::num::TryFromIntError;
+use std::{num::TryFromIntError, str::FromStr};
 
 use super::{BlockPagination, ExplorerApiState};
 use api::{
@@ -10,7 +10,8 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use hyle_model::utils::TimestampMs;
+use hyli_model::utils::TimestampMs;
+use serde::Deserialize;
 use sqlx::postgres::PgRow;
 use sqlx::types::chrono::NaiveDateTime;
 use sqlx::FromRow;
@@ -18,7 +19,7 @@ use sqlx::Row;
 use sqlx::{prelude::Type, Postgres};
 
 use crate::model::*;
-use hyle_modules::log_error;
+use hyli_modules::log_error;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DataProposalHashDb(pub DataProposalHash);
@@ -40,7 +41,7 @@ impl sqlx::Encode<'_, sqlx::Postgres> for DataProposalHashDb {
         buf: &mut sqlx::postgres::PgArgumentBuffer,
     ) -> std::result::Result<
         sqlx::encode::IsNull,
-        std::boxed::Box<(dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static)>,
+        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
         <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0 .0, buf)
     }
@@ -51,7 +52,7 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for DataProposalHashDb {
         value: sqlx::postgres::PgValueRef<'r>,
     ) -> std::result::Result<
         DataProposalHashDb,
-        std::boxed::Box<(dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static)>,
+        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
         let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
         Ok(DataProposalHashDb(DataProposalHash(inner)))
@@ -78,7 +79,7 @@ impl sqlx::Encode<'_, sqlx::Postgres> for TxHashDb {
         buf: &mut sqlx::postgres::PgArgumentBuffer,
     ) -> std::result::Result<
         sqlx::encode::IsNull,
-        std::boxed::Box<(dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static)>,
+        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
         <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0 .0, buf)
     }
@@ -89,10 +90,27 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for TxHashDb {
         value: sqlx::postgres::PgValueRef<'r>,
     ) -> std::result::Result<
         TxHashDb,
-        std::boxed::Box<(dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static)>,
+        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
         let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
         Ok(TxHashDb(TxHash(inner)))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TxIdDb(pub TxId);
+
+impl From<TxId> for TxIdDb {
+    fn from(tx_id: TxId) -> Self {
+        TxIdDb(tx_id)
+    }
+}
+
+impl<'r> FromRow<'r, PgRow> for TxIdDb {
+    fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
+        let tx_hash: TxHashDb = row.try_get("tx_hash")?;
+        let dp_hash: DataProposalHashDb = row.try_get("parent_dp_hash")?;
+        Ok(TxIdDb(TxId(dp_hash.0, tx_hash.0)))
     }
 }
 
@@ -116,7 +134,7 @@ impl sqlx::Encode<'_, sqlx::Postgres> for LaneIdDb {
         buf: &mut sqlx::postgres::PgArgumentBuffer,
     ) -> std::result::Result<
         sqlx::encode::IsNull,
-        std::boxed::Box<(dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static)>,
+        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
         <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&hex::encode(&self.0 .0 .0), buf)
     }
@@ -127,7 +145,7 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for LaneIdDb {
         value: sqlx::postgres::PgValueRef<'r>,
     ) -> std::result::Result<
         LaneIdDb,
-        std::boxed::Box<(dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static)>,
+        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
         let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
         Ok(LaneIdDb(LaneId(ValidatorPublicKey(hex::decode(inner)?))))
@@ -140,6 +158,7 @@ pub struct TransactionDb {
     pub tx_hash: TxHashDb,                         // Transaction hash
     pub parent_dp_hash: DataProposalHash,          // Corresponds to the data proposal hash
     pub block_hash: Option<ConsensusProposalHash>, // Corresponds to the block hash
+    pub block_height: Option<BlockHeight>,         // Corresponds to the block height
     pub index: Option<u32>,                        // Index of the transaction within the block
     pub version: u32,                              // Transaction version
     pub transaction_type: TransactionTypeDb,       // Type of transaction
@@ -153,6 +172,14 @@ impl<'r> FromRow<'r, PgRow> for TransactionDb {
     fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
         let tx_hash = row.try_get("tx_hash")?;
         let block_hash = row.try_get("block_hash")?;
+        let block_height: Option<i64> = row.try_get("block_height")?;
+        let block_height = block_height
+            .map(|h| {
+                h.try_into()
+                    .map(BlockHeight)
+                    .map_err(|e: TryFromIntError| sqlx::Error::Decode(e.into()))
+            })
+            .transpose()?;
         let dp_hash_db: DataProposalHashDb = row.try_get("parent_dp_hash")?;
         let parent_dp_hash = dp_hash_db.0;
         let index: Option<i32> = row.try_get("index")?;
@@ -178,6 +205,7 @@ impl<'r> FromRow<'r, PgRow> for TransactionDb {
             tx_hash,
             parent_dp_hash,
             block_hash,
+            block_height,
             index,
             version,
             transaction_type,
@@ -198,6 +226,7 @@ impl From<TransactionDb> for APITransaction {
             tx_hash: val.tx_hash.0,
             parent_dp_hash: val.parent_dp_hash,
             block_hash: val.block_hash,
+            block_height: val.block_height,
             index: val.index,
             version: val.version,
             transaction_type: val.transaction_type,
@@ -320,6 +349,86 @@ pub async fn get_transactions_by_contract(
     Ok(Json(transactions))
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct TransactionStatusQuery {
+    pub status: Vec<TransactionStatusDb>,
+}
+
+impl<'de> Deserialize<'de> for TransactionStatusQuery {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawStatusQuery {
+            #[serde(default)]
+            status: String,
+        }
+
+        let raw = RawStatusQuery::deserialize(deserializer)?;
+        let status = raw
+            .status
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| TransactionStatusDb::from_str(s).map_err(serde::de::Error::custom))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(TransactionStatusQuery { status })
+    }
+}
+
+#[utoipa::path(
+    get,
+    tag = "Indexer",
+    params(
+        ("contract_name" = String, Path, description = "Contract name"),
+    ),
+    path = "/transactions/contract/{contract_name}/last_settled_tx_id",
+    responses(
+        (status = OK, body = TxId)
+    )
+)]
+#[axum::debug_handler]
+pub async fn get_last_settled_tx_by_contract(
+    Path(contract_name): Path<String>,
+    Query(status): Query<TransactionStatusQuery>,
+    State(state): State<ExplorerApiState>,
+) -> Result<Json<Option<TxId>>, StatusCode> {
+    let status = if status.status.is_empty() {
+        vec![
+            TransactionStatusDb::Success,
+            TransactionStatusDb::Failure,
+            TransactionStatusDb::TimedOut,
+        ]
+    } else {
+        status.status
+    };
+
+    let tx_id = log_error!(
+        sqlx::query_as::<_, TxIdDb>(
+            "
+            SELECT 
+                t.parent_dp_hash, t.tx_hash 
+            FROM 
+                transactions t
+            JOIN blobs b ON t.parent_dp_hash = b.parent_dp_hash AND t.tx_hash = b.tx_hash
+            WHERE b.contract_name = $1 
+            AND t.transaction_status = ANY($2) 
+            ORDER BY t.block_height DESC, t.index DESC LIMIT 1
+            "
+        )
+        .bind(contract_name)
+        .bind(status)
+        .fetch_optional(&state.db)
+        .await
+        .map(|db| db.map(|tx_id_db| tx_id_db.0)),
+        "Failed to fetch last settled tx by contract"
+    )
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(tx_id))
+}
+
 #[utoipa::path(
     get,
     tag = "Indexer",
@@ -374,17 +483,7 @@ pub async fn get_transaction_with_hash(
     let transaction = log_error!(
         sqlx::query_as::<_, TransactionDb>(
             r#"
-SELECT
-    tx_hash,
-    version,
-    transaction_type,
-    transaction_status,
-    parent_dp_hash,
-    block_hash,
-    index,
-    b.timestamp,
-    lane_id,
-    identity
+SELECT t.*, b.timestamp
 FROM transactions t
 LEFT JOIN blocks b ON t.block_hash = b.hash
 WHERE t.tx_hash = $1 AND transaction_type='blob_transaction'
@@ -424,32 +523,17 @@ pub async fn get_transaction_events(
     let rows = log_error!(
         sqlx::query(
             r#"
-with filtered as (
-    SELECT 
-        t.block_hash,
-        b.height,
-        t.tx_hash,
-        t.parent_dp_hash,
-        t.events,
-        t.index
-    FROM transaction_state_events t
-    LEFT JOIN blocks b 
-        ON t.block_hash = b.hash
-    WHERE 
-        t.tx_hash = $1
-        AND t.block_height = b.height
-)
 SELECT
-    block_hash,
-    height,
-    tx_hash,
-    events
-FROM
-    (SELECT filtered.*, parent_dp_hash = FIRST_VALUE(parent_dp_hash) OVER (ORDER BY height DESC, index DESC) as first_res FROM filtered)
-WHERE first_res = TRUE
-ORDER BY 
-    height DESC,
-    index DESC;
+    t.block_hash,
+    t.block_height,
+    JSON_AGG(
+        JSONB_BUILD_OBJECT('index', t.index) || t.event
+        ORDER BY t.index
+    ) as events
+FROM transaction_state_events t
+WHERE t.tx_hash = $1
+GROUP BY t.block_hash, t.block_height
+ORDER BY t.block_height ASC;
 "#,
         )
         .bind(tx_hash)
@@ -463,7 +547,7 @@ ORDER BY
         .into_iter()
         .map(|row| {
             let block_hash = row.try_get("block_hash")?;
-            let block_height: i64 = row.try_get("height")?;
+            let block_height: i64 = row.try_get("block_height")?;
             let block_height = BlockHeight(block_height.try_into()?);
             let events: serde_json::Value = row.try_get("events")?;
             let events: Vec<serde_json::Value> = serde_json::from_value(events)?;
@@ -502,7 +586,7 @@ pub async fn get_blob_transactions_by_contract(
     let rows = log_error!(sqlx::query(
         r#"
         with blobs as (
-            SELECT blobs.*, array_remove(ARRAY_AGG(blob_proof_outputs.hyle_output), NULL) AS proof_outputs
+            SELECT blobs.*, array_remove(ARRAY_AGG(blob_proof_outputs.hyli_output), NULL) AS proof_outputs
             FROM blobs
             LEFT JOIN blob_proof_outputs ON blobs.parent_dp_hash = blob_proof_outputs.blob_parent_dp_hash AND blobs.tx_hash = blob_proof_outputs.blob_tx_hash AND blobs.blob_index = blob_proof_outputs.blob_index
             WHERE blobs.contract_name = $1
@@ -512,6 +596,7 @@ pub async fn get_blob_transactions_by_contract(
             t.tx_hash,
             t.parent_dp_hash,
             t.block_hash,
+            t.block_height,
             t.index,
             t.version,
             t.transaction_type,
@@ -524,6 +609,7 @@ pub async fn get_blob_transactions_by_contract(
             t.tx_hash,
             t.parent_dp_hash,
             t.block_hash,
+            t.block_height,
             t.index,
             t.version,
             t.transaction_type,
@@ -543,6 +629,9 @@ pub async fn get_blob_transactions_by_contract(
             let Some(block_hash) = api_tx.block_hash else {
                 return Err(sqlx::Error::RowNotFound);
             };
+            let Some(block_height) = api_tx.block_height else {
+                return Err(sqlx::Error::RowNotFound);
+            };
             let blobs: Vec<(String, Vec<u8>, Vec<serde_json::Value>)> = row.try_get("blobs")?;
             let blobs = blobs
                 .into_iter()
@@ -560,6 +649,7 @@ pub async fn get_blob_transactions_by_contract(
                 tx_hash: api_tx.tx_hash.0,
                 parent_dp_hash: api_tx.parent_dp_hash,
                 block_hash,
+                block_height,
                 index: api_tx.index.unwrap_or(0),
                 version: api_tx.version,
                 transaction_type: api_tx.transaction_type,

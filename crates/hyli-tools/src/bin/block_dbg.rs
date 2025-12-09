@@ -8,15 +8,15 @@ use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     execute, terminal,
 };
-use hyle_contract_sdk::{Block, NodeStateEvent, TransactionData, TxId, api::NodeInfo};
-use hyle_contract_sdk::{BlockHeight, SignedBlock};
-use hyle_model::DataEvent;
-use hyle_modules::modules::{
+use hyli_contract_sdk::{Block, NodeStateEvent, TransactionData, TxId, api::NodeInfo};
+use hyli_contract_sdk::{BlockHeight, SignedBlock};
+use hyli_model::DataEvent;
+use hyli_modules::modules::{
     da_listener::DAListenerConf,
     prover::{AutoProver, AutoProverCtx},
     signed_da_listener::SignedDAListener,
 };
-use hyle_modules::{
+use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     module_bus_client, module_handle_messages,
     modules::{
@@ -35,6 +35,7 @@ use smt_token::{
 };
 use std::collections::HashMap;
 use std::fs;
+use std::future::Future;
 use std::io::Write;
 use std::io::{self};
 use std::time::Duration;
@@ -287,7 +288,7 @@ struct DumpUiState {
     processed_height: Option<u64>,
     node_state: Option<NodeState>,
     tx_status: HashMap<TxId, TxStatus>,
-    processed_blocks: HashMap<u64, Block>,
+    processed_blocks: HashMap<u64, Arc<Block>>,
 }
 
 impl Module for BlockDbg {
@@ -323,13 +324,11 @@ impl BlockDbg {
         entries.sort_by_key(|e| e.file_name());
         for entry in entries {
             let path = entry.path();
-            if path.extension().map(|e| e == "bin").unwrap_or(false) {
-                if let Ok(bytes) = fs::read(&path) {
-                    if let Ok((block, tx_count)) = borsh::from_slice::<(SignedBlock, usize)>(&bytes)
-                    {
-                        blocks.push((block, tx_count));
-                    }
-                }
+            if path.extension().map(|e| e == "bin").unwrap_or(false)
+                && let Ok(bytes) = fs::read(&path)
+                && let Ok((block, tx_count)) = borsh::from_slice::<(SignedBlock, usize)>(&bytes)
+            {
+                blocks.push((block, tx_count));
             }
         }
         // Sort blocks by block_height (numeric order)
@@ -442,8 +441,8 @@ impl BlockDbg {
                             KeyCode::Down | KeyCode::Char('j') => {
                                 match ui_state.focused_panel {
                                     FocusPanel::BlockList => {
-                                        let display_blocks: Vec<_> = ui_state.blocks.iter().filter(|(_, tx_count)| *tx_count > 0).collect();
-                                        if ui_state.selected + 1 < display_blocks.len() {
+                                        let display_blocks = ui_state.blocks.iter().filter(|(_, tx_count)| *tx_count > 0).count();
+                                        if ui_state.selected + 1 < display_blocks {
                                             ui_state.selected += 1;
                                         }
                                     }
@@ -499,17 +498,17 @@ impl BlockDbg {
                                         let outputs = ui_state.blocks.iter().filter_map(|(block, _)|
                                                 if block.consensus_proposal.slot <= target_height {
                                                     tracing::info!("Processing block {}", block.consensus_proposal.slot);
-                                                    ui_state.node_state.as_mut().unwrap().handle_signed_block(block).ok()
+                                                    ui_state.node_state.as_mut().unwrap().handle_signed_block(block.clone()).ok()
                                                 } else {
                                                     None
                                                 }
                                             ).collect::<Vec<_>>();
                                         for block in outputs {
-                                            ui_state.processed_height = Some(block.block_height.0);
-                                            ui_state.process_block_outputs(&block);
+                                            ui_state.processed_height = Some(block.parsed_block.block_height.0);
+                                            ui_state.process_block_outputs(&block.parsed_block);
                                             // Activate if you want provers on.
                                             // self.bus.send(NodeStateEvent::NewBlock(Box::new(block.clone())))?;
-                                            ui_state.processed_blocks.insert(block.block_height.0, block);
+                                            ui_state.processed_blocks.insert(block.parsed_block.block_height.0, block.parsed_block);
                                             ui_state.redraw = true;
                                         }
                                     }

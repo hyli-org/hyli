@@ -1,6 +1,6 @@
 use clap::Parser;
-use hyle_model::ConsensusInfo;
-use hyle_modules::utils::logger::setup_tracing;
+use hyli_model::ConsensusInfo;
+use hyli_modules::utils::logger::setup_tracing;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Parser, Debug)]

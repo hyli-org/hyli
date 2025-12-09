@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
-use std::{collections::BTreeMap, str, sync::Arc};
+use std::{ops::Deref, str, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::debug;
+use tracing::{debug, error};
 
 use axum::{
     http::StatusCode,
@@ -22,7 +22,6 @@ use crate::transaction_builder::TxExecutorHandler;
 pub struct ContractStateStore<State> {
     pub state: Option<State>,
     pub contract_name: ContractName,
-    pub unsettled_blobs: BTreeMap<TxId, (BlobTransaction, TxContext)>,
 }
 
 pub type ContractHandlerStore<T> = Arc<RwLock<ContractStateStore<T>>>;
@@ -32,7 +31,6 @@ impl<State> Default for ContractStateStore<State> {
         ContractStateStore {
             state: None,
             contract_name: Default::default(),
-            unsettled_blobs: BTreeMap::new(),
         }
     }
 }
@@ -49,7 +47,7 @@ where
         &mut self,
         tx: &BlobTransaction,
         index: BlobIndex,
-        tx_context: TxContext,
+        tx_context: Arc<TxContext>,
     ) -> Result<Option<Event>> {
         let Blob {
             contract_name,
@@ -62,17 +60,27 @@ where
             blobs: tx.blobs.clone().into(),
             tx_blob_count: tx.blobs.len(),
             tx_hash: tx.hashed(),
-            tx_ctx: Some(tx_context),
+            tx_ctx: Some(tx_context.deref().clone()),
             private_input: vec![],
         };
 
-        let hyle_output = self.handle(&calldata)?;
-        let program_outputs = str::from_utf8(&hyle_output.program_outputs).unwrap_or("no output");
+        let hyli_output = match self.handle(&calldata) {
+            Ok(ho) => ho,
+            Err(e) => {
+                error!(
+                    "Failed to handle blob {index} for contract {contract_name}: {}",
+                    e
+                );
+                return Ok(None);
+            }
+        };
+
+        let program_outputs = str::from_utf8(&hyli_output.program_outputs).unwrap_or("no output");
 
         info!("🚀 Executed {contract_name}: {}", program_outputs);
         debug!(
             handler = %contract_name,
-            "hyle_output: {:?}", hyle_output
+            "hyli_output: {:?}", hyli_output
         );
         Ok(None)
     }
@@ -81,7 +89,7 @@ where
         &mut self,
         _tx: &BlobTransaction,
         _index: BlobIndex,
-        _tx_context: TxContext,
+        _tx_context: Arc<TxContext>,
     ) -> Result<Option<Event>> {
         Ok(None)
     }
@@ -90,7 +98,7 @@ where
         &mut self,
         _tx: &BlobTransaction,
         _index: BlobIndex,
-        _tx_context: TxContext,
+        _tx_context: Arc<TxContext>,
     ) -> Result<Option<Event>> {
         Ok(None)
     }
@@ -99,7 +107,7 @@ where
         &mut self,
         _tx: &BlobTransaction,
         _index: BlobIndex,
-        _tx_context: TxContext,
+        _tx_context: Arc<TxContext>,
     ) -> Result<Option<Event>> {
         Ok(None)
     }

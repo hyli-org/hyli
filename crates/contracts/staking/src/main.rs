@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use hyle_staking::state::Staking;
+use hyli_staking::state::Staking;
 use sdk::{
     guest::{execute, GuestEnv, Risc0Env},
     Calldata,

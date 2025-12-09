@@ -1,4 +1,4 @@
-use hyle_model::LaneId;
+use hyli_model::LaneId;
 use opentelemetry::{
     metrics::{Counter, Gauge},
     InstrumentationScope, KeyValue,
@@ -77,7 +77,7 @@ impl MempoolMetrics {
             1,
             &[KeyValue::new(
                 "nb_validators",
-                nc.0.bonded().len().to_string(),
+                nc.staking.bonded().len().to_string(),
             )],
         )
     }

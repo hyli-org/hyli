@@ -7,7 +7,7 @@ use axum::{
 };
 
 use crate::model::*;
-use hyle_modules::log_error;
+use hyli_modules::log_error;
 
 #[derive(sqlx::FromRow, Debug)]
 pub struct ContractDb {
@@ -16,7 +16,8 @@ pub struct ContractDb {
     pub verifier: String,    // Verifier of the contract
     pub program_id: Vec<u8>, // Program ID
     pub state_commitment: Vec<u8>, // state commitment of the contract
-    pub timeout_window: TimeoutWindowDb, // state commitment of the contract
+    pub soft_timeout: Option<i64>,
+    pub hard_timeout: Option<i64>,
     pub contract_name: String, // Contract name
     #[sqlx(try_from = "i64")]
     pub total_tx: u64, // Total number of transactions associated with the contract
@@ -151,105 +152,5 @@ pub async fn get_contract(
     match contract {
         Some(contract) => Ok(Json(contract)),
         None => Err(StatusCode::NOT_FOUND),
-    }
-}
-
-#[utoipa::path(
-    get,
-    tag = "Indexer",
-    params(
-        ("contract_name" = String, Path, description = "Contract name"),
-        ("height" = String, Path, description = "Block height")
-    ),
-    path = "/state/contract/{contract_name}/block/{height}",
-    responses(
-        (status = OK, body = APIContractState)
-    )
-)]
-pub async fn get_contract_state_by_height(
-    Path((contract_name, height)): Path<(String, i64)>,
-    State(state): State<ExplorerApiState>,
-) -> Result<Json<APIContractState>, StatusCode> {
-    let contract = log_error!(
-        sqlx::query_as::<_, ContractStateDb>(
-            r#"
-        SELECT cs.*
-        FROM contract_state cs
-        JOIN blocks b ON cs.block_hash = b.hash
-        WHERE contract_name = $1 AND height = $2"#,
-        )
-        .bind(contract_name)
-        .bind(height)
-        .fetch_optional(&state.db)
-        .await
-        .map(|db| db.map(Into::<APIContractState>::into)),
-        "Failed to fetch contract state by height"
-    )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    match contract {
-        Some(contract) => Ok(Json(contract)),
-        None => Err(StatusCode::NOT_FOUND),
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TimeoutWindowDb(pub TimeoutWindow);
-
-impl From<TimeoutWindow> for TimeoutWindowDb {
-    fn from(tw: TimeoutWindow) -> Self {
-        TimeoutWindowDb(tw)
-    }
-}
-
-impl From<TimeoutWindowDb> for TimeoutWindow {
-    fn from(tw_db: TimeoutWindowDb) -> Self {
-        tw_db.0
-    }
-}
-
-impl sqlx::Type<sqlx::Postgres> for TimeoutWindowDb {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <i64 as sqlx::Type<sqlx::Postgres>>::type_info()
-    }
-
-    fn compatible(ty: &sqlx::postgres::PgTypeInfo) -> bool {
-        <i64 as sqlx::Type<sqlx::Postgres>>::compatible(ty)
-    }
-}
-
-impl sqlx::Encode<'_, sqlx::Postgres> for TimeoutWindowDb {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync + 'static>> {
-        match &self.0 {
-            TimeoutWindow::NoTimeout => Ok(sqlx::encode::IsNull::Yes),
-            TimeoutWindow::Timeout(height) => {
-                let val: i64 = height
-                    .0
-                    .try_into()
-                    .map_err(|_| format!("BlockHeight value {} overflows i64", height.0))?;
-                <i64 as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&val, buf)
-            }
-        }
-    }
-}
-
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for TimeoutWindowDb {
-    fn decode(
-        value: sqlx::postgres::PgValueRef<'r>,
-    ) -> Result<TimeoutWindowDb, Box<dyn std::error::Error + Send + Sync + 'static>> {
-        let opt_val: Option<i64> = sqlx::Decode::<sqlx::Postgres>::decode(value)?;
-        let tw = match opt_val {
-            None => TimeoutWindow::NoTimeout,
-            Some(val) => {
-                if val < 0 {
-                    return Err(format!("Negative BlockHeight not allowed: {val}").into());
-                }
-                TimeoutWindow::Timeout(BlockHeight(val as u64))
-            }
-        };
-        Ok(TimeoutWindowDb(tw))
     }
 }

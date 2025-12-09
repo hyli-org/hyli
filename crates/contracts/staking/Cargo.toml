@@ -1,12 +1,12 @@
 [package]
-name = "hyle-staking"
+name = "hyli-staking"
 description = "Hyli Smart Contract"
 license-file = { workspace = true }
 version = { workspace = true }
 edition = { workspace = true }
 homepage = { workspace = true }
 repository = { workspace = true }
-rust-version = "1.81"
+rust-version = "1.85"
 
 [[bin]]
 name = "staking"
@@ -26,7 +26,7 @@ risc0-zkvm = { workspace = true, optional = true, features = ['std'] }
 client-sdk = { workspace = true, features = ["risc0"], optional = true }
 
 [dev-dependencies]
-risc0-zkvm = { workspace = true, features = ['std', 'prove'] }
+risc0-zkvm = { workspace = true, features = ['std'] }
 
 [features]
 default = []

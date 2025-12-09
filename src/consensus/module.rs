@@ -1,5 +1,9 @@
 use anyhow::Result;
-use hyle_modules::{bus::SharedMessageBus, log_error, modules::Module};
+use hyli_modules::{
+    bus::SharedMessageBus,
+    log_error,
+    modules::{files::CONSENSUS_BIN, Module},
+};
 
 use crate::model::SharedRunContext;
 
@@ -12,7 +16,7 @@ impl Module for Consensus {
     type Context = SharedRunContext;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let file = ctx.config.data_directory.clone().join("consensus.bin");
+        let file = ctx.config.data_directory.join(CONSENSUS_BIN);
         let store: ConsensusStore = Self::load_from_disk_or_default(file.as_path());
         let metrics = ConsensusMetrics::global(ctx.config.id.clone());
 

@@ -9,7 +9,6 @@ use crate::{
     indexer::Indexer,
     mempool::Mempool,
     model::{api::NodeInfo, SharedRunContext},
-    node_state::module::NodeStateModule,
     p2p::P2P,
     rest::{ApiDoc, RestApi, RestApiRunContext},
     single_node_consensus::SingleNodeConsensus,
@@ -22,23 +21,32 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use axum::Router;
 use hydentity::Hydentity;
-use hyle_crypto::SharedBlstCrypto;
-use hyle_modules::{
+use hyli_crypto::SharedBlstCrypto;
+use hyli_modules::{
+    log_error,
     modules::{
-        admin::{AdminApi, AdminApiRunContext},
+        admin::{AdminApi, AdminApiRunContext, NodeAdminApiClient},
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::DAListenerConf,
+        files::{CONSENSUS_BIN, NODE_STATE_BIN},
+        gcs_uploader::{GcsUploader, GcsUploaderCtx},
         signed_da_listener::SignedDAListener,
         websocket::WebSocketModule,
         BuildApiContextInner,
     },
-    node_state::module::NodeStateCtx,
+    node_state::{
+        module::{NodeStateCtx, NodeStateModule},
+        NodeStateStore,
+    },
+    utils::db::use_fresh_db,
 };
 use hyllar::Hyllar;
 use prometheus::Registry;
 use smt_token::account::AccountSMT;
 use std::{
+    fs::{self, File},
+    io::Write,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -70,8 +78,6 @@ impl RunPg {
             .with_cmd(["postgres", "-c", "log_statement=all"])
             .start()
             .await?;
-
-        std::thread::sleep(std::time::Duration::from_secs(3));
 
         config.database_url = format!(
             "postgres://postgres:postgres@localhost:{}/postgres",
@@ -195,9 +201,17 @@ pub async fn main_process(config: conf::Conf, crypto: Option<SharedBlstCrypto>) 
 }
 
 async fn common_main(
-    config: conf::Conf,
+    mut config: conf::Conf,
     crypto: Option<SharedBlstCrypto>,
 ) -> Result<ModulesHandler> {
+    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
+
+    // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.
+    // Handle this configuration rewrite before we print anything.
+    if config.run_explorer || config.run_indexer {
+        use_fresh_db(&config.data_directory, &mut config.database_url).await?;
+    }
+
     let config = Arc::new(config);
 
     welcome_message(&config);
@@ -245,16 +259,81 @@ async fn common_main(
 
     let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
 
-    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
-
     let build_api_ctx = Arc::new(BuildApiContextInner {
         router: Mutex::new(Some(Router::new())),
         openapi: Mutex::new(ApiDoc::openapi()),
     });
 
+    let mut node_state_override: Option<NodeStateStore> = None;
+
+    // Before we start the modules, let's fast load from a running node if we are catching up.
+    if config.run_fast_catchup {
+        let consensus_path = config.data_directory.join(CONSENSUS_BIN);
+        let node_state_path = config.data_directory.join(NODE_STATE_BIN);
+
+        // Check states exist and skip catchup if so
+        if config.fast_catchup_override || !consensus_path.exists() || !node_state_path.exists() {
+            let catchup_from = config.fast_catchup_from.clone();
+            info!("Catching up from {} with trust", catchup_from);
+
+            let client = NodeAdminApiClient::new(catchup_from.clone())?;
+
+            let catchup_response = client
+                .get_catchup_store()
+                .await
+                .context("Getting catchup data")?;
+
+            node_state_override =
+                borsh::from_slice(catchup_response.node_state_store.as_slice()).ok();
+
+            if consensus_path.exists() {
+                _ = fs::remove_file(&consensus_path);
+                info!("Removed old consensus file at {}", consensus_path.display());
+            }
+
+            if node_state_path.exists() {
+                _ = fs::remove_file(&node_state_path);
+                info!(
+                    "Removed old node state file at {}",
+                    node_state_path.display()
+                );
+            }
+
+            _ = log_error!(
+                File::create(consensus_path)
+                    .and_then(|mut file| file.write_all(&catchup_response.consensus_store))
+                    .context("Writing consensus catchup store to disk"),
+                "Saving consensus store"
+            );
+
+            _ = log_error!(
+                File::create(node_state_path)
+                    .and_then(|mut file| file.write_all(&catchup_response.node_state_store))
+                    .context("Writing node state catchup store to disk"),
+                "Saving node state store"
+            );
+        } else {
+            info!(
+                "Skipping fast catchup, {} and {} already exist in {}",
+                CONSENSUS_BIN,
+                NODE_STATE_BIN,
+                config.data_directory.display()
+            );
+        }
+    }
+
     let mut handler = ModulesHandler::new(&bus).await;
 
     if config.run_indexer {
+        if config.gcs.save_proofs || config.gcs.save_blocks {
+            handler
+                .build_module::<GcsUploader>(GcsUploaderCtx {
+                    gcs_config: config.gcs.clone(),
+                    data_directory: config.data_directory.clone(),
+                })
+                .await?;
+        }
+
         handler
             .build_module::<ContractStateIndexer<Hyllar>>(ContractStateIndexerCtx {
                 contract_name: "hyllar".into(),
@@ -262,13 +341,16 @@ async fn common_main(
                 api: build_api_ctx.clone(),
             })
             .await?;
-        handler
-            .build_module::<ContractStateIndexer<Hyllar>>(ContractStateIndexerCtx {
-                contract_name: "hyllar2".into(),
-                data_directory: config.data_directory.clone(),
-                api: build_api_ctx.clone(),
-            })
-            .await?;
+        // Used in amm_tests for now.
+        if std::env::var("RUN_HYLLAR2_CSI").is_ok() {
+            handler
+                .build_module::<ContractStateIndexer<Hyllar>>(ContractStateIndexerCtx {
+                    contract_name: "hyllar2".into(),
+                    data_directory: config.data_directory.clone(),
+                    api: build_api_ctx.clone(),
+                })
+                .await?;
+        }
         handler
             .build_module::<ContractStateIndexer<Hydentity>>(ContractStateIndexerCtx {
                 contract_name: "hydentity".into(),
@@ -316,6 +398,9 @@ async fn common_main(
                 .as_ref()
                 .expect("Crypto must be defined to run p2p")
                 .clone(),
+            start_height: node_state_override
+                .as_ref()
+                .map(|node_state| node_state.current_height),
         };
 
         handler

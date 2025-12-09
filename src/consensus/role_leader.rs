@@ -4,11 +4,11 @@ use std::collections::HashSet;
 
 use crate::{
     bus::command_response::CmdRespClient,
-    consensus::*,
+    consensus::{role_follower::follower_state, *},
     mempool::QueryNewCut,
     model::{Hashed, ValidatorPublicKey},
 };
-use hyle_model::{utils::TimestampMs, ConsensusProposal, ConsensusStakingAction};
+use hyli_model::{utils::TimestampMs, ConsensusProposal, ConsensusStakingAction};
 use staking::state::MIN_STAKE;
 use tokio::sync::broadcast;
 use tracing::{debug, error, trace};
@@ -63,7 +63,7 @@ impl Consensus {
 
         // If we already have a consensusproposal for this slot, then we voted on it,
         // and so we must repropose it (in case a commit was reached somewhere)
-        if self.bft_round_state.current_proposal.slot == self.bft_round_state.slot {
+        if current_proposal!(self).is_some_and(|cp| cp.slot == self.bft_round_state.slot) {
             debug!("♻️ Starting new view with the same ConsensusProposal as previous views")
         } else {
             // Creates ConsensusProposal
@@ -73,16 +73,54 @@ impl Consensus {
                 self.bft_round_state.staking
             );
 
+            // Determine if we need a full cut (if we don't have the last known cut)
+            let need_full_cut = self.bft_round_state.parent_cut.is_empty();
+            let query = QueryNewCut {
+                staking: self.bft_round_state.staking.clone(),
+                full: need_full_cut,
+            };
+
             let cut = match tokio::time::timeout(
                 self.config.consensus.slot_duration,
-                self.bus.shutdown_aware_request::<Self>(QueryNewCut(
-                    self.bft_round_state.staking.clone(),
-                )),
+                self.bus.shutdown_aware_request::<Self>(query),
             )
             .await
             .context("Timeout while querying Mempool")
             {
-                Ok(Ok(cut)) => {
+                Ok(Ok(mut cut)) => {
+                    // If we requested a diff, reconstruct the full cut by merging with parent_cut
+                    if !need_full_cut {
+                        let mut full_cut = self.bft_round_state.parent_cut.clone();
+                        // Replace or add lanes from cut into full_cut
+                        for (lane_id, dp_hash, cumul_size, poda) in cut.iter() {
+                            if let Some(entry) =
+                                full_cut.iter_mut().find(|(id, _, _, _)| id == lane_id)
+                            {
+                                if entry.2 < *cumul_size {
+                                    // Update the entry if the new cumul_size is larger (aka it's a newer entry)
+                                    *entry = (
+                                        lane_id.clone(),
+                                        dp_hash.clone(),
+                                        *cumul_size,
+                                        poda.clone(),
+                                    );
+                                } else {
+                                    debug!(
+                                        "Ignoring stale entry for lane {}: {:?}",
+                                        lane_id, entry
+                                    );
+                                }
+                            } else {
+                                full_cut.push((
+                                    lane_id.clone(),
+                                    dp_hash.clone(),
+                                    *cumul_size,
+                                    poda.clone(),
+                                ));
+                            }
+                        }
+                        cut = full_cut;
+                    }
                     // If the cut is the same as before (and we didn't time out), then check if we should delay.
                     if may_delay
                         .as_ref()
@@ -93,7 +131,7 @@ impl Consensus {
                     {
                         debug!("⏳ Delaying slot start");
                         self.bft_round_state.leader.pending_ticket = Some(ticket);
-                        let command_sender = hyle_modules::utils::static_type_map::Pick::<
+                        let command_sender = hyli_modules::utils::static_type_map::Pick::<
                             broadcast::Sender<ConsensusCommand>,
                         >::get(&self.bus)
                         .clone();
@@ -161,35 +199,39 @@ impl Consensus {
             }
 
             // Start Consensus with following cut
-            self.bft_round_state.current_proposal = ConsensusProposal {
+            self.bft_round_state.current_proposal = Some(ConsensusProposal {
                 slot: self.bft_round_state.slot,
                 cut,
                 staking_actions,
                 timestamp: current_timestamp,
                 parent_hash: self.bft_round_state.parent_hash.clone(),
-            };
+            });
         }
         self.bft_round_state.leader.step = Step::PrepareVote;
 
+        let Some(consensus_proposal) = self.store.bft_round_state.current_proposal.as_ref() else {
+            unreachable!("At this point, must exist - we reuse the old one or set it above");
+        };
+
         let prepare = (
             self.crypto.validator_pubkey().clone(),
-            self.bft_round_state.current_proposal.clone(),
+            consensus_proposal.clone(),
             ticket.clone(),
             self.bft_round_state.view,
         );
-        self.follower_state().buffered_prepares.push(prepare);
+        follower_state!(self).buffered_prepares.push(prepare);
 
         self.metrics.start_new_round(self.bft_round_state.slot);
 
-        // Verifies that to-be-built block is large enough (?)
+        // TODO: Verifies that to-be-built block is large enough (?)
 
         // Broadcasts Prepare message to all validators
         debug!(
-            proposal_hash = %self.bft_round_state.current_proposal.hashed(),
+            proposal_hash = %consensus_proposal.hashed(),
             "🌐 Slot {} started. Broadcasting Prepare message", self.bft_round_state.slot,
         );
         self.broadcast_net_message(ConsensusNetMessage::Prepare(
-            self.bft_round_state.current_proposal.clone(),
+            consensus_proposal.clone(),
             ticket,
             self.bft_round_state.view,
         ))?;
@@ -220,9 +262,13 @@ impl Consensus {
             return Ok(());
         }
 
+        let Some(current_proposal) = self.store.bft_round_state.current_proposal.as_ref() else {
+            bail!("PrepareVote received while no current proposal is set");
+        };
+
         // Verify that the PrepareVote is for the correct proposal.
         // This also checks slot/view as those are part of the hash.
-        if prepare_vote.msg.0 != self.bft_round_state.current_proposal.hashed() {
+        if prepare_vote.msg.0 != current_proposal.hashed() {
             bail!("PrepareVote has not received valid consensus proposal hash");
         }
 
@@ -265,7 +311,7 @@ impl Consensus {
             let aggregates: &Vec<&PrepareVote> =
                 &self.bft_round_state.leader.prepare_votes.iter().collect();
 
-            let proposal_hash_hint = self.bft_round_state.current_proposal.hashed();
+            let proposal_hash_hint = current_proposal.hashed();
             // Aggregates them into a *Prepare* Quorum Certificate
             let prepvote_signed_aggregation = self
                 .crypto
@@ -312,13 +358,17 @@ impl Consensus {
             return Ok(());
         }
 
+        let Some(current_proposal) = self.store.bft_round_state.current_proposal.as_ref() else {
+            bail!("PrepareVote received while no current proposal is set");
+        };
+
         // Verify that the ConfirmAck is for the correct proposal
-        if confirm_ack.msg.0 != self.bft_round_state.current_proposal.hashed() {
+        if confirm_ack.msg.0 != current_proposal.hashed() {
             debug!(
                 sender = %confirm_ack.signature.validator,
                 "Got {} expected {}",
                 confirm_ack.msg.0,
-                self.bft_round_state.current_proposal.hashed()
+                current_proposal.hashed()
             );
             bail!("ConfirmAck got invalid consensus proposal hash");
         }
@@ -368,13 +418,9 @@ impl Consensus {
                 &self.bft_round_state.leader.confirm_ack.iter().collect();
 
             // Aggregates them into a *Commit* Quorum Certificate
-            let commit_signed_aggregation = self.crypto.sign_aggregate(
-                (
-                    self.bft_round_state.current_proposal.hashed(),
-                    ConfirmAckMarker,
-                ),
-                aggregates,
-            )?;
+            let commit_signed_aggregation = self
+                .crypto
+                .sign_aggregate((current_proposal.hashed(), ConfirmAckMarker), aggregates)?;
 
             // Buffers the *Commit* Quorum Certificate
             let commit_quorum_certificate =
@@ -416,48 +462,56 @@ mod tests {
 
         node4.consensus.bft_round_state.state_tag = StateTag::Joining;
 
-        node1.consensus.bft_round_state.parent_cut = vec![(
+        let cut = vec![(
             LaneId(node1.pubkey()),
             DataProposalHash("propA".to_string()),
             LaneBytesSize(1),
             AggregateSignature::default(),
         )];
-        node2.consensus.bft_round_state.parent_cut =
-            node1.consensus.bft_round_state.parent_cut.clone();
-        node3.consensus.bft_round_state.parent_cut =
-            node1.consensus.bft_round_state.parent_cut.clone();
+
+        node1.consensus.bft_round_state.parent_cut = cut.clone();
+        node2.consensus.bft_round_state.parent_cut = cut.clone();
+        node3.consensus.bft_round_state.parent_cut = cut.clone();
 
         node1.start_round().await;
 
-        let (cp1, ticket, cp_view) = simple_commit_round! {
+        let (cp1, _ticket, _cp_view) = simple_commit_round! {
             leader: node1,
             followers: [node2, node3]
         };
+        assert_eq!(cp1.cut, cut);
 
         node2.start_round().await;
 
-        let (cp2, ticket, cp_view) = simple_commit_round! {
+        let (cp2, _ticket, _cp_view) = simple_commit_round! {
             leader: node2,
             followers: [node1, node3]
         };
         assert_ne!(cp2.cut.len(), 0);
+        assert_eq!(cp2.cut, cut);
 
         node4
             .consensus
-            .handle_node_state_event(NodeStateEvent::NewBlock(Box::new(Block {
-                block_height: BlockHeight(1),
-                hash: cp1.hashed(),
+            .handle_node_state_event(NodeStateEvent::NewBlock(NodeStateBlock {
+                signed_block: SignedBlock {
+                    consensus_proposal: cp1,
+                    ..Default::default()
+                }
+                .into(),
                 ..Default::default()
-            })))
+            }))
             .await
             .unwrap();
         node4
             .consensus
-            .handle_node_state_event(NodeStateEvent::NewBlock(Box::new(Block {
-                block_height: BlockHeight(2),
-                hash: cp2.hashed(),
+            .handle_node_state_event(NodeStateEvent::NewBlock(NodeStateBlock {
+                signed_block: SignedBlock {
+                    consensus_proposal: cp2,
+                    ..Default::default()
+                }
+                .into(),
                 ..Default::default()
-            })))
+            }))
             .await
             .unwrap();
 
@@ -482,10 +536,11 @@ mod tests {
 
         node4.start_round().await;
 
-        let (cp, ticket, cp_view) = simple_commit_round! {
+        let (cp, _ticket, _cp_view) = simple_commit_round! {
             leader: node4,
             followers: [node1, node2, node3]
         };
-        assert_eq!(cp.cut.len(), 0);
+        assert_ne!(cp.cut.len(), 0);
+        assert_eq!(cp.cut, cut);
     }
 }

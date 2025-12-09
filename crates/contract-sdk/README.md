@@ -6,14 +6,14 @@ In this crate you will find some helpers function to build your Smart Contract o
 
 ## Model
 
-Some of the models are defined in `hyle-model` crates, which is re-exported by this crate.
+Some of the models are defined in `hyli-model` crates, which is re-exported by this crate.
 
 For example, you can do either of these two:
 
 ```rust
 use contract_sdk::ZkProgramInput;
 // or
-use hyle_model::ZkProgramInput;
+use hyli_model::ZkProgramInput;
 ```
 
 It allows you to only depends on crate `contract-sdk` in your contract's code.
@@ -43,14 +43,14 @@ pub fn init_with_caller<Action>(
 ) -> Result<(ZkProgramInput, StructuredBlob<Action>, Identity), String>
 ```
 
-At the end of your contract, you need to output a `HyleOutput`, you can use the helper in `utils.rs`:
+At the end of your contract, you need to output a `HyliOutput`, you can use the helper in `utils.rs`:
 
 ```rust
-pub fn as_hyle_output(
+pub fn as_hyli_output(
     input: ZkProgramInput,
     new_state: State,
     res: crate::RunResult,
-) -> HyleOutput
+) -> HyliOutput
 ```
 
 ## Helpers

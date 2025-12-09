@@ -130,6 +130,8 @@ macro_rules! simple_commit_round {
         let round_consensus_proposal;
         let round_ticket;
         let view: u64;
+        use $crate::tests::autobahn_testing::broadcast;
+        use $crate::tests::autobahn_testing::send;
         broadcast! {
             description: "Leader - Prepare",
             from: $leader, to: [$($follower),+$(,$joining)?],
@@ -241,8 +243,8 @@ use assertables::assert_matches;
 pub(crate) use broadcast;
 pub(crate) use build_tuple;
 use futures::future::join_all;
-use hyle_model::utils::TimestampMs;
-use hyle_modules::utils::da_codec::DataAvailabilityServer;
+use hyli_model::utils::TimestampMs;
+use hyli_modules::{bus::dont_use_this::get_sender, node_state::NodeState};
 pub(crate) use send;
 pub(crate) use simple_commit_round;
 
@@ -268,20 +270,23 @@ macro_rules! build_nodes {
     }};
 }
 
-use crate::bus::command_response::Query;
-use crate::bus::dont_use_this::get_receiver;
-use crate::bus::metrics::BusMetrics;
-use crate::bus::{bus_client, SharedMessageBus};
-use crate::consensus::test::ConsensusTestCtx;
-use crate::consensus::{ConsensusEvent, ConsensusNetMessage, TCKind, Ticket, TimeoutKind};
-use crate::mempool::test::{make_register_contract_tx, MempoolTestCtx};
-use crate::mempool::{MempoolNetMessage, QueryNewCut, ValidatorDAG};
-use crate::model::*;
-use crate::node_state::module::NodeStateEvent;
-use crate::p2p::network::OutboundMessage;
-use crate::p2p::P2PCommand;
-use hyle_crypto::BlstCrypto;
-use hyle_modules::handle_messages;
+use crate::{
+    bus::{
+        bus_client, command_response::Query, dont_use_this::get_receiver, metrics::BusMetrics,
+        SharedMessageBus,
+    },
+    consensus::{
+        test::ConsensusTestCtx, ConsensusEvent, ConsensusNetMessage, TCKind, Ticket, TimeoutKind,
+    },
+    mempool::{
+        tests::{make_register_contract_tx, MempoolTestCtx},
+        MempoolNetMessage, QueryNewCut, ValidatorDAG,
+    },
+    model::*,
+    p2p::{network::OutboundMessage, P2PCommand},
+};
+use hyli_crypto::BlstCrypto;
+use hyli_modules::handle_messages;
 use tracing::info;
 
 bus_client!(
@@ -378,7 +383,7 @@ fn create_poda(
     data_proposal_hash: DataProposalHash,
     line_size: LaneBytesSize,
     nodes: &[&AutobahnTestCtx],
-) -> hyle_crypto::Signed<(DataProposalHash, LaneBytesSize), AggregateSignature> {
+) -> hyli_crypto::Signed<(DataProposalHash, LaneBytesSize), AggregateSignature> {
     let mut signed_messages: Vec<ValidatorDAG> = nodes
         .iter()
         .map(|node| {
@@ -727,7 +732,7 @@ async fn consensus_missed_prepare() {
     let register_tx = make_register_contract_tx(ContractName::new("test1"));
 
     disseminate! {
-        txs: [register_tx.clone()],
+        txs: [register_tx],
         owner: node1.mempool_ctx,
         voters: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx]
     };
@@ -742,6 +747,7 @@ async fn consensus_missed_prepare() {
         followers: [node2.consensus_ctx, node3.consensus_ctx, node4.consensus_ctx]
     };
 
+    let register_tx = make_register_contract_tx(ContractName::new("test1"));
     disseminate! {
         txs: [register_tx],
         owner: node2.mempool_ctx,
@@ -1016,9 +1022,6 @@ async fn mempool_fail_to_vote_on_fork() {
 
 #[test_log::test(tokio::test)]
 async fn autobahn_rejoin_flow() {
-    let mut server = DataAvailabilityServer::start(7890, "DaServer")
-        .await
-        .unwrap();
     let (mut node1, mut node2) = build_nodes!(2).await;
 
     // Let's setup the consensus so our joining node has some blocks to catch up.
@@ -1035,11 +1038,8 @@ async fn autobahn_rejoin_flow() {
         .consensus_ctx
         .setup_for_joining(&[&node1.consensus_ctx, &node2.consensus_ctx]);
 
-    // Let's setup a DataAvailability on this bus
-    let mut da = crate::data_availability::tests::DataAvailabilityTestCtx::new(
-        joining_node.shared_bus.new_handle(),
-    )
-    .await;
+    // Let's setup a NodeState on this bus
+    let mut ns = NodeState::create("test".to_string(), "test");
 
     let mut blocks = vec![SignedBlock {
         data_proposals: vec![],
@@ -1062,12 +1062,16 @@ async fn autobahn_rejoin_flow() {
         });
     }
 
+    let ns_event_sender = get_sender::<NodeStateEvent>(&joining_node.shared_bus).await;
     let mut ns_event_receiver = get_receiver::<NodeStateEvent>(&joining_node.shared_bus).await;
     let mut commit_receiver = get_receiver::<ConsensusEvent>(&node1.shared_bus).await;
 
     // Catchup up to the last block, but don't actually process the last block message yet.
-    for block in blocks.get(0..blocks.len() - 1).unwrap() {
-        da.handle_signed_block(block.clone(), &mut server).await;
+    for signed_block in blocks.get(0..blocks.len() - 1).unwrap() {
+        let node_state_block = ns.handle_signed_block(signed_block.clone()).unwrap();
+        ns_event_sender
+            .send(NodeStateEvent::NewBlock(node_state_block))
+            .unwrap();
     }
     while let Ok(event) = ns_event_receiver.try_recv() {
         info!("{:?}", event);
@@ -1096,8 +1100,12 @@ async fn autobahn_rejoin_flow() {
     }
 
     // Now process block 2
-    da.handle_signed_block(blocks.get(2).unwrap().clone(), &mut server)
-        .await;
+    let signed_block = blocks.get(2).unwrap().clone();
+    let node_state_block = ns.handle_signed_block(signed_block).unwrap();
+    ns_event_sender
+        .send(NodeStateEvent::NewBlock(node_state_block))
+        .unwrap();
+
     while let Ok(event) = ns_event_receiver.try_recv() {
         info!("{:?}", event);
         joining_node
@@ -1128,13 +1136,17 @@ async fn autobahn_rejoin_flow() {
         while let Ok(event) = commit_receiver.try_recv() {
             let ConsensusEvent::CommitConsensusProposal(ccp) = event;
             if ccp.consensus_proposal.slot > 2 {
-                let block = SignedBlock {
+                let signed_block = SignedBlock {
                     data_proposals: vec![],
                     certificate: ccp.certificate,
                     consensus_proposal: ccp.consensus_proposal,
                 };
-                da.handle_signed_block(block.clone(), &mut server).await;
-                blocks.push(block);
+                let node_state_block = ns.handle_signed_block(signed_block.clone()).unwrap();
+                ns_event_sender
+                    .send(NodeStateEvent::NewBlock(node_state_block))
+                    .unwrap();
+
+                blocks.push(signed_block);
             }
         }
         while let Ok(event) = ns_event_receiver.try_recv() {
@@ -1925,6 +1937,7 @@ async fn autobahn_commit_different_views_for_f() {
     node1
         .start_round_with_cut_from_mempool(TimestampMs(2000))
         .await;
+
     simple_commit_round! {
         leader: node1.consensus_ctx,
         followers: [node2.consensus_ctx, node3.consensus_ctx]
@@ -2141,6 +2154,7 @@ async fn autobahn_commit_byzantine_across_views_attempts() {
             assert_eq!(tcp, &initial_cp);
         }
     };
+    // TODO: check that proposing something different will fail?
 }
 
 #[test_log::test(tokio::test)]
@@ -2280,4 +2294,90 @@ async fn autobahn_commit_prepare_qc_across_multiple_views() {
             assert_eq!(tcp, &initial_cp, "TimeoutQC must reference the same CP from view 0");
         }
     };
+}
+
+#[test_log::test(tokio::test)]
+async fn follower_commits_cut_then_mempool_sends_stale_lane() {
+    // This test checks the following case:
+    // - Node1 gets a 2 DPs on its lane
+    // - Node2 hears of the first DP only
+    // - Node1, as leader, commits the 2 dps
+    // - Node2 gets a DP on its lane.
+    // - Node2, as leader, commits the new DP and re-uses the 2nd DP from node1 that it doesn't know
+    // (this last bit is where the code used to fail, as we would take our local DP1).
+    let (mut node1, mut node2) = build_nodes!(2).await;
+
+    // Node1 is leader, node2 is follower
+    let register_tx = make_register_contract_tx(ContractName::new("test1"));
+    let dp = node1.mempool_ctx.create_data_proposal(None, &[register_tx]);
+    node1
+        .mempool_ctx
+        .process_new_data_proposal(dp.clone())
+        .unwrap();
+    node1.mempool_ctx.timer_tick().await.unwrap();
+
+    let register_tx2 = make_register_contract_tx(ContractName::new("test2"));
+    let dp1b = node1
+        .mempool_ctx
+        .create_data_proposal(Some(dp.hashed()), &[register_tx2]);
+    node1
+        .mempool_ctx
+        .process_new_data_proposal(dp1b.clone())
+        .unwrap();
+    node1.mempool_ctx.timer_tick().await.unwrap();
+
+    // Disseminate to node2
+    broadcast! {
+        description: "Disseminate Tx",
+        from: node1.mempool_ctx, to: [node2.mempool_ctx],
+        message_matches: MempoolNetMessage::DataProposal(_, _)
+    };
+    node2.mempool_ctx.handle_processed_data_proposals().await;
+    send! {
+        description: "Disseminated Tx Vote",
+        from: [node2.mempool_ctx], to: node1.mempool_ctx,
+        message_matches: MempoolNetMessage::DataVote(..)
+    };
+
+    // Node1 starts round and commits cut
+    node1
+        .start_round_with_cut_from_mempool(TimestampMs(1000))
+        .await;
+
+    simple_commit_round! {
+        leader: node1.consensus_ctx,
+        followers: [node2.consensus_ctx]
+    };
+
+    let register_tx2 = make_register_contract_tx(ContractName::new("test2"));
+    let dp2 = node2
+        .mempool_ctx
+        .create_data_proposal(None, &[register_tx2]);
+    node2
+        .mempool_ctx
+        .process_new_data_proposal(dp2.clone())
+        .unwrap();
+    node2.mempool_ctx.timer_tick().await.unwrap();
+
+    node2
+        .start_round_with_cut_from_mempool(TimestampMs(2000))
+        .await;
+
+    let (cp, _, _) = simple_commit_round! {
+        leader: node2.consensus_ctx,
+        followers: [node1.consensus_ctx]
+    };
+
+    assert_eq!(
+        CutDisplay(&cp.cut).to_string(),
+        format!(
+            "{}:{}({} B), {}:{}({} B),",
+            LaneId(node1.consensus_ctx.validator_pubkey()),
+            dp1b.hashed(),
+            dp.estimate_size() + dp1b.estimate_size(),
+            LaneId(node2.consensus_ctx.validator_pubkey()),
+            dp2.hashed(),
+            dp2.estimate_size(),
+        )
+    );
 }

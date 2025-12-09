@@ -8,27 +8,29 @@ use std::time::Duration;
 
 use client_sdk::rest_client::NodeApiClient;
 use fixtures::turmoil::TurmoilHost;
-use hyle_model::{
-    BlobTransaction, ContractAction, ContractName, ProgramId, RegisterContractAction,
-    StateCommitment,
+use hyli_model::{
+    BlobTransaction, ContractName, ProgramId, RegisterContractAction, StateCommitment,
 };
-use hyle_modules::log_error;
-use hyle_net::net::Sim;
-use rand::{rngs::StdRng, SeedableRng};
+use hyli_modules::log_error;
+use hyli_net::net::Sim;
 
 use crate::fixtures::{test_helpers::wait_height, turmoil::TurmoilCtx};
 
 pub fn make_register_contract_tx(name: ContractName) -> BlobTransaction {
+    let register_contract_action = RegisterContractAction {
+        verifier: "test".into(),
+        program_id: ProgramId(vec![]),
+        state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+        contract_name: name.clone(),
+        constructor_metadata: Some(vec![1]),
+        ..Default::default()
+    };
     BlobTransaction::new(
-        "hyle@hyle",
-        vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
-            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-            contract_name: name,
-            ..Default::default()
-        }
-        .as_blob("hyle".into(), None, None)],
+        "hyli@hyli",
+        vec![
+            register_contract_action.as_blob("hyli".into()),
+            register_contract_action.as_blob(name),
+        ],
     )
 }
 
@@ -38,14 +40,14 @@ macro_rules! turmoil_simple {
         #[test_log::test]
             fn [<turmoil_ $simulation _ $seed _ $test>]() -> anyhow::Result<()> {
                 tracing::info!("Starting test {} with seed {}", stringify!([<turmoil_ $simulation _ $seed _ $test>]), $seed);
-                let rng = StdRng::seed_from_u64($seed);
-                let mut sim = hyle_net::turmoil::Builder::new()
+                let mut sim = hyli_net::turmoil::Builder::new()
                     .simulation_duration(Duration::from_secs(120))
                     .tick_duration(Duration::from_millis(20))
                     .min_message_latency(Duration::from_millis(20))
                 .tcp_capacity(256)
                 .enable_tokio_io()
-                    .build_with_rng(Box::new(rng));
+                    .rng_seed($seed)
+                    .build();
 
                 let mut ctx = TurmoilCtx::new_multi(4, 500, $seed, &mut sim)?;
 

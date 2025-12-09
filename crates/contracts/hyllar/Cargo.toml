@@ -1,12 +1,12 @@
 [package]
-name = "hyle-hyllar"
+name = "hyli-hyllar"
 description = "Hyli Smart Contract"
 license = "MIT"
 version = { workspace = true }
 edition = { workspace = true }
 homepage = { workspace = true }
 repository = { workspace = true }
-rust-version = "1.81"
+rust-version = "1.85"
 
 [[bin]]
 name = "hyllar"
@@ -36,10 +36,10 @@ client-sdk = { workspace = true, features = [
 
 [dev-dependencies]
 # Active client feature for tests
-hyle-hyllar = { path = ".", features = ["client"] }
+hyli-hyllar = { path = ".", features = ["client"] }
 
 tokio = { workspace = true, features = ["full", "tracing"] }
-risc0-zkvm = { workspace = true, features = ['std', 'prove'] }
+risc0-zkvm = { workspace = true, features = ['std'] }
 mockall = { workspace = true }
 
 [features]

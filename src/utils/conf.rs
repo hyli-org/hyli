@@ -1,13 +1,12 @@
 use anyhow::{Context, Result};
 use config::{Config, Environment, File};
-use hyle_modules::modules::websocket::WebSocketConfig;
+use hyli_modules::modules::gcs_uploader::GCSConf;
+use hyli_modules::modules::websocket::WebSocketConfig;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use serde_with::DurationMilliSeconds;
 use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::Arc, time::Duration};
 use strum_macros::IntoStaticStr;
-
-use crate::indexer::IndexerConf;
 
 #[serde_as]
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -86,6 +85,12 @@ pub struct NodeWebSocketConfig {
     pub events: Vec<String>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct IndexerConf {
+    pub query_buffer_size: usize,
+    pub persist_proofs: bool,
+}
+
 impl From<NodeWebSocketConfig> for WebSocketConfig {
     fn from(config: NodeWebSocketConfig) -> Self {
         Self {
@@ -111,6 +116,15 @@ pub struct Conf {
 
     /// Peer-to-peer layer configuration
     pub p2p: P2pConf,
+
+    // FastCatchup option, from the admin API of a running node.
+    pub run_fast_catchup: bool,
+    /// If false, skip fast catchup if there are already files present. If true, always fast-catchup on startup.
+    pub fast_catchup_override: bool,
+    /// Whether to also download older blocks after catchup.
+    pub fast_catchup_backfill: bool,
+    /// IP address to use for fast catchup
+    pub fast_catchup_from: String,
 
     // Validator options
     /// Consensus configuration
@@ -159,6 +173,9 @@ pub struct Conf {
 
     /// Configuration for the indexer module
     pub indexer: IndexerConf,
+
+    /// GCSUploader configuration
+    pub gcs: GCSConf,
 }
 
 impl Conf {
@@ -177,7 +194,7 @@ impl Conf {
         }
         let mut conf: Self = s
             .add_source(
-                Environment::with_prefix("hyle")
+                Environment::with_prefix("hyli")
                     .separator("__")
                     .prefix_separator("_")
                     .list_separator(",")
@@ -197,7 +214,7 @@ impl Conf {
         if conf.consensus.solo {
             conf.genesis.stakers.insert(
                 conf.id.clone(),
-                match std::env::var("HYLE_SINGLE_NODE_STAKE") {
+                match std::env::var("HYLI_SINGLE_NODE_STAKE") {
                     Ok(stake) => stake.parse::<u64>().context("Failed to parse stake"),
                     Err(e) => Err(Into::into(e)),
                 }
@@ -224,7 +241,7 @@ mod tests {
         let conf = Conf::new(vec![], None, None).unwrap();
         assert_eq!(conf.da_public_address, "127.0.0.1:4141");
         // All single underscores as there is no nesting.
-        std::env::set_var("HYLE_DA_PUBLIC_ADDRESS", "127.0.0.1:9090");
+        std::env::set_var("HYLI_DA_PUBLIC_ADDRESS", "127.0.0.1:9090");
         let conf = Conf::new(vec![], None, None).unwrap();
         assert_eq!(conf.da_public_address, "127.0.0.1:9090");
     }
@@ -233,7 +250,7 @@ mod tests {
         let conf = Conf::new(vec![], None, None).unwrap();
         assert_eq!(conf.p2p.public_address, "127.0.0.1:1231");
         // Note the double underscore
-        std::env::set_var("HYLE_P2P__PUBLIC_ADDRESS", "127.0.0.1:9090");
+        std::env::set_var("HYLI_P2P__PUBLIC_ADDRESS", "127.0.0.1:9090");
         let conf = Conf::new(vec![], None, None).unwrap();
         assert_eq!(conf.p2p.public_address, "127.0.0.1:9090");
     }

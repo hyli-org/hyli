@@ -2,12 +2,12 @@ use crate::bus::BusClientSender;
 
 use anyhow::Result;
 use client_sdk::tcp_client::{TcpApiServer, TcpServerMessage};
-use hyle_modules::{
+use hyli_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
     modules::{module_bus_client, Module},
 };
-use hyle_net::tcp::TcpEvent;
+use hyli_net::tcp::TcpEvent;
 use tracing::info;
 
 module_bus_client! {
@@ -55,7 +55,7 @@ impl TcpServer {
             on_self self,
             Some(tcp_event) = server.listen_next() => {
                 if let TcpEvent::Message { dest: _, data } = tcp_event {
-                    _ = log_error!(self.bus.send(data), "Sending message on TcpServerMessage topic from connection pool");
+                    _ = log_error!(self.bus.send_waiting_if_full(data).await, "Sending message on TcpServerMessage topic from connection pool");
                 }
             }
         };

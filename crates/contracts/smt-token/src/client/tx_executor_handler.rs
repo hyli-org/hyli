@@ -4,9 +4,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use client_sdk::transaction_builder::{ProvableBlobTx, TxExecutorHandler};
 use sdk::{
     merkle_utils::BorshableMerkleProof,
-    utils::{as_hyle_output, parse_calldata},
-    Calldata, ContractName, HyleOutput, Identity, RegisterContractEffect, StateCommitment,
-    StructuredBlob,
+    utils::{as_hyli_output, parse_calldata},
+    Calldata, ContractName, HyliOutput, Identity, StateCommitment, StructuredBlob,
 };
 
 pub mod metadata {
@@ -48,7 +47,9 @@ impl Clone for SmtTokenProvableState {
 }
 
 impl TxExecutorHandler for SmtTokenProvableState {
-    fn handle(&mut self, calldata: &Calldata) -> Result<HyleOutput> {
+    type Contract = SmtTokenContract;
+
+    fn handle(&mut self, calldata: &Calldata) -> Result<HyliOutput> {
         let root = *self.0.root();
         let initial_state_commitment = StateCommitment(Into::<[u8; 32]>::into(root).to_vec());
         let (action, execution_ctx) =
@@ -63,7 +64,7 @@ impl TxExecutorHandler for SmtTokenProvableState {
             Err(e) => Err(e),
             Ok(output) => Ok((output.into_bytes(), execution_ctx, vec![])),
         };
-        Ok(as_hyle_output(
+        Ok(as_hyli_output(
             initial_state_commitment,
             next_state_commitment,
             calldata,
@@ -190,8 +191,9 @@ impl TxExecutorHandler for SmtTokenProvableState {
     }
 
     fn construct_state(
-        _register_blob: &RegisterContractEffect,
-        _metadata: &Option<Vec<u8>>,
+        _: &sdk::ContractName,
+        _: &sdk::Contract,
+        _: &Option<Vec<u8>>,
     ) -> Result<Self> {
         Ok(Self::default())
     }

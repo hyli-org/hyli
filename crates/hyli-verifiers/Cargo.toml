@@ -1,0 +1,69 @@
+[package]
+name = "hyli-verifiers"
+description = "Hyli verifiers"
+license-file = { workspace = true }
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
+
+[dependencies]
+hyli-model = { workspace = true }
+
+serde_json = { workspace = true, optional = true }
+anyhow = { workspace = true }
+borsh = { workspace = true, features = ["derive"] }
+tracing = { workspace = true }
+hex = { workspace = true }
+rand = { workspace = true }
+once_cell = { workspace = true, optional = true }
+alloy-signer = { workspace = true, optional = true }
+alloy-signer-local = { workspace = true, optional = true }
+
+cairo-m-prover = { git = "https://github.com/kkrt-labs/cairo-m", optional = true }
+serde = { workspace = true, features = ["derive"], optional = true }
+sonic-rs = { version = "0.5.3", optional = true }
+stwo-prover = { git = "https://github.com/starkware-libs/stwo", features = [
+  "parallel",
+], rev = "ab57a1c", optional = true }
+
+sp1-sdk = { workspace = true, features = ["network"], optional = true }
+risc0-zkvm = { workspace = true, features = ["std"], optional = true }
+bincode = { workspace = true, optional = true }
+reth-stateless = { workspace = true, optional = true, features = ["k256"] }
+reth-ethereum = { workspace = true, optional = true, features = ["evm"] }
+reth-ethereum-primitives = { workspace = true, optional = true }
+reth-primitives-traits = { workspace = true, optional = true }
+alloy-genesis = { workspace = true, optional = true }
+alloy-consensus = { workspace = true, optional = true }
+alloy-eips = { workspace = true, optional = true }
+alloy-primitives = { workspace = true, optional = true }
+alloy-rlp = { workspace = true, optional = true }
+k256 = { workspace = true, optional = true }
+
+[dev-dependencies]
+test-log = { workspace = true, features = ["color", "trace"] }
+
+[features]
+default = []
+risc0 = ["dep:risc0-zkvm"]
+sp1 = ["dep:sp1-sdk", "dep:bincode", "dep:serde_json", "dep:once_cell"]
+cairo-m = ["dep:cairo-m-prover", "dep:stwo-prover", "dep:sonic-rs", "dep:serde"]
+reth = [
+  "dep:reth-stateless",
+  "dep:reth-ethereum",
+  "dep:reth-ethereum-primitives",
+  "dep:reth-primitives-traits",
+  "dep:alloy-genesis",
+  "dep:alloy-consensus",
+  "dep:alloy-eips",
+  "dep:alloy-primitives",
+  "dep:alloy-rlp",
+  "dep:alloy-signer",
+  "dep:alloy-signer-local",
+  "dep:serde",
+  "dep:serde_json",
+  "dep:bincode",
+  "dep:k256",
+]

@@ -5,12 +5,12 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use hyle_model::{api::APIProofDetails, utils::TimestampMs};
+use hyli_model::{api::APIProofDetails, utils::TimestampMs};
 use sqlx::FromRow;
 use sqlx::Row;
 
 use crate::model::*;
-use hyle_modules::log_error;
+use hyli_modules::log_error;
 
 #[utoipa::path(
     get,
@@ -119,6 +119,7 @@ SELECT
     t.tx_hash,
     t.parent_dp_hash,
     t.block_hash,
+    t.block_height,
     t.index,
     t.version,
     t.transaction_type,
@@ -128,7 +129,7 @@ SELECT
     array_remove(ARRAY_AGG(bpo.blob_tx_hash), NULL) AS blob_tx_hashes,
     array_remove(ARRAY_AGG(bpo.blob_index), NULL) AS blob_tx_indexes,
     array_remove(ARRAY_AGG(bpo.blob_proof_output_index), NULL) AS blob_proof_output_indexes,
-    array_remove(ARRAY_AGG(bpo.hyle_output), NULL) AS proof_outputs
+    array_remove(ARRAY_AGG(bpo.hyli_output), NULL) AS proof_outputs
 FROM transactions t
 LEFT JOIN blocks b 
     ON t.block_hash = b.hash
@@ -168,6 +169,7 @@ LIMIT 1;
                 tx_hash: api_tx.tx_hash.0,
                 parent_dp_hash: api_tx.parent_dp_hash,
                 block_hash: api_tx.block_hash,
+                block_height: api_tx.block_height,
                 index: api_tx.index,
                 version: api_tx.version,
                 transaction_type: api_tx.transaction_type,

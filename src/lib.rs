@@ -8,7 +8,7 @@
 //!
 //! ## Shortcuts to important pages
 //!
-//! * [Hyli contract sdk](../hyle_contract_sdk)
+//! * [Hyli contract sdk](../hyli_contract_sdk)
 //!
 //! ## Useful links
 //!
@@ -25,7 +25,6 @@ pub mod explorer;
 pub mod genesis;
 pub mod indexer;
 pub mod mempool;
-pub mod node_state;
 pub mod p2p;
 pub mod rest;
 pub mod single_node_consensus;

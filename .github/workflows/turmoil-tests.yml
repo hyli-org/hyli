@@ -15,10 +15,11 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
         with:
-          toolchain: stable
-          override: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run turmoil tests - Basic
         run: cargo test turmoil_simulation_basic --features turmoil
@@ -32,4 +33,3 @@ jobs:
         run: cargo test turmoil_simulation_slow_node --features turmoil
       - name: Run turmoil tests - 2 Slow Nodes
         run: cargo test turmoil_simulation_two_slow_nodes --features turmoil
-

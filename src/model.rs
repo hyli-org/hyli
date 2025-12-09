@@ -1,10 +1,10 @@
 //! Various data structures
 
-use hyle_crypto::SharedBlstCrypto;
-use hyle_modules::modules::SharedBuildApiCtx;
+use hyli_crypto::SharedBlstCrypto;
+use hyli_modules::modules::SharedBuildApiCtx;
 
 // Re-export
-pub use hyle_model::*;
+pub use hyli_model::*;
 
 use crate::utils::conf::SharedConf;
 
@@ -13,4 +13,5 @@ pub struct SharedRunContext {
     pub config: SharedConf,
     pub api: SharedBuildApiCtx,
     pub crypto: SharedBlstCrypto,
+    pub start_height: Option<BlockHeight>,
 }

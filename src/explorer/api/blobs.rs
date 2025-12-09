@@ -7,7 +7,7 @@ use axum::{
 };
 
 use crate::model::*;
-use hyle_modules::log_error;
+use hyli_modules::log_error;
 
 #[derive(sqlx::FromRow, Debug)]
 pub struct BlobDb {
@@ -18,7 +18,6 @@ pub struct BlobDb {
     pub contract_name: String, // Contract name associated with the blob
     pub data: Vec<u8>,     // Actual blob data
     pub proof_outputs: Vec<serde_json::Value>, // outputs of proofs
-    pub verified: bool,    // Verification status
 }
 
 impl From<BlobDb> for APIBlob {
@@ -30,7 +29,7 @@ impl From<BlobDb> for APIBlob {
             contract_name: value.contract_name,
             data: value.data,
             proof_outputs: value.proof_outputs,
-            verified: value.verified,
+            verified: true, // For now we only store verified blobs
         }
     }
 }
@@ -53,16 +52,18 @@ pub async fn get_blobs_by_tx_hash(
     let blobs = log_error!(
         sqlx::query_as::<_, BlobDb>(
             r#"
-WITH latest_height_for_this_tx_hash AS (
-  SELECT MAX(block_height) as max_height
+WITH last_tx_for_this_hash AS (
+  SELECT parent_dp_hash
   FROM transactions
   WHERE tx_hash = $1
     AND transaction_type = 'blob_transaction'
+  ORDER BY block_height DESC, index DESC
+  LIMIT 1
 )
 
 SELECT 
       blobs.*,
-      array_remove(ARRAY_AGG(blob_proof_outputs.hyle_output), NULL) AS proof_outputs
+      array_remove(ARRAY_AGG(blob_proof_outputs.hyli_output), NULL) AS proof_outputs
 FROM blobs
 LEFT JOIN
      blob_proof_outputs
@@ -73,7 +74,7 @@ JOIN
      transactions
         ON transactions.parent_dp_hash = blobs.parent_dp_hash AND transactions.tx_hash = blobs.tx_hash
 WHERE blobs.tx_hash = $1
-     AND transactions.block_height = (SELECT max_height FROM latest_height_for_this_tx_hash)
+     AND transactions.parent_dp_hash = (SELECT parent_dp_hash FROM last_tx_for_this_hash)
 GROUP BY
       blobs.parent_dp_hash,
       blobs.tx_hash,
@@ -113,7 +114,7 @@ pub async fn get_blob(
             r#"
 SELECT 
   blobs.*, 
-  array_remove(ARRAY_AGG(blob_proof_outputs.hyle_output), NULL) AS proof_outputs
+  array_remove(ARRAY_AGG(blob_proof_outputs.hyli_output), NULL) AS proof_outputs
 FROM blobs
 LEFT JOIN blob_proof_outputs 
   ON blobs.parent_dp_hash = blob_proof_outputs.blob_parent_dp_hash
@@ -128,8 +129,9 @@ GROUP BY
   blobs.parent_dp_hash, 
   blobs.tx_hash, 
   blobs.blob_index,
-  transactions.block_height
-ORDER BY transactions.block_height DESC
+  transactions.block_height,
+  transactions.index
+ORDER BY transactions.block_height DESC, transactions.index DESC
 LIMIT 1;
 "#,
         )

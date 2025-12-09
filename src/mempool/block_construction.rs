@@ -3,7 +3,7 @@ use crate::{
     mempool::storage::EntryOrMissingHash, model::*,
 };
 use futures::StreamExt;
-use hyle_modules::{log_error, log_warn};
+use hyli_modules::{log_error, log_warn};
 
 use super::storage::Storage;
 use anyhow::{bail, Context, Result};
@@ -119,7 +119,7 @@ impl super::Mempool {
         &mut self,
         buc: &BlockUnderConstruction,
     ) -> Result<()> {
-        let block_data = self
+        let mut block_data = self
             .try_get_full_data_for_signed_block(buc)
             .await
             .context("Processing queued committedConsensusProposal")?;
@@ -131,6 +131,13 @@ impl super::Mempool {
             buc.ccp.consensus_proposal.slot,
             block_data.len()
         );
+
+        // Delete stored proofs for all committed DataProposals - we don't need them anymore
+        for (lane_id, dps) in &mut block_data {
+            for dp in dps {
+                self.lanes.delete_proofs(lane_id, &dp.hashed())?;
+            }
+        }
 
         self.bus
             .send(MempoolBlockEvent::BuiltSignedBlock(SignedBlock {
@@ -254,7 +261,7 @@ pub mod test {
     use crate::mempool::MempoolNetMessage;
     use crate::tests::autobahn_testing::assert_chanmsg_matches;
 
-    use super::super::test::*;
+    use super::super::tests::*;
     use super::*;
 
     #[test_log::test(tokio::test)]
@@ -263,7 +270,7 @@ pub mod test {
 
         // Store a DP, process the commit message for the cut containing it.
         let register_tx = make_register_contract_tx(ContractName::new("test1"));
-        let dp_orig = ctx.create_data_proposal(None, &[register_tx.clone()]);
+        let dp_orig = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
         ctx.process_new_data_proposal(dp_orig.clone())?;
         let cumul_size = LaneBytesSize(dp_orig.estimate_size() as u64);
         let dp_hash = dp_orig.hashed();
@@ -297,24 +304,102 @@ pub mod test {
     }
 
     #[test_log::test(tokio::test)]
+    async fn proofs_deleted_after_commit() -> Result<()> {
+        use crate::model::{
+            BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, ProofDataHash,
+            Transaction, TransactionData, VerifiedProofTransaction, Verifier,
+        };
+
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+
+        // Create a DP with a VerifiedProof tx containing an inlined proof
+        let proof = ProofData(vec![1, 2, 3, 4, 5]);
+        let proof_hash = ProofDataHash(proof.hashed().0);
+        let vpt = VerifiedProofTransaction {
+            contract_name: ContractName::new("cleanup-proof"),
+            program_id: ProgramId(vec![]),
+            verifier: Verifier("test".into()),
+            proof: Some(proof.clone()),
+            proof_hash: proof_hash.clone(),
+            proof_size: proof.0.len(),
+            proven_blobs: vec![BlobProofOutput {
+                original_proof_hash: proof_hash,
+                blob_tx_hash: crate::model::TxHash("blob-tx".into()),
+                program_id: ProgramId(vec![]),
+                verifier: Verifier("test".into()),
+                hyli_output: HyliOutput::default(),
+            }],
+            is_recursive: false,
+        };
+        let dp = ctx.create_data_proposal(
+            None,
+            &[Transaction::from(TransactionData::VerifiedProof(vpt))],
+        );
+        let dp_hash = dp.hashed();
+        let cumul_size = LaneBytesSize(dp.estimate_size() as u64);
+
+        // Store it locally; this strips proofs into side-store
+        ctx.process_new_data_proposal(dp.clone())?;
+
+        let lane_id = LaneId(ctx.validator_pubkey().clone());
+        // Ensure proofs exist before commit
+        let proofs_before = ctx
+            .mempool
+            .lanes
+            .get_proofs_by_hash(&lane_id, &dp_hash)?
+            .expect("proofs should be present before commit");
+        assert_eq!(proofs_before.len(), 1);
+
+        // Process a cut committing this DP
+        let key = ctx.validator_pubkey().clone();
+        ctx.add_trusted_validator(&key);
+        let cut = ctx
+            .process_cut_with_dp(&key, &dp_hash, cumul_size, 1)
+            .await?;
+
+        // Wait for BuiltSignedBlock as a sanity check
+        assert_chanmsg_matches!(
+            ctx.mempool_event_receiver,
+            MempoolBlockEvent::StartedBuildingBlocks(_) => {}
+        );
+        assert_chanmsg_matches!(
+            ctx.mempool_event_receiver,
+            MempoolBlockEvent::BuiltSignedBlock(sb) => {
+                assert_eq!(sb.consensus_proposal.cut, cut);
+            }
+        );
+
+        // Proofs should be removed from storage after block build
+        let proofs_after = ctx.mempool.lanes.get_proofs_by_hash(&lane_id, &dp_hash)?;
+        assert!(
+            proofs_after.is_none(),
+            "proofs must be deleted after commit"
+        );
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
     async fn signed_block_data_proposals_in_order() -> Result<()> {
         let mut ctx = MempoolTestCtx::new("mempool").await;
 
         // Store a DP, process the commit message for the cut containing it.
         let register_tx = make_register_contract_tx(ContractName::new("test1"));
-        let dp_orig = ctx.create_data_proposal(None, &[register_tx.clone()]);
+        let dp_orig = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
         ctx.process_new_data_proposal(dp_orig.clone())?;
         let cumul_size = LaneBytesSize(dp_orig.estimate_size() as u64);
         let dp_hash = dp_orig.hashed();
 
         let register_tx2 = make_register_contract_tx(ContractName::new("test2"));
-        let dp_orig2 = ctx.create_data_proposal(Some(dp_hash.clone()), &[register_tx2.clone()]);
+        let dp_orig2 =
+            ctx.create_data_proposal(Some(dp_hash.clone()), std::slice::from_ref(&register_tx2));
         ctx.process_new_data_proposal(dp_orig2.clone())?;
         let cumul_size = LaneBytesSize(cumul_size.0 + dp_orig2.estimate_size() as u64);
         let dp_hash2 = dp_orig2.hashed();
 
         let register_tx3 = make_register_contract_tx(ContractName::new("test3"));
-        let dp_orig3 = ctx.create_data_proposal(Some(dp_hash2.clone()), &[register_tx3.clone()]);
+        let dp_orig3 =
+            ctx.create_data_proposal(Some(dp_hash2.clone()), std::slice::from_ref(&register_tx3));
         ctx.process_new_data_proposal(dp_orig3.clone())?;
         let cumul_size = LaneBytesSize(cumul_size.0 + dp_orig3.estimate_size() as u64);
         let dp_hash3 = dp_orig3.hashed();

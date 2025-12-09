@@ -2,7 +2,7 @@
 use fixtures::ctx::E2ECtx;
 use tracing::info;
 
-use hyle::model::ProofData;
+use hyli::model::ProofData;
 
 mod fixtures;
 
@@ -24,8 +24,9 @@ mod e2e_amm {
         client::tx_executor_handler::{register_identity, verify_identity},
         Hydentity,
     };
-    use hyle_contract_sdk::{Blob, Calldata, ContractName, HyleOutput};
-    use hyle_contracts::{AMM_ELF, AMM_ID, HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
+    use hyli_contract_sdk::{Blob, Calldata, ContractName, HyliOutput};
+    use hyli_contracts::{AMM_ELF, AMM_ID, HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
+    use hyli_model::api::TransactionStatusDb;
     use hyllar::{
         client::tx_executor_handler::{approve, transfer},
         erc20::ERC20,
@@ -145,7 +146,7 @@ mod e2e_amm {
         ///////////////////// hyllar2 contract registration /////////////////
         info!("➡️  Registring hyllar2 contract");
         const HYLLAR2_CONTRACT_NAME: &str = "hyllar2";
-        ctx.register_contract::<HyllarTestContract>("hyle@hyle".into(), HYLLAR2_CONTRACT_NAME)
+        ctx.register_contract::<HyllarTestContract>("hyli@hyli".into(), HYLLAR2_CONTRACT_NAME)
             .await?;
         /////////////////////////////////////////////////////////////////////
 
@@ -177,7 +178,7 @@ mod e2e_amm {
         )?;
         transfer(&mut tx, "hyllar".into(), "bob@hydentity".into(), 25)?;
 
-        ctx.send_provable_blob_tx(&tx).await?;
+        let tx_hash = ctx.send_provable_blob_tx(&tx).await?;
         let tx = executor.process(tx)?;
         let mut proofs = tx.iter_prove();
 
@@ -190,8 +191,23 @@ mod e2e_amm {
         info!("➡️  Sending proof for hyllar");
         ctx.send_proof_single(bob_transfer_proof).await?;
 
-        info!("➡️  Waiting for height 5 on indexer");
-        ctx.wait_indexer_height(5).await?;
+        let mut tries = 0;
+        loop {
+            if let Ok(tx) = ctx
+                .indexer_client()
+                .get_transaction_with_hash(&tx_hash)
+                .await
+            {
+                if tx.transaction_status == TransactionStatusDb::Success {
+                    break;
+                }
+            }
+            tries += 1;
+            if tries >= 10 {
+                panic!("Failed to get transaction with hash {tx_hash}");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
 
         let state: Hyllar = ctx
             .indexer_client()
@@ -256,7 +272,7 @@ mod e2e_amm {
         ///////////////////// amm contract registration /////////////////////
         info!("➡️  Registring amm contract");
         const AMM_CONTRACT_NAME: &str = "amm";
-        ctx.register_contract::<AmmTestContract>("hyle@hyle".into(), AMM_CONTRACT_NAME)
+        ctx.register_contract::<AmmTestContract>("hyli@hyli".into(), AMM_CONTRACT_NAME)
             .await?;
         /////////////////////////////////////////////////////////////////////
 
@@ -415,10 +431,10 @@ mod e2e_amm {
 
         let recursive_proof = generate_recursive_proof(
             &[
-                hyle_contracts::HYDENTITY_ID,
-                hyle_contracts::AMM_ID,
-                hyle_contracts::HYLLAR_ID,
-                hyle_contracts::HYLLAR_ID,
+                hyli_contracts::HYDENTITY_ID,
+                hyli_contracts::AMM_ID,
+                hyli_contracts::HYLLAR_ID,
+                hyli_contracts::HYLLAR_ID,
             ],
             &[
                 &hydentity_proof,
@@ -432,8 +448,8 @@ mod e2e_amm {
         info!("➡️  Sending recursive proof for hydentity, amm, hyllar and hyllar2");
         ctx.send_proof(
             "risc0-recursion".into(),
-            hyle_model::ProgramId(hyle_contracts::RISC0_RECURSION_ID.to_vec()),
-            hyle_model::verifiers::RISC0_1.into(),
+            hyli_model::ProgramId(hyli_contracts::RISC0_RECURSION_ID.to_vec()),
+            hyli_model::verifiers::RISC0_3.into(),
             ProofData(recursive_proof),
             vec![
                 blob_tx_hash.clone(),

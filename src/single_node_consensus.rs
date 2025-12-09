@@ -1,6 +1,7 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
-use crate::bus::command_response::{CmdRespClient, Query};
+use crate::bus::command_response::CmdRespClient;
 use crate::bus::BusClientSender;
 use crate::consensus::ConfirmAckMarker;
 use crate::consensus::{CommittedConsensusProposal, ConsensusEvent, QueryConsensusInfo};
@@ -10,12 +11,17 @@ use crate::model::*;
 use crate::utils::conf::SharedConf;
 use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
-use hyle_crypto::SharedBlstCrypto;
-use hyle_modules::bus::SharedMessageBus;
-use hyle_modules::modules::module_bus_client;
-use hyle_modules::modules::Module;
-use hyle_modules::{log_error, module_handle_messages};
-use hyle_net::clock::TimestampMsClock;
+use hyli_crypto::SharedBlstCrypto;
+use hyli_model::utils::TimestampMs;
+use hyli_modules::bus::command_response::Query;
+use hyli_modules::bus::SharedMessageBus;
+use hyli_modules::modules::admin::{
+    QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse,
+};
+use hyli_modules::modules::module_bus_client;
+use hyli_modules::modules::Module;
+use hyli_modules::{log_error, module_handle_messages};
+use hyli_net::clock::TimestampMsClock;
 use staking::state::Staking;
 use tracing::{debug, warn};
 
@@ -24,6 +30,7 @@ struct SingleNodeConsensusBusClient {
     sender(ConsensusEvent),
     sender(Query<QueryNewCut, Cut>),
     receiver(Query<QueryConsensusInfo, ConsensusInfo>),
+    receiver(Query<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse>),
     receiver(GenesisEvent),
 }
 }
@@ -35,6 +42,7 @@ struct SingleNodeConsensusStore {
     last_consensus_proposal_hash: ConsensusProposalHash,
     last_slot: u64,
     last_cut: Cut,
+    last_timestamp: TimestampMs,
 }
 
 pub struct SingleNodeConsensus {
@@ -143,7 +151,12 @@ impl SingleNodeConsensus {
             tracing::trace!("Genesis block done");
         }
 
-        let mut interval = tokio::time::interval(self.config.consensus.slot_duration);
+        self.store.last_timestamp = TimestampMsClock::now();
+
+        let mut interval = tokio::time::interval(std::cmp::min(
+            self.config.consensus.slot_duration,
+            Duration::from_millis(250),
+        ));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         interval.tick().await; // First tick is immediate
 
@@ -157,6 +170,9 @@ impl SingleNodeConsensus {
                 let validators = vec![];
                 Ok(ConsensusInfo { slot, view, round_leader, last_timestamp, validators })
             },
+            command_response<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse> _ => {
+                Ok(QueryConsensusCatchupStoreResponse(vec![]))
+            },
             _ = interval.tick() => {
                 self.handle_new_slot_tick().await?;
             },
@@ -169,17 +185,27 @@ impl SingleNodeConsensus {
         // Query a new cut to Mempool in order to create a new CommitCut
         match self
             .bus
-            .shutdown_aware_request::<Self>(QueryNewCut(self.store.staking.clone()))
+            .shutdown_aware_request::<Self>(QueryNewCut {
+                staking: self.store.staking.clone(),
+                full: true,
+            })
             .await
         {
             Ok(cut) => {
+                if cut == self.store.last_cut
+                    && TimestampMsClock::now()
+                        < self.store.last_timestamp.clone() + self.config.consensus.slot_duration
+                {
+                    debug!("No new cut, skipping commit");
+                    return Ok(());
+                }
                 self.store.last_cut = cut.clone();
             }
             Err(err) => {
-                // In case of an error, we reuse the last cut to avoid being considered byzantine
-                tracing::error!("Error while requesting new cut: {:?}", err);
+                tracing::warn!("Error while requesting new cut: {:?}", err);
             }
         };
+
         let new_slot = self.store.last_slot + 1;
         let consensus_proposal = ConsensusProposal {
             slot: new_slot,
@@ -189,6 +215,7 @@ impl SingleNodeConsensus {
             parent_hash: std::mem::take(&mut self.store.last_consensus_proposal_hash),
         };
 
+        self.store.last_timestamp = consensus_proposal.timestamp.clone();
         self.store.last_consensus_proposal_hash = consensus_proposal.hashed();
 
         let certificate = self
@@ -217,10 +244,10 @@ mod tests {
     use crate::bus::{bus_client, SharedMessageBus};
     use crate::utils::conf::Conf;
     use anyhow::Result;
-    use hyle_crypto::BlstCrypto;
-    use hyle_modules::bus::dont_use_this::get_sender;
-    use hyle_modules::handle_messages;
-    use hyle_modules::modules::signal::ShutdownModule;
+    use hyli_crypto::BlstCrypto;
+    use hyli_modules::bus::dont_use_this::get_sender;
+    use hyli_modules::handle_messages;
+    use hyli_modules::modules::signal::ShutdownModule;
     use std::sync::Arc;
     use tokio::sync::broadcast::{Receiver, Sender};
 

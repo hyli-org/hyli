@@ -16,18 +16,18 @@ use axum::{
     Router,
 };
 use futures::{SinkExt, StreamExt};
-use hyle_model::api::{
+use hyli_model::api::{
     BlobWithStatus, TransactionStatusDb, TransactionTypeDb, TransactionWithBlobs,
 };
-use hyle_model::utils::TimestampMs;
-use hyle_modules::bus::BusMessage;
-use hyle_modules::log_error;
-use hyle_modules::{
+use hyli_model::utils::TimestampMs;
+use hyli_modules::bus::BusMessage;
+use hyli_modules::log_error;
+use hyli_modules::{
     bus::SharedMessageBus,
     module_handle_messages,
     modules::{module_bus_client, Module, SharedBuildApiCtx},
 };
-use hyle_net::logged_task::logged_task;
+use hyli_net::logged_task::logged_task;
 use sqlx::Row;
 use sqlx::{postgres::PgPoolOptions, PgPool, Pool, Postgres};
 use std::collections::HashMap;
@@ -53,6 +53,7 @@ pub struct WsExplorerBlobTx {
     pub tx_hash: TxHashDb,
     pub dp_hash: DataProposalHashDb,
     pub block_hash: ConsensusProposalHash,
+    pub block_height: BlockHeight,
     pub index: u32,
     pub version: u32,
     pub lane_id: Option<LaneId>,
@@ -218,6 +219,7 @@ impl Explorer {
             .routes(routes!(api::get_transactions))
             .routes(routes!(api::get_transactions_by_height))
             .routes(routes!(api::get_transactions_by_contract))
+            .routes(routes!(api::get_last_settled_tx_by_contract))
             .routes(routes!(api::get_transaction_with_hash))
             .routes(routes!(api::get_transaction_events))
             .routes(routes!(api::get_blob_transactions_by_contract))
@@ -235,7 +237,6 @@ impl Explorer {
             // contract
             .routes(routes!(api::list_contracts))
             .routes(routes!(api::get_contract))
-            .routes(routes!(api::get_contract_state_by_height))
             .split_for_parts();
 
         if let Some(ctx) = ctx {
@@ -274,6 +275,7 @@ impl Explorer {
             tx_hash,
             dp_hash,
             block_hash,
+            block_height,
             index,
             version,
             lane_id,
@@ -290,6 +292,7 @@ impl Explorer {
                     tx_hash: tx_hash.0.clone(),
                     parent_dp_hash: dp_hash.0.clone(),
                     block_hash: block_hash.clone(),
+                    block_height,
                     index,
                     version,
                     transaction_type: TransactionTypeDb::BlobTransaction,

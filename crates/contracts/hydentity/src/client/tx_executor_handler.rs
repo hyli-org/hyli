@@ -4,10 +4,7 @@ use client_sdk::{
     helpers::risc0::Risc0Prover,
     transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutorBuilder, TxExecutorHandler},
 };
-use sdk::{
-    utils::as_hyle_output, Blob, Calldata, ContractName, RegisterContractEffect, StateCommitment,
-    ZkContract,
-};
+use sdk::{utils::as_hyli_output, Blob, Calldata, ContractName, StateCommitment, ZkContract};
 
 pub mod metadata {
     pub const HYDENTITY_ELF: &[u8] = include_bytes!("../../hydentity.img");
@@ -16,15 +13,17 @@ pub mod metadata {
 use metadata::*;
 
 impl TxExecutorHandler for Hydentity {
+    type Contract = Hydentity;
+
     fn build_commitment_metadata(&self, _blob: &Blob) -> Result<Vec<u8>> {
         borsh::to_vec(self).context("Failed to serialize Hydentity")
     }
 
-    fn handle(&mut self, calldata: &Calldata) -> Result<sdk::HyleOutput> {
+    fn handle(&mut self, calldata: &Calldata) -> Result<sdk::HyliOutput> {
         let initial_state_commitment = <Self as ZkContract>::commit(self);
         let mut res = <Self as ZkContract>::execute(self, calldata);
         let next_state_commitment = <Self as ZkContract>::commit(self);
-        Ok(as_hyle_output(
+        Ok(as_hyli_output(
             initial_state_commitment,
             next_state_commitment,
             calldata,
@@ -33,8 +32,9 @@ impl TxExecutorHandler for Hydentity {
     }
 
     fn construct_state(
-        _register_blob: &RegisterContractEffect,
-        _metadata: &Option<Vec<u8>>,
+        _: &sdk::ContractName,
+        _: &sdk::Contract,
+        _: &Option<Vec<u8>>,
     ) -> Result<Self> {
         Ok(Self::default())
     }

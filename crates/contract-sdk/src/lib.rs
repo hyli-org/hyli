@@ -37,10 +37,10 @@ pub mod secp256k1;
 pub mod utils;
 
 use caller::ExecutionContext;
-// re-export hyle-model
-pub use hyle_model::*;
+// re-export hyli-model
+pub use hyli_model::*;
 
-pub use hyle_model::utils as hyle_model_utils;
+pub use hyli_model::utils as hyli_model_utils;
 
 #[cfg(feature = "tracing")]
 pub use tracing;
@@ -51,6 +51,15 @@ pub use tracing;
 macro_rules! info {
     ($($arg:tt)*) => {
         $crate::tracing::info!($($arg)*);
+    }
+}
+
+// Si la feature "tracing" est activée, on redirige vers `tracing::error!`
+#[cfg(feature = "tracing")]
+#[macro_export]
+macro_rules! error {
+    ($($arg:tt)*) => {
+        $crate::tracing::error!($($arg)*);
     }
 }
 
@@ -71,12 +80,29 @@ macro_rules! info {
     }
 }
 
+// Si la feature "tracing" n'est pas activée, on redirige vers la fonction env::log
+#[cfg(all(not(feature = "tracing"), feature = "risc0"))]
+#[macro_export]
+macro_rules! error {
+    ($($arg:tt)*) => {
+        risc0_zkvm::guest::env::log(&format!($($arg)*));
+    }
+}
+
+#[cfg(all(not(feature = "tracing"), not(feature = "risc0")))]
+#[macro_export]
+macro_rules! error {
+    ($($arg:tt)*) => {
+        println!($($arg)*);
+    }
+}
+
 pub type RunResult = Result<(Vec<u8>, ExecutionContext, Vec<OnchainEffect>), String>;
 
 /**
 This trait is used to define the contract's entrypoint.
 By using it and the [execute](function@crate::guest::execute) function, you let the sdk
-generate for you the [HyleOutput] struct with correct fields.
+generate for you the [HyliOutput] struct with correct fields.
 
 The [Calldata] struct is built by the application backend and given as input to
 the program that runs in the zkvm.
@@ -89,9 +115,9 @@ expected type. For this, it can call either [utils::parse_raw_calldata] or
 ## Example of execute implementation:
 
 ```rust
-use hyle_contract_sdk::{StateCommitment, RunResult, ZkContract};
-use hyle_contract_sdk::utils::parse_raw_calldata;
-use hyle_model::Calldata;
+use hyli_contract_sdk::{StateCommitment, RunResult, ZkContract};
+use hyli_contract_sdk::utils::parse_raw_calldata;
+use hyli_model::Calldata;
 
 use borsh::{BorshSerialize, BorshDeserialize};
 

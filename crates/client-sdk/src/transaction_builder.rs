@@ -8,8 +8,8 @@ use std::{
 
 use anyhow::{bail, Result};
 use sdk::{
-    Blob, BlobIndex, BlobTransaction, Calldata, ContractAction, ContractName, Hashed, HyleOutput,
-    Identity, ProofTransaction, RegisterContractEffect, StateCommitment, TxContext,
+    Blob, BlobIndex, BlobTransaction, Calldata, Contract, ContractAction, ContractName, Hashed,
+    HyliOutput, Identity, ProofTransaction, StateCommitment, TxContext,
 };
 
 use crate::helpers::ClientSdkProver;
@@ -51,6 +51,22 @@ impl ProvableBlobTx {
         Ok(self.runners.last_mut().unwrap())
     }
 
+    pub fn add_blob(
+        &mut self,
+        blob: Blob,
+        private_input: Option<Vec<u8>>,
+    ) -> Result<&'_ mut ContractRunner> {
+        let runner = ContractRunner::new(
+            blob.contract_name.clone(),
+            self.identity.clone(),
+            BlobIndex(self.blobs.len()),
+            private_input,
+        )?;
+        self.runners.push(runner);
+        self.blobs.push(blob);
+        Ok(self.runners.last_mut().unwrap())
+    }
+
     pub fn add_context(&mut self, tx_context: TxContext) {
         self.tx_context = Some(tx_context);
     }
@@ -66,7 +82,7 @@ pub struct ProofTxBuilder {
     pub identity: Identity,
     pub blobs: Vec<Blob>,
     runners: Vec<ContractRunner>,
-    pub outputs: Vec<(ContractName, HyleOutput)>,
+    pub outputs: Vec<(ContractName, HyliOutput)>,
     provers: BTreeMap<ContractName, Arc<dyn ClientSdkProver<Vec<Calldata>> + Sync + Send>>,
 }
 
@@ -77,7 +93,7 @@ impl ProofTxBuilder {
     /// for (proof, contract_name) in transaction.iter_prove() {
     ///    let proof: ProofData = proof.await.unwrap();
     ///    ctx.client()
-    ///        .send_tx_proof(&hyle::model::ProofTransaction {
+    ///        .send_tx_proof(&hyli::model::ProofTransaction {
     ///            blob_tx_hash: blob_tx_hash.clone(),
     ///            proof,
     ///            contract_name,
@@ -136,12 +152,18 @@ where
         &mut self,
         contract_name: &ContractName,
         calldata: &Calldata,
-    ) -> anyhow::Result<HyleOutput>;
+    ) -> anyhow::Result<HyliOutput>;
 }
 
 pub struct TxExecutor<S: StateUpdater> {
     states: S,
     provers: BTreeMap<ContractName, Arc<dyn ClientSdkProver<Vec<Calldata>> + Sync + Send>>,
+}
+
+impl<S: StateUpdater> TxExecutor<S> {
+    pub fn get_state(&self, contract_name: &ContractName) -> Result<Box<dyn Any>> {
+        self.states.get(contract_name)
+    }
 }
 
 impl<S: StateUpdater> Deref for TxExecutor<S> {
@@ -352,13 +374,15 @@ impl ContractRunner {
 pub type TxExecutorHandlerResult<T> = Result<T>;
 pub use anyhow::Context as TxExecutorHandlerContext;
 pub trait TxExecutorHandler {
+    type Contract;
+
     /// Entry point for contract execution for the SDK's TxExecutor tool
     /// This handler provides a way to execute contract logic with access to the full provable state,
     /// as opposed to the ZkContract trait which only works with commitment metadata.
     ///
     /// Example: For a contract using a MerkleTrie, this handler can access and update the entire trie,
     /// while the ZkContract would only work with the root hash.
-    fn handle(&mut self, calldata: &Calldata) -> anyhow::Result<HyleOutput>;
+    fn handle(&mut self, calldata: &Calldata) -> anyhow::Result<HyliOutput>;
 
     /// This is the function that creates the commitment metadata.
     /// It provides the minimum information necessary to construct the commitment_medata field of the input
@@ -377,7 +401,8 @@ pub trait TxExecutorHandler {
 
     /// Parse a registration blob and construct the initial state of the contract
     fn construct_state(
-        register_blob: &RegisterContractEffect,
+        contract_name: &ContractName,
+        contract: &Contract,
         metadata: &Option<Vec<u8>>,
     ) -> anyhow::Result<Self>
     where
@@ -388,10 +413,10 @@ pub trait TxExecutorHandler {
 
 /// Macro to easily define the full state of a TxExecutor
 /// Struct-like syntax.
-/// Must have Calldata, ContractName, HyleOutput, TxExecutorHandler and anyhow in scope.
+/// Must have Calldata, ContractName, HyliOutput, TxExecutorHandler and anyhow in scope.
 /// Example:
 /// use anyhow;
-/// use hyle_contract_sdk::{Blob, Calldata, ContractName, HyleOutput};
+/// use hyli_contract_sdk::{Blob, Calldata, ContractName, HyliOutput};
 /// use client_sdk::transaction_builder::TxExecutorHandler;
 #[macro_export]
 macro_rules! contract_states {
@@ -438,7 +463,7 @@ macro_rules! contract_states {
                 }
             }
 
-            fn execute(&mut self, contract_name: &ContractName, calldata: &Calldata) -> anyhow::Result<HyleOutput> {
+            fn execute(&mut self, contract_name: &ContractName, calldata: &Calldata) -> anyhow::Result<HyliOutput> {
                 match contract_name.0.as_str() {
                     $(stringify!($contract_name) => {
                         self.$contract_name

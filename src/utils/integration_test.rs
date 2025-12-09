@@ -5,37 +5,38 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use crate::{
+    bus::{bus_client, metrics::BusMetrics, BusClientReceiver, SharedMessageBus},
+    consensus::Consensus,
+    data_availability::DataAvailability,
+    explorer::Explorer,
+    genesis::{Genesis, GenesisEvent},
+    indexer::Indexer,
+    mempool::Mempool,
+    model::SharedRunContext,
+    p2p::P2P,
+    rest::{RestApi, RestApiRunContext},
+    single_node_consensus::SingleNodeConsensus,
+    tcp_server::TcpServer,
+    utils::conf::Conf,
+};
 use anyhow::{bail, Context, Result};
 use axum::Router;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
-use hyle_model::api::NodeInfo;
-use hyle_model::TxHash;
-use hyle_modules::modules::{BuildApiContextInner, ModulesHandler};
-use hyle_modules::node_state::module::NodeStateCtx;
+use hyli_crypto::BlstCrypto;
+use hyli_model::NodeStateEvent;
+use hyli_model::{api::NodeInfo, TxHash};
+use hyli_modules::node_state::module::NodeStateModule;
+use hyli_modules::{
+    module_bus_client, module_handle_messages,
+    modules::{BuildApiContextInner, Module, ModulesHandler},
+    node_state::module::NodeStateCtx,
+};
 use tracing::info;
-
-use crate::bus::metrics::BusMetrics;
-use crate::bus::{bus_client, BusClientReceiver, SharedMessageBus};
-use crate::consensus::Consensus;
-use crate::data_availability::DataAvailability;
-use crate::explorer::Explorer;
-use crate::genesis::{Genesis, GenesisEvent};
-use crate::indexer::Indexer;
-use crate::mempool::Mempool;
-use crate::model::SharedRunContext;
-use crate::node_state::module::{NodeStateEvent, NodeStateModule};
-use crate::p2p::P2P;
-use crate::rest::{RestApi, RestApiRunContext};
-use crate::single_node_consensus::SingleNodeConsensus;
-use crate::tcp_server::TcpServer;
-use crate::utils::conf::Conf;
-use hyle_crypto::BlstCrypto;
-
-use hyle_modules::{module_bus_client, module_handle_messages, modules::Module};
 
 // Assume that we can reuse the OS-provided port.
 pub async fn find_available_port() -> u16 {
-    let listener = hyle_net::net::TcpListener::bind("127.0.0.1:0")
+    let listener = hyli_net::net::TcpListener::bind("127.0.0.1:0")
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();
@@ -261,6 +262,7 @@ impl NodeIntegrationCtx {
                 openapi: Default::default(),
             }),
             crypto,
+            start_height: None,
         };
 
         let mut handler = ModulesHandler::new(&bus).await;
@@ -384,7 +386,12 @@ impl NodeIntegrationCtx {
         loop {
             let event: NodeStateEvent = self.bus_client.recv().await?;
             let NodeStateEvent::NewBlock(block) = event;
-            if block.successful_txs.iter().any(|tx_hash| tx_hash == &tx) {
+            if block
+                .parsed_block
+                .successful_txs
+                .iter()
+                .any(|tx_hash| tx_hash == &tx)
+            {
                 break;
             }
         }

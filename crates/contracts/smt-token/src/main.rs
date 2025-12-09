@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use hyle_smt_token::SmtTokenContract;
+use hyli_smt_token::SmtTokenContract;
 use sdk::{
     guest::{execute, GuestEnv, Risc0Env},
     Calldata,

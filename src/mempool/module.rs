@@ -1,14 +1,13 @@
-use hyle_modules::{log_error, module_handle_messages};
+use hyli_modules::{log_error, module_handle_messages};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use crate::{
-    consensus::ConsensusEvent, model::*, node_state::module::NodeStateEvent,
-    p2p::network::MsgWithHeader, utils::conf::P2pMode,
+    consensus::ConsensusEvent, model::*, p2p::network::MsgWithHeader, utils::conf::P2pMode,
 };
 
 use client_sdk::tcp_client::TcpServerMessage;
-use hyle_model::{DataProposalHash, LaneBytesSize, LaneId};
-use hyle_modules::{bus::SharedMessageBus, modules::Module};
+use hyli_model::{DataProposalHash, LaneBytesSize, LaneId};
+use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use tracing::warn;
 
 use super::{api::RestApiMessage, MempoolNetMessage, QueryNewCut};
@@ -98,7 +97,7 @@ impl Module for Mempool {
                 let NodeStateEvent::NewBlock(block) = cmd;
                 // In this p2p mode we don't receive consensus events so we must update manually.
                 if self.conf.p2p.mode == P2pMode::LaneManager {
-                    if let Err(e) = self.staking.process_block(block.as_ref()) {
+                    if let Err(e) = self.staking.process_block(&block.staking_data) {
                         tracing::error!("Error processing block in mempool: {:?}", e);
                     }
                 }

@@ -6,14 +6,14 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use hyle_net::http::HttpClient;
+use hyli_net::http::HttpClient;
 use sdk::{
     api::{
         APIBlob, APIBlock, APIContract, APINodeContract, APIRegisterContract, APIStaking,
-        APITransaction, NodeInfo, TransactionWithBlobs,
+        APITransaction, NodeInfo, TransactionStatusDb, TransactionWithBlobs,
     },
     BlobIndex, BlobTransaction, BlockHash, BlockHeight, ConsensusInfo, Contract, ContractName,
-    ProofTransaction, TxHash, UnsettledBlobTransaction, ValidatorPublicKey,
+    ProofTransaction, TxHash, TxId, UnsettledBlobTransaction, ValidatorPublicKey,
 };
 
 #[derive(Clone)]
@@ -31,18 +31,22 @@ impl IndexerApiHttpClient {
             },
         })
     }
+
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn list_contracts(&self) -> Result<Vec<APIContract>> {
         self.get("v1/indexer/contracts")
             .await
             .context("listing contracts")
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_indexer_contract(&self, contract_name: &ContractName) -> Result<APIContract> {
         self.get(&format!("v1/indexer/contract/{contract_name}"))
             .await
             .context(format!("getting contract {contract_name}"))
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn fetch_current_state<State>(&self, contract_name: &ContractName) -> Result<State>
     where
         State: serde::de::DeserializeOwned,
@@ -52,41 +56,48 @@ impl IndexerApiHttpClient {
             .context(format!("getting contract {contract_name} state"))
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_block_height(&self) -> Result<BlockHeight> {
         let block: APIBlock = self.get_last_block().await?;
         Ok(BlockHeight(block.height))
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_blocks(&self) -> Result<Vec<APIBlock>> {
         self.get("v1/indexer/blocks")
             .await
             .context("getting blocks")
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_last_block(&self) -> Result<APIBlock> {
         self.get("v1/indexer/block/last")
             .await
             .context("getting last block")
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_block_by_height(&self, height: &BlockHeight) -> Result<APIBlock> {
         self.get(&format!("v1/indexer/block/height/{height}"))
             .await
             .context(format!("getting block with height {height}"))
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_block_by_hash(&self, hash: &BlockHash) -> Result<APIBlock> {
         self.get(&format!("v1/indexer/block/hash/{hash}"))
             .await
             .context(format!("getting block with hash {hash}"))
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_transactions(&self) -> Result<Vec<APITransaction>> {
         self.get("v1/indexer/transactions")
             .await
             .context("getting transactions")
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_transactions_by_height(
         &self,
         height: &BlockHeight,
@@ -96,6 +107,7 @@ impl IndexerApiHttpClient {
             .context(format!("getting transactions for block height {height}"))
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_transactions_by_contract(
         &self,
         contract_name: &ContractName,
@@ -105,12 +117,38 @@ impl IndexerApiHttpClient {
             .context(format!("getting transactions for contract {contract_name}"))
     }
 
+    /// Get the last settled tx id by contract name and status
+    /// If status is not provided, it will return the last settled tx id for all statuses (success, failure, timed_out)
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    pub async fn get_last_settled_txid_by_contract(
+        &self,
+        contract_name: &ContractName,
+        status: Option<Vec<TransactionStatusDb>>,
+    ) -> Result<Option<TxId>> {
+        self.get(&format!(
+            "v1/indexer/transactions/contract/{contract_name}/last_settled_tx_id?status={}",
+            status
+                .map(|s| s
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect::<Vec<String>>()
+                    .join(","))
+                .unwrap_or_default(),
+        ))
+        .await
+        .context(format!(
+            "getting last settled tx by contract {contract_name}"
+        ))
+    }
+
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_transaction_with_hash(&self, tx_hash: &TxHash) -> Result<APITransaction> {
         self.get(&format!("v1/indexer/transaction/hash/{tx_hash}"))
             .await
             .context(format!("getting transaction with hash {tx_hash}"))
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_blob_transactions_by_contract(
         &self,
         contract_name: &ContractName,
@@ -124,12 +162,14 @@ impl IndexerApiHttpClient {
         ))
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_blobs_by_tx_hash(&self, tx_hash: &TxHash) -> Result<Vec<APIBlob>> {
         self.get(&format!("v1/indexer/blobs/hash/{tx_hash}"))
             .await
             .context(format!("getting blob by transaction hash {tx_hash}"))
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_blob(&self, tx_hash: &TxHash, blob_index: BlobIndex) -> Result<APIBlob> {
         self.get(&format!(
             "v1/indexer/blob/hash/{tx_hash}/index/{blob_index}"
@@ -227,6 +267,7 @@ impl NodeApiHttpClient {
 }
 
 impl NodeApiClient for NodeApiHttpClient {
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     fn register_contract(
         &self,
         tx: APIRegisterContract,
@@ -238,6 +279,7 @@ impl NodeApiClient for NodeApiHttpClient {
         })
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     fn send_tx_blob(
         &self,
         tx: BlobTransaction,
@@ -249,6 +291,7 @@ impl NodeApiClient for NodeApiHttpClient {
         })
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     fn send_tx_proof(
         &self,
         tx: ProofTransaction,
@@ -260,6 +303,7 @@ impl NodeApiClient for NodeApiHttpClient {
         })
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     fn get_consensus_info(
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<ConsensusInfo>> + Send + '_>> {
@@ -270,6 +314,7 @@ impl NodeApiClient for NodeApiHttpClient {
         })
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     fn get_consensus_staking_state(
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<APIStaking>> + Send + '_>> {
@@ -280,10 +325,12 @@ impl NodeApiClient for NodeApiHttpClient {
         })
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     fn get_node_info(&self) -> Pin<Box<dyn Future<Output = Result<NodeInfo>> + Send + '_>> {
         Box::pin(async move { self.get("v1/info").await.context("getting node info") })
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     fn metrics(&self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
         Box::pin(async move {
             self.get_str("v1/metrics")
@@ -292,6 +339,7 @@ impl NodeApiClient for NodeApiHttpClient {
         })
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     fn get_block_height(&self) -> Pin<Box<dyn Future<Output = Result<BlockHeight>> + Send + '_>> {
         Box::pin(async move {
             self.get("v1/da/block/height")
@@ -300,6 +348,7 @@ impl NodeApiClient for NodeApiHttpClient {
         })
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     fn get_contract(
         &self,
         contract_name: ContractName,
@@ -311,6 +360,7 @@ impl NodeApiClient for NodeApiHttpClient {
         })
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     fn get_unsettled_tx(
         &self,
         blob_tx_hash: TxHash,
@@ -322,6 +372,7 @@ impl NodeApiClient for NodeApiHttpClient {
         })
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     fn get_settled_height(
         &self,
         contract_name: ContractName,
@@ -335,6 +386,7 @@ impl NodeApiClient for NodeApiHttpClient {
         })
     }
 }
+
 impl Deref for NodeApiHttpClient {
     type Target = HttpClient;
 
@@ -350,7 +402,7 @@ impl DerefMut for NodeApiHttpClient {
 
 #[allow(dead_code)]
 pub mod test {
-    use sdk::{hyle_model_utils::TimestampMs, Hashed, TimeoutWindow};
+    use sdk::{hyli_model_utils::TimestampMs, Hashed, TimeoutWindow};
 
     use super::*;
     use std::sync::{Arc, Mutex};
@@ -502,7 +554,10 @@ pub mod test {
                     verifier: contract.verifier,
                     timeout_window: match contract.timeout_window {
                         TimeoutWindow::NoTimeout => None,
-                        TimeoutWindow::Timeout(window) => Some(window.0),
+                        TimeoutWindow::Timeout {
+                            hard_timeout,
+                            soft_timeout,
+                        } => Some((hard_timeout.0, soft_timeout.0)),
                     },
                 })
             })

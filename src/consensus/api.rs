@@ -1,8 +1,8 @@
 use anyhow::anyhow;
 use axum::{debug_handler, extract::State, http::StatusCode, response::IntoResponse, Json, Router};
 use client_sdk::contract_indexer::AppError;
-use hyle_model::api::APIStaking;
-use hyle_modules::{bus::SharedMessageBus, modules::signal::ShutdownModule};
+use hyli_model::api::APIStaking;
+use hyli_modules::{bus::SharedMessageBus, modules::signal::ShutdownModule};
 use staking::state::Staking;
 use tracing::error;
 use utoipa::OpenApi;
@@ -114,7 +114,7 @@ pub async fn get_consensus_staking_state(
 
 impl Clone for RouterState {
     fn clone(&self) -> Self {
-        use hyle_modules::utils::static_type_map::Pick;
+        use hyli_modules::utils::static_type_map::Pick;
         Self {
             bus: RestBusClient::new(
                 Pick::<BusMetrics>::get(&self.bus).clone(),

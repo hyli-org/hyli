@@ -1,12 +1,12 @@
 [package]
-name = "hyle-contracts"
-description = "Metadata of hyle built-in contracts"
+name = "hyli-contracts"
+description = "Metadata of hyli built-in contracts"
 license-file = { workspace = true }
 version = { workspace = true }
 edition = { workspace = true }
 homepage = { workspace = true }
 repository = { workspace = true }
-rust-version = "1.81"
+rust-version = "1.85"
 
 [lib]
 path = "metadata.rs"

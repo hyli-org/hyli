@@ -10,22 +10,22 @@ use anyhow::{Context, Result};
 use api::APIContract;
 use assertables::assert_ok;
 use client_sdk::{rest_client::NodeApiClient, transaction_builder::ProvableBlobTx};
-use hyle_model::api::APINodeContract;
+use hyli_model::api::APINodeContract;
 use testcontainers_modules::{
     postgres::Postgres,
     testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
 };
 use tracing::info;
 
-use hyle::{
+use hyli::{
     model::*,
     rest::client::{IndexerApiHttpClient, NodeApiHttpClient},
     utils::conf::{Conf, P2pMode, TimestampCheck},
 };
-use hyle_contract_sdk::{
-    BlobIndex, ContractName, HyleOutput, Identity, ProgramId, StateCommitment, TxHash, Verifier,
+use hyli_contract_sdk::{
+    BlobIndex, ContractName, HyliOutput, Identity, ProgramId, StateCommitment, TxHash, Verifier,
 };
-use hyle_net::net::bind_tcp_listener;
+use hyli_net::net::bind_tcp_listener;
 
 use crate::fixtures::test_helpers::{wait_height_timeout, IndexerOrNodeHttpClient};
 
@@ -39,7 +39,7 @@ pub trait E2EContract {
 
 pub struct E2ECtx {
     pg: Option<ContainerAsync<Postgres>>,
-    nodes: Vec<test_helpers::TestProcess>,
+    pub nodes: Vec<test_helpers::TestProcess>,
     clients: Vec<NodeApiHttpClient>,
     client_index: usize,
     indexer_client: Option<IndexerApiHttpClient>,
@@ -77,7 +77,11 @@ impl E2ECtx {
 
         for node_conf in confs.iter_mut() {
             node_conf.genesis.stakers = genesis_stakers.clone();
-            let node = test_helpers::TestProcess::new("hyle", node_conf.clone()).start();
+            let node = test_helpers::TestProcess::new(
+                assert_cmd::cargo::cargo_bin!("hyli"),
+                node_conf.clone(),
+            )
+            .start();
 
             // Request something on node1 to be sure it's alive and working
             let client = NodeApiHttpClient::new(format!(
@@ -93,6 +97,7 @@ impl E2ECtx {
 
     pub async fn new_single(slot_duration_ms: u64) -> Result<E2ECtx> {
         std::env::set_var("RISC0_DEV_MODE", "1");
+        std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let mut conf_maker = ConfMaker::default();
         conf_maker.default.consensus.slot_duration = Duration::from_millis(slot_duration_ms);
@@ -101,7 +106,8 @@ impl E2ECtx {
             vec![("single-node".to_string(), 100)].into_iter().collect();
 
         let node_conf = conf_maker.build("single-node").await;
-        let node = test_helpers::TestProcess::new("hyle", node_conf).start();
+        let node = test_helpers::TestProcess::new(assert_cmd::cargo::cargo_bin!("hyli"), node_conf)
+            .start();
 
         // Request something on node1 to be sure it's alive and working
         let client =
@@ -125,6 +131,7 @@ impl E2ECtx {
 
     pub async fn new_single_with_indexer(slot_duration_ms: u64) -> Result<E2ECtx> {
         std::env::set_var("RISC0_DEV_MODE", "1");
+        std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let pg = Self::init().await;
 
@@ -139,7 +146,11 @@ impl E2ECtx {
         );
 
         let node_conf = conf_maker.build("single-node").await;
-        let node = test_helpers::TestProcess::new("hyle", node_conf.clone()).start();
+        let node = test_helpers::TestProcess::new(
+            assert_cmd::cargo::cargo_bin!("hyli"),
+            node_conf.clone(),
+        )
+        .start();
 
         // Request something on node1 to be sure it's alive and working
         let client =
@@ -151,7 +162,11 @@ impl E2ECtx {
         indexer_conf.da_read_from = node_conf.da_public_address.clone();
         indexer_conf.run_indexer = true;
         indexer_conf.run_explorer = true;
-        let indexer = test_helpers::TestProcess::new("indexer", indexer_conf.clone()).start();
+        let indexer = test_helpers::TestProcess::new(
+            assert_cmd::cargo::cargo_bin!("indexer"),
+            indexer_conf.clone(),
+        )
+        .start();
 
         let url = format!("http://localhost:{}/", &indexer_conf.rest_server_port);
         let indexer_client = IndexerApiHttpClient::new(url).unwrap();
@@ -175,6 +190,7 @@ impl E2ECtx {
     }
     pub async fn new_multi(count: usize, slot_duration_ms: u64) -> Result<E2ECtx> {
         std::env::set_var("RISC0_DEV_MODE", "1");
+        std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let mut conf_maker = ConfMaker::default();
         conf_maker.default.consensus.slot_duration = Duration::from_millis(slot_duration_ms);
@@ -235,7 +251,8 @@ impl E2ECtx {
     }
 
     pub async fn add_node_with_conf(&mut self, node_conf: Conf) -> Result<&NodeApiHttpClient> {
-        let node = test_helpers::TestProcess::new("hyle", node_conf).start();
+        let node = test_helpers::TestProcess::new(assert_cmd::cargo::cargo_bin!("hyli"), node_conf)
+            .start();
         // Request something on node1 to be sure it's alive and working
         let client =
             NodeApiHttpClient::new(format!("http://localhost:{}/", &node.conf.rest_server_port))
@@ -261,6 +278,7 @@ impl E2ECtx {
         timestamp_checks: TimestampCheck,
     ) -> Result<E2ECtx> {
         std::env::set_var("RISC0_DEV_MODE", "1");
+        std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let pg = Self::init().await;
 
@@ -279,7 +297,11 @@ impl E2ECtx {
         indexer_conf.run_indexer = true;
         indexer_conf.run_explorer = true;
         indexer_conf.da_read_from = nodes.last().unwrap().conf.da_public_address.clone();
-        let indexer = test_helpers::TestProcess::new("indexer", indexer_conf.clone()).start();
+        let indexer = test_helpers::TestProcess::new(
+            assert_cmd::cargo::cargo_bin!("indexer"),
+            indexer_conf.clone(),
+        )
+        .start();
 
         nodes.push(indexer);
         let url = format!("http://localhost:{}/", &indexer_conf.rest_server_port);
@@ -333,7 +355,7 @@ impl E2ECtx {
     pub fn get_instructions_for(&mut self, index: usize) {
         // Print instructions to start the node manually outside the test context.
         tracing::warn!(
-            "🚀 Start node with the following command:\nhyle=$(pwd)/target/release/hyle && (cd {} && RUST_LOG=info \"$hyle\")",
+            "🚀 Start node with the following command:\nhyli=$(pwd)/target/release/hyli && (cd {} && RUST_LOG=info \"$hyli\")",
             self.nodes[index].dir.path().display()
         );
     }
@@ -376,16 +398,18 @@ impl E2ECtx {
     where
         Contract: E2EContract,
     {
-        let blobs = vec![RegisterContractAction {
-            verifier: Contract::verifier(),
-            program_id: Contract::program_id(),
-            state_commitment: Contract::state_commitment(),
-            contract_name: name.into(),
-            ..Default::default()
-        }
-        .as_blob("hyle".into(), None, None)];
+        let tx = BlobTransaction::new(
+            sender.clone(),
+            vec![RegisterContractAction {
+                verifier: Contract::verifier(),
+                program_id: Contract::program_id(),
+                state_commitment: Contract::state_commitment(),
+                contract_name: name.into(),
+                ..Default::default()
+            }
+            .as_blob("hyli".into())],
+        );
 
-        let tx = BlobTransaction::new(sender.clone(), blobs.clone());
         assert_ok!(self.client().send_tx_blob(tx).await);
 
         tokio::time::timeout(Duration::from_secs(30), async {
@@ -415,9 +439,10 @@ impl E2ECtx {
             .await
     }
 
-    pub async fn send_proof_single(&self, proof: ProofTransaction) -> Result<()> {
-        assert_ok!(self.client().send_tx_proof(proof).await);
-        Ok(())
+    pub async fn send_proof_single(&self, proof: ProofTransaction) -> Result<TxHash> {
+        let tx_hash = self.client().send_tx_proof(proof).await;
+        assert_ok!(&tx_hash);
+        tx_hash
     }
 
     pub async fn send_proof(

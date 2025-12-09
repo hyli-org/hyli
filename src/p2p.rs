@@ -7,14 +7,14 @@ use crate::{
     model::SharedRunContext, utils::conf::SharedConf,
 };
 use anyhow::{bail, Context, Error, Result};
-use hyle_crypto::{BlstCrypto, SharedBlstCrypto};
-use hyle_model::{BlockHeight, NodeStateEvent, ValidatorPublicKey};
-use hyle_modules::{
+use hyli_crypto::{BlstCrypto, SharedBlstCrypto};
+use hyli_model::{BlockHeight, NodeStateEvent, ValidatorPublicKey};
+use hyli_modules::{
     bus::{BusMessage, SharedMessageBus},
     log_warn, module_handle_messages,
     modules::{module_bus_client, Module},
 };
-use hyle_net::{
+use hyli_net::{
     clock::TimestampMsClock,
     tcp::{
         p2p_server::{P2PServer, P2PServerEvent},
@@ -113,8 +113,8 @@ impl P2P {
         module_handle_messages! {
             on_self self,
             listen<NodeStateEvent> NodeStateEvent::NewBlock(b) => {
-                if b.block_height.0 > p2p_server.current_height {
-                    p2p_server.current_height = b.block_height.0;
+                if b.parsed_block.block_height.0 > p2p_server.current_height {
+                    p2p_server.current_height = b.parsed_block.block_height.0;
                 }
             }
             listen<P2PCommand> cmd => {

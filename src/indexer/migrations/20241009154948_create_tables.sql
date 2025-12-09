@@ -20,7 +20,7 @@ CREATE TABLE transactions (
     transaction_type transaction_type NOT NULL,      -- Field to identify the type of transaction (used for joins)
     transaction_status transaction_status NOT NULL,  -- Field to identify the status of the transaction
     block_hash TEXT REFERENCES blocks(hash) ON DELETE CASCADE,
-    block_height INT,
+    block_height BIGINT,
     lane_id TEXT,                           -- Lane ID
     index INT,                              -- Index of the transaction within the block
     identity TEXT,                          -- Identity (NULL except for blob transactions)
@@ -38,23 +38,13 @@ CREATE TABLE blobs (
     identity TEXT NOT NULL,            -- Identity field from the original BlobTransaction struct
     contract_name TEXT NOT NULL,       -- Contract name associated with the blob
     data BYTEA NOT NULL,               -- Actual blob data (stored as binary)
-    verified BOOLEAN NOT NULL,         -- Field to indicate if the blob is verified
     PRIMARY KEY (parent_dp_hash, tx_hash, blob_index), -- Composite primary key (parent_dp_hash + tx_hash + blob_index) to uniquely identify each blob
     CHECK (blob_index >= 0),           -- Ensure the index is positive
     FOREIGN KEY (parent_dp_hash, tx_hash) REFERENCES transactions(parent_dp_hash, tx_hash) ON DELETE CASCADE
 );
 create index idx_blobs_contract_name on blobs(contract_name);
 
--- This table stores actual proofs, which may not be present in all indexers
-CREATE TABLE proofs (
-    tx_hash TEXT NOT NULL,    
-    parent_dp_hash TEXT NOT NULL,    
-    proof BYTEA NOT NULL,
-    FOREIGN KEY (parent_dp_hash, tx_hash) REFERENCES transactions(parent_dp_hash, tx_hash) ON DELETE CASCADE,
-    PRIMARY KEY (tx_hash, parent_dp_hash)
-);
-
--- This table stores one line for each hyle output in a VerifiedProof
+-- This table stores one line for each hyli output in a VerifiedProof
 CREATE TABLE blob_proof_outputs (
     blob_parent_dp_hash  TEXT NOT NULL,         -- Foreign key linking to the BlobTransactions    
     blob_tx_hash  TEXT NOT NULL,         -- Foreign key linking to the BlobTransactions    
@@ -63,7 +53,7 @@ CREATE TABLE blob_proof_outputs (
     blob_index INT NOT NULL,            -- Index of the blob within the transaction
     blob_proof_output_index INT NOT NULL, -- Index of the blob proof output within the proof
     contract_name TEXT NOT NULL,       -- Contract name associated with the blob
-    hyle_output JSONB NOT NULL,        -- Additional metadata stored in JSONB format
+    hyli_output JSONB NOT NULL,        -- Additional metadata stored in JSONB format
     settled BOOLEAN NOT NULL,       -- Was this blob proof output used in settlement ? 
     PRIMARY KEY (proof_parent_dp_hash, proof_tx_hash, blob_parent_dp_hash, blob_tx_hash, blob_index, blob_proof_output_index),
     FOREIGN KEY (blob_parent_dp_hash, blob_tx_hash, blob_index) REFERENCES blobs(parent_dp_hash, tx_hash, blob_index) ON DELETE CASCADE,
@@ -73,13 +63,16 @@ CREATE TABLE blob_proof_outputs (
 );
 
 CREATE TABLE contracts (
-    tx_hash TEXT NOT NULL,
-    parent_dp_hash TEXT NOT NULL,
+    contract_name TEXT PRIMARY KEY NOT NULL,
     verifier TEXT NOT NULL,
     program_id BYTEA NOT NULL,
-    timeout_window BIGINT,
+    soft_timeout BIGINT,
+    hard_timeout BIGINT,
     state_commitment BYTEA NOT NULL,
-    contract_name TEXT PRIMARY KEY NOT NULL,
+    parent_dp_hash TEXT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    metadata BYTEA,
+    deleted_at_height INT,
     FOREIGN KEY (parent_dp_hash, tx_hash) REFERENCES transactions(parent_dp_hash, tx_hash) ON DELETE CASCADE
 );
 
@@ -92,21 +85,18 @@ CREATE TABLE contract_state (
 
 CREATE TABLE transaction_state_events (
     block_hash TEXT NOT NULL REFERENCES blocks(hash) ON DELETE CASCADE,
-    block_height INT,
-    index INT,
+    block_height BIGINT,
     tx_hash TEXT NOT NULL,
     parent_dp_hash TEXT NOT NULL,
-    FOREIGN KEY (tx_hash, parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE,
-    
-    events JSONB NOT NULL
+    event JSONB NOT NULL,
+    index INT,
+    FOREIGN KEY (tx_hash, parent_dp_hash) REFERENCES transactions(tx_hash, parent_dp_hash) ON DELETE CASCADE
 );
 
 
 CREATE INDEX idx_bpo_on_proof_tx
   ON blob_proof_outputs (proof_tx_hash);
 
-CREATE INDEX idx_proofs_on_tx_hash
-  ON proofs (tx_hash);
 
 CREATE INDEX idx_bpo_prooftx_contract
   ON blob_proof_outputs (proof_tx_hash, contract_name);
@@ -128,4 +118,3 @@ create table txs_contracts (
     PRIMARY KEY (parent_dp_hash, tx_hash, contract_name)
 );
 create index idx_txs_contracts_name on txs_contracts(contract_name);
-

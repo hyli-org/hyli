@@ -6,10 +6,7 @@ use client_sdk::{
         TxExecutorHandlerResult,
     },
 };
-use sdk::{
-    utils::as_hyle_output, Blob, Calldata, ContractName, RegisterContractEffect, StateCommitment,
-    ZkContract,
-};
+use sdk::{utils::as_hyli_output, Blob, Calldata, ContractName, StateCommitment, ZkContract};
 
 pub mod metadata {
     pub const UUID_TLD_ELF: &[u8] = include_bytes!("../../uuid-tld.img");
@@ -30,15 +27,17 @@ impl UuidTld {
 }
 
 impl TxExecutorHandler for UuidTld {
+    type Contract = UuidTld;
+
     fn build_commitment_metadata(&self, _blob: &Blob) -> TxExecutorHandlerResult<Vec<u8>> {
         borsh::to_vec(self).context("Failed to serialize UuidTld")
     }
 
-    fn handle(&mut self, calldata: &Calldata) -> TxExecutorHandlerResult<sdk::HyleOutput> {
+    fn handle(&mut self, calldata: &Calldata) -> TxExecutorHandlerResult<sdk::HyliOutput> {
         let initial_state_commitment = <Self as ZkContract>::commit(self);
         let mut res = <Self as ZkContract>::execute(self, calldata);
         let next_state_commitment = <Self as ZkContract>::commit(self);
-        Ok(as_hyle_output(
+        Ok(as_hyli_output(
             initial_state_commitment,
             next_state_commitment,
             calldata,
@@ -47,8 +46,9 @@ impl TxExecutorHandler for UuidTld {
     }
 
     fn construct_state(
-        _register_blob: &RegisterContractEffect,
-        _metadata: &Option<Vec<u8>>,
+        _: &sdk::ContractName,
+        _: &sdk::Contract,
+        _: &Option<Vec<u8>>,
     ) -> TxExecutorHandlerResult<Self> {
         Ok(Self::default())
     }
