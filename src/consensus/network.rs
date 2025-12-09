@@ -132,7 +132,7 @@ macro_rules! impl_marker_serialization {
     ($marker:ty, $variant:ident) => {
         impl BorshSerialize for $marker {
             fn serialize<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-                ConsensusMarkerSerde::$variant.serialize(writer)
+                BorshSerialize::serialize(&ConsensusMarkerSerde::$variant, writer)
             }
         }
 
@@ -212,6 +212,27 @@ mod tests {
         .unwrap();
 
         let _ = (pv, ca, ct, nct);
+    }
+
+    #[test]
+    fn quorum_certificate_cannot_be_reused_across_steps() {
+        let sig = AggregateSignature::default();
+        let prepare_qc: PrepareQC = QuorumCertificate(sig.clone(), PrepareVoteMarker);
+        let commit_qc: CommitQC = QuorumCertificate(sig, ConfirmAckMarker);
+
+        let prepare_bytes = borsh::to_vec(&prepare_qc).unwrap();
+        let commit_bytes = borsh::to_vec(&commit_qc).unwrap();
+
+        assert_ne!(
+            prepare_bytes, commit_bytes,
+            "different consensus steps must not share the same serialized QC bytes"
+        );
+
+        let err = CommitQC::deserialize_reader(&mut prepare_bytes.as_slice()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+
+        let err = PrepareQC::deserialize_reader(&mut commit_bytes.as_slice()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 }
 
