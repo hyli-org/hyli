@@ -1,4 +1,7 @@
-use borsh::{BorshDeserialize, BorshSerialize};
+use borsh::{
+    io::{self, Read, Write},
+    BorshDeserialize, BorshSerialize,
+};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::{fmt::Display, ops::Deref};
@@ -79,19 +82,7 @@ impl TimeoutKind {
     }
 }
 
-#[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    Clone,
-    BorshSerialize,
-    BorshDeserialize,
-    PartialEq,
-    Eq,
-    Hash,
-    Ord,
-    PartialOrd,
-)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct PrepareVoteMarker;
 pub type PrepareVote = SignedByValidator<(ConsensusProposalHash, PrepareVoteMarker)>;
 
@@ -101,19 +92,7 @@ impl From<PrepareVote> for ConsensusNetMessage {
     }
 }
 
-#[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    Clone,
-    BorshSerialize,
-    BorshDeserialize,
-    PartialEq,
-    Eq,
-    Hash,
-    Ord,
-    PartialOrd,
-)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct ConfirmAckMarker;
 pub type ConfirmAck = SignedByValidator<(ConsensusProposalHash, ConfirmAckMarker)>;
 
@@ -123,35 +102,101 @@ impl From<ConfirmAck> for ConsensusNetMessage {
     }
 }
 
-#[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    Clone,
-    BorshSerialize,
-    BorshDeserialize,
-    PartialEq,
-    Eq,
-    Hash,
-    Ord,
-    PartialOrd,
-)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct ConsensusTimeoutMarker;
 
-#[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    Clone,
-    BorshSerialize,
-    BorshDeserialize,
-    PartialEq,
-    Eq,
-    Hash,
-    Ord,
-    PartialOrd,
-)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct NilConsensusTimeoutMarker;
+
+macro_rules! impl_marker_serialization {
+    ($marker:ty, $tag:expr) => {
+        impl BorshSerialize for $marker {
+            fn serialize<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+                writer.write_all(&[$tag as u8])
+            }
+        }
+
+        impl BorshDeserialize for $marker {
+            fn deserialize_reader<R: Read>(reader: &mut R) -> io::Result<Self> {
+                let mut byte = [0u8; 1];
+                reader.read_exact(&mut byte)?;
+                if byte[0] == $tag as u8 {
+                    Ok(Self)
+                } else {
+                    Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        concat!(stringify!($marker), " marker byte mismatch"),
+                    ))
+                }
+            }
+        }
+    };
+}
+
+impl_marker_serialization!(PrepareVoteMarker, 1);
+impl_marker_serialization!(ConfirmAckMarker, 2);
+impl_marker_serialization!(ConsensusTimeoutMarker, 3);
+impl_marker_serialization!(NilConsensusTimeoutMarker, 4);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use borsh::{BorshDeserialize, BorshSerialize};
+    use std::collections::HashSet;
+
+    #[test]
+    fn marker_serialization_bytes_are_unique_and_expected() {
+        let pv = borsh::to_vec(&PrepareVoteMarker).unwrap();
+        let ca = borsh::to_vec(&ConfirmAckMarker).unwrap();
+        let ct = borsh::to_vec(&ConsensusTimeoutMarker).unwrap();
+        let nct = borsh::to_vec(&NilConsensusTimeoutMarker).unwrap();
+
+        assert_eq!(pv, vec![1u8]);
+        assert_eq!(ca, vec![2u8]);
+        assert_eq!(ct, vec![3u8]);
+        assert_eq!(nct, vec![4u8]);
+
+        let unique: HashSet<u8> = [pv[0], ca[0], ct[0], nct[0]].into_iter().collect();
+        assert_eq!(unique.len(), 4, "marker tags must be distinct");
+    }
+
+    #[test]
+    fn marker_deserialization_rejects_wrong_tag() {
+        fn assert_err<T: BorshDeserialize>(tag: u8) {
+            let err = T::deserialize_reader(&mut [tag].as_slice()).unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        }
+
+        assert_err::<PrepareVoteMarker>(2);
+        assert_err::<ConfirmAckMarker>(1);
+        assert_err::<ConsensusTimeoutMarker>(4);
+        assert_err::<NilConsensusTimeoutMarker>(3);
+    }
+
+    #[test]
+    fn marker_roundtrips() {
+        let pv: PrepareVoteMarker = BorshDeserialize::deserialize_reader(
+            &mut borsh::to_vec(&PrepareVoteMarker).unwrap().as_slice(),
+        )
+        .unwrap();
+        let ca: ConfirmAckMarker = BorshDeserialize::deserialize_reader(
+            &mut borsh::to_vec(&ConfirmAckMarker).unwrap().as_slice(),
+        )
+        .unwrap();
+        let ct: ConsensusTimeoutMarker = BorshDeserialize::deserialize_reader(
+            &mut borsh::to_vec(&ConsensusTimeoutMarker).unwrap().as_slice(),
+        )
+        .unwrap();
+        let nct: NilConsensusTimeoutMarker = BorshDeserialize::deserialize_reader(
+            &mut borsh::to_vec(&NilConsensusTimeoutMarker)
+                .unwrap()
+                .as_slice(),
+        )
+        .unwrap();
+
+        let _ = (pv, ca, ct, nct);
+    }
+}
 
 /// This first message will be used in the TC to generate a proof of timeout
 /// Here we add the parent hash purely to avoid replay attacks
