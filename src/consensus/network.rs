@@ -262,26 +262,26 @@ mod tests {
             );
         }
 
-        let invalid = |res: std::io::Result<_>| {
+        fn assert_invalid<T: std::fmt::Debug>(res: std::io::Result<T>) {
             let err = res.unwrap_err();
             assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-        };
+        }
 
-        invalid(CommitQC::deserialize_reader(&mut prepare_bytes.as_slice()));
-        invalid(TimeoutQC::deserialize_reader(&mut prepare_bytes.as_slice()));
-        invalid(NilQC::deserialize_reader(&mut prepare_bytes.as_slice()));
+        assert_invalid::<CommitQC>(CommitQC::deserialize_reader(&mut prepare_bytes.as_slice()));
+        assert_invalid::<TimeoutQC>(TimeoutQC::deserialize_reader(&mut prepare_bytes.as_slice()));
+        assert_invalid::<NilQC>(NilQC::deserialize_reader(&mut prepare_bytes.as_slice()));
 
-        invalid(PrepareQC::deserialize_reader(&mut commit_bytes.as_slice()));
-        invalid(TimeoutQC::deserialize_reader(&mut commit_bytes.as_slice()));
-        invalid(NilQC::deserialize_reader(&mut commit_bytes.as_slice()));
+        assert_invalid::<PrepareQC>(PrepareQC::deserialize_reader(&mut commit_bytes.as_slice()));
+        assert_invalid::<TimeoutQC>(TimeoutQC::deserialize_reader(&mut commit_bytes.as_slice()));
+        assert_invalid::<NilQC>(NilQC::deserialize_reader(&mut commit_bytes.as_slice()));
 
-        invalid(PrepareQC::deserialize_reader(&mut timeout_bytes.as_slice()));
-        invalid(CommitQC::deserialize_reader(&mut timeout_bytes.as_slice()));
-        invalid(NilQC::deserialize_reader(&mut timeout_bytes.as_slice()));
+        assert_invalid::<PrepareQC>(PrepareQC::deserialize_reader(&mut timeout_bytes.as_slice()));
+        assert_invalid::<CommitQC>(CommitQC::deserialize_reader(&mut timeout_bytes.as_slice()));
+        assert_invalid::<NilQC>(NilQC::deserialize_reader(&mut timeout_bytes.as_slice()));
 
-        invalid(PrepareQC::deserialize_reader(&mut nil_bytes.as_slice()));
-        invalid(CommitQC::deserialize_reader(&mut nil_bytes.as_slice()));
-        invalid(TimeoutQC::deserialize_reader(&mut nil_bytes.as_slice()));
+        assert_invalid::<PrepareQC>(PrepareQC::deserialize_reader(&mut nil_bytes.as_slice()));
+        assert_invalid::<CommitQC>(CommitQC::deserialize_reader(&mut nil_bytes.as_slice()));
+        assert_invalid::<TimeoutQC>(TimeoutQC::deserialize_reader(&mut nil_bytes.as_slice()));
     }
 }
 
