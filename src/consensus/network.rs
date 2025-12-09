@@ -234,6 +234,55 @@ mod tests {
         let err = PrepareQC::deserialize_reader(&mut commit_bytes.as_slice()).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
+
+    #[test]
+    fn quorum_certificates_are_marker_bound() {
+        let sig = AggregateSignature::default();
+        let prepare_qc: PrepareQC = QuorumCertificate(sig.clone(), PrepareVoteMarker);
+        let commit_qc: CommitQC = QuorumCertificate(sig.clone(), ConfirmAckMarker);
+        let timeout_qc: TimeoutQC = QuorumCertificate(sig.clone(), ConsensusTimeoutMarker);
+        let nil_qc: NilQC = QuorumCertificate(sig, NilConsensusTimeoutMarker);
+
+        let prepare_bytes = borsh::to_vec(&prepare_qc).unwrap();
+        let commit_bytes = borsh::to_vec(&commit_qc).unwrap();
+        let timeout_bytes = borsh::to_vec(&timeout_qc).unwrap();
+        let nil_bytes = borsh::to_vec(&nil_qc).unwrap();
+
+        for (left_name, left_bytes, right_name, right_bytes) in [
+            ("prepare", &prepare_bytes, "commit", &commit_bytes),
+            ("prepare", &prepare_bytes, "timeout", &timeout_bytes),
+            ("prepare", &prepare_bytes, "nil", &nil_bytes),
+            ("commit", &commit_bytes, "timeout", &timeout_bytes),
+            ("commit", &commit_bytes, "nil", &nil_bytes),
+            ("timeout", &timeout_bytes, "nil", &nil_bytes),
+        ] {
+            assert_ne!(
+                left_bytes, right_bytes,
+                "quorum certificate bytes must differ between {left_name} and {right_name}"
+            );
+        }
+
+        let invalid = |res: std::io::Result<_>| {
+            let err = res.unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        };
+
+        invalid(CommitQC::deserialize_reader(&mut prepare_bytes.as_slice()));
+        invalid(TimeoutQC::deserialize_reader(&mut prepare_bytes.as_slice()));
+        invalid(NilQC::deserialize_reader(&mut prepare_bytes.as_slice()));
+
+        invalid(PrepareQC::deserialize_reader(&mut commit_bytes.as_slice()));
+        invalid(TimeoutQC::deserialize_reader(&mut commit_bytes.as_slice()));
+        invalid(NilQC::deserialize_reader(&mut commit_bytes.as_slice()));
+
+        invalid(PrepareQC::deserialize_reader(&mut timeout_bytes.as_slice()));
+        invalid(CommitQC::deserialize_reader(&mut timeout_bytes.as_slice()));
+        invalid(NilQC::deserialize_reader(&mut timeout_bytes.as_slice()));
+
+        invalid(PrepareQC::deserialize_reader(&mut nil_bytes.as_slice()));
+        invalid(CommitQC::deserialize_reader(&mut nil_bytes.as_slice()));
+        invalid(TimeoutQC::deserialize_reader(&mut nil_bytes.as_slice()));
+    }
 }
 
 /// This first message will be used in the TC to generate a proof of timeout
