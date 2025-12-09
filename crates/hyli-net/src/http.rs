@@ -37,6 +37,14 @@ impl HttpClient {
         let full_url = format!("{}{}", &self.url, endpoint);
         let uri: Uri = full_url.parse().context("Parsing URI")?;
 
+        let scheme = uri.scheme_str().unwrap_or("http");
+        if scheme != "http" {
+            anyhow::bail!(
+                "Unsupported URI scheme: {}. HTTPS is not implemented",
+                scheme
+            );
+        }
+
         let authority = uri.authority().context("URI Authority")?.clone();
         let host = authority.host().to_string();
         let port = authority.port_u16().unwrap_or(80);
