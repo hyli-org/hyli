@@ -141,7 +141,7 @@ impl_marker_serialization!(NilConsensusTimeoutMarker, 4);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use borsh::{BorshDeserialize, BorshSerialize};
+    use borsh::BorshDeserialize;
     use std::collections::HashSet;
 
     #[test]
@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn marker_deserialization_rejects_wrong_tag() {
-        fn assert_err<T: BorshDeserialize>(tag: u8) {
+        fn assert_err<T: BorshDeserialize + std::fmt::Debug>(tag: u8) {
             let err = T::deserialize_reader(&mut [tag].as_slice()).unwrap_err();
             assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         }
