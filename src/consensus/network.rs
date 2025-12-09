@@ -108,35 +108,52 @@ pub struct ConsensusTimeoutMarker;
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct NilConsensusTimeoutMarker;
 
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    Ord,
+    PartialOrd,
+    BorshSerialize,
+    BorshDeserialize,
+)]
+enum ConsensusMarkerSerde {
+    PrepareVote,
+    ConfirmAck,
+    ConsensusTimeout,
+    NilConsensusTimeout,
+}
+
 macro_rules! impl_marker_serialization {
-    ($marker:ty, $tag:expr) => {
+    ($marker:ty, $variant:ident) => {
         impl BorshSerialize for $marker {
             fn serialize<W: Write>(&self, writer: &mut W) -> io::Result<()> {
-                writer.write_all(&[$tag as u8])
+                ConsensusMarkerSerde::$variant.serialize(writer)
             }
         }
 
         impl BorshDeserialize for $marker {
             fn deserialize_reader<R: Read>(reader: &mut R) -> io::Result<Self> {
-                let mut byte = [0u8; 1];
-                reader.read_exact(&mut byte)?;
-                if byte[0] == $tag as u8 {
-                    Ok(Self)
-                } else {
-                    Err(io::Error::new(
+                match ConsensusMarkerSerde::deserialize_reader(reader)? {
+                    ConsensusMarkerSerde::$variant => Ok(Self),
+                    _ => Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        concat!(stringify!($marker), " marker byte mismatch"),
-                    ))
+                        concat!(stringify!($marker), " marker variant mismatch"),
+                    )),
                 }
             }
         }
     };
 }
 
-impl_marker_serialization!(PrepareVoteMarker, 1);
-impl_marker_serialization!(ConfirmAckMarker, 2);
-impl_marker_serialization!(ConsensusTimeoutMarker, 3);
-impl_marker_serialization!(NilConsensusTimeoutMarker, 4);
+impl_marker_serialization!(PrepareVoteMarker, PrepareVote);
+impl_marker_serialization!(ConfirmAckMarker, ConfirmAck);
+impl_marker_serialization!(ConsensusTimeoutMarker, ConsensusTimeout);
+impl_marker_serialization!(NilConsensusTimeoutMarker, NilConsensusTimeout);
 
 #[cfg(test)]
 mod tests {
@@ -151,10 +168,10 @@ mod tests {
         let ct = borsh::to_vec(&ConsensusTimeoutMarker).unwrap();
         let nct = borsh::to_vec(&NilConsensusTimeoutMarker).unwrap();
 
-        assert_eq!(pv, vec![1u8]);
-        assert_eq!(ca, vec![2u8]);
-        assert_eq!(ct, vec![3u8]);
-        assert_eq!(nct, vec![4u8]);
+        assert_eq!(pv, vec![0u8]);
+        assert_eq!(ca, vec![1u8]);
+        assert_eq!(ct, vec![2u8]);
+        assert_eq!(nct, vec![3u8]);
 
         let unique: HashSet<u8> = [pv[0], ca[0], ct[0], nct[0]].into_iter().collect();
         assert_eq!(unique.len(), 4, "marker tags must be distinct");
@@ -167,10 +184,10 @@ mod tests {
             assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
         }
 
-        assert_err::<PrepareVoteMarker>(2);
-        assert_err::<ConfirmAckMarker>(1);
-        assert_err::<ConsensusTimeoutMarker>(4);
-        assert_err::<NilConsensusTimeoutMarker>(3);
+        assert_err::<PrepareVoteMarker>(1);
+        assert_err::<ConfirmAckMarker>(0);
+        assert_err::<ConsensusTimeoutMarker>(3);
+        assert_err::<NilConsensusTimeoutMarker>(2);
     }
 
     #[test]
