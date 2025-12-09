@@ -11,10 +11,40 @@ use tokio::task::JoinHandle;
 
 use anyhow::Result;
 
+pub type TcpHeaders = Vec<(String, String)>;
+
 #[derive(Clone, BorshDeserialize, BorshSerialize, PartialEq)]
 pub enum TcpMessage {
     Ping,
-    Data(Arc<Vec<u8>>),
+    Data(TcpData),
+}
+
+#[derive(Clone, BorshDeserialize, BorshSerialize, PartialEq, Default)]
+pub struct TcpData {
+    pub headers: TcpHeaders,
+    pub payload: Arc<Vec<u8>>,
+}
+
+impl TcpData {
+    pub fn new(payload: Vec<u8>) -> Self {
+        Self {
+            headers: Vec::new(),
+            payload: Arc::new(payload),
+        }
+    }
+
+    pub fn with_headers(headers: TcpHeaders, payload: Vec<u8>) -> Self {
+        Self {
+            headers,
+            payload: Arc::new(payload),
+        }
+    }
+}
+
+#[derive(BorshDeserialize, BorshSerialize)]
+struct TcpWireData {
+    headers: TcpHeaders,
+    payload: Vec<u8>,
 }
 
 impl TryFrom<TcpMessage> for Bytes {
@@ -23,14 +53,35 @@ impl TryFrom<TcpMessage> for Bytes {
         match message {
             // This is an untagged enum, if you send exactly "PING", it'll be treated as a ping.
             TcpMessage::Ping => Ok(Bytes::from_static(b"PING")),
-            TcpMessage::Data(data) => Ok(Bytes::copy_from_slice(data.as_ref())),
+            TcpMessage::Data(data) => {
+                let wire = TcpWireData {
+                    headers: data.headers.clone(),
+                    payload: data.payload.as_ref().clone(),
+                };
+                Ok(Bytes::from(borsh::to_vec(&wire)?))
+            }
         }
     }
 }
 
 fn to_tcp_message(data: &impl BorshSerialize) -> Result<TcpMessage> {
     let binary = borsh::to_vec(data)?;
-    Ok(TcpMessage::Data(Arc::new(binary)))
+    Ok(TcpMessage::Data(TcpData::new(binary)))
+}
+
+fn to_tcp_message_with_headers(
+    data: &impl BorshSerialize,
+    headers: TcpHeaders,
+) -> Result<TcpMessage> {
+    let binary = borsh::to_vec(data)?;
+    Ok(TcpMessage::Data(TcpData::with_headers(headers, binary)))
+}
+
+pub fn decode_tcp_payload<Data: BorshDeserialize>(bytes: &[u8]) -> Result<(TcpHeaders, Data)> {
+    match borsh::from_slice::<TcpWireData>(bytes) {
+        Ok(wire) => Ok((wire.headers, borsh::from_slice::<Data>(&wire.payload)?)),
+        Err(_) => Ok((Vec::new(), borsh::from_slice::<Data>(bytes)?)),
+    }
 }
 
 #[test]
@@ -39,14 +90,28 @@ fn test_serialize_tcp_message() {
     let bytes: Bytes = msg.try_into().unwrap();
     assert_eq!(bytes, Bytes::from_static(b"PING"));
 
-    let data = TcpMessage::Data(Arc::new(vec![1, 2, 3]));
+    let data = TcpMessage::Data(TcpData::new(vec![1, 2, 3]));
     let bytes: Bytes = data.try_into().unwrap();
-    assert_eq!(bytes, Bytes::from(vec![1, 2, 3]));
+    assert_eq!(bytes, Bytes::from(vec![0, 0, 0, 0, 3, 0, 0, 0, 1, 2, 3]));
 
     let d: Vec<u8> = vec![1, 2, 3];
     let data = to_tcp_message(&d).unwrap();
     let bytes: Bytes = data.try_into().unwrap();
-    assert_eq!(bytes, Bytes::from(vec![3, 0, 0, 0, 1, 2, 3]));
+    assert_eq!(
+        bytes,
+        Bytes::from(vec![0, 0, 0, 0, 7, 0, 0, 0, 3, 0, 0, 0, 1, 2, 3])
+    );
+
+    let headers = vec![(
+        "content-type".to_string(),
+        "application/octet-stream".to_string(),
+    )];
+    let data_with_headers = to_tcp_message_with_headers(&d, headers.clone()).unwrap();
+    let bytes: Bytes = data_with_headers.try_into().unwrap();
+    let (decoded_headers, decoded_data): (TcpHeaders, Vec<u8>) =
+        decode_tcp_payload(bytes.as_ref()).unwrap();
+    assert_eq!(decoded_headers, headers);
+    assert_eq!(decoded_data, d);
 }
 
 impl std::fmt::Debug for TcpMessage {
@@ -55,14 +120,15 @@ impl std::fmt::Debug for TcpMessage {
             TcpMessage::Ping => write!(f, "PING"),
             TcpMessage::Data(data) => write!(
                 f,
-                "DATA: {} bytes ({:?})",
-                data.len(),
-                match data.len() {
+                "DATA: {} bytes, {} headers ({:?})",
+                data.payload.len(),
+                data.headers.len(),
+                match data.payload.len() {
                     0 => "empty".to_string(),
-                    1..20 => hex::encode(data.as_ref()),
+                    1..20 => hex::encode(data.payload.as_ref()),
                     _ => format!(
                         "{}...",
-                        hex::encode(data.iter().take(20).cloned().collect::<Vec<_>>())
+                        hex::encode(data.payload.iter().take(20).cloned().collect::<Vec<_>>())
                     ),
                 },
             ),
@@ -124,9 +190,18 @@ pub struct NodeConnectionData {
 
 #[derive(Debug, Clone)]
 pub enum TcpEvent<Data: BorshDeserialize> {
-    Message { dest: String, data: Data },
-    Error { dest: String, error: String },
-    Closed { dest: String },
+    Message {
+        dest: String,
+        data: Data,
+        headers: TcpHeaders,
+    },
+    Error {
+        dest: String,
+        error: String,
+    },
+    Closed {
+        dest: String,
+    },
 }
 
 /// A socket abstraction to send a receive data
