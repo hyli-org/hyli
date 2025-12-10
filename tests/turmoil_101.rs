@@ -112,8 +112,23 @@ turmoil_simple!(611..=620, simulation_one_more_node, submit_10_contracts);
 turmoil_simple!(621..=630, simulation_partition, submit_10_contracts);
 turmoil_simple!(631..=640, simulation_drop_storm, submit_10_contracts);
 turmoil_simple!(641..=650, simulation_restart_node, submit_10_contracts);
-turmoil_simple!(651..=655, simulation_asymmetric_partition, submit_10_contracts);
+turmoil_simple!(
+    651..=655,
+    simulation_asymmetric_partition,
+    submit_10_contracts
+);
 turmoil_simple!(656..=660, simulation_long_isolation, submit_10_contracts);
+turmoil_simple!(701..=710, simulation_basic, submit_10_contracts_all_nodes);
+turmoil_simple!(
+    720..=725,
+    simulation_drop_storm,
+    submit_10_contracts_all_nodes
+);
+turmoil_simple!(
+    726..=730,
+    simulation_drop_packets,
+    submit_10_contracts_all_nodes
+);
 
 /// Stress runner to try and systematically reproduce drop-storm desyncs.
 /// Ignored by default because it can take time; run manually when hunting regressions.
@@ -167,7 +182,10 @@ fn turmoil_drop_storm_repro_runner() -> anyhow::Result<()> {
         anyhow::bail!("drop-storm reproduced at seed {seed}: {msg}");
     }
 
-    tracing::info!("No drop-storm desync reproduced after {} attempts", attempts);
+    tracing::info!(
+        "No drop-storm desync reproduced after {} attempts",
+        attempts
+    );
     Ok(())
 }
 
@@ -175,7 +193,11 @@ fn turmoil_drop_storm_repro_runner() -> anyhow::Result<()> {
 /// 1) Run drop-storm with more aggressive holds.
 /// 2) Mid-storm, isolate the leader (simulate restart) for a downtime.
 /// 3) After healing, isolate a random node for a long catchup window.
-fn hard_drop_storm_scenario(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>, leader_id: String) -> anyhow::Result<()> {
+fn hard_drop_storm_scenario(
+    ctx: &mut TurmoilCtx,
+    sim: &mut Sim<'_>,
+    leader_id: String,
+) -> anyhow::Result<()> {
     // More aggressive storm than the default: shorter interval, longer holds.
     let warmup = Duration::from_secs(5);
     let storm_duration = Duration::from_secs(30);
@@ -241,12 +263,7 @@ fn hard_drop_storm_scenario(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>, leader_id: 
         // Leader restart (isolate both directions for downtime)
         if !leader_isolated && now > restart_at {
             leader_isolated = true;
-            for other in ctx
-                .nodes
-                .clone()
-                .iter()
-                .filter(|n| n.conf.id != leader_id)
-            {
+            for other in ctx.nodes.clone().iter().filter(|n| n.conf.id != leader_id) {
                 sim.hold(leader_id.clone(), other.conf.id.clone());
                 sim.hold(other.conf.id.clone(), leader_id.clone());
             }
@@ -255,12 +272,7 @@ fn hard_drop_storm_scenario(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>, leader_id: 
         if let Some(until) = leader_offline_until {
             if now >= until {
                 leader_offline_until = None;
-                for other in ctx
-                    .nodes
-                    .clone()
-                    .iter()
-                    .filter(|n| n.conf.id != leader_id)
-                {
+                for other in ctx.nodes.clone().iter().filter(|n| n.conf.id != leader_id) {
                     sim.release(leader_id.clone(), other.conf.id.clone());
                     sim.release(other.conf.id.clone(), leader_id.clone());
                 }
@@ -311,7 +323,8 @@ fn hard_drop_storm_scenario(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>, leader_id: 
         }
 
         // Stop when clients are done and we've passed the post-heal window.
-        if finished && now > warmup + storm_duration + post_heal_isolation + Duration::from_secs(15) {
+        if finished && now > warmup + storm_duration + post_heal_isolation + Duration::from_secs(15)
+        {
             return Ok(());
         }
     }
@@ -478,7 +491,10 @@ pub fn simulation_partition(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::
 ///
 /// Cut only inbound traffic to a single node for a while to force asymmetric knowledge,
 /// then heal and let it catch up.
-pub fn simulation_asymmetric_partition(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::Result<()> {
+pub fn simulation_asymmetric_partition(
+    ctx: &mut TurmoilCtx,
+    sim: &mut Sim<'_>,
+) -> anyhow::Result<()> {
     let warmup = Duration::from_secs(5);
     let partition_duration = Duration::from_secs(15);
     let settle_time = Duration::from_secs(10);
@@ -493,12 +509,7 @@ pub fn simulation_asymmetric_partition(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) 
 
         if !partitioned && now > warmup {
             partitioned = true;
-            for other in ctx
-                .nodes
-                .clone()
-                .iter()
-                .filter(|n| n.conf.id != target)
-            {
+            for other in ctx.nodes.clone().iter().filter(|n| n.conf.id != target) {
                 // Block inbound messages so the target misses many blocks, but keep outbound traffic flowing (with jitter).
                 sim.hold(other.conf.id.clone(), target.clone());
                 sim.set_link_latency(
@@ -511,14 +522,13 @@ pub fn simulation_asymmetric_partition(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) 
 
         if partitioned && !healed && now > warmup + partition_duration {
             healed = true;
-            for other in ctx
-                .nodes
-                .clone()
-                .iter()
-                .filter(|n| n.conf.id != target)
-            {
+            for other in ctx.nodes.clone().iter().filter(|n| n.conf.id != target) {
                 sim.release(other.conf.id.clone(), target.clone());
-                sim.set_link_latency(target.clone(), other.conf.id.clone(), Duration::from_millis(40));
+                sim.set_link_latency(
+                    target.clone(),
+                    other.conf.id.clone(),
+                    Duration::from_millis(40),
+                );
             }
         }
 
@@ -657,6 +667,89 @@ pub fn simulation_drop_storm(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow:
 
 /// **Simulation**
 ///
+/// Randomly partitions links (true drop) for short bursts to force message loss,
+/// then heals everything.
+pub fn simulation_drop_packets(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::Result<()> {
+    let warmup = Duration::from_secs(4);
+    let storm_duration = Duration::from_secs(18);
+    let interval = Duration::from_secs(2);
+    let settle_time = Duration::from_secs(6);
+    // Drop probability per message while link is marked as RandPartition.
+    sim.set_fail_rate(0.01);
+
+    // Only partition links between validator nodes, never between clients and nodes.
+    let validator_ids: Vec<String> = ctx.nodes.iter().map(|n| n.conf.id.clone()).collect();
+
+    #[derive(Clone)]
+    struct ActivePartition {
+        from: String,
+        to: String,
+        release_at: Duration,
+    }
+
+    let mut parts: Vec<ActivePartition> = Vec::new();
+    let mut last = Duration::from_secs(0);
+    let mut healed = false;
+
+    loop {
+        let finished = sim.step().map_err(|s| anyhow::anyhow!(s.to_string()))?;
+        let now = sim.elapsed();
+
+        // Schedule new partitions during the storm window.
+        if now > warmup && now < warmup + storm_duration && now.saturating_sub(last) > interval {
+            let (from, to) = ctx.random_id_pair_from(&validator_ids);
+            let len = Duration::from_secs(ctx.random_between(1, 3));
+            // Use random partition (drops with the configured fail_rate) to avoid a total blackout.
+            sim.partition(from.clone(), to.clone());
+            parts.push(ActivePartition {
+                from,
+                to,
+                release_at: now + len,
+            });
+            last = now;
+        }
+
+        // Release expired partitions.
+        let mut to_release = Vec::new();
+        parts.retain(|p| {
+            if now >= p.release_at {
+                to_release.push((p.from.clone(), p.to.clone()));
+                false
+            } else {
+                true
+            }
+        });
+        for (from, to) in to_release {
+            sim.repair(from.clone(), to.clone());
+        }
+
+        // Heal everything once the storm window is over.
+        if !healed && now > warmup + storm_duration {
+            healed = true;
+            for node in ctx.nodes.clone().iter() {
+                for other in ctx
+                    .nodes
+                    .clone()
+                    .iter()
+                    .filter(|n| n.conf.id != node.conf.id)
+                {
+                    sim.repair(node.conf.id.clone(), other.conf.id.clone());
+                }
+            }
+        }
+
+        if finished && now > warmup + storm_duration + settle_time {
+            tracing::info!(
+                "Drop-packets scenario finished after {} ms",
+                sim.elapsed().as_millis()
+            );
+            return Ok(());
+        }
+    }
+}
+
+/// **Simulation**
+///
 /// Keep a node fully isolated long enough to build a backlog, then reconnect it and ensure it can catch up.
 pub fn simulation_long_isolation(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::Result<()> {
     let warmup = Duration::from_secs(6);
@@ -672,12 +765,7 @@ pub fn simulation_long_isolation(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> any
 
         if !isolated && now > warmup {
             isolated = true;
-            for other in ctx
-                .nodes
-                .clone()
-                .iter()
-                .filter(|n| n.conf.id != target)
-            {
+            for other in ctx.nodes.clone().iter().filter(|n| n.conf.id != target) {
                 sim.hold(target.clone(), other.conf.id.clone());
                 sim.hold(other.conf.id.clone(), target.clone());
             }
@@ -685,12 +773,7 @@ pub fn simulation_long_isolation(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> any
 
         if isolated && !healed && now > warmup + isolation_duration {
             healed = true;
-            for other in ctx
-                .nodes
-                .clone()
-                .iter()
-                .filter(|n| n.conf.id != target)
-            {
+            for other in ctx.nodes.clone().iter().filter(|n| n.conf.id != target) {
                 sim.release(target.clone(), other.conf.id.clone());
                 sim.release(other.conf.id.clone(), target.clone());
             }
@@ -724,13 +807,9 @@ pub fn simulation_restart_node(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyho
         let now = sim.elapsed();
 
         // Simulate a restart by isolating the node for a short downtime, then reconnecting.
-        if offline_until.is_none() && now > warmup && now.saturating_sub(last_cycle) > downtime * 2 {
-            for other in ctx
-                .nodes
-                .clone()
-                .iter()
-                .filter(|n| n.conf.id != target)
-            {
+        if offline_until.is_none() && now > warmup && now.saturating_sub(last_cycle) > downtime * 2
+        {
+            for other in ctx.nodes.clone().iter().filter(|n| n.conf.id != target) {
                 sim.hold(target.clone(), other.conf.id.clone());
                 sim.hold(other.conf.id.clone(), target.clone());
             }
@@ -740,12 +819,7 @@ pub fn simulation_restart_node(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyho
 
         if let Some(until) = offline_until {
             if now >= until {
-                for other in ctx
-                    .nodes
-                    .clone()
-                    .iter()
-                    .filter(|n| n.conf.id != target)
-                {
+                for other in ctx.nodes.clone().iter().filter(|n| n.conf.id != target) {
                     sim.release(target.clone(), other.conf.id.clone());
                     sim.release(other.conf.id.clone(), target.clone());
                 }
@@ -882,6 +956,64 @@ pub async fn submit_10_contracts(node: TurmoilHost) -> anyhow::Result<()> {
                         return Err(e);
                     }
                     warn!("Retrying get_contract {} attempt {}: {}", name, attempts, e);
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Variant where all nodes in the simulation expect 40 contracts total:
+/// each of the 4 nodes submits 10 unique contracts, and every node waits until
+/// all 40 are registered.
+pub async fn submit_10_contracts_all_nodes(node: TurmoilHost) -> anyhow::Result<()> {
+    let client_with_retries = node.client.retry_15times_1000ms();
+
+    _ = wait_height(&client_with_retries, 1).await;
+
+    // Derive participating nodes from the genesis stakers of this config.
+    let node_ids: Vec<String> = node.conf.genesis.stakers.keys().cloned().collect();
+    let my_contracts: Vec<String> = (1..=10)
+        .map(|i| format!("{}-contract-{i}", node.conf.id))
+        .collect();
+    let all_contracts: Vec<String> = node_ids
+        .iter()
+        .flat_map(|id| (1..=10).map(move |i| format!("{id}-contract-{i}")))
+        .collect();
+
+    if node_ids.contains(&node.conf.id) {
+        for name in my_contracts.iter() {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let tx = make_register_contract_tx(name.clone().into());
+
+            _ = log_error!(
+                client_with_retries.send_tx_blob(tx).await,
+                "Sending tx blob"
+            );
+        }
+    } else {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+
+    for name in all_contracts {
+        let mut attempts = 0;
+        loop {
+            match client_with_retries.get_contract(name.clone().into()).await {
+                Ok(contract) => {
+                    assert_eq!(contract.contract_name.0, name.as_str());
+                    break;
+                }
+                Err(e) => {
+                    attempts += 1;
+                    if attempts > 60 {
+                        return Err(e);
+                    }
+                    warn!(
+                        "Retrying get_contract {} attempt {} on {}: {}",
+                        name, attempts, node.conf.id, e
+                    );
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
             }

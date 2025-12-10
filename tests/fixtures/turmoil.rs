@@ -11,7 +11,7 @@ use hex;
 use hyli::{entrypoint::main_process, utils::conf::Conf};
 use hyli_crypto::BlstCrypto;
 use hyli_net::net::Sim;
-use rand::{rngs::StdRng, RngCore, SeedableRng};
+use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tracing::info;
@@ -191,6 +191,16 @@ impl TurmoilCtx {
 
     pub fn client(&self) -> NodeApiHttpClient {
         self.nodes.first().unwrap().client.clone()
+    }
+
+    pub fn random_id_pair_from(&mut self, subset: &[String]) -> (String, String) {
+        let mut rng = &mut self.rng;
+        let a = subset[rng.gen_range(0..subset.len())].clone();
+        let mut b = subset[rng.gen_range(0..subset.len())].clone();
+        while a == b {
+            b = subset[rng.gen_range(0..subset.len())].clone();
+        }
+        (a, b)
     }
 
     pub fn conf(&self, n: u64) -> Conf {
