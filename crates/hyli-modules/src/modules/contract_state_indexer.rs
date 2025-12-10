@@ -410,17 +410,43 @@ mod tests {
     #[tokio::test]
     async fn test_handle_node_state_event() {
         let contract_name = ContractName::from("test_contract");
+        let blob = Blob {
+            contract_name: contract_name.clone(),
+            data: BlobData(vec![1, 2, 3]),
+        };
+        let tx = BlobTransaction::new("test", vec![blob]);
+        let tx_id = TxId(DataProposalHash::default(), tx.hashed());
+        let tx_context = Arc::new(TxContext::default());
+
         let mut indexer = build_indexer(contract_name.clone()).await;
         register_contract(&mut indexer).await;
 
-        let mut node_state = NodeState::create("test".to_string(), "test");
-        let block = node_state
-            .handle_signed_block(SignedBlock::default())
-            .unwrap();
+        let unsettled_tx = UnsettledBlobTransaction {
+            tx_id: tx_id.clone(),
+            tx: tx.clone(),
+            blobs_hash: tx.blobs_hash(),
+            possible_proofs: BTreeMap::new(),
+            tx_context,
+            settleable_contracts: std::collections::HashSet::new(),
+        };
+
+        let stateful_events = StatefulEvents {
+            events: vec![(tx_id, StatefulEvent::SettledTx(unsettled_tx))],
+        };
+
+        let block = NodeStateBlock {
+            signed_block: Arc::new(SignedBlock::default()),
+            parsed_block: Arc::new(Block::default()),
+            staking_data: Arc::new(BlockStakingData::default()),
+            stateful_events: Arc::new(stateful_events),
+        };
 
         let event = NodeStateEvent::NewBlock(block);
 
         indexer.handle_node_state_event(event).await.unwrap();
+
+        let store = indexer.store.read().await;
+        assert_eq!(store.state.clone().unwrap().0, vec![1, 2, 3]);
         // Add assertions based on the expected state changes
     }
 }
