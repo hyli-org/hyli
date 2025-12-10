@@ -13,7 +13,7 @@ env:
 jobs:
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 20
     strategy:
       matrix:
@@ -67,7 +67,7 @@ jobs:
           files: target/nextest/ci/junit.xml
   coverage:
     name: Unit tests coverage
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     strategy:
       matrix:
@@ -103,7 +103,7 @@ jobs:
           fail_ci_if_error: true
   features_flags:
     name: Build with different feature flags
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     strategy:
       matrix:
@@ -127,7 +127,7 @@ jobs:
   unused_dependencies:
     name: Check unused dependencies
     if: github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

@@ -6,7 +6,7 @@ on:
 
 jobs:
   check-crates:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     strategy:
       fail-fast: false
       matrix:
@@ -47,7 +47,7 @@ jobs:
         run: cargo docs-rs -p ${{ matrix.crate }}
 
   list-crates:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     outputs:
       crates: ${{ steps.crate-list.outputs.crates }}
 

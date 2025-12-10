@@ -13,7 +13,7 @@ jobs:
   clippy:
     name: clippy check
     if: github.event.pull_request.draft == false
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     steps:
       - uses: actions/checkout@v4
       # For keyring dependencies

@@ -6,17 +6,17 @@ on:
       - feat/add_ci_workflow_to_update_contracts
   schedule:
     - cron: "0 2 * * *"
-  workflow_dispatch:  # Permet l'exécution manuelle
+  workflow_dispatch: # Permet l'exécution manuelle
 
 jobs:
   update-files:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Récupère tout l'historique pour éviter les problèmes
+          fetch-depth: 0 # Récupère tout l'historique pour éviter les problèmes
       - name: Install rzup
         run: |
           curl -L https://risczero.com/install | bash
