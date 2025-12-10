@@ -13,7 +13,6 @@ use hyli_model::{
 };
 use hyli_modules::log_error;
 use hyli_net::net::Sim;
-use rand::{rngs::StdRng, SeedableRng};
 use tracing::warn;
 
 use crate::fixtures::{test_helpers::wait_height, turmoil::TurmoilCtx};
@@ -144,14 +143,14 @@ fn turmoil_drop_storm_repro_runner() -> anyhow::Result<()> {
         let seed = 630 + run as u64 * 2 + 1;
         tracing::info!("drop-storm repro attempt {} seed {}", run + 1, seed);
 
-        let rng = StdRng::seed_from_u64(seed);
         let mut sim = hyli_net::turmoil::Builder::new()
             .simulation_duration(Duration::from_secs(200))
             .tick_duration(Duration::from_millis(20))
             .min_message_latency(Duration::from_millis(20))
             .tcp_capacity(256)
             .enable_tokio_io()
-            .build_with_rng(Box::new(rng));
+            .rng_seed(seed)
+            .build();
 
         // Slightly faster slots to increase commit cadence under fault.
         let mut ctx = TurmoilCtx::new_multi(4, 400, seed, &mut sim)?;
