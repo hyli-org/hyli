@@ -24,6 +24,10 @@ jobs:
           # - nightly
     steps:
       - uses: actions/checkout@v4
+      - uses: docker/setup-docker-action@v4
+      - run: docker version
+      - run: docker run --rm alpine:3.20 echo hello
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
