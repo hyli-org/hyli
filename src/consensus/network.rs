@@ -1,4 +1,7 @@
-use borsh::{BorshDeserialize, BorshSerialize};
+use borsh::{
+    io::{self, Read, Write},
+    BorshDeserialize, BorshSerialize,
+};
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::{fmt::Display, ops::Deref};
@@ -79,19 +82,7 @@ impl TimeoutKind {
     }
 }
 
-#[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    Clone,
-    BorshSerialize,
-    BorshDeserialize,
-    PartialEq,
-    Eq,
-    Hash,
-    Ord,
-    PartialOrd,
-)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct PrepareVoteMarker;
 pub type PrepareVote = SignedByValidator<(ConsensusProposalHash, PrepareVoteMarker)>;
 
@@ -101,19 +92,7 @@ impl From<PrepareVote> for ConsensusNetMessage {
     }
 }
 
-#[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    Clone,
-    BorshSerialize,
-    BorshDeserialize,
-    PartialEq,
-    Eq,
-    Hash,
-    Ord,
-    PartialOrd,
-)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct ConfirmAckMarker;
 pub type ConfirmAck = SignedByValidator<(ConsensusProposalHash, ConfirmAckMarker)>;
 
@@ -123,35 +102,188 @@ impl From<ConfirmAck> for ConsensusNetMessage {
     }
 }
 
-#[derive(
-    Debug,
-    Serialize,
-    Deserialize,
-    Clone,
-    BorshSerialize,
-    BorshDeserialize,
-    PartialEq,
-    Eq,
-    Hash,
-    Ord,
-    PartialOrd,
-)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct ConsensusTimeoutMarker;
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct NilConsensusTimeoutMarker;
 
 #[derive(
     Debug,
     Serialize,
     Deserialize,
     Clone,
-    BorshSerialize,
-    BorshDeserialize,
     PartialEq,
     Eq,
     Hash,
     Ord,
     PartialOrd,
+    BorshSerialize,
+    BorshDeserialize,
 )]
-pub struct NilConsensusTimeoutMarker;
+enum ConsensusMarkerSerde {
+    PrepareVote,
+    ConfirmAck,
+    ConsensusTimeout,
+    NilConsensusTimeout,
+}
+
+macro_rules! impl_marker_serialization {
+    ($marker:ty, $variant:ident) => {
+        impl BorshSerialize for $marker {
+            fn serialize<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+                BorshSerialize::serialize(&ConsensusMarkerSerde::$variant, writer)
+            }
+        }
+
+        impl BorshDeserialize for $marker {
+            fn deserialize_reader<R: Read>(reader: &mut R) -> io::Result<Self> {
+                match ConsensusMarkerSerde::deserialize_reader(reader)? {
+                    ConsensusMarkerSerde::$variant => Ok(Self),
+                    _ => Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        concat!(stringify!($marker), " marker variant mismatch"),
+                    )),
+                }
+            }
+        }
+    };
+}
+
+impl_marker_serialization!(PrepareVoteMarker, PrepareVote);
+impl_marker_serialization!(ConfirmAckMarker, ConfirmAck);
+impl_marker_serialization!(ConsensusTimeoutMarker, ConsensusTimeout);
+impl_marker_serialization!(NilConsensusTimeoutMarker, NilConsensusTimeout);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use borsh::BorshDeserialize;
+    use std::collections::HashSet;
+
+    #[test]
+    fn marker_serialization_bytes_are_unique_and_expected() {
+        let pv = borsh::to_vec(&PrepareVoteMarker).unwrap();
+        let ca = borsh::to_vec(&ConfirmAckMarker).unwrap();
+        let ct = borsh::to_vec(&ConsensusTimeoutMarker).unwrap();
+        let nct = borsh::to_vec(&NilConsensusTimeoutMarker).unwrap();
+
+        assert_eq!(pv, vec![0u8]);
+        assert_eq!(ca, vec![1u8]);
+        assert_eq!(ct, vec![2u8]);
+        assert_eq!(nct, vec![3u8]);
+
+        let unique: HashSet<u8> = [pv[0], ca[0], ct[0], nct[0]].into_iter().collect();
+        assert_eq!(unique.len(), 4, "marker tags must be distinct");
+    }
+
+    #[test]
+    fn marker_deserialization_rejects_wrong_tag() {
+        fn assert_err<T: BorshDeserialize + std::fmt::Debug>(tag: u8) {
+            let err = T::deserialize_reader(&mut [tag].as_slice()).unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        }
+
+        assert_err::<PrepareVoteMarker>(1);
+        assert_err::<ConfirmAckMarker>(0);
+        assert_err::<ConsensusTimeoutMarker>(3);
+        assert_err::<NilConsensusTimeoutMarker>(2);
+    }
+
+    #[test]
+    fn marker_roundtrips() {
+        let pv: PrepareVoteMarker = BorshDeserialize::deserialize_reader(
+            &mut borsh::to_vec(&PrepareVoteMarker).unwrap().as_slice(),
+        )
+        .unwrap();
+        let ca: ConfirmAckMarker = BorshDeserialize::deserialize_reader(
+            &mut borsh::to_vec(&ConfirmAckMarker).unwrap().as_slice(),
+        )
+        .unwrap();
+        let ct: ConsensusTimeoutMarker = BorshDeserialize::deserialize_reader(
+            &mut borsh::to_vec(&ConsensusTimeoutMarker).unwrap().as_slice(),
+        )
+        .unwrap();
+        let nct: NilConsensusTimeoutMarker = BorshDeserialize::deserialize_reader(
+            &mut borsh::to_vec(&NilConsensusTimeoutMarker)
+                .unwrap()
+                .as_slice(),
+        )
+        .unwrap();
+
+        let _ = (pv, ca, ct, nct);
+    }
+
+    #[test]
+    fn quorum_certificate_cannot_be_reused_across_steps() {
+        let sig = AggregateSignature::default();
+        let prepare_qc: PrepareQC = QuorumCertificate(sig.clone(), PrepareVoteMarker);
+        let commit_qc: CommitQC = QuorumCertificate(sig, ConfirmAckMarker);
+
+        let prepare_bytes = borsh::to_vec(&prepare_qc).unwrap();
+        let commit_bytes = borsh::to_vec(&commit_qc).unwrap();
+
+        assert_ne!(
+            prepare_bytes, commit_bytes,
+            "different consensus steps must not share the same serialized QC bytes"
+        );
+
+        let err = CommitQC::deserialize_reader(&mut prepare_bytes.as_slice()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+
+        let err = PrepareQC::deserialize_reader(&mut commit_bytes.as_slice()).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn quorum_certificates_are_marker_bound() {
+        let sig = AggregateSignature::default();
+        let prepare_qc: PrepareQC = QuorumCertificate(sig.clone(), PrepareVoteMarker);
+        let commit_qc: CommitQC = QuorumCertificate(sig.clone(), ConfirmAckMarker);
+        let timeout_qc: TimeoutQC = QuorumCertificate(sig.clone(), ConsensusTimeoutMarker);
+        let nil_qc: NilQC = QuorumCertificate(sig, NilConsensusTimeoutMarker);
+
+        let prepare_bytes = borsh::to_vec(&prepare_qc).unwrap();
+        let commit_bytes = borsh::to_vec(&commit_qc).unwrap();
+        let timeout_bytes = borsh::to_vec(&timeout_qc).unwrap();
+        let nil_bytes = borsh::to_vec(&nil_qc).unwrap();
+
+        for (left_name, left_bytes, right_name, right_bytes) in [
+            ("prepare", &prepare_bytes, "commit", &commit_bytes),
+            ("prepare", &prepare_bytes, "timeout", &timeout_bytes),
+            ("prepare", &prepare_bytes, "nil", &nil_bytes),
+            ("commit", &commit_bytes, "timeout", &timeout_bytes),
+            ("commit", &commit_bytes, "nil", &nil_bytes),
+            ("timeout", &timeout_bytes, "nil", &nil_bytes),
+        ] {
+            assert_ne!(
+                left_bytes, right_bytes,
+                "quorum certificate bytes must differ between {left_name} and {right_name}"
+            );
+        }
+
+        fn assert_invalid<T: std::fmt::Debug>(res: std::io::Result<T>) {
+            let err = res.unwrap_err();
+            assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        }
+
+        assert_invalid::<CommitQC>(CommitQC::deserialize_reader(&mut prepare_bytes.as_slice()));
+        assert_invalid::<TimeoutQC>(TimeoutQC::deserialize_reader(&mut prepare_bytes.as_slice()));
+        assert_invalid::<NilQC>(NilQC::deserialize_reader(&mut prepare_bytes.as_slice()));
+
+        assert_invalid::<PrepareQC>(PrepareQC::deserialize_reader(&mut commit_bytes.as_slice()));
+        assert_invalid::<TimeoutQC>(TimeoutQC::deserialize_reader(&mut commit_bytes.as_slice()));
+        assert_invalid::<NilQC>(NilQC::deserialize_reader(&mut commit_bytes.as_slice()));
+
+        assert_invalid::<PrepareQC>(PrepareQC::deserialize_reader(&mut timeout_bytes.as_slice()));
+        assert_invalid::<CommitQC>(CommitQC::deserialize_reader(&mut timeout_bytes.as_slice()));
+        assert_invalid::<NilQC>(NilQC::deserialize_reader(&mut timeout_bytes.as_slice()));
+
+        assert_invalid::<PrepareQC>(PrepareQC::deserialize_reader(&mut nil_bytes.as_slice()));
+        assert_invalid::<CommitQC>(CommitQC::deserialize_reader(&mut nil_bytes.as_slice()));
+        assert_invalid::<TimeoutQC>(TimeoutQC::deserialize_reader(&mut nil_bytes.as_slice()));
+    }
+}
 
 /// This first message will be used in the TC to generate a proof of timeout
 /// Here we add the parent hash purely to avoid replay attacks
