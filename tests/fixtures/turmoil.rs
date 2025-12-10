@@ -108,6 +108,7 @@ impl TurmoilCtx {
         sim: &mut Sim<'_>,
     ) -> Result<TurmoilCtx> {
         std::env::set_var("RISC0_DEV_MODE", "1");
+        std::env::set_var("HYLI_TURMOIL_SEED", seed.to_string());
 
         let rng = StdRng::seed_from_u64(seed);
 

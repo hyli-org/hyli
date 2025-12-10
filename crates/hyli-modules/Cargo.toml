@@ -35,6 +35,9 @@ paste = { workspace = true }
 hex = { workspace = true }
 fjall = { workspace = true }
 
+# For DB utils
+sqlx = { workspace = true, optional = true }
+
 # GCS
 google-cloud-storage = { workspace = true }
 
@@ -69,4 +72,6 @@ hydentity = { workspace = true, features = ["client"] }
 [features]
 risc0 = ["client-sdk/risc0"]
 sp1 = ["client-sdk/sp1"]
+turmoil = []
 test = ["dep:test-log"]
+db = ["dep:sqlx"]

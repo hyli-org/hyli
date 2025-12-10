@@ -20,11 +20,11 @@ use crate::{
     genesis::GenesisEvent,
     model::*,
     p2p::network::{OutboundMessage, PeerEvent},
-    utils::conf::SharedConf,
+    utils::{conf::SharedConf, deterministic_rng::deterministic_rng},
 };
 use anyhow::{Context, Result};
 use core::str;
-use rand::seq::SliceRandom;
+use rand::seq::IndexedRandom;
 use std::{collections::BTreeSet, time::Duration};
 use tokio::{
     task::JoinSet,
@@ -160,7 +160,7 @@ impl DaCatchupper {
     }
 
     pub fn choose_random_peer(&self) -> Option<String> {
-        self.peers.choose(&mut rand::thread_rng()).cloned()
+        self.peers.choose(&mut deterministic_rng()).cloned()
     }
 
     pub fn init_catchup(

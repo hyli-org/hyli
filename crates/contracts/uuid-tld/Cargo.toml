@@ -21,7 +21,7 @@ borsh = { workspace = true }
 risc0-zkvm = { workspace = true, optional = true, features = ['std'] }
 client-sdk = { workspace = true, features = ["risc0"], optional = true }
 uuid = { workspace = true }
-rand = { version = "0.9" }
+rand = { workspace = true }
 rand_seeder = { workspace = true }
 
 [dev-dependencies]

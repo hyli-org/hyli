@@ -26,12 +26,12 @@ macro_rules! turmoil_simple {
         #[test_log::test]
             fn [<turmoil_p2p_ $nb _nodes_ $simulation _ $seed >]() -> anyhow::Result<()> {
                 tracing::info!("Starting test {} with seed {}", stringify!([<turmoil_ $simulation _ $seed >]), $seed);
-                let rng = StdRng::seed_from_u64($seed);
                 let mut sim = hyli_net::turmoil::Builder::new()
                     .simulation_duration(Duration::from_secs(50))
                     .tick_duration(Duration::from_millis(50))
                     .enable_tokio_io()
-                    .build_with_rng(Box::new(rng));
+                    .rng_seed($seed)
+                    .build();
 
                 let mut peers = vec![];
 

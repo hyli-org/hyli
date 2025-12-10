@@ -21,4 +21,4 @@ borsh = { workspace = true }
 clap = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-rand = { version = "0.9" }
+rand = { workspace = true }

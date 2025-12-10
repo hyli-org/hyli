@@ -43,6 +43,12 @@ impl BorshSerialize for BorshableMerkleProof {
                     writer.write_all(zero_bits.as_slice())?;
                     BorshSerialize::serialize(&zero_count, writer)?;
                 }
+                MergeValue::ShortCut { key, value, height } => {
+                    BorshSerialize::serialize(&1u8, writer)?;
+                    writer.write_all(key.as_slice())?;
+                    writer.write_all(value.as_slice())?;
+                    BorshSerialize::serialize(&height, writer)?;
+                }
             }
         }
         Ok(())
@@ -81,6 +87,20 @@ impl BorshDeserialize for BorshableMerkleProof {
                         base_node: H256::from(base_node_buf),
                         zero_bits: H256::from(zero_bits_buf),
                         zero_count,
+                    });
+                }
+                2 => {
+                    let mut key_buf = [0u8; 32];
+                    reader.read_exact(&mut key_buf)?;
+
+                    let mut value_buf = [0u8; 32];
+                    reader.read_exact(&mut value_buf)?;
+
+                    let height = u8::deserialize_reader(reader)?;
+                    merkle_path.push(MergeValue::ShortCut {
+                        key: H256::from(key_buf),
+                        value: H256::from(value_buf),
+                        height,
                     });
                 }
                 _ => {
