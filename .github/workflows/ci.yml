@@ -146,6 +146,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ matrix.toolchain }}
+          toolchain: stable
       - name: Machete
         uses: bnjbvr/cargo-machete@v0.7.1
