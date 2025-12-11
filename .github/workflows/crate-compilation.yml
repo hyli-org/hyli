@@ -8,10 +8,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-env:
-  CARGO_TARGET_DIR: /home/runner/.cache/node-cache/rust/hyli/target
-  # don't share CARGO_HOME as too many // jobs on same home
-
 jobs:
   check-crates:
     runs-on: arc-runner-set
@@ -34,6 +30,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
+      - name: Use runner host path as cache
+        run: |
+          echo "CARGO_TARGET_DIR=/home/runner/.cache/node-cache/rust/hyli-${{ matric.crate }}/target" >> $GITHUB_ENV
       - run: sudo apt update && sudo apt install -y build-essential libssl-dev pkg-config
       - run: cargo install cargo-docs-rs --force
 
