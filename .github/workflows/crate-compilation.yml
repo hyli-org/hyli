@@ -2,11 +2,15 @@ name: Check Crates Compilation
 
 on:
   push:
-    branches: [main]
+    branches: [main, self-hosted-workers]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check-crates:
-    runs-on: ubuntu-latest
+    runs-on: arc-runner-set
     strategy:
       fail-fast: false
       matrix:
@@ -26,11 +30,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
-      - uses: dtolnay/install@cargo-docs-rs
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: linux-nightly
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Use runner host path as cache
+        run: |
+          echo "CARGO_TARGET_DIR=/home/runner/.cache/node-cache/rust/hyli-${{ matrix.crate }}/target" >> $GITHUB_ENV
+      - run: sudo apt update && sudo apt install -y build-essential libssl-dev pkg-config
+      - run: cargo install cargo-docs-rs --force
 
       - name: Compile crate '${{ matrix.crate }}' with no default features
         run: cargo build -p ${{ matrix.crate }} --no-default-features
@@ -47,7 +51,7 @@ jobs:
         run: cargo docs-rs -p ${{ matrix.crate }}
 
   list-crates:
-    runs-on: ubuntu-latest
+    runs-on: arc-runner-set
     outputs:
       crates: ${{ steps.crate-list.outputs.crates }}
 

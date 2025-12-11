@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 use tracing::{debug, info, trace, warn};
 
 use super::*;
+#[cfg(not(test))]
+use crate::utils::deterministic_rng::deterministic_rng;
 use crate::{
     bus::BusClientSender,
     consensus::StateTag,
@@ -11,6 +13,7 @@ use crate::{
     p2p::P2PCommand,
     utils::conf::TimestampCheck,
 };
+
 use hyli_crypto::BlstCrypto;
 use hyli_model::{
     utils::TimestampMs, AggregateSignature, ConsensusProposal, ConsensusProposalHash,
@@ -789,7 +792,7 @@ impl Consensus {
             if bonded.is_empty() {
                 None
             } else {
-                let mut rng = rand::thread_rng();
+                let mut rng = deterministic_rng();
                 bonded
                     .iter()
                     .filter(|pk| pk != &self.crypto.validator_pubkey())

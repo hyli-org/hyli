@@ -14,9 +14,11 @@ use crate::{
 };
 use anyhow::{bail, Error, Result};
 use axum::Router;
-use rand::{distributions::Alphanumeric, Rng};
+use rand::{distr::Alphanumeric, Rng};
 use tokio::task::JoinHandle;
 use tracing::{debug, info};
+
+use crate::utils::deterministic_rng::deterministic_rng;
 
 const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -104,7 +106,7 @@ where
         // State 2 starts creating a tmp file data.state2.tmp
         // rename data.state2.tmp into store (atomic override)
         // rename data.state1.tmp into
-        let salt: String = rand::thread_rng()
+        let salt: String = deterministic_rng()
             .sample_iter(&Alphanumeric)
             .take(8)
             .map(char::from)
