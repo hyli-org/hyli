@@ -32,7 +32,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - name: Use runner host path as cache
         run: |
-          echo "CARGO_TARGET_DIR=/home/runner/.cache/node-cache/rust/hyli-${{ matric.crate }}/target" >> $GITHUB_ENV
+          echo "CARGO_TARGET_DIR=/home/runner/.cache/node-cache/rust/hyli-${{ matrix.crate }}/target" >> $GITHUB_ENV
       - run: sudo apt update && sudo apt install -y build-essential libssl-dev pkg-config
       - run: cargo install cargo-docs-rs --force
 
