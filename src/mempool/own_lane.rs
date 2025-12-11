@@ -272,6 +272,17 @@ impl super::Mempool {
             .map(|(_tx_hash, tx)| tx)
             .collect();
 
+        let status_event = MempoolStatusEvent::WaitingDissemination {
+            parent_data_proposal_hash: self
+                .get_last_data_prop_hash_in_own_lane()
+                .unwrap_or(DataProposalHash(self.crypto.validator_pubkey().to_string())),
+            txs: collected_txs.clone(),
+        };
+
+        self.bus
+            .send(status_event)
+            .context("Sending Status event for TX")?;
+
         debug!(
             "🌝 Creating new data proposals with {} txs (est. size {}). {} tx remain.",
             collected_txs.len(),
@@ -408,20 +419,7 @@ impl super::Mempool {
             self.waiting_dissemination_txs
                 .insert(tx_hash.clone(), tx.clone());
 
-            // dbg!(&self.waiting);
-
             self.metrics.add_api_tx(tx_type);
-            let status_event = MempoolStatusEvent::WaitingDissemination {
-                // TODO: handle this differently somehow. For now, this works as we always drain waiting tx right up.
-                parent_data_proposal_hash: self
-                    .get_last_data_prop_hash_in_own_lane()
-                    .unwrap_or(DataProposalHash(self.crypto.validator_pubkey().to_string())),
-                tx,
-            };
-
-            self.bus
-                .send(status_event)
-                .context("Sending Status event for TX")?;
         }
 
         self.metrics
@@ -531,28 +529,6 @@ pub mod test {
         ctx.submit_tx(&register_tx);
         ctx.submit_tx(&register_tx_3);
 
-        assert_chanmsg_matches!(
-            ctx.mempool_status_event_receiver,
-            MempoolStatusEvent::WaitingDissemination { parent_data_proposal_hash, tx } => {
-                assert_eq!(parent_data_proposal_hash, DataProposalHash(ctx.mempool.crypto.validator_pubkey().to_string()));
-                assert_eq!(tx,register_tx);
-            }
-        );
-        assert_chanmsg_matches!(
-            ctx.mempool_status_event_receiver,
-            MempoolStatusEvent::WaitingDissemination { parent_data_proposal_hash, tx } => {
-                assert_eq!(parent_data_proposal_hash, DataProposalHash(ctx.mempool.crypto.validator_pubkey().to_string()));
-                assert_eq!(tx,register_tx_2);
-            }
-        );
-        assert_chanmsg_matches!(
-            ctx.mempool_status_event_receiver,
-            MempoolStatusEvent::WaitingDissemination { parent_data_proposal_hash, tx } => {
-                assert_eq!(parent_data_proposal_hash, DataProposalHash(ctx.mempool.crypto.validator_pubkey().to_string()));
-                assert_eq!(tx,register_tx_3);
-            }
-        );
-
         assert!(ctx.mempool_status_event_receiver.is_empty());
 
         ctx.timer_tick().await?;
@@ -569,14 +545,20 @@ pub mod test {
             .unwrap()
             .unwrap();
 
-        assert_eq!(
-            dp.txs,
-            vec![
-                register_tx.clone(),
-                register_tx_2.clone(),
-                register_tx_3.clone(),
-            ]
+        let actual_txs = vec![
+            register_tx.clone(),
+            register_tx_2.clone(),
+            register_tx_3.clone(),
+        ];
+
+        assert_chanmsg_matches!(
+            ctx.mempool_status_event_receiver,
+            MempoolStatusEvent::WaitingDissemination { parent_data_proposal_hash, txs } => {
+                assert_eq!(parent_data_proposal_hash, DataProposalHash(ctx.mempool.crypto.validator_pubkey().to_string()));
+                assert_eq!(txs, actual_txs);
+            }
         );
+        assert_eq!(dp.txs, actual_txs);
 
         // Assert that pending_tx has been flushed
         assert!(ctx.mempool.waiting_dissemination_txs.is_empty());

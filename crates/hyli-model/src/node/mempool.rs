@@ -9,7 +9,7 @@ use crate::*;
 pub enum MempoolStatusEvent {
     WaitingDissemination {
         parent_data_proposal_hash: DataProposalHash,
-        tx: Transaction,
+        txs: Vec<Transaction>,
     },
     DataProposalCreated {
         parent_data_proposal_hash: DataProposalHash,

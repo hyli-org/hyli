@@ -332,7 +332,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     indexer
         .handle_mempool_status_event(MempoolStatusEvent::WaitingDissemination {
             parent_data_proposal_hash: parent_data_proposal.hashed(),
-            tx: register_tx_1_wd.clone(),
+            txs: vec![register_tx_1_wd.clone()],
         })
         .await
         .expect("MempoolStatusEvent");
@@ -349,7 +349,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     indexer
         .handle_mempool_status_event(MempoolStatusEvent::WaitingDissemination {
             parent_data_proposal_hash: parent_data_proposal.hashed(),
-            tx: register_tx_2_wd.clone(),
+            txs: vec![register_tx_2_wd.clone()],
         })
         .await
         .expect("MempoolStatusEvent");
@@ -382,7 +382,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     indexer
         .handle_mempool_status_event(MempoolStatusEvent::WaitingDissemination {
             parent_data_proposal_hash: data_proposal.hashed(),
-            tx: blob_transaction_wd.clone(),
+            txs: vec![blob_transaction_wd.clone()],
         })
         .await
         .expect("MempoolStatusEvent");
