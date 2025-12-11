@@ -142,10 +142,20 @@ impl Consensus {
         received_slot: Slot,
         received_view: View,
     ) -> Result<()> {
-        // This TC is for our current slot and view, so we can leave Joining mode
-        let is_next_view_leader = &self.next_view_leader()? != self.crypto.validator_pubkey();
-        if is_next_view_leader && matches!(self.bft_round_state.state_tag, StateTag::Joining) {
-            self.bft_round_state.state_tag = StateTag::Leader;
+        let tc_parent_hash = match &received_proposal_qc {
+            TCKind::PrepareQC((_, cp)) => cp.parent_hash.clone(),
+            _ => self.bft_round_state.parent_hash.clone(),
+        };
+        self.verify_tc(
+            &received_timeout_certificate,
+            &received_proposal_qc,
+            received_slot,
+            received_view,
+            tc_parent_hash,
+        )?;
+
+        if matches!(self.bft_round_state.state_tag, StateTag::Joining) {
+            self.bft_round_state.state_tag = StateTag::Follower;
         }
 
         self.verify_and_process_tc_ticket(
@@ -802,6 +812,134 @@ mod tests {
         assert_eq!(cp.slot, 1);
         assert_eq!(cp_view, 1);
         assert_eq!(cp.parent_hash, ConsensusProposalHash("genesis".into()));
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn joining_transitions_out_on_valid_tc() {
+        let (mut node1, mut node2, mut node3, mut node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        // Force node4 to be in Joining state to validate transition on TC
+        node4.consensus.bft_round_state.state_tag = StateTag::Joining;
+
+        // Make 3 nodes timeout to build a TC (node4 will not timeout)
+        ConsensusTestCtx::timeout(&mut [&mut node1, &mut node2, &mut node3]).await;
+
+        // Distribute Timeout messages among the 3 nodes (consume their Timeout broadcasts)
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node1, to: [node2, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node2, to: [node1, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node3, to: [node2, node1],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+
+        // Capture a TimeoutCertificate from any node and deliver it to node4
+        let tc1 = node1.assert_broadcast("TC").await;
+        if let ConsensusNetMessage::TimeoutCertificate(..) = &tc1.msg {
+            node4
+                .handle_msg(&tc1, "deliver TC from node1 to node4")
+                .await;
+        } else {
+            let tc2 = node2.assert_broadcast("TC").await;
+            if let ConsensusNetMessage::TimeoutCertificate(..) = &tc2.msg {
+                node4
+                    .handle_msg(&tc2, "deliver TC from node2 to node4")
+                    .await;
+            } else {
+                let tc3 = node3.assert_broadcast("TC").await;
+                if let ConsensusNetMessage::TimeoutCertificate(..) = &tc3.msg {
+                    node4
+                        .handle_msg(&tc3, "deliver TC from node3 to node4")
+                        .await;
+                } else {
+                    panic!("no TimeoutCertificate broadcast captured");
+                }
+            }
+        }
+
+        // Node4 should have exited Joining after processing a valid TC
+        assert!(
+            !matches!(node4.consensus.bft_round_state.state_tag, StateTag::Joining),
+            "Node4 must exit Joining on valid TC"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn joining_invalid_tc_keeps_joining() {
+        let (mut node1, mut node2, mut node3, mut node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        // Force node4 into Joining and corrupt its parent hash so TC verification fails
+        node4.consensus.bft_round_state.state_tag = StateTag::Joining;
+        node4.consensus.bft_round_state.parent_hash =
+            ConsensusProposalHash("bogus_parent_hash".into());
+
+        // Make 3 nodes timeout to build a TC (with the correct parent hash)
+        ConsensusTestCtx::timeout(&mut [&mut node1, &mut node2, &mut node3]).await;
+
+        // Consume Timeout broadcasts
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node1, to: [node2, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node2, to: [node1, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node3, to: [node2, node1],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+
+        // Deliver any TimeoutCertificate (valid for others) to node4; it should fail verification locally
+        let tc1 = node1.assert_broadcast("TC").await;
+        if let ConsensusNetMessage::TimeoutCertificate(..) = &tc1.msg {
+            node4
+                .handle_msg(&tc1, "deliver TC from node1 to node4")
+                .await;
+        } else {
+            let tc2 = node2.assert_broadcast("TC").await;
+            if let ConsensusNetMessage::TimeoutCertificate(..) = &tc2.msg {
+                node4
+                    .handle_msg(&tc2, "deliver TC from node2 to node4")
+                    .await;
+            } else {
+                let tc3 = node3.assert_broadcast("TC").await;
+                if let ConsensusNetMessage::TimeoutCertificate(..) = &tc3.msg {
+                    node4
+                        .handle_msg(&tc3, "deliver TC from node3 to node4")
+                        .await;
+                } else {
+                    panic!("no TimeoutCertificate broadcast captured");
+                }
+            }
+        }
+
+        // State must remain Joining because TC validation failed and we change state only after validation
+        assert!(
+            matches!(node4.consensus.bft_round_state.state_tag, StateTag::Joining),
+            "Node4 must remain in Joining when TC verification fails"
+        );
     }
 
     #[test_log::test(tokio::test)]
