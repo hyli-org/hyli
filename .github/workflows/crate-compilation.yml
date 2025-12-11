@@ -60,7 +60,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - run: cargo install cargo-docs-rs
+      - run: cargo install cargo-docs-rs --force
       - id: crate-list
         name: List workspace crates
         run: |
