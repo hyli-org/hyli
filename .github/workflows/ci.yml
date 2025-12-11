@@ -31,7 +31,7 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
 
       # For keyring dependencies
-      - run: apt update && apt install -y libdbus-1-dev pkg-config
+      - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config
 
       - name: Cache Docker layers
         id: image-cache
