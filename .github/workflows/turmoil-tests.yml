@@ -5,6 +5,11 @@ on:
   pull_request:
     branches:
       - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TARGET_DIR: /home/runner/.cache/node-cache/rust/hyli/target
   CARGO_HOME: /home/runner/.cache/node-cache/rust/cargo-home

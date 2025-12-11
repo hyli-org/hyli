@@ -4,6 +4,10 @@ on:
   push:
     branches: [main, self-hosted-workers]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TARGET_DIR: /home/runner/.cache/node-cache/rust/hyli/target
   CARGO_HOME: /home/runner/.cache/node-cache/rust/cargo-home-nightly
@@ -30,6 +34,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dev-hanz-ops/install-gh-cli-action@v0.2.1
+        with:
+          gh-cli-version: 2.83.2
       - uses: dtolnay/rust-toolchain@nightly
       - uses: dtolnay/install@cargo-docs-rs
       - run: sudo apt update && sudo apt install -y build-essential libssl-dev
