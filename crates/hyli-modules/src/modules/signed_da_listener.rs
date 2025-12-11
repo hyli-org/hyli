@@ -1,7 +1,10 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 use anyhow::Result;
-use sdk::{BlockHeight, DataEvent, Hashed, MempoolStatusEvent, SignedBlock};
+use sdk::{
+    BlockHeight, DataAvailabilityEvent, DataAvailabilityRequest, DataEvent, Hashed,
+    MempoolStatusEvent, SignedBlock,
+};
 use tokio::task::yield_now;
 use tracing::{debug, info, warn};
 
@@ -12,7 +15,7 @@ use crate::{
         Module,
     },
     node_state::module::NodeStateModule,
-    utils::da_codec::{DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest},
+    utils::da_codec::DataAvailabilityClient,
 };
 use crate::{log_error, module_handle_messages};
 

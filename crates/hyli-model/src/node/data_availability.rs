@@ -194,3 +194,14 @@ pub struct NodeStateBlock {
 pub enum NodeStateEvent {
     NewBlock(NodeStateBlock),
 }
+
+// Da Listener
+//
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug, PartialEq, Eq)]
+pub struct DataAvailabilityRequest(pub BlockHeight);
+
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub enum DataAvailabilityEvent {
+    SignedBlock(SignedBlock),
+    MempoolStatusEvent(MempoolStatusEvent),
+}
