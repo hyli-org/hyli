@@ -10,7 +10,6 @@ concurrency:
 
 env:
   CARGO_TARGET_DIR: /home/runner/.cache/node-cache/rust/hyli/target
-  # don't share CARGO_HOME as too many // jobs on same home
 
 jobs:
   check-crates:
@@ -33,6 +32,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@nightly
       - run: sudo apt update && sudo apt install -y build-essential libssl-dev
       - run: cargo install cargo-docs-rs --force
