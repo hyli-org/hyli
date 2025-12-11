@@ -10,7 +10,7 @@ on:
 
 jobs:
   update-files:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: arc-runner-set
 
     steps:
       - name: Checkout repository

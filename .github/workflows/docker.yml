@@ -20,7 +20,7 @@ jobs:
       id-token: "write"
       packages: "write"
 
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -98,7 +98,7 @@ jobs:
 
   multiplatform_image:
     needs: build_and_push
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     permissions:
       contents: "read"

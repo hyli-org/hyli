@@ -15,7 +15,7 @@ jobs:
       id-token: "write"
       packages: "write"
 
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:

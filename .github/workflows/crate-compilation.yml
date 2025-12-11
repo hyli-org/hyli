@@ -4,9 +4,13 @@ on:
   push:
     branches: [main]
 
+env:
+  CARGO_TARGET_DIR: /home/runner/.cache/node-cache/rust/hyli/target
+  CARGO_HOME: /home/runner/.cache/node-cache/rust/cargo-home
+
 jobs:
   check-crates:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: arc-runner-set
     strategy:
       fail-fast: false
       matrix:
@@ -27,10 +31,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
       - uses: dtolnay/install@cargo-docs-rs
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: linux-nightly
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: sudo apt update && sudo apt install -y build-essential libssl-dev
 
       - name: Compile crate '${{ matrix.crate }}' with no default features
         run: cargo build -p ${{ matrix.crate }} --no-default-features
@@ -47,7 +48,7 @@ jobs:
         run: cargo docs-rs -p ${{ matrix.crate }}
 
   list-crates:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: arc-runner-set
     outputs:
       crates: ${{ steps.crate-list.outputs.crates }}
 

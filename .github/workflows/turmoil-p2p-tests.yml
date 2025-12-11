@@ -8,7 +8,7 @@ on:
 
 jobs:
   test-turmoil:
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: arc-runner-set
 
     steps:
       - name: Checkout code
