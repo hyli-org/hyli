@@ -2,15 +2,10 @@
 
 // Pick one of the two implementations
 use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
+use hyli_modules::utils::da_codec::{DataAvailabilityClient, DataAvailabilityServer};
 //use hyli_modules::modules::data_availability::blocks_memory::Blocks;
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
-use hyli_modules::{
-    log_error, module_bus_client, module_handle_messages,
-    utils::da_codec::{
-        DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest,
-        DataAvailabilityServer,
-    },
-};
+use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::TcpEvent;
 use tokio::task::JoinHandle;
 
@@ -96,9 +91,6 @@ struct DABusClient {
     receiver(PeerEvent),
 }
 }
-
-type DaTcpServer =
-    hyli_net::tcp::tcp_server::TcpServer<DataAvailabilityRequest, DataAvailabilityEvent>;
 
 #[derive(Debug)]
 pub struct DataAvailability {
@@ -400,7 +392,7 @@ impl DataAvailability {
             self.config.da_server_port
         );
 
-        let mut server: DaTcpServer = DataAvailabilityServer::start_with_opts(
+        let mut server = DataAvailabilityServer::start_with_opts(
             self.config.da_server_port,
             Some(self.config.da_max_frame_length),
             format!("DAServer-{}", self.config.id.clone()).as_str(),
@@ -514,7 +506,7 @@ impl DataAvailability {
         peer_ip: String,
         retries: usize,
         catchup_joinset: &mut JoinSet<(Vec<ConsensusProposalHash>, String, usize)>,
-        server: &mut DaTcpServer,
+        server: &mut DataAvailabilityServer,
     ) -> Result<()> {
         if let Some(hash) = block_hashes.pop() {
             debug!("📡  Sending block {} to peer {}", &hash, &peer_ip);
@@ -547,7 +539,7 @@ impl DataAvailability {
     async fn handle_mempool_event(
         &mut self,
         evt: MempoolBlockEvent,
-        tcp_server: &mut DaTcpServer,
+        tcp_server: &mut DataAvailabilityServer,
         sender: &tokio::sync::mpsc::Sender<SignedBlock>,
     ) -> Result<()> {
         match evt {
@@ -575,7 +567,7 @@ impl DataAvailability {
     async fn handle_mempool_status_event(
         &mut self,
         evt: MempoolStatusEvent,
-        tcp_server: &mut DaTcpServer,
+        tcp_server: &mut DataAvailabilityServer,
     ) {
         let errors = tcp_server
             .broadcast(DataAvailabilityEvent::MempoolStatusEvent(evt))
@@ -591,7 +583,7 @@ impl DataAvailability {
     async fn handle_signed_block(
         &mut self,
         block: SignedBlock,
-        tcp_server: &mut DaTcpServer,
+        tcp_server: &mut DataAvailabilityServer,
     ) -> Option<BlockHeight> {
         let hash = block.hashed();
         // if new block is already handled, ignore it
@@ -651,7 +643,7 @@ impl DataAvailability {
     async fn pop_buffer(
         &mut self,
         mut last_block_hash: ConsensusProposalHash,
-        tcp_server: &mut DaTcpServer,
+        tcp_server: &mut DataAvailabilityServer,
     ) -> Option<BlockHeight> {
         let mut res = None;
 
@@ -722,7 +714,7 @@ impl DataAvailability {
     async fn add_processed_block(
         &mut self,
         block: SignedBlock,
-        tcp_server: &mut DaTcpServer,
+        tcp_server: &mut DataAvailabilityServer,
     ) -> anyhow::Result<()> {
         self.store_block(&block)?;
 
@@ -789,8 +781,8 @@ pub mod tests {
     #![allow(clippy::indexing_slicing)]
     use std::time::Duration;
 
+    use super::module_bus_client;
     use super::Blocks;
-    use super::{module_bus_client, DaTcpServer};
     use crate::data_availability::DaCatchupPolicy;
     use crate::{
         bus::BusClientSender,
@@ -802,10 +794,8 @@ pub mod tests {
     use hyli_modules::log_error;
     use hyli_modules::node_state::module::NodeStateBusClient;
     use hyli_modules::node_state::NodeState;
-    use hyli_modules::utils::da_codec::{
-        DataAvailabilityClient, DataAvailabilityEvent, DataAvailabilityRequest,
-        DataAvailabilityServer,
-    };
+    use hyli_modules::utils::da_codec::DataAvailabilityClient;
+    use hyli_modules::utils::da_codec::DataAvailabilityServer;
     use staking::state::Staking;
 
     struct DataAvailabilityTestCtx {
@@ -847,7 +837,7 @@ pub mod tests {
         pub async fn handle_signed_block(
             &mut self,
             block: SignedBlock,
-            tcp_server: &mut DaTcpServer,
+            tcp_server: &mut DataAvailabilityServer,
         ) {
             self.da.handle_signed_block(block.clone(), tcp_server).await;
             let block_hash = block.hashed();
