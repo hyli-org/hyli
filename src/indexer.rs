@@ -684,7 +684,27 @@ impl Indexer {
             sqlx::query(
                 "UPDATE transactions SET transaction_status = updates.transaction_status
                 FROM updates
-                WHERE transactions.tx_hash = updates.tx_hash AND transactions.parent_dp_hash = updates.parent_dp_hash"
+                WHERE transactions.tx_hash = updates.tx_hash
+                  AND transactions.parent_dp_hash = updates.parent_dp_hash
+                  AND (
+                    CASE transactions.transaction_status
+                        WHEN 'waiting_dissemination' THEN 1
+                        WHEN 'data_proposal_created' THEN 2
+                        WHEN 'sequenced' THEN 3
+                        WHEN 'success' THEN 4
+                        WHEN 'failure' THEN 4
+                        WHEN 'timed_out' THEN 4
+                    END
+                  ) < (
+                    CASE updates.transaction_status
+                        WHEN 'waiting_dissemination' THEN 1
+                        WHEN 'data_proposal_created' THEN 2
+                        WHEN 'sequenced' THEN 3
+                        WHEN 'success' THEN 4
+                        WHEN 'failure' THEN 4
+                        WHEN 'timed_out' THEN 4
+                    END
+                  )",
             )
             .execute(&mut *transaction)
             .await?;
