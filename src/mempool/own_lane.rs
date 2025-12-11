@@ -486,7 +486,6 @@ impl super::Mempool {
             proven_blobs: std::iter::zip(tx_hashes, std::iter::zip(hyli_outputs, program_ids))
                 .map(
                     |(blob_tx_hash, (hyli_output, program_id))| BlobProofOutput {
-                        original_proof_hash: ProofDataHash("todo?".to_owned()),
                         blob_tx_hash: blob_tx_hash.clone(),
                         hyli_output,
                         program_id,
@@ -678,7 +677,6 @@ pub mod test {
             proof_hash: proof_hash.clone(),
             proof_size: proof.0.len(),
             proven_blobs: vec![BlobProofOutput {
-                original_proof_hash: proof_hash,
                 blob_tx_hash: crate::model::TxHash("blob-tx".into()),
                 program_id: ProgramId(vec![]),
                 verifier: Verifier("test".into()),
