@@ -34,7 +34,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
-      - run: sudo apt update && sudo apt install -y build-essential libssl-dev
+      - run: sudo apt update && sudo apt install -y build-essential libssl-dev pkg-config
       - run: cargo install cargo-docs-rs --force
 
       - name: Compile crate '${{ matrix.crate }}' with no default features
