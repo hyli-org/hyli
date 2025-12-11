@@ -92,10 +92,10 @@ pub struct HandledBlobProofOutput {
     Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
 )]
 pub struct BlobProofOutput {
-    // TODO: this can be recovered from the hyli output
+    /// Hash of the blob transaction being proven.
+    /// This duplicates `hyli_output.tx_hash` but is kept for convenient access
+    /// and database indexing without needing to deserialize the full hyli_output.
     pub blob_tx_hash: TxHash,
-    // TODO: remove this?
-    pub original_proof_hash: ProofDataHash,
 
     /// HyliOutput of the proof for this blob
     pub hyli_output: HyliOutput,
@@ -111,7 +111,6 @@ impl Hashed<BlobProofOutputHash> for BlobProofOutput {
     fn hashed(&self) -> BlobProofOutputHash {
         let mut hasher = Sha3_256::new();
         hasher.update(self.blob_tx_hash.0.as_bytes());
-        hasher.update(self.original_proof_hash.0.as_bytes());
         hasher.update(self.program_id.0.clone());
         hasher.update(contract::Hashed::hashed(&self.hyli_output).0);
         BlobProofOutputHash(hasher.finalize().to_vec())
