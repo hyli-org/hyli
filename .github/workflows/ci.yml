@@ -9,6 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RISC0_EXECUTOR: ipc
+  CARGO_TARGET_DIR: /home/runner/.cache/node-cache/rust/hyli/target
+  CARGO_HOME: /home/runner/.cache/node-cache/rust/cargo-home
 
 jobs:
   test:
@@ -52,10 +54,6 @@ jobs:
       #     shared-key: linux-stable
       #     save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Use runner host path as cache
-        run: |
-          echo "CARGO_TARGET_DIR=/home/runner/.cache/node-cache/rust/hyli/target" >> $GITHUB_ENV
-
       - name: Install r0vm
         run: |
           wget https://github.com/risc0/risc0/releases/download/v3.0.3/cargo-risczero-x86_64-unknown-linux-gnu.tgz
@@ -91,10 +89,6 @@ jobs:
       #     shared-key: linux-stable
       #     save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Use runner host path as cache
-        run: |
-          echo "CARGO_TARGET_DIR=/home/runner/.cache/node-cache/rust/hyli/target" >> $GITHUB_ENV
-
       # For keyring dependencies
       - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config wget build-essential libssl-dev
       - name: Install r0vm
@@ -125,10 +119,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
-      - name: Use runner host path as cache
-        run: |
-          echo "CARGO_TARGET_DIR=/home/runner/.cache/node-cache/rust/hyli/target" >> $GITHUB_ENV
-
       # For keyring dependencies
       - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config build-essential libssl-dev
       - name: Build model
@@ -147,5 +137,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+      - run: sudo apt update && sudo apt install -y build-essential libssl-dev
       - name: Machete
         uses: bnjbvr/cargo-machete@v0.7.1
