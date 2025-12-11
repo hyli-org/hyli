@@ -323,7 +323,6 @@ pub mod test {
             proof_hash: proof_hash.clone(),
             proof_size: proof.0.len(),
             proven_blobs: vec![BlobProofOutput {
-                original_proof_hash: proof_hash,
                 blob_tx_hash: crate::model::TxHash("blob-tx".into()),
                 program_id: ProgramId(vec![]),
                 verifier: Verifier("test".into()),
