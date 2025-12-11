@@ -23,9 +23,6 @@ jobs:
           # - nightly
     steps:
       - uses: actions/checkout@v4
-      - run: docker version
-      - run: docker run --rm alpine:3.20 echo hello
-      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
@@ -50,10 +47,14 @@ jobs:
         run: docker load -i ~/image-cache/postgres.tar
 
       - uses: taiki-e/install-action@nextest
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: linux-stable
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # - uses: Swatinem/rust-cache@v2
+      #   with:
+      #     shared-key: linux-stable
+      #     save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Use runner host path as cache
+        run: |
+          echo "CARGO_TARGET_DIR=/home/runner/.cache/node-cache/rust/hyli/target" >> $GITHUB_ENV
 
       - name: Install r0vm
         run: |
@@ -85,10 +86,15 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: linux-stable
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # - uses: Swatinem/rust-cache@v2
+      #   with:
+      #     shared-key: linux-stable
+      #     save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Use runner host path as cache
+        run: |
+          echo "CARGO_TARGET_DIR=/home/runner/.cache/node-cache/rust/hyli/target" >> $GITHUB_ENV
+
       # For keyring dependencies
       - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config wget build-essential libssl-dev
       - name: Install r0vm
@@ -119,6 +125,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
+      - name: Use runner host path as cache
+        run: |
+          echo "CARGO_TARGET_DIR=/home/runner/.cache/node-cache/rust/hyli/target" >> $GITHUB_ENV
+
       # For keyring dependencies
       - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config build-essential libssl-dev
       - name: Build model
@@ -134,5 +144,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
       - name: Machete
         uses: bnjbvr/cargo-machete@v0.7.1
