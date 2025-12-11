@@ -239,7 +239,6 @@ impl Genesis {
                     proven_blobs: outputs
                         .drain(..)
                         .map(|(contract_name, out)| BlobProofOutput {
-                            original_proof_hash: ProofDataHash(blob_tx_hash.0.clone()),
                             verifier: hyli_model::verifiers::RISC0_3.into(),
                             program_id: contract_program_ids
                                 .get(&contract_name)
