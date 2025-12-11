@@ -2137,7 +2137,6 @@ pub mod test {
                 program_id: proof.program_id.clone(),
                 verifier: proof.verifier.clone(),
                 blob_tx_hash: blob_tx_hash.clone(),
-                original_proof_hash: proof.proof.hashed(),
             }],
             proof_hash: proof.proof.hashed(),
             proof_size: proof.estimate_size(),
