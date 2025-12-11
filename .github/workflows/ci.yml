@@ -31,7 +31,7 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
 
       # For keyring dependencies
-      - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config wget build-essential
+      - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config wget build-essential libssl-dev
 
       - name: Cache Docker layers
         id: image-cache
@@ -90,7 +90,7 @@ jobs:
           shared-key: linux-stable
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # For keyring dependencies
-      - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config wget build-essential
+      - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config wget build-essential libssl-dev
       - name: Install r0vm
         run: |
           wget https://github.com/risc0/risc0/releases/download/v3.0.3/cargo-risczero-x86_64-unknown-linux-gnu.tgz
@@ -120,7 +120,7 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
       # For keyring dependencies
-      - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config build-essential
+      - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config build-essential libssl-dev
       - name: Build model
         run: cargo build -p hyli-model --no-default-features
       - name: Build
