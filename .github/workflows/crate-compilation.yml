@@ -34,7 +34,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
-      - run: cargo install cargo-docs-rs
       - run: sudo apt update && sudo apt install -y build-essential libssl-dev
 
       - name: Compile crate '${{ matrix.crate }}' with no default features
@@ -61,6 +60,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - run: cargo install cargo-docs-rs
       - id: crate-list
         name: List workspace crates
         run: |
