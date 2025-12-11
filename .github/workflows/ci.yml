@@ -31,7 +31,7 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
 
       # For keyring dependencies
-      - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config
+      - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config wget
 
       - name: Cache Docker layers
         id: image-cache
@@ -71,7 +71,6 @@ jobs:
   coverage:
     name: Unit tests coverage
     runs-on: arc-runner-set
-    container: rust:bullseye
     timeout-minutes: 10
     strategy:
       matrix:
@@ -91,7 +90,7 @@ jobs:
           shared-key: linux-stable
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # For keyring dependencies
-      - run: apt update && apt install -y libdbus-1-dev pkg-config
+      - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config
       - name: Install r0vm
         run: |
           wget https://github.com/risc0/risc0/releases/download/v3.0.3/cargo-risczero-x86_64-unknown-linux-gnu.tgz
@@ -108,7 +107,6 @@ jobs:
   features_flags:
     name: Build with different feature flags
     runs-on: arc-runner-set
-    container: rust:bullseye
     timeout-minutes: 10
     strategy:
       matrix:
@@ -122,7 +120,7 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
       # For keyring dependencies
-      - run: apt update && apt install -y libdbus-1-dev pkg-config
+      - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config
       - name: Build model
         run: cargo build -p hyli-model --no-default-features
       - name: Build
@@ -133,7 +131,6 @@ jobs:
     name: Check unused dependencies
     if: github.event.pull_request.draft == false
     runs-on: arc-runner-set
-    container: rust:bullseye
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
