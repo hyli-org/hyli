@@ -172,7 +172,6 @@ async fn get_txs(api_client: &Arc<NodeApiMockClient>) -> Vec<Transaction> {
                         program_id: ProgramId(vec![]),
                         verifier: "test".into(),
                         blob_tx_hash,
-                        original_proof_hash: t.proof.hashed(),
                     }
                 })
                 .collect();
