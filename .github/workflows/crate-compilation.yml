@@ -2,7 +2,7 @@ name: Check Crates Compilation
 
 on:
   push:
-    branches: [main]
+    branches: [main, self-hosted-workers]
 
 env:
   CARGO_TARGET_DIR: /home/runner/.cache/node-cache/rust/hyli/target
