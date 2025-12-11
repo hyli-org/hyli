@@ -29,6 +29,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+      - uses: dev-hanz-ops/install-gh-cli-action@v0.2.1
       - uses: dtolnay/rust-toolchain@nightly
       - uses: dtolnay/install@cargo-docs-rs
       - run: sudo apt update && sudo apt install -y build-essential libssl-dev
