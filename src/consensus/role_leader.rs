@@ -32,7 +32,10 @@ pub struct LeaderState {
 }
 
 impl Consensus {
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    #[cfg_attr(
+        feature = "instrumentation",
+        tracing::instrument(skip(self, current_timestamp, may_delay), fields(slot = tracing::field::Empty, view = tracing::field::Empty))
+    )]
     pub(super) async fn start_round(
         &mut self,
         current_timestamp: TimestampMs,
@@ -186,6 +189,9 @@ impl Consensus {
                 new_validators_to_bond.len(),
                 CutDisplay(&cut)
             );
+            let span = tracing::Span::current();
+            span.record("slot", self.bft_round_state.slot);
+            span.record("view", self.bft_round_state.view);
 
             let mut staking_actions: Vec<ConsensusStakingAction> = new_validators_to_bond
                 .into_iter()
@@ -245,6 +251,10 @@ impl Consensus {
         matches!(self.bft_round_state.state_tag, StateTag::Leader)
     }
 
+    #[cfg_attr(
+        feature = "instrumentation",
+        tracing::instrument(skip(self, prepare_vote))
+    )]
     pub(super) fn on_prepare_vote(&mut self, prepare_vote: PrepareVote) -> Result<()> {
         if !matches!(self.bft_round_state.state_tag, StateTag::Leader) {
             debug!(
@@ -340,6 +350,10 @@ impl Consensus {
         Ok(())
     }
 
+    #[cfg_attr(
+        feature = "instrumentation",
+        tracing::instrument(skip(self, confirm_ack))
+    )]
     pub(super) fn on_confirm_ack(&mut self, confirm_ack: ConfirmAck) -> Result<()> {
         if !matches!(self.bft_round_state.state_tag, StateTag::Leader) {
             debug!(
