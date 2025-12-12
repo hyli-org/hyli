@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::{Parser, command};
+use clap::Parser;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli_model::DataEvent;
 use serde::{Deserialize, Serialize};

@@ -4,7 +4,7 @@ use hyli::{
     entrypoint::RunPg,
     utils::conf::{self, P2pMode},
 };
-use hyli_modules::{log_error, utils::logger::setup_tracing};
+use hyli_modules::{log_error, utils::logger::setup_otlp};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -14,6 +14,9 @@ pub struct Args {
 
     #[clap(long, action)]
     pub pg: bool,
+
+    #[arg(long, default_value = "false")]
+    pub tracing: bool,
 }
 
 #[cfg(feature = "dhat")]
@@ -37,7 +40,11 @@ async fn main() -> Result<()> {
     // The indexer binary skips the TCP server
     config.run_tcp_server = false;
 
-    setup_tracing(&config.log_format, format!("{}(nopkey)", config.id.clone()))?;
+    setup_otlp(
+        &config.log_format,
+        format!("{}(nopkey)", config.id.clone()),
+        args.tracing,
+    )?;
 
     let _pg = if args.pg {
         Some(RunPg::new(&mut config).await?)

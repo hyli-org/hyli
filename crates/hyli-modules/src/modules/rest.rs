@@ -92,7 +92,17 @@ impl Module for RestApi {
     type Context = RestApiRunContext;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let app = ctx.router.merge(
+        #[cfg(feature = "instrumentation")]
+        let app = ctx.router.layer(
+            TraceLayer::new_for_http()
+                .make_span_with(make_span)
+                .on_response(close_span),
+        );
+
+        #[cfg(not(feature = "instrumentation"))]
+        let app = ctx.router;
+
+        let app = app.merge(
             Router::new()
                 .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ctx.openapi))
                 .route("/v1/info", get(get_info))
@@ -109,6 +119,7 @@ impl Module for RestApi {
             .layer(TraceLayer::new_for_http())
             .layer(tower_http::decompression::RequestDecompressionLayer::new())
             .layer(axum::middleware::from_fn(request_logger));
+
         Ok(RestApi {
             port: ctx.port,
             app: Some(app),
@@ -153,6 +164,41 @@ pub async fn request_logger(req: Request<Body>, next: Next) -> impl IntoResponse
     }
 
     response
+}
+
+#[cfg(feature = "instrumentation")]
+fn make_span<B>(request: &Request<B>) -> tracing::Span {
+    use opentelemetry_http::HeaderExtractor;
+    use tracing::field;
+    use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+    let headers = request.headers();
+    let name = format!("{} {}", request.method(), request.uri());
+    let span = tracing::info_span!(
+        "http-request",
+        name,
+        ?headers,
+        http.method =  %request.method(),
+        http.uri =  %request.uri(),
+        http.status = field::Empty,
+        http.duration = field::Empty,
+    );
+
+    let parent_context = opentelemetry::global::get_text_map_propagator(|propagator| {
+        propagator.extract(&HeaderExtractor(request.headers()))
+    });
+    span.set_parent(parent_context);
+
+    span
+}
+
+#[cfg(feature = "instrumentation")]
+fn close_span<B>(response: &Response<B>, latency: std::time::Duration, span: &tracing::Span) {
+    span.record("http.status", tracing::field::display(response.status()));
+    span.record(
+        "http.duration",
+        tracing::field::display(latency.as_micros()),
+    );
 }
 
 pub async fn get_info(State(state): State<RouterState>) -> Result<impl IntoResponse, AppError> {

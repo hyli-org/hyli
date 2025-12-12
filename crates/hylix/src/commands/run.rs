@@ -58,16 +58,9 @@ pub async fn run_backend(
     extra_args: &[String],
 ) -> HylixResult<tokio::process::Child> {
     let server_port = config.run.server_port.to_string();
-    let mut args = vec![
-        "run",
-        "--bin",
-        "server",
-        "-F",
-        "nonreproducible",
-        "--",
-        "--server-port",
-        &server_port,
-    ];
+    let mut args = vec!["run", "--bin", "server", "-F", "nonreproducible"];
+    args.extend(config.build.extra_flags.iter().map(String::as_str));
+    args.extend(["--", "--server-port", &server_port]);
     if config.build.release {
         args.insert(1, "--release");
     }

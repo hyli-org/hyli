@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use hyli::{entrypoint::RunPg, utils::conf};
 use hyli_crypto::BlstCrypto;
-use hyli_modules::{log_error, utils::logger::setup_tracing};
+use hyli_modules::{log_error, utils::logger::setup_otlp};
 use std::sync::Arc;
 use tracing::info;
 
@@ -20,6 +20,9 @@ pub struct Args {
 
     #[arg(long, default_value = "config.toml")]
     pub config_file: Vec<String>,
+
+    #[arg(long, default_value = "false")]
+    pub tracing: bool,
 
     #[clap(long, action)]
     pub pg: bool,
@@ -67,13 +70,14 @@ async fn main() -> Result<()> {
     let crypto = Arc::new(BlstCrypto::new(&config.id).context("Could not create crypto")?);
     let pubkey = Some(crypto.validator_pubkey().clone());
 
-    setup_tracing(
+    setup_otlp(
         &config.log_format,
         format!(
             "{}({})",
             config.id.clone(),
             pubkey.clone().unwrap_or_default()
         ),
+        args.tracing,
     )?;
 
     info!("Loaded key {:?} for validator", pubkey);
