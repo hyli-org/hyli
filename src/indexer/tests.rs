@@ -332,7 +332,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     indexer
         .handle_mempool_status_event(MempoolStatusEvent::WaitingDissemination {
             parent_data_proposal_hash: parent_data_proposal.hashed(),
-            tx: register_tx_1_wd.clone(),
+            txs: vec![register_tx_1_wd.clone()],
         })
         .await
         .expect("MempoolStatusEvent");
@@ -349,7 +349,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     indexer
         .handle_mempool_status_event(MempoolStatusEvent::WaitingDissemination {
             parent_data_proposal_hash: parent_data_proposal.hashed(),
-            tx: register_tx_2_wd.clone(),
+            txs: vec![register_tx_2_wd.clone()],
         })
         .await
         .expect("MempoolStatusEvent");
@@ -382,7 +382,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     indexer
         .handle_mempool_status_event(MempoolStatusEvent::WaitingDissemination {
             parent_data_proposal_hash: data_proposal.hashed(),
-            tx: blob_transaction_wd.clone(),
+            txs: vec![blob_transaction_wd.clone()],
         })
         .await
         .expect("MempoolStatusEvent");
@@ -1155,6 +1155,79 @@ async fn test_indexer_api() -> Result<()> {
         let (contract_name, _) = tx;
         assert_eq!(contract_name, ContractName::new("contract_1"));
     }
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_data_proposal_created_does_not_downgrade_success() -> Result<()> {
+    let container = Postgres::default()
+        .with_tag("17-alpine")
+        .with_cmd(["postgres", "-c", "log_statement=all"])
+        .start()
+        .await
+        .unwrap();
+    let db = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&format!(
+            "postgresql://postgres:postgres@localhost:{}/postgres",
+            container.get_host_port_ipv4(5432).await.unwrap()
+        ))
+        .await
+        .unwrap();
+    MIGRATOR.run(&db).await.unwrap();
+
+    let (mut indexer, explorer) = new_indexer(db.clone()).await;
+    let server = setup_test_server(&explorer).await?;
+
+    let contract_name = ContractName::new("monotonic");
+    let register_tx = new_register_tx(contract_name, StateCommitment(vec![1, 2, 3]));
+    let transaction = Transaction {
+        version: 1,
+        transaction_data: TransactionData::Blob(register_tx.clone()),
+    };
+    let parent_dp = DataProposal::new(None, vec![transaction.clone()]);
+    let parent_dp_hash = parent_dp.hashed();
+    let tx_metadata = transaction.metadata(parent_dp_hash.clone());
+
+    sqlx::query(
+        "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity)
+         VALUES ($1, $2, $3, $4, $5, NULL, NULL, NULL, $6, $7)",
+    )
+    .bind(parent_dp_hash.0.clone())
+    .bind(tx_metadata.id.1.0.clone())
+    .bind(transaction.version as i32)
+    .bind(TransactionTypeDb::BlobTransaction)
+    .bind(TransactionStatusDb::Success)
+    .bind(0_i32)
+    .bind(Some(register_tx.identity.0.clone()))
+    .execute(&db)
+    .await
+    .unwrap();
+
+    assert_tx_status(
+        &server,
+        tx_metadata.id.1.clone(),
+        TransactionStatusDb::Success,
+    )
+    .await;
+
+    let dpc_event = MempoolStatusEvent::DataProposalCreated {
+        parent_data_proposal_hash: parent_dp_hash.clone(),
+        data_proposal_hash: DataProposal::new(
+            Some(parent_dp_hash.clone()),
+            vec![transaction.clone()],
+        )
+        .hashed(),
+        txs_metadatas: vec![tx_metadata.clone()],
+    };
+    indexer
+        .handle_mempool_status_event(dpc_event)
+        .await
+        .expect("MempoolStatusEvent");
+    indexer.dump_store_to_db().await.expect("Dump to db");
+
+    assert_tx_status(&server, tx_metadata.id.1, TransactionStatusDb::Success).await;
 
     Ok(())
 }

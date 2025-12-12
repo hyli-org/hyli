@@ -6,20 +6,30 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/target
+  CARGO_HOME: ${{ github.workspace }}/.cache/cargo-home
+  SHARED_CACHE_DIR: /home/runner/.cache/node-cache/rust
+
 jobs:
   test-turmoil:
-    runs-on: ubuntu-latest
+    runs-on: arc-runner-set
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Copy cache from shared storage
+        run: .github/scripts/copy-cache.sh "hyli-turmoil"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: sudo apt update && sudo apt install -y build-essential libssl-dev pkg-config
 
       - name: Run turmoil tests - Basic
         run: cargo test turmoil_simulation_basic --features turmoil
@@ -33,3 +43,7 @@ jobs:
         run: cargo test turmoil_simulation_slow_node --features turmoil
       - name: Run turmoil tests - 2 Slow Nodes
         run: cargo test turmoil_simulation_two_slow_nodes --features turmoil
+
+      - name: Save cache to shared storage
+        if: always() && github.ref == 'refs/heads/main'
+        run: .github/scripts/save-cache.sh "hyli-turmoil"

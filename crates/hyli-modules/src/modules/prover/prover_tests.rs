@@ -9,6 +9,7 @@ use crate::{
 use super::*;
 use client_sdk::helpers::test::TxExecutorTestProver;
 use client_sdk::rest_client::test::NodeApiMockClient;
+use rand::{rng, Rng};
 use sdk::*;
 use std::sync::Arc;
 use tempfile::tempdir;
@@ -203,7 +204,8 @@ fn count_hyli_outputs(proof: &Transaction) -> usize {
 
 fn new_blob_tx(val: u32) -> Transaction {
     // random id to have a different tx hash
-    let id: usize = rand::random();
+    let mut rng = rng();
+    let id: usize = rng.random::<u64>() as usize;
     let tx = BlobTransaction::new(
         format!("{id}@test"),
         vec![Blob {
@@ -221,7 +223,8 @@ fn new_blob_tx(val: u32) -> Transaction {
 
 fn new_failing_blob_tx(val: u32) -> Transaction {
     // random id to have a different tx hash
-    let id: usize = rand::random();
+    let mut rng = rng();
+    let id: usize = rng.random::<u64>() as usize;
     let tx = BlobTransaction::new(
         format!("failing_{id}@test"),
         vec![Blob {

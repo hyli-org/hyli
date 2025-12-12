@@ -416,19 +416,11 @@ pub mod tests {
     use crate::tcp::{tcp_client::TcpClient, to_tcp_message, TcpEvent, TcpMessage};
 
     use anyhow::Result;
-    use borsh::{BorshDeserialize, BorshSerialize};
     use bytes::Bytes;
     use futures::TryStreamExt;
+    use sdk::{BlockHeight, DataAvailabilityEvent, DataAvailabilityRequest};
 
     use super::TcpServer;
-
-    #[derive(BorshDeserialize, BorshSerialize, Clone, Debug, PartialEq, Eq)]
-    pub struct DataAvailabilityRequest(pub usize);
-
-    #[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
-    pub enum DataAvailabilityEvent {
-        SignedBlock(String),
-    }
 
     type DAServer = TcpServer<DataAvailabilityRequest, DataAvailabilityEvent>;
     type DAClient = TcpClient<DataAvailabilityRequest, DataAvailabilityEvent>;
@@ -443,7 +435,7 @@ pub mod tests {
         client.ping().await?;
 
         // Send data to server
-        client.send(DataAvailabilityRequest(2)).await?;
+        client.send(DataAvailabilityRequest(BlockHeight(2))).await?;
 
         tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -452,17 +444,17 @@ pub mod tests {
             _ => panic!("Expected a Message event"),
         };
 
-        assert_eq!(DataAvailabilityRequest(2), d);
+        assert_eq!(DataAvailabilityRequest(BlockHeight(2)), d);
         assert!(server.pool_receiver.try_recv().is_err());
 
         // From server to client
         _ = server
-            .broadcast(DataAvailabilityEvent::SignedBlock("blabla".to_string()))
+            .broadcast(DataAvailabilityEvent::SignedBlock(Default::default()))
             .await;
 
         assert_eq!(
             client.recv().await.unwrap(),
-            DataAvailabilityEvent::SignedBlock("blabla".to_string())
+            DataAvailabilityEvent::SignedBlock(Default::default())
         );
 
         let client_socket_addr = server.connected_clients().first().unwrap().clone();
@@ -498,7 +490,7 @@ pub mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         server
-            .broadcast(DataAvailabilityEvent::SignedBlock("test".to_string()))
+            .broadcast(DataAvailabilityEvent::SignedBlock(Default::default()))
             .await;
 
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -508,7 +500,7 @@ pub mod tests {
         assert_eq!(
             res1.unwrap().unwrap(),
             TryInto::<Bytes>::try_into(
-                to_tcp_message(&DataAvailabilityEvent::SignedBlock("test".to_string())).unwrap()
+                to_tcp_message(&DataAvailabilityEvent::SignedBlock(Default::default())).unwrap()
             )
             .unwrap()
         );
@@ -517,7 +509,7 @@ pub mod tests {
         assert_eq!(
             res2.unwrap().unwrap(),
             TryInto::<Bytes>::try_into(
-                to_tcp_message(&DataAvailabilityEvent::SignedBlock("test".to_string())).unwrap()
+                to_tcp_message(&DataAvailabilityEvent::SignedBlock(Default::default())).unwrap()
             )
             .unwrap()
         );
@@ -555,7 +547,7 @@ pub mod tests {
         server
             .raw_send_parallel(
                 vec![client2_addr.to_string()],
-                borsh::to_vec(&DataAvailabilityEvent::SignedBlock("test".to_string())).unwrap(),
+                borsh::to_vec(&DataAvailabilityEvent::SignedBlock(Default::default())).unwrap(),
             )
             .await;
 
@@ -570,7 +562,7 @@ pub mod tests {
         assert_eq!(
             res2.unwrap().unwrap(),
             TryInto::<Bytes>::try_into(
-                to_tcp_message(&DataAvailabilityEvent::SignedBlock("test".to_string())).unwrap()
+                to_tcp_message(&DataAvailabilityEvent::SignedBlock(Default::default())).unwrap()
             )
             .unwrap()
         );
@@ -607,7 +599,7 @@ pub mod tests {
         _ = server
             .send(
                 client2_addr.to_string(),
-                DataAvailabilityEvent::SignedBlock("test".to_string()),
+                DataAvailabilityEvent::SignedBlock(Default::default()),
             )
             .await;
 
@@ -622,7 +614,7 @@ pub mod tests {
         assert_eq!(
             res2.unwrap().unwrap(),
             TryInto::<Bytes>::try_into(
-                to_tcp_message(&DataAvailabilityEvent::SignedBlock("test".to_string())).unwrap()
+                to_tcp_message(&DataAvailabilityEvent::SignedBlock(Default::default())).unwrap()
             )
             .unwrap()
         );

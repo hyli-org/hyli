@@ -39,6 +39,7 @@ use hyli_modules::{
         module::{NodeStateCtx, NodeStateModule},
         NodeStateStore,
     },
+    utils::db::use_fresh_db,
 };
 use hyllar::Hyllar;
 use prometheus::Registry;
@@ -200,9 +201,17 @@ pub async fn main_process(config: conf::Conf, crypto: Option<SharedBlstCrypto>) 
 }
 
 async fn common_main(
-    config: conf::Conf,
+    mut config: conf::Conf,
     crypto: Option<SharedBlstCrypto>,
 ) -> Result<ModulesHandler> {
+    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
+
+    // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.
+    // Handle this configuration rewrite before we print anything.
+    if config.run_explorer || config.run_indexer {
+        use_fresh_db(&config.data_directory, &mut config.database_url).await?;
+    }
+
     let config = Arc::new(config);
 
     welcome_message(&config);
@@ -249,8 +258,6 @@ async fn common_main(
     }
 
     let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
-
-    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
 
     let build_api_ctx = Arc::new(BuildApiContextInner {
         router: Mutex::new(Some(Router::new())),

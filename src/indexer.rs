@@ -291,33 +291,37 @@ impl Indexer {
         match event {
             MempoolStatusEvent::WaitingDissemination {
                 parent_data_proposal_hash,
-                tx,
+                txs,
             } => {
-                self.handler_store.txs.push_front(TxStore {
-                    tx_hash: TxHashDb(tx.hashed().clone()),
-                    dp_hash: DataProposalHashDb(parent_data_proposal_hash.clone()),
-                    transaction_type: match tx.transaction_data {
-                        TransactionData::Blob(_) => TransactionTypeDb::BlobTransaction,
-                        TransactionData::Proof(_) => TransactionTypeDb::ProofTransaction,
-                        TransactionData::VerifiedProof(_) => TransactionTypeDb::ProofTransaction,
-                    },
-                    block_hash: None,
-                    block_height: BlockHeight(0),
-                    lane_id: None, // TODO: we know the lane here so not sure why this used to be an option
-                    index: 0,
-                    identity: match tx.transaction_data {
-                        TransactionData::Blob(ref blob_tx) => Some(blob_tx.identity.clone().0),
-                        _ => None,
-                    },
-                    contract_names: match tx.transaction_data {
-                        TransactionData::Blob(ref blob_tx) => blob_tx
-                            .blobs
-                            .iter()
-                            .map(|b| b.contract_name.clone())
-                            .collect(),
-                        _ => HashSet::new(),
-                    },
-                });
+                for tx in txs {
+                    self.handler_store.txs.push_front(TxStore {
+                        tx_hash: TxHashDb(tx.hashed().clone()),
+                        dp_hash: DataProposalHashDb(parent_data_proposal_hash.clone()),
+                        transaction_type: match tx.transaction_data {
+                            TransactionData::Blob(_) => TransactionTypeDb::BlobTransaction,
+                            TransactionData::Proof(_) => TransactionTypeDb::ProofTransaction,
+                            TransactionData::VerifiedProof(_) => {
+                                TransactionTypeDb::ProofTransaction
+                            }
+                        },
+                        block_hash: None,
+                        block_height: BlockHeight(0),
+                        lane_id: None, // TODO: we know the lane here so not sure why this used to be an option
+                        index: 0,
+                        identity: match tx.transaction_data {
+                            TransactionData::Blob(ref blob_tx) => Some(blob_tx.identity.clone().0),
+                            _ => None,
+                        },
+                        contract_names: match tx.transaction_data {
+                            TransactionData::Blob(ref blob_tx) => blob_tx
+                                .blobs
+                                .iter()
+                                .map(|b| b.contract_name.clone())
+                                .collect(),
+                            _ => HashSet::new(),
+                        },
+                    });
+                }
                 // We skip the blobs here or they'll conflict later and it's easier.
             }
             MempoolStatusEvent::DataProposalCreated { txs_metadatas, .. } => {
@@ -680,7 +684,27 @@ impl Indexer {
             sqlx::query(
                 "UPDATE transactions SET transaction_status = updates.transaction_status
                 FROM updates
-                WHERE transactions.tx_hash = updates.tx_hash AND transactions.parent_dp_hash = updates.parent_dp_hash"
+                WHERE transactions.tx_hash = updates.tx_hash
+                  AND transactions.parent_dp_hash = updates.parent_dp_hash
+                  AND (
+                    CASE transactions.transaction_status
+                        WHEN 'waiting_dissemination' THEN 1
+                        WHEN 'data_proposal_created' THEN 2
+                        WHEN 'sequenced' THEN 3
+                        WHEN 'success' THEN 4
+                        WHEN 'failure' THEN 4
+                        WHEN 'timed_out' THEN 4
+                    END
+                  ) < (
+                    CASE updates.transaction_status
+                        WHEN 'waiting_dissemination' THEN 1
+                        WHEN 'data_proposal_created' THEN 2
+                        WHEN 'sequenced' THEN 3
+                        WHEN 'success' THEN 4
+                        WHEN 'failure' THEN 4
+                        WHEN 'timed_out' THEN 4
+                    END
+                  )",
             )
             .execute(&mut *transaction)
             .await?;
