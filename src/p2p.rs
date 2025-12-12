@@ -25,7 +25,7 @@ use network::{
     IntoHeaderSignableData, MsgHeader, MsgWithHeader, NetMessage, OutboundMessage, PeerEvent,
 };
 use opentelemetry::{metrics::Histogram, InstrumentationScope};
-use tracing::{info, trace, warn};
+use tracing::{info, trace, warn, Instrument};
 
 pub mod network;
 
@@ -124,11 +124,12 @@ impl P2P {
                     }
                 }
             }
-            listen<OutboundMessage> res => {
+            listen<OutboundMessage> res, span(ctx) => {
+                let _span = hyli_modules::bus::info_span_ctx!("p2p_outbound", ctx);
                 match res {
                     OutboundMessage::SendMessage { validator_id, msg }  => {
                         let canal = Self::choose_canal(&msg);
-                        if let Err(e) = p2p_server.send(validator_id.clone(), canal, msg.clone()).await {
+                        if let Err(e) = p2p_server.send(validator_id.clone(), canal, msg.clone()).instrument(_span).await {
                             self.handle_failed_send(
                                 &mut p2p_server,
                                 validator_id,
@@ -138,10 +139,12 @@ impl P2P {
                         }
                     }
                     OutboundMessage::BroadcastMessage(message) => {
+                        let _ = _span.entered();
                         let canal = Self::choose_canal(&message);
                         p2p_server.broadcast(message.clone(), canal)
                     }
                     OutboundMessage::BroadcastMessageOnlyFor(only_for, message) => {
+                        let _ = _span.entered();
                         let canal = Self::choose_canal(&message);
                         p2p_server.broadcast_only_for(&only_for, canal, message.clone())
                     }

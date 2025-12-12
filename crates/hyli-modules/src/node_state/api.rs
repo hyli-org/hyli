@@ -280,31 +280,31 @@ impl Clone for RouterState {
         Self {
             bus: RestBusClient::new(
                 Pick::<BusMetrics>::get(&self.bus).clone(),
-                Pick::<tokio::sync::broadcast::Sender<Query<ContractName, (BlockHeight, Contract)>>>::get(
+                Pick::<crate::bus::BusSender<Query<ContractName, (BlockHeight, Contract)>>>::get(
                     &self.bus,
                 )
                 .clone(),
                 Pick::<
-                    tokio::sync::broadcast::Sender<
+                    crate::bus::BusSender<
                         Query<QuerySettledHeight, BlockHeight>,
                     >,
                 >::get(&self.bus)
                 .clone(),
                 Pick::<
-                    tokio::sync::broadcast::Sender<Query<QueryUnsettledTxCount, u64>>,
+                    crate::bus::BusSender<Query<QueryUnsettledTxCount, u64>>,
                 >::get(&self.bus)
                 .clone(),
-                Pick::<tokio::sync::broadcast::Sender<Query<QueryBlockHeight, BlockHeight>>>::get(
+                Pick::<crate::bus::BusSender<Query<QueryBlockHeight, BlockHeight>>>::get(
                     &self.bus,
                 )
                 .clone(),
                 Pick::<
-                    tokio::sync::broadcast::Sender<
+                    crate::bus::BusSender<
                         Query<QueryUnsettledTx, UnsettledBlobTransaction>,
                     >,
                 >::get(&self.bus)
                 .clone(),
-                Pick::<tokio::sync::broadcast::Receiver<ShutdownModule>>::get(&self.bus).resubscribe(),
+                Pick::<crate::bus::BusReceiver<ShutdownModule>>::get(&self.bus).resubscribe(),
             ),
         }
     }

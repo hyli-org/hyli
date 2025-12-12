@@ -228,7 +228,7 @@ macro_rules! disseminate {
 
 macro_rules! assert_chanmsg_matches {
     ($chan: expr, $pat:pat => $block:block) => {{
-        let var = $chan.try_recv().unwrap();
+        let var = $chan.try_recv().unwrap().into_message();
         if let $pat = var {
             $block
         } else {
@@ -243,7 +243,10 @@ pub(crate) use broadcast;
 pub(crate) use build_tuple;
 use futures::future::join_all;
 use hyli_model::utils::TimestampMs;
-use hyli_modules::{bus::dont_use_this::get_sender, node_state::NodeState};
+use hyli_modules::{
+    bus::{dont_use_this::get_sender, BusEnvelope},
+    node_state::NodeState,
+};
 pub(crate) use send;
 pub(crate) use simple_commit_round;
 
@@ -1069,10 +1072,13 @@ async fn autobahn_rejoin_flow() {
     for signed_block in blocks.get(0..blocks.len() - 1).unwrap() {
         let node_state_block = ns.handle_signed_block(signed_block.clone()).unwrap();
         ns_event_sender
-            .send(NodeStateEvent::NewBlock(node_state_block))
+            .send(BusEnvelope::from_message(NodeStateEvent::NewBlock(
+                node_state_block,
+            )))
             .unwrap();
     }
     while let Ok(event) = ns_event_receiver.try_recv() {
+        let event = event.into_message();
         info!("{:?}", event);
         joining_node
             .consensus_ctx
@@ -1102,10 +1108,13 @@ async fn autobahn_rejoin_flow() {
     let signed_block = blocks.get(2).unwrap().clone();
     let node_state_block = ns.handle_signed_block(signed_block).unwrap();
     ns_event_sender
-        .send(NodeStateEvent::NewBlock(node_state_block))
+        .send(BusEnvelope::from_message(NodeStateEvent::NewBlock(
+            node_state_block,
+        )))
         .unwrap();
 
     while let Ok(event) = ns_event_receiver.try_recv() {
+        let event = event.into_message();
         info!("{:?}", event);
         joining_node
             .consensus_ctx
@@ -1133,7 +1142,7 @@ async fn autobahn_rejoin_flow() {
     // Catch up
     for _ in 0..4 {
         while let Ok(event) = commit_receiver.try_recv() {
-            let ConsensusEvent::CommitConsensusProposal(ccp) = event;
+            let ConsensusEvent::CommitConsensusProposal(ccp) = event.into_message();
             if ccp.consensus_proposal.slot > 2 {
                 let signed_block = SignedBlock {
                     data_proposals: vec![],
@@ -1142,13 +1151,16 @@ async fn autobahn_rejoin_flow() {
                 };
                 let node_state_block = ns.handle_signed_block(signed_block.clone()).unwrap();
                 ns_event_sender
-                    .send(NodeStateEvent::NewBlock(node_state_block))
+                    .send(BusEnvelope::from_message(NodeStateEvent::NewBlock(
+                        node_state_block,
+                    )))
                     .unwrap();
 
                 blocks.push(signed_block);
             }
         }
         while let Ok(event) = ns_event_receiver.try_recv() {
+            let event = event.into_message();
             joining_node
                 .consensus_ctx
                 .handle_node_state_event(event)

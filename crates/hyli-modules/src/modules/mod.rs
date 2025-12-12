@@ -165,9 +165,7 @@ pub mod signal {
 
     /// Execute a future, cancelling it if a shutdown signal is received.
     pub async fn shutdown_aware<M: 'static, F>(
-        receiver: &mut impl Pick<
-            tokio::sync::broadcast::Receiver<crate::modules::signal::ShutdownModule>,
-        >,
+        receiver: &mut impl Pick<crate::bus::BusReceiver<crate::modules::signal::ShutdownModule>>,
         f: F,
     ) -> anyhow::Result<F::Output>
     where
@@ -189,9 +187,7 @@ pub mod signal {
 
     /// Execute a future, cancelling it if a shutdown signal is received or a timeout is reached.
     pub async fn shutdown_aware_timeout<M: 'static, F>(
-        receiver: &mut impl Pick<
-            tokio::sync::broadcast::Receiver<crate::modules::signal::ShutdownModule>,
-        >,
+        receiver: &mut impl Pick<crate::bus::BusReceiver<crate::modules::signal::ShutdownModule>>,
         duration: std::time::Duration,
         f: F,
     ) -> anyhow::Result<F::Output>
@@ -217,15 +213,14 @@ pub mod signal {
 
     pub async fn async_receive_shutdown<T: 'static>(
         should_shutdown: &mut bool,
-        shutdown_receiver: &mut tokio::sync::broadcast::Receiver<
-            crate::modules::signal::ShutdownModule,
-        >,
+        shutdown_receiver: &mut crate::bus::BusReceiver<crate::modules::signal::ShutdownModule>,
     ) -> anyhow::Result<()> {
         if *should_shutdown {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             return Ok(());
         }
         while let Ok(shutdown_event) = shutdown_receiver.recv().await {
+            let shutdown_event = shutdown_event.into_message();
             if TypeId::of::<T>() == TypeId::of::<()>() {
                 tracing::debug!("Break signal received for any module");
                 *should_shutdown = true;
@@ -252,7 +247,7 @@ macro_rules! module_handle_messages {
     (on_self $self:expr, delay_shutdown_until  $lay_shutdow_until:block, $($rest:tt)*) => {
         {
             // Safety: this is disjoint.
-            let mut shutdown_receiver = unsafe { &mut *$crate::utils::static_type_map::Pick::<tokio::sync::broadcast::Receiver<$crate::modules::signal::ShutdownModule>>::splitting_get_mut(&mut $self.bus) };
+            let mut shutdown_receiver = unsafe { &mut *$crate::utils::static_type_map::Pick::<$crate::bus::BusReceiver<$crate::modules::signal::ShutdownModule>>::splitting_get_mut(&mut $self.bus) };
             let mut should_shutdown = false;
             $crate::handle_messages! {
                 on_bus $self.bus,
@@ -275,7 +270,7 @@ macro_rules! module_handle_messages {
     (on_self $self:expr, $($rest:tt)*) => {
         {
             // Safety: this is disjoint.
-            let mut shutdown_receiver = unsafe { &mut *$crate::utils::static_type_map::Pick::<tokio::sync::broadcast::Receiver<$crate::modules::signal::ShutdownModule>>::splitting_get_mut(&mut $self.bus) };
+            let mut shutdown_receiver = unsafe { &mut *$crate::utils::static_type_map::Pick::<$crate::bus::BusReceiver<$crate::modules::signal::ShutdownModule>>::splitting_get_mut(&mut $self.bus) };
             let mut should_shutdown = false;
             $crate::handle_messages! {
                 on_bus $self.bus,
@@ -802,9 +797,27 @@ mod tests {
             std::any::type_name::<TestModule<usize>>().to_string()
         );
 
-        assert_eq!(cancellation_counter_receiver.try_recv().expect("1"), 1);
-        assert_eq!(cancellation_counter_receiver.try_recv().expect("1"), 1);
-        assert_eq!(cancellation_counter_receiver.try_recv().expect("1"), 1);
+        assert_eq!(
+            cancellation_counter_receiver
+                .try_recv()
+                .expect("1")
+                .into_message(),
+            1
+        );
+        assert_eq!(
+            cancellation_counter_receiver
+                .try_recv()
+                .expect("1")
+                .into_message(),
+            1
+        );
+        assert_eq!(
+            cancellation_counter_receiver
+                .try_recv()
+                .expect("1")
+                .into_message(),
+            1
+        );
     }
 
     // in case a module fails, it will emit a shutdowncompleted event that will trigger the shutdown loop and shut all other modules

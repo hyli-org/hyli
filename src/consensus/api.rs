@@ -118,15 +118,15 @@ impl Clone for RouterState {
         Self {
             bus: RestBusClient::new(
                 Pick::<BusMetrics>::get(&self.bus).clone(),
-                Pick::<tokio::sync::broadcast::Sender<Query<QueryConsensusInfo, ConsensusInfo>>>::get(
+                Pick::<hyli_modules::bus::BusSender<Query<QueryConsensusInfo, ConsensusInfo>>>::get(
                     &self.bus,
                 )
                 .clone(),
-                Pick::<tokio::sync::broadcast::Sender<Query<QueryConsensusStakingState, Staking>>>::get(
+                Pick::<hyli_modules::bus::BusSender<Query<QueryConsensusStakingState, Staking>>>::get(
                     &self.bus,
                 )
                 .clone(),
-                Pick::<tokio::sync::broadcast::Receiver<ShutdownModule>>::get(&self.bus).resubscribe()
+                Pick::<hyli_modules::bus::BusReceiver<ShutdownModule>>::get(&self.bus).resubscribe()
             )
         }
     }

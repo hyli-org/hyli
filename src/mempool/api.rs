@@ -297,7 +297,7 @@ impl Clone for RouterState {
         Self {
             bus: RestBusClient::new(
                 Pick::<BusMetrics>::get(&self.bus).clone(),
-                Pick::<tokio::sync::broadcast::Sender<RestApiMessage>>::get(&self.bus).clone(),
+                Pick::<hyli_modules::bus::BusSender<RestApiMessage>>::get(&self.bus).clone(),
             ),
         }
     }

@@ -867,6 +867,7 @@ pub mod test {
         utils::integration_test::NodeIntegrationCtxBuilder,
     };
     use hyli_modules::{
+        bus::BusEnvelope,
         handle_messages,
         node_state::{module::NodeStateModule, NodeState},
     };
@@ -886,9 +887,9 @@ pub mod test {
     use utils::TimestampMs;
 
     pub struct ConsensusTestCtx {
-        pub out_receiver: Receiver<OutboundMessage>,
-        pub _event_receiver: Receiver<ConsensusEvent>,
-        pub _p2p_receiver: Receiver<P2PCommand>,
+        pub out_receiver: Receiver<BusEnvelope<OutboundMessage>>,
+        pub _event_receiver: Receiver<BusEnvelope<ConsensusEvent>>,
+        pub _p2p_receiver: Receiver<BusEnvelope<P2PCommand>>,
         pub consensus: Consensus,
         pub name: String,
     }
@@ -1195,6 +1196,8 @@ pub mod test {
                 .try_recv()
                 .expect(format!("{description}: No message broadcasted").as_str());
 
+            let rec = rec.into_message();
+
             if let OutboundMessage::BroadcastMessage(net_msg) = rec {
                 if let NetMessage::ConsensusMessage(msg) = net_msg {
                     Box::pin(async move { msg })
@@ -1221,7 +1224,7 @@ pub mod test {
         #[track_caller]
         pub(crate) fn assert_no_broadcast(&mut self, description: &str) {
             #[allow(clippy::expect_fun_call)]
-            let rec = self.out_receiver.try_recv();
+            let rec = self.out_receiver.try_recv().map(|msg| msg.into_message());
 
             match rec {
                 Ok(OutboundMessage::BroadcastMessage(net_msg)) => {
@@ -1242,7 +1245,8 @@ pub mod test {
             let rec = self
                 .out_receiver
                 .try_recv()
-                .expect(format!("{description}: No message sent").as_str());
+                .expect(format!("{description}: No message sent").as_str())
+                .into_message();
             if let OutboundMessage::SendMessage {
                 validator_id: dest,
                 msg: net_msg,

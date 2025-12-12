@@ -1062,7 +1062,7 @@ mod tests {
             .unwrap();
 
         // We should request missing_prepare2
-        match sync_request_rv.recv().await {
+        match sync_request_rv.recv().await.map(|msg| msg.into_message()) {
             Ok(OutboundMessage::SendMessage {
                 msg:
                     NetMessage::ConsensusMessage(MsgWithHeader::<ConsensusNetMessage> {
@@ -1099,7 +1099,7 @@ mod tests {
             .unwrap();
 
         // We should request missing_prepare1
-        match sync_request_rv.recv().await {
+        match sync_request_rv.recv().await.map(|msg| msg.into_message()) {
             Ok(OutboundMessage::SendMessage {
                 msg:
                     NetMessage::ConsensusMessage(MsgWithHeader::<ConsensusNetMessage> {
