@@ -39,17 +39,17 @@ mkdir -p "$CARGO_TARGET_DIR"
 # Copy CARGO_HOME components if they exist
 if [ -d "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/registry" ]; then
   echo "  Copying registry..."
-  cp -r "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/registry" "$CARGO_HOME/"
+  cp -a "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/registry" "$CARGO_HOME/"
 fi
 
 if [ -d "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/git" ]; then
   echo "  Copying git..."
-  cp -r "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/git" "$CARGO_HOME/"
+  cp -a "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/git" "$CARGO_HOME/"
 fi
 
 if [ -d "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/bin" ]; then
   echo "  Copying bin..."
-  cp -r "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/bin" "$CARGO_HOME/"
+  cp -a "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/bin" "$CARGO_HOME/"
 fi
 
 if [ -f "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/.crates.toml" ]; then

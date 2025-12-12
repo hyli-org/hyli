@@ -40,17 +40,17 @@ set +e
 # Save CARGO_HOME components
 if [ -d "$CARGO_HOME/registry" ]; then
   echo "  Saving registry..."
-  cp -r "$CARGO_HOME/registry" "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/"
+  cp -a "$CARGO_HOME/registry" "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/"
 fi
 
 if [ -d "$CARGO_HOME/git" ]; then
   echo "  Saving git..."
-  cp -r "$CARGO_HOME/git" "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/"
+  cp -a "$CARGO_HOME/git" "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/"
 fi
 
 if [ -d "$CARGO_HOME/bin" ]; then
   echo "  Saving bin..."
-  cp -r "$CARGO_HOME/bin" "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/"
+  cp -a "$CARGO_HOME/bin" "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/"
 fi
 
 if [ -f "$CARGO_HOME/.crates.toml" ]; then
@@ -66,7 +66,7 @@ fi
 # Save target directory
 if [ -d "$CARGO_TARGET_DIR" ]; then
   echo "  Saving target directory..."
-  cp -r "$CARGO_TARGET_DIR" "$SHARED_CACHE_DIR/$CACHE_NAME/"
+  cp -a "$CARGO_TARGET_DIR" "$SHARED_CACHE_DIR/$CACHE_NAME/"
 fi
 
 echo "Cache save completed!"
