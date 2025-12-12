@@ -66,6 +66,7 @@ fi
 if [ -d "$SHARED_CACHE_DIR/$CACHE_NAME/target" ]; then
   echo "  Copying target directory..."
   cp -rT "$SHARED_CACHE_DIR/$CACHE_NAME/target" "$CARGO_TARGET_DIR/"
+  ls -la "$CARGO_TARGET_DIR/"
 fi
 
 echo "Cache copy completed!"
