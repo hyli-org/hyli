@@ -183,6 +183,8 @@ macro_rules! handle_messages {
                 $(
                     #[cfg(feature = "instrumentation")]
                     let $ctx = __envelope.context();
+                    #[cfg(not(feature = "instrumentation"))]
+                    let $ctx = ();
                 )?
                 if let Ok(mut _value) = _raw_query.into_message().take() {
                     let $res = &mut _value.data;
