@@ -95,7 +95,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Copy cache from shared storage
-        run: .github/scripts/copy-cache.sh "hyli-tests"
+        run: .github/scripts/copy-cache.sh "hyli-tests-cov"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -125,7 +125,7 @@ jobs:
 
       - name: Save cache to shared storage
         if: always() && github.ref == 'refs/heads/main'
-        run: .github/scripts/save-cache.sh "hyli-tests"
+        run: .github/scripts/save-cache.sh "hyli-tests-cov"
 
   features_flags:
     name: Build with different feature flags
@@ -141,7 +141,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Copy cache from shared storage
-        run: .github/scripts/copy-cache.sh "hyli-tests"
+        run: .github/scripts/copy-cache.sh "hyli-tests-flags"
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -157,7 +157,7 @@ jobs:
 
       - name: Save cache to shared storage
         if: always() && github.ref == 'refs/heads/main'
-        run: .github/scripts/save-cache.sh "hyli-tests"
+        run: .github/scripts/save-cache.sh "hyli-tests-flags"
 
   unused_dependencies:
     name: Check unused dependencies
@@ -167,9 +167,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Copy cache from shared storage
-        run: .github/scripts/copy-cache.sh "hyli-tests"
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -178,7 +175,3 @@ jobs:
 
       - name: Machete
         uses: bnjbvr/cargo-machete@v0.7.1
-
-      - name: Save cache to shared storage
-        if: always() && github.ref == 'refs/heads/main'
-        run: .github/scripts/save-cache.sh "hyli-tests"
