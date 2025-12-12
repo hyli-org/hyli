@@ -101,9 +101,6 @@ impl Module for RestApi {
         #[cfg(not(feature = "instrumentation"))]
         let app = ctx.router;
 
-        #[cfg(not(feature = "instrumentation"))]
-        let app = ctx.router;
-
         let app = app.merge(
             Router::new()
                 .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ctx.openapi))
