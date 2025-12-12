@@ -5601,7 +5601,6 @@ dependencies = [
  "indexmap 2.12.1",
  "native-tls",
  "opentelemetry",
- "opentelemetry-otlp",
  "opentelemetry-prometheus",
  "opentelemetry_sdk",
  "paste",

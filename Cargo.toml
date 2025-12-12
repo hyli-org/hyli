@@ -227,7 +227,6 @@ indexmap = { workspace = true, features = ["serde"] }
 opentelemetry = { workspace = true }
 opentelemetry-prometheus = { workspace = true }
 opentelemetry_sdk = { workspace = true }
-opentelemetry-otlp = { workspace = true, optional = true }
 paste = { workspace = true }
 prometheus = { workspace = true }
 rand = { workspace = true }
@@ -318,11 +317,7 @@ dhat = ["dep:dhat"]
 monitoring = ["dep:alloc-metrics"]
 alloc-track = ["dep:alloc-track"]
 
-instrumentation = [
-  "hyli-net/instrumentation",
-  "hyli-modules/instrumentation",
-  "dep:opentelemetry-otlp",
-]
+instrumentation = ["hyli-net/instrumentation", "hyli-modules/instrumentation"]
 
 # Activate this feature to recompile contracts locally (mostly useful for iterating on tests)
 nonreproducible = ["hyli-contracts/nonreproducible"]
