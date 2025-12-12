@@ -35,6 +35,8 @@ echo "  Cache name: $CACHE_NAME"
 # Create shared cache directories
 mkdir -p "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home"
 
+set +e
+
 # Save CARGO_HOME components
 if [ -d "$CARGO_HOME/registry" ]; then
   echo "  Saving registry..."
