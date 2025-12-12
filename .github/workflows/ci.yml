@@ -68,7 +68,6 @@ jobs:
           wget https://github.com/risc0/risc0/releases/download/v3.0.3/cargo-risczero-x86_64-unknown-linux-gnu.tgz
           tar xzvf cargo-risczero-x86_64-unknown-linux-gnu.tgz
           echo "$PWD" >> $GITHUB_PATH
-      - run: ls -la $CARGO_TARGET_DIR
       - run: cargo nextest run --cargo-profile ci --workspace --tests
       - run: cargo test --doc --workspace --profile ci
       - name: Upload test results to Codecov
@@ -79,7 +78,7 @@ jobs:
           files: target/nextest/ci/junit.xml
 
       - name: Save cache to shared storage
-        if: always()
+        if: always() && github.ref == 'refs/heads/main'
         run: .github/scripts/save-cache.sh "hyli-tests"
 
   coverage:
@@ -125,7 +124,7 @@ jobs:
           fail_ci_if_error: true
 
       - name: Save cache to shared storage
-        if: always()
+        if: always() && github.ref == 'refs/heads/main'
         run: .github/scripts/save-cache.sh "hyli-tests-cov"
 
   features_flags:
