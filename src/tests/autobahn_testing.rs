@@ -2035,6 +2035,109 @@ async fn autobahn_commit_different_views_for_fplusone() {
     // TODO: fix this by sending commit messages to the nodes that are timing out so they can unlock themselves.
 }
 
+/// Reproduces the multiple-commit-for-same-slot bug: a node that already committed
+/// slot 5 in view 0 receives another CommitQC for slot 5 (new view/leader) and emits
+/// a second BuiltSignedBlock for the same height.
+#[tokio::test]
+#[ignore = "reproduces duplicate commit bug (multiple commits for same slot)"]
+async fn autobahn_duplicate_commits_same_slot() {
+    let _ = tracing::dispatcher::set_global_default(tracing::Dispatch::default());
+
+    let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
+
+    ConsensusTestCtx::setup_for_round(
+        &mut [
+            &mut node0.consensus_ctx,
+            &mut node1.consensus_ctx,
+            &mut node2.consensus_ctx,
+            &mut node3.consensus_ctx,
+        ],
+        0,
+        5,
+        0,
+    );
+
+    // Slot 5, view 0: node0 leads, everyone commits.
+    node0
+        .start_round_with_cut_from_mempool(TimestampMs(1000))
+        .await;
+
+    broadcast! {
+        description: "Prepare v0",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Prepare(..)
+    };
+    send! {
+        description: "PrepareVote v0",
+        from: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx], to: node0.consensus_ctx,
+        message_matches: ConsensusNetMessage::PrepareVote(_)
+    };
+    broadcast! {
+        description: "Confirm v0",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Confirm(..)
+    };
+    send! {
+        description: "ConfirmAck v0",
+        from: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx], to: node0.consensus_ctx,
+        message_matches: ConsensusNetMessage::ConfirmAck(_)
+    };
+    broadcast! {
+        description: "Commit v0",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Commit(..)
+    };
+
+    // Now make node1 the next leader via timeouts, so it proposes the same slot in a new view.
+    ConsensusTestCtx::timeout(&mut [
+        &mut node1.consensus_ctx,
+        &mut node2.consensus_ctx,
+        &mut node3.consensus_ctx,
+    ])
+    .await;
+    broadcast! {
+        description: "Follower - Timeout node1",
+        from: node1.consensus_ctx, to: [node0.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout node2",
+        from: node2.consensus_ctx, to: [node0.consensus_ctx, node1.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout node3",
+        from: node3.consensus_ctx, to: [node0.consensus_ctx, node1.consensus_ctx, node2.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+
+    // Node1 starts a new view for the *same* slot 5 and commits again.
+    node1
+        .start_round_with_cut_from_mempool(TimestampMs(2000))
+        .await;
+    simple_commit_round! {
+        leader: node1.consensus_ctx,
+        followers: [node0.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx]
+    };
+
+    // Drain node0's mempool events and count built blocks for slot 5.
+    let mut slot5_built = 0;
+    while let Ok(evt) = node0.mempool_ctx.mempool_event_receiver.try_recv() {
+        if let MempoolBlockEvent::BuiltSignedBlock(sb) = evt {
+            if sb.consensus_proposal.slot == 5 {
+                slot5_built += 1;
+            }
+        }
+    }
+
+    // Expect only one commit per slot; currently duplicates reproduce the bug.
+    assert_eq!(
+        1, slot5_built,
+        "node0 built {} blocks for slot 5 (should be 1)",
+        slot5_built
+    );
+}
+
 #[test_log::test(tokio::test)]
 async fn autobahn_commit_byzantine_across_views_attempts() {
     let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
