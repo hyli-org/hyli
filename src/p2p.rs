@@ -162,7 +162,7 @@ impl P2P {
                                 height: BlockHeight(height)
                             }), "Sending new peer event");
                         },
-                        P2PServerEvent::P2PMessage { msg: net_message, headers } => {
+                        P2PServerEvent::P2PMessage { msg: net_message, headers: _ } => {
                             let _ = log_warn!(self.handle_net_message(net_message).await, "Handling P2P net message");
                         },
                     }

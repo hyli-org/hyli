@@ -69,6 +69,7 @@ fn to_tcp_message(data: &impl BorshSerialize) -> Result<TcpMessage> {
     Ok(TcpMessage::Data(TcpData::new(binary)))
 }
 
+#[allow(dead_code)]
 fn to_tcp_message_with_headers(
     data: &impl BorshSerialize,
     headers: TcpHeaders,
