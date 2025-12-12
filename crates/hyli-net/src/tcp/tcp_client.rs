@@ -13,7 +13,7 @@ use crate::{clock::TimestampMsClock, net::TcpStream};
 use anyhow::{bail, Result};
 use tracing::{debug, info, trace, warn};
 
-use super::{to_tcp_message, TcpMessage};
+use super::{decode_tcp_payload, to_tcp_message, TcpMessage};
 
 type TcpSender = SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>;
 type TcpReceiver = SplitStream<Framed<TcpStream, LengthDelimitedCodec>>;
@@ -117,8 +117,8 @@ where
                     if *bytes == *b"PING" {
                         trace!("Ping received for client {}", self.id);
                     } else {
-                        match borsh::from_slice(&bytes) {
-                            Ok(data) => return Some(data),
+                        match decode_tcp_payload(&bytes) {
+                            Ok((_, data)) => return Some(data),
                             Err(io) => {
                                 warn!("Error while deserializing data: {:#}", io);
                                 return None;
