@@ -54,7 +54,7 @@ fi
 
 if [ -f "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/.crates.toml" ]; then
   echo "  Copying .crates.toml..."
-  cp "$SHARED_CACHE_DIR/cargo-home/.crates.toml" "$CARGO_HOME/"
+  cp "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/.crates.toml" "$CARGO_HOME/"
 fi
 
 if [ -f "$SHARED_CACHE_DIR/$CACHE_NAME/cargo-home/.crates2.json" ]; then
