@@ -20,7 +20,7 @@ use crate::{
     clock::TimestampMsClock,
     metrics::P2PMetrics,
     ordered_join_set::OrderedJoinSet,
-    tcp::{tcp_client::TcpClient, Handshake},
+    tcp::{tcp_client::TcpClient, Handshake, TcpHeaders},
 };
 
 use super::{tcp_server::TcpServer, Canal, NodeConnectionData, P2PTcpMessage, TcpEvent};
@@ -35,7 +35,7 @@ pub enum P2PServerEvent<Msg> {
     },
     P2PMessage {
         msg: Msg,
-        headers: Vec<(String, String)>,
+        headers: TcpHeaders,
     },
 }
 
