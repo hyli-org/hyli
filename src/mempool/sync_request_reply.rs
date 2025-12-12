@@ -290,6 +290,7 @@ mod tests {
     };
     use anyhow::Result;
     use hyli_crypto::BlstCrypto;
+    use hyli_modules::bus::BusReceiver;
     use std::{collections::BTreeMap, sync::Arc};
     use tokio::time::{timeout, Duration};
 
@@ -298,7 +299,7 @@ mod tests {
         validator: ValidatorPublicKey,
         dp_hash: DataProposalHash,
         data_proposal: DataProposal,
-        receiver: tokio::sync::broadcast::Receiver<OutboundMessage>,
+        receiver: BusReceiver<OutboundMessage>,
     }
 
     fn setup_sync_harness() -> Result<SyncTestHarness> {
@@ -470,7 +471,7 @@ mod tests {
             .await?;
         harness.mempool_sync.send_replies().await;
 
-        let first = receiver.recv().await?;
+        let first = receiver.recv().await?.into_message();
         assert_sync_reply(first, &harness.validator, &harness.data_proposal);
 
         harness
@@ -532,7 +533,7 @@ mod tests {
             .await?;
         harness.mempool_sync.send_replies().await;
 
-        let second = receiver.recv().await?;
+        let second = receiver.recv().await?.into_message();
         assert_sync_reply(second, &harness.validator, &harness.data_proposal);
 
         Ok(())

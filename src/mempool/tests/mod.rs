@@ -19,16 +19,16 @@ use anyhow::Result;
 use assertables::assert_ok;
 use hyli_contract_sdk::StateCommitment;
 use hyli_crypto::BlstCrypto;
+use hyli_modules::bus::BusReceiver;
 use hyli_modules::modules::Module;
-use tokio::sync::broadcast::Receiver;
 use utils::TimestampMs;
 
 pub struct MempoolTestCtx {
     pub name: String,
-    pub out_receiver: Receiver<OutboundMessage>,
+    pub out_receiver: BusReceiver<OutboundMessage>,
     pub mempool_sync_request_sender: tokio::sync::mpsc::Sender<SyncRequest>,
-    pub mempool_event_receiver: Receiver<MempoolBlockEvent>,
-    pub mempool_status_event_receiver: Receiver<MempoolStatusEvent>,
+    pub mempool_event_receiver: BusReceiver<MempoolBlockEvent>,
+    pub mempool_status_event_receiver: BusReceiver<MempoolStatusEvent>,
     pub mempool: Mempool,
 }
 
@@ -178,7 +178,8 @@ impl MempoolTestCtx {
         let rec = self
             .out_receiver
             .try_recv()
-            .expect(format!("{description}: No message broadcasted").as_str());
+            .expect(format!("{description}: No message broadcasted").as_str())
+            .into_message();
 
         match rec {
             OutboundMessage::BroadcastMessageOnlyFor(_, net_msg) => {
@@ -211,7 +212,8 @@ impl MempoolTestCtx {
             let rec = tokio::time::timeout(Duration::from_millis(1000), self.out_receiver.recv())
                 .await
                 .expect(format!("{description}: No message broadcasted").as_str())
-                .expect(format!("{description}: No message broadcasted").as_str());
+                .expect(format!("{description}: No message broadcasted").as_str())
+                .into_message();
 
             match rec {
                 OutboundMessage::SendMessage { validator_id, msg } => {
@@ -263,7 +265,8 @@ impl MempoolTestCtx {
             let rec = tokio::time::timeout(Duration::from_millis(1000), self.out_receiver.recv())
                 .await
                 .expect(format!("{description}: No message broadcasted").as_str())
-                .expect(format!("{description}: No message broadcasted").as_str());
+                .expect(format!("{description}: No message broadcasted").as_str())
+                .into_message();
 
             match rec {
                 OutboundMessage::BroadcastMessage(net_msg) => {
