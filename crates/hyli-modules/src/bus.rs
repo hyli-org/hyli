@@ -194,6 +194,13 @@ pub trait BusClientSender<T> {
     where
         Self: Send,
         T: Send;
+
+    #[cfg(feature = "instrumentation")]
+    fn send_with_context(
+        &mut self,
+        message: T,
+        context: opentelemetry::Context,
+    ) -> anyhow::Result<()>;
 }
 pub trait BusClientReceiver<T> {
     fn recv(
@@ -264,6 +271,27 @@ where
         }
         Ok(())
     }
+
+    #[cfg(feature = "instrumentation")]
+    fn send_with_context(
+        &mut self,
+        message: Msg,
+        context: opentelemetry::Context,
+    ) -> anyhow::Result<()> {
+        if Pick::<BusSender<Msg>>::get(self).receiver_count() > 0 {
+            // We have a potential TOCTOU race here, so use a buffer.
+            if Pick::<BusSender<Msg>>::get(self).len() >= <Msg as BusMessage>::CAPACITY_IF_WAITING {
+                anyhow::bail!("Channel is full, cannot send message");
+            }
+            Pick::<BusMetrics>::get_mut(self).send::<Msg, Client>();
+            Pick::<BusSender<Msg>>::get(self)
+                .send(BusEnvelope { message, context })
+                // Error is always "channel closed" so let's replace that
+                .map_err(|_| anyhow::anyhow!("Failed to send message"))?;
+        }
+        Ok(())
+    }
+
     async fn send_waiting_if_full(&mut self, message: Msg) -> anyhow::Result<()>
     where
         Client: Send,
