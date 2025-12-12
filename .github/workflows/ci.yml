@@ -9,8 +9,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RISC0_EXECUTOR: ipc
-  CARGO_TARGET_DIR: /home/runner/.cache/node-cache/rust/hyli/target
-  CARGO_HOME: /home/runner/.cache/node-cache/rust/cargo-home
+  CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/target
+  CARGO_HOME: ${{ github.workspace }}/.cache/cargo-home
+  SHARED_CACHE_DIR: /home/runner/.cache/node-cache/rust
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -29,6 +30,10 @@ jobs:
           # - nightly
     steps:
       - uses: actions/checkout@v4
+
+      - name: Copy cache from shared storage
+        run: .github/scripts/copy-cache.sh "hyli-tests"
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
@@ -71,6 +76,11 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: target/nextest/ci/junit.xml
+
+      - name: Save cache to shared storage
+        if: always() && github.ref == 'refs/heads/main'
+        run: .github/scripts/save-cache.sh "hyli-tests"
+
   coverage:
     name: Unit tests coverage
     runs-on: arc-runner-set
@@ -83,6 +93,10 @@ jobs:
           # - nightly
     steps:
       - uses: actions/checkout@v4
+
+      - name: Copy cache from shared storage
+        run: .github/scripts/copy-cache.sh "hyli-tests-cov"
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
@@ -108,6 +122,11 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
           fail_ci_if_error: true
+
+      - name: Save cache to shared storage
+        if: always() && github.ref == 'refs/heads/main'
+        run: .github/scripts/save-cache.sh "hyli-tests-cov"
+
   features_flags:
     name: Build with different feature flags
     runs-on: arc-runner-set
@@ -120,6 +139,10 @@ jobs:
           # - nightly
     steps:
       - uses: actions/checkout@v4
+
+      - name: Copy cache from shared storage
+        run: .github/scripts/copy-cache.sh "hyli-tests-flags"
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
@@ -131,6 +154,11 @@ jobs:
         run: cargo build --no-default-features
       - name: Build with sp1
         run: cargo build --no-default-features -F sp1
+
+      - name: Save cache to shared storage
+        if: always() && github.ref == 'refs/heads/main'
+        run: .github/scripts/save-cache.sh "hyli-tests-flags"
+
   unused_dependencies:
     name: Check unused dependencies
     if: github.event.pull_request.draft == false
@@ -138,9 +166,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
+
       - run: sudo apt update && sudo apt install -y build-essential libssl-dev
+
       - name: Machete
         uses: bnjbvr/cargo-machete@v0.7.1

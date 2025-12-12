@@ -11,8 +11,9 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CARGO_TARGET_DIR: /home/runner/.cache/node-cache/rust/hyli/target
-  CARGO_HOME: /home/runner/.cache/node-cache/rust/cargo-home
+  CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/target
+  CARGO_HOME: ${{ github.workspace }}/.cache/cargo-home
+  SHARED_CACHE_DIR: /home/runner/.cache/node-cache/rust
 
 jobs:
   test-turmoil:
@@ -22,6 +23,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Copy cache from shared storage
+        run: .github/scripts/copy-cache.sh "hyli-p2p-turmoil"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -29,3 +33,7 @@ jobs:
 
       - name: Run turmoil P2P tests - basic
         run: cargo test -p hyli-net --features turmoil turmoil_p2p
+
+      - name: Save cache to shared storage
+        if: always() && github.ref == 'refs/heads/main'
+        run: .github/scripts/save-cache.sh "hyli-p2p-turmoil"
