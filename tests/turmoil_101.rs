@@ -4,18 +4,33 @@
 
 mod fixtures;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
+use std::{net::IpAddr, net::Ipv4Addr};
 
+use borsh::BorshDeserialize;
 use client_sdk::rest_client::NodeApiClient;
 use fixtures::turmoil::TurmoilHost;
 use hyli_model::{
     BlobTransaction, ContractName, ProgramId, RegisterContractAction, StateCommitment,
 };
 use hyli_modules::log_error;
-use hyli_net::net::Sim;
+use hyli_net::{
+    net::{Segment, Sim},
+    tcp::P2PTcpMessage,
+};
+use hyli::entrypoint::SimulatedTimeExporter;
+use opentelemetry::metrics::{Counter, MeterProvider};
+use opentelemetry_otlp::{Protocol, WithExportConfig};
+use opentelemetry_sdk::{metrics::ManualReader, Resource};
 use tracing::warn;
 
 use crate::fixtures::{drop_logger, test_helpers::wait_height, turmoil::TurmoilCtx};
+use hyli::{
+    mempool::MempoolNetMessage,
+    p2p::network::{MsgWithHeader, NetMessage},
+};
 
 pub fn make_register_contract_tx(name: ContractName) -> BlobTransaction {
     let register_contract_action = RegisterContractAction {
@@ -58,6 +73,79 @@ fn assert_converged(
     }
 
     Ok(())
+}
+
+fn build_turmoil_metric() -> Counter<u64> {
+    static COUNTER: OnceLock<Counter<u64>> = OnceLock::new();
+    COUNTER
+        .get_or_init(|| {
+            let provider = build_turmoil_meter_provider();
+            let meter = provider.meter("turmoil_simulation");
+            let counter = meter.u64_counter("turmoil_drop_dp_total").build();
+            counter.add(0, &[]);
+
+            // Keep provider alive for the test duration.
+            static PROVIDER: OnceLock<opentelemetry_sdk::metrics::SdkMeterProvider> =
+                OnceLock::new();
+            let _ = PROVIDER.set(provider);
+            counter
+        })
+        .clone()
+}
+
+fn build_turmoil_meter_provider() -> opentelemetry_sdk::metrics::SdkMeterProvider {
+    let endpoint = std::env::var("HYLI_TURMOIL_OTLP_METRICS_ENDPOINT")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "http://localhost:8428/opentelemetry/v1/metrics".to_string());
+
+    let resource = Resource::builder()
+        .with_service_name("turmoil_simulation")
+        .build();
+
+    let maybe_exporter = opentelemetry_otlp::MetricExporter::builder()
+        .with_http()
+        .with_protocol(Protocol::HttpBinary)
+        .with_endpoint(endpoint)
+        .with_timeout(Duration::from_secs(5))
+        .build();
+
+    let mut builder =
+        opentelemetry_sdk::metrics::SdkMeterProvider::builder().with_resource(resource);
+
+    if let Ok(exporter) = maybe_exporter {
+        let exporter = SimulatedTimeExporter::new(exporter);
+        let reader = opentelemetry_sdk::metrics::PeriodicReader::builder(exporter)
+            .with_interval(Duration::from_millis(1000))
+            .build();
+        builder = builder.with_reader(reader);
+    } else {
+        let reader = ManualReader::builder().build();
+        builder = builder.with_reader(reader);
+    }
+
+    builder.build()
+}
+
+fn decode_mempool_msg(bytes: &[u8]) -> Option<MsgWithHeader<MempoolNetMessage>> {
+    if let Ok(P2PTcpMessage::Data(NetMessage::MempoolMessage(msg))) =
+        P2PTcpMessage::try_from_slice(bytes)
+    {
+        return Some(msg);
+    }
+
+    if bytes.len() > 4 {
+        let len = u32::from_be_bytes(bytes[..4].try_into().ok()?) as usize;
+        if len == bytes.len() - 4 {
+            if let Ok(P2PTcpMessage::Data(NetMessage::MempoolMessage(msg))) =
+                P2PTcpMessage::try_from_slice(&bytes[4..])
+            {
+                return Some(msg);
+            }
+        }
+    }
+
+    None
 }
 
 macro_rules! turmoil_simple {
@@ -126,6 +214,11 @@ turmoil_simple!(
 turmoil_simple!(
     726..=730,
     simulation_drop_packets,
+    submit_10_contracts_all_nodes
+);
+turmoil_simple!(
+    731..=735,
+    simulation_drop_data_proposals,
     submit_10_contracts_all_nodes
 );
 
@@ -755,6 +848,96 @@ pub fn simulation_drop_packets(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyho
             tracing::info!(
                 "Drop-packets scenario finished after {} ms",
                 sim.elapsed().as_millis()
+            );
+            return Ok(());
+        }
+    }
+}
+
+/// **Simulation**
+///
+/// Drop a handful of mempool data proposals at the transport layer using a
+/// predicate-based filter, then let the cluster converge.
+pub fn simulation_drop_data_proposals(
+    ctx: &mut TurmoilCtx,
+    sim: &mut Sim<'_>,
+) -> anyhow::Result<()> {
+    let warmup = Duration::from_secs(6);
+    let settle_time = Duration::from_secs(14);
+    let _drop_logger_guard = drop_logger::install_drop_logger_for_drop_packets();
+
+    let drop_budget = Arc::new(AtomicUsize::new(2));
+    let dropped_total = Arc::new(AtomicUsize::new(0));
+    let drop_counter = build_turmoil_metric();
+    let start = std::time::Instant::now();
+    // Constrain drops to a single destination node so the cluster can still heal via sync.
+    let target_drop_node = ctx
+        .nodes
+        .get(0)
+        .map(|n| n.conf.id.clone())
+        .unwrap_or_else(|| "node-1".to_string());
+    let target_octet = target_drop_node
+        .split('-')
+        .last()
+        .and_then(|n| n.parse::<u8>().ok())
+        .unwrap_or(1);
+    let target_drop_ip = IpAddr::V4(Ipv4Addr::new(192, 168, 0, target_octet));
+
+    sim.set_drop_filter({
+        let drop_budget = drop_budget.clone();
+        let dropped_total = dropped_total.clone();
+        let start = start.clone();
+        let target_drop_ip = target_drop_ip;
+        move |src, dst, protocol| {
+            if dst.ip() != target_drop_ip {
+                return false;
+            }
+            // Give the cluster a brief window to stabilize before injecting drops.
+            if start.elapsed() < Duration::from_secs(2) {
+                return false;
+            }
+
+            let payload = match protocol {
+                hyli_net::net::Protocol::Tcp(Segment::Data(_, bytes)) => bytes,
+                _ => return false,
+            };
+
+            if let Some(msg) = decode_mempool_msg(payload) {
+                if matches!(msg.msg, MempoolNetMessage::DataProposal(_, _)) {
+                    if drop_budget
+                        .fetch_update(
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                            |current| current.checked_sub(1),
+                        )
+                        .is_ok()
+                    {
+                        tracing::info!(
+                            "Dropping data proposal {} -> {} (budget left {})",
+                            src,
+                            dst,
+                            drop_budget.load(Ordering::SeqCst)
+                        );
+                        drop_counter.add(1, &[]);
+                        dropped_total.fetch_add(1, Ordering::SeqCst);
+                        return true;
+                    }
+                }
+            }
+
+            false
+        }
+    });
+
+    loop {
+        let finished = sim.step().map_err(|s| anyhow::anyhow!(s.to_string()))?;
+        let now = sim.elapsed();
+
+        if finished && now > warmup + settle_time {
+            tracing::info!(
+                "Drop-data-proposals scenario finished after {} ms (dropped {})",
+                sim.elapsed().as_millis(),
+                dropped_total.load(Ordering::SeqCst),
             );
             return Ok(());
         }

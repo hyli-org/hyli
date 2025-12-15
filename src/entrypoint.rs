@@ -5,6 +5,9 @@ mod metrics;
 mod turmoil_time;
 
 #[cfg(feature = "turmoil")]
+pub use turmoil_time::SimulatedTimeExporter;
+
+#[cfg(feature = "turmoil")]
 use crate::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     consensus::Consensus,

@@ -264,6 +264,7 @@ ignored = ["zip", "bytes", "tokio-util", "native-tls"]
 
 [patch.crates-io]
 sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.9-risczero.0" }
+turmoil = { path = "../turmoil" }
 
 # Temporary patch for zkhash to support M31 field operations
 # This patches the HorizenLabs/poseidon2 repo to use our custom branch with M31 field support
@@ -305,6 +306,7 @@ tracing-subscriber = { workspace = true, features = [
   "env-filter",
   "registry",
 ] }
+opentelemetry-otlp = { workspace = true }
 
 [features]
 default = ["risc0", "turmoil"]
