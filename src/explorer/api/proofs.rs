@@ -105,7 +105,7 @@ pub async fn get_proofs_by_height(
     ),
     path = "/proof/hash/{tx_hash}",
     responses(
-        (status = OK, body = APITransaction)
+        (status = OK, body = APIProofDetails)
     )
 )]
 pub async fn get_proof_with_hash(
