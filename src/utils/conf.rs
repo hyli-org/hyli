@@ -113,6 +113,12 @@ pub struct Conf {
     pub log_format: String,
     /// Directory name to store node state.
     pub data_directory: PathBuf,
+    /// Endpoint to push OTLP metrics (empty to disable).
+    #[serde(default)]
+    pub otlp_metrics_endpoint: String,
+    /// Interval in milliseconds between OTLP exports.
+    #[serde(default)]
+    pub otlp_metrics_export_interval_ms: u64,
 
     /// Peer-to-peer layer configuration
     pub p2p: P2pConf,
