@@ -2,18 +2,21 @@
 #![cfg(feature = "turmoil")]
 #![cfg(test)]
 
-use std::sync::Arc;
+use std::cell::Cell;
+use std::sync::{Arc, Once};
 use std::time::Duration;
 
 use anyhow::Context;
 use client_sdk::rest_client::NodeApiHttpClient;
 use hyli::{entrypoint::main_process, utils::conf::Conf};
 use hyli_crypto::BlstCrypto;
+use hyli_net::clock::TimestampMsClock;
 use hyli_net::net::Sim;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tempfile::TempDir;
 use tokio::sync::Mutex;
 use tracing::info;
+use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
 
 use anyhow::Result;
 
@@ -106,8 +109,27 @@ impl TurmoilCtx {
         seed: u64,
         sim: &mut Sim<'_>,
     ) -> Result<TurmoilCtx> {
+        init_global_tracing_subscriber();
         std::env::set_var("RISC0_DEV_MODE", "1");
         std::env::set_var("HYLI_TURMOIL_SEED", seed.to_string());
+        // Keep simulated time anchored to wall-clock so downstream collectors see current-ish timestamps.
+        let origin_ms = std::time::SystemTime::now()
+            .checked_sub(Duration::from_secs(3600))
+            .unwrap_or_else(|| std::time::SystemTime::now())
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis().to_string())
+            .unwrap_or_else(|_| "0".to_string());
+        std::env::set_var("HYLI_TURMOIL_ORIGIN_MS", origin_ms);
+        if let Some(parsed) = std::env::var("HYLI_TURMOIL_ORIGIN_MS")
+            .ok()
+            .and_then(|v| v.parse::<u128>().ok())
+        {
+            TimestampMsClock::reset_origin_and_elapsed(parsed);
+        }
+        // Default to verbose logs during turmoil sims so we can trace drop-related stalls.
+        if std::env::var("RUST_LOG").is_err() {
+            std::env::set_var("RUST_LOG", "debug");
+        }
 
         let rng = StdRng::seed_from_u64(seed);
 
@@ -220,4 +242,41 @@ impl TurmoilCtx {
 
         (from, to)
     }
+}
+
+/// Install a global tracing subscriber that works across background threads.
+/// The `test-log` scoped subscriber uses a scoped test writer which panics
+/// when OTEL background threads log without a dispatcher. A simple global
+/// subscriber to stderr keeps those threads safe while allowing per-test
+/// scoped subscribers to override on the main thread.
+fn init_global_tracing_subscriber() {
+    static INIT: Once = Once::new();
+    thread_local! {
+        static THREAD_INIT: Cell<bool> = Cell::new(false);
+    }
+
+    INIT.call_once(|| {
+        let env_filter =
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+        let subscriber = Registry::default()
+            .with(env_filter.clone())
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr));
+        let _ = tracing::subscriber::set_global_default(subscriber);
+    });
+
+    THREAD_INIT.with(|flag| {
+        if flag.replace(true) {
+            return;
+        }
+
+        let env_filter =
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+        let subscriber = Registry::default()
+            .with(env_filter)
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr));
+        let guard = tracing::subscriber::set_default(subscriber);
+        // Keep the subscriber alive for the remainder of the thread to avoid
+        // panics in OTEL background threads that inherit the current dispatcher.
+        std::mem::forget(guard);
+    });
 }
