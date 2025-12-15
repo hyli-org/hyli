@@ -142,12 +142,6 @@ impl Consensus {
         received_slot: Slot,
         received_view: View,
     ) -> Result<()> {
-        // This TC is for our current slot and view, so we can leave Joining mode
-        let is_next_view_leader = &self.next_view_leader()? != self.crypto.validator_pubkey();
-        if is_next_view_leader && matches!(self.bft_round_state.state_tag, StateTag::Joining) {
-            self.bft_round_state.state_tag = StateTag::Leader;
-        }
-
         self.verify_and_process_tc_ticket(
             received_timeout_certificate,
             &received_proposal_qc,
@@ -1165,5 +1159,39 @@ mod tests {
         assert_eq!(cp_view, 1);
         assert!(matches!(ticket, Ticket::TimeoutQC(_, _)));
         assert_eq!(cp.parent_hash, ConsensusProposalHash("genesis".into()));
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn future_timeout_certificate_keeps_joining() {
+        let (mut node1, node2): (ConsensusTestCtx, ConsensusTestCtx) = build_nodes!(2).await;
+
+        node1.consensus.bft_round_state.state_tag = StateTag::Joining;
+        node1.consensus.bft_round_state.slot = 1;
+        node1.consensus.bft_round_state.view = 0;
+
+        let future_slot = node1.consensus.bft_round_state.slot + 2;
+
+        let msg = node2
+            .consensus
+            .sign_net_message(ConsensusNetMessage::TimeoutCertificate(
+                QuorumCertificate(AggregateSignature::default(), ConsensusTimeoutMarker),
+                TCKind::NilProposal(QuorumCertificate(
+                    AggregateSignature::default(),
+                    NilConsensusTimeoutMarker,
+                )),
+                future_slot,
+                0,
+            ))
+            .expect("Error while signing");
+
+        node1
+            .handle_msg(&msg, "Future TC while joining should be ignored")
+            .await;
+
+        assert!(matches!(
+            node1.consensus.bft_round_state.state_tag,
+            StateTag::Joining
+        ));
+        assert_eq!(node1.consensus.bft_round_state.slot, 1);
     }
 }
