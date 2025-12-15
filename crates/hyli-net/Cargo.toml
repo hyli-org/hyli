@@ -33,6 +33,7 @@ serde = { workspace = true }
 axum = { workspace = true }
 tower-service = { workspace = true }
 opentelemetry = { workspace = true }
+tracing-opentelemetry = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand = { workspace = true, features = ["std"] }
@@ -42,4 +43,4 @@ test-log = { workspace = true, features = ["color", "trace"] }
 [features]
 # default = ["turmoil"]
 turmoil = ["dep:turmoil"]
-instrumentation = ["tracing/attributes"]
+instrumentation = ["tracing/attributes", "dep:tracing-opentelemetry"]

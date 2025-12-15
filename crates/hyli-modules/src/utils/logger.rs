@@ -1,10 +1,10 @@
 use anyhow::Result;
-use tracing::{level_filters::LevelFilter, Subscriber};
-use tracing_subscriber::{
-    fmt::{format, FormatEvent, FormatFields},
-    registry::LookupSpan,
-    EnvFilter,
-};
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{layer::SubscriberExt, registry::LookupSpan, EnvFilter, Layer};
+
+#[cfg(feature = "instrumentation")]
+use opentelemetry::trace::TracerProvider;
 
 // Direct logging macros
 /// Macro designed to log warnings
@@ -100,16 +100,16 @@ struct NodeNameFormatter<T> {
     base_formatter: T,
 }
 
-impl<S, N, T> FormatEvent<S, N> for NodeNameFormatter<T>
+impl<S, N, T> tracing_subscriber::fmt::FormatEvent<S, N> for NodeNameFormatter<T>
 where
-    S: Subscriber + for<'a> LookupSpan<'a>,
-    N: for<'a> FormatFields<'a> + 'static,
-    T: FormatEvent<S, N>,
+    S: tracing::Subscriber + for<'a> LookupSpan<'a>,
+    N: for<'a> tracing_subscriber::fmt::FormatFields<'a> + 'static,
+    T: tracing_subscriber::fmt::FormatEvent<S, N>,
 {
     fn format_event(
         &self,
         ctx: &tracing_subscriber::fmt::FmtContext<'_, S, N>,
-        mut writer: format::Writer<'_>,
+        mut writer: tracing_subscriber::fmt::format::Writer<'_>,
         event: &tracing::Event<'_>,
     ) -> std::fmt::Result {
         write!(&mut writer, "{} ", &self.node_name,)?;
@@ -126,9 +126,14 @@ pub enum TracingMode {
     NodeName,
 }
 
+pub fn setup_tracing(log_format: &str, node_name: String) -> Result<()> {
+    setup_otlp(log_format, node_name, false)
+}
+
 /// Setup tracing - stdout subscriber
 /// stdout defaults to INFO to INFO even if RUST_LOG is set to e.g. debug
-pub fn setup_tracing(log_format: &str, node_name: String) -> Result<()> {
+#[cfg_attr(not(feature = "instrumentation"), allow(unused_variables))]
+pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) -> Result<()> {
     let mut filter = EnvFilter::builder()
         .with_default_directive(LevelFilter::INFO.into())
         .from_env()?;
@@ -165,20 +170,84 @@ pub fn setup_tracing(log_format: &str, node_name: String) -> Result<()> {
         "node" => TracingMode::NodeName,
         _ => TracingMode::Full,
     };
+    let tracing =
+        tracing_subscriber::registry().with(tracing_subscriber::fmt::layer().with_filter(filter));
+
+    #[cfg(feature = "instrumentation")]
+    if tracing_enabled {
+        use opentelemetry_sdk::propagation::TraceContextPropagator;
+
+        let endpoint =
+            std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".to_string());
+
+        opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
+
+        tracing
+            .with(otlp_layer(endpoint, node_name).expect("Failed to create OTLP layer"))
+            .init();
+    } else {
+        use tracing_subscriber::util::SubscriberInitExt;
+
+        match mode {
+            TracingMode::Full => tracing.init(),
+            TracingMode::Json => tracing.with(tracing_subscriber::fmt::layer().json()).init(),
+            TracingMode::NodeName => tracing
+                .with(
+                    tracing_subscriber::fmt::layer().event_format(NodeNameFormatter {
+                        node_name,
+                        base_formatter: tracing_subscriber::fmt::format(),
+                    }),
+                )
+                .init(),
+        };
+    }
+
+    #[cfg(not(feature = "instrumentation"))]
     match mode {
-        TracingMode::Full => tracing_subscriber::fmt().with_env_filter(filter).init(),
-        TracingMode::Json => tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .json()
-            .init(),
-        TracingMode::NodeName => tracing_subscriber::fmt()
-            .with_env_filter(filter)
-            .event_format(NodeNameFormatter {
-                node_name,
-                base_formatter: tracing_subscriber::fmt::format(),
-            })
+        TracingMode::Full => tracing.init(),
+        TracingMode::Json => tracing.with(tracing_subscriber::fmt::layer().json()).init(),
+        TracingMode::NodeName => tracing
+            .with(
+                tracing_subscriber::fmt::layer().event_format(NodeNameFormatter {
+                    node_name,
+                    base_formatter: tracing_subscriber::fmt::format(),
+                }),
+            )
             .init(),
     };
 
     Ok(())
+}
+
+#[cfg(feature = "instrumentation")]
+/// Create an OTLP layer exporting tracing data.
+fn otlp_layer<S>(
+    endpoint: String,
+    service_name: String,
+) -> Result<impl tracing_subscriber::Layer<S>>
+where
+    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+{
+    use opentelemetry_otlp::{SpanExporter, WithExportConfig};
+    use opentelemetry_sdk::{trace::SdkTracerProvider, Resource};
+
+    let exporter = SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint)
+        .build()?;
+
+    let resource = Resource::builder()
+        .with_service_name(service_name.clone())
+        .build();
+
+    let provider = SdkTracerProvider::builder()
+        .with_resource(resource)
+        .with_batch_exporter(exporter)
+        .build();
+
+    let tracer = provider.tracer(service_name);
+
+    Ok(tracing_opentelemetry::layer()
+        .with_tracer(tracer)
+        .with_filter(LevelFilter::INFO))
 }

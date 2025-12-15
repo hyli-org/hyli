@@ -29,9 +29,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: sudo apt update && sudo apt install -y build-essential libssl-dev
 
       - name: Run turmoil P2P tests - basic
         run: cargo test -p hyli-net --features turmoil turmoil_p2p
