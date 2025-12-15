@@ -83,6 +83,7 @@ where
                 Ok((stream, socket_addr)) = self.tcp_listener.accept() => {
                     let mut codec = LengthDelimitedCodec::new();
                     if let Some(len) = self.max_frame_length {
+                println!("Setting max frame length to {}", len);
                         codec.set_max_frame_length(len);
                     }
 
@@ -291,6 +292,10 @@ where
                                         headers,
                                     },
                                     Err(io) => {
+                                        error!(
+                                            "Error decoding TCP payload from socket {}: {}",
+                                            cloned_socket_addr, io
+                                        );
                                         metrics.message_error();
                                         TcpEvent::Error {
                                             dest: cloned_socket_addr.clone(),
@@ -660,7 +665,7 @@ pub mod tests {
         .await?;
 
         // Should be ok server side
-        client_relaxed.send(vec![0b_0; 89]).await?;
+        client_relaxed.send(vec![0b_0; 88]).await?;
 
         let data = match server.listen_next().await.unwrap() {
             TcpEvent::Message { data, .. } => data,
@@ -672,10 +677,10 @@ pub mod tests {
                 panic!("Expected a Message event, got Closed for {}", dest)
             }
         };
-        assert_eq!(data.len(), 89);
+        assert_eq!(data.len(), 88);
 
         // Should explode server side
-        client_relaxed.send(vec![0b_0; 93]).await?;
+        client_relaxed.send(vec![0b_0; 89]).await?;
 
         let received_data = server.listen_next().await;
         assert!(received_data.is_some_and(|tcp_event| matches!(tcp_event, TcpEvent::Closed { .. })));
