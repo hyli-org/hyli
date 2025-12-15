@@ -539,9 +539,7 @@ pub mod tests {
         let client2_addr = server
             .connected_clients()
             .clone()
-            .into_iter()
-            .filter(|addr| addr != &client1_addr)
-            .next_back()
+            .into_iter().rfind(|addr| addr != &client1_addr)
             .unwrap();
 
         server
@@ -591,9 +589,7 @@ pub mod tests {
         let client2_addr = server
             .connected_clients()
             .clone()
-            .into_iter()
-            .filter(|addr| addr != &client1_addr)
-            .next_back()
+            .into_iter().rfind(|addr| addr != &client1_addr)
             .unwrap();
 
         _ = server

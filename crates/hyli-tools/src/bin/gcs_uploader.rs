@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
-use clap::{Parser, command};
+use clap::Parser;
 
 use hyli_contract_sdk::BlockHeight;
 use hyli_modules::{
