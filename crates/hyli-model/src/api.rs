@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use strum::IntoDiscriminant;
@@ -99,7 +100,9 @@ pub enum TransactionTypeDb {
 }
 
 #[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Serialize, Deserialize, BorshSerialize, BorshDeserialize, ToSchema, Clone, PartialEq, Eq,
+)]
 #[cfg_attr(
     feature = "sqlx",
     sqlx(type_name = "transaction_status", rename_all = "snake_case")
