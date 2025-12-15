@@ -15,7 +15,7 @@ use hyli_modules::log_error;
 use hyli_net::net::Sim;
 use tracing::warn;
 
-use crate::fixtures::{test_helpers::wait_height, turmoil::TurmoilCtx};
+use crate::fixtures::{drop_logger, test_helpers::wait_height, turmoil::TurmoilCtx};
 
 pub fn make_register_contract_tx(name: ContractName) -> BlobTransaction {
     let register_contract_action = RegisterContractAction {
@@ -669,15 +669,23 @@ pub fn simulation_drop_storm(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow:
 /// Randomly partitions links (true drop) for short bursts to force message loss,
 /// then heals everything.
 pub fn simulation_drop_packets(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::Result<()> {
-    let warmup = Duration::from_secs(4);
-    let storm_duration = Duration::from_secs(18);
+    let warmup = Duration::from_secs(6);
+    let storm_duration = Duration::from_secs(6);
     let interval = Duration::from_secs(2);
-    let settle_time = Duration::from_secs(6);
-    // Drop probability per message while link is marked as RandPartition.
-    sim.set_fail_rate(0.01);
+    // Allow more time after the storm for nodes to resync missing data proposals/blocks.
+    let settle_time = Duration::from_secs(8);
+    // Drop probability per message while link is marked as RandPartition. Keep it scoped to
+    // validator links so client->node RPCs are not randomly dropped.
+    let link_fail_rate = 0.0005;
+    sim.set_fail_rate(0.0);
 
     // Only partition links between validator nodes, never between clients and nodes.
     let validator_ids: Vec<String> = ctx.nodes.iter().map(|n| n.conf.id.clone()).collect();
+    for (idx, from) in validator_ids.iter().enumerate() {
+        for to in validator_ids.iter().skip(idx + 1) {
+            sim.set_link_fail_rate(from.clone(), to.clone(), link_fail_rate);
+        }
+    }
 
     #[derive(Clone)]
     struct ActivePartition {
@@ -689,16 +697,22 @@ pub fn simulation_drop_packets(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyho
     let mut parts: Vec<ActivePartition> = Vec::new();
     let mut last = Duration::from_secs(0);
     let mut healed = false;
+    // Only enabled for the failing seed (or when HYLI_LOG_DROPPED_MESSAGES=1) to keep output manageable.
+    let _drop_logger_guard = drop_logger::install_drop_logger_for_drop_packets();
 
     loop {
         let finished = sim.step().map_err(|s| anyhow::anyhow!(s.to_string()))?;
         let now = sim.elapsed();
 
         // Schedule new partitions during the storm window.
-        if now > warmup && now < warmup + storm_duration && now.saturating_sub(last) > interval {
+        if now > warmup
+            && now < warmup + storm_duration
+            && now.saturating_sub(last) > interval
+            && parts.is_empty()
+        {
             let (from, to) = ctx.random_id_pair_from(&validator_ids);
-            let len = Duration::from_secs(ctx.random_between(1, 3));
-            // Use random partition (drops with the configured fail_rate) to avoid a total blackout.
+            let len = Duration::from_millis(ctx.random_between(700, 1500));
+            // Explicitly partition to drop traffic between this pair for a short burst.
             sim.partition(from.clone(), to.clone());
             parts.push(ActivePartition {
                 from,

@@ -71,6 +71,7 @@ alloy-serde = { version = "1.1.0", default-features = false }
 alloy-trie = { version = "0.9.0", default-features = false }
 alloc-metrics = { version = "0.1.1" }
 anyhow = { version = "1.0.98" }
+async-trait = { version = "0.1.83" }
 anymap = { version = "0.12.1", default-features = false }
 assertables = { version = "9.8.2", default-features = false }
 axum = { version = "0.8.4" }
@@ -105,6 +106,7 @@ mockall = { version = "0.13.0", default-features = false }
 once_cell = { version = "1.19.0", default-features = false }
 opentelemetry = { version = "0.28.0" }
 opentelemetry-prometheus = { version = "0.28.0" }
+opentelemetry-otlp = { version = "0.28.0" }
 opentelemetry_sdk = { version = "0.28.0" }
 paste = { version = "1.0.15", default-features = false }
 prometheus = { version = "0.13.4" }
@@ -220,9 +222,11 @@ bytes = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 config = { workspace = true, default-features = false, features = ["toml"] }
 futures = { workspace = true }
+async-trait = { workspace = true }
 indexmap = { workspace = true, features = ["serde"] }
 opentelemetry = { workspace = true }
 opentelemetry-prometheus = { workspace = true }
+opentelemetry-otlp = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 paste = { workspace = true }
 prometheus = { workspace = true }
@@ -296,9 +300,14 @@ risc0-zkvm = { workspace = true, default-features = false, features = [
   "client",
 ] }
 signal-child = "1.0.6"
+tracing-subscriber = { workspace = true, features = [
+  "fmt",
+  "env-filter",
+  "registry",
+] }
 
 [features]
-default = ["risc0"]
+default = ["risc0", "turmoil"]
 
 turmoil = ["hyli-net/turmoil", "client-sdk/turmoil", "hyli-modules/turmoil"]
 

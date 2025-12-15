@@ -1,5 +1,10 @@
 #![allow(clippy::expect_used, reason = "Fail on misconfiguration")]
 
+mod metrics;
+#[cfg(feature = "turmoil")]
+mod turmoil_time;
+
+#[cfg(feature = "turmoil")]
 use crate::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     consensus::Consensus,
@@ -42,7 +47,6 @@ use hyli_modules::{
     utils::db::use_fresh_db,
 };
 use hyllar::Hyllar;
-use prometheus::Registry;
 use smt_token::account::AccountSMT;
 use std::{
     fs::{self, File},
@@ -217,17 +221,8 @@ async fn common_main(
     welcome_message(&config);
     info!("Starting node with config: {:?}", &config);
 
-    let registry = Registry::new();
-    // Init global metrics meter we expose as an endpoint
-    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-        .with_reader(
-            opentelemetry_prometheus::exporter()
-                .with_registry(registry.clone())
-                .build()
-                .context("starting prometheus exporter")?,
-        )
-        .build();
-
+    let (provider, registry) = metrics::build_meter_provider(&config)?;
+    metrics::spawn_metric_tasks(provider.clone(), &config);
     opentelemetry::global::set_meter_provider(provider.clone());
 
     #[cfg(feature = "monitoring")]

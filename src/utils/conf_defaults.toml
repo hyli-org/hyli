@@ -4,6 +4,9 @@ id = "node"
 log_format = "full"
 # Directory name to store node state.
 data_directory = "data_node"
+# OTLP metrics (default to local VictoriaMetrics; set empty to disable).
+otlp_metrics_endpoint = "http://localhost:8428/opentelemetry/v1/metrics"
+otlp_metrics_export_interval_ms = 1000
 
 # Fast Cachup mode
 run_fast_catchup = false
