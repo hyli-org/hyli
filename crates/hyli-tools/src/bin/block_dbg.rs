@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::{Parser, command};
+use clap::Parser;
 use client_sdk::{
     contract_indexer::utoipa::OpenApi, helpers::test::TxExecutorTestProver,
     rest_client::test::NodeApiMockClient,
