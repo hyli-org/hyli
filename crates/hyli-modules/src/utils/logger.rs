@@ -1,10 +1,10 @@
 use anyhow::Result;
-use tracing::level_filters::LevelFilter;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{layer::SubscriberExt, registry::LookupSpan, EnvFilter, Layer};
-
 #[cfg(feature = "instrumentation")]
 use opentelemetry::trace::TracerProvider;
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::Registry;
+use tracing_subscriber::{layer::SubscriberExt, registry::LookupSpan, EnvFilter, Layer};
 
 // Direct logging macros
 /// Macro designed to log warnings
@@ -170,8 +170,19 @@ pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) ->
         "node" => TracingMode::NodeName,
         _ => TracingMode::Full,
     };
-    let tracing =
-        tracing_subscriber::registry().with(tracing_subscriber::fmt::layer().with_filter(filter));
+    let tracing = tracing_subscriber::registry();
+
+    let log_layer = (match mode {
+        TracingMode::Full => tracing_subscriber::fmt::layer().boxed(),
+        TracingMode::Json => tracing_subscriber::fmt::layer().json().boxed(),
+        TracingMode::NodeName => tracing_subscriber::fmt::layer()
+            .event_format(NodeNameFormatter {
+                node_name: node_name.clone(),
+                base_formatter: tracing_subscriber::fmt::format(),
+            })
+            .boxed(),
+    } as Box<dyn Layer<Registry> + Send + Sync>)
+        .with_filter(filter);
 
     #[cfg(feature = "instrumentation")]
     if tracing_enabled {
@@ -183,38 +194,13 @@ pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) ->
         opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
         tracing
+            .with(log_layer)
             .with(otlp_layer(endpoint, node_name).expect("Failed to create OTLP layer"))
             .init();
-    } else {
-        use tracing_subscriber::util::SubscriberInitExt;
-
-        match mode {
-            TracingMode::Full => tracing.init(),
-            TracingMode::Json => tracing.with(tracing_subscriber::fmt::layer().json()).init(),
-            TracingMode::NodeName => tracing
-                .with(
-                    tracing_subscriber::fmt::layer().event_format(NodeNameFormatter {
-                        node_name,
-                        base_formatter: tracing_subscriber::fmt::format(),
-                    }),
-                )
-                .init(),
-        };
+        return Ok(());
     }
 
-    #[cfg(not(feature = "instrumentation"))]
-    match mode {
-        TracingMode::Full => tracing.init(),
-        TracingMode::Json => tracing.with(tracing_subscriber::fmt::layer().json()).init(),
-        TracingMode::NodeName => tracing
-            .with(
-                tracing_subscriber::fmt::layer().event_format(NodeNameFormatter {
-                    node_name,
-                    base_formatter: tracing_subscriber::fmt::format(),
-                }),
-            )
-            .init(),
-    };
+    tracing.with(log_layer).init();
 
     Ok(())
 }
