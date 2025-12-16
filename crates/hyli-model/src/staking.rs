@@ -143,37 +143,6 @@ impl std::fmt::Display for ValidatorPublicKey {
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct LaneId(pub ValidatorPublicKey);
 
-#[cfg(feature = "sqlx")]
-impl sqlx::Type<sqlx::Postgres> for LaneId {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as sqlx::Type<sqlx::Postgres>>::type_info()
-    }
-}
-#[cfg(feature = "sqlx")]
-impl sqlx::Encode<'_, sqlx::Postgres> for LaneId {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> std::result::Result<
-        sqlx::encode::IsNull,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&hex::encode(&self.0 .0), buf)
-    }
-}
-#[cfg(feature = "sqlx")]
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for LaneId {
-    fn decode(
-        value: sqlx::postgres::PgValueRef<'r>,
-    ) -> std::result::Result<
-        LaneId,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(LaneId(ValidatorPublicKey(hex::decode(inner)?)))
-    }
-}
-
 // Cumulative size of the lane from the beginning
 #[derive(
     Debug,
