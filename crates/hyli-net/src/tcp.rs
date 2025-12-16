@@ -25,15 +25,6 @@ pub fn headers_from_span() -> TcpHeaders {
             propagator.inject_context(&context, &mut carrier);
             headers = carrier.into_iter().collect();
         });
-        if !headers.is_empty() {
-            tracing::info!(
-                "💚 Injected {} tracing headers into TCP message: {:?}",
-                headers.len(),
-                headers
-            );
-        } else {
-            tracing::info!("💥 No tracing headers injected into TCP message");
-        }
         headers
     }
     #[cfg(not(feature = "instrumentation"))]
@@ -56,27 +47,6 @@ pub struct TcpData {
 
 impl TcpData {
     pub fn new(payload: Vec<u8>) -> Self {
-        // let mut headers: TcpHeaders = Vec::new();
-
-        // #[cfg(feature = "instrumentation")]
-        // opentelemetry::global::get_text_map_propagator(|propagator| {
-        //     use tracing_opentelemetry::OpenTelemetrySpanExt;
-        //
-        //     let mut carrier = std::collections::HashMap::new();
-        //     let context = tracing::Span::current().context();
-        //     propagator.inject_context(&context, &mut carrier);
-        //     headers = carrier.into_iter().collect();
-        // });
-        // if !headers.is_empty() {
-        //     tracing::info!(
-        //         "💚 Injected {} tracing headers into TCP message: {:?}",
-        //         headers.len(),
-        //         headers
-        //     );
-        // } else {
-        //     tracing::info!("💥 No tracing headers injected into TCP message");
-        // }
-
         Self {
             headers: Vec::new(),
             payload: Arc::new(payload),
