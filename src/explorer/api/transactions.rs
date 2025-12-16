@@ -20,23 +20,6 @@ use sqlx::Row;
 use crate::model::*;
 use hyli_modules::log_error;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct TxIdDb(pub TxId);
-
-impl From<TxId> for TxIdDb {
-    fn from(tx_id: TxId) -> Self {
-        TxIdDb(tx_id)
-    }
-}
-
-impl<'r> FromRow<'r, PgRow> for TxIdDb {
-    fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
-        let tx_hash: TxHash = row.try_get("tx_hash")?;
-        let dp_hash: DataProposalHash = row.try_get("parent_dp_hash")?;
-        Ok(TxIdDb(TxId(dp_hash, tx_hash)))
-    }
-}
-
 #[derive(Debug)]
 pub struct TransactionDb {
     // Struct for the transactions table
@@ -290,7 +273,7 @@ pub async fn get_last_settled_tx_by_contract(
     };
 
     let tx_id = log_error!(
-        sqlx::query_as::<_, TxIdDb>(
+        sqlx::query_as::<_, TxId>(
             "
             SELECT 
                 t.parent_dp_hash, t.tx_hash 
@@ -305,8 +288,7 @@ pub async fn get_last_settled_tx_by_contract(
         .bind(contract_name)
         .bind(status)
         .fetch_optional(&state.db)
-        .await
-        .map(|db| db.map(|tx_id_db| tx_id_db.0)),
+        .await,
         "Failed to fetch last settled tx by contract"
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;

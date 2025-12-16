@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::{collections::HashMap, fmt::Display, sync::RwLock};
 
+#[cfg(feature = "sqlx")]
+use sqlx::Row;
+
 use crate::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
@@ -140,6 +143,15 @@ impl DataSized for DataProposal {
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct TxId(pub DataProposalHash, pub TxHash);
+
+#[cfg(feature = "sqlx")]
+impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for TxId {
+    fn from_row(row: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
+        let tx_hash: TxHash = row.try_get("tx_hash")?;
+        let dp_hash: DataProposalHash = row.try_get("parent_dp_hash")?;
+        Ok(TxId(dp_hash, tx_hash))
+    }
+}
 
 #[derive(
     Clone,
