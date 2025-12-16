@@ -1,4 +1,4 @@
-use super::{ExplorerApiState, TxHashDb};
+use super::ExplorerApiState;
 use api::APIBlob;
 use axum::{
     extract::{Path, State},
@@ -11,19 +11,19 @@ use hyli_modules::log_error;
 
 #[derive(sqlx::FromRow, Debug)]
 pub struct BlobDb {
-    pub tx_hash: TxHashDb, // Corresponds to the transaction hash
+    pub tx_hash: TxHash, // Corresponds to the transaction hash
     #[sqlx(try_from = "i32")]
     pub blob_index: u32, // Index of the blob within the transaction
-    pub identity: String,  // Identity of the blob
+    pub identity: String, // Identity of the blob
     pub contract_name: String, // Contract name associated with the blob
-    pub data: Vec<u8>,     // Actual blob data
+    pub data: Vec<u8>,   // Actual blob data
     pub proof_outputs: Vec<serde_json::Value>, // outputs of proofs
 }
 
 impl From<BlobDb> for APIBlob {
     fn from(value: BlobDb) -> Self {
         APIBlob {
-            tx_hash: value.tx_hash.0,
+            tx_hash: value.tx_hash,
             blob_index: value.blob_index,
             identity: value.identity,
             contract_name: value.contract_name,

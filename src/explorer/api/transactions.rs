@@ -60,44 +60,6 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for DataProposalHashDb {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct TxHashDb(pub TxHash);
-
-impl From<TxHash> for TxHashDb {
-    fn from(tx_hash: TxHash) -> Self {
-        TxHashDb(tx_hash)
-    }
-}
-
-impl Type<Postgres> for TxHashDb {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as Type<Postgres>>::type_info()
-    }
-}
-impl sqlx::Encode<'_, sqlx::Postgres> for TxHashDb {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> std::result::Result<
-        sqlx::encode::IsNull,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0 .0, buf)
-    }
-}
-
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for TxHashDb {
-    fn decode(
-        value: sqlx::postgres::PgValueRef<'r>,
-    ) -> std::result::Result<
-        TxHashDb,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(TxHashDb(TxHash(inner)))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct TxIdDb(pub TxId);
 
 impl From<TxId> for TxIdDb {
@@ -108,16 +70,16 @@ impl From<TxId> for TxIdDb {
 
 impl<'r> FromRow<'r, PgRow> for TxIdDb {
     fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
-        let tx_hash: TxHashDb = row.try_get("tx_hash")?;
+        let tx_hash: TxHash = row.try_get("tx_hash")?;
         let dp_hash: DataProposalHashDb = row.try_get("parent_dp_hash")?;
-        Ok(TxIdDb(TxId(dp_hash.0, tx_hash.0)))
+        Ok(TxIdDb(TxId(dp_hash.0, tx_hash)))
     }
 }
 
 #[derive(Debug)]
 pub struct TransactionDb {
     // Struct for the transactions table
-    pub tx_hash: TxHashDb,                         // Transaction hash
+    pub tx_hash: TxHash,                           // Transaction hash
     pub parent_dp_hash: DataProposalHash,          // Corresponds to the data proposal hash
     pub block_hash: Option<ConsensusProposalHash>, // Corresponds to the block hash
     pub block_height: Option<BlockHeight>,         // Corresponds to the block height
@@ -185,7 +147,7 @@ impl From<TransactionDb> for APITransaction {
             .timestamp
             .map(|t| TimestampMs(t.and_utc().timestamp_millis() as u128));
         APITransaction {
-            tx_hash: val.tx_hash.0,
+            tx_hash: val.tx_hash,
             parent_dp_hash: val.parent_dp_hash,
             block_hash: val.block_hash,
             block_height: val.block_height,
@@ -608,7 +570,7 @@ pub async fn get_blob_transactions_by_contract(
             };
 
             Ok(TransactionWithBlobs {
-                tx_hash: api_tx.tx_hash.0,
+                tx_hash: api_tx.tx_hash,
                 parent_dp_hash: api_tx.parent_dp_hash,
                 block_hash,
                 block_height,
