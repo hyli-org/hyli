@@ -367,7 +367,7 @@ where
                                 .await;
                             break;
                         }
-                }
+                    }
                     None => {
                         // If we reach here, the stream has been closed.
                         warn!(
