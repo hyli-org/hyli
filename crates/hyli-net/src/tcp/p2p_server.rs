@@ -210,81 +210,73 @@ where
         p2p_tcp_event: P2PTcpEvent<P2PTcpMessage<Msg>>,
     ) -> anyhow::Result<Option<P2PServerEvent<Msg>>> {
         match p2p_tcp_event {
-            P2PTcpEvent::TcpEvent(tcp_event) => {
-                match tcp_event {
-                    TcpEvent::Message {
-                        dest,
-                        data: P2PTcpMessage::Handshake(handshake),
-                    } => self.handle_handshake(dest, handshake).await,
-                    TcpEvent::Message {
-                        dest,
-                        data: P2PTcpMessage::Data(msg),
-                    } => {
-                        let mut canal_label: Option<Canal> = None;
-                        if let Some((peer_pubkey, canal, peer_info, _)) =
-                            self.get_peer_by_socket_addr(&dest)
-                        {
-                            self.metrics.message_received(
-                                peer_info.node_connection_data.p2p_public_address.clone(),
-                                canal.clone(),
-                            );
-                            canal_label = Some(canal.clone());
-                            if canal == &Canal::new("mempool") {
-                                info!(
-                                "📥 [{}] Received mempool TCP message from {} ({}) on socket {}",
-                                self.node_id, peer_info.node_connection_data.name, peer_pubkey, dest
-                            );
-                            }
-                        }
-                        trace!(
-                            "P2PServer delivering TcpEvent::Message canal={} dest={} node={}",
-                            canal_label
-                                .as_ref()
-                                .map(|c| c.to_string())
-                                .unwrap_or_else(|| "unknown".into()),
-                            dest,
-                            self.node_id
+            P2PTcpEvent::TcpEvent(tcp_event) => match tcp_event {
+                TcpEvent::Message {
+                    dest,
+                    data: P2PTcpMessage::Handshake(handshake),
+                } => self.handle_handshake(dest, handshake).await,
+                TcpEvent::Message {
+                    dest,
+                    data: P2PTcpMessage::Data(msg),
+                } => {
+                    let mut canal_label: Option<Canal> = None;
+                    if let Some((_peer_pubkey, canal, peer_info, _)) =
+                        self.get_peer_by_socket_addr(&dest)
+                    {
+                        self.metrics.message_received(
+                            peer_info.node_connection_data.p2p_public_address.clone(),
+                            canal.clone(),
                         );
-                        Ok(Some(P2PServerEvent::P2PMessage { msg }))
+                        canal_label = Some(canal.clone());
                     }
-                    TcpEvent::Error { dest, error } => {
-                        if let Some((peer_pubkey, _canal, peer_info, _)) =
-                            self.get_peer_by_socket_addr(&dest)
-                        {
-                            self.metrics.message_error(
-                                peer_info.node_connection_data.p2p_public_address.clone(),
-                                _canal.clone(),
-                            );
-                            warn!(
-                                "P2P TCP error on socket {} (node={}, peer={}, canal={})",
-                                dest, self.node_id, peer_pubkey, _canal
-                            );
-                        }
-                        warn!(
-                            "P2P TCP error on socket {} (node={}): {}",
-                            dest, self.node_id, error
-                        );
-                        self.handle_error_event(dest, error).await;
-                        Ok(None)
-                    }
-                    TcpEvent::Closed { dest } => {
-                        if let Some((peer_pubkey, canal, peer_info, _)) =
-                            self.get_peer_by_socket_addr(&dest)
-                        {
-                            self.metrics.message_closed(
-                                peer_info.node_connection_data.p2p_public_address.clone(),
-                                canal.clone(),
-                            );
-                            warn!(
-                                "P2P TCP closed on socket {} (node={}, peer={}, canal={})",
-                                dest, self.node_id, peer_pubkey, canal
-                            );
-                        }
-                        self.handle_closed_event(dest);
-                        Ok(None)
-                    }
+                    trace!(
+                        "P2PServer delivering TcpEvent::Message canal={} dest={} node={}",
+                        canal_label
+                            .as_ref()
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "unknown".into()),
+                        dest,
+                        self.node_id
+                    );
+                    Ok(Some(P2PServerEvent::P2PMessage { msg }))
                 }
-            }
+                TcpEvent::Error { dest, error } => {
+                    if let Some((peer_pubkey, _canal, peer_info, _)) =
+                        self.get_peer_by_socket_addr(&dest)
+                    {
+                        self.metrics.message_error(
+                            peer_info.node_connection_data.p2p_public_address.clone(),
+                            _canal.clone(),
+                        );
+                        warn!(
+                            "P2P TCP error on socket {} (node={}, peer={}, canal={})",
+                            dest, self.node_id, peer_pubkey, _canal
+                        );
+                    }
+                    warn!(
+                        "P2P TCP error on socket {} (node={}): {}",
+                        dest, self.node_id, error
+                    );
+                    self.handle_error_event(dest, error).await;
+                    Ok(None)
+                }
+                TcpEvent::Closed { dest } => {
+                    if let Some((peer_pubkey, canal, peer_info, _)) =
+                        self.get_peer_by_socket_addr(&dest)
+                    {
+                        self.metrics.message_closed(
+                            peer_info.node_connection_data.p2p_public_address.clone(),
+                            canal.clone(),
+                        );
+                        warn!(
+                            "P2P TCP closed on socket {} (node={}, peer={}, canal={})",
+                            dest, self.node_id, peer_pubkey, canal
+                        );
+                    }
+                    self.handle_closed_event(dest);
+                    Ok(None)
+                }
+            },
             P2PTcpEvent::HandShakeTcpClient(public_addr, tcp_client, canal) => {
                 if let Err(e) = self
                     .do_handshake(public_addr.clone(), tcp_client, canal.clone())
