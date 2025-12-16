@@ -114,44 +114,6 @@ impl<'r> FromRow<'r, PgRow> for TxIdDb {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct LaneIdDb(pub LaneId);
-
-impl From<LaneId> for LaneIdDb {
-    fn from(tx_hash: LaneId) -> Self {
-        LaneIdDb(tx_hash)
-    }
-}
-
-impl Type<Postgres> for LaneIdDb {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as Type<Postgres>>::type_info()
-    }
-}
-impl sqlx::Encode<'_, sqlx::Postgres> for LaneIdDb {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> std::result::Result<
-        sqlx::encode::IsNull,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&hex::encode(&self.0 .0 .0), buf)
-    }
-}
-
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for LaneIdDb {
-    fn decode(
-        value: sqlx::postgres::PgValueRef<'r>,
-    ) -> std::result::Result<
-        LaneIdDb,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(LaneIdDb(LaneId(ValidatorPublicKey(hex::decode(inner)?))))
-    }
-}
-
 #[derive(Debug)]
 pub struct TransactionDb {
     // Struct for the transactions table
@@ -164,7 +126,7 @@ pub struct TransactionDb {
     pub transaction_type: TransactionTypeDb,       // Type of transaction
     pub transaction_status: TransactionStatusDb,   // Status of the transaction
     pub timestamp: Option<NaiveDateTime>,          // Timestamp of the transaction (block timestamp)
-    pub lane_id: Option<LaneIdDb>,                 // Lane ID of the transaction
+    pub lane_id: Option<LaneId>,                   // Lane ID of the transaction
     pub identity: Option<String>, // Identity of the transaction sender (null for proofs)
 }
 
@@ -198,7 +160,7 @@ impl<'r> FromRow<'r, PgRow> for TransactionDb {
             ),
         };
         let timestamp: Option<NaiveDateTime> = row.try_get("timestamp").unwrap_or_default();
-        let lane_id: Option<LaneIdDb> = row.try_get("lane_id").unwrap_or_default();
+        let lane_id: Option<LaneId> = row.try_get("lane_id").unwrap_or_default();
         let identity: Option<String> = row.try_get("identity").unwrap_or_default();
 
         Ok(TransactionDb {
@@ -232,7 +194,7 @@ impl From<TransactionDb> for APITransaction {
             transaction_type: val.transaction_type,
             transaction_status: val.transaction_status,
             timestamp,
-            lane_id: val.lane_id.map(|l| l.0),
+            lane_id: val.lane_id,
             identity: val.identity,
         }
     }
@@ -657,7 +619,7 @@ pub async fn get_blob_transactions_by_contract(
                 timestamp: api_tx
                     .timestamp
                     .map(|t| TimestampMs(t.and_utc().timestamp_millis() as u128)),
-                lane_id: api_tx.lane_id.map(|l| l.0),
+                lane_id: api_tx.lane_id,
                 identity,
                 blobs,
             })

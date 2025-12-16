@@ -177,7 +177,7 @@ LIMIT 1;
                 timestamp: api_tx
                     .timestamp
                     .map(|t| TimestampMs(t.and_utc().timestamp_millis() as u128)),
-                lane_id: api_tx.lane_id.map(|l| l.0),
+                lane_id: api_tx.lane_id,
                 proof_outputs,
             })
         }),

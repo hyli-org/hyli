@@ -2,7 +2,7 @@
 
 use crate::{
     explorer::{
-        api::{DataProposalHashDb, LaneIdDb, TxHashDb},
+        api::{DataProposalHashDb, TxHashDb},
         WsExplorerBlobTx,
     },
     model::*,
@@ -197,7 +197,7 @@ pub struct TxStore {
     pub transaction_type: TransactionTypeDb,
     pub block_hash: Option<ConsensusProposalHash>,
     pub block_height: BlockHeight,
-    pub lane_id: Option<LaneIdDb>,
+    pub lane_id: Option<LaneId>,
     pub index: i32,
     pub identity: Option<String>,
     pub contract_names: HashSet<ContractName>,
@@ -358,7 +358,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                     transaction_type: TransactionTypeDb::BlobTransaction,
                     block_hash: Some(self.block_hash.clone()),
                     block_height: self.block_height,
-                    lane_id: Some(LaneIdDb(lane_id.clone())),
+                    lane_id: Some(lane_id.clone()),
                     index: index as i32,
                     identity: Some(blob_tx.identity.clone().0),
                     contract_names: blob_tx
@@ -409,7 +409,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                     transaction_type: TransactionTypeDb::ProofTransaction,
                     block_hash: Some(self.block_hash.clone()),
                     block_height: self.block_height,
-                    lane_id: Some(LaneIdDb(lane_id.clone())),
+                    lane_id: Some(lane_id.clone()),
                     index: index as i32,
                     identity: None,
                     contract_names: HashSet::new(),
