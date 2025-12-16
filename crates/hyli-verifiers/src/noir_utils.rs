@@ -7,14 +7,22 @@ pub fn split_public_inputs<'a>(
     proof_with_public_inputs: &'a [u8],
     vkey: &[u8],
 ) -> Option<(&'a [u8], &'a [u8])> {
-    // We need to know the number of public inputs, and that's in the vkey.
-    // See barretenberg/plonk/proof_system/verification_key/verification_key.hpp
-    // This is msgpack encoded, but we can safely just parse the third u64 (for now anyways).
-    let num_public_inputs = vkey
-        .get(16..24)
-        .map(|x| u64::from_be_bytes(x.try_into().unwrap()))?;
+    // The vk is encoded as field elements; element 1 is the public-input count.
+    // Each field element is 32 bytes, so index 1 lives in bytes 32..64.
+    let num_public_inputs = {
+        let field_one = vkey.get(32..64)?;
+        // Count fits in u64; take the least-significant 8 bytes.
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(field_one.get(24..32)?);
+        u64::from_be_bytes(buf)
+    };
 
-    proof_with_public_inputs.split_at_checked((num_public_inputs * 32) as usize)
+    let split_at = num_public_inputs.saturating_mul(32) as usize;
+    if split_at == 0 || proof_with_public_inputs.len() < split_at {
+        return None;
+    }
+
+    proof_with_public_inputs.split_at_checked(split_at)
 }
 
 /// Reverses the flattening process by splitting a `Vec<u8>` into a vector of sanitized hex-encoded strings
