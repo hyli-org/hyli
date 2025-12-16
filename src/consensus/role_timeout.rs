@@ -507,7 +507,7 @@ impl Consensus {
 
 #[cfg(test)]
 mod tests {
-    use crate::{consensus::test::*, tests::autobahn_testing::*};
+    use crate::{build_nodes, consensus::test::*, tests::autobahn_testing::*};
 
     use super::*;
 

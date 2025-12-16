@@ -878,7 +878,7 @@ pub mod test {
         bus::{dont_use_this::get_receiver, metrics::BusMetrics, SharedMessageBus},
         model::DataProposalHash,
         p2p::network::NetMessage,
-        tests::autobahn_testing::*,
+        tests::autobahn_testing::{broadcast, send, simple_commit_round, AutobahnBusClient},
         utils::conf::Conf,
     };
     use assertables::{assert_contains, assert_none};
@@ -893,6 +893,7 @@ pub mod test {
         pub name: String,
     }
 
+    #[macro_export]
     macro_rules! build_nodes {
         ($count:tt) => {{
             async {
@@ -917,7 +918,6 @@ pub mod test {
             }
         }};
     }
-    pub(crate) use build_nodes;
 
     impl ConsensusTestCtx {
         pub async fn build_consensus(

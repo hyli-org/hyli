@@ -443,3 +443,104 @@ impl Consensus {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::build_nodes;
+    use crate::consensus::test::ConsensusTestCtx;
+    use crate::tests::autobahn_testing::{broadcast, send, simple_commit_round};
+
+    #[test_log::test(tokio::test)]
+    async fn test_catchup_then_empty_cut() {
+        let (mut node1, mut node2, mut node3, mut node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        node4.consensus.bft_round_state.state_tag = StateTag::Joining;
+
+        let cut = vec![(
+            LaneId(node1.pubkey()),
+            DataProposalHash("propA".to_string()),
+            LaneBytesSize(1),
+            AggregateSignature::default(),
+        )];
+
+        node1.consensus.bft_round_state.parent_cut = cut.clone();
+        node2.consensus.bft_round_state.parent_cut = cut.clone();
+        node3.consensus.bft_round_state.parent_cut = cut.clone();
+
+        node1.start_round().await;
+
+        let (cp1, _ticket, _cp_view) = simple_commit_round! {
+            leader: node1,
+            followers: [node2, node3]
+        };
+        assert_eq!(cp1.cut, cut);
+
+        node2.start_round().await;
+
+        let (cp2, _ticket, _cp_view) = simple_commit_round! {
+            leader: node2,
+            followers: [node1, node3]
+        };
+        assert_ne!(cp2.cut.len(), 0);
+        assert_eq!(cp2.cut, cut);
+
+        node4
+            .consensus
+            .handle_node_state_event(NodeStateEvent::NewBlock(NodeStateBlock {
+                signed_block: SignedBlock {
+                    consensus_proposal: cp1,
+                    ..Default::default()
+                }
+                .into(),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+        node4
+            .consensus
+            .handle_node_state_event(NodeStateEvent::NewBlock(NodeStateBlock {
+                signed_block: SignedBlock {
+                    consensus_proposal: cp2,
+                    ..Default::default()
+                }
+                .into(),
+                ..Default::default()
+            }))
+            .await
+            .unwrap();
+
+        // At this point, timeout
+        ConsensusTestCtx::timeout(&mut [&mut node1, &mut node2, &mut node3]).await;
+        broadcast! {
+            description: "Timeout",
+            from: node1, to: [node2, node3, node4],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Timeout",
+            from: node2, to: [node1, node3, node4],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Timeout",
+            from: node3, to: [node1, node2, node4],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        node4.assert_broadcast("Timeout message").await;
+
+        node4.start_round().await;
+
+        let (cp, _ticket, _cp_view) = simple_commit_round! {
+            leader: node4,
+            followers: [node1, node2, node3]
+        };
+        assert_ne!(cp.cut.len(), 0);
+        assert_eq!(cp.cut, cut);
+    }
+}
