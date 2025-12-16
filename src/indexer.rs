@@ -1,7 +1,7 @@
 //! Index system for historical data.
 
 use crate::{
-    explorer::{api::DataProposalHashDb, WsExplorerBlobTx},
+    explorer::WsExplorerBlobTx,
     model::*,
     utils::conf::{Conf, SharedConf},
 };
@@ -190,7 +190,7 @@ impl std::fmt::Debug for IndexerHandlerStore {
 #[derive(Debug)]
 pub struct TxStore {
     pub tx_hash: TxHash,
-    pub dp_hash: DataProposalHashDb,
+    pub dp_hash: DataProposalHash,
     pub transaction_type: TransactionTypeDb,
     pub block_hash: Option<ConsensusProposalHash>,
     pub block_height: BlockHeight,
@@ -214,7 +214,7 @@ struct ContractInsertStore {
     pub program_id: Vec<u8>,
     pub timeout_window: TimeoutWindow,
     pub state_commitment: Vec<u8>,
-    pub parent_dp_hash: DataProposalHashDb,
+    pub parent_dp_hash: DataProposalHash,
     pub tx_hash: TxHash,
     pub metadata: Option<Vec<u8>>,
 }
@@ -293,7 +293,7 @@ impl Indexer {
                 for tx in txs {
                     self.handler_store.txs.push_front(TxStore {
                         tx_hash: tx.hashed().clone(),
-                        dp_hash: DataProposalHashDb(parent_data_proposal_hash.clone()),
+                        dp_hash: parent_data_proposal_hash.clone(),
                         transaction_type: match tx.transaction_data {
                             TransactionData::Blob(_) => TransactionTypeDb::BlobTransaction,
                             TransactionData::Proof(_) => TransactionTypeDb::ProofTransaction,
@@ -351,7 +351,7 @@ impl NodeStateCallback for IndexerHandlerStore {
             | TxEvent::RejectedBlobTransaction(tx_id, lane_id, index, blob_tx, _tx_context) => {
                 self.txs.push_front(TxStore {
                     tx_hash: tx_id.1.clone(),
-                    dp_hash: DataProposalHashDb(tx_id.0.clone()),
+                    dp_hash: tx_id.0.clone(),
                     transaction_type: TransactionTypeDb::BlobTransaction,
                     block_hash: Some(self.block_hash.clone()),
                     block_height: self.block_height,
@@ -402,7 +402,7 @@ impl NodeStateCallback for IndexerHandlerStore {
             TxEvent::SequencedProofTransaction(tx_id, lane_id, index, ..) => {
                 self.txs.push_front(TxStore {
                     tx_hash: tx_id.1.clone(),
-                    dp_hash: DataProposalHashDb(tx_id.0.clone()),
+                    dp_hash: tx_id.0.clone(),
                     transaction_type: TransactionTypeDb::ProofTransaction,
                     block_hash: Some(self.block_hash.clone()),
                     block_height: self.block_height,
@@ -453,7 +453,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                     program_id: contract.program_id.0.clone(),
                     timeout_window: contract.timeout_window.clone(),
                     state_commitment: contract.state.0.clone(),
-                    parent_dp_hash: DataProposalHashDb(tx_id.0.clone()),
+                    parent_dp_hash: tx_id.0.clone(),
                     tx_hash: tx_id.1.clone(),
                     metadata: metadata.clone(),
                 });
@@ -569,7 +569,7 @@ impl Indexer {
             let mut add_comma = false;
             let mut add_comma_ctx = false;
             for tx in chunk.into_iter() {
-                if already_inserted.insert(TxId(tx.dp_hash.0.clone(), tx.tx_hash.clone())) {
+                if already_inserted.insert(TxId(tx.dp_hash.clone(), tx.tx_hash.clone())) {
                     if add_comma {
                         query_builder.push(",");
                     }
@@ -667,9 +667,7 @@ impl Indexer {
                     "INSERT INTO updates (parent_dp_hash, tx_hash, transaction_status) ",
                 );
                 query_builder.push_values(entries.into_iter(), |mut b, (status, tx_id)| {
-                    b.push_bind(DataProposalHashDb(tx_id.0))
-                        .push_bind(tx_id.1)
-                        .push_bind(status);
+                    b.push_bind(tx_id.0).push_bind(tx_id.1).push_bind(status);
                 });
                 _ = log_error!(
                     query_builder.build().execute(&mut *transaction).await,

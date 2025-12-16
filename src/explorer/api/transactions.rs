@@ -16,48 +16,9 @@ use sqlx::postgres::PgRow;
 use sqlx::types::chrono::NaiveDateTime;
 use sqlx::FromRow;
 use sqlx::Row;
-use sqlx::{prelude::Type, Postgres};
 
 use crate::model::*;
 use hyli_modules::log_error;
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct DataProposalHashDb(pub DataProposalHash);
-
-impl From<DataProposalHash> for DataProposalHashDb {
-    fn from(dp_hash: DataProposalHash) -> Self {
-        DataProposalHashDb(dp_hash)
-    }
-}
-
-impl Type<Postgres> for DataProposalHashDb {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as Type<Postgres>>::type_info()
-    }
-}
-impl sqlx::Encode<'_, sqlx::Postgres> for DataProposalHashDb {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> std::result::Result<
-        sqlx::encode::IsNull,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0 .0, buf)
-    }
-}
-
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for DataProposalHashDb {
-    fn decode(
-        value: sqlx::postgres::PgValueRef<'r>,
-    ) -> std::result::Result<
-        DataProposalHashDb,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(DataProposalHashDb(DataProposalHash(inner)))
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TxIdDb(pub TxId);
@@ -71,8 +32,8 @@ impl From<TxId> for TxIdDb {
 impl<'r> FromRow<'r, PgRow> for TxIdDb {
     fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
         let tx_hash: TxHash = row.try_get("tx_hash")?;
-        let dp_hash: DataProposalHashDb = row.try_get("parent_dp_hash")?;
-        Ok(TxIdDb(TxId(dp_hash.0, tx_hash)))
+        let dp_hash: DataProposalHash = row.try_get("parent_dp_hash")?;
+        Ok(TxIdDb(TxId(dp_hash, tx_hash)))
     }
 }
 
@@ -104,8 +65,7 @@ impl<'r> FromRow<'r, PgRow> for TransactionDb {
                     .map_err(|e: TryFromIntError| sqlx::Error::Decode(e.into()))
             })
             .transpose()?;
-        let dp_hash_db: DataProposalHashDb = row.try_get("parent_dp_hash")?;
-        let parent_dp_hash = dp_hash_db.0;
+        let parent_dp_hash: DataProposalHash = row.try_get("parent_dp_hash")?;
         let index: Option<i32> = row.try_get("index")?;
         let version: i32 = row.try_get("version")?;
         let version: u32 = version

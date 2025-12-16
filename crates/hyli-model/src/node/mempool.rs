@@ -158,6 +158,37 @@ pub struct TxId(pub DataProposalHash, pub TxHash);
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct DataProposalHash(pub String);
 
+#[cfg(feature = "sqlx")]
+impl sqlx::Type<sqlx::Postgres> for DataProposalHash {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+}
+#[cfg(feature = "sqlx")]
+impl sqlx::Encode<'_, sqlx::Postgres> for DataProposalHash {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> std::result::Result<
+        sqlx::encode::IsNull,
+        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
+    > {
+        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
+    }
+}
+#[cfg(feature = "sqlx")]
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for DataProposalHash {
+    fn decode(
+        value: sqlx::postgres::PgValueRef<'r>,
+    ) -> std::result::Result<
+        DataProposalHash,
+        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
+    > {
+        let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        Ok(DataProposalHash(inner))
+    }
+}
+
 impl Hashed<DataProposalHash> for DataProposal {
     fn hashed(&self) -> DataProposalHash {
         if let Some(hash) = self.hash_cache.read().unwrap().as_ref() {
