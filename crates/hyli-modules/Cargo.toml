@@ -53,6 +53,10 @@ utoipa-swagger-ui = { workspace = true, features = ["axum"] }
 tower-http = { workspace = true, features = ["trace", "cors", "catch-panic"] }
 prometheus = { workspace = true }
 opentelemetry = { workspace = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-http = { workspace = true, optional = true }
 
 test-log = { workspace = true, features = ["color", "trace"], optional = true }
 indexmap = { workspace = true }
@@ -74,4 +78,10 @@ risc0 = ["client-sdk/risc0"]
 sp1 = ["client-sdk/sp1"]
 turmoil = []
 test = ["dep:test-log"]
+instrumentation = [
+  "dep:opentelemetry-otlp",
+  "dep:tracing-opentelemetry",
+  "dep:opentelemetry_sdk",
+  "dep:opentelemetry-http",
+]
 db = ["dep:sqlx"]

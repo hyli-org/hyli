@@ -106,6 +106,8 @@ once_cell = { version = "1.19.0", default-features = false }
 opentelemetry = { version = "0.28.0" }
 opentelemetry-prometheus = { version = "0.28.0" }
 opentelemetry_sdk = { version = "0.28.0" }
+opentelemetry-otlp = { version = "0.28.0", features = ["grpc-tonic", "trace"] }
+opentelemetry-http = { version = "0.28" }
 paste = { version = "1.0.15", default-features = false }
 prometheus = { version = "0.13.4" }
 quote = { version = "1.0.42", default-features = false }
@@ -133,6 +135,7 @@ syn = { version = "2.0.104" }
 tempfile = { version = "3.20.0", default-features = false }
 test-log = { version = "0.2.18", default-features = false }
 testcontainers-modules = { version = "0.14.0", default-features = false }
+tracing-opentelemetry = "0.29.0"
 tokio = { version = "1.47.1" }
 tokio-util = { version = "0.7.16" }
 toml = { version = "0.9.5", default-features = false }
@@ -298,7 +301,7 @@ risc0-zkvm = { workspace = true, default-features = false, features = [
 signal-child = "1.0.6"
 
 [features]
-default = ["risc0"]
+default = ["risc0", "instrumentation"]
 
 turmoil = ["hyli-net/turmoil", "client-sdk/turmoil", "hyli-modules/turmoil"]
 
@@ -313,6 +316,8 @@ keyring = ["hyli-crypto/keyring"]
 dhat = ["dep:dhat"]
 monitoring = ["dep:alloc-metrics"]
 alloc-track = ["dep:alloc-track"]
+
+instrumentation = ["hyli-net/instrumentation", "hyli-modules/instrumentation"]
 
 # Activate this feature to recompile contracts locally (mostly useful for iterating on tests)
 nonreproducible = ["hyli-contracts/nonreproducible"]
