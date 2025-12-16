@@ -519,6 +519,7 @@ impl Consensus {
     }
 
     /// Apply ticket locally, and start new round with it
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, ticket)))]
     fn advance_round(&mut self, ticket: Ticket) -> Result<()> {
         self.apply_ticket(ticket.clone())?;
 
@@ -590,6 +591,10 @@ impl Consensus {
     }
 
     /// Message received by leader & follower.
+    #[cfg_attr(
+        feature = "instrumentation",
+        tracing::instrument(skip(self, candidacy))
+    )]
     fn on_validator_candidacy(
         &mut self,
         candidacy: SignedByValidator<ValidatorCandidacy>,

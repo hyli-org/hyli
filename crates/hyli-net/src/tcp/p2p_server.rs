@@ -831,7 +831,6 @@ where
         jobs.spawn(async move { (peers, (borsh::to_vec(&P2PTcpMessage::Data(msg)), headers)) });
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, msg)))]
     async fn actually_send_to(
         &mut self,
         only_for: HashSet<ValidatorPublicKey>,

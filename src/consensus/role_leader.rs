@@ -190,8 +190,8 @@ impl Consensus {
                 CutDisplay(&cut)
             );
             let span = tracing::Span::current();
-            span.record("slot", self.bft_round_state.slot);
-            span.record("view", self.bft_round_state.view);
+            span.record("slot", self.bft_round_state.slot as i64); // u64 is converted as string by
+            span.record("view", self.bft_round_state.view as i64); // otlp, so cast to i64 here
 
             let mut staking_actions: Vec<ConsensusStakingAction> = new_validators_to_bond
                 .into_iter()
