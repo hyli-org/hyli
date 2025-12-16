@@ -48,39 +48,6 @@ impl Display for SignedByValidator<ValidatorCandidacy> {
     }
 }
 
-#[cfg(feature = "sqlx")]
-impl sqlx::Type<sqlx::Postgres> for ConsensusProposalHash {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as sqlx::Type<sqlx::Postgres>>::type_info()
-    }
-}
-
-#[cfg(feature = "sqlx")]
-impl sqlx::Encode<'_, sqlx::Postgres> for ConsensusProposalHash {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> std::result::Result<
-        sqlx::encode::IsNull,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
-    }
-}
-
-#[cfg(feature = "sqlx")]
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for ConsensusProposalHash {
-    fn decode(
-        value: sqlx::postgres::PgValueRef<'r>,
-    ) -> std::result::Result<
-        ConsensusProposalHash,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(ConsensusProposalHash(inner))
-    }
-}
-
 #[derive(
     Debug,
     Clone,

@@ -50,8 +50,8 @@ impl BusMessage for WsExplorerBlobTx {}
 #[derive(Debug, Clone)]
 pub struct WsExplorerBlobTx {
     pub tx: BlobTransaction,
-    pub tx_hash: TxHashDb,
-    pub dp_hash: DataProposalHashDb,
+    pub tx_hash: TxHash,
+    pub dp_hash: DataProposalHash,
     pub block_hash: ConsensusProposalHash,
     pub block_height: BlockHeight,
     pub index: u32,
@@ -289,8 +289,8 @@ impl Explorer {
                 .any(|blob| &blob.contract_name == contrat_name)
             {
                 let enriched_tx = TransactionWithBlobs {
-                    tx_hash: tx_hash.0.clone(),
-                    parent_dp_hash: dp_hash.0.clone(),
+                    tx_hash: tx_hash.clone(),
+                    parent_dp_hash: dp_hash.clone(),
                     block_hash: block_hash.clone(),
                     block_height,
                     index,

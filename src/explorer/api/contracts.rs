@@ -1,4 +1,4 @@
-use super::{ExplorerApiState, TxHashDb};
+use super::ExplorerApiState;
 use api::{APIContract, APIContractState};
 use axum::{
     extract::{Path, State},
@@ -12,7 +12,7 @@ use hyli_modules::log_error;
 #[derive(sqlx::FromRow, Debug)]
 pub struct ContractDb {
     // Struct for the contracts table
-    pub tx_hash: TxHashDb,   // Corresponds to the registration transaction hash
+    pub tx_hash: TxHash,     // Corresponds to the registration transaction hash
     pub verifier: String,    // Verifier of the contract
     pub program_id: Vec<u8>, // Program ID
     pub state_commitment: Vec<u8>, // state commitment of the contract
@@ -29,7 +29,7 @@ pub struct ContractDb {
 impl From<ContractDb> for APIContract {
     fn from(val: ContractDb) -> Self {
         APIContract {
-            tx_hash: val.tx_hash.0,
+            tx_hash: val.tx_hash,
             verifier: val.verifier,
             program_id: val.program_id,
             state_commitment: val.state_commitment,

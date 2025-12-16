@@ -18,6 +18,9 @@ pub use transaction::*;
 #[cfg(feature = "full")]
 pub mod api;
 
+#[cfg(feature = "sqlx")]
+pub mod sqlx_impls;
+
 mod contract;
 mod staking;
 pub use contract::*;
