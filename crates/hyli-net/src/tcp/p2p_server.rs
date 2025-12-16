@@ -649,6 +649,7 @@ where
         Ok(())
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, msg)))]
     pub async fn send(
         &mut self,
         validator_pub_key: ValidatorPublicKey,
@@ -701,6 +702,7 @@ where
         Ok(())
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, msg)))]
     pub fn broadcast(&mut self, msg: Msg, canal: Canal) {
         let Some(jobs) = self.canal_jobs.get_mut(&canal) else {
             error!("Canal {:?} does not exist in P2P server", canal);
@@ -710,6 +712,7 @@ where
         jobs.spawn(async move { (peers, borsh::to_vec(&P2PTcpMessage::Data(msg))) });
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, msg)))]
     pub fn broadcast_only_for(
         &mut self,
         only_for: &HashSet<ValidatorPublicKey>,
@@ -724,6 +727,7 @@ where
         jobs.spawn(async move { (peers, borsh::to_vec(&P2PTcpMessage::Data(msg))) });
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, msg)))]
     async fn actually_send_to(
         &mut self,
         only_for: HashSet<ValidatorPublicKey>,

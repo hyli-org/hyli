@@ -246,15 +246,15 @@ mod tests {
     use anyhow::Result;
     use hyli_crypto::BlstCrypto;
     use hyli_modules::bus::dont_use_this::get_sender;
+    use hyli_modules::bus::{BusReceiver, BusSender};
     use hyli_modules::handle_messages;
     use hyli_modules::modules::signal::ShutdownModule;
     use std::sync::Arc;
-    use tokio::sync::broadcast::{Receiver, Sender};
 
     pub struct TestContext {
-        consensus_event_receiver: Receiver<ConsensusEvent>,
+        consensus_event_receiver: BusReceiver<ConsensusEvent>,
         #[allow(dead_code)]
-        shutdown_sender: Sender<ShutdownModule>,
+        shutdown_sender: BusSender<ShutdownModule>,
         single_node_consensus: SingleNodeConsensus,
     }
 
@@ -307,7 +307,8 @@ mod tests {
             let rec = self
                 .consensus_event_receiver
                 .try_recv()
-                .expect(format!("{err}: No message broadcasted").as_str());
+                .expect(format!("{err}: No message broadcasted").as_str())
+                .into_message();
 
             match rec {
                 ConsensusEvent::CommitConsensusProposal(CommittedConsensusProposal {

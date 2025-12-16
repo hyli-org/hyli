@@ -255,7 +255,7 @@ impl Mempool {
         let (sync_request_sender, sync_request_receiver) =
             tokio::sync::mpsc::channel::<SyncRequest>(30);
         let net_sender =
-            Pick::<tokio::sync::broadcast::Sender<OutboundMessage>>::get(&self.bus).clone();
+            Pick::<hyli_modules::bus::BusSender<OutboundMessage>>::get(&self.bus).clone();
 
         let mut mempool_sync = MempoolSync::create(
             self.own_lane_id().clone(),
