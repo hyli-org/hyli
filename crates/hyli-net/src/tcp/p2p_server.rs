@@ -219,29 +219,64 @@ where
                     dest,
                     data: P2PTcpMessage::Data(msg),
                 } => {
-                    if let Some(peer) = self.get_peer_by_socket_addr(&dest) {
+                    let mut canal_label: Option<Canal> = None;
+                    if let Some((peer_pubkey, canal, peer_info, _)) =
+                        self.get_peer_by_socket_addr(&dest)
+                    {
                         self.metrics.message_received(
-                            peer.1.node_connection_data.p2p_public_address.clone(),
-                            peer.0.clone(),
+                            peer_info.node_connection_data.p2p_public_address.clone(),
+                            canal.clone(),
                         );
+                        canal_label = Some(canal.clone());
+                        if canal == &Canal::new("mempool") {
+                            info!(
+                                "📥 [{}] Received mempool TCP message from {} ({}) on socket {}",
+                                self.node_id, peer_info.node_connection_data.name, peer_pubkey, dest
+                            );
+                        }
                     }
+                    trace!(
+                        "P2PServer delivering TcpEvent::Message canal={} dest={} node={}",
+                        canal_label
+                            .as_ref()
+                            .map(|c| c.to_string())
+                            .unwrap_or_else(|| "unknown".into()),
+                        dest,
+                        self.node_id
+                    );
                     Ok(Some(P2PServerEvent::P2PMessage { msg }))
                 }
                 TcpEvent::Error { dest, error } => {
-                    if let Some(peer) = self.get_peer_by_socket_addr(&dest) {
+                    if let Some((peer_pubkey, _canal, peer_info, _)) =
+                        self.get_peer_by_socket_addr(&dest)
+                    {
                         self.metrics.message_error(
-                            peer.1.node_connection_data.p2p_public_address.clone(),
-                            peer.0.clone(),
+                            peer_info.node_connection_data.p2p_public_address.clone(),
+                            _canal.clone(),
+                        );
+                        warn!(
+                            "P2P TCP error on socket {} (node={}, peer={}, canal={})",
+                            dest, self.node_id, peer_pubkey, _canal
                         );
                     }
+                    warn!(
+                        "P2P TCP error on socket {} (node={}): {}",
+                        dest, self.node_id, error
+                    );
                     self.handle_error_event(dest, error).await;
                     Ok(None)
                 }
                 TcpEvent::Closed { dest } => {
-                    if let Some(peer) = self.get_peer_by_socket_addr(&dest) {
+                    if let Some((peer_pubkey, canal, peer_info, _)) =
+                        self.get_peer_by_socket_addr(&dest)
+                    {
                         self.metrics.message_closed(
-                            peer.1.node_connection_data.p2p_public_address.clone(),
-                            peer.0.clone(),
+                            peer_info.node_connection_data.p2p_public_address.clone(),
+                            canal.clone(),
+                        );
+                        warn!(
+                            "P2P TCP closed on socket {} (node={}, peer={}, canal={})",
+                            dest, self.node_id, peer_pubkey, canal
                         );
                     }
                     self.handle_closed_event(dest);
@@ -302,13 +337,12 @@ where
     pub fn get_peer_by_socket_addr(
         &self,
         dest: &String,
-    ) -> Option<(&Canal, &PeerInfo, &PeerSocket)> {
-        self.peers.values().find_map(|peer_info| {
-            peer_info
-                .canals
-                .iter()
-                .find(|(_canal, peer_socket)| &peer_socket.socket_addr == dest)
-                .map(|(canal, peer_socket)| (canal, peer_info, peer_socket))
+    ) -> Option<(&ValidatorPublicKey, &Canal, &PeerInfo, &PeerSocket)> {
+        self.peers.iter().find_map(|(pubkey, peer_info)| {
+            peer_info.canals.iter().find_map(|(canal, peer_socket)| {
+                (&peer_socket.socket_addr == dest)
+                    .then_some((pubkey, canal, peer_info, peer_socket))
+            })
         })
     }
 
@@ -317,13 +351,22 @@ where
         dest: String,
         _error: String,
     ) -> Option<P2PServerEvent<Msg>> {
-        warn!("Error with peer connection: {:?}", _error);
+        warn!(
+            "Error with peer connection on {} (node={}): {:?}",
+            dest, self.node_id, _error
+        );
         // There was an error with the connection with the peer. We try to reconnect.
 
         // TODO: An error can happen when a message was no *sent* correctly. Investigate how to handle that specific case
         // TODO: match the error type to decide what to do
         self.tcp_server.drop_peer_stream(dest.clone());
-        if let Some((canal, info, _)) = self.get_peer_by_socket_addr(&dest) {
+        if let Some((_peer_pubkey, canal, info, _)) = self.get_peer_by_socket_addr(&dest) {
+            trace!(
+                "Will retry connection to peer {} canal {} after error {}",
+                info.node_connection_data.name,
+                canal,
+                dest
+            );
             self.start_connection_task(
                 info.node_connection_data.p2p_public_address.clone(),
                 canal.clone(),
@@ -335,16 +378,31 @@ where
     fn handle_closed_event(&mut self, dest: String) {
         // TODO: investigate how to properly handle this case
         // The connection has been closed by peer. We remove the peer and try to reconnect.
+        warn!(
+            "Peer connection closed on {} (node={})",
+            dest, self.node_id
+        );
 
         // When we receive a close event
         // It is a closed connection that need to be removed from tcp server clients in all cases
         // If it is a connection matching a canal/peer, it means we can retry
         self.tcp_server.drop_peer_stream(dest.clone());
-        if let Some((canal, info, _)) = self.get_peer_by_socket_addr(&dest) {
+        if let Some((_peer_pubkey, canal, info, _)) = self.get_peer_by_socket_addr(&dest) {
+            trace!(
+                "Will retry connection to peer {} canal {} after close {}",
+                info.node_connection_data.name,
+                canal,
+                dest
+            );
             self.start_connection_task(
                 info.node_connection_data.p2p_public_address.clone(),
                 canal.clone(),
             )
+        } else {
+            warn!(
+                "Closed socket {} did not map to a known peer/canal on node={}",
+                dest, self.node_id
+            );
         }
     }
 
@@ -427,7 +485,7 @@ where
             .remove(&(v.msg.p2p_public_address.clone(), canal.clone()));
 
         if let Some(peer_socket) = self.get_socket_mut(&canal, &peer_pubkey) {
-            let peer_addr_to_drop = if peer_socket.timestamp < timestamp || {
+            let (peer_addr_to_drop, kept_socket) = if peer_socket.timestamp < timestamp || {
                 peer_socket.timestamp == timestamp
                     && local_pubkey.cmp(&peer_pubkey) == Ordering::Less
             } {
@@ -438,14 +496,22 @@ where
                 let socket_addr = peer_socket.socket_addr.clone();
                 peer_socket.timestamp = timestamp;
                 peer_socket.socket_addr = dest.clone();
-                socket_addr.clone()
+                (socket_addr.clone(), dest.clone())
             } else {
                 debug!(
                     "Local peer {}/{} ({}): keeping socket {} and discard too old {}",
                     v.msg.p2p_public_address, canal, peer_pubkey, peer_socket.socket_addr, dest
                 );
-                dest
+                (dest.clone(), peer_socket.socket_addr.clone())
             };
+            trace!(
+                "Updating existing canal {} for peer {} on node {} -> dropping {} keeping {}",
+                canal,
+                peer_pubkey,
+                self.node_id,
+                peer_addr_to_drop,
+                kept_socket
+            );
             self.tcp_server.drop_peer_stream(peer_addr_to_drop);
             None
         } else {
@@ -454,6 +520,13 @@ where
                 debug!(
                     "Local peer {}/{} ({}): creating canal for existing peer on socket {}",
                     v.msg.p2p_public_address, canal, peer_pubkey, dest
+                );
+                trace!(
+                    "Node {} adding new canal {} to existing peer {} on socket {}",
+                    self.node_id,
+                    canal,
+                    peer_pubkey,
+                    dest
                 );
                 validator.canals.insert(
                     canal.clone(),
@@ -468,6 +541,13 @@ where
                 debug!(
                     "Local peer {}/{} ({}): creating new peer and canal on socket {}",
                     v.msg.p2p_public_address, canal, peer_pubkey, dest
+                );
+                trace!(
+                    "Node {} storing new peer {} on canal {} via socket {}",
+                    self.node_id,
+                    peer_pubkey,
+                    canal,
+                    dest
                 );
                 let peer_info = PeerInfo {
                     canals: HashMap::from_iter(vec![(
@@ -546,6 +626,13 @@ where
         peer_address: String,
         canal: Canal,
     ) -> anyhow::Result<()> {
+        trace!(
+            "try_start_connection request to {} on canal {} (node={}, connecting={})",
+            peer_address,
+            canal,
+            self.node_id,
+            self.connecting.len()
+        );
         if peer_address == self.node_p2p_public_address {
             trace!("Trying to connect to self");
             return Ok(());
@@ -656,6 +743,25 @@ where
         canal: Canal,
         msg: Msg,
     ) -> anyhow::Result<()> {
+        let Some(peer) = self.peers.get(&validator_pub_key) else {
+            warn!(
+                "Trying to send message to unknown Peer {}/{}. Unable to proceed.",
+                validator_pub_key, canal
+            );
+            return Ok(());
+        };
+
+        let Some(peer_socket) = peer.canals.get(&canal) else {
+            warn!(
+                "Peer {} has no socket for canal {} on node {}; available canals: {:?}",
+                validator_pub_key,
+                canal,
+                self.node_id,
+                peer.canals.keys().collect::<Vec<_>>()
+            );
+            return Ok(());
+        };
+
         if let Some(jobs) = self.canal_jobs.get_mut(&canal) {
             if !jobs.is_empty() {
                 jobs.spawn(async move {
@@ -668,23 +774,11 @@ where
             }
         }
 
-        let (pub_addr, peer_info) = match self.peers.get(&validator_pub_key).and_then(|peer| {
-            let addr = peer.node_connection_data.p2p_public_address.clone();
-            peer.canals.get(&canal).map(|c| (addr, c))
-        }) {
-            Some((addr, info)) => (addr, info),
-            None => {
-                warn!(
-                    "Trying to send message to unknown Peer {}/{}. Unable to proceed.",
-                    validator_pub_key, canal
-                );
-                return Ok(());
-            }
-        };
+        let pub_addr = peer.node_connection_data.p2p_public_address.clone();
 
         if let Err(e) = self
             .tcp_server
-            .send(peer_info.socket_addr.clone(), P2PTcpMessage::Data(msg))
+            .send(peer_socket.socket_addr.clone(), P2PTcpMessage::Data(msg))
             .await
         {
             self.try_start_connection_for_peer(&validator_pub_key, canal)
