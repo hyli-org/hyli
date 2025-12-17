@@ -1463,7 +1463,7 @@ pub mod tests {
 
         let send_errors = p2p_server1
             .tcp_server
-            .raw_send_parallel(vec![socket_addr], vec![255])
+            .raw_send_parallel(vec![socket_addr], vec![255], vec![])
             .await;
         assert!(send_errors.is_empty(), "Expected raw send to succeed");
 
