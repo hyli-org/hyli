@@ -409,15 +409,15 @@ where
         // TODO: match the error type to decide what to do
         self.mark_socket_poisoned(&dest);
         self.tcp_server.drop_peer_stream(dest.clone());
-        let retry_target = self
-            .get_peer_by_socket_addr(&dest)
-            .map(|(peer_pubkey, canal, info, _)| {
-                (
-                    peer_pubkey.clone(),
-                    canal.clone(),
-                    info.node_connection_data.name.clone(),
-                )
-            });
+        let retry_target =
+            self.get_peer_by_socket_addr(&dest)
+                .map(|(peer_pubkey, canal, info, _)| {
+                    (
+                        peer_pubkey.clone(),
+                        canal.clone(),
+                        info.node_connection_data.name.clone(),
+                    )
+                });
 
         if let Some((peer_pubkey, canal, peer_name)) = retry_target {
             trace!(
@@ -446,15 +446,15 @@ where
         // If it is a connection matching a canal/peer, it means we can retry
         self.mark_socket_poisoned(&dest);
         self.tcp_server.drop_peer_stream(dest.clone());
-        let retry_target = self
-            .get_peer_by_socket_addr(&dest)
-            .map(|(peer_pubkey, canal, info, _)| {
-                (
-                    peer_pubkey.clone(),
-                    canal.clone(),
-                    info.node_connection_data.name.clone(),
-                )
-            });
+        let retry_target =
+            self.get_peer_by_socket_addr(&dest)
+                .map(|(peer_pubkey, canal, info, _)| {
+                    (
+                        peer_pubkey.clone(),
+                        canal.clone(),
+                        info.node_connection_data.name.clone(),
+                    )
+                });
 
         if let Some((peer_pubkey, canal, peer_name)) = retry_target {
             trace!(
@@ -845,10 +845,7 @@ where
         if peer_socket.poisoned_at.is_some() {
             warn!(
                 "Peer {} socket {} for canal {} is poisoned; skipping send on node {}",
-                validator_pub_key,
-                socket_addr,
-                canal,
-                self.node_id
+                validator_pub_key, socket_addr, canal, self.node_id
             );
             return Ok(());
         }
