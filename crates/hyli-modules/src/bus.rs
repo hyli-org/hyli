@@ -195,7 +195,6 @@ pub trait BusClientSender<T> {
         Self: Send,
         T: Send;
 
-    #[cfg(feature = "instrumentation")]
     fn send_with_context(
         &mut self,
         message: T,
@@ -272,7 +271,6 @@ where
         Ok(())
     }
 
-    #[cfg(feature = "instrumentation")]
     fn send_with_context(
         &mut self,
         message: Msg,
@@ -285,7 +283,11 @@ where
             }
             Pick::<BusMetrics>::get_mut(self).send::<Msg, Client>();
             Pick::<BusSender<Msg>>::get(self)
-                .send(BusEnvelope { message, context })
+                .send(BusEnvelope {
+                    message,
+                    #[cfg(feature = "instrumentation")]
+                    context,
+                })
                 // Error is always "channel closed" so let's replace that
                 .map_err(|_| anyhow::anyhow!("Failed to send message"))?;
         }

@@ -393,7 +393,7 @@ async fn setup_decode_error_host(peer: String, peers: Vec<String>) -> Result<(),
 
                 if armed && !sent_error && peer == "peer-1" {
                     if let Some(socket) = p2p.tcp_server.connected_clients().first().cloned() {
-                        let errors = p2p.tcp_server.raw_send_parallel(vec![socket], vec![255]).await;
+                        let errors = p2p.tcp_server.raw_send_parallel(vec![socket], vec![255], vec![]).await;
                         assert!(errors.is_empty(), "Expected raw send to succeed");
                         sent_error = true;
                     }
