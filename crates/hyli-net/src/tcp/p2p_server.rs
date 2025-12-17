@@ -25,6 +25,8 @@ use crate::{
 
 use super::{tcp_server::TcpServer, Canal, NodeConnectionData, P2PTcpMessage, TcpEvent};
 
+const POISONED_RETRY_INTERVAL: Duration = Duration::from_secs(10);
+
 #[derive(Debug)]
 pub enum P2PServerEvent<Msg> {
     NewPeer {
@@ -51,6 +53,8 @@ pub struct PeerSocket {
     timestamp: TimestampMs,
     // This is the socket_addr used in the tcp_server for the current peer
     pub socket_addr: String,
+    // Last time we marked/retried this socket as poisoned.
+    pub poisoned_at: Option<TimestampMs>,
 }
 
 #[derive(Clone, Debug)]
@@ -288,6 +292,7 @@ where
                 Ok(None)
             }
             P2PTcpEvent::PingPeers => {
+                let now = TimestampMsClock::now();
                 let sockets: Vec<(ValidatorPublicKey, Canal, String, PeerSocket)> = self
                     .peers
                     .iter()
@@ -301,9 +306,27 @@ where
                     .collect();
 
                 for (pubkey, canal, public_addr, socket) in sockets {
+                    if socket.poisoned_at.is_some() {
+                        let should_retry = socket
+                            .poisoned_at
+                            .map(|poisoned_at| now.clone() - poisoned_at >= POISONED_RETRY_INTERVAL)
+                            .unwrap_or(true);
+                        if should_retry {
+                            if let Err(e) =
+                                self.try_start_connection_for_peer(&pubkey, canal.clone())
+                            {
+                                warn!(
+                                    "Problem when retrying poisoned socket for peer {} on canal {}: {}",
+                                    pubkey, canal, e
+                                );
+                            }
+                        }
+                        continue;
+                    }
                     self.metrics.ping(public_addr, canal.clone());
                     if let Err(e) = self.tcp_server.ping(socket.socket_addr.clone()).await {
                         debug!("Error pinging peer {}: {:?}", socket.socket_addr, e);
+                        self.mark_socket_poisoned(&socket.socket_addr);
                         let _ = self.try_start_connection_for_peer(&pubkey, canal.clone());
                     }
                 }
@@ -344,6 +367,30 @@ where
         })
     }
 
+    fn mark_socket_poisoned(&mut self, dest: &String) {
+        let mut target = self
+            .get_peer_by_socket_addr(dest)
+            .map(|(pubkey, canal, _, _)| (pubkey.clone(), canal.clone()));
+
+        if target.is_none() {
+            if let Some((public_addr, canal_name)) = dest.split_once('/') {
+                if let Some((pubkey, _)) = self
+                    .peers
+                    .iter()
+                    .find(|(_, info)| info.node_connection_data.p2p_public_address == public_addr)
+                {
+                    target = Some((pubkey.clone(), Canal::new(canal_name.to_string())));
+                }
+            }
+        }
+
+        if let Some((pubkey, canal)) = target {
+            if let Some(peer_socket) = self.get_socket_mut(&canal, &pubkey) {
+                peer_socket.poisoned_at = Some(TimestampMsClock::now());
+            }
+        }
+    }
+
     async fn handle_error_event(
         &mut self,
         dest: String,
@@ -357,18 +404,31 @@ where
 
         // TODO: An error can happen when a message was no *sent* correctly. Investigate how to handle that specific case
         // TODO: match the error type to decide what to do
+        self.mark_socket_poisoned(&dest);
         self.tcp_server.drop_peer_stream(dest.clone());
-        if let Some((_peer_pubkey, canal, info, _)) = self.get_peer_by_socket_addr(&dest) {
+        let retry_target = self
+            .get_peer_by_socket_addr(&dest)
+            .map(|(peer_pubkey, canal, info, _)| {
+                (
+                    peer_pubkey.clone(),
+                    canal.clone(),
+                    info.node_connection_data.name.clone(),
+                )
+            });
+
+        if let Some((peer_pubkey, canal, peer_name)) = retry_target {
             trace!(
                 "Will retry connection to peer {} canal {} after error {}",
-                info.node_connection_data.name,
+                peer_name,
                 canal,
                 dest
             );
-            self.start_connection_task(
-                info.node_connection_data.p2p_public_address.clone(),
-                canal.clone(),
-            )
+            if let Err(e) = self.try_start_connection_for_peer(&peer_pubkey, canal.clone()) {
+                warn!(
+                    "Problem when retrying connection to peer {} after error: {}",
+                    peer_pubkey, e
+                );
+            }
         }
         None
     }
@@ -381,18 +441,31 @@ where
         // When we receive a close event
         // It is a closed connection that need to be removed from tcp server clients in all cases
         // If it is a connection matching a canal/peer, it means we can retry
+        self.mark_socket_poisoned(&dest);
         self.tcp_server.drop_peer_stream(dest.clone());
-        if let Some((_peer_pubkey, canal, info, _)) = self.get_peer_by_socket_addr(&dest) {
+        let retry_target = self
+            .get_peer_by_socket_addr(&dest)
+            .map(|(peer_pubkey, canal, info, _)| {
+                (
+                    peer_pubkey.clone(),
+                    canal.clone(),
+                    info.node_connection_data.name.clone(),
+                )
+            });
+
+        if let Some((peer_pubkey, canal, peer_name)) = retry_target {
             trace!(
                 "Will retry connection to peer {} canal {} after close {}",
-                info.node_connection_data.name,
+                peer_name,
                 canal,
                 dest
             );
-            self.start_connection_task(
-                info.node_connection_data.p2p_public_address.clone(),
-                canal.clone(),
-            )
+            if let Err(e) = self.try_start_connection_for_peer(&peer_pubkey, canal.clone()) {
+                warn!(
+                    "Problem when retrying connection to peer {} after close: {}",
+                    peer_pubkey, e
+                );
+            }
         } else {
             warn!(
                 "Closed socket {} did not map to a known peer/canal on node={}",
@@ -491,12 +564,14 @@ where
                 let socket_addr = peer_socket.socket_addr.clone();
                 peer_socket.timestamp = timestamp;
                 peer_socket.socket_addr = dest.clone();
+                peer_socket.poisoned_at = None;
                 (socket_addr.clone(), dest.clone())
             } else {
                 debug!(
                     "Local peer {}/{} ({}): keeping socket {} and discard too old {}",
                     v.msg.p2p_public_address, canal, peer_pubkey, peer_socket.socket_addr, dest
                 );
+                peer_socket.poisoned_at = None;
                 (dest.clone(), peer_socket.socket_addr.clone())
             };
             trace!(
@@ -528,6 +603,7 @@ where
                     PeerSocket {
                         timestamp,
                         socket_addr: dest,
+                        poisoned_at: None,
                     },
                 );
             }
@@ -550,6 +626,7 @@ where
                         PeerSocket {
                             timestamp,
                             socket_addr: dest,
+                            poisoned_at: None,
                         },
                     )]),
                     node_connection_data: v.msg.clone(),
@@ -598,6 +675,11 @@ where
         pubkey: &ValidatorPublicKey,
         canal: Canal,
     ) -> anyhow::Result<()> {
+        let now = TimestampMsClock::now();
+        if let Some(peer_socket) = self.get_socket_mut(&canal, pubkey) {
+            peer_socket.poisoned_at = Some(now.clone());
+        }
+
         let peer = self
             .peers
             .get(pubkey)
@@ -756,6 +838,17 @@ where
             );
             return Ok(());
         };
+        let socket_addr = peer_socket.socket_addr.clone();
+        if peer_socket.poisoned_at.is_some() {
+            warn!(
+                "Peer {} socket {} for canal {} is poisoned; skipping send on node {}",
+                validator_pub_key,
+                socket_addr,
+                canal,
+                self.node_id
+            );
+            return Ok(());
+        }
 
         if let Some(jobs) = self.canal_jobs.get_mut(&canal) {
             if !jobs.is_empty() {
@@ -773,9 +866,10 @@ where
 
         if let Err(e) = self
             .tcp_server
-            .send(peer_socket.socket_addr.clone(), P2PTcpMessage::Data(msg))
+            .send(socket_addr.clone(), P2PTcpMessage::Data(msg))
             .await
         {
+            self.mark_socket_poisoned(&socket_addr);
             self.try_start_connection_for_peer(&validator_pub_key, canal)
                 .context(format!(
                     "Re-handshaking after message sending error with peer {validator_pub_key}"
@@ -828,9 +922,12 @@ where
             .iter()
             .filter_map(|(pubkey, peer)| {
                 if only_for.contains(pubkey) {
-                    peer.canals
-                        .get(&canal)
-                        .map(|socket| (socket.socket_addr.clone(), pubkey.clone()))
+                    peer.canals.get(&canal).and_then(|socket| {
+                        socket
+                            .poisoned_at
+                            .is_none()
+                            .then_some((socket.socket_addr.clone(), pubkey.clone()))
+                    })
                 } else {
                     None
                 }
@@ -845,6 +942,7 @@ where
         HashMap::from_iter(res.into_iter().filter_map(|(k, v)| {
             peer_addr_to_pubkey.get(&k).map(|pubkey| {
                 error!("Error sending message to {} during broadcast: {}", k, v);
+                self.mark_socket_poisoned(&k);
                 if let Err(e) = self.try_start_connection_for_peer(pubkey, canal.clone()) {
                     warn!("Problem when triggering re-handshake after message sending error with peer {}/{}: {}", pubkey, canal, e);
                 }
