@@ -1455,19 +1455,15 @@ pub mod tests {
         )
         .await?;
         // Server2 may see an intermediate close before the verack.
-        receive_and_handle_until(
-            &mut p2p_server2,
-            "Expected HandShake Verack",
-            |event| {
-                matches!(
-                    event,
-                    P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                        dest: _,
-                        data: P2PTcpMessage::Handshake(Handshake::Verack(_))
-                    })
-                )
-            },
-        )
+        receive_and_handle_until(&mut p2p_server2, "Expected HandShake Verack", |event| {
+            matches!(
+                event,
+                P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                    dest: _,
+                    data: P2PTcpMessage::Handshake(Handshake::Verack(_))
+                })
+            )
+        })
         .await?;
 
         assert_eq!(p2p_server1.peers.len(), 1);

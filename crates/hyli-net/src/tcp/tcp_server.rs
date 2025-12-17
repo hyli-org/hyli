@@ -766,7 +766,10 @@ pub mod tests {
         assert!(matches!(evt, TcpEvent::Error { .. }));
 
         let followup = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
-        assert!(followup.is_err(), "expected no further events after decode error");
+        assert!(
+            followup.is_err(),
+            "expected no further events after decode error"
+        );
 
         Ok(())
     }

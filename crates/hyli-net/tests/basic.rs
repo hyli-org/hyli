@@ -182,8 +182,7 @@ async fn setup_drop_host(
 
     if peer == "peer-1" {
         for peer in all_other_peers.clone() {
-            let _ =
-                p2p.try_start_connection(format!("{}:{}", peer.clone(), 9090), Canal::new("A"));
+            let _ = p2p.try_start_connection(format!("{}:{}", peer.clone(), 9090), Canal::new("A"));
         }
     }
 
@@ -362,10 +361,7 @@ pub fn setup_drops(peers: Vec<String>, sim: &mut Sim<'_>, seed: u64) -> anyhow::
     }
 }
 
-async fn setup_decode_error_host(
-    peer: String,
-    peers: Vec<String>,
-) -> Result<(), Box<dyn Error>> {
+async fn setup_decode_error_host(peer: String, peers: Vec<String>) -> Result<(), Box<dyn Error>> {
     let crypto = BlstCrypto::new(peer.clone().as_str())?;
     let mut p2p = P2PServer::<Msg>::new(
         std::sync::Arc::new(crypto),
@@ -458,7 +454,9 @@ pub fn setup_decode_error_reconnect(
     for peer in peers.clone().into_iter() {
         let peer_clone = peer.clone();
         let peers_clone = peers.clone();
-        sim.client(peer.clone(), async move { setup_decode_error_host(peer_clone, peers_clone).await })
+        sim.client(peer.clone(), async move {
+            setup_decode_error_host(peer_clone, peers_clone).await
+        })
     }
 
     sim.run()
