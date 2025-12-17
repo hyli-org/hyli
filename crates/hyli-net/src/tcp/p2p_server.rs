@@ -1426,7 +1426,8 @@ pub mod tests {
             &mut p2p_server2,
             P2PTcpEvent::TcpEvent(TcpEvent::Message {
                 dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Hello(_))
+                data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
+                ..
             }),
             "Expected HandShake Hello message"
         );
@@ -1435,7 +1436,8 @@ pub mod tests {
             &mut p2p_server1,
             P2PTcpEvent::TcpEvent(TcpEvent::Message {
                 dest: _,
-                data: P2PTcpMessage::Handshake(Handshake::Verack(_))
+                data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
+                ..
             }),
             "Expected HandShake Verack"
         );
@@ -1475,7 +1477,8 @@ pub mod tests {
                     event,
                     P2PTcpEvent::TcpEvent(TcpEvent::Message {
                         dest: _,
-                        data: P2PTcpMessage::Handshake(Handshake::Hello(_))
+                        data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
+                        ..
                     })
                 )
             },
@@ -1487,7 +1490,8 @@ pub mod tests {
                 event,
                 P2PTcpEvent::TcpEvent(TcpEvent::Message {
                     dest: _,
-                    data: P2PTcpMessage::Handshake(Handshake::Verack(_))
+                    data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
+                    ..
                 })
             )
         })
