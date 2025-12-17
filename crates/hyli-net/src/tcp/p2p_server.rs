@@ -479,11 +479,18 @@ where
         self.connecting
             .remove(&(v.msg.p2p_public_address.clone(), canal.clone()));
 
+        let existing_socket_addr = self.find_socket_addr(&canal, &peer_pubkey).cloned();
+        let existing_is_live = existing_socket_addr
+            .as_ref()
+            .is_some_and(|addr| self.tcp_server.connected_clients().contains(addr));
+
         if let Some(peer_socket) = self.get_socket_mut(&canal, &peer_pubkey) {
-            let (peer_addr_to_drop, kept_socket) = if peer_socket.timestamp < timestamp || {
-                peer_socket.timestamp == timestamp
-                    && local_pubkey.cmp(&peer_pubkey) == Ordering::Less
-            } {
+            let (peer_addr_to_drop, kept_socket) = if !existing_is_live
+                || peer_socket.timestamp < timestamp
+                || {
+                    peer_socket.timestamp == timestamp
+                        && local_pubkey.cmp(&peer_pubkey) == Ordering::Less
+                } {
                 debug!(
                     "Local peer {}/{} ({}): dropping socket {} in favor of more recent one {}",
                     v.msg.p2p_public_address, canal, peer_pubkey, peer_socket.socket_addr, dest
@@ -854,18 +861,21 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "turmoil")))]
 pub mod tests {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     use anyhow::Result;
     use borsh::{BorshDeserialize, BorshSerialize};
     use hyli_crypto::BlstCrypto;
+    use sdk::hyli_model_utils::TimestampMs;
     use tokio::net::TcpListener;
 
-    use crate::tcp::{p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent};
+    use crate::tcp::{
+        p2p_server::P2PServer, Canal, Handshake, NodeConnectionData, P2PTcpMessage, TcpEvent,
+    };
 
-    use super::P2PTcpEvent;
+    use super::{P2PTcpEvent, PeerInfo, PeerSocket};
 
     pub async fn find_available_port() -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1468,6 +1478,68 @@ pub mod tests {
 
         assert_eq!(p2p_server1.peers.len(), 1);
         assert_eq!(p2p_server2.peers.len(), 1);
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn p2p_accepts_handshake_when_socket_is_gone() -> Result<()> {
+        let crypto_local = BlstCrypto::new_random().unwrap();
+        let crypto_remote = BlstCrypto::new_random().unwrap();
+        let port = find_available_port().await;
+
+        let mut p2p_server = P2PServer::<TestMessage>::new(
+            crypto_local.into(),
+            "node-local".to_string(),
+            port,
+            None,
+            format!("127.0.0.1:{port}"),
+            "127.0.0.1:4321".into(),
+            HashSet::from_iter(vec![Canal::new("A")]),
+        )
+        .await?;
+
+        let canal = Canal::new("A");
+        let node_data = NodeConnectionData {
+            version: 1,
+            name: "node-remote".to_string(),
+            current_height: 0,
+            p2p_public_address: "127.0.0.1:9999".to_string(),
+            da_public_address: "127.0.0.1:4321".to_string(),
+        };
+        let signed = crypto_remote.sign(node_data.clone())?;
+        let peer_pubkey = signed.signature.validator.clone();
+
+        p2p_server.peers.insert(
+            peer_pubkey.clone(),
+            PeerInfo {
+                canals: HashMap::from_iter(vec![(
+                    canal.clone(),
+                    PeerSocket {
+                        timestamp: TimestampMs(2000),
+                        socket_addr: "stale-socket".to_string(),
+                    },
+                )]),
+                node_connection_data: node_data,
+            },
+        );
+
+        p2p_server.handle_peer_update(
+            canal.clone(),
+            &signed,
+            TimestampMs(1000),
+            "fresh-socket".to_string(),
+        );
+
+        let socket = p2p_server
+            .peers
+            .get(&peer_pubkey)
+            .unwrap()
+            .canals
+            .get(&canal)
+            .unwrap();
+        assert_eq!(socket.socket_addr, "fresh-socket");
+        assert_eq!(socket.timestamp, TimestampMs(1000));
 
         Ok(())
     }

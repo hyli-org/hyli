@@ -149,7 +149,7 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "turmoil")))]
 mod tests {
     use std::time::Duration;
 
