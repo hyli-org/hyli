@@ -180,10 +180,8 @@ async fn setup_drop_host(
 
     tracing::info!("All other peers {:?}", all_other_peers);
 
-    if peer == "peer-1" {
-        for peer in all_other_peers.clone() {
-            let _ = p2p.try_start_connection(format!("{}:{}", peer.clone(), 9090), Canal::new("A"));
-        }
+    for peer in all_other_peers.clone() {
+        let _ = p2p.try_start_connection(format!("{}:{}", peer.clone(), 9090), Canal::new("A"));
     }
 
     let mut interval_broadcast = tokio::time::interval(Duration::from_millis(50));
@@ -234,11 +232,8 @@ async fn setup_drop_client(
 
     tracing::info!("All other peers {:?}", all_other_peers);
 
-    if peer == "peer-1" {
-        for target_peer in all_other_peers.clone() {
-            let _ = p2p
-                .try_start_connection(format!("{}:{}", target_peer.clone(), 9090), Canal::new("A"));
-        }
+    for peer in all_other_peers.clone() {
+        let _ = p2p.try_start_connection(format!("{}:{}", peer.clone(), 9090), Canal::new("A"));
     }
 
     let mut interval_broadcast = tokio::time::interval(Duration::from_millis(100));
