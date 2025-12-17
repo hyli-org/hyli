@@ -484,7 +484,7 @@ pub mod tests {
 
     use anyhow::Result;
     use bytes::Bytes;
-    use futures::TryStreamExt;
+    use futures::{SinkExt, TryStreamExt};
     use sdk::{BlockHeight, DataAvailabilityEvent, DataAvailabilityRequest};
 
     use super::TcpServer;
@@ -740,6 +740,33 @@ pub mod tests {
 
         let received_data = server.listen_next().await;
         assert!(received_data.is_some_and(|tcp_event| matches!(tcp_event, TcpEvent::Closed { .. })));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tcp_decode_error_stops_processing() -> Result<()> {
+        let mut server = DAServer::start(0, "DaServer").await?;
+        let mut client = TcpClient::<Vec<u8>, Vec<u8>>::connect(
+            "raw".to_string(),
+            format!("0.0.0.0:{}", server.local_addr().unwrap().port()),
+        )
+        .await?;
+
+        let _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
+
+        client.sender.send(Bytes::from_static(&[0u8; 4])).await?;
+        let valid = borsh::to_vec(&DataAvailabilityRequest(BlockHeight(1)))?;
+        client.sender.send(Bytes::from(valid)).await?;
+
+        let evt = tokio::time::timeout(Duration::from_millis(200), server.listen_next())
+            .await
+            .expect("timeout waiting for error event")
+            .expect("expected an error event");
+        assert!(matches!(evt, TcpEvent::Error { .. }));
+
+        let followup = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
+        assert!(followup.is_err(), "expected no further events after decode error");
 
         Ok(())
     }

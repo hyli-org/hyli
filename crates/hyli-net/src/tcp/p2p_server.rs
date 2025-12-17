@@ -889,6 +889,21 @@ pub mod tests {
         }};
     }
 
+    async fn receive_and_handle_until(
+        server: &mut super::P2PServer<TestMessage>,
+        error_msg: &str,
+        predicate: impl Fn(&P2PTcpEvent<P2PTcpMessage<TestMessage>>) -> bool,
+    ) -> Result<()> {
+        loop {
+            let event = receive_event(server, error_msg).await?;
+            let matched = predicate(&event);
+            server.handle_p2p_tcp_event(event).await?;
+            if matched {
+                return Ok(());
+            }
+        }
+    }
+
     async fn setup_p2p_server_pair() -> Result<(
         (u16, super::P2PServer<TestMessage>),
         (u16, super::P2PServer<TestMessage>),
@@ -1362,6 +1377,101 @@ pub mod tests {
             1,
             "Server2 should have reconnected to server1"
         );
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn p2p_server_reconnects_after_decode_error() -> Result<()> {
+        let ((_, mut p2p_server1), (port2, mut p2p_server2)) = setup_p2p_server_pair().await?;
+
+        // Initial connection
+        let _ = p2p_server1.try_start_connection(format!("127.0.0.1:{port2}"), Canal::new("A"));
+
+        // Server1 waits for TcpClient to connect
+        receive_and_handle_event!(
+            &mut p2p_server1,
+            P2PTcpEvent::HandShakeTcpClient(_, _, _),
+            "Expected HandShake TCP Client connection"
+        );
+        // Server2 receives Hello message
+        receive_and_handle_event!(
+            &mut p2p_server2,
+            P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                dest: _,
+                data: P2PTcpMessage::Handshake(Handshake::Hello(_))
+            }),
+            "Expected HandShake Hello message"
+        );
+        // Server1 receives Verack message
+        receive_and_handle_event!(
+            &mut p2p_server1,
+            P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                dest: _,
+                data: P2PTcpMessage::Handshake(Handshake::Verack(_))
+            }),
+            "Expected HandShake Verack"
+        );
+
+        assert_eq!(p2p_server1.peers.len(), 1);
+        assert_eq!(p2p_server2.peers.len(), 1);
+
+        let connected = p2p_server1.tcp_server.connected_clients();
+        assert_eq!(connected.len(), 1, "Expected a single client socket");
+        let socket_addr = connected.first().cloned().unwrap();
+
+        let send_errors = p2p_server1
+            .tcp_server
+            .raw_send_parallel(vec![socket_addr], vec![255])
+            .await;
+        assert!(send_errors.is_empty(), "Expected raw send to succeed");
+
+        // Server2 should see the decode error and attempt to reconnect.
+        receive_and_handle_event!(
+            &mut p2p_server2,
+            P2PTcpEvent::TcpEvent(TcpEvent::Error { dest: _, error: _ }),
+            "Expected Tcp Error message"
+        );
+
+        // Server2 waits for TcpClient to reconnect
+        receive_and_handle_event!(
+            &mut p2p_server2,
+            P2PTcpEvent::HandShakeTcpClient(_, _, _),
+            "Expected HandShake TCP Client connection"
+        );
+        // Server1 may see the close before the new handshake hello.
+        receive_and_handle_until(
+            &mut p2p_server1,
+            "Expected HandShake Hello message",
+            |event| {
+                matches!(
+                    event,
+                    P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                        dest: _,
+                        data: P2PTcpMessage::Handshake(Handshake::Hello(_))
+                    })
+                )
+            },
+        )
+        .await?;
+        // Server2 may see an intermediate close before the verack.
+        receive_and_handle_until(
+            &mut p2p_server2,
+            "Expected HandShake Verack",
+            |event| {
+                matches!(
+                    event,
+                    P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                        dest: _,
+                        data: P2PTcpMessage::Handshake(Handshake::Verack(_))
+                    })
+                )
+            },
+        )
+        .await?;
+
+        assert_eq!(p2p_server1.peers.len(), 1);
+        assert_eq!(p2p_server2.peers.len(), 1);
 
         Ok(())
     }

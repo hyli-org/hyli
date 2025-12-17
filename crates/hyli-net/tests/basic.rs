@@ -59,6 +59,7 @@ turmoil_simple!(501..=520, 4, setup_drops);
 turmoil_simple!(521..=540, 10, setup_drops);
 
 turmoil_simple!(521..=540, 10, setup_late_host_at_first_handshake);
+turmoil_simple!(701, 2, setup_decode_error_reconnect);
 
 async fn setup_basic_host(
     peer: String,
@@ -179,8 +180,11 @@ async fn setup_drop_host(
 
     tracing::info!("All other peers {:?}", all_other_peers);
 
-    for peer in all_other_peers.clone() {
-        let _ = p2p.try_start_connection(format!("{}:{}", peer.clone(), 9090), Canal::new("A"));
+    if peer == "peer-1" {
+        for peer in all_other_peers.clone() {
+            let _ =
+                p2p.try_start_connection(format!("{}:{}", peer.clone(), 9090), Canal::new("A"));
+        }
     }
 
     let mut interval_broadcast = tokio::time::interval(Duration::from_millis(50));
@@ -231,8 +235,11 @@ async fn setup_drop_client(
 
     tracing::info!("All other peers {:?}", all_other_peers);
 
-    for peer in all_other_peers.clone() {
-        let _ = p2p.try_start_connection(format!("{}:{}", peer.clone(), 9090), Canal::new("A"));
+    if peer == "peer-1" {
+        for target_peer in all_other_peers.clone() {
+            let _ = p2p
+                .try_start_connection(format!("{}:{}", target_peer.clone(), 9090), Canal::new("A"));
+        }
     }
 
     let mut interval_broadcast = tokio::time::interval(Duration::from_millis(100));
@@ -353,4 +360,109 @@ pub fn setup_drops(peers: Vec<String>, sim: &mut Sim<'_>, seed: u64) -> anyhow::
             return Ok(());
         }
     }
+}
+
+async fn setup_decode_error_host(
+    peer: String,
+    peers: Vec<String>,
+) -> Result<(), Box<dyn Error>> {
+    let crypto = BlstCrypto::new(peer.clone().as_str())?;
+    let mut p2p = P2PServer::<Msg>::new(
+        std::sync::Arc::new(crypto),
+        peer.clone(),
+        9090,
+        None,
+        format!("{}:{}", peer, 9090),
+        format!("{}:{}", peer, 4141),
+        HashSet::from_iter(std::iter::once(Canal::new("A"))),
+    )
+    .await?;
+
+    let all_other_peers: HashSet<String> =
+        HashSet::from_iter(peers.clone().into_iter().filter(|p| p != &peer));
+
+    for peer in all_other_peers.clone() {
+        let _ = p2p.try_start_connection(format!("{}:{}", peer.clone(), 9090), Canal::new("A"));
+    }
+
+    let mut interval = tokio::time::interval(Duration::from_millis(50));
+    let start = tokio::time::Instant::now();
+    let mut armed = false;
+    let mut sent_error = false;
+    let mut saw_disconnect = false;
+    let mut reconnected = false;
+    let deadline = start + Duration::from_secs(12);
+
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                if !armed && start.elapsed() > Duration::from_secs(1) && p2p.peers.len() == all_other_peers.len() {
+                    armed = true;
+                }
+
+                if armed && !sent_error && peer == "peer-1" {
+                    if let Some(socket) = p2p.tcp_server.connected_clients().first().cloned() {
+                        let errors = p2p.tcp_server.raw_send_parallel(vec![socket], vec![255]).await;
+                        assert!(errors.is_empty(), "Expected raw send to succeed");
+                        sent_error = true;
+                    }
+                }
+
+                if armed && reconnected && (peer != "peer-1" || sent_error) {
+                    break Ok(());
+                }
+
+                if tokio::time::Instant::now() > deadline {
+                    break Err("Timed out waiting for reconnection".into());
+                }
+            }
+            tcp_event = p2p.listen_next() => {
+                if armed {
+                    if matches!(
+                        tcp_event,
+                        hyli_net::tcp::p2p_server::P2PTcpEvent::TcpEvent(
+                            hyli_net::tcp::TcpEvent::Error { .. }
+                                | hyli_net::tcp::TcpEvent::Closed { .. }
+                        )
+                    ) {
+                        saw_disconnect = true;
+                    }
+
+                    if saw_disconnect
+                        && matches!(
+                            tcp_event,
+                            hyli_net::tcp::p2p_server::P2PTcpEvent::HandShakeTcpClient(_, _, _)
+                                | hyli_net::tcp::p2p_server::P2PTcpEvent::TcpEvent(
+                                    hyli_net::tcp::TcpEvent::Message {
+                                        data: P2PTcpMessage::Handshake(_),
+                                        ..
+                                    }
+                                )
+                        )
+                    {
+                        reconnected = true;
+                    }
+                }
+                _ = p2p.handle_p2p_tcp_event(tcp_event).await;
+            }
+        }
+    }
+}
+
+pub fn setup_decode_error_reconnect(
+    peers: Vec<String>,
+    sim: &mut Sim<'_>,
+    _seed: u64,
+) -> anyhow::Result<()> {
+    tracing::info!("Starting simulation with peers {:?}", peers.clone());
+    for peer in peers.clone().into_iter() {
+        let peer_clone = peer.clone();
+        let peers_clone = peers.clone();
+        sim.client(peer.clone(), async move { setup_decode_error_host(peer_clone, peers_clone).await })
+    }
+
+    sim.run()
+        .map_err(|e| anyhow::anyhow!("Simulation error {}", e.to_string()))?;
+
+    Ok(())
 }
