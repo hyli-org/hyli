@@ -3,7 +3,6 @@ use std::{
     io::ErrorKind,
     marker::PhantomData,
     net::{Ipv4Addr, SocketAddr},
-    sync::Arc,
     time::Duration,
 };
 
@@ -22,7 +21,7 @@ use crate::{
     logged_task::logged_task,
     metrics::TcpServerMetrics,
     net::{TcpListener, TcpStream},
-    tcp::{to_tcp_message, TcpMessage},
+    tcp::{decode_tcp_payload, to_tcp_message, TcpData, TcpMessage},
 };
 use tracing::{debug, error, trace, warn};
 
@@ -84,6 +83,7 @@ where
                 Ok((stream, socket_addr)) = self.tcp_listener.accept() => {
                     let mut codec = LengthDelimitedCodec::new();
                     if let Some(len) = self.max_frame_length {
+                println!("Setting max frame length to {}", len);
                         codec.set_max_frame_length(len);
                     }
 
@@ -176,7 +176,7 @@ where
 
         // Send the message to all targets concurrently and wait for them to finish
         let all_sent = {
-            let message = TcpMessage::Data(Arc::new(msg));
+            let message = TcpMessage::Data(TcpData::new(msg));
             debug!("Broadcasting msg {:?} to all", message);
             let mut tasks = vec![];
             for (name, socket) in self
@@ -303,10 +303,11 @@ where
                             metrics.message_received();
                             metrics.message_received_bytes(bytes.len() as u64);
                             // Try non-blocking send first to detect channel pressure.
-                            let event = match borsh::from_slice(&bytes) {
-                                Ok(data) => TcpEvent::Message {
+                            let event = match decode_tcp_payload(&bytes) {
+                                Ok((headers, data)) => TcpEvent::Message {
                                     dest: cloned_socket_addr.clone(),
                                     data,
+                                    headers,
                                 },
                                 Err(io) => {
                                     metrics.message_error();
@@ -494,9 +495,9 @@ pub mod tests {
 
     #[tokio::test]
     async fn tcp_test() -> Result<()> {
-        let mut server = DAServer::start(2345, "DaServer").await?;
+        let mut server = DAServer::start(2346, "DaServer").await?;
 
-        let mut client = DAClient::connect("me".to_string(), "0.0.0.0:2345").await?;
+        let mut client = DAClient::connect("me".to_string(), "0.0.0.0:2346").await?;
 
         // Ping
         client.ping().await?;
@@ -704,19 +705,19 @@ pub mod tests {
         // Send data to server
         // A vec will be prefixed with 4 bytes (u32) containing the size of the payload
         // Here we reach 100 bytes <= 100
-        client.send(vec![0b_0; 96]).await?;
+        client.send(vec![0b_0; 88]).await?;
 
         let data = match server.listen_next().await.unwrap() {
             TcpEvent::Message { data, .. } => data,
             _ => panic!("Expected a Message event"),
         };
 
-        assert_eq!(data.len(), 96);
+        assert_eq!(data.len(), 88);
         assert!(server.pool_receiver.try_recv().is_err());
 
         // Send data to server
         // Here we reach 101 bytes, it should explode the limit
-        let sent = client.send(vec![0b_0; 97]).await;
+        let sent = client.send(vec![0b_0; 89]).await;
         tracing::warn!("Sent: {:?}", sent);
         assert!(sent.is_err_and(|e| e.to_string().contains("frame size too big")));
 
@@ -727,16 +728,22 @@ pub mod tests {
         .await?;
 
         // Should be ok server side
-        client_relaxed.send(vec![0b_0; 96]).await?;
+        client_relaxed.send(vec![0b_0; 88]).await?;
 
         let data = match server.listen_next().await.unwrap() {
             TcpEvent::Message { data, .. } => data,
-            _ => panic!("Expected a Message event"),
+            TcpEvent::Error { dest, error } => panic!(
+                "Expected a Message event, got Error for {}: {}",
+                dest, error
+            ),
+            TcpEvent::Closed { dest } => {
+                panic!("Expected a Message event, got Closed for {}", dest)
+            }
         };
-        assert_eq!(data.len(), 96);
+        assert_eq!(data.len(), 88);
 
         // Should explode server side
-        client_relaxed.send(vec![0b_0; 97]).await?;
+        client_relaxed.send(vec![0b_0; 89]).await?;
 
         let received_data = server.listen_next().await;
         assert!(received_data.is_some_and(|tcp_event| matches!(tcp_event, TcpEvent::Closed { .. })));
