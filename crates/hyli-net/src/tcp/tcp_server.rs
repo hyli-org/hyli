@@ -98,6 +98,14 @@ where
                     }
                 }
                 message = self.pool_receiver.recv() => {
+                    let queued = self.pool_receiver.len();
+                    if let Some(msg) = message.as_ref() {
+                        match msg.as_ref() {
+                            TcpEvent::Message { dest, .. } => trace!("TcpServer event queue: message for {} ({} remaining)", dest, queued),
+                            TcpEvent::Closed { dest } => trace!("TcpServer event queue: closed for {} ({} remaining)", dest, queued),
+                            TcpEvent::Error { dest, error } => trace!("TcpServer event queue: error for {}: {} ({} remaining)", dest, error, queued),
+                        }
+                    }
                     return message.map(|message| *message);
                 }
             }
@@ -265,6 +273,9 @@ where
         let pool_sender = self.pool_sender.clone();
         let cloned_socket_addr = socket_addr.clone();
         let metrics = self.metrics.clone();
+        let pool_sender_for_sender = self.pool_sender.clone();
+        // Track how many frames we read per socket to detect stalls.
+        let mut frames_received: u64 = 0;
 
         // This task is responsible for reception of ping and message.
         // If an error occurs and is not an InvalidData error, we assume the task is to be aborted.
@@ -282,23 +293,58 @@ where
                                 bytes.len(),
                                 hex::encode(bytes.iter().take(10).cloned().collect::<Vec<_>>())
                             );
+                            frames_received += 1;
+                            trace!(
+                                "Socket {} frame #{} ({} bytes) queued for decode",
+                                cloned_socket_addr,
+                                frames_received,
+                                bytes.len()
+                            );
                             metrics.message_received();
                             metrics.message_received_bytes(bytes.len() as u64);
-                            let _ = pool_sender
-                                .send(Box::new(match borsh::from_slice(&bytes) {
-                                    Ok(data) => TcpEvent::Message {
-                                        dest: cloned_socket_addr.clone(),
-                                        data,
-                                    },
-                                    Err(io) => {
-                                        metrics.message_error();
-                                        TcpEvent::Error {
+                            // Try non-blocking send first to detect channel pressure.
+                            let event = match borsh::from_slice(&bytes) {
+                                Ok(data) => TcpEvent::Message {
+                                    dest: cloned_socket_addr.clone(),
+                                    data,
+                                },
+                                Err(io) => {
+                                    metrics.message_error();
+                                    warn!(
+                                        "Failed to decode TCP frame on {} ({} bytes): {}. Closing socket.",
+                                        cloned_socket_addr,
+                                        bytes.len(),
+                                        io
+                                    );
+                                    // Treat decode failure as fatal: notify upstream and stop the loop.
+                                    let _ = pool_sender
+                                        .send(Box::new(TcpEvent::Error {
                                             dest: cloned_socket_addr.clone(),
                                             error: io.to_string(),
-                                        }
-                                    }
-                                }))
-                                .await;
+                                        }))
+                                        .await;
+                                    break;
+                                }
+                            };
+
+                            match pool_sender.try_send(Box::new(event)) {
+                                Ok(_) => {}
+                                Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
+                                    warn!(
+                                        "TCP event channel full for socket {}",
+                                        cloned_socket_addr,
+                                    );
+                                    // Fallback to an awaited send to avoid dropping the event.
+                                    let _ = pool_sender.send(event).await;
+                                }
+                                Err(tokio::sync::mpsc::error::TrySendError::Closed(event)) => {
+                                    warn!(
+                                        "TCP event channel closed for socket {}, dropping event",
+                                        cloned_socket_addr,
+                                    );
+                                    drop(event);
+                                }
+                            }
                         }
                     }
 
@@ -324,7 +370,10 @@ where
                     }
                     None => {
                         // If we reach here, the stream has been closed.
-                        warn!("Socket {} closed", cloned_socket_addr);
+                        warn!(
+                            "Socket {} closed after receiving {} frame(s)",
+                            cloned_socket_addr, frames_received
+                        );
                         metrics.message_closed();
                         let _ = pool_sender
                             .send(Box::new(TcpEvent::Closed {
@@ -342,6 +391,7 @@ where
 
         let abort_sender_task = logged_task({
             let cloned_socket_addr = socket_addr.clone();
+            let pool_sender = pool_sender_for_sender.clone();
             async move {
                 while let Some(msg) = sender_recv.recv().await {
                     let Ok(msg_bytes) = msg.try_into() else {
@@ -362,11 +412,23 @@ where
                                 "Timeout sending message to peer {}: {}",
                                 cloned_socket_addr, e
                             );
+                            let _ = pool_sender
+                                .send(Box::new(TcpEvent::Error {
+                                    dest: cloned_socket_addr.clone(),
+                                    error: format!("send_timeout: {e}"),
+                                }))
+                                .await;
                             metrics.message_send_error();
                             break;
                         }
                         Ok(Err(e)) => {
                             error!("Sending message to peer {}: {}", cloned_socket_addr, e);
+                            let _ = pool_sender
+                                .send(Box::new(TcpEvent::Error {
+                                    dest: cloned_socket_addr.clone(),
+                                    error: e.to_string(),
+                                }))
+                                .await;
                             metrics.message_send_error();
                             break;
                         }
@@ -401,6 +463,11 @@ where
 
     pub fn drop_peer_stream(&mut self, peer_ip: String) {
         if let Some(peer_stream) = self.sockets.remove(&peer_ip) {
+            tracing::warn!(
+                "Dropping peer stream {} (remaining sockets: {})",
+                peer_ip,
+                self.sockets.len()
+            );
             peer_stream.abort_sender_task.abort();
             peer_stream.abort_receiver_task.abort();
             tracing::debug!("Client {} dropped & disconnected", peer_ip);
@@ -417,7 +484,7 @@ pub mod tests {
 
     use anyhow::Result;
     use bytes::Bytes;
-    use futures::TryStreamExt;
+    use futures::{SinkExt, TryStreamExt};
     use sdk::{BlockHeight, DataAvailabilityEvent, DataAvailabilityRequest};
 
     use super::TcpServer;
@@ -673,6 +740,36 @@ pub mod tests {
 
         let received_data = server.listen_next().await;
         assert!(received_data.is_some_and(|tcp_event| matches!(tcp_event, TcpEvent::Closed { .. })));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tcp_decode_error_stops_processing() -> Result<()> {
+        let mut server = DAServer::start(0, "DaServer").await?;
+        let mut client = TcpClient::<Vec<u8>, Vec<u8>>::connect(
+            "raw".to_string(),
+            format!("0.0.0.0:{}", server.local_addr().unwrap().port()),
+        )
+        .await?;
+
+        let _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
+
+        client.sender.send(Bytes::from_static(&[0u8; 4])).await?;
+        let valid = borsh::to_vec(&DataAvailabilityRequest(BlockHeight(1)))?;
+        client.sender.send(Bytes::from(valid)).await?;
+
+        let evt = tokio::time::timeout(Duration::from_millis(200), server.listen_next())
+            .await
+            .expect("timeout waiting for error event")
+            .expect("expected an error event");
+        assert!(matches!(evt, TcpEvent::Error { .. }));
+
+        let followup = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
+        assert!(
+            followup.is_err(),
+            "expected no further events after decode error"
+        );
 
         Ok(())
     }
