@@ -166,7 +166,7 @@ LIMIT 1;
                 .collect();
 
             Ok(APIProofDetails {
-                tx_hash: api_tx.tx_hash.0,
+                tx_hash: api_tx.tx_hash,
                 parent_dp_hash: api_tx.parent_dp_hash,
                 block_hash: api_tx.block_hash,
                 block_height: api_tx.block_height,
@@ -177,7 +177,7 @@ LIMIT 1;
                 timestamp: api_tx
                     .timestamp
                     .map(|t| TimestampMs(t.and_utc().timestamp_millis() as u128)),
-                lane_id: api_tx.lane_id.map(|l| l.0),
+                lane_id: api_tx.lane_id,
                 proof_outputs,
             })
         }),

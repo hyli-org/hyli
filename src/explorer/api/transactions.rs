@@ -16,146 +16,14 @@ use sqlx::postgres::PgRow;
 use sqlx::types::chrono::NaiveDateTime;
 use sqlx::FromRow;
 use sqlx::Row;
-use sqlx::{prelude::Type, Postgres};
 
 use crate::model::*;
 use hyli_modules::log_error;
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct DataProposalHashDb(pub DataProposalHash);
-
-impl From<DataProposalHash> for DataProposalHashDb {
-    fn from(dp_hash: DataProposalHash) -> Self {
-        DataProposalHashDb(dp_hash)
-    }
-}
-
-impl Type<Postgres> for DataProposalHashDb {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as Type<Postgres>>::type_info()
-    }
-}
-impl sqlx::Encode<'_, sqlx::Postgres> for DataProposalHashDb {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> std::result::Result<
-        sqlx::encode::IsNull,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0 .0, buf)
-    }
-}
-
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for DataProposalHashDb {
-    fn decode(
-        value: sqlx::postgres::PgValueRef<'r>,
-    ) -> std::result::Result<
-        DataProposalHashDb,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(DataProposalHashDb(DataProposalHash(inner)))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TxHashDb(pub TxHash);
-
-impl From<TxHash> for TxHashDb {
-    fn from(tx_hash: TxHash) -> Self {
-        TxHashDb(tx_hash)
-    }
-}
-
-impl Type<Postgres> for TxHashDb {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as Type<Postgres>>::type_info()
-    }
-}
-impl sqlx::Encode<'_, sqlx::Postgres> for TxHashDb {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> std::result::Result<
-        sqlx::encode::IsNull,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0 .0, buf)
-    }
-}
-
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for TxHashDb {
-    fn decode(
-        value: sqlx::postgres::PgValueRef<'r>,
-    ) -> std::result::Result<
-        TxHashDb,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(TxHashDb(TxHash(inner)))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct TxIdDb(pub TxId);
-
-impl From<TxId> for TxIdDb {
-    fn from(tx_id: TxId) -> Self {
-        TxIdDb(tx_id)
-    }
-}
-
-impl<'r> FromRow<'r, PgRow> for TxIdDb {
-    fn from_row(row: &'r PgRow) -> Result<Self, sqlx::Error> {
-        let tx_hash: TxHashDb = row.try_get("tx_hash")?;
-        let dp_hash: DataProposalHashDb = row.try_get("parent_dp_hash")?;
-        Ok(TxIdDb(TxId(dp_hash.0, tx_hash.0)))
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct LaneIdDb(pub LaneId);
-
-impl From<LaneId> for LaneIdDb {
-    fn from(tx_hash: LaneId) -> Self {
-        LaneIdDb(tx_hash)
-    }
-}
-
-impl Type<Postgres> for LaneIdDb {
-    fn type_info() -> sqlx::postgres::PgTypeInfo {
-        <String as Type<Postgres>>::type_info()
-    }
-}
-impl sqlx::Encode<'_, sqlx::Postgres> for LaneIdDb {
-    fn encode_by_ref(
-        &self,
-        buf: &mut sqlx::postgres::PgArgumentBuffer,
-    ) -> std::result::Result<
-        sqlx::encode::IsNull,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&hex::encode(&self.0 .0 .0), buf)
-    }
-}
-
-impl<'r> sqlx::Decode<'r, sqlx::Postgres> for LaneIdDb {
-    fn decode(
-        value: sqlx::postgres::PgValueRef<'r>,
-    ) -> std::result::Result<
-        LaneIdDb,
-        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
-    > {
-        let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(LaneIdDb(LaneId(ValidatorPublicKey(hex::decode(inner)?))))
-    }
-}
-
 #[derive(Debug)]
 pub struct TransactionDb {
     // Struct for the transactions table
-    pub tx_hash: TxHashDb,                         // Transaction hash
+    pub tx_hash: TxHash,                           // Transaction hash
     pub parent_dp_hash: DataProposalHash,          // Corresponds to the data proposal hash
     pub block_hash: Option<ConsensusProposalHash>, // Corresponds to the block hash
     pub block_height: Option<BlockHeight>,         // Corresponds to the block height
@@ -164,7 +32,7 @@ pub struct TransactionDb {
     pub transaction_type: TransactionTypeDb,       // Type of transaction
     pub transaction_status: TransactionStatusDb,   // Status of the transaction
     pub timestamp: Option<NaiveDateTime>,          // Timestamp of the transaction (block timestamp)
-    pub lane_id: Option<LaneIdDb>,                 // Lane ID of the transaction
+    pub lane_id: Option<LaneId>,                   // Lane ID of the transaction
     pub identity: Option<String>, // Identity of the transaction sender (null for proofs)
 }
 
@@ -180,8 +48,7 @@ impl<'r> FromRow<'r, PgRow> for TransactionDb {
                     .map_err(|e: TryFromIntError| sqlx::Error::Decode(e.into()))
             })
             .transpose()?;
-        let dp_hash_db: DataProposalHashDb = row.try_get("parent_dp_hash")?;
-        let parent_dp_hash = dp_hash_db.0;
+        let parent_dp_hash: DataProposalHash = row.try_get("parent_dp_hash")?;
         let index: Option<i32> = row.try_get("index")?;
         let version: i32 = row.try_get("version")?;
         let version: u32 = version
@@ -198,7 +65,7 @@ impl<'r> FromRow<'r, PgRow> for TransactionDb {
             ),
         };
         let timestamp: Option<NaiveDateTime> = row.try_get("timestamp").unwrap_or_default();
-        let lane_id: Option<LaneIdDb> = row.try_get("lane_id").unwrap_or_default();
+        let lane_id: Option<LaneId> = row.try_get("lane_id").unwrap_or_default();
         let identity: Option<String> = row.try_get("identity").unwrap_or_default();
 
         Ok(TransactionDb {
@@ -223,7 +90,7 @@ impl From<TransactionDb> for APITransaction {
             .timestamp
             .map(|t| TimestampMs(t.and_utc().timestamp_millis() as u128));
         APITransaction {
-            tx_hash: val.tx_hash.0,
+            tx_hash: val.tx_hash,
             parent_dp_hash: val.parent_dp_hash,
             block_hash: val.block_hash,
             block_height: val.block_height,
@@ -232,7 +99,7 @@ impl From<TransactionDb> for APITransaction {
             transaction_type: val.transaction_type,
             transaction_status: val.transaction_status,
             timestamp,
-            lane_id: val.lane_id.map(|l| l.0),
+            lane_id: val.lane_id,
             identity: val.identity,
         }
     }
@@ -406,7 +273,7 @@ pub async fn get_last_settled_tx_by_contract(
     };
 
     let tx_id = log_error!(
-        sqlx::query_as::<_, TxIdDb>(
+        sqlx::query_as::<_, TxId>(
             "
             SELECT 
                 t.parent_dp_hash, t.tx_hash 
@@ -421,8 +288,7 @@ pub async fn get_last_settled_tx_by_contract(
         .bind(contract_name)
         .bind(status)
         .fetch_optional(&state.db)
-        .await
-        .map(|db| db.map(|tx_id_db| tx_id_db.0)),
+        .await,
         "Failed to fetch last settled tx by contract"
     )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -646,7 +512,7 @@ pub async fn get_blob_transactions_by_contract(
             };
 
             Ok(TransactionWithBlobs {
-                tx_hash: api_tx.tx_hash.0,
+                tx_hash: api_tx.tx_hash,
                 parent_dp_hash: api_tx.parent_dp_hash,
                 block_hash,
                 block_height,
@@ -657,7 +523,7 @@ pub async fn get_blob_transactions_by_contract(
                 timestamp: api_tx
                     .timestamp
                     .map(|t| TimestampMs(t.and_utc().timestamp_millis() as u128)),
-                lane_id: api_tx.lane_id.map(|l| l.0),
+                lane_id: api_tx.lane_id,
                 identity,
                 blobs,
             })
