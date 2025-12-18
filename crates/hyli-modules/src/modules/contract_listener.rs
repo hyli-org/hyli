@@ -384,3 +384,6 @@ impl ContractListener {
         Ok(txs)
     }
 }
+
+#[cfg(test)]
+mod contract_listener_tests;

@@ -19,6 +19,7 @@ use futures::{SinkExt, StreamExt};
 use hyli_model::api::{
     BlobWithStatus, TransactionStatusDb, TransactionTypeDb, TransactionWithBlobs,
 };
+use hyli_model::indexer::MIGRATOR;
 use hyli_model::utils::TimestampMs;
 use hyli_modules::bus::BusMessage;
 use hyli_modules::log_error;
@@ -88,8 +89,6 @@ impl Explorer {
         }
     }
 }
-
-pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/indexer/migrations");
 
 impl Module for Explorer {
     type Context = (SharedConf, SharedBuildApiCtx);

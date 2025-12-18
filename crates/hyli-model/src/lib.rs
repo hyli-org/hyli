@@ -19,6 +19,8 @@ pub use transaction::*;
 pub mod api;
 
 #[cfg(feature = "sqlx")]
+pub mod indexer;
+#[cfg(feature = "sqlx")]
 pub mod sqlx_impls;
 
 mod contract;

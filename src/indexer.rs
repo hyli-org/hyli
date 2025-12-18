@@ -7,8 +7,11 @@ use crate::{
 };
 use anyhow::{Context, Error, Result};
 use chrono::{DateTime, Utc};
-use hyli_model::api::{TransactionStatusDb, TransactionTypeDb};
 use hyli_model::utils::TimestampMs;
+use hyli_model::{
+    api::{TransactionStatusDb, TransactionTypeDb},
+    indexer::MIGRATOR,
+};
 use hyli_modules::{bus::BusClientSender, node_state::BlockNodeStateCallback};
 use hyli_modules::{
     bus::SharedMessageBus,
@@ -45,8 +48,6 @@ pub struct Indexer {
     handler_store: IndexerHandlerStore,
     conf: Conf,
 }
-
-pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/indexer/migrations");
 
 const BLOCK_NOTIFICATION_CHANNEL: &str = "block_notifications";
 

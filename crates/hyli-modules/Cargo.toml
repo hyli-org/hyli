@@ -73,6 +73,7 @@ sha2 = { workspace = true }
 secp256k1 = { workspace = true, features = ["rand", "global-context"] }
 test-log = { workspace = true, features = ["color", "trace"] }
 hydentity = { workspace = true, features = ["client"] }
+testcontainers-modules = { workspace = true, features = ["postgres"] }
 
 [features]
 risc0 = ["client-sdk/risc0"]
