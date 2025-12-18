@@ -1,8 +1,9 @@
-[profile.ci.junit]  # this can be some other profile, too
+[profile.ci.junit] # this can be some other profile, too
 path = "junit.xml"
 
 [profile.ci]
 slow-timeout = { period = "120s", terminate-after = 2 }
+test-threads = 4
 
 [profile.default]
 # "retries" defines the number of times a test should be retried. If set to a
