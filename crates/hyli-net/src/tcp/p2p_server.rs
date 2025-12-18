@@ -33,6 +33,7 @@ pub struct P2PTimeouts {
     pub poisoned_retry_interval: Duration,
     pub tcp_client_handshake_timeout: Duration,
     pub tcp_send_timeout: Duration,
+    pub connect_retry_cooldown: Duration,
 }
 
 impl Default for P2PTimeouts {
@@ -41,6 +42,7 @@ impl Default for P2PTimeouts {
             poisoned_retry_interval: Duration::from_secs(10),
             tcp_client_handshake_timeout: Duration::from_secs(10),
             tcp_send_timeout: Duration::from_secs(10),
+            connect_retry_cooldown: Duration::from_secs(3),
         }
     }
 }
@@ -755,7 +757,9 @@ where
         if let Some(ongoing) = self.connecting.get(&(peer_address.clone(), canal.clone())) {
             match ongoing {
                 HandshakeOngoing::TcpClientStartedAt(last_connect_attempt, abort_handle) => {
-                    if now.clone() - last_connect_attempt.clone() < Duration::from_secs(3) {
+                    if now.clone() - last_connect_attempt.clone()
+                        < self.timeouts.connect_retry_cooldown
+                    {
                         {
                             return Ok(());
                         }
@@ -763,7 +767,9 @@ where
                     abort_handle.abort();
                 }
                 HandshakeOngoing::HandshakeStartedAt(addr, last_handshake_started_at) => {
-                    if now.clone() - last_handshake_started_at.clone() < Duration::from_secs(3) {
+                    if now.clone() - last_handshake_started_at.clone()
+                        < self.timeouts.connect_retry_cooldown
+                    {
                         {
                             return Ok(());
                         }

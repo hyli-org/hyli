@@ -107,6 +107,9 @@ impl P2P {
                 tcp_send_timeout: Duration::from_millis(
                     self.config.p2p.timeouts.tcp_send_timeout_ms,
                 ),
+                connect_retry_cooldown: Duration::from_millis(
+                    self.config.p2p.timeouts.connect_retry_cooldown_ms,
+                ),
             },
         )
         .await?;

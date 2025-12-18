@@ -81,6 +81,8 @@ pub struct P2pTimeoutsConf {
     pub tcp_client_handshake_timeout_ms: u64,
     /// Timeout when sending frames over TCP sockets (ms)
     pub tcp_send_timeout_ms: u64,
+    /// Minimum delay before retrying a connect/handshake for the same peer (ms)
+    pub connect_retry_cooldown_ms: u64,
 }
 
 impl Default for P2pTimeoutsConf {
@@ -89,6 +91,7 @@ impl Default for P2pTimeoutsConf {
             poisoned_retry_interval_ms: 10_000,
             tcp_client_handshake_timeout_ms: 10_000,
             tcp_send_timeout_ms: 10_000,
+            connect_retry_cooldown_ms: 3_000,
         }
     }
 }
