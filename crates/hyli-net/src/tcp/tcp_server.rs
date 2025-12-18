@@ -30,6 +30,21 @@ use tracing::{debug, error, trace, warn};
 
 use super::{tcp_client::TcpClient, SocketStream, TcpEvent};
 
+#[derive(Clone, Debug)]
+pub struct TcpServerOptions {
+    pub max_frame_length: Option<usize>,
+    pub send_timeout: Duration,
+}
+
+impl Default for TcpServerOptions {
+    fn default() -> Self {
+        Self {
+            max_frame_length: None,
+            send_timeout: Duration::from_secs(10),
+        }
+    }
+}
+
 pub struct TcpServer<Req, Res>
 where
     Res: BorshSerialize + std::fmt::Debug,
@@ -37,6 +52,7 @@ where
 {
     tcp_listener: TcpListener,
     max_frame_length: Option<usize>,
+    send_timeout: Duration,
     pool_sender: Sender<Box<TcpEvent<Req>>>,
     pool_receiver: Receiver<Box<TcpEvent<Req>>>,
     ping_sender: Sender<String>,
@@ -52,7 +68,7 @@ where
     Res: BorshSerialize + BorshDeserialize + std::fmt::Debug,
 {
     pub async fn start(port: u16, pool_name: &str) -> anyhow::Result<Self> {
-        Self::start_with_opts(port, None, pool_name).await
+        Self::start_with_options(port, pool_name, TcpServerOptions::default()).await
     }
 
     pub async fn start_with_opts(
@@ -60,16 +76,33 @@ where
         max_frame_length: Option<usize>,
         pool_name: &str,
     ) -> anyhow::Result<Self> {
+        Self::start_with_options(
+            port,
+            pool_name,
+            TcpServerOptions {
+                max_frame_length,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+
+    pub async fn start_with_options(
+        port: u16,
+        pool_name: &str,
+        options: TcpServerOptions,
+    ) -> anyhow::Result<Self> {
         let tcp_listener = TcpListener::bind(&(Ipv4Addr::UNSPECIFIED, port)).await?;
         let (pool_sender, pool_receiver) = tokio::sync::mpsc::channel(100);
         let (ping_sender, ping_receiver) = tokio::sync::mpsc::channel(100);
         debug!(
             "Starting TcpConnectionPool {}, listening for stream requests on {} with max_frame_len: {:?}",
-            &pool_name, port, max_frame_length
+            &pool_name, port, options.max_frame_length
         );
         Ok(TcpServer {
             sockets: HashMap::new(),
-            max_frame_length,
+            max_frame_length: options.max_frame_length,
+            send_timeout: options.send_timeout,
             tcp_listener,
             pool_sender,
             pool_receiver,
@@ -275,6 +308,7 @@ where
         mut receiver: SplitStream<Framed<TcpStream, LengthDelimitedCodec>>,
         socket_addr: &String,
     ) {
+        let send_timeout = self.send_timeout;
         // Start a task to process pings from the peer.
         // We do the processing in the main select! loop to keep things synchronous.
         // This makes it easier to store data in the same struct without mutexing.
@@ -414,9 +448,7 @@ where
                     };
                     let start = std::time::Instant::now();
                     let nb_bytes: usize = (&msg_bytes as &Bytes).len();
-                    match tokio::time::timeout(Duration::from_secs(10), sender.send(msg_bytes))
-                        .await
-                    {
+                    match tokio::time::timeout(send_timeout, sender.send(msg_bytes)).await {
                         Err(e) => {
                             error!(
                                 "Timeout sending message to peer {}: {}",

@@ -7,7 +7,7 @@ use std::{collections::HashSet, error::Error, time::Duration};
 use hyli_crypto::BlstCrypto;
 use hyli_net::{
     net::Sim,
-    tcp::{p2p_server::P2PServer, Canal, P2PTcpMessage},
+    tcp::{p2p_server::P2PServer, p2p_server::P2PTimeouts, Canal, P2PTcpMessage},
 };
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -77,6 +77,7 @@ async fn setup_basic_host(
         format!("{}:{}", peer, 9090),
         format!("{}:{}", peer, 4141),
         HashSet::from_iter(std::iter::once(Canal::new("A"))),
+        P2PTimeouts::default(),
     )
     .await?;
 
@@ -173,6 +174,7 @@ async fn setup_drop_host(
         format!("{}:{}", peer, 9090),
         format!("{}:{}", peer, 4141),
         HashSet::from_iter(std::iter::once(Canal::new("A"))),
+        P2PTimeouts::default(),
     )
     .await?;
 
@@ -225,6 +227,7 @@ async fn setup_drop_client(
         format!("{}:{}", peer, 9090),
         format!("{}:{}", peer, 4141),
         HashSet::from_iter(std::iter::once(Canal::new("A"))),
+        P2PTimeouts::default(),
     )
     .await?;
 
@@ -367,6 +370,7 @@ async fn setup_decode_error_host(peer: String, peers: Vec<String>) -> Result<(),
         format!("{}:{}", peer, 9090),
         format!("{}:{}", peer, 4141),
         HashSet::from_iter(std::iter::once(Canal::new("A"))),
+        P2PTimeouts::default(),
     )
     .await?;
 
@@ -474,6 +478,7 @@ async fn setup_poisoned_socket_host(
         format!("{}:{}", peer, 9090),
         format!("{}:{}", peer, 4141),
         HashSet::from_iter(std::iter::once(Canal::new("A"))),
+        P2PTimeouts::default(),
     )
     .await?;
 
