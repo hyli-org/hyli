@@ -227,6 +227,7 @@ async fn setup_drop_client(
         format!("{}:{}", peer, 9090),
         format!("{}:{}", peer, 4141),
         HashSet::from_iter(std::iter::once(Canal::new("A"))),
+        P2PTimeouts::default(),
     )
     .await?;
 
@@ -369,6 +370,7 @@ async fn setup_decode_error_host(peer: String, peers: Vec<String>) -> Result<(),
         format!("{}:{}", peer, 9090),
         format!("{}:{}", peer, 4141),
         HashSet::from_iter(std::iter::once(Canal::new("A"))),
+        P2PTimeouts::default(),
     )
     .await?;
 
@@ -476,6 +478,7 @@ async fn setup_poisoned_socket_host(
         format!("{}:{}", peer, 9090),
         format!("{}:{}", peer, 4141),
         HashSet::from_iter(std::iter::once(Canal::new("A"))),
+        P2PTimeouts::default(),
     )
     .await?;
 
