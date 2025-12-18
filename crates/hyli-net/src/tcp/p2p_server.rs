@@ -23,9 +23,29 @@ use crate::{
     tcp::{tcp_client::TcpClient, Handshake, TcpHeaders},
 };
 
-use super::{tcp_server::TcpServer, Canal, NodeConnectionData, P2PTcpMessage, TcpEvent};
+use super::{
+    tcp_server::{TcpServer, TcpServerOptions},
+    Canal, NodeConnectionData, P2PTcpMessage, TcpEvent,
+};
 
-const POISONED_RETRY_INTERVAL: Duration = Duration::from_secs(10);
+#[derive(Clone, Debug)]
+pub struct P2PTimeouts {
+    pub poisoned_retry_interval: Duration,
+    pub tcp_client_handshake_timeout: Duration,
+    pub tcp_send_timeout: Duration,
+    pub connect_retry_cooldown: Duration,
+}
+
+impl Default for P2PTimeouts {
+    fn default() -> Self {
+        Self {
+            poisoned_retry_interval: Duration::from_secs(10),
+            tcp_client_handshake_timeout: Duration::from_secs(10),
+            tcp_send_timeout: Duration::from_secs(10),
+            connect_retry_cooldown: Duration::from_secs(3),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum P2PServerEvent<Msg> {
@@ -109,6 +129,7 @@ where
     peers_ping_ticker: Interval,
     // Serialization of messages can take time so we offload them.
     canal_jobs: HashMap<Canal, OrderedJoinSet<CanalJob>>,
+    timeouts: P2PTimeouts,
     _phantom: std::marker::PhantomData<Msg>,
 }
 
@@ -116,6 +137,7 @@ impl<Msg> P2PServer<Msg>
 where
     Msg: std::fmt::Debug + BorshDeserialize + BorshSerialize + Send + 'static,
 {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         crypto: Arc<BlstCrypto>,
         node_id: String,
@@ -124,6 +146,7 @@ where
         node_p2p_public_address: String,
         node_da_public_address: String,
         canals: HashSet<Canal>,
+        timeouts: P2PTimeouts,
     ) -> Result<Self, anyhow::Error> {
         Ok(Self {
             crypto,
@@ -134,10 +157,13 @@ where
             node_p2p_public_address,
             node_da_public_address,
             current_height: 0,
-            tcp_server: TcpServer::start_with_opts(
+            tcp_server: TcpServer::start_with_options(
                 port,
-                max_frame_length,
                 format!("P2P-{node_id}").as_str(),
+                TcpServerOptions {
+                    max_frame_length,
+                    send_timeout: timeouts.tcp_send_timeout,
+                },
             )
             .await?,
             peers: HashMap::new(),
@@ -147,6 +173,7 @@ where
                 .into_iter()
                 .map(|canal| (canal, OrderedJoinSet::new()))
                 .collect(),
+            timeouts,
             _phantom: std::marker::PhantomData,
         })
     }
@@ -315,7 +342,9 @@ where
                     if socket.poisoned_at.is_some() {
                         let should_retry = socket
                             .poisoned_at
-                            .map(|poisoned_at| now.clone() - poisoned_at >= POISONED_RETRY_INTERVAL)
+                            .map(|poisoned_at| {
+                                now.clone() - poisoned_at >= self.timeouts.poisoned_retry_interval
+                            })
                             .unwrap_or(true);
                         if should_retry {
                             if let Err(e) =
@@ -728,7 +757,9 @@ where
         if let Some(ongoing) = self.connecting.get(&(peer_address.clone(), canal.clone())) {
             match ongoing {
                 HandshakeOngoing::TcpClientStartedAt(last_connect_attempt, abort_handle) => {
-                    if now.clone() - last_connect_attempt.clone() < Duration::from_secs(3) {
+                    if now.clone() - last_connect_attempt.clone()
+                        < self.timeouts.connect_retry_cooldown
+                    {
                         {
                             return Ok(());
                         }
@@ -736,7 +767,9 @@ where
                     abort_handle.abort();
                 }
                 HandshakeOngoing::HandshakeStartedAt(addr, last_handshake_started_at) => {
-                    if now.clone() - last_handshake_started_at.clone() < Duration::from_secs(3) {
+                    if now.clone() - last_handshake_started_at.clone()
+                        < self.timeouts.connect_retry_cooldown
+                    {
                         {
                             return Ok(());
                         }
@@ -756,14 +789,16 @@ where
         let now = TimestampMsClock::now();
         let peer_address_clone = peer_address.clone();
         let canal_clone = canal.clone();
+        let handshake_timeout = self.timeouts.tcp_client_handshake_timeout;
 
         tracing::info!("Starting connecting to {}/{}", peer_address, canal);
 
         let abort_handle = self.handshake_clients_tasks.spawn(async move {
-            let handshake_task = TcpClient::connect_with_opts(
+            let handshake_task = TcpClient::connect_with_opts_and_timeout(
                 "p2p_server_handshake",
                 mfl,
                 peer_address_clone.clone(),
+                handshake_timeout,
             );
 
             let result = handshake_task.await;
@@ -1025,6 +1060,7 @@ pub mod tests {
             format!("127.0.0.1:{port1}"),
             "127.0.0.1:4321".into(), // send some dummy address for DA,
             HashSet::from_iter(vec![Canal::new("A"), Canal::new("B")]),
+            super::P2PTimeouts::default(),
         )
         .await?;
         let p2p_server2 = P2PServer::new(
@@ -1035,6 +1071,7 @@ pub mod tests {
             format!("127.0.0.1:{port2}"),
             "127.0.0.1:4321".into(), // send some dummy address for DA
             HashSet::from_iter(vec![Canal::new("A"), Canal::new("B")]),
+            super::P2PTimeouts::default(),
         )
         .await?;
 

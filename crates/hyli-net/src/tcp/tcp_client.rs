@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
@@ -55,7 +55,19 @@ where
         max_frame_length: Option<usize>,
         target: A,
     ) -> Result<TcpClient<Req, Res>> {
-        let timeout = std::time::Duration::from_secs(10);
+        Self::connect_with_opts_and_timeout(id, max_frame_length, target, Duration::from_secs(10))
+            .await
+    }
+
+    pub async fn connect_with_opts_and_timeout<
+        Id: std::fmt::Display,
+        A: crate::net::ToSocketAddrs + std::fmt::Display,
+    >(
+        id: Id,
+        max_frame_length: Option<usize>,
+        target: A,
+        timeout: Duration,
+    ) -> Result<TcpClient<Req, Res>> {
         let start = tokio::time::Instant::now();
         let tcp_stream = loop {
             debug!(
