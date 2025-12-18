@@ -55,6 +55,9 @@ pub struct PeerSocket {
     // This is the socket_addr used in the tcp_server for the current peer
     pub socket_addr: String,
     // Last time we marked/retried this socket as poisoned.
+    // Note: on a TCP error we drop the tcp_server side, but p2p_server would still broadcast to
+    // this socket until a new handshake overwrites it, generating noisy send errors. We flag it
+    // as poisoned so sends are skipped until the next successful handshake replaces it.
     pub poisoned_at: Option<TimestampMs>,
 }
 
@@ -439,7 +442,7 @@ where
     fn handle_closed_event(&mut self, dest: String) {
         // TODO: investigate how to properly handle this case
         // The connection has been closed by peer. We remove the peer and try to reconnect.
-        warn!("Peer connection closed on {} (node={})", dest, self.node_id);
+        debug!("Peer connection closed on {} (node={})", dest, self.node_id);
 
         // When we receive a close event
         // It is a closed connection that need to be removed from tcp server clients in all cases
@@ -843,7 +846,7 @@ where
         };
         let socket_addr = peer_socket.socket_addr.clone();
         if peer_socket.poisoned_at.is_some() {
-            warn!(
+            debug!(
                 "Peer {} socket {} for canal {} is poisoned; skipping send on node {}",
                 validator_pub_key, socket_addr, canal, self.node_id
             );

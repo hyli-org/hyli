@@ -371,7 +371,7 @@ where
                     }
                     None => {
                         // If we reach here, the stream has been closed.
-                        warn!(
+                        debug!(
                             "Socket {} closed after receiving {} frame(s)",
                             cloned_socket_addr, frames_received
                         );
@@ -464,7 +464,7 @@ where
 
     pub fn drop_peer_stream(&mut self, peer_ip: String) {
         if let Some(peer_stream) = self.sockets.remove(&peer_ip) {
-            tracing::warn!(
+            tracing::debug!(
                 "Dropping peer stream {} (remaining sockets: {})",
                 peer_ip,
                 self.sockets.len()
