@@ -54,6 +54,14 @@ peers = []
 # Interval the p2p layer does a ping to check aliveness of other peers.
 ping_interval = 10
 
+[p2p.timeouts]
+# Wait before retrying a socket marked as poisoned after failures (ms)
+poisoned_retry_interval_ms = 10_000
+# Max duration for a TCP client handshake connection attempt (ms)
+tcp_client_handshake_timeout_ms = 10_000
+# Timeout when sending TCP frames (ms)
+tcp_send_timeout_ms = 10_000
+
 
 [consensus]
 # Time to wait before producing a new block when no new transactions are received.

@@ -56,6 +56,9 @@ pub struct P2pConf {
     pub peers: Vec<String>,
     /// Time in milliseconds between pings to peers
     pub ping_interval: u64,
+    /// Timeouts used by the TCP P2P layer
+    #[serde(default)]
+    pub timeouts: P2pTimeoutsConf,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
@@ -67,6 +70,27 @@ pub enum P2pMode {
     /// Run a limited node that subscribes to another one for DA
     #[default]
     None,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(default)]
+pub struct P2pTimeoutsConf {
+    /// How long to avoid sending to a poisoned socket before retrying (ms)
+    pub poisoned_retry_interval_ms: u64,
+    /// Total time allowed for a TCP client handshake connection attempt (ms)
+    pub tcp_client_handshake_timeout_ms: u64,
+    /// Timeout when sending frames over TCP sockets (ms)
+    pub tcp_send_timeout_ms: u64,
+}
+
+impl Default for P2pTimeoutsConf {
+    fn default() -> Self {
+        Self {
+            poisoned_retry_interval_ms: 10_000,
+            tcp_client_handshake_timeout_ms: 10_000,
+            tcp_send_timeout_ms: 10_000,
+        }
+    }
 }
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize)]

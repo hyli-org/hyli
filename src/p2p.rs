@@ -1,6 +1,6 @@
 //! Networking layer
 
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Duration};
 
 use crate::{
     bus::BusClientSender, consensus::ConsensusNetMessage, mempool::MempoolNetMessage,
@@ -17,7 +17,7 @@ use hyli_modules::{
 use hyli_net::{
     clock::TimestampMsClock,
     tcp::{
-        p2p_server::{P2PServer, P2PServerEvent},
+        p2p_server::{P2PServer, P2PServerEvent, P2PTimeouts},
         Canal,
     },
 };
@@ -97,6 +97,17 @@ impl P2P {
             self.config.p2p.public_address.clone(),
             self.config.da_public_address.clone(),
             HashSet::from_iter(vec![Canal::new("mempool"), Canal::new("consensus")]),
+            P2PTimeouts {
+                poisoned_retry_interval: Duration::from_millis(
+                    self.config.p2p.timeouts.poisoned_retry_interval_ms,
+                ),
+                tcp_client_handshake_timeout: Duration::from_millis(
+                    self.config.p2p.timeouts.tcp_client_handshake_timeout_ms,
+                ),
+                tcp_send_timeout: Duration::from_millis(
+                    self.config.p2p.timeouts.tcp_send_timeout_ms,
+                ),
+            },
         )
         .await?;
 
