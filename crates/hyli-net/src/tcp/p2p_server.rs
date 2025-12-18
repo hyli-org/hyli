@@ -135,6 +135,7 @@ impl<Msg> P2PServer<Msg>
 where
     Msg: std::fmt::Debug + BorshDeserialize + BorshSerialize + Send + 'static,
 {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         crypto: Arc<BlstCrypto>,
         node_id: String,
