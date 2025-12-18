@@ -439,7 +439,7 @@ impl Consensus {
             if &round_leader == self.crypto.validator_pubkey() {
                 // This TC is for our current slot and view (by construction), so we can leave Joining mode
                 if matches!(self.bft_round_state.state_tag, StateTag::Joining) {
-                    self.bft_round_state.state_tag = StateTag::Leader;
+                    self.set_state_tag(StateTag::Leader);
                 }
             } else {
                 // Broadcast the Timeout Certificate to all validators
@@ -454,6 +454,7 @@ impl Consensus {
             self.advance_round(Ticket::TimeoutQC(ticket.0, ticket.1))?;
         }
 
+        self.record_consensus_state_metric();
         Ok(())
     }
 

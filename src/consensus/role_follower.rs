@@ -70,7 +70,7 @@ impl Consensus {
                 info!(
                     "Received Prepare message for next slot while joining. Exiting joining mode."
                 );
-                self.bft_round_state.state_tag = StateTag::Follower;
+                self.set_state_tag(StateTag::Follower);
             } else {
                 follower_state!(self).buffered_prepares.push((
                     sender.clone(),
@@ -664,7 +664,7 @@ impl Consensus {
             if self.round_leader()? == *self.crypto.validator_pubkey()
                 && matches!(self.bft_round_state.state_tag, StateTag::Joining)
             {
-                self.bft_round_state.state_tag = StateTag::Leader;
+                self.set_state_tag(StateTag::Leader);
             }
         }
 
@@ -720,7 +720,7 @@ impl Consensus {
 
         self.bft_round_state.slot = potential_proposal.slot;
         self.bft_round_state.view = 0; // TODO
-        self.bft_round_state.state_tag = StateTag::Follower;
+        self.set_state_tag(StateTag::Follower);
 
         self.emit_commit_event(&commit_quorum_certificate)?;
 

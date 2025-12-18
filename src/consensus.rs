@@ -25,7 +25,7 @@ use hyli_modules::modules::admin::{
 };
 use hyli_modules::{log_error, module_bus_client, module_handle_messages, modules::Module};
 use hyli_net::clock::TimestampMsClock;
-use metrics::ConsensusMetrics;
+use metrics::{ConsensusMetrics, ConsensusStateMetric};
 use role_follower::FollowerState;
 use role_leader::LeaderState;
 use role_timeout::TimeoutRoleState;
@@ -120,7 +120,7 @@ pub struct BFTRoundState {
     state_tag: StateTag,
 }
 
-#[derive(BorshSerialize, BorshDeserialize, Default, Debug)]
+#[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone, Copy, PartialEq, Eq)]
 enum StateTag {
     #[default]
     Joining,
@@ -190,6 +190,33 @@ macro_rules! current_proposal {
 pub(crate) use current_proposal;
 
 impl Consensus {
+    fn set_state_tag(&mut self, state_tag: StateTag) {
+        self.bft_round_state.state_tag = state_tag;
+        self.record_consensus_state_metric();
+    }
+
+    fn record_consensus_state_metric(&self) {
+        let state = if self.is_in_timeout_phase() {
+            ConsensusStateMetric::Timeout
+        } else {
+            match self.bft_round_state.state_tag {
+                StateTag::Joining => ConsensusStateMetric::Joining,
+                StateTag::Leader => ConsensusStateMetric::Leader,
+                StateTag::Follower => ConsensusStateMetric::Follower,
+            }
+        };
+
+        self.metrics.set_state(state);
+    }
+
+    fn is_in_timeout_phase(&self) -> bool {
+        self.bft_round_state.timeout.requests.iter().any(|r| {
+            r.0.msg.0 == self.bft_round_state.slot
+                && r.0.msg.1 == self.bft_round_state.view
+                && &r.0.signature.validator == self.crypto.validator_pubkey()
+        })
+    }
+
     fn round_leader(&self) -> Result<ValidatorPublicKey> {
         // Find out who the next leader will be.
         // For now, this is round-robin on slot + view for simplicity.
@@ -299,10 +326,10 @@ impl Consensus {
 
         let round_leader = self.round_leader()?;
         if round_leader == *self.crypto.validator_pubkey() {
-            self.bft_round_state.state_tag = StateTag::Leader;
+            self.set_state_tag(StateTag::Leader);
             debug!("👑 I'm the new leader! 👑")
         } else {
-            self.bft_round_state.state_tag = StateTag::Follower;
+            self.set_state_tag(StateTag::Follower);
             self.store
                 .bft_round_state
                 .timeout
@@ -658,6 +685,7 @@ impl Consensus {
                         self.bft_round_state.timeout.requests.clear();
                     }
                 }
+                self.record_consensus_state_metric();
                 Ok(())
             }
         }
@@ -727,10 +755,10 @@ impl Consensus {
                         let round_leader = self.round_leader()?;
 
                         if round_leader == *self.crypto.validator_pubkey() {
-                            self.bft_round_state.state_tag = StateTag::Leader;
+                            self.set_state_tag(StateTag::Leader);
                             info!("👑 Starting consensus as leader");
                         } else {
-                            self.bft_round_state.state_tag = StateTag::Follower;
+                            self.set_state_tag(StateTag::Follower);
                             info!(
                                 "💂‍♂️ Starting consensus as follower of leader {}",
                                 round_leader
@@ -759,7 +787,7 @@ impl Consensus {
                         // maybe we were about to be the leader and got byzantined out.
                         // Regardless, we should probably assume that we need to catch up.
                         // TODO: this logic can be improved.
-                        self.bft_round_state.state_tag = StateTag::Joining;
+                        self.set_state_tag(StateTag::Joining);
                         // Set up an initial timeout to ensure we don't get stuck if we miss commits
                         self.store.bft_round_state.timeout.state.schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
 
@@ -784,6 +812,7 @@ impl Consensus {
             "🚀 Starting consensus as {:?}",
             self.bft_round_state.state_tag
         );
+        self.record_consensus_state_metric();
 
         let mut timeout_ticker = interval(Duration::from_millis(200));
         timeout_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
