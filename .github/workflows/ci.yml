@@ -84,7 +84,7 @@ jobs:
   coverage:
     name: Unit tests coverage
     runs-on: arc-runner-set
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       matrix:
         toolchain:
@@ -115,7 +115,7 @@ jobs:
           tar xzvf cargo-risczero-x86_64-unknown-linux-gnu.tgz
           echo "$PWD" >> $GITHUB_PATH
       - name: Generate code coverage
-        run: cargo llvm-cov --workspace --lib --lcov --output-path lcov.info -- --test-threads=4
+        run: cargo llvm-cov --workspace --lib --lcov --output-path lcov.info -- --test-threads=1
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
