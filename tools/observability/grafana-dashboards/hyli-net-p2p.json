@@ -1,0 +1,193 @@
+{
+  "title": "Hyli Net - P2P & TCP",
+  "uid": "hyli-net-p2p",
+  "timezone": "browser",
+  "schemaVersion": 38,
+  "version": 2,
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "refresh": 1,
+        "hide": 0,
+        "multi": false,
+        "includeAll": false
+      },
+      {
+        "name": "node",
+        "type": "query",
+        "datasource": "$datasource",
+        "refresh": 2,
+        "hide": 0,
+        "multi": false,
+        "includeAll": false,
+        "query": "label_values(p2p_server_peers, service_name)",
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Peers",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "datasource": "$datasource",
+      "targets": [
+        {
+          "expr": "p2p_server_peers{service_name=\"$node\"}",
+          "legendFormat": "peers"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Handshake Attempts by Phase",
+      "gridPos": { "x": 4, "y": 0, "w": 10, "h": 6 },
+      "datasource": "$datasource",
+      "targets": [
+        {
+          "expr": "rate(p2p_server_handshake{service_name=\"$node\"}[1m])",
+          "legendFormat": "{{phase}} {{direction}} {{canal}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Handshake Throttle",
+      "gridPos": { "x": 14, "y": 0, "w": 10, "h": 6 },
+      "datasource": "$datasource",
+      "targets": [
+        {
+          "expr": "rate(p2p_server_handshake_throttle{service_name=\"$node\"}[1m])",
+          "legendFormat": "{{phase}} {{canal}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Handshake Latency p50/p95",
+      "gridPos": { "x": 0, "y": 6, "w": 12, "h": 6 },
+      "datasource": "$datasource",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.5, sum(rate(p2p_server_handshake_latency_seconds_bucket{service_name=\"$node\"}[5m])) by (le, canal))",
+          "legendFormat": "p50 {{canal}}"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(p2p_server_handshake_latency_seconds_bucket{service_name=\"$node\"}[5m])) by (le, canal))",
+          "legendFormat": "p95 {{canal}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Poisoned Socket Events",
+      "gridPos": { "x": 12, "y": 6, "w": 12, "h": 6 },
+      "datasource": "$datasource",
+      "targets": [
+        {
+          "expr": "rate(p2p_server_poison{service_name=\"$node\"}[1m])",
+          "legendFormat": "{{action}} {{canal}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "TCP Events",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 6 },
+      "datasource": "$datasource",
+      "targets": [
+        {
+          "expr": "rate(p2p_server_tcp_event{service_name=\"$node\"}[1m])",
+          "legendFormat": "{{type}} {{canal}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Rehandshake Errors",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 6 },
+      "datasource": "$datasource",
+      "targets": [
+        {
+          "expr": "rate(p2p_server_rehandshake_error{service_name=\"$node\"}[1m])",
+          "legendFormat": "{{canal}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Messages by Direction/Result",
+      "gridPos": { "x": 0, "y": 18, "w": 12, "h": 6 },
+      "datasource": "$datasource",
+      "targets": [
+        {
+          "expr": "rate(p2p_server_message{service_name=\"$node\"}[1m])",
+          "legendFormat": "{{direction}} {{result}} {{canal}}"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Top Poisoned Peers (marked)",
+      "gridPos": { "x": 12, "y": 18, "w": 12, "h": 6 },
+      "datasource": "$datasource",
+      "targets": [
+        {
+          "expr": "topk(10, rate(p2p_server_poison{service_name=\"$node\",action=\"marked\"}[5m]))",
+          "legendFormat": "{{peer}} {{canal}}"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Top Poisoned Peers (send skipped)",
+      "gridPos": { "x": 0, "y": 24, "w": 12, "h": 6 },
+      "datasource": "$datasource",
+      "targets": [
+        {
+          "expr": "topk(10, rate(p2p_server_poison{service_name=\"$node\",action=\"send_skipped\"}[5m]))",
+          "legendFormat": "{{peer}} {{canal}}"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "TCP Errors vs Closed",
+      "gridPos": { "x": 12, "y": 24, "w": 12, "h": 6 },
+      "datasource": "$datasource",
+      "targets": [
+        {
+          "expr": "rate(p2p_server_tcp_event{service_name=\"$node\",type=\"error\"}[1m])",
+          "legendFormat": "error {{canal}}"
+        },
+        {
+          "expr": "rate(p2p_server_tcp_event{service_name=\"$node\",type=\"closed\"}[1m])",
+          "legendFormat": "closed {{canal}}"
+        }
+      ]
+    }
+  ]
+}
