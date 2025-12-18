@@ -2,20 +2,11 @@ name: Check Crates Compilation
 
 on:
   push:
-    branches: [main, self-hosted-workers]
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
-env:
-  CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/target
-  CARGO_HOME: ${{ github.workspace }}/.cache/cargo-home
-  SHARED_CACHE_DIR: /home/runner/.cache/node-cache/rust
+    branches: [main]
 
 jobs:
   check-crates:
-    runs-on: arc-runner-set
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -35,12 +26,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
-
-      - name: Copy cache from shared storage
-        run: .github/scripts/copy-cache.sh "hyli-check-${{ matrix.crate }}"
-
-      - run: sudo apt update && sudo apt install -y build-essential libssl-dev pkg-config
-      - run: cargo install cargo-docs-rs --force
+      - uses: dtolnay/install@cargo-docs-rs
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-check-crate
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Compile crate '${{ matrix.crate }}' with no default features
         run: cargo build -p ${{ matrix.crate }} --no-default-features
@@ -56,12 +46,8 @@ jobs:
         if: matrix.crate != 'hyli-noir-tools'
         run: cargo docs-rs -p ${{ matrix.crate }}
 
-      - name: Save cache to shared storage
-        if: always() && github.ref == 'refs/heads/main'
-        run: .github/scripts/save-cache.sh "hyli-check-${{ matrix.crate }}"
-
   list-crates:
-    runs-on: arc-runner-set
+    runs-on: ubuntu-latest
     outputs:
       crates: ${{ steps.crate-list.outputs.crates }}
 
