@@ -13,6 +13,26 @@ use anyhow::Result;
 
 pub type TcpHeaders = Vec<(String, String)>;
 
+pub fn headers_from_span() -> TcpHeaders {
+    #[cfg(feature = "instrumentation")]
+    {
+        let mut headers: TcpHeaders = Vec::new();
+        opentelemetry::global::get_text_map_propagator(|propagator| {
+            use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+            let mut carrier = std::collections::HashMap::new();
+            let context = tracing::Span::current().context();
+            propagator.inject_context(&context, &mut carrier);
+            headers = carrier.into_iter().collect();
+        });
+        headers
+    }
+    #[cfg(not(feature = "instrumentation"))]
+    {
+        Vec::new()
+    }
+}
+
 #[derive(Clone, BorshDeserialize, BorshSerialize, PartialEq)]
 pub enum TcpMessage {
     Ping,
@@ -33,7 +53,7 @@ impl TcpData {
         }
     }
 
-    pub fn with_headers(headers: TcpHeaders, payload: Vec<u8>) -> Self {
+    pub fn with_headers(payload: Vec<u8>, headers: TcpHeaders) -> Self {
         Self {
             headers,
             payload: Arc::new(payload),
@@ -75,7 +95,7 @@ fn to_tcp_message_with_headers(
     headers: TcpHeaders,
 ) -> Result<TcpMessage> {
     let binary = borsh::to_vec(data)?;
-    Ok(TcpMessage::Data(TcpData::with_headers(headers, binary)))
+    Ok(TcpMessage::Data(TcpData::with_headers(binary, headers)))
 }
 
 pub fn decode_tcp_payload<Data: BorshDeserialize>(bytes: &[u8]) -> Result<(TcpHeaders, Data)> {

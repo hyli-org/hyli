@@ -92,11 +92,14 @@ pub struct PeerInfo {
 
 type HandShakeJoinSet<Data> = JoinSet<(String, anyhow::Result<TcpClient<Data, Data>>, Canal)>;
 
-type CanalJob = (HashSet<ValidatorPublicKey>, Result<Vec<u8>, std::io::Error>);
+type CanalJob = (
+    HashSet<ValidatorPublicKey>,
+    (Result<Vec<u8>, std::io::Error>, TcpHeaders),
+);
 type CanalJobResult = (
     Canal,
     HashSet<ValidatorPublicKey>,
-    Result<Vec<u8>, std::io::Error>,
+    (Result<Vec<u8>, std::io::Error>, TcpHeaders),
 );
 
 #[derive(Debug)]
@@ -224,13 +227,13 @@ where
                         }
                     }
                 },
-                (canal, pubkeys, data) = std::future::poll_fn(|cx| Self::poll_hashmap(&mut self.canal_jobs, cx)) => {
+                (canal, pubkeys, (data, headers)) = std::future::poll_fn(|cx| Self::poll_hashmap(&mut self.canal_jobs, cx)) => {
                     let Ok(msg) = data else {
                         warn!("Error in canal jobs: {:?}", data);
                         continue
                     };
                     // TODO: handle errors?
-                    self.actually_send_to(pubkeys, canal, msg).await;
+                    self.actually_send_to(pubkeys, canal, msg, headers).await;
                 }
                 _ = self.peers_ping_ticker.tick() => {
                     return P2PTcpEvent::PingPeers;
@@ -556,6 +559,7 @@ where
                                     verack,
                                     timestamp.clone(),
                                 ))),
+                                vec![],
                             )
                             .await
                         {
@@ -881,6 +885,7 @@ where
                     signed_node_connection_data.clone(),
                     timestamp,
                 ))),
+                vec![],
             )
             .await?;
 
@@ -889,7 +894,7 @@ where
         Ok(())
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, msg)))]
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn send(
         &mut self,
         validator_pub_key: ValidatorPublicKey,
@@ -925,12 +930,13 @@ where
             return Ok(());
         }
 
+        let headers = crate::tcp::headers_from_span();
         if let Some(jobs) = self.canal_jobs.get_mut(&canal) {
             if !jobs.is_empty() {
                 jobs.spawn(async move {
                     (
                         HashSet::from_iter(std::iter::once(validator_pub_key)),
-                        borsh::to_vec(&P2PTcpMessage::Data(msg)),
+                        (borsh::to_vec(&P2PTcpMessage::Data(msg)), headers),
                     )
                 });
                 return Ok(());
@@ -941,7 +947,7 @@ where
 
         if let Err(e) = self
             .tcp_server
-            .send(socket_addr.clone(), P2PTcpMessage::Data(msg))
+            .send(socket_addr.clone(), P2PTcpMessage::Data(msg), headers)
             .await
         {
             self.mark_socket_poisoned(&socket_addr);
@@ -965,17 +971,18 @@ where
         Ok(())
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, msg)))]
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn broadcast(&mut self, msg: Msg, canal: Canal) {
         let Some(jobs) = self.canal_jobs.get_mut(&canal) else {
             error!("Canal {:?} does not exist in P2P server", canal);
             return;
         };
         let peers = self.peers.keys().cloned().collect();
-        jobs.spawn(async move { (peers, borsh::to_vec(&P2PTcpMessage::Data(msg))) });
+        let headers = crate::tcp::headers_from_span();
+        jobs.spawn(async move { (peers, (borsh::to_vec(&P2PTcpMessage::Data(msg)), headers)) });
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, msg)))]
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn broadcast_only_for(
         &mut self,
         only_for: &HashSet<ValidatorPublicKey>,
@@ -987,15 +994,16 @@ where
             return;
         };
         let peers = only_for.clone();
-        jobs.spawn(async move { (peers, borsh::to_vec(&P2PTcpMessage::Data(msg))) });
+        let headers = crate::tcp::headers_from_span();
+        jobs.spawn(async move { (peers, (borsh::to_vec(&P2PTcpMessage::Data(msg)), headers)) });
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, msg)))]
     async fn actually_send_to(
         &mut self,
         only_for: HashSet<ValidatorPublicKey>,
         canal: Canal,
         msg: Vec<u8>,
+        headers: TcpHeaders,
     ) -> HashMap<ValidatorPublicKey, anyhow::Error> {
         let peer_addr_to_pubkey: HashMap<String, ValidatorPublicKey> = self
             .peers
@@ -1016,7 +1024,7 @@ where
 
         let res = self
             .tcp_server
-            .raw_send_parallel(peer_addr_to_pubkey.keys().cloned().collect(), msg)
+            .raw_send_parallel(peer_addr_to_pubkey.keys().cloned().collect(), msg, headers)
             .await;
 
         HashMap::from_iter(res.into_iter().filter_map(|(k, v)| {
@@ -1628,7 +1636,7 @@ pub mod tests {
 
         let send_errors = p2p_server1
             .tcp_server
-            .raw_send_parallel(vec![socket_addr], vec![255])
+            .raw_send_parallel(vec![socket_addr], vec![255], vec![])
             .await;
         assert!(send_errors.is_empty(), "Expected raw send to succeed");
 

@@ -21,7 +21,10 @@ use crate::{
     logged_task::logged_task,
     metrics::TcpServerMetrics,
     net::{TcpListener, TcpStream},
-    tcp::{decode_tcp_payload, to_tcp_message, TcpData, TcpMessage},
+    tcp::{
+        decode_tcp_payload, to_tcp_message, to_tcp_message_with_headers, TcpData, TcpHeaders,
+        TcpMessage,
+    },
 };
 use tracing::{debug, error, trace, warn};
 
@@ -199,6 +202,7 @@ where
         &mut self,
         socket_addrs: Vec<String>,
         msg: Vec<u8>,
+        headers: TcpHeaders,
     ) -> HashMap<String, anyhow::Error> {
         // Getting targetted addrs that are not in the connected sockets list
         let unknown_socket_addrs = {
@@ -209,7 +213,7 @@ where
 
         // Send the message to all targets concurrently and wait for them to finish
         let all_sent = {
-            let message = TcpMessage::Data(TcpData::new(msg));
+            let message = TcpMessage::Data(TcpData::with_headers(msg, headers));
             debug!("Broadcasting msg {:?} to all", message);
             let mut tasks = vec![];
             for (name, socket) in self
@@ -250,14 +254,19 @@ where
 
         result
     }
-    pub async fn send(&mut self, socket_addr: String, msg: Res) -> anyhow::Result<()> {
+    pub async fn send(
+        &mut self,
+        socket_addr: String,
+        msg: Res,
+        headers: TcpHeaders,
+    ) -> anyhow::Result<()> {
         debug!("Sending msg {:?} to {}", msg, socket_addr);
         let stream = self
             .sockets
             .get_mut(&socket_addr)
             .context(format!("Retrieving client {socket_addr}"))?;
 
-        let binary_data = to_tcp_message(&msg)?;
+        let binary_data = to_tcp_message_with_headers(&msg, headers)?;
         stream
             .sender
             .send(binary_data)
@@ -647,6 +656,7 @@ pub mod tests {
             .raw_send_parallel(
                 vec![client2_addr.to_string()],
                 borsh::to_vec(&DataAvailabilityEvent::SignedBlock(Default::default())).unwrap(),
+                vec![],
             )
             .await;
 
@@ -698,6 +708,7 @@ pub mod tests {
             .send(
                 client2_addr.to_string(),
                 DataAvailabilityEvent::SignedBlock(Default::default()),
+                vec![],
             )
             .await;
 

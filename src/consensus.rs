@@ -20,6 +20,7 @@ use hyli_crypto::BlstCrypto;
 use hyli_crypto::SharedBlstCrypto;
 use hyli_model::utils::TimestampMs;
 use hyli_modules::bus::BusMessage;
+use hyli_modules::info_span_ctx;
 use hyli_modules::modules::admin::{
     QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse,
 };
@@ -518,6 +519,7 @@ impl Consensus {
     }
 
     /// Apply ticket locally, and start new round with it
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, ticket)))]
     fn advance_round(&mut self, ticket: Ticket) -> Result<()> {
         self.apply_ticket(ticket.clone())?;
 
@@ -589,6 +591,10 @@ impl Consensus {
     }
 
     /// Message received by leader & follower.
+    #[cfg_attr(
+        feature = "instrumentation",
+        tracing::instrument(skip(self, candidacy))
+    )]
     fn on_validator_candidacy(
         &mut self,
         candidacy: SignedByValidator<ValidatorCandidacy>,
@@ -796,7 +802,8 @@ impl Consensus {
             listen<ConsensusCommand> cmd => {
                 let _ = log_error!(self.handle_command(cmd).await, "Error while handling consensus command");
             }
-            listen<MsgWithHeader<ConsensusNetMessage>> msg => {
+            listen<MsgWithHeader<ConsensusNetMessage>> msg, span(ctx) => {
+                let _span = info_span_ctx!("handle_consensus_net_message", ctx).entered();
                 let _ = log_error!(self.handle_net_message(msg), "Consensus message failed");
             }
             command_response<QueryConsensusInfo, ConsensusInfo> _ => {
