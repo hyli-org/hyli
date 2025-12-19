@@ -807,10 +807,6 @@ impl Indexer {
                         .next()
                         .unwrap()
                         .clone();
-                    // contract_notifications
-                    //     .entry(contract_name.clone())
-                    //     .or_default()
-                    //     .insert(tx.block_height);
                     let update = self
                         .handler_store
                         .contract_updates

@@ -18,12 +18,6 @@ use crate::bus::{BusClientSender, BusMessage, SharedMessageBus};
 use crate::modules::Module;
 use crate::{module_bus_client, module_handle_messages};
 
-#[derive(BorshSerialize, BorshDeserialize)]
-pub enum IndexerNotification {
-    NewBlock(BlockHeight),
-    NewTxs(ContractName, BlockHeight),
-}
-
 #[derive(Debug, Clone)]
 pub struct ContractListenerConf {
     pub database_url: String,
@@ -101,7 +95,7 @@ impl ContractListener {
 
         // Initialize last seen heights with current max heights per contract (covers missed events before startup).
         for contract in &self.conf.contracts {
-            let height = self.fetch_lastest_settled_height(contract).await?;
+            let height = self.fetch_latest_settled_height(contract).await?;
             info!(
                 "📡 ContractPgListener initial height for contract {}: {}",
                 contract, height.0
@@ -110,7 +104,7 @@ impl ContractListener {
                 .insert(contract.clone(), height);
         }
 
-        // Dispatch any unsettled txs at startup.
+        // Dispatch any unprocessed txs at startup.
         self.dispatch_unprocessed_blocks().await?;
 
         module_handle_messages! {
@@ -170,7 +164,7 @@ impl ContractListener {
         Ok(())
     }
 
-    async fn fetch_lastest_settled_height(&self, contract: &ContractName) -> Result<BlockHeight> {
+    async fn fetch_latest_settled_height(&self, contract: &ContractName) -> Result<BlockHeight> {
         let rec = sqlx::query(
             r#"
             SELECT MAX(block_height) as block_height
@@ -266,7 +260,7 @@ impl ContractListener {
             }
 
             debug!(
-                "Processing {} unsettled txs for contract {}",
+                "Processing {} txs for contract {}",
                 txs.len(),
                 contract_name
             );
@@ -281,8 +275,10 @@ impl ContractListener {
                     TransactionStatusDb::Success
                     | TransactionStatusDb::Failure
                     | TransactionStatusDb::TimedOut => {
-                        self.last_processed_block_height
-                            .insert(contract_name.clone(), BlockHeight(height.0 + 1));
+                        self.last_processed_block_height.insert(
+                            contract_name.clone(),
+                            BlockHeight(tx_ctx.block_height.0 + 1),
+                        );
                     }
                     _ => {}
                 }
