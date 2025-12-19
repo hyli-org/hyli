@@ -350,9 +350,12 @@ where
                             })
                             .unwrap_or(true);
                         if should_retry {
+                            self.metrics.poison_retry(pubkey.to_string(), canal.clone());
                             if let Err(e) =
                                 self.try_start_connection_for_peer(&pubkey, canal.clone())
                             {
+                                self.metrics
+                                    .rehandshake_error(pubkey.to_string(), canal.clone());
                                 warn!(
                                     "Problem when retrying poisoned socket for peer {} on canal {}: {}",
                                     pubkey, canal, e
@@ -425,6 +428,8 @@ where
         if let Some((pubkey, canal)) = target {
             if let Some(peer_socket) = self.get_socket_mut(&canal, &pubkey) {
                 peer_socket.poisoned_at = Some(TimestampMsClock::now());
+                self.metrics
+                    .poison_marked(pubkey.to_string(), canal.clone());
             }
         }
     }
@@ -462,11 +467,20 @@ where
                 dest
             );
             if let Err(e) = self.try_start_connection_for_peer(&peer_pubkey, canal.clone()) {
+                self.metrics
+                    .rehandshake_error(peer_pubkey.to_string(), canal.clone());
                 warn!(
                     "Problem when retrying connection to peer {} after error: {}",
                     peer_pubkey, e
                 );
             }
+            self.metrics.tcp_error_event(Some(canal.clone()));
+        } else {
+            self.metrics.tcp_error_event(None);
+            warn!(
+                "Peer connection error on {} did not map to a known peer/canal on node={}",
+                dest, self.node_id
+            );
         }
         None
     }
@@ -499,12 +513,16 @@ where
                 dest
             );
             if let Err(e) = self.try_start_connection_for_peer(&peer_pubkey, canal.clone()) {
+                self.metrics
+                    .rehandshake_error(peer_pubkey.to_string(), canal.clone());
                 warn!(
                     "Problem when retrying connection to peer {} after close: {}",
                     peer_pubkey, e
                 );
             }
+            self.metrics.tcp_closed_event(Some(canal.clone()));
         } else {
+            self.metrics.tcp_closed_event(None);
             warn!(
                 "Closed socket {} did not map to a known peer/canal on node={}",
                 dest, self.node_id
@@ -566,6 +584,19 @@ where
 
                 // Verify message signature
                 BlstCrypto::verify(&v).context("Error verifying Verack message")?;
+
+                if let Some(elapsed) = self
+                    .connecting
+                    .get(&(v.msg.p2p_public_address.clone(), canal.clone()))
+                    .and_then(|ongoing| match ongoing {
+                        HandshakeOngoing::HandshakeStartedAt(_, started_at) => {
+                            Some((TimestampMsClock::now() - started_at.clone()).as_secs_f64())
+                        }
+                        _ => None,
+                    })
+                {
+                    self.metrics.handshake_latency(canal.clone(), elapsed);
+                }
 
                 info!(
                     "👋 [{}] Processing Verack handshake message {:?}",
@@ -764,6 +795,8 @@ where
                     if now.clone() - last_connect_attempt.clone()
                         < self.timeouts.connect_retry_cooldown
                     {
+                        self.metrics
+                            .handshake_throttle_tcp_client(peer_address.clone(), canal.clone());
                         {
                             return Ok(());
                         }
@@ -774,6 +807,8 @@ where
                     if now.clone() - last_handshake_started_at.clone()
                         < self.timeouts.connect_retry_cooldown
                     {
+                        self.metrics
+                            .handshake_throttle_handshake(peer_address.clone(), canal.clone());
                         {
                             return Ok(());
                         }
@@ -890,6 +925,8 @@ where
                 "Peer {} socket {} for canal {} is poisoned; skipping send on node {}",
                 validator_pub_key, socket_addr, canal, self.node_id
             );
+            self.metrics
+                .poison_send_skipped(validator_pub_key.to_string(), canal.clone());
             return Ok(());
         }
 
@@ -914,10 +951,15 @@ where
             .await
         {
             self.mark_socket_poisoned(&socket_addr);
-            self.try_start_connection_for_peer(&validator_pub_key, canal)
-                .context(format!(
+            if let Err(start_err) =
+                self.try_start_connection_for_peer(&validator_pub_key, canal.clone())
+            {
+                self.metrics
+                    .rehandshake_error(validator_pub_key.to_string(), canal.clone());
+                return Err(start_err.context(format!(
                     "Re-handshaking after message sending error with peer {validator_pub_key}"
-                ))?;
+                )));
+            }
             bail!(
                 "Failed to send message to peer {}: {:?}",
                 validator_pub_key,
