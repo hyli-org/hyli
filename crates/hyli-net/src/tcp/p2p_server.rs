@@ -910,11 +910,7 @@ where
 
         if let Err(e) = self
             .tcp_server
-            .send(
-                socket_addr.clone(),
-                P2PTcpMessage::Data(msg),
-                headers,
-            )
+            .send(socket_addr.clone(), P2PTcpMessage::Data(msg), headers)
             .await
         {
             self.mark_socket_poisoned(&socket_addr);
