@@ -3,6 +3,7 @@ use std::{
     io::ErrorKind,
     marker::PhantomData,
     net::{Ipv4Addr, SocketAddr},
+    sync::{Arc, RwLock},
     time::Duration,
 };
 
@@ -29,6 +30,13 @@ use crate::{
 use tracing::{debug, error, trace, warn};
 
 use super::{tcp_client::TcpClient, SocketStream, TcpEvent};
+
+fn read_peer_label(peer_label: &RwLock<String>) -> String {
+    match peer_label.read() {
+        Ok(guard) => guard.clone(),
+        Err(poisoned) => poisoned.into_inner().clone(),
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct TcpServerOptions {
@@ -317,6 +325,7 @@ where
         let cloned_socket_addr = socket_addr.clone();
         let metrics = self.metrics.clone();
         let pool_sender_for_sender = self.pool_sender.clone();
+        let peer_label = Arc::new(RwLock::new(socket_addr.clone()));
         // Track how many frames we read per socket to detect stalls.
         let mut frames_received: u64 = 0;
 
@@ -435,14 +444,13 @@ where
 
         let abort_sender_task = logged_task({
             let cloned_socket_addr = socket_addr.clone();
+            let peer_label = peer_label.clone();
             let pool_sender = pool_sender_for_sender.clone();
             async move {
                 while let Some(msg) = sender_recv.recv().await {
                     let Ok(msg_bytes) = msg.try_into() else {
-                        error!(
-                            "Failed to serialize message to send to peer {}",
-                            cloned_socket_addr
-                        );
+                        let label = read_peer_label(&peer_label);
+                        error!("Failed to serialize message to send to peer {}", label);
                         metrics.message_send_error();
                         break;
                     };
@@ -450,10 +458,8 @@ where
                     let nb_bytes: usize = (&msg_bytes as &Bytes).len();
                     match tokio::time::timeout(send_timeout, sender.send(msg_bytes)).await {
                         Err(e) => {
-                            error!(
-                                "Timeout sending message to peer {}: {}",
-                                cloned_socket_addr, e
-                            );
+                            let label = read_peer_label(&peer_label);
+                            error!("Timeout sending message to peer {}: {}", label, e);
                             let _ = pool_sender
                                 .send(Box::new(TcpEvent::Error {
                                     dest: cloned_socket_addr.clone(),
@@ -464,7 +470,8 @@ where
                             break;
                         }
                         Ok(Err(e)) => {
-                            error!("Sending message to peer {}: {}", cloned_socket_addr, e);
+                            let label = read_peer_label(&peer_label);
+                            error!("Sending message to peer {}: {}", label, e);
                             let _ = pool_sender
                                 .send(Box::new(TcpEvent::Error {
                                     dest: cloned_socket_addr.clone(),
@@ -491,6 +498,7 @@ where
             socket_addr.to_string(),
             SocketStream {
                 last_ping: TimestampMsClock::now(),
+                peer_label,
                 sender: sender_snd,
                 abort_sender_task,
                 abort_receiver_task,
@@ -516,20 +524,31 @@ where
             self.metrics.peers_snapshot(self.sockets.len() as u64);
         }
     }
+
+    pub fn set_peer_label(&mut self, socket_addr: &str, label: String) {
+        if let Some(stream) = self.sockets.get_mut(socket_addr) {
+            let mut guard = match stream.peer_label.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            *guard = label;
+        }
+    }
 }
 
 #[cfg(test)]
 pub mod tests {
     use std::time::Duration;
 
-    use crate::tcp::{tcp_client::TcpClient, to_tcp_message, TcpEvent, TcpMessage};
+    use crate::tcp::{
+        tcp_client::TcpClient, tcp_server::read_peer_label, to_tcp_message, TcpEvent, TcpMessage,
+    };
 
+    use super::TcpServer;
     use anyhow::Result;
     use bytes::Bytes;
     use futures::{SinkExt, TryStreamExt};
     use sdk::{BlockHeight, DataAvailabilityEvent, DataAvailabilityRequest};
-
-    use super::TcpServer;
 
     type DAServer = TcpServer<DataAvailabilityRequest, DataAvailabilityEvent>;
     type DAClient = TcpClient<DataAvailabilityRequest, DataAvailabilityEvent>;
@@ -821,6 +840,38 @@ pub mod tests {
             "expected no further events after decode error"
         );
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn peer_label_updates_after_set() -> anyhow::Result<()> {
+        let mut server = DAServer::start(0, "DaServer").await?;
+        let _client = DAClient::connect(
+            "me".to_string(),
+            format!("0.0.0.0:{}", server.local_addr().unwrap().port()),
+        )
+        .await?;
+        _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
+
+        let socket_key = server.connected_clients().first().unwrap().clone();
+        {
+            let stored = server
+                .sockets
+                .get(&socket_key)
+                .expect("socket should be registered");
+            let initial_label = read_peer_label(&stored.peer_label);
+            assert_eq!(initial_label, socket_key);
+        }
+
+        server.set_peer_label(&socket_key, "peer-A".to_string());
+        let updated = {
+            let stored = server
+                .sockets
+                .get(&socket_key)
+                .expect("socket should be registered");
+            read_peer_label(&stored.peer_label)
+        };
+        assert_eq!(updated, "peer-A");
         Ok(())
     }
 }
