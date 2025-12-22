@@ -31,10 +31,13 @@ use tracing::{debug, error, trace, warn};
 
 use super::{tcp_client::TcpClient, SocketStream, TcpEvent};
 
-fn read_peer_label(peer_label: &RwLock<String>) -> String {
+fn peer_label_or_addr(peer_label: &RwLock<String>, socket_addr: &str) -> String {
     match peer_label.read() {
         Ok(guard) => guard.clone(),
-        Err(poisoned) => poisoned.into_inner().clone(),
+        Err(err) => {
+            warn!("Failed to read peer label: {}", err);
+            socket_addr.to_string()
+        }
     }
 }
 
@@ -449,7 +452,7 @@ where
             async move {
                 while let Some(msg) = sender_recv.recv().await {
                     let Ok(msg_bytes) = msg.try_into() else {
-                        let label = read_peer_label(&peer_label);
+                        let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
                         error!("Failed to serialize message to send to peer {}", label);
                         metrics.message_send_error();
                         break;
@@ -458,7 +461,7 @@ where
                     let nb_bytes: usize = (&msg_bytes as &Bytes).len();
                     match tokio::time::timeout(send_timeout, sender.send(msg_bytes)).await {
                         Err(e) => {
-                            let label = read_peer_label(&peer_label);
+                            let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
                             error!("Timeout sending message to peer {}: {}", label, e);
                             let _ = pool_sender
                                 .send(Box::new(TcpEvent::Error {
@@ -470,7 +473,7 @@ where
                             break;
                         }
                         Ok(Err(e)) => {
-                            let label = read_peer_label(&peer_label);
+                            let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
                             error!("Sending message to peer {}: {}", label, e);
                             let _ = pool_sender
                                 .send(Box::new(TcpEvent::Error {
@@ -541,7 +544,7 @@ pub mod tests {
     use std::time::Duration;
 
     use crate::tcp::{
-        tcp_client::TcpClient, tcp_server::read_peer_label, to_tcp_message, TcpEvent, TcpMessage,
+        tcp_client::TcpClient, tcp_server::peer_label_or_addr, to_tcp_message, TcpEvent, TcpMessage,
     };
 
     use super::TcpServer;
@@ -859,7 +862,7 @@ pub mod tests {
                 .sockets
                 .get(&socket_key)
                 .expect("socket should be registered");
-            let initial_label = read_peer_label(&stored.peer_label);
+            let initial_label = peer_label_or_addr(&stored.peer_label, &socket_key);
             assert_eq!(initial_label, socket_key);
         }
 
@@ -869,7 +872,7 @@ pub mod tests {
                 .sockets
                 .get(&socket_key)
                 .expect("socket should be registered");
-            read_peer_label(&stored.peer_label)
+            peer_label_or_addr(&stored.peer_label, &socket_key)
         };
         assert_eq!(updated, "peer-A");
         Ok(())
