@@ -19,10 +19,10 @@ use futures::{SinkExt, StreamExt};
 use hyli_model::api::{
     BlobWithStatus, TransactionStatusDb, TransactionTypeDb, TransactionWithBlobs,
 };
-use hyli_model::indexer::MIGRATOR;
 use hyli_model::utils::TimestampMs;
 use hyli_modules::bus::BusMessage;
 use hyli_modules::log_error;
+use hyli_modules::modules::indexer::MIGRATOR;
 use hyli_modules::{
     bus::SharedMessageBus,
     module_handle_messages,

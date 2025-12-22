@@ -30,6 +30,8 @@ pub mod contract_state_indexer;
 pub mod da_listener;
 pub mod data_availability;
 pub mod gcs_uploader;
+#[cfg(feature = "db")]
+pub mod indexer;
 pub mod prover;
 pub mod prover_metrics;
 pub mod rest;

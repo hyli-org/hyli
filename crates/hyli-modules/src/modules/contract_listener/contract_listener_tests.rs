@@ -7,13 +7,14 @@ use crate::{
     },
     modules::{
         contract_listener::{ContractListener, ContractListenerConf, ContractListenerEvent},
+        indexer::MIGRATOR,
         signal::ShutdownModule,
         Module, ShutdownClient,
     },
 };
 use anyhow::Result;
 use hyli_model::{api::TransactionStatusDb, BlobIndex, BlockHeight, ContractName, TxHash};
-use sdk::{indexer::MIGRATOR, BlockHash, ConsensusProposalHash};
+use sdk::{BlockHash, ConsensusProposalHash};
 use sqlx::{postgres::PgPoolOptions, types::chrono::Utc, PgPool};
 use testcontainers_modules::{
     postgres::Postgres,
