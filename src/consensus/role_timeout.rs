@@ -76,6 +76,7 @@ impl TimeoutRoleState {
 }
 
 impl Consensus {
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub(super) fn verify_tc(
         &self,
         tc_qc: &TimeoutQC,
@@ -135,6 +136,7 @@ impl Consensus {
         Ok(())
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub(super) fn on_timeout_certificate(
         &mut self,
         received_timeout_certificate: TimeoutQC,
@@ -155,6 +157,12 @@ impl Consensus {
     pub(super) fn on_timeout_tick(&mut self) -> Result<()> {
         match &self.bft_round_state.timeout.state {
             TimeoutState::Scheduled { timestamp } if TimestampMsClock::now() >= *timestamp => {
+                let _span = tracing::info_span!(
+                    "TimeoutTick",
+                    slot = self.bft_round_state.slot as i64,
+                    view = self.bft_round_state.view as i64
+                )
+                .entered();
                 // Trigger state transition to mutiny
                 info!(
                     "⏰ Trigger timeout for slot {} and view {}",
@@ -178,6 +186,7 @@ impl Consensus {
         }
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub(super) fn on_timeout(
         &mut self,
         received_timeout: SignedByValidator<(

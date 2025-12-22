@@ -41,6 +41,7 @@ pub(super) enum TicketVerifyAndProcess {
 }
 
 impl Consensus {
+    #[tracing::instrument(skip(self, consensus_proposal, ticket))]
     pub(super) fn on_prepare(
         &mut self,
         sender: ValidatorPublicKey,
@@ -219,6 +220,7 @@ impl Consensus {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self, prepare_quorum_certificate, proposal_hash_hint))]
     pub(super) fn on_confirm(
         &mut self,
         sender: ValidatorPublicKey,
@@ -283,6 +285,7 @@ impl Consensus {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self, commit_quorum_certificate, proposal_hash_hint))]
     pub(super) fn on_commit(
         &mut self,
         sender: ValidatorPublicKey,

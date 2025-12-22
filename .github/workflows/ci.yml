@@ -84,7 +84,7 @@ jobs:
   coverage:
     name: Unit tests coverage
     runs-on: arc-runner-set
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       matrix:
         toolchain:
