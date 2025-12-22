@@ -464,8 +464,8 @@ impl DataAvailability {
             }
 
             Some(tcp_event) = server.listen_next() => {
-                if let TcpEvent::Message { dest, data, .. } = tcp_event {
-                    _ = log_error!(self.start_streaming_to_peer(data.0, &mut catchup_joinset, &dest).await, "Starting streaming to peer");
+                if let TcpEvent::Message { socket_addr, data, .. } = tcp_event {
+                    _ = log_error!(self.start_streaming_to_peer(data.0, &mut catchup_joinset, &socket_addr).await, "Starting streaming to peer");
                 }
             }
 

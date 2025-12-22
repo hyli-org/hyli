@@ -54,7 +54,7 @@ impl TcpServer {
         module_handle_messages! {
             on_self self,
             Some(tcp_event) = server.listen_next() => {
-                if let TcpEvent::Message { dest: _, data, headers: _ } = tcp_event {
+                if let TcpEvent::Message { socket_addr: _, data, headers: _ } = tcp_event {
                     _ = log_error!(self.bus.send_waiting_if_full(data).await, "Sending message on TcpServerMessage topic from connection pool");
                 }
             }
