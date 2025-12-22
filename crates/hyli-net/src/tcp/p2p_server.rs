@@ -652,11 +652,14 @@ where
                 peer_addr_to_drop,
                 kept_socket
             );
+            self.tcp_server
+                .set_peer_label(&kept_socket, v.msg.name.clone());
             self.tcp_server.drop_peer_stream(peer_addr_to_drop);
             None
         } else {
             // If the validator exists, but not this canal, we create it
             if let Some(validator) = self.peers.get_mut(&peer_pubkey) {
+                let dest_addr = dest.clone();
                 debug!(
                     "Local peer {}/{} ({}): creating canal for existing peer on socket {}",
                     v.msg.p2p_public_address, canal, peer_pubkey, dest
@@ -676,9 +679,12 @@ where
                         poisoned_at: None,
                     },
                 );
+                self.tcp_server
+                    .set_peer_label(&dest_addr, v.msg.name.clone());
             }
             // If the validator was never created before
             else {
+                let dest_addr = dest.clone();
                 debug!(
                     "Local peer {}/{} ({}): creating new peer and canal on socket {}",
                     v.msg.p2p_public_address, canal, peer_pubkey, dest
@@ -703,6 +709,8 @@ where
                 };
 
                 self.peers.insert(peer_pubkey.clone(), peer_info);
+                self.tcp_server
+                    .set_peer_label(&dest_addr, v.msg.name.clone());
             }
 
             self.metrics.peers_snapshot(self.peers.len() as u64);
