@@ -449,9 +449,15 @@ impl Consensus {
             if &round_leader == self.crypto.validator_pubkey() {
                 // This TC is for our current slot and view (by construction), so we can leave Joining mode
                 if matches!(self.bft_round_state.state_tag, StateTag::Joining) {
+                    debug!("Leaving Joining mode as leader after timeout certificate");
                     self.set_state_tag(StateTag::Leader);
                 }
             } else {
+                // This TC is for our current slot and view (by construction), so we can leave Joining mode
+                if matches!(self.bft_round_state.state_tag, StateTag::Joining) {
+                    debug!("Leaving Joining mode as follower after timeout certificate");
+                    self.set_state_tag(StateTag::Follower);
+                }
                 // Broadcast the Timeout Certificate to all validators
                 self.broadcast_net_message(ConsensusNetMessage::TimeoutCertificate(
                     ticket.0.clone(),

@@ -1214,7 +1214,8 @@ async fn autobahn_rejoin_flow_in_consensus_with_tc() {
 
 #[test_log::test(tokio::test)]
 // Test an edge case where all nodes are stopped and must restart from a certain height.
-async fn autobahn_all_restart_flow() {
+// Case A is via timeout certificates.
+async fn autobahn_all_restart_flow_a() {
     let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
 
     ConsensusTestCtx::setup_for_round(
@@ -1233,7 +1234,69 @@ async fn autobahn_all_restart_flow() {
         node.consensus_ctx.setup_for_rejoining(3);
     }
 
-    // Everyone times out.
+    // Nodes 0/1/2 time out
+    // Node 3 will receive the TC directly to test both paths
+    // (node 3 also happens to be leader)
+    ConsensusTestCtx::timeout(&mut [
+        &mut node0.consensus_ctx,
+        &mut node1.consensus_ctx,
+        &mut node2.consensus_ctx,
+    ])
+    .await;
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node1.consensus_ctx, to: [node0.consensus_ctx, node2.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node2.consensus_ctx, to: [node0.consensus_ctx, node1.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout Certificate",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::TimeoutCertificate(..)
+    };
+
+    // Now node3 starts slot 3 view 1
+    node3
+        .start_round_with_cut_from_mempool(TimestampMs(4100))
+        .await;
+    simple_commit_round! {
+        leader: node3.consensus_ctx,
+        followers: [node0.consensus_ctx, node1.consensus_ctx, node2.consensus_ctx]
+    };
+}
+
+#[test_log::test(tokio::test)]
+// Test an edge case where all nodes are stopped and must restart from a certain height.
+// Case B is directly via the timeout flow.
+async fn autobahn_all_restart_flow_b() {
+    let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
+
+    ConsensusTestCtx::setup_for_round(
+        &mut [
+            &mut node0.consensus_ctx,
+            &mut node1.consensus_ctx,
+            &mut node2.consensus_ctx,
+            &mut node3.consensus_ctx,
+        ],
+        3,
+        0,
+    );
+
+    // Mark all nodes as joining
+    for node in [&mut node0, &mut node1, &mut node2, &mut node3] {
+        node.consensus_ctx.setup_for_rejoining(3);
+    }
+
+    // Nodes 0/1/2/3 time out
     ConsensusTestCtx::timeout(&mut [
         &mut node0.consensus_ctx,
         &mut node1.consensus_ctx,
@@ -1241,7 +1304,6 @@ async fn autobahn_all_restart_flow() {
         &mut node3.consensus_ctx,
     ])
     .await;
-
     broadcast! {
         description: "Follower - Timeout",
         from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
@@ -1261,6 +1323,15 @@ async fn autobahn_all_restart_flow() {
         description: "Follower - Timeout",
         from: node3.consensus_ctx, to: [node0.consensus_ctx, node1.consensus_ctx, node2.consensus_ctx],
         message_matches: ConsensusNetMessage::Timeout(..)
+    };
+
+    // Now node3 starts slot 3 view 1
+    node3
+        .start_round_with_cut_from_mempool(TimestampMs(4100))
+        .await;
+    simple_commit_round! {
+        leader: node3.consensus_ctx,
+        followers: [node0.consensus_ctx, node1.consensus_ctx, node2.consensus_ctx]
     };
 }
 

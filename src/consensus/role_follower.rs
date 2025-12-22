@@ -659,16 +659,15 @@ impl Consensus {
                 tc_view
             );
 
+            // This TC is for our current slot, so we can leave Joining mode
+            if matches!(self.bft_round_state.state_tag, StateTag::Joining) {
+                debug!("Leaving Joining mode after timeout certificate");
+                self.set_state_tag(StateTag::Follower);
+            }
+
             // Fake our view so we fast-forward properly.
             self.bft_round_state.view = tc_view;
             self.advance_round(Ticket::TimeoutQC(timeout_qc, tc_kind_data.clone()))?;
-
-            // This TC is for our current slot and view, so we can leave Joining mode
-            if self.round_leader()? == *self.crypto.validator_pubkey()
-                && matches!(self.bft_round_state.state_tag, StateTag::Joining)
-            {
-                self.set_state_tag(StateTag::Leader);
-            }
         }
 
         Ok(TicketVerifyAndProcess::Processed)
