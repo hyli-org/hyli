@@ -211,16 +211,9 @@ impl Consensus {
             ..
         } = &received_timeout;
 
-        if received_parent_hash != &self.bft_round_state.parent_hash {
-            debug!(
-                "🌘 Ignoring timeout with incorrect parent hash {}, expected {}",
-                received_parent_hash, self.bft_round_state.parent_hash
-            );
-            return Ok(());
-        }
         if received_slot < &self.bft_round_state.slot {
             debug!(
-                "🌘 Ignoring timeout for slot {}, am at {}",
+                "🌘 Ignoring timeout for older slot {}, am at {}",
                 received_slot, self.bft_round_state.slot
             );
             return Ok(());
@@ -229,8 +222,16 @@ impl Consensus {
         if received_slot != &self.bft_round_state.slot || received_view < &self.bft_round_state.view
         {
             info!(
-                "Timeout (Slot: {}, view: {}) does not match expected (Slot == {}, view >= {})",
+                "🌘 Timeout (Slot: {}, view: {}) does not match expected (Slot == {}, view >= {})",
                 received_slot, received_view, self.bft_round_state.slot, self.bft_round_state.view,
+            );
+            return Ok(());
+        }
+
+        if received_parent_hash != &self.bft_round_state.parent_hash {
+            debug!(
+                "🌘 Ignoring timeout with incorrect parent hash {}, expected {}",
+                received_parent_hash, self.bft_round_state.parent_hash
             );
             return Ok(());
         }
@@ -304,7 +305,7 @@ impl Consensus {
         );
 
         info!(
-            "Got {voting_power} voting power with {len} timeout requests for the view {received_view}. f is {f}",
+            "Got {voting_power} voting power with {len} timeout requests for the slot {received_slot} view {received_view}. f is {f}",
         );
 
         // Count requests and if f+1 requests, and not already part of it, join the mutiny

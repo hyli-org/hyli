@@ -1033,11 +1033,19 @@ pub mod test {
             }
         }
 
+        /// Set a node up to catchup to the consensus without being part of it.
         pub fn setup_for_joining(&mut self, nodes: &[&ConsensusTestCtx]) {
             for other_node in nodes.iter() {
                 self.add_trusted_validator(other_node.consensus.crypto.validator_pubkey());
             }
             self.consensus.bft_round_state.state_tag = StateTag::Joining;
+        }
+
+        /// Set a node up to catchup to the consensus while already being part of it (e.g. after starting)
+        pub fn setup_for_rejoining(&mut self, slot: u64) {
+            self.consensus.bft_round_state.state_tag = StateTag::Joining;
+            self.consensus.bft_round_state.slot = slot;
+            self.consensus.bft_round_state.view = 0;
         }
 
         pub fn validator_pubkey(&self) -> ValidatorPublicKey {
@@ -1106,16 +1114,11 @@ pub mod test {
             matches!(self.consensus.bft_round_state.state_tag, StateTag::Joining)
         }
 
-        pub fn setup_for_round(
-            nodes: &mut [&mut ConsensusTestCtx],
-            leader: usize,
-            slot: u64,
-            view: u64,
-        ) {
+        pub fn setup_for_round(nodes: &mut [&mut ConsensusTestCtx], slot: u64, view: u64) {
             // TODO: write a real one?
             let commit_qc = QuorumCertificate(AggregateSignature::default(), ConfirmAckMarker);
 
-            for (index, node) in nodes.iter_mut().enumerate() {
+            for node in nodes.iter_mut() {
                 node.consensus.bft_round_state.slot = slot;
                 node.consensus.bft_round_state.view = view;
 
@@ -1124,7 +1127,7 @@ pub mod test {
                     .follower
                     .buffered_quorum_certificate = Some(commit_qc.clone());
 
-                if index == leader {
+                if node.consensus.round_leader().unwrap() == node.pubkey() {
                     node.consensus.bft_round_state.state_tag = StateTag::Leader;
                     node.consensus.bft_round_state.leader.pending_ticket =
                         Some(Ticket::CommitQC(commit_qc.clone()));

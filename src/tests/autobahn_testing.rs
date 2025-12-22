@@ -1023,13 +1023,254 @@ async fn mempool_fail_to_vote_on_fork() {
 }
 
 #[test_log::test(tokio::test)]
-async fn autobahn_rejoin_flow() {
+async fn autobahn_rejoin_flow_in_consensus_with_tc() {
+    // Ordered so that node1 is leader at slot 3
+    let (mut node3, mut node2, mut node1, mut joining_node) = build_nodes!(4).await;
+
+    // Let's setup the consensus so our joining node has some blocks to catch up.
+    ConsensusTestCtx::setup_for_round(
+        &mut [
+            &mut node1.consensus_ctx,
+            &mut node2.consensus_ctx,
+            &mut node3.consensus_ctx,
+        ],
+        3,
+        0,
+    );
+    joining_node.consensus_ctx.setup_for_rejoining(0);
+
+    // Let's setup a NodeState on this bus
+    let mut ns = NodeState::create("test".to_string(), "test");
+    let ns_event_sender = get_sender::<NodeStateEvent>(&joining_node.shared_bus).await;
+    let mut ns_event_receiver = get_receiver::<NodeStateEvent>(&joining_node.shared_bus).await;
+    let mut commit_receiver = get_receiver::<ConsensusEvent>(&node1.shared_bus).await;
+
+    // Prep blocks 0, 1, 2
+    let mut blocks = vec![SignedBlock {
+        data_proposals: vec![],
+        certificate: AggregateSignature::default(),
+        consensus_proposal: ConsensusProposal {
+            slot: 0,
+            ..ConsensusProposal::default()
+        },
+    }];
+    for _ in 0..2 {
+        blocks.push(SignedBlock {
+            data_proposals: vec![],
+            certificate: AggregateSignature::default(),
+            consensus_proposal: ConsensusProposal {
+                slot: blocks.len() as u64,
+                parent_hash: blocks[blocks.len() - 1].hashed(),
+                ..ConsensusProposal::default()
+            },
+        });
+    }
+
+    // Catchup up to the last block, but don't actually process the last block message yet.
+    for signed_block in blocks.get(0..blocks.len() - 1).unwrap() {
+        let node_state_block = ns.handle_signed_block(signed_block.clone()).unwrap();
+        ns_event_sender
+            .send(BusEnvelope::from_message(NodeStateEvent::NewBlock(
+                node_state_block,
+            )))
+            .unwrap();
+    }
+    while let Ok(event) = ns_event_receiver.try_recv() {
+        let event = event.into_message();
+        info!("{:?}", event);
+        joining_node
+            .consensus_ctx
+            .handle_node_state_event(event)
+            .await
+            .expect("should handle data event");
+    }
+
+    // At this point DA is caught up, node state is missing one block,
+    // consensus is still on slot 0.
+
+    info!("Starting rounds...");
+
+    // Do one round - we won't catch up yet.
+    node1
+        .start_round_with_cut_from_mempool(TimestampMs(1000 * 3))
+        .await;
+    simple_commit_round! {
+        leader: node1.consensus_ctx,
+        followers: [node2.consensus_ctx, node3.consensus_ctx],
+        joining: joining_node.consensus_ctx
+    };
+
+    // Now process block 2
+    let signed_block = blocks.get(2).unwrap().clone();
+    let node_state_block = ns.handle_signed_block(signed_block).unwrap();
+    ns_event_sender
+        .send(BusEnvelope::from_message(NodeStateEvent::NewBlock(
+            node_state_block,
+        )))
+        .unwrap();
+    while let Ok(event) = ns_event_receiver.try_recv() {
+        let event = event.into_message();
+        info!("{:?}", event);
+        joining_node
+            .consensus_ctx
+            .handle_node_state_event(event)
+            .await
+            .expect("should handle data event");
+    }
+
+    // We still aren't caught up
+    assert!(joining_node.consensus_ctx.is_joining());
+
+    // Now we are leader, but we are not caught up, so everyone time else times out.
+    ConsensusTestCtx::timeout(&mut [
+        &mut node1.consensus_ctx,
+        &mut node2.consensus_ctx,
+        &mut node3.consensus_ctx,
+    ])
+    .await;
+
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx, joining_node.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx, joining_node.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node3.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, joining_node.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+
+    broadcast! {
+        description: "Follower - Timeout Certificate",
+        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx, joining_node.consensus_ctx],
+        message_matches: ConsensusNetMessage::TimeoutCertificate(..)
+    };
+
+    info!("Followers timeout");
+
+    // At this point, slot 4, view 1 is started by node 3.
+    node3
+        .start_round_with_cut_from_mempool(TimestampMs(4100))
+        .await;
+
+    simple_commit_round! {
+        leader: node3.consensus_ctx,
+        followers: [node1.consensus_ctx, node2.consensus_ctx],
+        joining: joining_node.consensus_ctx
+    };
+
+    // We still aren't caught up
+    assert!(joining_node.consensus_ctx.is_joining());
+
+    // Catch up the two blocks
+    for _ in 0..2 {
+        while let Ok(event) = commit_receiver.try_recv() {
+            let ConsensusEvent::CommitConsensusProposal(ccp) = event.into_message();
+            if ccp.consensus_proposal.slot > 2 {
+                let signed_block = SignedBlock {
+                    data_proposals: vec![],
+                    certificate: ccp.certificate,
+                    consensus_proposal: ccp.consensus_proposal,
+                };
+                let node_state_block = ns.handle_signed_block(signed_block.clone()).unwrap();
+                ns_event_sender
+                    .send(BusEnvelope::from_message(NodeStateEvent::NewBlock(
+                        node_state_block,
+                    )))
+                    .unwrap();
+
+                blocks.push(signed_block);
+            }
+        }
+        while let Ok(event) = ns_event_receiver.try_recv() {
+            let event = event.into_message();
+            joining_node
+                .consensus_ctx
+                .handle_node_state_event(event)
+                .await
+                .expect("should handle data event");
+        }
+    }
+
+    // Now node3 (again, quirk of current leader selection) starts slot 5 view 0
+    node3
+        .start_round_with_cut_from_mempool(TimestampMs(5000))
+        .await;
+
+    simple_commit_round! {
+        leader: node3.consensus_ctx,
+        followers: [node1.consensus_ctx, node2.consensus_ctx],
+        joining: joining_node.consensus_ctx
+    };
+
+    // We are caught up
+    assert!(!joining_node.consensus_ctx.is_joining());
+}
+
+#[test_log::test(tokio::test)]
+// Test an edge case where all nodes are stopped and must restart from a certain height.
+async fn autobahn_all_restart_flow() {
+    let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
+
+    ConsensusTestCtx::setup_for_round(
+        &mut [
+            &mut node0.consensus_ctx,
+            &mut node1.consensus_ctx,
+            &mut node2.consensus_ctx,
+            &mut node3.consensus_ctx,
+        ],
+        3,
+        0,
+    );
+
+    // Mark all nodes as joining
+    for node in [&mut node0, &mut node1, &mut node2, &mut node3] {
+        node.consensus_ctx.setup_for_rejoining(3);
+    }
+
+    // Everyone times out.
+    ConsensusTestCtx::timeout(&mut [
+        &mut node0.consensus_ctx,
+        &mut node1.consensus_ctx,
+        &mut node2.consensus_ctx,
+        &mut node3.consensus_ctx,
+    ])
+    .await;
+
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node1.consensus_ctx, to: [node0.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node2.consensus_ctx, to: [node0.consensus_ctx, node1.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node3.consensus_ctx, to: [node0.consensus_ctx, node1.consensus_ctx, node2.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+}
+
+#[test_log::test(tokio::test)]
+async fn autobahn_rejoin_flow_outside_consensus() {
     let (mut node1, mut node2) = build_nodes!(2).await;
 
     // Let's setup the consensus so our joining node has some blocks to catch up.
     ConsensusTestCtx::setup_for_round(
         &mut [&mut node1.consensus_ctx, &mut node2.consensus_ctx],
-        0,
         3,
         0,
     );
@@ -1318,7 +1559,6 @@ async fn autobahn_missed_a_confirm_message() {
             &mut node3.consensus_ctx,
             &mut node4.consensus_ctx,
         ],
-        0,
         5,
         0,
     );
@@ -1415,7 +1655,6 @@ async fn autobahn_missed_confirm_and_commit_messages() {
             &mut node3.consensus_ctx,
             &mut node4.consensus_ctx,
         ],
-        0,
         5,
         0,
     );
@@ -1502,7 +1741,6 @@ async fn autobahn_buffer_early_messages() {
             &mut node3.consensus_ctx,
             &mut node4.consensus_ctx,
         ],
-        0,
         5,
         0,
     );
@@ -1672,7 +1910,6 @@ async fn autobahn_got_timed_out_during_sync() {
             &mut node2.consensus_ctx,
             &mut node3.consensus_ctx,
         ],
-        0,
         5,
         0,
     );
@@ -1865,7 +2102,6 @@ async fn autobahn_commit_different_views_for_f() {
             &mut node2.consensus_ctx,
             &mut node3.consensus_ctx,
         ],
-        0,
         5,
         0,
     );
@@ -1979,7 +2215,6 @@ async fn autobahn_commit_different_views_for_fplusone() {
             &mut node2.consensus_ctx,
             &mut node3.consensus_ctx,
         ],
-        0,
         5,
         0,
     );
@@ -2057,7 +2292,6 @@ async fn autobahn_commit_byzantine_across_views_attempts() {
             &mut node2.consensus_ctx,
             &mut node3.consensus_ctx,
         ],
-        0,
         5,
         0,
     );
@@ -2179,7 +2413,6 @@ async fn autobahn_commit_prepare_qc_across_multiple_views() {
             &mut node2.consensus_ctx,
             &mut node3.consensus_ctx,
         ],
-        0,
         5,
         0,
     );

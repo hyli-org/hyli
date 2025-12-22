@@ -841,10 +841,12 @@ impl Consensus {
                 }
             }
 
-            // Edge case: we have already committed a different CQC (this check that bft slot == cp slot + 1 means we committed)
+            // Edge case: we have already committed a different CQC (this check that bft slot == cp slot + 1 which means we committed)
+            // (this currently triggers when exiting joining, but it's spurious then)
+            // (TODO: fix this for joining by storing a CQC?)
             if !self.current_slot_prepare_is_present() {
                 warn!(
-                    "Received an unknown commit QC for slot {}. This is unsafe to verify as we have updated staking with changes in that slot.
+                    "Received an unknown commit QC for slot {}. This is unsafe to verify if we have updated staking with changes in that slot.
                     Proceeding with current staking anyways.",
                     self.bft_round_state.slot
                 );
