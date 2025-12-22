@@ -2,7 +2,10 @@ pub mod p2p_server;
 pub mod tcp_client;
 pub mod tcp_server;
 
-use std::{fmt::Display, sync::Arc};
+use std::{
+    fmt::Display,
+    sync::{Arc, RwLock},
+};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
@@ -230,6 +233,8 @@ pub enum TcpEvent<Data: BorshDeserialize> {
 struct SocketStream {
     /// Last timestamp we received a ping from the peer.
     last_ping: TimestampMs,
+    /// Best-effort human label for logging (defaults to socket addr).
+    peer_label: Arc<RwLock<String>>,
     /// Sender to stream data to the peer
     sender: tokio::sync::mpsc::Sender<TcpMessage>,
     /// Handle to abort the sending side of the stream
