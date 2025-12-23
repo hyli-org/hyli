@@ -1,6 +1,6 @@
 use crate::utils::TimestampMs;
-use crate::DataProposalHash;
 use crate::{ConsensusProposalHash, LaneId, TxHash, TxId};
+use crate::{ContractName, DataProposalHash};
 use sqlx::Row;
 
 impl sqlx::Type<sqlx::Postgres> for TimestampMs {
@@ -21,6 +21,35 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for TimestampMs {
         let timestamp = <NaiveDateTime as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
         let millis = timestamp.and_utc().timestamp_millis() as u128;
         Ok(TimestampMs(millis))
+    }
+}
+
+impl sqlx::Type<sqlx::Postgres> for ContractName {
+    fn type_info() -> sqlx::postgres::PgTypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+}
+impl sqlx::Encode<'_, sqlx::Postgres> for ContractName {
+    fn encode_by_ref(
+        &self,
+        buf: &mut sqlx::postgres::PgArgumentBuffer,
+    ) -> std::result::Result<
+        sqlx::encode::IsNull,
+        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
+    > {
+        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
+    }
+}
+
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for ContractName {
+    fn decode(
+        value: sqlx::postgres::PgValueRef<'r>,
+    ) -> std::result::Result<
+        ContractName,
+        std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
+    > {
+        let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
+        Ok(ContractName(inner))
     }
 }
 

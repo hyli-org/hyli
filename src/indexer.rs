@@ -9,7 +9,9 @@ use anyhow::{Context, Error, Result};
 use chrono::{DateTime, Utc};
 use hyli_model::api::{TransactionStatusDb, TransactionTypeDb};
 use hyli_model::utils::TimestampMs;
-use hyli_modules::{bus::BusClientSender, node_state::BlockNodeStateCallback};
+use hyli_modules::{
+    bus::BusClientSender, modules::indexer::MIGRATOR, node_state::BlockNodeStateCallback,
+};
 use hyli_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
@@ -17,7 +19,10 @@ use hyli_modules::{
     node_state::{module::NodeStateModule, NodeState, NodeStateCallback, NodeStateStore, TxEvent},
 };
 use hyli_net::clock::TimestampMsClock;
-use sqlx::{postgres::PgPoolOptions, Acquire, PgPool, Pool, Postgres, QueryBuilder, Row};
+use serde::Serialize;
+use sqlx::{
+    postgres::PgPoolOptions, Acquire, PgConnection, PgPool, Pool, Postgres, QueryBuilder, Row,
+};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     ops::Deref,
@@ -43,7 +48,7 @@ pub struct Indexer {
     conf: Conf,
 }
 
-pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/indexer/migrations");
+const BLOCK_NOTIFICATION_CHANNEL: &str = "block_notifications";
 
 impl Module for Indexer {
     type Context = (SharedConf, SharedBuildApiCtx);
@@ -201,6 +206,15 @@ pub struct TxStore {
 }
 
 pub struct BlockStore {
+    pub block_hash: ConsensusProposalHash,
+    pub parent_hash: ConsensusProposalHash,
+    pub block_height: BlockHeight,
+    pub timestamp: DateTime<Utc>,
+    pub total_txs: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct BlockNotification {
     pub block_hash: ConsensusProposalHash,
     pub parent_hash: ConsensusProposalHash,
     pub block_height: BlockHeight,
@@ -537,9 +551,23 @@ impl Indexer {
         let transaction = &self.db;
         let mut transaction = transaction.acquire().await?;
         let transaction = transaction.acquire().await?;
+        let mut block_notifications = Vec::new();
+        // Only transaction that have some contracts in tx_store.contract_names will be notified
+        // Hence, only sequenced blob transactions will be notified
+        // FIXME: Add notification for contracts at the block where a tx for that contract settles
+        // TODO: Investigate if we should have a channel per transaction status update
+        let mut contract_notifications: HashMap<ContractName, HashSet<BlockHeight>> =
+            HashMap::new();
 
         // First insert blocks
         for block in self.handler_store.blocks.drain(..) {
+            block_notifications.push(BlockNotification {
+                block_hash: block.block_hash.clone(),
+                parent_hash: block.parent_hash.clone(),
+                block_height: block.block_height,
+                timestamp: block.timestamp,
+                total_txs: block.total_txs,
+            });
             sqlx::query("INSERT INTO blocks (hash, parent_hash, height, timestamp, total_txs) VALUES ($1, $2, $3, $4, $5)")
                 .bind(block.block_hash)
                 .bind(block.parent_hash)
@@ -570,11 +598,20 @@ impl Indexer {
             let mut add_comma_ctx = false;
             for tx in chunk.into_iter() {
                 if already_inserted.insert(TxId(tx.dp_hash.clone(), tx.tx_hash.clone())) {
+                    let contract_names: Vec<_> = tx.contract_names.into_iter().collect();
+                    if !contract_names.is_empty() {
+                        for contract_name in &contract_names {
+                            contract_notifications
+                                .entry(contract_name.clone())
+                                .or_default()
+                                .insert(tx.block_height);
+                        }
+                    }
                     if add_comma {
                         query_builder.push(",");
                     }
 
-                    for contract_name in tx.contract_names.into_iter() {
+                    for contract_name in contract_names.into_iter() {
                         if add_comma_ctx {
                             query_builder_ctx.push(",");
                         }
@@ -820,6 +857,13 @@ impl Indexer {
                 .await?;
         }
 
+        if !contract_notifications.is_empty() {
+            send_contract_notifications(&mut *transaction, contract_notifications).await?;
+        }
+        if !block_notifications.is_empty() {
+            send_block_notifications(&mut *transaction, block_notifications).await?;
+        }
+
         Ok(())
     }
 }
@@ -905,6 +949,39 @@ impl tokio::io::AsyncRead for StreamableData {
         }
         core::task::Poll::Ready(Ok(()))
     }
+}
+
+async fn send_contract_notifications(
+    transaction: &mut PgConnection,
+    notifications: HashMap<ContractName, HashSet<BlockHeight>>,
+) -> Result<()> {
+    for (contract_name, blocks) in notifications {
+        for block_height in blocks {
+            sqlx::query("SELECT pg_notify($1, $2)")
+                .bind(&contract_name.0)
+                .bind(block_height.0.to_string())
+                .execute(&mut *transaction)
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn send_block_notifications(
+    transaction: &mut PgConnection,
+    blocks: Vec<BlockNotification>,
+) -> Result<()> {
+    for block in blocks {
+        let payload = serde_json::to_string(&block)?;
+        sqlx::query("SELECT pg_notify($1, $2)")
+            .bind(BLOCK_NOTIFICATION_CHANNEL)
+            .bind(payload)
+            .execute(&mut *transaction)
+            .await?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

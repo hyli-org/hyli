@@ -22,6 +22,7 @@ use hyli_model::api::{
 use hyli_model::utils::TimestampMs;
 use hyli_modules::bus::BusMessage;
 use hyli_modules::log_error;
+use hyli_modules::modules::indexer::MIGRATOR;
 use hyli_modules::{
     bus::SharedMessageBus,
     module_handle_messages,
@@ -88,8 +89,6 @@ impl Explorer {
         }
     }
 }
-
-pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/indexer/migrations");
 
 impl Module for Explorer {
     type Context = (SharedConf, SharedBuildApiCtx);
