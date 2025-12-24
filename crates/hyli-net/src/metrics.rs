@@ -344,3 +344,82 @@ impl TcpServerMetrics {
             .add(len, &self.server_name_label);
     }
 }
+
+#[derive(Clone)]
+pub struct TcpClientMetrics {
+    message_received: Counter<u64>,
+    message_received_bytes: Counter<u64>,
+    message_emitted: Counter<u64>,
+    message_emitted_bytes: Counter<u64>,
+    message_error: Counter<u64>,
+    message_closed: Counter<u64>,
+    message_send_error: Counter<u64>,
+    message_send_time: Histogram<f64>,
+    client_name_label: Vec<KeyValue>,
+}
+
+impl TcpClientMetrics {
+    pub fn global(client_name: String) -> TcpClientMetrics {
+        let scope = InstrumentationScope::builder(client_name.clone()).build();
+        let my_meter = opentelemetry::global::meter_with_scope(scope);
+        TcpClientMetrics {
+            message_received: my_meter.u64_counter("tcp_client_message_received").build(),
+            message_received_bytes: my_meter
+                .u64_counter("tcp_client_message_received_bytes")
+                .build(),
+            message_emitted: my_meter.u64_counter("tcp_client_message_emitted").build(),
+            message_emitted_bytes: my_meter
+                .u64_counter("tcp_client_message_emitted_bytes")
+                .build(),
+            message_error: my_meter.u64_counter("tcp_client_message_error").build(),
+            message_closed: my_meter.u64_counter("tcp_client_message_closed").build(),
+            message_send_error: my_meter
+                .u64_counter("tcp_client_message_send_error")
+                .build(),
+            message_send_time: my_meter
+                .f64_histogram("tcp_client_message_send_time_seconds")
+                .build(),
+            client_name_label: vec![KeyValue::new("client_name", client_name)],
+        }
+    }
+
+    pub fn message_received(&self) {
+        self.message_received.add(1, &self.client_name_label);
+    }
+
+    pub fn message_emitted(&self) {
+        self.message_emitted.add(1, &self.client_name_label);
+    }
+
+    pub fn message_emitted_bytes(&self, len: u64) {
+        self.message_emitted_bytes.add(len, &self.client_name_label);
+    }
+
+    pub fn message_error(&self) {
+        self.message_error.add(1, &self.client_name_label);
+    }
+
+    pub fn message_closed(&self) {
+        self.message_closed.add(1, &self.client_name_label);
+    }
+
+    pub fn message_send_error(&self) {
+        self.message_send_error.add(1, &self.client_name_label);
+    }
+
+    pub fn message_send_time(&self, duration: f64) {
+        self.message_send_time
+            .record(duration, &self.client_name_label);
+    }
+
+    pub(crate) fn message_received_bytes(&self, len: u64) {
+        self.message_received_bytes
+            .add(len, &self.client_name_label);
+    }
+}
+
+impl std::fmt::Debug for TcpClientMetrics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TcpClientMetrics").finish()
+    }
+}

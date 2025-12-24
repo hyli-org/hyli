@@ -373,13 +373,13 @@ where
                                     Err(io) => {
                                         metrics.message_error();
                                         warn!(
-                                        "Failed to decode TCP frame from peer {} (socket_addr={}, frame=#{}, {} bytes): {}. Closing socket.",
-                                        label,
-                                        cloned_socket_addr,
-                                        frames_received,
-                                        bytes.len(),
-                                        io
-                                    );
+                                            "Failed to decode TCP frame from peer {} (socket_addr={}, frame=#{}, {} bytes): {}. Closing socket.",
+                                            label,
+                                            cloned_socket_addr,
+                                            frames_received,
+                                            bytes.len(),
+                                            io
+                                        );
                                         // Treat decode failure as fatal: notify upstream and stop the loop.
                                         let _ = pool_sender
                                             .send(Box::new(TcpEvent::Error {
