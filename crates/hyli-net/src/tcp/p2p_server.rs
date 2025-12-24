@@ -64,7 +64,7 @@ pub enum P2PServerEvent<Msg> {
 #[derive(Debug)]
 pub enum P2PTcpEvent<Data: BorshDeserialize + BorshSerialize> {
     TcpEvent(TcpEvent<Data>),
-    HandShakeTcpClient(String, TcpClient<Data, Data>, Canal),
+    HandShakeTcpClient(String, Box<TcpClient<Data, Data>>, Canal),
     PingPeers,
 }
 
@@ -211,7 +211,7 @@ where
                 Some(joinset_result) = self.handshake_clients_tasks.join_next() => {
                     match joinset_result {
                         Ok((public_addr, Ok(tcp_client), canal)) => {
-                            return P2PTcpEvent::HandShakeTcpClient(public_addr, tcp_client, canal);
+                            return P2PTcpEvent::HandShakeTcpClient(public_addr, Box::new(tcp_client), canal);
                         }
                         Ok((public_addr, Err(err), canal)) => {
                             warn!(
@@ -294,7 +294,7 @@ where
             },
             P2PTcpEvent::HandShakeTcpClient(public_addr, tcp_client, canal) => {
                 if let Err(e) = self
-                    .do_handshake(public_addr.clone(), tcp_client, canal.clone())
+                    .do_handshake(public_addr.clone(), *tcp_client, canal.clone())
                     .await
                 {
                     warn!("Error during handshake: {:?}", e);
