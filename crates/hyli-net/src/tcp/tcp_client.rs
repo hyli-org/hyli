@@ -9,7 +9,7 @@ use futures::{
 use sdk::hyli_model_utils::TimestampMs;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-use crate::{clock::TimestampMsClock, net::TcpStream};
+use crate::{clock::TimestampMsClock, metrics::TcpClientMetrics, net::TcpStream};
 use anyhow::{bail, Result};
 use tracing::{debug, info, trace, warn};
 
@@ -29,6 +29,7 @@ where
     pub receiver: TcpReceiver,
     pub last_ping: TimestampMs,
     pub socket_addr: SocketAddr,
+    pub metrics: TcpClientMetrics,
     pub _marker: std::marker::PhantomData<(Req, Res)>,
 }
 
@@ -68,6 +69,7 @@ where
         target: A,
         timeout: Duration,
     ) -> Result<TcpClient<Req, Res>> {
+        let id = id.to_string();
         let start = tokio::time::Instant::now();
         let tcp_stream = loop {
             debug!(
@@ -104,18 +106,34 @@ where
         let (sender, receiver) = Framed::new(tcp_stream, codec).split();
 
         Ok(TcpClient::<Req, Res> {
-            id: id.to_string(),
+            id: id.clone(),
             sender,
             receiver,
             last_ping: TimestampMsClock::now(),
             socket_addr: addr,
+            metrics: TcpClientMetrics::global(id),
             _marker: std::marker::PhantomData,
         })
     }
 
     pub async fn send(&mut self, msg: Req) -> Result<()> {
-        self.sender.send(to_tcp_message(&msg)?.try_into()?).await?;
-        Ok(())
+        let msg_bytes: Bytes = to_tcp_message(&msg)?.try_into()?;
+        let nb_bytes: usize = (&msg_bytes as &Bytes).len();
+        let start = std::time::Instant::now();
+        let res = self.sender.send(msg_bytes).await;
+        self.metrics
+            .message_send_time(start.elapsed().as_secs_f64());
+        match res {
+            Ok(()) => {
+                self.metrics.message_emitted();
+                self.metrics.message_emitted_bytes(nb_bytes as u64);
+                Ok(())
+            }
+            Err(e) => {
+                self.metrics.message_send_error();
+                Err(e.into())
+            }
+        }
     }
     pub async fn ping(&mut self) -> Result<()> {
         self.sender.send(TcpMessage::Ping.try_into()?).await?;
@@ -129,9 +147,12 @@ where
                     if *bytes == *b"PING" {
                         trace!("Ping received for client {}", self.id);
                     } else {
+                        self.metrics.message_received();
+                        self.metrics.message_received_bytes(bytes.len() as u64);
                         match decode_tcp_payload(&bytes) {
                             Ok((_, data)) => return Some(data),
                             Err(io) => {
+                                self.metrics.message_error();
                                 warn!("Error while deserializing data: {:#}", io);
                                 return None;
                             }
@@ -141,10 +162,12 @@ where
                 None => {
                     // End of stream
                     warn!("End of stream for client {}", self.id);
+                    self.metrics.message_closed();
                     return None;
                 }
                 Some(Err(e)) => {
                     warn!("Error while streaming data from peer: {:#}", e);
+                    self.metrics.message_error();
                     return None;
                 }
             }

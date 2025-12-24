@@ -7,6 +7,10 @@ use hyli_modules::utils::da_codec::{DataAvailabilityClient, DataAvailabilityServ
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::TcpEvent;
+use opentelemetry::{
+    metrics::{Counter, Gauge},
+    InstrumentationScope, KeyValue,
+};
 use tokio::task::JoinHandle;
 
 use crate::{
@@ -70,7 +74,11 @@ impl Module for DataAvailability {
             bus,
             blocks,
             buffered_signed_blocks: BTreeSet::new(),
-            catchupper: DaCatchupper::new(catchup_policy, ctx.config.da_max_frame_length),
+            catchupper: DaCatchupper::new(
+                catchup_policy,
+                ctx.config.da_max_frame_length,
+                ctx.config.id.clone(),
+            ),
         })
     }
 
@@ -110,6 +118,57 @@ struct DaCatchupPolicy {
     backfill: bool,
 }
 
+#[derive(Debug, Clone)]
+struct DaCatchupMetrics {
+    start: Counter<u64>,
+    restart: Counter<u64>,
+    timeout: Counter<u64>,
+    stream_closed: Counter<u64>,
+    start_height: Gauge<u64>,
+}
+
+impl Default for DaCatchupMetrics {
+    fn default() -> Self {
+        Self::global("default_node".to_string())
+    }
+}
+
+impl DaCatchupMetrics {
+    pub fn global(node_name: String) -> DaCatchupMetrics {
+        let scope = InstrumentationScope::builder(node_name).build();
+        let my_meter = opentelemetry::global::meter_with_scope(scope);
+        DaCatchupMetrics {
+            start: my_meter.u64_counter("da_catchup_start").build(),
+            restart: my_meter.u64_counter("da_catchup_restart").build(),
+            timeout: my_meter.u64_counter("da_catchup_timeout").build(),
+            stream_closed: my_meter.u64_counter("da_catchup_stream_closed").build(),
+            start_height: my_meter.u64_gauge("da_catchup_start_height").build(),
+        }
+    }
+
+    fn start(&self, peer: &str, height: u64) {
+        let labels = [KeyValue::new("peer", peer.to_string())];
+        self.start.add(1, &labels);
+        self.start_height.record(height, &labels);
+    }
+
+    fn restart(&self, peer: &str, height: u64) {
+        let labels = [KeyValue::new("peer", peer.to_string())];
+        self.restart.add(1, &labels);
+        self.start_height.record(height, &labels);
+    }
+
+    fn timeout(&self, peer: &str) {
+        self.timeout
+            .add(1, &[KeyValue::new("peer", peer.to_string())]);
+    }
+
+    fn stream_closed(&self, peer: &str) {
+        self.stream_closed
+            .add(1, &[KeyValue::new("peer", peer.to_string())]);
+    }
+}
+
 #[derive(Debug, Default)]
 struct DaCatchupper {
     policy: Option<DaCatchupPolicy>,
@@ -118,10 +177,15 @@ struct DaCatchupper {
     pub peers: Vec<String>,
     pub stop_height: Option<BlockHeight>,
     da_max_frame_length: usize,
+    metrics: DaCatchupMetrics,
 }
 
 impl DaCatchupper {
-    pub fn new(policy: Option<DaCatchupPolicy>, da_max_frame_length: usize) -> Self {
+    pub fn new(
+        policy: Option<DaCatchupPolicy>,
+        da_max_frame_length: usize,
+        node_name: String,
+    ) -> Self {
         DaCatchupper {
             policy,
             status: None,
@@ -129,6 +193,7 @@ impl DaCatchupper {
             peers: vec![],
             da_max_frame_length,
             stop_height: None,
+            metrics: DaCatchupMetrics::global(node_name),
         }
     }
 
@@ -204,7 +269,13 @@ impl DaCatchupper {
         );
 
         self.status = Some((
-            Self::start_task(peer, self.da_max_frame_length, from_height, sender.clone()),
+            Self::start_task(
+                peer,
+                self.da_max_frame_length,
+                from_height,
+                sender.clone(),
+                self.metrics.clone(),
+            ),
             from_height,
         ));
 
@@ -272,7 +343,14 @@ impl DaCatchupper {
             );
             let from = processed_height.max(*old_height);
 
-            let new_task = Self::start_task(peer, self.da_max_frame_length, from, sender.clone());
+            self.metrics.restart(&peer, from.0);
+            let new_task = Self::start_task(
+                peer,
+                self.da_max_frame_length,
+                from,
+                sender.clone(),
+                self.metrics.clone(),
+            );
             self.status = Some((new_task, from));
         } else {
             debug!(
@@ -290,18 +368,21 @@ impl DaCatchupper {
         da_max_frame_length: usize,
         start_height: BlockHeight,
         sender: tokio::sync::mpsc::Sender<SignedBlock>,
+        metrics: DaCatchupMetrics,
     ) -> JoinHandle<anyhow::Result<()>> {
         info!(
             "Starting catchup from height {} on peer {}",
             start_height, peer
         );
 
+        metrics.start(&peer, start_height.0);
+
         tokio::spawn(async move {
             let mut client = log_error!(
                 DataAvailabilityClient::connect_with_opts(
                     "catchupper".to_string(),
                     Some(da_max_frame_length),
-                    peer,
+                    peer.clone(),
                 )
                 .await,
                 "Error occurred setting up the DA listener"
@@ -323,11 +404,13 @@ impl DaCatchupper {
                 tokio::select! {
                     _ = &mut sleep => {
                         warn!("Timeout expired while waiting for block.");
+                        metrics.timeout(&peer);
                         break;
                     }
                     received = client.recv() => {
                         match received {
                             None => {
+                                metrics.stream_closed(&peer);
                                 break;
                             }
                             Some(DataAvailabilityEvent::SignedBlock(block)) => {
@@ -464,8 +547,8 @@ impl DataAvailability {
             }
 
             Some(tcp_event) = server.listen_next() => {
-                if let TcpEvent::Message { dest, data, .. } = tcp_event {
-                    _ = log_error!(self.start_streaming_to_peer(data.0, &mut catchup_joinset, &dest).await, "Starting streaming to peer");
+                if let TcpEvent::Message { socket_addr, data, .. } = tcp_event {
+                    _ = log_error!(self.start_streaming_to_peer(data.0, &mut catchup_joinset, &socket_addr).await, "Starting streaming to peer");
                 }
             }
 

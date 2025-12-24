@@ -11,8 +11,8 @@ use tracing::{debug, info, warn};
 use crate::{
     bus::{BusClientSender, SharedMessageBus},
     modules::{
-        da_listener::DAListenerConf, data_availability::blocks_fjall::Blocks, module_bus_client,
-        Module,
+        da_listener::DAListenerConf, da_listener_metrics::DaTcpClientMetrics,
+        data_availability::blocks_fjall::Blocks, module_bus_client, Module,
     },
     node_state::module::NodeStateModule,
     utils::da_codec::DataAvailabilityClient,
@@ -33,6 +33,7 @@ pub struct SignedDAListener {
     bus: SignedDAListenerBusClient,
     current_block: BlockHeight,
     block_buffer: BTreeMap<BlockHeight, SignedBlock>,
+    tcp_client_metrics: DaTcpClientMetrics,
 }
 
 impl Module for SignedDAListener {
@@ -62,6 +63,10 @@ impl Module for SignedDAListener {
             current_block,
             bus,
             block_buffer: BTreeMap::new(),
+            tcp_client_metrics: DaTcpClientMetrics::global(
+                "signed_da_listener".to_string(),
+                "signed_da_listener",
+            ),
         })
     }
 
@@ -80,6 +85,7 @@ impl SignedDAListener {
         .await?;
 
         client.send(DataAvailabilityRequest(block_height)).await?;
+        self.tcp_client_metrics.start(block_height.0);
 
         Ok(client)
     }
@@ -225,6 +231,7 @@ impl SignedDAListener {
                 on_self self,
                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(self.config.timeout_client_secs)) => {
                     warn!("No blocks received in the last {} seconds, restarting client", self.config.timeout_client_secs);
+                    self.tcp_client_metrics.reconnect("timeout");
                     client = self.start_client(self.current_block).await?;
                 }
                 frame = client.recv() => {
@@ -232,10 +239,12 @@ impl SignedDAListener {
                         let _ = log_error!(self.processing_next_frame(streamed_signed_block).await, "Consuming da stream");
                         if let Err(e) = client.ping().await {
                             warn!("Ping failed: {}. Restarting client...", e);
+                            self.tcp_client_metrics.reconnect("ping_error");
                             client = self.start_client(self.current_block).await?;
                         }
                     } else {
                         warn!("DA stream connection lost. Reconnecting...");
+                        self.tcp_client_metrics.reconnect("stream_closed");
                         client = self.start_client(self.current_block).await?;
                     }
                 }

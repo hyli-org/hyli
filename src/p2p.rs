@@ -121,8 +121,8 @@ impl P2P {
         );
 
         for peer_ip in self.config.p2p.peers.clone() {
-            _ = p2p_server.try_start_connection(peer_ip.clone(), Canal::new("mempool"));
-            _ = p2p_server.try_start_connection(peer_ip, Canal::new("consensus"));
+            p2p_server.try_start_connection(peer_ip.clone(), Canal::new("mempool"));
+            p2p_server.try_start_connection(peer_ip, Canal::new("consensus"));
         }
 
         module_handle_messages! {
@@ -135,7 +135,7 @@ impl P2P {
             listen<P2PCommand> cmd => {
                 match cmd {
                     P2PCommand::ConnectTo { peer } => {
-                        _ = p2p_server.try_start_connection(peer, Canal::new("consensus"));
+                        p2p_server.try_start_connection(peer, Canal::new("consensus"));
                     }
                 }
             }
