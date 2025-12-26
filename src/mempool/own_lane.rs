@@ -428,11 +428,44 @@ impl super::Mempool {
         Ok(())
     }
 
+    pub(super) fn build_verified_proof_transaction(
+        proof_tx: &ProofTransaction,
+        proof_hash: ProofDataHash,
+        is_recursive: bool,
+        hyli_outputs: Vec<HyliOutput>,
+        program_ids: Vec<ProgramId>,
+    ) -> VerifiedProofTransaction {
+        let tx_hashes: Vec<TxHash> = hyli_outputs.iter().map(|ho| ho.tx_hash.clone()).collect();
+
+        VerifiedProofTransaction {
+            contract_name: proof_tx.contract_name.clone(),
+            program_id: proof_tx.program_id.clone(),
+            verifier: proof_tx.verifier.clone(),
+            proof: Some(proof_tx.proof.clone()),
+            proof_hash: proof_hash.clone(),
+            proof_size: proof_tx.estimate_size(),
+            proven_blobs: std::iter::zip(tx_hashes, std::iter::zip(hyli_outputs, program_ids))
+                .map(
+                    |(blob_tx_hash, (hyli_output, program_id))| BlobProofOutput {
+                        original_proof_hash: proof_hash.clone(),
+                        blob_tx_hash,
+                        hyli_output,
+                        program_id,
+                        // Should be the same verifier for all blobs in the proof
+                        verifier: proof_tx.verifier.clone(),
+                    },
+                )
+                .collect(),
+            is_recursive,
+        }
+    }
+
     fn process_proof_tx(mut tx: Transaction) -> Result<Transaction> {
         let TransactionData::Proof(proof_transaction) = tx.transaction_data else {
             bail!("Can only process ProofTx");
         };
 
+        let proof_hash = proof_transaction.proof.hashed();
         let is_recursive = proof_transaction.contract_name.0 == "risc0-recursion";
 
         let (hyli_outputs, program_ids) = if is_recursive {
@@ -473,27 +506,15 @@ impl super::Mempool {
             },
         );
 
-        tx.transaction_data = TransactionData::VerifiedProof(VerifiedProofTransaction {
-            proof_hash: proof_transaction.proof.hashed(),
-            proof_size: proof_transaction.estimate_size(),
-            proof: Some(proof_transaction.proof),
-            contract_name: proof_transaction.contract_name.clone(),
-            program_id: proof_transaction.program_id.clone(),
-            verifier: proof_transaction.verifier.clone(),
+        let verified_proof_tx = Self::build_verified_proof_transaction(
+            &proof_transaction,
+            proof_hash,
             is_recursive,
-            proven_blobs: std::iter::zip(tx_hashes, std::iter::zip(hyli_outputs, program_ids))
-                .map(
-                    |(blob_tx_hash, (hyli_output, program_id))| BlobProofOutput {
-                        original_proof_hash: ProofDataHash("todo?".to_owned()),
-                        blob_tx_hash: blob_tx_hash.clone(),
-                        hyli_output,
-                        program_id,
-                        // Should be the same verifier for all blobs in the proof
-                        verifier: proof_transaction.verifier.clone(),
-                    },
-                )
-                .collect(),
-        });
+            hyli_outputs,
+            program_ids,
+        );
+
+        tx.transaction_data = TransactionData::VerifiedProof(verified_proof_tx);
 
         Ok(tx)
     }
@@ -873,6 +894,39 @@ pub mod test {
         assert!(dps.len() == 1, "Should have the oldest DataProposal");
         assert_eq!(dps[0].1.txs.len(), 1);
         assert_eq!(dps[0].1.txs[0], tx1);
+
+        Ok(())
+    }
+
+    #[test_log::test]
+    fn test_build_verified_proof_transaction_sets_original_proof_hash() -> Result<()> {
+        let proof = crate::model::ProofData(vec![1, 2, 3, 4]);
+        let proof_hash = proof.hashed();
+        let proof_tx = crate::model::ProofTransaction {
+            contract_name: crate::model::ContractName::new("test-contract"),
+            program_id: crate::model::ProgramId(vec![1, 2, 3]),
+            verifier: crate::model::Verifier("test-verifier".into()),
+            proof: proof.clone(),
+        };
+
+        let hyli_output = crate::model::HyliOutput {
+            tx_hash: crate::model::TxHash("blob-tx-hash".into()),
+            ..crate::model::HyliOutput::default()
+        };
+        let program_id = proof_tx.program_id.clone();
+
+        let vpt = Mempool::build_verified_proof_transaction(
+            &proof_tx,
+            proof_hash.clone(),
+            false,
+            vec![hyli_output],
+            vec![program_id],
+        );
+
+        assert_eq!(vpt.proof_hash, proof_hash);
+        assert_eq!(vpt.proven_blobs.len(), 1);
+        let blob_output = &vpt.proven_blobs[0];
+        assert_eq!(blob_output.original_proof_hash, proof_hash);
 
         Ok(())
     }
