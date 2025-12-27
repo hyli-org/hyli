@@ -205,6 +205,9 @@ where
                 StatefulEvent::SequencedTx(..) => {
                     // Nothing to do so far
                 }
+                StatefulEvent::WaitingSequencingTx(..) => {
+                    // Transaction is waiting sequencing, nothing to do yet
+                }
                 StatefulEvent::SettledTx(tx) => {
                     self.handle_tx(tx, |state, tx, index, ctx| {
                         state.handle_transaction_success(tx, index, ctx)

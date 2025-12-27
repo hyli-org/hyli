@@ -143,6 +143,13 @@ pub enum TxEvent<'a> {
         &'a Arc<TxContext>,
     ),
     DuplicateBlobTransaction(&'a TxId),
+    WaitingSequencingBlobTransaction(
+        &'a TxId,
+        &'a LaneId,
+        u32,
+        &'a BlobTransaction,
+        &'a Arc<TxContext>,
+    ),
     SequencedBlobTransaction(
         &'a TxId,
         &'a LaneId,
@@ -193,6 +200,7 @@ impl<'a> TxEvent<'a> {
         match self {
             TxEvent::RejectedBlobTransaction(tx_id, ..) => tx_id,
             TxEvent::DuplicateBlobTransaction(tx_id) => tx_id,
+            TxEvent::WaitingSequencingBlobTransaction(tx_id, ..) => tx_id,
             TxEvent::SequencedBlobTransaction(tx_id, ..) => tx_id,
             TxEvent::SequencedProofTransaction(tx_id, ..) => tx_id,
             TxEvent::Settled(tx_id, ..) => tx_id,
@@ -271,6 +279,11 @@ pub struct NodeStateStore {
     pub current_height: BlockHeight,
     // This field is public for testing purposes
     pub contracts: HashMap<ContractName, Contract>,
+    /// Sequencing rules per contract
+    sequencing_rules: HashMap<ContractName, SequencingRule>,
+    /// Transactions waiting sequencing, indexed by hash
+    unsequenced_transactions: HashMap<TxHash, UnsequencedTransaction>,
+    /// Sequenced but unsettled transactions
     unsettled_transactions: OrderedTxMap,
 }
 
@@ -292,6 +305,8 @@ impl Default for NodeStateStore {
             timeouts: Timeouts::default(),
             current_height: BlockHeight(0),
             contracts: HashMap::new(),
+            sequencing_rules: HashMap::new(),
+            unsequenced_transactions: HashMap::new(),
             unsettled_transactions: OrderedTxMap::default(),
         };
         let hyli_contract = hyli_contract_definition();
@@ -369,42 +384,100 @@ impl<'any> NodeStateProcessing<'any> {
                                     chain_id: HYLI_TESTNET_CHAIN_ID,
                                 })
                             });
-                    match self.handle_blob_tx(tx_id.0.clone(), blob_transaction, tx_context.clone())
-                    {
-                        Ok(BlobTxHandled::ShouldSettle(tx_hash)) => {
-                            self.callback.on_event(&TxEvent::SequencedBlobTransaction(
-                                &tx_id,
-                                &lane_id,
-                                i as u32,
+                    // Check if the transaction should be sequenced immediately or placed on hold
+                    match self.should_sequence_immediately(blob_transaction) {
+                        Ok(true) => {
+                            // Sequence immediately with existing logic
+                            match self.handle_blob_tx(
+                                tx_id.0.clone(),
                                 blob_transaction,
-                                tx_context,
-                            ));
-                            let mut blob_tx_to_try_and_settle = BTreeSet::new();
-                            blob_tx_to_try_and_settle.insert(tx_hash);
-                            // In case of a BlobTransaction with only native verifies, we need to trigger the
-                            // settlement here as we will never get a ProofTransaction
-                            next_unsettled_txs =
-                                self.settle_txs_until_done(blob_tx_to_try_and_settle);
+                                tx_context.clone(),
+                            ) {
+                                Ok(BlobTxHandled::ShouldSettle(tx_hash)) => {
+                                    self.callback.on_event(&TxEvent::SequencedBlobTransaction(
+                                        &tx_id,
+                                        &lane_id,
+                                        i as u32,
+                                        blob_transaction,
+                                        tx_context,
+                                    ));
+                                    let mut blob_tx_to_try_and_settle = BTreeSet::new();
+                                    blob_tx_to_try_and_settle.insert(tx_hash);
+                                    // In case of a BlobTransaction with only native verifies, we need to trigger the
+                                    // settlement here as we will never get a ProofTransaction
+                                    next_unsettled_txs =
+                                        self.settle_txs_until_done(blob_tx_to_try_and_settle);
+                                }
+                                Ok(BlobTxHandled::Duplicate) => {
+                                    debug!(
+                                        "Blob transaction: {:?} is already in the unsettled map, ignoring.",
+                                        tx_id
+                                    );
+                                    self.callback
+                                        .on_event(&TxEvent::DuplicateBlobTransaction(&tx_id));
+                                }
+                                Ok(BlobTxHandled::Ok) => {
+                                    self.callback.on_event(&TxEvent::SequencedBlobTransaction(
+                                        &tx_id,
+                                        &lane_id,
+                                        i as u32,
+                                        blob_transaction,
+                                        tx_context,
+                                    ));
+                                }
+                                Err(e) => {
+                                    let err = format!("Failed to handle blob transaction: {e:?}");
+                                    error!(tx_hash = %tx_id.1, "{err}");
+                                    self.callback.on_event(&TxEvent::RejectedBlobTransaction(
+                                        &tx_id,
+                                        &lane_id,
+                                        i as u32,
+                                        blob_transaction,
+                                        tx_context,
+                                    ));
+                                }
+                            }
                         }
-                        Ok(BlobTxHandled::Duplicate) => {
-                            debug!(
-                                "Blob transaction: {:?} is already in the unsettled map, ignoring.",
-                                tx_id
-                            );
-                            self.callback
-                                .on_event(&TxEvent::DuplicateBlobTransaction(&tx_id));
-                        }
-                        Ok(BlobTxHandled::Ok) => {
-                            self.callback.on_event(&TxEvent::SequencedBlobTransaction(
-                                &tx_id,
-                                &lane_id,
-                                i as u32,
+                        Ok(false) => {
+                            // Place the transaction on hold for proofs
+                            match self.add_to_unsequenced(
                                 blob_transaction,
-                                tx_context,
-                            ));
+                                tx_context.clone(),
+                                tx_id.0.clone(),
+                            ) {
+                                Ok(()) => {
+                                    debug!(
+                                        "Blob transaction {} placed in unsequenced queue",
+                                        tx_id.1
+                                    );
+                                    // Trigger PendingBlobTransaction event to indicate the transaction is waiting for proofs
+                                    self.callback.on_event(
+                                        &TxEvent::WaitingSequencingBlobTransaction(
+                                            &tx_id,
+                                            &lane_id,
+                                            i as u32,
+                                            blob_transaction,
+                                            tx_context,
+                                        ),
+                                    );
+                                }
+                                Err(e) => {
+                                    let err = format!("Failed to add blob transaction to unsequenced queue: {e:?}");
+                                    error!(tx_hash = %tx_id.1, "{err}");
+                                    self.callback.on_event(&TxEvent::RejectedBlobTransaction(
+                                        &tx_id,
+                                        &lane_id,
+                                        i as u32,
+                                        blob_transaction,
+                                        tx_context,
+                                    ));
+                                }
+                            }
                         }
                         Err(e) => {
-                            let err = format!("Failed to handle blob transaction: {e:?}");
+                            let err = format!(
+                                "Failed to check sequencing rules for blob transaction: {e:?}"
+                            );
                             error!(tx_hash = %tx_id.1, "{err}");
                             self.callback.on_event(&TxEvent::RejectedBlobTransaction(
                                 &tx_id,
@@ -436,6 +509,26 @@ impl<'any> NodeStateProcessing<'any> {
                         .proven_blobs
                         .iter()
                         .filter_map(|blob_proof_data| {
+                            // First check if this is a proof for an unsequenced transaction
+                            match self.process_unsequenced_proof(&tx_id, blob_proof_data) {
+                                Ok(Some(tx_hash)) => {
+                                    // The transaction was moved to the settlement queue
+                                    debug!("Transaction {} moved from unsequenced to settlement after receiving proof", tx_hash);
+                                    return Some(tx_hash);
+                                }
+                                Ok(None) => {
+                                    // Not an unsequenced transaction or not all proofs yet
+                                    // Continue with normal logic
+                                }
+                                Err(err) => {
+                                    let err = format!("Failed to process unsequenced proof: {err:#}");
+                                    debug!("{err}");
+                                    self.callback.on_event(&TxEvent::TxError(&tx_id, &err));
+                                    return None;
+                                }
+                            }
+                            
+                            // Normal logic for already sequenced transactions
                             match self.handle_blob_proof(
                                 &tx_id,
                                 blob_proof_data,
@@ -493,6 +586,9 @@ impl<'any> NodeStateProcessing<'any> {
         self.this
             .metrics
             .record_current_height(self.current_height.0);
+
+        // Clean up expired unsequenced transactions
+        self.cleanup_expired_unsequenced_transactions();
 
         debug!("Done handling signed block: {:?}", signed_block.height());
 
@@ -594,6 +690,237 @@ impl<'any> NodeStateProcessing<'any> {
             Ok(BlobTxHandled::ShouldSettle(tx_hash))
         } else {
             Ok(BlobTxHandled::Ok)
+        }
+    }
+
+    /// Determines if a transaction should be sequenced immediately or placed on hold
+    fn should_sequence_immediately(&self, tx: &BlobTransaction) -> Result<bool, Error> {
+        // Check rules for each blob in the transaction
+        for blob in &tx.blobs {
+            let rule = self
+                .sequencing_rules
+                .get(&blob.contract_name)
+                .unwrap_or(&SequencingRule::Immediate);
+            // .ok_or_else(|| anyhow::anyhow!("contract unknown: {}", blob.contract_name))?;
+
+            match rule {
+                SequencingRule::Immediate => continue,
+                SequencingRule::RequireAllProofs => {
+                    // This transaction must wait for all its proofs
+                    return Ok(false);
+                }
+                SequencingRule::Custom(_) => {
+                    // For now, treat custom rules as RequireAllProofs
+                    return Ok(false);
+                }
+            }
+        }
+
+        // If all blobs allow immediate sequencing
+        Ok(true)
+    }
+
+    /// Adds a transaction to unsequenced transactions
+    fn add_to_unsequenced(
+        &mut self,
+        tx: &BlobTransaction,
+        tx_context: Arc<TxContext>,
+        parent_dp_hash: DataProposalHash,
+    ) -> Result<(), Error> {
+        let tx_hash = tx.hashed();
+        let tx_id = TxId(parent_dp_hash, tx_hash.clone());
+
+        let unsequenced_tx = UnsequencedTransaction {
+            tx: tx.clone(),
+            tx_id,
+            tx_context,
+            blobs_with_proofs: BTreeSet::new(),
+            received_proofs: BTreeMap::new(),
+            created_at: self.current_height,
+        };
+
+        self.unsequenced_transactions
+            .insert(tx_hash.clone(), unsequenced_tx);
+        debug!("Transaction {} added to unsequenced transactions", tx_hash);
+        Ok(())
+    }
+
+    /// Processes a received proof for an unsequenced transaction
+    fn process_unsequenced_proof(
+        &mut self,
+        proof_tx_id: &TxId,
+        blob_proof_data: &BlobProofOutput,
+    ) -> Result<Option<TxHash>, Error> {
+        let blob_tx_hash = &blob_proof_data.blob_tx_hash;
+
+        let Some(unsequenced_tx) = self.unsequenced_transactions.get_mut(blob_tx_hash) else {
+            // This proof is not for an unsequenced transaction
+            return Ok(None);
+        };
+
+        let blob_index = blob_proof_data.hyli_output.index;
+
+        // Verify that the blob index is valid
+        if blob_index.0 >= unsequenced_tx.tx.blobs.len() {
+            bail!(
+                "Invalid blob index {} for transaction {} (max: {})",
+                blob_index.0,
+                blob_tx_hash,
+                unsequenced_tx.tx.blobs.len()
+            );
+        }
+
+        // Add the proof
+        let blob_proof = (
+            blob_proof_data.program_id.clone(),
+            blob_proof_data.verifier.clone(),
+            proof_tx_id.clone(),
+            blob_proof_data.hyli_output.clone(),
+        );
+
+        unsequenced_tx
+            .received_proofs
+            .entry(blob_index)
+            .or_insert_with(Vec::new)
+            .push(blob_proof);
+
+        unsequenced_tx.blobs_with_proofs.insert(blob_index);
+
+        debug!(
+            "Proof received for blob {} in transaction {}",
+            blob_index.0, blob_tx_hash
+        );
+
+        // Check if all necessary proofs have been received
+        let tx_clone = unsequenced_tx.tx.clone();
+        if self.can_sequence_transaction(&tx_clone)? {
+            // All proofs are here, we can sequence
+            let unsequenced_tx = self.unsequenced_transactions.remove(blob_tx_hash).unwrap();
+
+            // Convert to UnsettledBlobTransaction and add to settlement transactions
+            let possible_proofs: BTreeMap<BlobIndex, Vec<(ProgramId, Verifier, TxId, HyliOutput)>> =
+                unsequenced_tx.received_proofs;
+
+            let blobs_hash = unsequenced_tx.tx.blobs_hash();
+            let unsettled_tx = UnsettledBlobTransaction {
+                tx: unsequenced_tx.tx,
+                tx_id: unsequenced_tx.tx_id,
+                tx_context: unsequenced_tx.tx_context,
+                blobs_hash,
+                possible_proofs,
+                settleable_contracts: HashSet::new(),
+            };
+
+            let tx_hash = blob_tx_hash.clone();
+            if self.unsettled_transactions.add(unsettled_tx).is_some() {
+                debug!(
+                    "Transaction {} moved from unsequenced to settlement queue",
+                    tx_hash
+                );
+                if self.unsettled_transactions.is_next_to_settle(&tx_hash) {
+                    self.set_timeout(&tx_hash);
+                }
+                return Ok(Some(tx_hash));
+            } else {
+                // Duplicate transaction, ignore
+                return Ok(None);
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Checks if a transaction has received all necessary proofs to be sequenced
+    fn can_sequence_transaction(&self, tx: &BlobTransaction) -> Result<bool, Error> {
+        for (index, blob) in tx.blobs.iter().enumerate() {
+            let blob_index = BlobIndex(index);
+            let contract_name = &blob.contract_name;
+
+            // Get the sequencing rule for this contract
+            let default_rule = SequencingRule::default();
+            let sequencing_rule = self
+                .sequencing_rules
+                .get(contract_name)
+                .unwrap_or(&default_rule);
+
+            match sequencing_rule {
+                SequencingRule::Immediate => {
+                    // This blob doesn't need proof
+                    continue;
+                }
+                SequencingRule::RequireAllProofs => {
+                    // Check if this blob has at least one proof
+                    let tx_hash = tx.hashed();
+                    if let Some(unsequenced_tx) = self.unsequenced_transactions.get(&tx_hash) {
+                        if !unsequenced_tx.blobs_with_proofs.contains(&blob_index) {
+                            return Ok(false);
+                        }
+                    } else {
+                        return Ok(false);
+                    }
+                }
+                SequencingRule::Custom(_) => {
+                    // For now, treat custom rules as RequireAllProofs
+                    let tx_hash = tx.hashed();
+                    if let Some(unsequenced_tx) = self.unsequenced_transactions.get(&tx_hash) {
+                        if !unsequenced_tx.blobs_with_proofs.contains(&blob_index) {
+                            return Ok(false);
+                        }
+                    } else {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Sets a sequencing rule for a contract
+    #[allow(dead_code)]
+    pub fn set_contract_sequencing_rule(
+        &mut self,
+        contract_name: ContractName,
+        rule: SequencingRule,
+    ) {
+        self.sequencing_rules
+            .insert(contract_name.clone(), rule.clone());
+        debug!(
+            "Sequencing rule set for contract {}: {:?}",
+            contract_name, rule
+        );
+    }
+
+    /// Gets the sequencing rule for a contract
+    #[allow(dead_code)]
+    pub fn get_contract_sequencing_rule(&self, contract_name: &ContractName) -> SequencingRule {
+        self.sequencing_rules
+            .get(contract_name)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Cleans up expired unsequenced transactions
+    #[allow(dead_code)]
+    fn cleanup_expired_unsequenced_transactions(&mut self) {
+        let current_height = self.current_height;
+        let expired_txs: Vec<TxHash> = self
+            .unsequenced_transactions
+            .iter()
+            .filter_map(|(hash, tx)| {
+                // TODO: Use proper value for expiration threshold
+                // Expire transactions after 100 blocks (example)
+                if current_height.0 > tx.created_at.0 + 100 {
+                    Some(hash.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for tx_hash in expired_txs {
+            self.unsequenced_transactions.remove(&tx_hash);
+            debug!("Expired unsequenced transaction removed: {}", tx_hash);
         }
     }
 
@@ -1797,6 +2124,19 @@ impl NodeStateCallback for BlockNodeStateCallback {
                 self.block_under_construction
                     .dp_parent_hashes
                     .insert(tx_id.1.clone(), tx_id.0.clone());
+            }
+            TxEvent::WaitingSequencingBlobTransaction(tx_id, lane_id, _, blob_tx, tx_context) => {
+                // Transaction is waiting sequencing, we can track it but don't add to successful txs yet
+                self.block_under_construction
+                    .dp_parent_hashes
+                    .insert(tx_id.1.clone(), tx_id.0.clone());
+                self.block_under_construction
+                    .lane_ids
+                    .insert(tx_id.1.clone(), lane_id.clone());
+                self.stateful_events.events.push((
+                    tx_id.clone(),
+                    StatefulEvent::WaitingSequencingTx(blob_tx.clone(), tx_context.clone()),
+                ));
             }
             TxEvent::SequencedBlobTransaction(tx_id, lane_id, _, blob_tx, tx_context) => {
                 self.block_under_construction
