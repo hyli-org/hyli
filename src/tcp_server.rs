@@ -8,7 +8,7 @@ use hyli_modules::{
     modules::{module_bus_client, Module},
 };
 use hyli_net::tcp::TcpEvent;
-use tracing::info;
+use tracing::{info, warn};
 
 module_bus_client! {
 #[derive(Debug)]
@@ -54,8 +54,18 @@ impl TcpServer {
         module_handle_messages! {
             on_self self,
             Some(tcp_event) = server.listen_next() => {
-                if let TcpEvent::Message { dest: _, data, headers: _ } = tcp_event {
-                    _ = log_error!(self.bus.send_waiting_if_full(data).await, "Sending message on TcpServerMessage topic from connection pool");
+                match tcp_event {
+                    TcpEvent::Message { socket_addr: _, data, headers: _ } => {
+                        _ = log_error!(self.bus.send_waiting_if_full(data).await, "Sending message on TcpServerMessage topic from connection pool");
+                    }
+                    TcpEvent::Closed { socket_addr } => {
+                        // Ensure we don't leak dead sockets in the underlying TcpServer.
+                        server.drop_peer_stream(socket_addr);
+                    }
+                    TcpEvent::Error { socket_addr, error } => {
+                        warn!("TcpApiServer connection error from {}: {}", socket_addr, error);
+                        server.drop_peer_stream(socket_addr);
+                    }
                 }
             }
         };

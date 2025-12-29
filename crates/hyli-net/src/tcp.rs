@@ -215,16 +215,16 @@ pub struct NodeConnectionData {
 #[derive(Debug, Clone)]
 pub enum TcpEvent<Data: BorshDeserialize> {
     Message {
-        dest: String,
+        socket_addr: String,
         data: Data,
         headers: TcpHeaders,
     },
     Error {
-        dest: String,
+        socket_addr: String,
         error: String,
     },
     Closed {
-        dest: String,
+        socket_addr: String,
     },
 }
 
@@ -234,7 +234,7 @@ struct SocketStream {
     /// Last timestamp we received a ping from the peer.
     last_ping: TimestampMs,
     /// Best-effort human label for logging (defaults to socket addr).
-    peer_label: Arc<RwLock<String>>,
+    socket_label: Arc<RwLock<String>>,
     /// Sender to stream data to the peer
     sender: tokio::sync::mpsc::Sender<TcpMessage>,
     /// Handle to abort the sending side of the stream
