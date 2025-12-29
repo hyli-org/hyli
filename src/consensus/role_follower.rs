@@ -659,16 +659,15 @@ impl Consensus {
                 tc_view
             );
 
+            // This TC is for our current slot, so we can leave Joining mode
+            if matches!(self.bft_round_state.state_tag, StateTag::Joining) {
+                debug!("Leaving Joining mode after timeout certificate");
+                self.set_state_tag(StateTag::Follower);
+            }
+
             // Fake our view so we fast-forward properly.
             self.bft_round_state.view = tc_view;
             self.advance_round(Ticket::TimeoutQC(timeout_qc, tc_kind_data.clone()))?;
-
-            // This TC is for our current slot and view, so we can leave Joining mode
-            if self.round_leader()? == *self.crypto.validator_pubkey()
-                && matches!(self.bft_round_state.state_tag, StateTag::Joining)
-            {
-                self.set_state_tag(StateTag::Leader);
-            }
         }
 
         Ok(TicketVerifyAndProcess::Processed)
@@ -841,10 +840,12 @@ impl Consensus {
                 }
             }
 
-            // Edge case: we have already committed a different CQC (this check that bft slot == cp slot + 1 means we committed)
+            // Edge case: we have already committed a different CQC (this check that bft slot == cp slot + 1 which means we committed)
+            // (this currently triggers when exiting joining, but it's spurious then)
+            // (TODO: fix this for joining by storing a CQC?)
             if !self.current_slot_prepare_is_present() {
                 warn!(
-                    "Received an unknown commit QC for slot {}. This is unsafe to verify as we have updated staking with changes in that slot.
+                    "Received an unknown commit QC for slot {}. This is unsafe to verify if we have updated staking with changes in that slot.
                     Proceeding with current staking anyways.",
                     self.bft_round_state.slot
                 );
