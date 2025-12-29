@@ -474,6 +474,8 @@ where
             self.metrics
                 .message_closed(peer_p2p_addr.to_string(), canal.clone());
         } else {
+            self.metrics
+                .message_closed(socket_addr.clone(), Canal("unknown".to_string()));
             warn!(
                 "P2P TCP closed (node={}, socket_addr={})",
                 self.node_id, socket_addr
