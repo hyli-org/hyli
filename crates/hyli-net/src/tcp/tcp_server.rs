@@ -61,6 +61,7 @@ where
     Res: BorshSerialize + std::fmt::Debug,
     Req: BorshDeserialize + std::fmt::Debug,
 {
+    pool_name: String,
     tcp_listener: TcpListener,
     max_frame_length: Option<usize>,
     send_timeout: Duration,
@@ -111,6 +112,7 @@ where
             &pool_name, port, options.max_frame_length
         );
         Ok(TcpServer {
+            pool_name: pool_name.to_string(),
             sockets: HashMap::new(),
             max_frame_length: options.max_frame_length,
             send_timeout: options.send_timeout,
@@ -148,9 +150,9 @@ where
                     let queued = self.pool_receiver.len();
                     if let Some(msg) = message.as_ref() {
                         match msg.as_ref() {
-                            TcpEvent::Message { socket_addr, .. } => trace!("TcpServer event queue: message for {} ({} remaining)", socket_addr, queued),
-                            TcpEvent::Closed { socket_addr } => trace!("TcpServer event queue: closed for {} ({} remaining)", socket_addr, queued),
-                            TcpEvent::Error { socket_addr, error } => trace!("TcpServer event queue: error for {}: {} ({} remaining)", socket_addr, error, queued),
+                            TcpEvent::Message { socket_addr, .. } => trace!(pool = %self.pool_name, "TcpServer event queue: message for {} ({} remaining)", socket_addr, queued),
+                            TcpEvent::Closed { socket_addr } => trace!(pool = %self.pool_name, "TcpServer event queue: closed for {} ({} remaining)", socket_addr, queued),
+                            TcpEvent::Error { socket_addr, error } => trace!(pool = %self.pool_name, "TcpServer event queue: error for {}: {} ({} remaining)", socket_addr, error, queued),
                         }
                     }
                     return message.map(|message| *message);
@@ -189,7 +191,7 @@ where
         };
         debug!("Broadcasting msg {:?} to all", binary_data);
         for (name, socket) in self.sockets.iter_mut() {
-            debug!(" - to {}", name);
+            debug!(pool = %self.pool_name, " - to {}", name);
             tasks.push(
                 socket
                     .sender
@@ -204,7 +206,12 @@ where
             send_result.err().map(|error| {
                 (
                     client_name.clone(),
-                    anyhow::anyhow!("Sending message to client {}: {}", client_name, error),
+                    anyhow::anyhow!(
+                        "Sending message to client {} (pool={}): {}",
+                        client_name,
+                        self.pool_name,
+                        error
+                    ),
                 )
             })
         }))
@@ -272,7 +279,7 @@ where
         msg: Res,
         headers: TcpHeaders,
     ) -> anyhow::Result<()> {
-        debug!("Sending msg {:?} to {}", msg, socket_addr);
+        debug!(pool = %self.pool_name, "Sending msg {:?} to {}", msg, socket_addr);
         let stream = self
             .sockets
             .get_mut(&socket_addr)
@@ -287,7 +294,7 @@ where
     }
 
     pub fn try_send(&mut self, socket_addr: String, msg: Res) -> anyhow::Result<()> {
-        debug!("Try Sending msg {:?} to {}", msg, socket_addr);
+        debug!(pool = %self.pool_name, "Try Sending msg {:?} to {}", msg, socket_addr);
         let stream = self
             .sockets
             .get_mut(&socket_addr)
@@ -330,6 +337,7 @@ where
         let metrics = self.metrics.clone();
         let pool_sender_for_sender = self.pool_sender.clone();
         let peer_label = Arc::new(RwLock::new(socket_addr.clone()));
+        let pool = self.pool_name.clone();
         // Track how many frames we read per socket to detect stalls.
         let mut frames_received: u64 = 0;
 
@@ -338,6 +346,7 @@ where
         // If the stream is closed, we also assume the task is to be aborted.
         let abort_receiver_task = logged_task({
             let peer_label = peer_label.clone();
+            let pool = pool.clone();
             async move {
                 loop {
                     match receiver.next().await {
@@ -347,6 +356,7 @@ where
                             } else {
                                 let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
                                 debug!(
+                                    pool = %pool,
                                     "Received data from peer {} (socket_addr={}): {} bytes ({}...)",
                                     label,
                                     cloned_socket_addr,
@@ -355,6 +365,7 @@ where
                                 );
                                 frames_received += 1;
                                 trace!(
+                                    pool = %pool,
                                     "Peer {} (socket_addr={}) frame #{} ({} bytes) queued for decode",
                                     label,
                                     cloned_socket_addr,
@@ -373,6 +384,7 @@ where
                                     Err(io) => {
                                         metrics.message_error();
                                         warn!(
+                                            pool = %pool,
                                             "Failed to decode TCP frame from peer {} (socket_addr={}, frame=#{}, {} bytes): {}. Closing socket.",
                                             label,
                                             cloned_socket_addr,
@@ -395,6 +407,7 @@ where
                                     Ok(_) => {}
                                     Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
                                         warn!(
+                                            pool = %pool,
                                             "TCP event channel full for peer {} (socket_addr={})",
                                             label, cloned_socket_addr
                                         );
@@ -403,9 +416,10 @@ where
                                     }
                                     Err(tokio::sync::mpsc::error::TrySendError::Closed(event)) => {
                                         warn!(
+                                            pool = %pool,
                                             "TCP event channel closed for peer {} (socket_addr={}), dropping event",
                                             label, cloned_socket_addr,
-                                    );
+                                        );
                                         drop(event);
                                     }
                                 }
@@ -416,12 +430,14 @@ where
                             let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
                             if err.kind() == ErrorKind::InvalidData {
                                 error!(
+                                    pool = %pool,
                                     "Received invalid data from peer {} (socket_addr={}): {}",
                                     label, cloned_socket_addr, err
                                 );
                             } else {
                                 // If the error is not invalid data, we can assume the socket is closed.
                                 warn!(
+                                    pool = %pool,
                                     "Closing socket for peer {} (socket_addr={}) after read error: {} (kind={:?})",
                                     label,
                                     cloned_socket_addr,
@@ -442,6 +458,7 @@ where
                             // If we reach here, the stream has been closed.
                             let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
                             debug!(
+                                pool = %pool,
                                 "Socket closed for peer {} (socket_addr={}) after receiving {} frame(s)",
                                 label, cloned_socket_addr, frames_received
                             );
@@ -464,12 +481,14 @@ where
         let abort_sender_task = logged_task({
             let cloned_socket_addr = socket_addr.clone();
             let peer_label = peer_label.clone();
+            let pool = pool.clone();
             let pool_sender = pool_sender_for_sender.clone();
             async move {
                 while let Some(msg) = sender_recv.recv().await {
                     let Ok(msg_bytes) = msg.try_into() else {
                         let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
                         error!(
+                            pool = %pool,
                             "Failed to serialize message to send to peer {} (socket_addr={})",
                             label, cloned_socket_addr
                         );
@@ -482,6 +501,7 @@ where
                         Err(e) => {
                             let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
                             error!(
+                                pool = %pool,
                                 "Timeout sending message to peer {} (socket_addr={}): {}",
                                 label, cloned_socket_addr, e
                             );
@@ -497,6 +517,7 @@ where
                         Ok(Err(e)) => {
                             let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
                             error!(
+                                pool = %pool,
                                 "Sending message to peer {} (socket_addr={}): {}",
                                 label, cloned_socket_addr, e
                             );
@@ -519,7 +540,7 @@ where
             }
         });
 
-        tracing::debug!("Socket {} connected", socket_addr);
+        tracing::debug!(pool = %pool, "Socket {} connected", socket_addr);
         // Store socket in the list.
         self.metrics.peers_snapshot(self.sockets.len() as u64 + 1);
         self.sockets.insert(
@@ -542,13 +563,14 @@ where
     pub fn drop_peer_stream(&mut self, peer_ip: String) {
         if let Some(peer_stream) = self.sockets.remove(&peer_ip) {
             tracing::debug!(
+                pool = %self.pool_name,
                 "Dropping peer stream {} (remaining sockets: {})",
                 peer_ip,
                 self.sockets.len()
             );
             peer_stream.abort_sender_task.abort();
             peer_stream.abort_receiver_task.abort();
-            tracing::debug!("Client {} dropped & disconnected", peer_ip);
+            tracing::debug!(pool = %self.pool_name, "Client {} dropped & disconnected", peer_ip);
             self.metrics.peers_snapshot(self.sockets.len() as u64);
         }
     }
