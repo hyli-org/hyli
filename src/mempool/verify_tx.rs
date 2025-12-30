@@ -70,6 +70,7 @@ impl super::Mempool {
                         received_hash, lane_id
                     );
                     return self.send_vote(
+                        &lane_id,
                         self.get_lane_operator(&lane_id),
                         received_hash,
                         lane_size,
@@ -145,6 +146,7 @@ impl super::Mempool {
                 trace!("Send vote for DataProposal");
                 #[allow(clippy::unwrap_used, reason = "we always have a size for Vote")]
                 self.send_vote(
+                    lane_id,
                     self.get_lane_operator(lane_id),
                     data_proposal_hash,
                     lane_size.unwrap(),
@@ -216,7 +218,12 @@ impl super::Mempool {
                 let (hash, size) =
                     self.lanes
                         .store_data_proposal(&crypto, &lane_id, data_proposal)?;
-                self.send_vote(self.get_lane_operator(&lane_id), hash.clone(), size)?;
+                self.send_vote(
+                    &lane_id,
+                    self.get_lane_operator(&lane_id),
+                    hash.clone(),
+                    size,
+                )?;
 
                 while let Some(poda_signatures) = self
                     .inner
@@ -309,8 +316,7 @@ impl super::Mempool {
                 Ok((DataProposalVerdict::Refuse, None))
             }
             CanBePutOnTop::AlreadyOnTop => {
-                // This can happen if the lane tip is updated (via a commit) before the data proposal arrived.
-                // For performance reasons, we don't to process the data proposal
+                // Lane tip was updated (via commit) before this proposal arrived, so we ignore it.
                 Ok((DataProposalVerdict::Ignore, None))
             }
         }
@@ -411,6 +417,7 @@ impl super::Mempool {
 
     fn send_vote(
         &mut self,
+        lane_id: &LaneId,
         validator: &ValidatorPublicKey,
         data_proposal_hash: DataProposalHash,
         size: LaneBytesSize,
@@ -420,7 +427,10 @@ impl super::Mempool {
         debug!("🗳️ Sending vote for DataProposal {data_proposal_hash} to {validator} (lane size: {size})");
         self.send_net_message(
             validator.clone(),
-            MempoolNetMessage::DataVote(self.crypto.sign((data_proposal_hash, size))?),
+            MempoolNetMessage::DataVote(
+                lane_id.clone(),
+                self.crypto.sign((data_proposal_hash, size))?,
+            ),
         )?;
         Ok(())
     }
@@ -508,11 +518,13 @@ pub mod test {
         );
         let size = LaneBytesSize(data_proposal.estimate_size() as u64);
         let hash = data_proposal.hashed();
+        let lane_id = LaneId(ctx.mempool.crypto.validator_pubkey().clone());
 
         let signed_msg =
             ctx.mempool
                 .crypto
                 .sign_msg_with_header(MempoolNetMessage::DataProposal(
+                    lane_id,
                     hash.clone(),
                     data_proposal.clone(),
                 ))?;
@@ -530,10 +542,13 @@ pub mod test {
             .await
             .msg
         {
-            MempoolNetMessage::DataVote(SignedByValidator {
-                msg: (data_vote, voted_size),
-                ..
-            }) => {
+            MempoolNetMessage::DataVote(
+                _,
+                SignedByValidator {
+                    msg: (data_vote, voted_size),
+                    ..
+                },
+            ) => {
                 assert_eq!(data_vote, hash);
                 assert_eq!(size, voted_size);
             }

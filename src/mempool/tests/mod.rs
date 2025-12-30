@@ -77,8 +77,7 @@ impl MempoolTestCtx {
     }
 
     pub fn own_lane(&self) -> LaneId {
-        self.mempool
-            .get_lane(self.mempool.crypto.validator_pubkey())
+        self.mempool.own_lane_id()
     }
 
     pub fn validator_pubkey(&self) -> &ValidatorPublicKey {
@@ -438,10 +437,14 @@ impl MempoolTestCtx {
 
 pub fn create_data_vote(
     crypto: &BlstCrypto,
+    lane_id: LaneId,
     hash: DataProposalHash,
     size: LaneBytesSize,
 ) -> Result<MempoolNetMessage> {
-    Ok(MempoolNetMessage::DataVote(crypto.sign((hash, size))?))
+    Ok(MempoolNetMessage::DataVote(
+        lane_id,
+        crypto.sign((hash, size))?,
+    ))
 }
 
 pub fn make_register_contract_tx(name: ContractName) -> Transaction {
@@ -464,10 +467,11 @@ async fn test_sending_sync_request() -> Result<()> {
     let mut ctx = MempoolTestCtx::new("mempool").await;
     let crypto2 = BlstCrypto::new("2").unwrap();
     let pubkey2 = crypto2.validator_pubkey();
+    let lane_id = LaneId(pubkey2.clone());
 
     ctx.handle_consensus_event(ConsensusProposal {
         cut: vec![(
-            LaneId(pubkey2.clone()),
+            lane_id.clone(),
             DataProposalHash("dp_hash_in_cut".to_owned()),
             LaneBytesSize::default(),
             PoDA::default(),
@@ -482,7 +486,8 @@ async fn test_sending_sync_request() -> Result<()> {
         .await
         .msg
     {
-        MempoolNetMessage::SyncRequest(from, to) => {
+        MempoolNetMessage::SyncRequest(req_lane_id, from, to) => {
+            assert_eq!(req_lane_id, lane_id);
             assert_eq!(from, None);
             assert_eq!(to, Some(DataProposalHash("dp_hash_in_cut".to_owned())));
         }
@@ -502,6 +507,7 @@ async fn test_receiving_sync_request() -> Result<()> {
 
     // Since mempool is alone, no broadcast
     let (..) = ctx.last_lane_entry(&LaneId(ctx.validator_pubkey().clone()));
+    let lane_id = ctx.mempool.own_lane_id();
 
     // Add new validator
     let crypto2 = BlstCrypto::new("2").unwrap();
@@ -509,6 +515,7 @@ async fn test_receiving_sync_request() -> Result<()> {
 
     for _ in 1..5 {
         let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(
+            lane_id.clone(),
             None,
             Some(data_proposal.hashed()),
         ))?;
@@ -523,6 +530,7 @@ async fn test_receiving_sync_request() -> Result<()> {
 
     for _ in 1..5 {
         let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(
+            lane_id.clone(),
             None,
             Some(data_proposal.hashed()),
         ))?;
@@ -539,7 +547,7 @@ async fn test_receiving_sync_request() -> Result<()> {
         .await
         .msg
     {
-        MempoolNetMessage::SyncReply(_metadata, data_proposal_r) => {
+        MempoolNetMessage::SyncReply(_, _metadata, data_proposal_r) => {
             assert_eq!(data_proposal_r, data_proposal);
         }
         _ => panic!("Expected SyncReply message"),
@@ -566,6 +574,7 @@ async fn test_receiving_sync_requests_multiple_dps() -> Result<()> {
 
     // Since mempool is alone, no broadcast
     let (..) = ctx.last_lane_entry(&LaneId(ctx.validator_pubkey().clone()));
+    let lane_id = ctx.mempool.own_lane_id();
 
     // Add new validator
     let crypto2 = BlstCrypto::new("2").unwrap();
@@ -574,6 +583,7 @@ async fn test_receiving_sync_requests_multiple_dps() -> Result<()> {
     // Sync request for the interval up to data proposal
     for _ in 1..3 {
         let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(
+            lane_id.clone(),
             None,
             Some(data_proposal.hashed()),
         ))?;
@@ -589,6 +599,7 @@ async fn test_receiving_sync_requests_multiple_dps() -> Result<()> {
     // Sync request for the whole interval
     for _ in 1..3 {
         let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(
+            lane_id.clone(),
             None,
             Some(data_proposal2.hashed()),
         ))?;
@@ -603,8 +614,11 @@ async fn test_receiving_sync_requests_multiple_dps() -> Result<()> {
 
     // Sync request for the whole interval
     for _ in 1..3 {
-        let signed_msg =
-            crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(None, None))?;
+        let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(
+            lane_id.clone(),
+            None,
+            None,
+        ))?;
 
         ctx.mempool
             .handle_net_message(signed_msg, &ctx.mempool_sync_request_sender)
@@ -618,7 +632,7 @@ async fn test_receiving_sync_requests_multiple_dps() -> Result<()> {
         .await
         .msg
     {
-        MempoolNetMessage::SyncReply(_metadata, data_proposal_r) => {
+        MempoolNetMessage::SyncReply(_, _metadata, data_proposal_r) => {
             assert_eq!(data_proposal_r, data_proposal);
         }
         _ => panic!("Expected SyncReply message"),
@@ -629,7 +643,7 @@ async fn test_receiving_sync_requests_multiple_dps() -> Result<()> {
         .await
         .msg
     {
-        MempoolNetMessage::SyncReply(_metadata, data_proposal_r) => {
+        MempoolNetMessage::SyncReply(_, _metadata, data_proposal_r) => {
             assert_eq!(data_proposal_r, data_proposal2);
         }
         _ => panic!("Expected SyncReply message"),
@@ -647,6 +661,7 @@ async fn test_receiving_sync_reply() -> Result<()> {
     let register_tx = make_register_contract_tx(ContractName::new("test1"));
     let data_proposal = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
     let cumul_size = LaneBytesSize(data_proposal.estimate_size() as u64);
+    let lane_id = ctx.mempool.own_lane_id();
 
     // Add new validator
     let crypto2 = BlstCrypto::new("2").unwrap();
@@ -656,6 +671,7 @@ async fn test_receiving_sync_reply() -> Result<()> {
 
     // First: the message is from crypto2, but the DP is not signed correctly
     let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
+        lane_id.clone(),
         LaneEntryMetadata {
             parent_data_proposal_hash: None,
             cumul_size,
@@ -674,12 +690,13 @@ async fn test_receiving_sync_reply() -> Result<()> {
         handle.expect_err("should fail").to_string(),
         format!(
             "At least one lane entry is missing signature from {}",
-            crypto2.validator_pubkey()
+            ctx.validator_pubkey()
         )
     );
 
     // Second: the message is NOT from crypto2, but the DP is signed by crypto2
     let signed_msg = crypto3.sign_msg_with_header(MempoolNetMessage::SyncReply(
+        lane_id.clone(),
         LaneEntryMetadata {
             parent_data_proposal_hash: None,
             cumul_size,
@@ -699,12 +716,13 @@ async fn test_receiving_sync_reply() -> Result<()> {
         handle.expect_err("should fail").to_string(),
         format!(
             "At least one lane entry is missing signature from {}",
-            crypto3.validator_pubkey()
+            ctx.validator_pubkey()
         )
     );
 
     // Third: the message is from crypto2, the signature is from crypto2, but the message is wrong
     let signed_msg = crypto3.sign_msg_with_header(MempoolNetMessage::SyncReply(
+        lane_id.clone(),
         LaneEntryMetadata {
             parent_data_proposal_hash: None,
             cumul_size,
@@ -724,12 +742,13 @@ async fn test_receiving_sync_reply() -> Result<()> {
         handle.expect_err("should fail").to_string(),
         format!(
             "At least one lane entry is missing signature from {}",
-            crypto3.validator_pubkey()
+            ctx.validator_pubkey()
         )
     );
 
     // Fourth: the message is from crypto2, the signature is from crypto2, but the size is wrong
     let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
+        lane_id.clone(),
         LaneEntryMetadata {
             parent_data_proposal_hash: None,
             cumul_size: LaneBytesSize(0),
@@ -749,16 +768,19 @@ async fn test_receiving_sync_reply() -> Result<()> {
         handle.expect_err("should fail").to_string(),
         format!(
             "At least one lane entry is missing signature from {}",
-            crypto2.validator_pubkey()
+            ctx.validator_pubkey()
         )
     );
 
     // Final case: message is correct
     let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
+        lane_id.clone(),
         LaneEntryMetadata {
             parent_data_proposal_hash: None,
             cumul_size,
-            signatures: vec![crypto2
+            signatures: vec![ctx
+                .mempool
+                .crypto
                 .sign((data_proposal.hashed(), cumul_size))
                 .expect("should sign")],
         },
@@ -772,10 +794,10 @@ async fn test_receiving_sync_reply() -> Result<()> {
     assert_ok!(handle, "Should handle net message");
 
     // Assert that the lane entry was added
-    assert!(ctx.mempool.lanes.contains(
-        &ctx.mempool.get_lane(crypto2.validator_pubkey()),
-        &data_proposal.hashed()
-    ));
+    assert!(ctx
+        .mempool
+        .lanes
+        .contains(&lane_id, &data_proposal.hashed()));
 
     Ok(())
 }
@@ -811,6 +833,7 @@ async fn test_sync_request_single_dp() -> Result<()> {
     // Send a sync request for dp2 only
     ctx.mempool
         .on_sync_request(
+            lane_id.clone(),
             &ctx.mempool_sync_request_sender,
             None,
             Some(dp2_hash.clone()),
@@ -826,7 +849,8 @@ async fn test_sync_request_single_dp() -> Result<()> {
         .await
         .msg
     {
-        MempoolNetMessage::SyncReply(metadata, dp) => {
+        MempoolNetMessage::SyncReply(reply_lane_id, metadata, dp) => {
+            assert_eq!(reply_lane_id, lane_id);
             assert_eq!(dp, dp2);
             assert_eq!(metadata.parent_data_proposal_hash, Some(dp1_hash));
             assert_eq!(metadata.cumul_size, dp2_size);
