@@ -1287,12 +1287,12 @@ pub mod test {
                 .expect(format!("{description}: No message sent").as_str())
                 .into_message();
             if let OutboundMessage::SendMessage {
-                validator_id: dest,
+                validator_id,
                 msg: net_msg,
             } = rec
             {
                 if let NetMessage::ConsensusMessage(msg) = net_msg {
-                    assert_eq!(to, &dest, "Got message {msg:?}");
+                    assert_eq!(to, &validator_id, "Got message {msg:?}");
                     Box::pin(async move { msg })
                 } else {
                     warn!("{description}: skipping non-consensus message, details in debug");

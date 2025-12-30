@@ -28,6 +28,7 @@ pub mod bus_ws_connector;
 pub mod contract_listener;
 pub mod contract_state_indexer;
 pub mod da_listener;
+pub mod da_listener_metrics;
 pub mod data_availability;
 pub mod gcs_uploader;
 #[cfg(feature = "db")]
