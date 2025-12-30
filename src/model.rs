@@ -8,6 +8,8 @@ pub use hyli_model::*;
 
 use crate::utils::conf::SharedConf;
 
+pub type LaneOperatorKey = ValidatorPublicKey;
+
 #[derive(Clone)]
 pub struct SharedRunContext {
     pub config: SharedConf,

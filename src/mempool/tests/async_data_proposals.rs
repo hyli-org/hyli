@@ -223,7 +223,11 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
     });
 
     node_client.send(node_modules.crypto.sign_msg_with_header(
-        MempoolNetMessage::DataProposal(data_proposal.hashed(), data_proposal),
+        MempoolNetMessage::DataProposal(
+            LaneId(node_modules.crypto.validator_pubkey().clone()),
+            data_proposal.hashed(),
+            data_proposal,
+        ),
     )?)?;
 
     // Wait until we commit this TX

@@ -182,7 +182,7 @@ macro_rules! disseminate {
         let dp_msg = broadcast! {
             description: "Disseminate DataProposal",
             from: $owner, to: [$($voter),+],
-            message_matches: MempoolNetMessage::DataProposal(_, _)
+            message_matches: MempoolNetMessage::DataProposal(_, _, _)
         };
 
         join_all(
@@ -201,7 +201,7 @@ macro_rules! disseminate {
         let poda = broadcast! {
             description: "Disseminate Poda 1",
             from: $owner, to: [$($voter),+],
-            message_matches: MempoolNetMessage::PoDAUpdate(hash, _signatures) => {
+            message_matches: MempoolNetMessage::PoDAUpdate(_, hash, _signatures) => {
                 assert_eq!(hash, &dp.hashed());
             }
         };
@@ -209,7 +209,7 @@ macro_rules! disseminate {
         let poda2 = broadcast! {
             description: "Disseminate Poda 2",
             from: $owner, to: [$($voter),+],
-            message_matches: MempoolNetMessage::PoDAUpdate(hash, _signatures) => {
+            message_matches: MempoolNetMessage::PoDAUpdate(_, hash, _signatures) => {
                 assert_eq!(hash, &dp.hashed());
             }
         };
@@ -217,7 +217,7 @@ macro_rules! disseminate {
         let poda3 = broadcast! {
             description: "Disseminate Poda 3",
             from: $owner, to: [$($voter),+],
-            message_matches: MempoolNetMessage::PoDAUpdate(hash, _signatures) => {
+            message_matches: MempoolNetMessage::PoDAUpdate(_, hash, _signatures) => {
                 assert_eq!(hash, &dp.hashed());
             }
         };
@@ -419,7 +419,7 @@ async fn autobahn_basic_flow() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, data) => {
+        message_matches: MempoolNetMessage::DataProposal(_, _, data) => {
             assert_eq!(data.txs.len(), 2);
         }
     };
@@ -555,7 +555,7 @@ async fn mempool_broadcast_multiple_data_proposals() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: MempoolNetMessage::DataProposal(_, _, _)
     };
 
     join_all(
@@ -596,7 +596,7 @@ async fn mempool_broadcast_multiple_data_proposals() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: MempoolNetMessage::DataProposal(_, _, _)
     };
 
     join_all(
@@ -636,7 +636,7 @@ async fn mempool_podaupdate_too_early() {
     let dp_msg = broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: MempoolNetMessage::DataProposal(_, _, _)
     };
 
     join_all(
@@ -655,7 +655,7 @@ async fn mempool_podaupdate_too_early() {
     let poda = broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx],
-        message_matches: MempoolNetMessage::PoDAUpdate(hash, signatures) => {
+        message_matches: MempoolNetMessage::PoDAUpdate(_, hash, signatures) => {
             assert_eq!(hash, &dp.hashed());
             assert_eq!(2, signatures.len());
         }
@@ -664,7 +664,7 @@ async fn mempool_podaupdate_too_early() {
     let poda2 = broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx],
-        message_matches: MempoolNetMessage::PoDAUpdate(hash, signatures) => {
+        message_matches: MempoolNetMessage::PoDAUpdate(_, hash, signatures) => {
             assert_eq!(hash, &dp.hashed());
             assert_eq!(3, signatures.len());
         }
@@ -714,7 +714,7 @@ async fn mempool_podaupdate_too_early() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::PoDAUpdate(hash, signatures) => {
+        message_matches: MempoolNetMessage::PoDAUpdate(_, hash, signatures) => {
             assert_eq!(hash, &dp.hashed());
             assert_eq!(4, signatures.len());
         }
@@ -905,7 +905,7 @@ async fn mempool_fail_to_vote_on_fork() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, data) => {
+        message_matches: MempoolNetMessage::DataProposal(_, _, data) => {
             dp1_check = data.clone();
         }
     };
@@ -950,7 +950,7 @@ async fn mempool_fail_to_vote_on_fork() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: MempoolNetMessage::DataProposal(_, _, _)
     };
 
     join_all(
@@ -979,6 +979,7 @@ async fn mempool_fail_to_vote_on_fork() {
     let data_proposal_fork_3 = node1
         .mempool_ctx
         .create_net_message(MempoolNetMessage::DataProposal(
+            node1.mempool_ctx.own_lane(),
             dp_fork_3.hashed(),
             dp_fork_3.clone(),
         ))
@@ -2645,7 +2646,7 @@ async fn follower_commits_cut_then_mempool_sends_stale_lane() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: MempoolNetMessage::DataProposal(_, _, _)
     };
     node2.mempool_ctx.handle_processed_data_proposals().await;
     send! {
