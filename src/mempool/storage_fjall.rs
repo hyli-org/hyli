@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
-    path::Path,
+    path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
 };
 
 use anyhow::{bail, Result};
@@ -33,6 +34,24 @@ pub struct LanesStorage {
     pub by_hash_metadata: PartitionHandle,
     pub by_hash_data: PartitionHandle,
     pub dp_proofs: PartitionHandle,
+}
+
+static SHARED_LANES: OnceLock<Mutex<HashMap<PathBuf, LanesStorage>>> = OnceLock::new();
+
+pub fn shared_lanes_storage(
+    path: &Path,
+    lanes_tip: BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>,
+) -> Result<LanesStorage> {
+    let registry = SHARED_LANES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = registry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    if let Some(existing) = guard.get(path) {
+        return Ok(existing.clone());
+    }
+
+    let storage = LanesStorage::new(path, lanes_tip)?;
+    guard.insert(path.to_path_buf(), storage.clone());
+    Ok(storage)
 }
 
 impl LanesStorage {

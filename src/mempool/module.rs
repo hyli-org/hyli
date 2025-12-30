@@ -10,13 +10,13 @@ use hyli_model::{DataProposalHash, LaneBytesSize, LaneId};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use tracing::warn;
 
-use super::{api::RestApiMessage, MempoolNetMessage, QueryNewCut};
+use super::{api::RestApiMessage, DisseminationEvent, MempoolNetMessage, QueryNewCut};
 
 use crate::model::SharedRunContext;
 
 use super::{
     api, mempool_bus_client::MempoolBusClient, metrics::MempoolMetrics,
-    storage_fjall::LanesStorage, Mempool, MempoolStore,
+    storage_fjall::shared_lanes_storage, Mempool, MempoolStore,
 };
 
 use anyhow::Result;
@@ -54,7 +54,7 @@ impl Module for Mempool {
             conf: ctx.config.clone(),
             crypto: Arc::clone(&ctx.crypto),
             metrics,
-            lanes: LanesStorage::new(&ctx.config.data_directory, lanes_tip)?,
+            lanes: shared_lanes_storage(&ctx.config.data_directory, lanes_tip)?,
             inner: attributes,
         })
     }
@@ -134,14 +134,11 @@ impl Module for Mempool {
                 _  = log_error!(self.prepare_new_data_proposal(), "Try preparing a new data proposal on tick");
             }
             _ = disseminate_timer.tick() => {
-                if let Ok(true) = log_error!(
-                    self
-                    .redisseminate_oldest_data_proposal()
-                    .await,
+                _ = log_error!(
+                    self.send_dissemination_event(DisseminationEvent::Tick),
                     "Disseminate data proposals on tick"
-                ) {
-                    disseminate_timer.reset();
-                }
+                );
+                disseminate_timer.reset();
             }
         };
 

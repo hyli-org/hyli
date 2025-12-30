@@ -309,14 +309,9 @@ impl AutobahnTestCtx {
         let event_receiver = get_receiver::<ConsensusEvent>(&shared_bus).await;
         let p2p_receiver = get_receiver::<P2PCommand>(&shared_bus).await;
         let consensus_out_receiver = get_receiver::<OutboundMessage>(&shared_bus).await;
-        let mempool_out_receiver = get_receiver::<OutboundMessage>(&shared_bus).await;
-        let mempool_event_receiver = get_receiver::<MempoolBlockEvent>(&shared_bus).await;
-        let mempool_status_event_receiver = get_receiver::<MempoolStatusEvent>(&shared_bus).await;
-
         let consensus = ConsensusTestCtx::build_consensus(&shared_bus, crypto.clone()).await;
-        let mempool = MempoolTestCtx::build_mempool(&shared_bus, crypto).await;
-
-        let mempool_sync_request_sender = mempool.start_mempool_sync();
+        let mempool_ctx =
+            MempoolTestCtx::new_with_shared_bus(name, &shared_bus, crypto).await;
 
         AutobahnTestCtx {
             shared_bus,
@@ -327,14 +322,7 @@ impl AutobahnTestCtx {
                 consensus,
                 name: name.to_string(),
             },
-            mempool_ctx: MempoolTestCtx {
-                name: name.to_string(),
-                out_receiver: mempool_out_receiver,
-                mempool_event_receiver,
-                mempool_status_event_receiver,
-                mempool,
-                mempool_sync_request_sender,
-            },
+            mempool_ctx,
         }
     }
 

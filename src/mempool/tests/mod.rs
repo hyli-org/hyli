@@ -20,7 +20,9 @@ use assertables::assert_ok;
 use hyli_contract_sdk::StateCommitment;
 use hyli_crypto::BlstCrypto;
 use hyli_modules::bus::BusReceiver;
+use hyli_modules::modules::BuildApiContextInner;
 use hyli_modules::modules::Module;
+use std::path::PathBuf;
 use utils::TimestampMs;
 
 pub struct MempoolTestCtx {
@@ -30,12 +32,16 @@ pub struct MempoolTestCtx {
     pub mempool_event_receiver: BusReceiver<MempoolBlockEvent>,
     pub mempool_status_event_receiver: BusReceiver<MempoolStatusEvent>,
     pub mempool: Mempool,
+    pub data_dir: PathBuf,
 }
 
 impl MempoolTestCtx {
-    pub async fn build_mempool(shared_bus: &SharedMessageBus, crypto: BlstCrypto) -> Mempool {
-        let tmp_dir = tempfile::tempdir().unwrap().keep();
-        let lanes = LanesStorage::new(&tmp_dir, BTreeMap::default()).unwrap();
+    pub async fn build_mempool(
+        shared_bus: &SharedMessageBus,
+        crypto: BlstCrypto,
+        data_dir: &PathBuf,
+    ) -> Mempool {
+        let lanes = storage_fjall::shared_lanes_storage(data_dir, BTreeMap::default()).unwrap();
         let bus = MempoolBusClient::new_from_bus(shared_bus.new_handle()).await;
 
         // Initialize Mempool
@@ -50,15 +56,36 @@ impl MempoolTestCtx {
         }
     }
 
-    pub async fn new(name: &str) -> Self {
-        let crypto = BlstCrypto::new(name).unwrap();
-        let shared_bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
+    pub async fn new_with_shared_bus(
+        name: &str,
+        shared_bus: &SharedMessageBus,
+        crypto: BlstCrypto,
+    ) -> Self {
+        let out_receiver = get_receiver::<OutboundMessage>(shared_bus).await;
+        let mempool_event_receiver = get_receiver::<MempoolBlockEvent>(shared_bus).await;
+        let mempool_status_event_receiver = get_receiver::<MempoolStatusEvent>(shared_bus).await;
 
-        let out_receiver = get_receiver::<OutboundMessage>(&shared_bus).await;
-        let mempool_event_receiver = get_receiver::<MempoolBlockEvent>(&shared_bus).await;
-        let mempool_status_event_receiver = get_receiver::<MempoolStatusEvent>(&shared_bus).await;
-        let mempool = Self::build_mempool(&shared_bus, crypto).await;
+        let data_dir = tempfile::tempdir().unwrap().keep();
+        let mut mempool = Self::build_mempool(shared_bus, crypto, &data_dir).await;
         let mempool_sync_request_sender = mempool.start_mempool_sync();
+
+        let mut conf = crate::utils::conf::Conf::default();
+        conf.id = name.to_string();
+        conf.data_directory = data_dir.clone();
+        let ctx = crate::model::SharedRunContext {
+            config: Arc::new(conf),
+            api: Arc::new(BuildApiContextInner::default()),
+            crypto: mempool.crypto.clone(),
+            start_height: None,
+        };
+
+        let mut dissemination_manager =
+            super::dissemination::DisseminationManager::build(shared_bus.new_handle(), ctx)
+                .await
+                .expect("Failed to build DisseminationManager");
+        tokio::spawn(async move {
+            _ = dissemination_manager.run().await;
+        });
 
         MempoolTestCtx {
             name: name.to_string(),
@@ -67,7 +94,14 @@ impl MempoolTestCtx {
             mempool_event_receiver,
             mempool_status_event_receiver,
             mempool,
+            data_dir,
         }
+    }
+
+    pub async fn new(name: &str) -> Self {
+        let crypto = BlstCrypto::new(name).unwrap();
+        let shared_bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
+        Self::new_with_shared_bus(name, &shared_bus, crypto).await
     }
 
     pub fn setup_node(&mut self, cryptos: &[BlstCrypto]) {
@@ -99,6 +133,12 @@ impl MempoolTestCtx {
             .staking
             .bond(pubkey.clone())
             .expect("cannot bond trusted validator");
+
+        self.mempool
+            .send_dissemination_event(DisseminationEvent::StakingUpdated {
+                staking: self.mempool.staking.clone(),
+            })
+            .expect("send staking update");
     }
 
     pub fn sign_data<T: borsh::BorshSerialize>(&self, data: T) -> Result<SignedByValidator<T>> {
@@ -124,7 +164,7 @@ impl MempoolTestCtx {
     pub async fn timer_tick(&mut self) -> Result<bool> {
         let Ok(true) = self.mempool.prepare_new_data_proposal() else {
             debug!("No new data proposal to prepare");
-            return self.mempool.disseminate_data_proposals(None).await;
+            return Ok(false);
         };
 
         let (dp_hash, dp) = self
@@ -134,12 +174,13 @@ impl MempoolTestCtx {
             .await
             .context("join next data proposal in preparation")??;
 
-        Ok(self.mempool.resume_new_data_proposal(dp, dp_hash).await?
-            || self.mempool.disseminate_data_proposals(None).await?)
+        self.mempool.resume_new_data_proposal(dp, dp_hash).await
     }
 
     pub async fn disseminate_timer_tick(&mut self) -> Result<bool> {
-        self.mempool.redisseminate_oldest_data_proposal().await
+        self.mempool
+            .send_dissemination_event(DisseminationEvent::Tick)?;
+        Ok(true)
     }
 
     pub async fn handle_poda_update(
@@ -393,11 +434,22 @@ impl MempoolTestCtx {
     }
 
     pub fn process_new_data_proposal(&mut self, dp: DataProposal) -> Result<()> {
-        self.mempool.lanes.store_data_proposal(
+        let (dp_hash, cumul_size) = self.mempool.lanes.store_data_proposal(
             &self.mempool.crypto,
             &LaneId(self.mempool.crypto.validator_pubkey().clone()),
             dp,
         )?;
+        let lane_id = LaneId(self.mempool.crypto.validator_pubkey().clone());
+        self.mempool.send_dissemination_event(DisseminationEvent::NewDpCreated {
+            lane_id: lane_id.clone(),
+            data_proposal_hash: dp_hash.clone(),
+        })?;
+        self.mempool
+            .send_dissemination_event(DisseminationEvent::DpStored {
+                lane_id,
+                data_proposal_hash: dp_hash,
+                cumul_size,
+            })?;
         Ok(())
     }
 

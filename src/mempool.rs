@@ -23,7 +23,7 @@ use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     fmt::Display,
     ops::{Deref, DerefMut},
     path::PathBuf,
@@ -41,6 +41,7 @@ use tracing::{debug, info, trace};
 
 pub mod api;
 pub mod block_construction;
+pub mod dissemination;
 pub mod metrics;
 pub mod module;
 pub mod own_lane;
@@ -53,6 +54,8 @@ pub mod verify_tx;
 
 #[cfg(test)]
 pub mod tests;
+
+pub use dissemination::DisseminationEvent;
 
 pub struct LongTasksRuntime(std::mem::ManuallyDrop<tokio::runtime::Runtime>);
 impl Default for LongTasksRuntime {
@@ -178,6 +181,7 @@ struct MempoolBusClient {
     sender(OutboundMessage),
     sender(MempoolBlockEvent),
     sender(MempoolStatusEvent),
+    sender(DisseminationEvent),
     receiver(MsgWithHeader<MempoolNetMessage>),
     receiver(RestApiMessage),
     receiver(TcpServerMessage),
@@ -331,6 +335,9 @@ impl Mempool {
                 );
 
                 self.staking = cpp.staking.clone();
+                self.send_dissemination_event(DisseminationEvent::StakingUpdated {
+                    staking: self.staking.clone(),
+                })?;
 
                 let cut = cpp.consensus_proposal.cut.clone();
                 let previous_cut = self
@@ -344,6 +351,10 @@ impl Mempool {
 
                 // Removes all DPs that are not in the new cut, updates lane tip and sends SyncRequest for missing DPs
                 self.clean_and_update_lanes(&cut, &previous_cut)?;
+                self.send_dissemination_event(DisseminationEvent::CcpCommitted {
+                    cut,
+                    previous_cut,
+                })?;
 
                 Ok(())
             }
@@ -419,6 +430,13 @@ impl Mempool {
             info!("Nothing to do for this SyncRequest");
             return Ok(());
         };
+
+        self.send_dissemination_event(DisseminationEvent::SyncRequestIn {
+            lane_id: lane_id.clone(),
+            from: from.clone(),
+            to: Some(to.clone()),
+            requester: validator.clone(),
+        })?;
 
         // Transmit sync request to the Mempool submodule, to build a reply
         sync_request_sender
@@ -533,6 +551,12 @@ impl Mempool {
                 .or_default();
 
             lane.push(podas);
+        } else {
+            self.send_dissemination_event(DisseminationEvent::PoDAUpdated {
+                lane_id: lane_id.clone(),
+                data_proposal_hash: data_proposal_hash.clone(),
+                signatures: podas,
+            })?;
         }
 
         Ok(())
@@ -568,38 +592,6 @@ impl Mempool {
     }
 
     #[inline(always)]
-    fn broadcast_net_message(&mut self, net_message: MempoolNetMessage) -> Result<()> {
-        let enum_variant_name: &'static str = (&net_message).into();
-        let error_msg =
-            format!("Broadcasting MempoolNetMessage::{enum_variant_name} msg on the bus");
-        self.bus
-            .send(OutboundMessage::broadcast(
-                self.crypto.sign_msg_with_header(net_message)?,
-            ))
-            .context(error_msg)?;
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn broadcast_only_for_net_message(
-        &mut self,
-        only_for: HashSet<ValidatorPublicKey>,
-        net_message: MempoolNetMessage,
-    ) -> Result<()> {
-        let enum_variant_name: &'static str = (&net_message).into();
-        let error_msg = format!(
-            "Broadcasting MempoolNetMessage::{enum_variant_name} msg only for: {only_for:?} on the bus"
-        );
-        self.bus
-            .send(OutboundMessage::broadcast_only_for(
-                only_for,
-                self.crypto.sign_msg_with_header(net_message)?,
-            ))
-            .context(error_msg)?;
-        Ok(())
-    }
-
-    #[inline(always)]
     fn send_net_message(
         &mut self,
         to: ValidatorPublicKey,
@@ -613,6 +605,14 @@ impl Mempool {
                 self.crypto.sign_msg_with_header(net_message)?,
             ))
             .context(error_msg)?;
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn send_dissemination_event(&mut self, event: DisseminationEvent) -> Result<()> {
+        self.bus
+            .send(event)
+            .context("Sending DisseminationEvent on the bus")?;
         Ok(())
     }
 }
