@@ -1,22 +1,20 @@
 //! Logic for processing the API inbound TXs in the mempool.
 
-use crate::mempool::storage::MetadataOrMissingHash;
 use crate::{bus::BusClientSender, model::*};
 
 use anyhow::{bail, Context, Result};
 use client_sdk::tcp_client::TcpServerMessage;
-use futures::StreamExt;
-use std::collections::HashSet;
 use tracing::{debug, trace};
 
-use super::storage::LaneEntryMetadata;
 use super::verifiers::{verify_proof, verify_recursive_proof};
+#[cfg(test)]
+use super::MempoolNetMessage;
 use super::{api::RestApiMessage, storage::Storage};
-use super::{MempoolNetMessage, ValidatorDAG};
+use super::{DisseminationEvent, ValidatorDAG};
 
 impl super::Mempool {
     fn get_last_data_prop_hash_in_own_lane(&self) -> Option<DataProposalHash> {
-        self.lanes.get_lane_hash_tip(&self.own_lane_id()).cloned()
+        self.lanes.get_lane_hash_tip(&self.own_lane_id())
     }
 
     pub(super) fn own_lane_id(&self) -> LaneId {
@@ -65,11 +63,11 @@ impl super::Mempool {
             || old_voting_power < 2 * f && new_voting_power >= 2 * f
             || new_voting_power > 3 * f
         {
-            self.broadcast_net_message(MempoolNetMessage::PoDAUpdate(
+            self.send_dissemination_event(DisseminationEvent::PoDAReady {
                 lane_id,
                 data_proposal_hash,
                 signatures,
-            ))?;
+            })?;
         }
         Ok(())
     }
@@ -92,170 +90,11 @@ impl super::Mempool {
     pub(super) async fn resume_new_data_proposal(
         &mut self,
         data_proposal: DataProposal,
-        data_proposal_hash: DataProposalHash,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         trace!("🐣 Create new data proposal");
 
         self.register_new_data_proposal(data_proposal)?;
-
-        // TODO: when we have a smarter system, we should probably not trigger this here
-        // to make the event loop more efficient.
-        self.disseminate_data_proposals(Some(data_proposal_hash))
-            .await
-    }
-
-    /// If only_dp_with_hash is Some, only disseminate the DP with the specified hash. If None, disseminate any pending DPs.
-    /// Returns true if we did disseminate something
-    pub(super) async fn disseminate_data_proposals(
-        &mut self,
-        only_dp_with_hash: Option<DataProposalHash>,
-    ) -> Result<bool> {
-        trace!("🌝 Disseminate data proposals");
-
-        let last_cut = self
-            .last_ccp
-            .as_ref()
-            .map(|ccp| ccp.consensus_proposal.cut.clone());
-
-        // Check for each pending DataProposal if it has enough signatures
-        let cloned_lanes = self.lanes.clone();
-        let own_lane_id = self.own_lane_id();
-        let mut entries_stream =
-            Box::pin(cloned_lanes.get_pending_entries_in_lane(&own_lane_id, last_cut));
-
-        while let Some(stream_entry) = entries_stream.next().await {
-            let MetadataOrMissingHash::Metadata(entry_metadata, dp_hash) = stream_entry? else {
-                bail!(
-                    "DataProposal not retrieved for dissemination in lane {}",
-                    &own_lane_id
-                );
-            };
-            // If only_dp_with_hash is Some, we only disseminate that one, skip all others.
-            if let Some(ref only_dp_with_hash) = only_dp_with_hash {
-                if &dp_hash != only_dp_with_hash {
-                    continue;
-                }
-            }
-
-            self.rebroadcast_data_proposal(&entry_metadata, &dp_hash)?;
-
-            return Ok(true);
-        }
-
-        Ok(false)
-    }
-
-    /// Redisseminate oldest DataProposal in own lane if it has not been disseminated yet.
-    pub async fn redisseminate_oldest_data_proposal(&mut self) -> Result<bool> {
-        trace!("🌝 Redisseminate oldest data proposal");
-
-        let last_cut = self
-            .last_ccp
-            .as_ref()
-            .map(|ccp| ccp.consensus_proposal.cut.clone());
-
-        let Some((metadata, dp_hash)) = self
-            .lanes
-            .get_oldest_pending_entry(&self.own_lane_id(), last_cut)
-            .await?
-        else {
-            // No pending proposal, ignore.
-            debug!("No pending DataProposal in lane {}", &self.own_lane_id());
-            return Ok(true);
-        };
-
-        self.rebroadcast_data_proposal(&metadata, &dp_hash)
-            .context("Rebroadcasting oldest DataProposal")
-    }
-
-    /// Rebroadcast DataProposal to validators that have not signed it yet.
-    fn rebroadcast_data_proposal(
-        &mut self,
-        entry_metadata: &LaneEntryMetadata,
-        dp_hash: &DataProposalHash,
-    ) -> Result<bool> {
-        // If there's only 1 signature (=own signature), broadcast it to everyone
-        let there_are_other_validators = !self.staking.is_bonded(self.crypto.validator_pubkey())
-            || self.staking.bonded().len() >= 2;
-        if entry_metadata.signatures.len() == 1 && there_are_other_validators {
-            let lane_id = self.own_lane_id();
-            let Some(mut data_proposal) = self.lanes.get_dp_by_hash(&lane_id, dp_hash)? else {
-                bail!("Can't find DataProposal {} in lane {}", dp_hash, &lane_id);
-            };
-
-            // Rehydrate proofs from side-store for broadcast
-            let Some(proofs) = self.lanes.get_proofs_by_hash(&lane_id, dp_hash)? else {
-                anyhow::bail!("Can't find Proofs for DP {} in lane {}", dp_hash, lane_id);
-            };
-            data_proposal.hydrate_proofs(proofs);
-
-            debug!(
-                "🚗 Broadcast DataProposal {} ({} validators, {} txs)",
-                data_proposal.hashed(),
-                self.staking.bonded().len(),
-                data_proposal.txs.len()
-            );
-            self.metrics
-                .dp_disseminations
-                .add(self.staking.bonded().len() as u64, &[]);
-            self.broadcast_net_message(MempoolNetMessage::DataProposal(
-                lane_id,
-                data_proposal.hashed(),
-                data_proposal.clone(),
-            ))?;
-        } else {
-            // Otherwise, rebroadcast only to validators that have not signed it yet.
-            let validator_that_has_signed: HashSet<&ValidatorPublicKey> = entry_metadata
-                .signatures
-                .iter()
-                .map(|s| &s.signature.validator)
-                .collect();
-
-            // No PoDA yet, so rebroadcast to validators that haven't signed.
-            let only_for: HashSet<ValidatorPublicKey> = self
-                .staking
-                .bonded()
-                .iter()
-                .filter(|pubkey| !validator_that_has_signed.contains(pubkey))
-                .cloned()
-                .collect();
-
-            if only_for.is_empty() {
-                return Ok(false);
-            }
-
-            let lane_id = self.own_lane_id();
-            let Some(mut data_proposal) = self.lanes.get_dp_by_hash(&lane_id, dp_hash)? else {
-                bail!("Can't find DataProposal {} in lane {}", dp_hash, &lane_id);
-            };
-
-            // Rehydrate proofs from side-store for broadcast
-            let Some(proofs) = self.lanes.get_proofs_by_hash(&lane_id, dp_hash)? else {
-                anyhow::bail!("Can't find Proofs for DP {} in lane {}", dp_hash, lane_id);
-            };
-            data_proposal.hydrate_proofs(proofs);
-
-            debug!(
-                "🚗 Rebroadcast DataProposal {} (only for {} validators, {} txs)",
-                &data_proposal.hashed(),
-                only_for.len(),
-                &data_proposal.txs.len()
-            );
-
-            self.metrics
-                .dp_disseminations
-                .add(only_for.len() as u64, &[]);
-
-            self.broadcast_only_for_net_message(
-                only_for,
-                MempoolNetMessage::DataProposal(
-                    lane_id,
-                    data_proposal.hashed(),
-                    data_proposal.clone(),
-                ),
-            )?;
-        }
-        Ok(true)
+        Ok(())
     }
 
     /// Inits DataProposal preparation if there are pending transactions
@@ -342,8 +181,19 @@ impl super::Mempool {
 
         self.metrics.created_data_proposals.add(1, &[]);
 
-        self.lanes
-            .store_data_proposal(&self.crypto, &self.own_lane_id(), data_proposal)?;
+        let (data_proposal_hash, cumul_size) =
+            self.lanes
+                .store_data_proposal(&self.crypto, &self.own_lane_id(), data_proposal)?;
+
+        self.send_dissemination_event(DisseminationEvent::NewDpCreated {
+            lane_id: self.own_lane_id(),
+            data_proposal_hash: data_proposal_hash.clone(),
+        })?;
+        self.send_dissemination_event(DisseminationEvent::DpStored {
+            lane_id: self.own_lane_id(),
+            data_proposal_hash,
+            cumul_size,
+        })?;
 
         Ok(())
     }
@@ -551,7 +401,7 @@ pub mod test {
         let dp = ctx
             .mempool
             .lanes
-            .get_dp_by_hash(&ctx.own_lane(), dp_hash)
+            .get_dp_by_hash(&ctx.own_lane(), &dp_hash)
             .unwrap()
             .unwrap();
 
@@ -623,6 +473,8 @@ pub mod test {
             create_data_vote(&crypto2, lane_id.clone(), data_proposal.hashed(), size)?;
         let signed_msg3 =
             create_data_vote(&crypto3, lane_id.clone(), data_proposal.hashed(), size)?;
+        // Clear event receiver
+        while ctx.dissemination_event_receiver.try_recv().is_ok() {}
         ctx.mempool
             .handle_net_message(
                 crypto2.sign_msg_with_header(signed_msg2)?,
@@ -636,13 +488,23 @@ pub mod test {
             )
             .await?;
 
-        // Assert that PoDAUpdate message is broadcasted
-        match ctx.assert_broadcast("PoDAUpdate").await.msg {
-            MempoolNetMessage::PoDAUpdate(_, hash, signatures) => {
-                assert_eq!(hash, data_proposal.hashed());
+        // Assert that PoDAReady message is sent to dissemination
+        match ctx
+            .dissemination_event_receiver
+            .recv()
+            .await
+            .unwrap()
+            .into_message()
+        {
+            DisseminationEvent::PoDAReady {
+                data_proposal_hash,
+                signatures,
+                ..
+            } => {
+                assert_eq!(data_proposal_hash, data_proposal.hashed());
                 assert_eq!(signatures.len(), 2);
             }
-            _ => panic!("Expected PoDAUpdate message"),
+            _ => panic!("Expected PoDAReady message"),
         };
 
         Ok(())
@@ -844,7 +706,6 @@ pub mod test {
         ctx1.timer_tick().await?;
         // ctx1.handle_processed_data_proposals().await;
 
-        // Récupère les deux DataProposals broadcastées par ctx1
         let mut dps = vec![];
         for _ in 0..2 {
             match ctx1.assert_broadcast("DataProposal").await.msg {
@@ -856,27 +717,21 @@ pub mod test {
         assert!(dps.len() == 2, "Should have two DataProposals");
         assert_eq!(dps[0].1.txs.len(), 1);
         assert_eq!(dps[1].1.txs.len(), 1);
-        assert_eq!(dps[0].1.txs[0], tx1);
-        assert_eq!(dps[1].1.txs[0], tx2);
+        let txs = dps
+            .iter()
+            .map(|(_, dp)| dp.txs[0].clone())
+            .collect::<Vec<_>>();
+        assert!(txs.contains(&tx1));
+        assert!(txs.contains(&tx2));
 
-        // Rebroadcast les DataProposals
-
-        ctx1.timer_tick().await?;
-
-        // Récupère les deux DataProposals broadcastées par ctx1
-        let mut dps = vec![];
-        for _ in 0..1 {
-            match ctx1.assert_broadcast("DataProposal").await.msg {
-                MempoolNetMessage::DataProposal(_, hash, dp) => dps.push((hash, dp)),
-                _ => panic!("Expected DataProposal message"),
-            }
-        }
-
-        assert!(dps.len() == 1, "Should have the most recent DataProposal");
-        assert_eq!(dps[0].1.txs.len(), 1);
-        assert_eq!(dps[0].1.txs[0], tx2);
-
-        ctx1.disseminate_timer_tick().await?;
+        // Redisseminate the oldest pending DataProposal
+        // TODO: implement this as more of an integration test?
+        let (oldest_hash, _) = dps
+            .iter()
+            .find(|(_, dp)| dp.parent_data_proposal_hash.is_none())
+            .expect("oldest dp should exist");
+        ctx1.maybe_disseminate_dp(&ctx1.own_lane(), oldest_hash)
+            .expect("disseminate");
 
         // Récupère les deux DataProposals broadcastées par ctx1
         let mut dps = vec![];
