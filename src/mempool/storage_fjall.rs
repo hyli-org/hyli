@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock, RwLock},
 };
 
 use anyhow::{bail, Result};
@@ -12,7 +12,6 @@ use fjall::{
 };
 use futures::Stream;
 use hyli_model::{LaneId, ProofData, TxHash};
-use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::{
@@ -95,14 +94,16 @@ impl LanesStorage {
     }
 
     pub fn lane_tips_snapshot(&self) -> BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)> {
-        let guard = self.lanes_tip.blocking_read();
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let guard = self.lanes_tip.read().unwrap();
         guard.clone()
     }
 
     pub fn lane_tips_read(
         &self,
-    ) -> tokio::sync::RwLockReadGuard<'_, BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>> {
-        self.lanes_tip.blocking_read()
+    ) -> std::sync::RwLockReadGuard<'_, BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>> {
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        self.lanes_tip.read().unwrap()
     }
 
     pub fn new(
@@ -330,17 +331,20 @@ impl Storage for LanesStorage {
     }
 
     fn get_lane_ids(&self) -> Vec<LaneId> {
-        let guard = self.lanes_tip.blocking_read();
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let guard = self.lanes_tip.read().unwrap();
         guard.keys().cloned().collect()
     }
 
     fn get_lane_hash_tip(&self, lane_id: &LaneId) -> Option<DataProposalHash> {
-        let guard = self.lanes_tip.blocking_read();
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let guard = self.lanes_tip.read().unwrap();
         guard.get(lane_id).map(|(hash, _)| hash.clone())
     }
 
     fn get_lane_size_tip(&self, lane_id: &LaneId) -> Option<LaneBytesSize> {
-        let guard = self.lanes_tip.blocking_read();
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let guard = self.lanes_tip.read().unwrap();
         guard.get(lane_id).map(|(_, size)| *size)
     }
 
@@ -351,7 +355,8 @@ impl Storage for LanesStorage {
         size: LaneBytesSize,
     ) -> Option<(DataProposalHash, LaneBytesSize)> {
         tracing::trace!("Updating lane tip for lane {} to {:?}", lane_id, dp_hash);
-        let mut guard = self.lanes_tip.blocking_write();
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let mut guard = self.lanes_tip.write().unwrap();
         guard.insert(lane_id, (dp_hash, size))
     }
 

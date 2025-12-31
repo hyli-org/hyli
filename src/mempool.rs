@@ -273,6 +273,7 @@ impl Mempool {
     }
 
     /// Creates a cut with local material on QueryNewCut message reception (from consensus)
+    /// DO NOT make this async without proper deadlock considerations, see below.
     fn handle_querynewcut(&mut self, staking: &mut QueryNewCut) -> Result<Cut> {
         self.metrics.query_new_cut(staking);
         let emptyvec = vec![];
@@ -285,6 +286,7 @@ impl Mempool {
         let mut cut: Cut = vec![];
         // We lock in read for the full loop for performance
         // Because all writes to tips happen in mempool, this should be essentially free.
+        // NB: if this function ever becomes async, we must consider deadlocks here as this is a std::sync::RwLock
         let lane_tips = self.lanes.lane_tips_read();
         for lane_id in lane_tips.keys() {
             let previous_entry = previous_cut
