@@ -16,21 +16,20 @@ use block_construction::BlockUnderConstruction;
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
 use hyli_crypto::SharedBlstCrypto;
-use hyli_modules::{bus::BusMessage, log_warn, module_bus_client, utils::static_type_map::Pick};
-use hyli_net::{logged_task::logged_task, ordered_join_set::OrderedJoinSet};
+use hyli_modules::{bus::BusMessage, log_warn, module_bus_client};
+use hyli_net::ordered_join_set::OrderedJoinSet;
 use indexmap::IndexSet;
 use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     fmt::Display,
     ops::{Deref, DerefMut},
     path::PathBuf,
     time::Duration,
 };
 use storage::{LaneEntryMetadata, Storage};
-use sync_request_reply::{MempoolSync, SyncRequest};
 use tokio::task::JoinSet;
 use verify_tx::DataProposalVerdict;
 // Pick one of the two implementations
@@ -41,18 +40,20 @@ use tracing::{debug, info, trace};
 
 pub mod api;
 pub mod block_construction;
+pub mod dissemination;
 pub mod metrics;
 pub mod module;
 pub mod own_lane;
 pub mod storage;
 pub mod storage_fjall;
 pub mod storage_memory;
-pub mod sync_request_reply;
 pub mod verifiers;
 pub mod verify_tx;
 
 #[cfg(test)]
 pub mod tests;
+
+pub use dissemination::DisseminationEvent;
 
 pub struct LongTasksRuntime(std::mem::ManuallyDrop<tokio::runtime::Runtime>);
 impl Default for LongTasksRuntime {
@@ -102,6 +103,7 @@ impl DerefMut for LongTasksRuntime {
 /// Validator Data Availability Guarantee
 /// This is a signed message that contains the hash of the data proposal and the size of the lane (DP included)
 /// It acts as proof the validator committed to making this DP available.
+/// We don't actually sign the Lane ID itself, assuming DPs are unique enough across lanes, as BLS signatures are slow.
 pub type ValidatorDAG = SignedByValidator<(DataProposalHash, LaneBytesSize)>;
 type UnaggregatedPoDA = Vec<ValidatorDAG>;
 
@@ -177,6 +179,7 @@ struct MempoolBusClient {
     sender(OutboundMessage),
     sender(MempoolBlockEvent),
     sender(MempoolStatusEvent),
+    sender(DisseminationEvent),
     receiver(MsgWithHeader<MempoolNetMessage>),
     receiver(RestApiMessage),
     receiver(TcpServerMessage),
@@ -199,11 +202,11 @@ struct MempoolBusClient {
     IntoStaticStr,
 )]
 pub enum MempoolNetMessage {
-    DataProposal(DataProposalHash, DataProposal),
-    DataVote(ValidatorDAG),
-    PoDAUpdate(DataProposalHash, Vec<ValidatorDAG>),
-    SyncRequest(Option<DataProposalHash>, Option<DataProposalHash>),
-    SyncReply(LaneEntryMetadata, DataProposal),
+    DataProposal(LaneId, DataProposalHash, DataProposal),
+    DataVote(LaneId, ValidatorDAG),
+    PoDAUpdate(LaneId, DataProposalHash, Vec<ValidatorDAG>),
+    SyncRequest(LaneId, Option<DataProposalHash>, Option<DataProposalHash>),
+    SyncReply(LaneId, LaneEntryMetadata, DataProposal),
 }
 
 impl BusMessage for MempoolNetMessage {}
@@ -219,26 +222,23 @@ impl IntoHeaderSignableData for MempoolNetMessage {
     fn to_header_signable_data(&self) -> HeaderSignableData {
         match self {
             // We get away with only signing the hash - verification must check the hash is correct
-            MempoolNetMessage::DataProposal(hash, _) => {
-                HeaderSignableData(hash.0.clone().into_bytes())
+            MempoolNetMessage::DataProposal(lane_id, hash, _) => {
+                HeaderSignableData(borsh::to_vec(&(lane_id, hash)).unwrap_or_default())
             }
-            MempoolNetMessage::DataVote(vdag) => {
-                HeaderSignableData(borsh::to_vec(&vdag.msg).unwrap_or_default())
+            MempoolNetMessage::DataVote(lane_id, vdag) => {
+                HeaderSignableData(borsh::to_vec(&(lane_id, vdag.msg.clone())).unwrap_or_default())
             }
-            MempoolNetMessage::PoDAUpdate(_, vdags) => {
-                HeaderSignableData(borsh::to_vec(&vdags).unwrap_or_default())
+            MempoolNetMessage::PoDAUpdate(lane_id, data_proposal_hash, vdags) => {
+                HeaderSignableData(
+                    borsh::to_vec(&(lane_id, data_proposal_hash, vdags)).unwrap_or_default(),
+                )
             }
-            MempoolNetMessage::SyncRequest(from, to) => HeaderSignableData(
-                [from.clone(), to.clone()]
-                    .map(|h| h.unwrap_or_default().0.into_bytes())
-                    .concat(),
-            ),
-            MempoolNetMessage::SyncReply(metadata, data_proposal) => {
-                let hash = [
-                    borsh::to_vec(&metadata).unwrap_or_default(),
-                    data_proposal.hashed().0.into_bytes(),
-                ];
-                HeaderSignableData(hash.concat())
+            MempoolNetMessage::SyncRequest(lane_id, from, to) => {
+                HeaderSignableData(borsh::to_vec(&(lane_id, from, to)).unwrap_or_default())
+            }
+            MempoolNetMessage::SyncReply(lane_id, metadata, data_proposal) => {
+                let hash = (lane_id, metadata, data_proposal.hashed().0.clone());
+                HeaderSignableData(borsh::to_vec(&hash).unwrap_or_default())
             }
         }
     }
@@ -251,27 +251,8 @@ pub enum ProcessedDPEvent {
 }
 
 impl Mempool {
-    pub fn start_mempool_sync(&self) -> tokio::sync::mpsc::Sender<SyncRequest> {
-        let (sync_request_sender, sync_request_receiver) =
-            tokio::sync::mpsc::channel::<SyncRequest>(30);
-        let net_sender =
-            Pick::<hyli_modules::bus::BusSender<OutboundMessage>>::get(&self.bus).clone();
-
-        let mut mempool_sync = MempoolSync::create(
-            self.own_lane_id().clone(),
-            self.lanes.new_handle(),
-            self.crypto.clone(),
-            self.metrics.clone(),
-            net_sender,
-            sync_request_receiver,
-        );
-
-        logged_task(async move { mempool_sync.start().await });
-
-        sync_request_sender
-    }
-
     /// Creates a cut with local material on QueryNewCut message reception (from consensus)
+    /// DO NOT make this async without proper deadlock considerations, see below.
     fn handle_querynewcut(&mut self, staking: &mut QueryNewCut) -> Result<Cut> {
         self.metrics.query_new_cut(staking);
         let emptyvec = vec![];
@@ -282,7 +263,11 @@ impl Mempool {
             .unwrap_or(&emptyvec);
 
         let mut cut: Cut = vec![];
-        for lane_id in self.lanes.get_lane_ids() {
+        // We lock in read for the full loop for performance
+        // Because all writes to tips happen in mempool, this should be essentially free.
+        // NB: if this function ever becomes async, we must consider deadlocks here as this is a std::sync::RwLock
+        let lane_tips = self.lanes.lane_tips_read();
+        for lane_id in lane_tips.keys() {
             let previous_entry = previous_cut
                 .iter()
                 .find(|(lane_id_, _, _, _)| lane_id_ == lane_id);
@@ -334,6 +319,9 @@ impl Mempool {
                 );
 
                 self.staking = cpp.staking.clone();
+                self.send_dissemination_event(DisseminationEvent::StakingUpdated {
+                    staking: self.staking.clone(),
+                })?;
 
                 let cut = cpp.consensus_proposal.cut.clone();
                 let previous_cut = self
@@ -347,6 +335,10 @@ impl Mempool {
 
                 // Removes all DPs that are not in the new cut, updates lane tip and sends SyncRequest for missing DPs
                 self.clean_and_update_lanes(&cut, &previous_cut)?;
+                self.send_dissemination_event(DisseminationEvent::CcpCommitted {
+                    cut,
+                    previous_cut,
+                })?;
 
                 Ok(())
             }
@@ -356,7 +348,6 @@ impl Mempool {
     async fn handle_net_message(
         &mut self,
         msg: MsgWithHeader<MempoolNetMessage>,
-        sync_request_sender: &tokio::sync::mpsc::Sender<SyncRequest>,
     ) -> Result<()> {
         let validator = &msg.header.signature.validator;
         // TODO: adapt can_rejoin test to emit a stake tx before turning on the joining node
@@ -369,28 +360,30 @@ impl Mempool {
         // }
 
         match msg.msg {
-            MempoolNetMessage::DataProposal(data_proposal_hash, data_proposal) => {
-                let lane_id = self.get_lane(validator);
+            MempoolNetMessage::DataProposal(lane_id, data_proposal_hash, data_proposal) => {
                 self.on_data_proposal(&lane_id, data_proposal_hash, data_proposal)?;
             }
-            MempoolNetMessage::DataVote(vdag) => {
-                self.on_data_vote(vdag)?;
+            MempoolNetMessage::DataVote(lane_id, vdag) => {
+                self.on_data_vote(lane_id, vdag)?;
             }
-            MempoolNetMessage::PoDAUpdate(data_proposal_hash, signatures) => {
-                let lane_id = self.get_lane(validator);
+            MempoolNetMessage::PoDAUpdate(lane_id, data_proposal_hash, signatures) => {
                 self.on_poda_update(&lane_id, &data_proposal_hash, signatures)?
             }
-            MempoolNetMessage::SyncRequest(from_data_proposal_hash, to_data_proposal_hash) => {
+            MempoolNetMessage::SyncRequest(
+                lane_id,
+                from_data_proposal_hash,
+                to_data_proposal_hash,
+            ) => {
                 self.on_sync_request(
-                    sync_request_sender,
+                    lane_id,
                     from_data_proposal_hash,
                     to_data_proposal_hash,
                     validator.clone(),
                 )
                 .await?;
             }
-            MempoolNetMessage::SyncReply(metadata, data_proposal) => {
-                self.on_sync_reply(validator, metadata, data_proposal)
+            MempoolNetMessage::SyncReply(lane_id, metadata, data_proposal) => {
+                self.on_sync_reply(&lane_id, validator, metadata, data_proposal)
                     .await?;
             }
         }
@@ -399,56 +392,43 @@ impl Mempool {
 
     async fn on_sync_request(
         &mut self,
-        sync_request_sender: &tokio::sync::mpsc::Sender<SyncRequest>,
+        lane_id: LaneId,
         from: Option<DataProposalHash>,
         to: Option<DataProposalHash>,
         validator: ValidatorPublicKey,
     ) -> Result<()> {
         debug!(
             "{} SyncRequest received from validator {validator} for last_data_proposal_hash {:?}",
-            &self.own_lane_id(),
-            to
+            lane_id, to
         );
 
-        let Some(to) = to.or(self
-            .lanes
-            .lanes_tip
-            .get(&self.own_lane_id())
-            .map(|lane_id| lane_id.0.clone()))
-        else {
+        let Some(to) = to.or(self.lanes.get_lane_hash_tip(&lane_id)) else {
             info!("Nothing to do for this SyncRequest");
             return Ok(());
         };
 
-        // Transmit sync request to the Mempool submodule, to build a reply
-        sync_request_sender
-            .send(SyncRequest {
-                from,
-                to,
-                validator: validator.clone(),
-            })
-            .await
-            .context("Sending SyncRequest to Mempool submodule")?;
+        self.send_dissemination_event(DisseminationEvent::SyncRequestIn {
+            lane_id: lane_id.clone(),
+            from: from.clone(),
+            to: Some(to.clone()),
+            requester: validator.clone(),
+        })?;
 
         Ok(())
     }
 
     async fn on_sync_reply(
         &mut self,
+        lane_id: &LaneId,
         sender_validator: &ValidatorPublicKey,
         metadata: LaneEntryMetadata,
         data_proposal: DataProposal,
     ) -> Result<()> {
         debug!("SyncReply from validator {sender_validator}");
 
-        // TODO: Introduce lane ids in sync reply
-        self.metrics.sync_reply_receive(
-            &LaneId(sender_validator.clone()),
-            self.crypto.validator_pubkey(),
-        );
+        self.metrics
+            .sync_reply_receive(lane_id, self.crypto.validator_pubkey());
 
-        // TODO: this isn't necessarily the case - another validator could have sent us data for this lane.
-        let lane_id = &LaneId(sender_validator.clone());
         let lane_operator = self.get_lane_operator(lane_id);
 
         let missing_entry_not_present = {
@@ -460,7 +440,7 @@ impl Mempool {
                 .any(|s| &s.signature.validator == lane_operator && s.msg == expected_message)
         };
 
-        // Ensure all lane entries are signed by the validator.
+        // Ensure all lane entries are signed by the operator.
         if missing_entry_not_present {
             bail!(
                 "At least one lane entry is missing signature from {}",
@@ -468,7 +448,7 @@ impl Mempool {
             );
         }
 
-        // Add missing lanes to the validator's lane
+        // Store the missing entry in the target lane.
         trace!(
             "Filling hole with 1 entry (parent dp hash: {:?}) for {lane_id}",
             metadata.parent_data_proposal_hash
@@ -536,13 +516,15 @@ impl Mempool {
                 .or_default();
 
             lane.push(podas);
+        } else {
+            self.send_dissemination_event(DisseminationEvent::PoDAUpdated {
+                lane_id: lane_id.clone(),
+                data_proposal_hash: data_proposal_hash.clone(),
+                signatures: podas,
+            })?;
         }
 
         Ok(())
-    }
-
-    fn get_lane(&self, validator: &ValidatorPublicKey) -> LaneId {
-        LaneId(validator.clone())
     }
 
     fn get_lane_operator<'a>(&self, lane_id: &'a LaneId) -> &'a ValidatorPublicKey {
@@ -566,42 +548,11 @@ impl Mempool {
         self.send_net_message(
             validator.clone(),
             MempoolNetMessage::SyncRequest(
+                lane_id.clone(),
                 from_data_proposal_hash.cloned(),
                 to_data_proposal_hash.cloned(),
             ),
         )?;
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn broadcast_net_message(&mut self, net_message: MempoolNetMessage) -> Result<()> {
-        let enum_variant_name: &'static str = (&net_message).into();
-        let error_msg =
-            format!("Broadcasting MempoolNetMessage::{enum_variant_name} msg on the bus");
-        self.bus
-            .send(OutboundMessage::broadcast(
-                self.crypto.sign_msg_with_header(net_message)?,
-            ))
-            .context(error_msg)?;
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn broadcast_only_for_net_message(
-        &mut self,
-        only_for: HashSet<ValidatorPublicKey>,
-        net_message: MempoolNetMessage,
-    ) -> Result<()> {
-        let enum_variant_name: &'static str = (&net_message).into();
-        let error_msg = format!(
-            "Broadcasting MempoolNetMessage::{enum_variant_name} msg only for: {only_for:?} on the bus"
-        );
-        self.bus
-            .send(OutboundMessage::broadcast_only_for(
-                only_for,
-                self.crypto.sign_msg_with_header(net_message)?,
-            ))
-            .context(error_msg)?;
         Ok(())
     }
 
@@ -619,6 +570,14 @@ impl Mempool {
                 self.crypto.sign_msg_with_header(net_message)?,
             ))
             .context(error_msg)?;
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn send_dissemination_event(&mut self, event: DisseminationEvent) -> Result<()> {
+        self.bus
+            .send(event)
+            .context("Sending DisseminationEvent on the bus")?;
         Ok(())
     }
 }

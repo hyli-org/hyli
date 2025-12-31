@@ -176,16 +176,16 @@ impl Storage for LanesStorage {
         Ok(signatures)
     }
 
-    fn get_lane_ids(&self) -> impl Iterator<Item = &LaneId> {
-        self.lanes_tip.keys()
+    fn get_lane_ids(&self) -> Vec<LaneId> {
+        self.lanes_tip.keys().cloned().collect()
     }
 
-    fn get_lane_hash_tip(&self, lane_id: &LaneId) -> Option<&DataProposalHash> {
-        self.lanes_tip.get(lane_id).map(|(hash, _)| hash)
+    fn get_lane_hash_tip(&self, lane_id: &LaneId) -> Option<DataProposalHash> {
+        self.lanes_tip.get(lane_id).map(|(hash, _)| hash.clone())
     }
 
-    fn get_lane_size_tip(&self, lane_id: &LaneId) -> Option<&LaneBytesSize> {
-        self.lanes_tip.get(lane_id).map(|(_, size)| size)
+    fn get_lane_size_tip(&self, lane_id: &LaneId) -> Option<LaneBytesSize> {
+        self.lanes_tip.get(lane_id).map(|(_, size)| *size)
     }
 
     fn update_lane_tip(

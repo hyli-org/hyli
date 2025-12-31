@@ -7,7 +7,7 @@ use crate::{
     explorer::Explorer,
     genesis::Genesis,
     indexer::Indexer,
-    mempool::Mempool,
+    mempool::{dissemination::DisseminationManager, Mempool},
     model::{api::NodeInfo, SharedRunContext},
     p2p::P2P,
     rest::{ApiDoc, RestApi, RestApiRunContext},
@@ -415,6 +415,9 @@ async fn common_main(
             .build_module::<DataAvailability>(ctx.clone())
             .await?;
 
+        handler
+            .build_module::<DisseminationManager>(ctx.clone())
+            .await?;
         handler.build_module::<Mempool>(ctx.clone()).await?;
 
         handler.build_module::<Genesis>(ctx.clone()).await?;

@@ -276,7 +276,7 @@ pub mod test {
         let dp_hash = dp_orig.hashed();
 
         let key = ctx.validator_pubkey().clone();
-        ctx.add_trusted_validator(&key);
+        ctx.add_trusted_validator(&key).await;
 
         let cut = ctx
             .process_cut_with_dp(&key, &dp_hash, cumul_size, 1)
@@ -352,7 +352,7 @@ pub mod test {
 
         // Process a cut committing this DP
         let key = ctx.validator_pubkey().clone();
-        ctx.add_trusted_validator(&key);
+        ctx.add_trusted_validator(&key).await;
         let cut = ctx
             .process_cut_with_dp(&key, &dp_hash, cumul_size, 1)
             .await?;
@@ -405,7 +405,7 @@ pub mod test {
         let dp_hash3 = dp_orig3.hashed();
 
         let key = ctx.validator_pubkey().clone();
-        ctx.add_trusted_validator(&key);
+        ctx.add_trusted_validator(&key).await;
 
         let cut = ctx
             .process_cut_with_dp(&key, &dp_hash3, cumul_size, 1)
@@ -570,7 +570,8 @@ pub mod test {
             .await
             .msg
         {
-            MempoolNetMessage::SyncRequest(from, to) => {
+            MempoolNetMessage::SyncRequest(lane_id, from, to) => {
+                assert_eq!(lane_id, lane_id2);
                 assert_eq!(from, None);
                 assert_eq!(to, Some(dp4_hash.clone()));
             }
@@ -673,7 +674,8 @@ pub mod test {
             .await
             .msg
         {
-            MempoolNetMessage::SyncRequest(from, to) => {
+            MempoolNetMessage::SyncRequest(req_lane_id, from, to) => {
+                assert_eq!(req_lane_id, lane_id);
                 assert_eq!(from, None);
                 assert_eq!(to, Some(dp2_hash.clone()));
             }
