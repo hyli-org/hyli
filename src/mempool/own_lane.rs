@@ -707,21 +707,6 @@ pub mod test {
         ctx1.timer_tick().await?;
         // ctx1.handle_processed_data_proposals().await;
 
-        // TODO: this test is now failing because the new logic doesn't insta-disseminate new DPs
-        let mut dps = vec![];
-        for _ in 0..2 {
-            match ctx1.assert_broadcast("DataProposal").await.msg {
-                MempoolNetMessage::DataProposal(_, hash, dp) => dps.push((hash, dp)),
-                _ => panic!("Expected DataProposal message"),
-            }
-        }
-
-        assert!(dps.len() == 2, "Should have two DataProposals");
-        assert_eq!(dps[0].0, dps[1].0); // We broadcasted the same DP twice.
-
-        /*
-
-        // Récupère les deux DataProposals broadcastées par ctx1
         let mut dps = vec![];
         for _ in 0..2 {
             match ctx1.assert_broadcast("DataProposal").await.msg {
@@ -733,12 +718,20 @@ pub mod test {
         assert!(dps.len() == 2, "Should have two DataProposals");
         assert_eq!(dps[0].1.txs.len(), 1);
         assert_eq!(dps[1].1.txs.len(), 1);
-        assert_eq!(dps[0].1.txs[0], tx1);
-        assert_eq!(dps[1].1.txs[0], tx2);
+        let txs = dps
+            .iter()
+            .map(|(_, dp)| dp.txs[0].clone())
+            .collect::<Vec<_>>();
+        assert!(txs.contains(&tx1));
+        assert!(txs.contains(&tx2));
 
         // Redisseminate the oldest pending DataProposal
         // TODO: implement this as more of an integration test?
-        ctx1.maybe_disseminate_dp(&ctx1.own_lane(), &dps[0].0)
+        let (oldest_hash, _) = dps
+            .iter()
+            .find(|(_, dp)| dp.parent_data_proposal_hash.is_none())
+            .expect("oldest dp should exist");
+        ctx1.maybe_disseminate_dp(&ctx1.own_lane(), oldest_hash)
             .expect("disseminate");
 
         // Récupère les deux DataProposals broadcastées par ctx1
@@ -753,8 +746,6 @@ pub mod test {
         assert!(dps.len() == 1, "Should have the oldest DataProposal");
         assert_eq!(dps[0].1.txs.len(), 1);
         assert_eq!(dps[0].1.txs[0], tx1);
-
-        */
 
         Ok(())
     }

@@ -177,7 +177,9 @@ macro_rules! disseminate {
         $owner
             .process_new_data_proposal(dp.clone())
             .unwrap();
-        $owner.timer_tick().await.unwrap();
+        $owner
+            .process_dissemination_events()
+            .expect("process dissemination events");
 
         let dp_msg = broadcast! {
             description: "Disseminate DataProposal",
@@ -198,6 +200,12 @@ macro_rules! disseminate {
             message_matches: MempoolNetMessage::DataVote(..)
         };
 
+        $owner
+            .process_dissemination_events()
+            .expect("process dissemination events");
+
+        let voter_count = 0 $(+ { let _ = &$voter; 1 })+;
+
         let poda = broadcast! {
             description: "Disseminate Poda 1",
             from: $owner, to: [$($voter),+],
@@ -214,12 +222,16 @@ macro_rules! disseminate {
             }
         };
 
-        let poda3 = broadcast! {
-            description: "Disseminate Poda 3",
-            from: $owner, to: [$($voter),+],
-            message_matches: MempoolNetMessage::PoDAUpdate(_, hash, _signatures) => {
-                assert_eq!(hash, &dp.hashed());
-            }
+        let poda3 = if voter_count >= 3 {
+            Some(broadcast! {
+                description: "Disseminate Poda 3",
+                from: $owner, to: [$($voter),+],
+                message_matches: MempoolNetMessage::PoDAUpdate(_, hash, _signatures) => {
+                    assert_eq!(hash, &dp.hashed());
+                }
+            })
+        } else {
+            None
         };
 
         (dp, dp_msg, poda, poda2, poda3)
@@ -402,7 +414,15 @@ async fn autobahn_basic_flow() {
         .mempool_ctx
         .process_new_data_proposal(dp.clone())
         .unwrap();
+    node1
+        .mempool_ctx
+        .process_dissemination_events()
+        .expect("process dissemination events");
     node1.mempool_ctx.timer_tick().await.unwrap();
+    node1
+        .mempool_ctx
+        .process_dissemination_events()
+        .expect("process dissemination events");
 
     broadcast! {
         description: "Disseminate Tx",
@@ -563,6 +583,11 @@ async fn mempool_broadcast_multiple_data_proposals() {
         message_matches: MempoolNetMessage::DataVote(..)
     };
 
+    node1
+        .mempool_ctx
+        .process_dissemination_events()
+        .expect("process dissemination events");
+
     node1.mempool_ctx.assert_broadcast("poda update f+1").await;
     node1.mempool_ctx.assert_broadcast("poda update 2f+1").await;
     node1.mempool_ctx.assert_broadcast("poda update 3f+1").await;
@@ -613,49 +638,11 @@ async fn mempool_podaupdate_too_early() {
 
     let register_tx = make_register_contract_tx(ContractName::new("test1"));
 
-    let dp = node1.mempool_ctx.create_data_proposal(None, &[register_tx]);
     let lane_id = LaneId(node1.mempool_ctx.validator_pubkey().clone());
-    node1
-        .mempool_ctx
-        .process_new_data_proposal(dp.clone())
-        .unwrap();
-    node1.mempool_ctx.timer_tick().await.unwrap();
-
-    let dp_msg = broadcast! {
-        description: "Disseminate Tx",
-        from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _, _)
-    };
-
-    join_all(
-        [&mut node2.mempool_ctx, &mut node3.mempool_ctx]
-            .iter_mut()
-            .map(|ctx| ctx.handle_processed_data_proposals()),
-    )
-    .await;
-
-    send! {
-        description: "Disseminated Tx Vote",
-        from: [node2.mempool_ctx, node3.mempool_ctx], to: node1.mempool_ctx,
-        message_matches: MempoolNetMessage::DataVote(..)
-    };
-
-    let poda = broadcast! {
-        description: "Disseminate Tx",
-        from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx],
-        message_matches: MempoolNetMessage::PoDAUpdate(_, hash, signatures) => {
-            assert_eq!(hash, &dp.hashed());
-            assert_eq!(2, signatures.len());
-        }
-    };
-
-    let poda2 = broadcast! {
-        description: "Disseminate Tx",
-        from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx],
-        message_matches: MempoolNetMessage::PoDAUpdate(_, hash, signatures) => {
-            assert_eq!(hash, &dp.hashed());
-            assert_eq!(3, signatures.len());
-        }
+    let (dp, dp_msg, poda, poda2, _poda3) = disseminate! {
+        txs: [register_tx],
+        owner: node1.mempool_ctx,
+        voters: [node2.mempool_ctx, node3.mempool_ctx]
     };
 
     let assert_nb_signatures = |node: &AutobahnTestCtx, n: usize| {
@@ -698,6 +685,10 @@ async fn mempool_podaupdate_too_early() {
         from: [node4.mempool_ctx], to: node1.mempool_ctx,
         message_matches: MempoolNetMessage::DataVote(..)
     };
+    node1
+        .mempool_ctx
+        .process_dissemination_events()
+        .expect("process dissemination events");
 
     broadcast! {
         description: "Disseminate Tx",
@@ -916,6 +907,11 @@ async fn mempool_fail_to_vote_on_fork() {
         from: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx], to: node1.mempool_ctx,
         message_matches: MempoolNetMessage::DataVote(..)
     };
+
+    node1
+        .mempool_ctx
+        .process_dissemination_events()
+        .expect("process dissemination events");
 
     node1.mempool_ctx.assert_broadcast("poda update f+1").await;
     node1.mempool_ctx.assert_broadcast("poda update 2f+1").await;

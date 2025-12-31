@@ -25,6 +25,7 @@ use hyli_modules::bus::BusReceiver;
 use hyli_modules::modules::BuildApiContextInner;
 use hyli_modules::modules::Module;
 use std::path::PathBuf;
+use tokio::sync::broadcast::error::TryRecvError;
 use utils::TimestampMs;
 
 pub struct MempoolTestCtx {
@@ -331,7 +332,8 @@ impl MempoolTestCtx {
                 .into_message();
 
             match rec {
-                OutboundMessage::BroadcastMessage(net_msg) => {
+                OutboundMessage::BroadcastMessage(net_msg)
+                | OutboundMessage::BroadcastMessageOnlyFor(_, net_msg) => {
                     if let NetMessage::MempoolMessage(msg) = net_msg {
                         msg
                     } else {
@@ -463,6 +465,17 @@ impl MempoolTestCtx {
                 data_proposal_hash: dp_hash,
                 cumul_size,
             })?;
+        Ok(())
+    }
+
+    pub fn process_dissemination_events(&mut self) -> Result<()> {
+        loop {
+            match self.dissemination_event_receiver.try_recv() {
+                Ok(event) => self.dissemination_manager.on_event(event.into_message())?,
+                Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
+                Err(TryRecvError::Lagged(_)) => continue,
+            }
+        }
         Ok(())
     }
 

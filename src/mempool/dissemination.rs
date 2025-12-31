@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::{bail, Context, Result};
+use futures::StreamExt;
 use hyli_model::{DataProposalHash, LaneBytesSize, LaneId, ValidatorPublicKey};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages, modules::Module};
 use staking::state::Staking;
@@ -15,7 +16,7 @@ use crate::{
 
 use super::{
     metrics::MempoolMetrics,
-    storage::{LaneEntryMetadata, Storage},
+    storage::{LaneEntryMetadata, MetadataOrMissingHash, Storage},
     storage_fjall::{shared_lanes_storage, LanesStorage},
     MempoolNetMessage, ValidatorDAG,
 };
@@ -128,7 +129,7 @@ impl Module for DisseminationManager {
         module_handle_messages! {
             on_self self,
             listen<DisseminationEvent> evt => {
-                _ = log_error!(self.on_event(evt).await, "Handling DisseminationEvent");
+                _ = log_error!(self.on_event(evt), "Handling DisseminationEvent");
             }
             _ = disseminate_timer.tick() => {
                 _ = log_error!(self.redisseminate_owned_lanes().await, "Disseminate data proposals on tick");
@@ -141,7 +142,7 @@ impl Module for DisseminationManager {
 }
 
 impl DisseminationManager {
-    async fn on_event(&mut self, event: DisseminationEvent) -> Result<()> {
+    pub(crate) fn on_event(&mut self, event: DisseminationEvent) -> Result<()> {
         match event {
             DisseminationEvent::NewDpCreated {
                 lane_id,
@@ -256,15 +257,32 @@ impl DisseminationManager {
 
     pub(super) async fn redisseminate_owned_lanes(&mut self) -> Result<()> {
         for lane_id in self.owned_lanes.clone().into_iter() {
-            let Some((metadata, dp_hash)) = self
-                .lanes
-                .get_oldest_pending_entry(&lane_id, self.last_cut.clone())
-                .await
-                .context("Getting oldest pending entry")?
-            else {
-                continue;
+            let pending_entries = {
+                let mut stream = Box::pin(
+                    self.lanes
+                        .get_pending_entries_in_lane(&lane_id, self.last_cut.clone()),
+                );
+                let mut entries = Vec::new();
+
+                while let Some(entry) = stream.next().await {
+                    match entry.context("Getting pending entry")? {
+                        MetadataOrMissingHash::Metadata(metadata, dp_hash) => {
+                            entries.push((metadata, dp_hash));
+                        }
+                        MetadataOrMissingHash::MissingHash(_) => {
+                            break;
+                        }
+                    }
+                }
+
+                entries
             };
-            self.rebroadcast_data_proposal(&lane_id, &dp_hash, &metadata)?;
+
+            for (metadata, dp_hash) in pending_entries {
+                if self.rebroadcast_data_proposal(&lane_id, &dp_hash, &metadata)? {
+                    break;
+                }
+            }
         }
         Ok(())
     }
