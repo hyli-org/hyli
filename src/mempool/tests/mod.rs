@@ -1,10 +1,12 @@
 mod async_data_proposals;
 mod native_verifier_test;
+mod sync_reply;
 
 use core::panic;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Duration;
 
 use super::*;
 use crate::bus::metrics::BusMetrics;
@@ -31,7 +33,6 @@ use utils::TimestampMs;
 pub struct MempoolTestCtx {
     pub name: String,
     pub out_receiver: BusReceiver<OutboundMessage>,
-    pub mempool_sync_request_sender: tokio::sync::mpsc::Sender<SyncRequest>,
     pub mempool_event_receiver: BusReceiver<MempoolBlockEvent>,
     pub mempool_status_event_receiver: BusReceiver<MempoolStatusEvent>,
     pub dissemination_event_receiver: BusReceiver<DisseminationEvent>,
@@ -95,12 +96,10 @@ impl MempoolTestCtx {
         let data_dir = tempfile::tempdir().unwrap().keep();
         let (mempool, dissemination_manager) =
             Self::build_mempool(shared_bus, crypto, &data_dir).await;
-        let mempool_sync_request_sender = mempool.start_mempool_sync();
 
         MempoolTestCtx {
             name: name.to_string(),
             out_receiver,
-            mempool_sync_request_sender,
             mempool_event_receiver,
             mempool_status_event_receiver,
             dissemination_event_receiver,
@@ -116,9 +115,10 @@ impl MempoolTestCtx {
         Self::new_with_shared_bus(name, &shared_bus, crypto).await
     }
 
-    pub fn setup_node(&mut self, cryptos: &[BlstCrypto]) {
+    pub async fn setup_node(&mut self, cryptos: &[BlstCrypto]) {
         for other_crypto in cryptos.iter() {
-            self.add_trusted_validator(other_crypto.validator_pubkey());
+            self.add_trusted_validator(other_crypto.validator_pubkey())
+                .await;
         }
     }
 
@@ -130,7 +130,7 @@ impl MempoolTestCtx {
         self.mempool.crypto.validator_pubkey()
     }
 
-    pub fn add_trusted_validator(&mut self, pubkey: &ValidatorPublicKey) {
+    pub async fn add_trusted_validator(&mut self, pubkey: &ValidatorPublicKey) {
         self.mempool
             .staking
             .stake(hex::encode(pubkey.0.clone()).into(), 100)
@@ -156,6 +156,7 @@ impl MempoolTestCtx {
             ))
             .expect("update dissemination staking");
         self.process_dissemination_events()
+            .await
             .expect("process dissemination events");
     }
 
@@ -212,13 +213,9 @@ impl MempoolTestCtx {
             .maybe_disseminate_dp(lane_id, dp_hash)
     }
 
-    pub async fn handle_poda_update(
-        &mut self,
-        net_message: MsgWithHeader<MempoolNetMessage>,
-        sync_request_sender: &tokio::sync::mpsc::Sender<SyncRequest>,
-    ) {
+    pub async fn handle_poda_update(&mut self, net_message: MsgWithHeader<MempoolNetMessage>) {
         self.mempool
-            .handle_net_message(net_message, sync_request_sender)
+            .handle_net_message(net_message)
             .await
             .expect("fail to handle net message");
     }
@@ -358,7 +355,7 @@ impl MempoolTestCtx {
     pub async fn handle_msg(&mut self, msg: &MsgWithHeader<MempoolNetMessage>, _err: &str) {
         debug!("📥 {} Handling message: {:?}", self.name, msg);
         self.mempool
-            .handle_net_message(msg.clone(), &self.mempool_sync_request_sender)
+            .handle_net_message(msg.clone())
             .await
             .expect("should handle net msg");
     }
@@ -474,15 +471,26 @@ impl MempoolTestCtx {
         Ok(())
     }
 
-    pub fn process_dissemination_events(&mut self) -> Result<()> {
+    pub async fn process_dissemination_events(&mut self) -> Result<()> {
         loop {
             match self.dissemination_event_receiver.try_recv() {
-                Ok(event) => self.dissemination_manager.on_event(event.into_message())?,
+                Ok(event) => {
+                    self.dissemination_manager
+                        .on_event(event.into_message())
+                        .await?
+                }
                 Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
                 Err(TryRecvError::Lagged(_)) => continue,
             }
         }
         Ok(())
+    }
+
+    pub async fn process_sync(&mut self) -> Result<()> {
+        self.process_dissemination_events().await?;
+        self.dissemination_manager
+            .process_sync_requests_and_replies_for_test()
+            .await
     }
 
     pub async fn process_cut_with_dp(
@@ -552,6 +560,7 @@ async fn test_sending_sync_request() -> Result<()> {
     let crypto2 = BlstCrypto::new("2").unwrap();
     let pubkey2 = crypto2.validator_pubkey();
     let lane_id = LaneId(pubkey2.clone());
+    ctx.add_trusted_validator(pubkey2).await;
 
     ctx.handle_consensus_event(ConsensusProposal {
         cut: vec![(
@@ -564,9 +573,10 @@ async fn test_sending_sync_request() -> Result<()> {
     })
     .await;
 
-    // Assert that we send a SyncReply
+    ctx.process_sync().await?;
+    // Assert that we send a SyncRequest
     match ctx
-        .assert_send(crypto2.validator_pubkey(), "SyncReply")
+        .assert_send(crypto2.validator_pubkey(), "SyncRequest")
         .await
         .msg
     {
@@ -595,7 +605,7 @@ async fn test_receiving_sync_request() -> Result<()> {
 
     // Add new validator
     let crypto2 = BlstCrypto::new("2").unwrap();
-    ctx.add_trusted_validator(crypto2.validator_pubkey());
+    ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
 
     for _ in 1..5 {
         let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(
@@ -605,11 +615,12 @@ async fn test_receiving_sync_request() -> Result<()> {
         ))?;
 
         ctx.mempool
-            .handle_net_message(signed_msg, &ctx.mempool_sync_request_sender)
+            .handle_net_message(signed_msg)
             .await
             .expect("should handle net message");
     }
 
+    ctx.process_sync().await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     for _ in 1..5 {
@@ -620,22 +631,35 @@ async fn test_receiving_sync_request() -> Result<()> {
         ))?;
 
         ctx.mempool
-            .handle_net_message(signed_msg, &ctx.mempool_sync_request_sender)
+            .handle_net_message(signed_msg)
             .await
             .expect("should handle net message");
     }
+    ctx.process_sync().await?;
 
-    // Assert that we send a SyncReply
-    match ctx
-        .assert_send(crypto2.validator_pubkey(), "SyncReply")
-        .await
-        .msg
-    {
-        MempoolNetMessage::SyncReply(_, _metadata, data_proposal_r) => {
-            assert_eq!(data_proposal_r, data_proposal);
+    let mut replies = Vec::new();
+    while let Ok(outbound) = ctx.out_receiver.try_recv() {
+        match outbound.into_message() {
+            OutboundMessage::SendMessage { validator_id, msg } => {
+                assert_eq!(&validator_id, crypto2.validator_pubkey());
+                match msg {
+                    NetMessage::MempoolMessage(msg) => match msg.msg {
+                        MempoolNetMessage::SyncReply(_, _metadata, dp) => replies.push(dp),
+                        other => panic!("Expected SyncReply message, got {other:?}"),
+                    },
+                    other => panic!("Expected mempool message, got {other:?}"),
+                }
+            }
+            OutboundMessage::BroadcastMessage(_) | OutboundMessage::BroadcastMessageOnlyFor(..) => {
+                continue;
+            }
         }
-        _ => panic!("Expected SyncReply message"),
-    };
+    }
+
+    assert!(!replies.is_empty(), "Expected at least one SyncReply");
+    for reply in replies {
+        assert_eq!(reply, data_proposal);
+    }
 
     assert!(ctx.out_receiver.is_empty());
     Ok(())
@@ -662,7 +686,7 @@ async fn test_receiving_sync_requests_multiple_dps() -> Result<()> {
 
     // Add new validator
     let crypto2 = BlstCrypto::new("2").unwrap();
-    ctx.add_trusted_validator(crypto2.validator_pubkey());
+    ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
 
     // Sync request for the interval up to data proposal
     for _ in 1..3 {
@@ -673,11 +697,12 @@ async fn test_receiving_sync_requests_multiple_dps() -> Result<()> {
         ))?;
 
         ctx.mempool
-            .handle_net_message(signed_msg, &ctx.mempool_sync_request_sender)
+            .handle_net_message(signed_msg)
             .await
             .expect("should handle net message");
     }
 
+    ctx.process_sync().await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Sync request for the whole interval
@@ -689,11 +714,12 @@ async fn test_receiving_sync_requests_multiple_dps() -> Result<()> {
         ))?;
 
         ctx.mempool
-            .handle_net_message(signed_msg, &ctx.mempool_sync_request_sender)
+            .handle_net_message(signed_msg)
             .await
             .expect("should handle net message");
     }
 
+    ctx.process_sync().await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Sync request for the whole interval
@@ -705,34 +731,35 @@ async fn test_receiving_sync_requests_multiple_dps() -> Result<()> {
         ))?;
 
         ctx.mempool
-            .handle_net_message(signed_msg, &ctx.mempool_sync_request_sender)
+            .handle_net_message(signed_msg)
             .await
             .expect("should handle net message");
     }
+    ctx.process_sync().await?;
 
-    // Assert that we send a SyncReply #1
-    match ctx
-        .assert_send(crypto2.validator_pubkey(), "SyncReply")
-        .await
-        .msg
-    {
-        MempoolNetMessage::SyncReply(_, _metadata, data_proposal_r) => {
-            assert_eq!(data_proposal_r, data_proposal);
+    let mut replies = std::collections::HashSet::new();
+    while let Ok(outbound) = ctx.out_receiver.try_recv() {
+        match outbound.into_message() {
+            OutboundMessage::SendMessage { validator_id, msg } => {
+                assert_eq!(&validator_id, crypto2.validator_pubkey());
+                match msg {
+                    NetMessage::MempoolMessage(msg) => match msg.msg {
+                        MempoolNetMessage::SyncReply(_, _metadata, dp) => {
+                            replies.insert(dp.hashed());
+                        }
+                        other => panic!("Expected SyncReply message, got {other:?}"),
+                    },
+                    other => panic!("Expected mempool message, got {other:?}"),
+                }
+            }
+            OutboundMessage::BroadcastMessage(_) | OutboundMessage::BroadcastMessageOnlyFor(..) => {
+                continue;
+            }
         }
-        _ => panic!("Expected SyncReply message"),
-    };
-    // Assert that we send a SyncReply #2
-    match ctx
-        .assert_send(crypto2.validator_pubkey(), "SyncReply")
-        .await
-        .msg
-    {
-        MempoolNetMessage::SyncReply(_, _metadata, data_proposal_r) => {
-            assert_eq!(data_proposal_r, data_proposal2);
-        }
-        _ => panic!("Expected SyncReply message"),
-    };
+    }
 
+    assert!(replies.contains(&data_proposal.hashed()));
+    assert!(replies.contains(&data_proposal2.hashed()));
     assert!(ctx.out_receiver.is_empty());
     Ok(())
 }
@@ -751,7 +778,7 @@ async fn test_receiving_sync_reply() -> Result<()> {
     let crypto2 = BlstCrypto::new("2").unwrap();
     let crypto3 = BlstCrypto::new("3").unwrap();
 
-    ctx.add_trusted_validator(crypto2.validator_pubkey());
+    ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
 
     // First: the message is from crypto2, but the DP is not signed correctly
     let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
@@ -766,10 +793,7 @@ async fn test_receiving_sync_reply() -> Result<()> {
         data_proposal.clone(),
     ))?;
 
-    let handle = ctx
-        .mempool
-        .handle_net_message(signed_msg.clone(), &ctx.mempool_sync_request_sender)
-        .await;
+    let handle = ctx.mempool.handle_net_message(signed_msg.clone()).await;
     assert_eq!(
         handle.expect_err("should fail").to_string(),
         format!(
@@ -792,10 +816,7 @@ async fn test_receiving_sync_reply() -> Result<()> {
     ))?;
 
     // This actually fails - we don't know how to handle it
-    let handle = ctx
-        .mempool
-        .handle_net_message(signed_msg.clone(), &ctx.mempool_sync_request_sender)
-        .await;
+    let handle = ctx.mempool.handle_net_message(signed_msg.clone()).await;
     assert_eq!(
         handle.expect_err("should fail").to_string(),
         format!(
@@ -818,10 +839,7 @@ async fn test_receiving_sync_reply() -> Result<()> {
     ))?;
 
     // This actually fails - we don't know how to handle it
-    let handle = ctx
-        .mempool
-        .handle_net_message(signed_msg.clone(), &ctx.mempool_sync_request_sender)
-        .await;
+    let handle = ctx.mempool.handle_net_message(signed_msg.clone()).await;
     assert_eq!(
         handle.expect_err("should fail").to_string(),
         format!(
@@ -844,10 +862,7 @@ async fn test_receiving_sync_reply() -> Result<()> {
     ))?;
 
     // This actually fails - we don't know how to handle it
-    let handle = ctx
-        .mempool
-        .handle_net_message(signed_msg.clone(), &ctx.mempool_sync_request_sender)
-        .await;
+    let handle = ctx.mempool.handle_net_message(signed_msg.clone()).await;
     assert_eq!(
         handle.expect_err("should fail").to_string(),
         format!(
@@ -871,10 +886,7 @@ async fn test_receiving_sync_reply() -> Result<()> {
         data_proposal.clone(),
     ))?;
 
-    let handle = ctx
-        .mempool
-        .handle_net_message(signed_msg.clone(), &ctx.mempool_sync_request_sender)
-        .await;
+    let handle = ctx.mempool.handle_net_message(signed_msg.clone()).await;
     assert_ok!(handle, "Should handle net message");
 
     // Assert that the lane entry was added
@@ -918,14 +930,13 @@ async fn test_sync_request_single_dp() -> Result<()> {
     ctx.mempool
         .on_sync_request(
             lane_id.clone(),
-            &ctx.mempool_sync_request_sender,
             None,
             Some(dp2_hash.clone()),
             crypto.validator_pubkey().clone(),
         )
         .await?;
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    ctx.process_sync().await?;
 
     // Verify that only dp2 was sent in the sync reply
     match ctx

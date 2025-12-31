@@ -276,7 +276,7 @@ pub mod test {
         let dp_hash = dp_orig.hashed();
 
         let key = ctx.validator_pubkey().clone();
-        ctx.add_trusted_validator(&key);
+        ctx.add_trusted_validator(&key).await;
 
         let cut = ctx
             .process_cut_with_dp(&key, &dp_hash, cumul_size, 1)
@@ -352,7 +352,7 @@ pub mod test {
 
         // Process a cut committing this DP
         let key = ctx.validator_pubkey().clone();
-        ctx.add_trusted_validator(&key);
+        ctx.add_trusted_validator(&key).await;
         let cut = ctx
             .process_cut_with_dp(&key, &dp_hash, cumul_size, 1)
             .await?;
@@ -405,7 +405,7 @@ pub mod test {
         let dp_hash3 = dp_orig3.hashed();
 
         let key = ctx.validator_pubkey().clone();
-        ctx.add_trusted_validator(&key);
+        ctx.add_trusted_validator(&key).await;
 
         let cut = ctx
             .process_cut_with_dp(&key, &dp_hash3, cumul_size, 1)
@@ -493,6 +493,7 @@ pub mod test {
 
         let lane_id1 = ctx.mempool.own_lane_id().clone();
         let lane_id2 = ctx2.mempool.own_lane_id().clone();
+        ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
 
         // Create a chain of 2 DataProposals in lane 1
         let dp1 = DataProposal::new(None, vec![]);
@@ -556,6 +557,8 @@ pub mod test {
         let result = ctx.mempool.build_signed_block_and_emit(&buc).await;
         assert!(result.is_err());
 
+        ctx.process_sync().await?;
+
         assert!(
             ctx.mempool_event_receiver.try_recv().is_err(),
             "Should not have started building blocks yet"
@@ -615,6 +618,7 @@ pub mod test {
         let ctx_owner = MempoolTestCtx::new("mempool_owner").await;
         let lane_id = ctx_owner.mempool.own_lane_id().clone();
         let crypto = ctx_owner.mempool.crypto.clone();
+        ctx.add_trusted_validator(crypto.validator_pubkey()).await;
 
         // Create a chain of 3 DataProposals
         let dp1 = DataProposal::new(None, vec![]);
@@ -665,6 +669,8 @@ pub mod test {
         // Try to build a signed block
         let result = ctx.mempool.build_signed_block_and_emit(&buc).await;
         assert!(result.is_err());
+
+        ctx.process_sync().await?;
 
         match ctx
             .assert_send(

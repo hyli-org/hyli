@@ -179,6 +179,7 @@ macro_rules! disseminate {
             .unwrap();
         $owner
             .process_dissemination_events()
+            .await
             .expect("process dissemination events");
 
         let dp_msg = broadcast! {
@@ -202,6 +203,7 @@ macro_rules! disseminate {
 
         $owner
             .process_dissemination_events()
+            .await
             .expect("process dissemination events");
 
         let voter_count = 0 $(+ { let _ = &$voter; 1 })+;
@@ -275,7 +277,7 @@ macro_rules! build_nodes {
                     AutobahnTestCtx::new(format!("node-{i}").as_ref(), crypto).await;
 
                 autobahn_node.consensus_ctx.setup_node(i, &cryptos);
-                autobahn_node.mempool_ctx.setup_node(&cryptos);
+                autobahn_node.mempool_ctx.setup_node(&cryptos).await;
                 nodes.push(autobahn_node);
             }
 
@@ -416,11 +418,13 @@ async fn autobahn_basic_flow() {
     node1
         .mempool_ctx
         .process_dissemination_events()
+        .await
         .expect("process dissemination events");
     node1.mempool_ctx.timer_tick().await.unwrap();
     node1
         .mempool_ctx
         .process_dissemination_events()
+        .await
         .expect("process dissemination events");
 
     broadcast! {
@@ -585,6 +589,7 @@ async fn mempool_broadcast_multiple_data_proposals() {
     node1
         .mempool_ctx
         .process_dissemination_events()
+        .await
         .expect("process dissemination events");
 
     node1.mempool_ctx.assert_broadcast("poda update f+1").await;
@@ -687,6 +692,7 @@ async fn mempool_podaupdate_too_early() {
     node1
         .mempool_ctx
         .process_dissemination_events()
+        .await
         .expect("process dissemination events");
 
     broadcast! {
@@ -910,6 +916,7 @@ async fn mempool_fail_to_vote_on_fork() {
     node1
         .mempool_ctx
         .process_dissemination_events()
+        .await
         .expect("process dissemination events");
 
     node1.mempool_ctx.assert_broadcast("poda update f+1").await;
