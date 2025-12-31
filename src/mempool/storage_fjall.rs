@@ -45,8 +45,17 @@ pub fn shared_lanes_storage(path: &Path) -> Result<LanesStorage> {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     if let Some(existing) = guard.get(path) {
+        tracing::debug!(
+            "Reusing existing shared lanes storage at {}",
+            path.to_string_lossy()
+        );
         return Ok(existing.clone());
     }
+
+    tracing::debug!(
+        "Creating new shared lanes storage at {}",
+        path.to_string_lossy()
+    );
 
     let lanes_tip = load_lanes_tip(path);
     let storage = LanesStorage::new(path, lanes_tip)?;

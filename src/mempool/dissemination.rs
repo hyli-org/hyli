@@ -240,7 +240,11 @@ impl DisseminationManager {
         ))
     }
 
-    fn maybe_disseminate_dp(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> Result<()> {
+    pub(super) fn maybe_disseminate_dp(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+    ) -> Result<()> {
         let Some(metadata) = self.lanes.get_metadata_by_hash(lane_id, dp_hash)? else {
             bail!("Can't find metadata for DP {} in lane {}", dp_hash, lane_id);
         };
@@ -250,7 +254,7 @@ impl DisseminationManager {
             .map(|_| ())
     }
 
-    async fn redisseminate_owned_lanes(&mut self) -> Result<()> {
+    pub(super) async fn redisseminate_owned_lanes(&mut self) -> Result<()> {
         for lane_id in self.owned_lanes.clone().into_iter() {
             let Some((metadata, dp_hash)) = self
                 .lanes
@@ -271,6 +275,11 @@ impl DisseminationManager {
         dp_hash: &DataProposalHash,
         entry_metadata: &LaneEntryMetadata,
     ) -> Result<bool> {
+        trace!(
+            "Rebroadcasting DataProposal {} in lane {}",
+            dp_hash,
+            lane_id
+        );
         let there_are_other_validators = !self.staking.is_bonded(self.crypto.validator_pubkey())
             || self.staking.bonded().len() >= 2;
         let signed_by: HashSet<ValidatorPublicKey> = entry_metadata
@@ -354,5 +363,10 @@ impl DisseminationManager {
             ))
             .context("Broadcasting mempool message only for targets")?;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn add_owned_lane(&mut self, lane_id: LaneId) {
+        self.owned_lanes.insert(lane_id);
     }
 }

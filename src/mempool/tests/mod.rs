@@ -9,8 +9,10 @@ use std::sync::Arc;
 use super::*;
 use crate::bus::metrics::BusMetrics;
 use crate::bus::SharedMessageBus;
+use crate::mempool::dissemination::DisseminationManager;
 use crate::model;
 use crate::p2p::network::NetMessage;
+use crate::utils::conf::Conf;
 use crate::{
     bus::dont_use_this::get_receiver,
     p2p::network::{HeaderSigner, MsgWithHeader},
@@ -31,29 +33,52 @@ pub struct MempoolTestCtx {
     pub mempool_sync_request_sender: tokio::sync::mpsc::Sender<SyncRequest>,
     pub mempool_event_receiver: BusReceiver<MempoolBlockEvent>,
     pub mempool_status_event_receiver: BusReceiver<MempoolStatusEvent>,
+    pub dissemination_event_receiver: BusReceiver<DisseminationEvent>,
     pub mempool: Mempool,
+    pub dissemination_manager: DisseminationManager,
     pub data_dir: PathBuf,
 }
 
 impl MempoolTestCtx {
-    pub async fn build_mempool(
+    async fn build_mempool(
         shared_bus: &SharedMessageBus,
         crypto: BlstCrypto,
         data_dir: &PathBuf,
-    ) -> Mempool {
+    ) -> (Mempool, DisseminationManager) {
         let lanes = storage_fjall::shared_lanes_storage(data_dir).unwrap();
         let bus = MempoolBusClient::new_from_bus(shared_bus.new_handle()).await;
 
+        let conf = Conf::new(
+            vec![],
+            Some(data_dir.to_string_lossy().to_string()),
+            Some(false),
+        );
+        let ctx = crate::model::SharedRunContext {
+            config: conf.unwrap_or_default().into(),
+            api: Arc::new(BuildApiContextInner::default()),
+            crypto: crypto.clone().into(),
+            start_height: None,
+        };
+
+        // TODO: split module from functionality?
+        let dissemination_manager =
+            super::dissemination::DisseminationManager::build(shared_bus.new_handle(), ctx)
+                .await
+                .expect("Failed to build DisseminationManager");
+
         // Initialize Mempool
-        Mempool {
-            bus,
-            file: None,
-            conf: SharedConf::default(),
-            crypto: Arc::new(crypto),
-            metrics: MempoolMetrics::global("id".to_string()),
-            lanes,
-            inner: MempoolStore::default(),
-        }
+        (
+            Mempool {
+                bus,
+                file: None,
+                conf: SharedConf::default(),
+                crypto: Arc::new(crypto),
+                metrics: MempoolMetrics::global("id".to_string()),
+                lanes,
+                inner: MempoolStore::default(),
+            },
+            dissemination_manager,
+        )
     }
 
     pub async fn new_with_shared_bus(
@@ -64,28 +89,12 @@ impl MempoolTestCtx {
         let out_receiver = get_receiver::<OutboundMessage>(shared_bus).await;
         let mempool_event_receiver = get_receiver::<MempoolBlockEvent>(shared_bus).await;
         let mempool_status_event_receiver = get_receiver::<MempoolStatusEvent>(shared_bus).await;
+        let dissemination_event_receiver = get_receiver::<DisseminationEvent>(shared_bus).await;
 
         let data_dir = tempfile::tempdir().unwrap().keep();
-        let mut mempool = Self::build_mempool(shared_bus, crypto, &data_dir).await;
+        let (mempool, dissemination_manager) =
+            Self::build_mempool(shared_bus, crypto, &data_dir).await;
         let mempool_sync_request_sender = mempool.start_mempool_sync();
-
-        let mut conf = crate::utils::conf::Conf::default();
-        conf.id = name.to_string();
-        conf.data_directory = data_dir.clone();
-        let ctx = crate::model::SharedRunContext {
-            config: Arc::new(conf),
-            api: Arc::new(BuildApiContextInner::default()),
-            crypto: mempool.crypto.clone(),
-            start_height: None,
-        };
-
-        let mut dissemination_manager =
-            super::dissemination::DisseminationManager::build(shared_bus.new_handle(), ctx)
-                .await
-                .expect("Failed to build DisseminationManager");
-        tokio::spawn(async move {
-            _ = dissemination_manager.run().await;
-        });
 
         MempoolTestCtx {
             name: name.to_string(),
@@ -93,7 +102,9 @@ impl MempoolTestCtx {
             mempool_sync_request_sender,
             mempool_event_receiver,
             mempool_status_event_receiver,
+            dissemination_event_receiver,
             mempool,
+            dissemination_manager,
             data_dir,
         }
     }
@@ -161,14 +172,10 @@ impl MempoolTestCtx {
             .unwrap()
     }
 
-    pub async fn disseminate_timer_tick(&mut self) -> Result<()> {
-        todo!()
-    }
-
-    pub async fn timer_tick(&mut self) -> Result<bool> {
+    pub async fn timer_tick(&mut self) -> Result<()> {
         let Ok(true) = self.mempool.prepare_new_data_proposal() else {
             debug!("No new data proposal to prepare");
-            return Ok(false);
+            return self.disseminate_owned_lanes().await;
         };
 
         let (dp_hash, dp) = self
@@ -178,7 +185,24 @@ impl MempoolTestCtx {
             .await
             .context("join next data proposal in preparation")??;
 
-        self.mempool.resume_new_data_proposal(dp, dp_hash).await
+        self.mempool.resume_new_data_proposal(dp, dp_hash).await?;
+
+        self.disseminate_owned_lanes().await
+    }
+
+    pub async fn disseminate_owned_lanes(&mut self) -> Result<()> {
+        self.dissemination_manager
+            .add_owned_lane(self.mempool.own_lane_id());
+        self.dissemination_manager.redisseminate_owned_lanes().await
+    }
+
+    pub fn maybe_disseminate_dp(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+    ) -> Result<()> {
+        self.dissemination_manager
+            .maybe_disseminate_dp(lane_id, dp_hash)
     }
 
     pub async fn handle_poda_update(
