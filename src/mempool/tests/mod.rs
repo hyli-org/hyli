@@ -155,6 +155,8 @@ impl MempoolTestCtx {
                 },
             ))
             .expect("update dissemination staking");
+        self.process_dissemination_events()
+            .expect("process dissemination events");
     }
 
     pub fn sign_data<T: borsh::BorshSerialize>(&self, data: T) -> Result<SignedByValidator<T>> {

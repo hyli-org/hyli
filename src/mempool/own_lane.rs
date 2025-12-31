@@ -41,6 +41,11 @@ impl super::Mempool {
         let signatures =
             self.lanes
                 .add_signatures(&lane_id, &data_proposal_hash, std::iter::once(vdag))?;
+        self.send_dissemination_event(DisseminationEvent::VoteReceived {
+            lane_id: lane_id.clone(),
+            data_proposal_hash: data_proposal_hash.clone(),
+            voter: validator.clone(),
+        })?;
 
         // Compute voting power of all signers to check if the DataProposal received enough votes
         let validators: Vec<ValidatorPublicKey> = signatures
@@ -489,23 +494,27 @@ pub mod test {
             .await?;
 
         // Assert that PoDAReady message is sent to dissemination
-        match ctx
-            .dissemination_event_receiver
-            .recv()
-            .await
-            .unwrap()
-            .into_message()
-        {
-            DisseminationEvent::PoDAReady {
-                data_proposal_hash,
-                signatures,
-                ..
-            } => {
-                assert_eq!(data_proposal_hash, data_proposal.hashed());
-                assert_eq!(signatures.len(), 2);
+        loop {
+            match ctx
+                .dissemination_event_receiver
+                .recv()
+                .await
+                .unwrap()
+                .into_message()
+            {
+                DisseminationEvent::PoDAReady {
+                    data_proposal_hash,
+                    signatures,
+                    ..
+                } => {
+                    assert_eq!(data_proposal_hash, data_proposal.hashed());
+                    assert_eq!(signatures.len(), 2);
+                    break;
+                }
+                DisseminationEvent::VoteReceived { .. } => continue,
+                _ => panic!("Expected PoDAReady message"),
             }
-            _ => panic!("Expected PoDAReady message"),
-        };
+        }
 
         Ok(())
     }

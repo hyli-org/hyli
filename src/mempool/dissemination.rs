@@ -56,6 +56,11 @@ pub enum DisseminationEvent {
         data_proposal_hash: DataProposalHash,
         signatures: Vec<ValidatorDAG>,
     },
+    VoteReceived {
+        lane_id: LaneId,
+        data_proposal_hash: DataProposalHash,
+        voter: ValidatorPublicKey,
+    },
 }
 
 impl hyli_modules::bus::BusMessage for DisseminationEvent {}
@@ -81,6 +86,12 @@ struct PeerKnowledge {
     by_dp: HashMap<(LaneId, DataProposalHash, ValidatorPublicKey), EvidenceState>,
 }
 
+#[derive(Debug, Default)]
+struct InflightTracker {
+    by_peer: HashMap<ValidatorPublicKey, usize>,
+    by_dp: HashMap<(LaneId, DataProposalHash), HashSet<ValidatorPublicKey>>,
+}
+
 pub struct DisseminationManager {
     bus: DisseminationBusClient,
     _conf: SharedConf,
@@ -88,6 +99,7 @@ pub struct DisseminationManager {
     metrics: MempoolMetrics,
     lanes: LanesStorage,
     knowledge: PeerKnowledge,
+    inflight: InflightTracker,
     owned_lanes: HashSet<LaneId>,
     last_cut: Option<Cut>,
     staking: Staking,
@@ -116,6 +128,7 @@ impl Module for DisseminationManager {
             metrics: MempoolMetrics::global(ctx.config.id.clone()),
             lanes,
             knowledge: PeerKnowledge::default(),
+            inflight: InflightTracker::default(),
             owned_lanes: HashSet::new(),
             last_cut: None,
             staking: Staking::default(),
@@ -185,6 +198,17 @@ impl DisseminationManager {
                 );
                 self.send_poda_update(lane_id, data_proposal_hash, signatures)?;
             }
+            DisseminationEvent::VoteReceived {
+                lane_id,
+                data_proposal_hash,
+                voter,
+            } => {
+                self.knowledge.by_dp.insert(
+                    (lane_id.clone(), data_proposal_hash.clone(), voter.clone()),
+                    EvidenceState::DefinitelyHas,
+                );
+                self.clear_inflight_target(&lane_id, &data_proposal_hash, &voter);
+            }
             DisseminationEvent::SyncRequestIn {
                 lane_id,
                 from,
@@ -210,10 +234,23 @@ impl DisseminationManager {
         match event {
             ConsensusEvent::CommitConsensusProposal(cpp) => {
                 self.staking = cpp.staking;
+                self.on_ccp_committed(&cpp.consensus_proposal.cut);
                 self.last_cut = Some(cpp.consensus_proposal.cut);
             }
         }
         Ok(())
+    }
+
+    fn on_ccp_committed(&mut self, cut: &Cut) {
+        for (lane_id, dp_hash, _size, poda) in cut.iter() {
+            for validator in poda.validators.iter() {
+                self.clear_inflight_target(lane_id, dp_hash, validator);
+                self.knowledge.by_dp.insert(
+                    (lane_id.clone(), dp_hash.clone(), validator.clone()),
+                    EvidenceState::DefinitelyHas,
+                );
+            }
+        }
     }
 
     fn on_poda_updated(
@@ -223,6 +260,11 @@ impl DisseminationManager {
         signatures: Vec<ValidatorDAG>,
     ) {
         for signature in signatures.into_iter() {
+            self.clear_inflight_target(
+                &lane_id,
+                &data_proposal_hash,
+                &signature.signature.validator,
+            );
             let entry = (
                 lane_id.clone(),
                 data_proposal_hash.clone(),
@@ -299,6 +341,7 @@ impl DisseminationManager {
         dp_hash: &DataProposalHash,
         entry_metadata: &LaneEntryMetadata,
     ) -> Result<bool> {
+        const MAX_INFLIGHT_PER_PEER: usize = 256;
         trace!(
             "Rebroadcasting DataProposal {} in lane {}",
             dp_hash,
@@ -312,21 +355,34 @@ impl DisseminationManager {
             .map(|s| s.signature.validator.clone())
             .collect();
         let bonded_validators = self.staking.bonded();
+        let bonded_validators_len = bonded_validators.len();
+        let self_validator = self.crypto.validator_pubkey();
 
-        let targets = if entry_metadata.signatures.len() == 1 && there_are_other_validators {
-            None
-        } else {
-            let only_for: HashSet<ValidatorPublicKey> = bonded_validators
-                .iter()
-                .filter(|pubkey| !signed_by.contains(pubkey))
-                .cloned()
-                .collect();
+        let mut candidate_targets: HashSet<ValidatorPublicKey> =
+            if entry_metadata.signatures.len() == 1 && there_are_other_validators {
+                bonded_validators.iter().cloned().collect()
+            } else {
+                bonded_validators
+                    .iter()
+                    .filter(|pubkey| !signed_by.contains(pubkey))
+                    .cloned()
+                    .collect()
+            };
+        candidate_targets.remove(self_validator);
 
-            if only_for.is_empty() {
-                return Ok(false);
-            }
-            Some(only_for)
-        };
+        if candidate_targets.is_empty() {
+            return Ok(false);
+        }
+
+        let filtered_targets = self.filter_targets_for_inflight(
+            lane_id,
+            dp_hash,
+            candidate_targets,
+            MAX_INFLIGHT_PER_PEER,
+        );
+        if filtered_targets.is_empty() {
+            return Ok(false);
+        }
 
         let Some(mut data_proposal) = self.lanes.get_dp_by_hash(lane_id, dp_hash)? else {
             bail!("Can't find DataProposal {} in lane {}", dp_hash, lane_id);
@@ -337,33 +393,116 @@ impl DisseminationManager {
         };
         data_proposal.hydrate_proofs(proofs);
 
-        match targets {
-            None => {
-                self.metrics
-                    .dp_disseminations
-                    .add(bonded_validators.len() as u64, &[]);
-                self.send_net_message(MempoolNetMessage::DataProposal(
-                    lane_id.clone(),
-                    data_proposal.hashed(),
-                    data_proposal,
-                ))?;
-            }
-            Some(only_for) => {
-                self.metrics
-                    .dp_disseminations
-                    .add(only_for.len() as u64, &[]);
-                self.send_net_message_only_for(
-                    only_for,
-                    MempoolNetMessage::DataProposal(
-                        lane_id.clone(),
-                        data_proposal.hashed(),
-                        data_proposal,
-                    ),
-                )?;
+        let net_message =
+            MempoolNetMessage::DataProposal(lane_id.clone(), data_proposal.hashed(), data_proposal);
+
+        if filtered_targets.len() == bonded_validators_len && there_are_other_validators {
+            self.metrics
+                .dp_disseminations
+                .add(filtered_targets.len() as u64, &[]);
+            self.send_net_message(net_message)?;
+        } else {
+            self.metrics
+                .dp_disseminations
+                .add(filtered_targets.len() as u64, &[]);
+            self.send_net_message_only_for(filtered_targets.clone(), net_message)?;
+        }
+
+        self.record_inflight_targets(lane_id, dp_hash, filtered_targets);
+
+        Ok(true)
+    }
+
+    fn filter_targets_for_inflight(
+        &self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+        candidates: HashSet<ValidatorPublicKey>,
+        max_inflight_per_peer: usize,
+    ) -> HashSet<ValidatorPublicKey> {
+        let existing = self.inflight.by_dp.get(&(lane_id.clone(), dp_hash.clone()));
+        candidates
+            .into_iter()
+            .filter(|peer| {
+                if existing.map_or(false, |set| set.contains(peer)) {
+                    return true;
+                }
+                let inflight = self.inflight.by_peer.get(peer).copied().unwrap_or(0);
+                inflight < max_inflight_per_peer
+            })
+            .collect()
+    }
+
+    fn record_inflight_targets(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+        targets: HashSet<ValidatorPublicKey>,
+    ) {
+        let mut peers = Vec::with_capacity(targets.len());
+        {
+            let entry = self
+                .inflight
+                .by_dp
+                .entry((lane_id.clone(), dp_hash.clone()))
+                .or_default();
+
+            for peer in targets.into_iter() {
+                if entry.insert(peer.clone()) {
+                    *self.inflight.by_peer.entry(peer.clone()).or_insert(0) += 1;
+                }
+                peers.push(peer);
             }
         }
 
-        Ok(true)
+        for peer in peers {
+            self.mark_weak_has(lane_id, dp_hash, &peer);
+        }
+    }
+
+    fn mark_weak_has(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+        peer: &ValidatorPublicKey,
+    ) {
+        let key = (lane_id.clone(), dp_hash.clone(), peer.clone());
+        match self.knowledge.by_dp.get(&key) {
+            Some(EvidenceState::DefinitelyHas) | Some(EvidenceState::StrongHas) => {}
+            _ => {
+                self.knowledge.by_dp.insert(key, EvidenceState::WeakHas);
+            }
+        }
+    }
+
+    fn clear_inflight_target(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+        peer: &ValidatorPublicKey,
+    ) {
+        let Some(entry) = self
+            .inflight
+            .by_dp
+            .get_mut(&(lane_id.clone(), dp_hash.clone()))
+        else {
+            return;
+        };
+
+        if entry.remove(peer) {
+            if let Some(inflight) = self.inflight.by_peer.get_mut(peer) {
+                *inflight = inflight.saturating_sub(1);
+                if *inflight == 0 {
+                    self.inflight.by_peer.remove(peer);
+                }
+            }
+        }
+
+        if entry.is_empty() {
+            self.inflight
+                .by_dp
+                .remove(&(lane_id.clone(), dp_hash.clone()));
+        }
     }
 
     fn send_net_message(&mut self, net_message: MempoolNetMessage) -> Result<()> {
