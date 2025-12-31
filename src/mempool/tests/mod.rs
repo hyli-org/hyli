@@ -41,7 +41,7 @@ impl MempoolTestCtx {
         crypto: BlstCrypto,
         data_dir: &PathBuf,
     ) -> Mempool {
-        let lanes = storage_fjall::shared_lanes_storage(data_dir, BTreeMap::default()).unwrap();
+        let lanes = storage_fjall::shared_lanes_storage(data_dir).unwrap();
         let bus = MempoolBusClient::new_from_bus(shared_bus.new_handle()).await;
 
         // Initialize Mempool
@@ -161,6 +161,10 @@ impl MempoolTestCtx {
             .unwrap()
     }
 
+    pub async fn disseminate_timer_tick(&mut self) -> Result<()> {
+        todo!()
+    }
+
     pub async fn timer_tick(&mut self) -> Result<bool> {
         let Ok(true) = self.mempool.prepare_new_data_proposal() else {
             debug!("No new data proposal to prepare");
@@ -175,12 +179,6 @@ impl MempoolTestCtx {
             .context("join next data proposal in preparation")??;
 
         self.mempool.resume_new_data_proposal(dp, dp_hash).await
-    }
-
-    pub async fn disseminate_timer_tick(&mut self) -> Result<bool> {
-        self.mempool
-            .send_dissemination_event(DisseminationEvent::Tick)?;
-        Ok(true)
     }
 
     pub async fn handle_poda_update(
@@ -334,21 +332,11 @@ impl MempoolTestCtx {
     }
 
     pub fn current_hash(&self, lane_id: &LaneId) -> Option<DataProposalHash> {
-        self.mempool
-            .lanes
-            .lanes_tip
-            .get(lane_id)
-            .cloned()
-            .map(|(h, _)| h)
+        self.mempool.lanes.get_lane_hash_tip(lane_id)
     }
 
     pub fn current_size_of(&self, lane_id: &LaneId) -> Option<LaneBytesSize> {
-        self.mempool
-            .lanes
-            .lanes_tip
-            .get(lane_id)
-            .cloned()
-            .map(|(_, s)| s)
+        self.mempool.lanes.get_lane_size_tip(lane_id)
     }
 
     pub fn last_lane_entry(
@@ -440,10 +428,11 @@ impl MempoolTestCtx {
             dp,
         )?;
         let lane_id = LaneId(self.mempool.crypto.validator_pubkey().clone());
-        self.mempool.send_dissemination_event(DisseminationEvent::NewDpCreated {
-            lane_id: lane_id.clone(),
-            data_proposal_hash: dp_hash.clone(),
-        })?;
+        self.mempool
+            .send_dissemination_event(DisseminationEvent::NewDpCreated {
+                lane_id: lane_id.clone(),
+                data_proposal_hash: dp_hash.clone(),
+            })?;
         self.mempool
             .send_dissemination_event(DisseminationEvent::DpStored {
                 lane_id,

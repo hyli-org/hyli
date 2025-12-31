@@ -283,7 +283,10 @@ impl Mempool {
             .unwrap_or(&emptyvec);
 
         let mut cut: Cut = vec![];
-        for lane_id in self.lanes.get_lane_ids() {
+        // We lock in read for the full loop for performance
+        // Because all writes to tips happen in mempool, this should be essentially free.
+        let lane_tips = self.lanes.lane_tips_read();
+        for lane_id in lane_tips.keys() {
             let previous_entry = previous_cut
                 .iter()
                 .find(|(lane_id_, _, _, _)| lane_id_ == lane_id);
@@ -421,12 +424,7 @@ impl Mempool {
             lane_id, to
         );
 
-        let Some(to) = to.or(self
-            .lanes
-            .lanes_tip
-            .get(&lane_id)
-            .map(|lane_id| lane_id.0.clone()))
-        else {
+        let Some(to) = to.or(self.lanes.get_lane_hash_tip(&lane_id)) else {
             info!("Nothing to do for this SyncRequest");
             return Ok(());
         };

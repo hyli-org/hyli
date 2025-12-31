@@ -7,14 +7,14 @@ use client_sdk::tcp_client::TcpServerMessage;
 use tracing::{debug, trace};
 
 use super::verifiers::{verify_proof, verify_recursive_proof};
-use super::{api::RestApiMessage, storage::Storage};
-use super::{DisseminationEvent, ValidatorDAG};
 #[cfg(test)]
 use super::MempoolNetMessage;
+use super::{api::RestApiMessage, storage::Storage};
+use super::{DisseminationEvent, ValidatorDAG};
 
 impl super::Mempool {
     fn get_last_data_prop_hash_in_own_lane(&self) -> Option<DataProposalHash> {
-        self.lanes.get_lane_hash_tip(&self.own_lane_id()).cloned()
+        self.lanes.get_lane_hash_tip(&self.own_lane_id())
     }
 
     pub(super) fn own_lane_id(&self) -> LaneId {
@@ -35,9 +35,7 @@ impl super::Mempool {
         }
         debug!(
             "Vote from {} on own lane {}, dp {}",
-            validator,
-            lane_id,
-            data_proposal_hash
+            validator, lane_id, data_proposal_hash
         );
 
         let signatures =
@@ -184,11 +182,9 @@ impl super::Mempool {
 
         self.metrics.created_data_proposals.add(1, &[]);
 
-        let (data_proposal_hash, cumul_size) = self.lanes.store_data_proposal(
-            &self.crypto,
-            &self.own_lane_id(),
-            data_proposal,
-        )?;
+        let (data_proposal_hash, cumul_size) =
+            self.lanes
+                .store_data_proposal(&self.crypto, &self.own_lane_id(), data_proposal)?;
 
         self.send_dissemination_event(DisseminationEvent::NewDpCreated {
             lane_id: self.own_lane_id(),
@@ -406,7 +402,7 @@ pub mod test {
         let dp = ctx
             .mempool
             .lanes
-            .get_dp_by_hash(&ctx.own_lane(), dp_hash)
+            .get_dp_by_hash(&ctx.own_lane(), &dp_hash)
             .unwrap()
             .unwrap();
 
@@ -624,8 +620,7 @@ pub mod test {
         let crypto2 = BlstCrypto::new("2").unwrap();
         ctx.add_trusted_validator(crypto2.validator_pubkey());
 
-        let signed_msg =
-            create_data_vote(&crypto2, lane_id.clone(), data_proposal_hash, size)?;
+        let signed_msg = create_data_vote(&crypto2, lane_id.clone(), data_proposal_hash, size)?;
 
         ctx.mempool
             .handle_net_message(

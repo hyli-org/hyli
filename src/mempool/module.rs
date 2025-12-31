@@ -1,16 +1,15 @@
 use hyli_modules::{log_error, module_handle_messages};
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use crate::{
     consensus::ConsensusEvent, model::*, p2p::network::MsgWithHeader, utils::conf::P2pMode,
 };
 
 use client_sdk::tcp_client::TcpServerMessage;
-use hyli_model::{DataProposalHash, LaneBytesSize, LaneId};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use tracing::warn;
 
-use super::{api::RestApiMessage, DisseminationEvent, MempoolNetMessage, QueryNewCut};
+use super::{api::RestApiMessage, MempoolNetMessage, QueryNewCut};
 
 use crate::model::SharedRunContext;
 
@@ -39,22 +38,13 @@ impl Module for Mempool {
         )
         .unwrap_or_default();
 
-        let lanes_tip =
-            Self::load_from_disk::<BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>>(
-                ctx.config
-                    .data_directory
-                    .join("mempool_lanes_tip.bin")
-                    .as_path(),
-            )
-            .unwrap_or_default();
-
         Ok(Mempool {
             bus,
             file: Some(ctx.config.data_directory.clone()),
             conf: ctx.config.clone(),
             crypto: Arc::clone(&ctx.crypto),
             metrics,
-            lanes: shared_lanes_storage(&ctx.config.data_directory, lanes_tip)?,
+            lanes: shared_lanes_storage(&ctx.config.data_directory)?,
             inner: attributes,
         })
     }
@@ -65,12 +55,7 @@ impl Module for Mempool {
             Duration::from_millis(500),
         );
         let mut new_dp_timer = tokio::time::interval(tick_interval);
-        // We always disseminate new data proposals, so we can run the re-dissemination timer
-        // infrequently, as it will only be useful if we had a network issue that lead
-        // to a PoDA not being created.
-        let mut disseminate_timer = tokio::time::interval(Duration::from_secs(15));
         new_dp_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        disseminate_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         let sync_request_sender = self.start_mempool_sync();
 
@@ -133,13 +118,6 @@ impl Module for Mempool {
             _ = new_dp_timer.tick() => {
                 _  = log_error!(self.prepare_new_data_proposal(), "Try preparing a new data proposal on tick");
             }
-            _ = disseminate_timer.tick() => {
-                _ = log_error!(
-                    self.send_dissemination_event(DisseminationEvent::Tick),
-                    "Disseminate data proposals on tick"
-                );
-                disseminate_timer.reset();
-            }
         };
 
         Ok(())
@@ -154,7 +132,7 @@ impl Module for Mempool {
             _ = log_error!(
                 Self::save_on_disk(
                     file.join("mempool_lanes_tip.bin").as_path(),
-                    &self.lanes.lanes_tip
+                    &self.lanes.lane_tips_snapshot()
                 ),
                 "Persisting Mempool lanes tip"
             );

@@ -49,8 +49,9 @@ pub enum DisseminationEvent {
         data_proposal_hash: DataProposalHash,
         signatures: Vec<ValidatorDAG>,
     },
-    StakingUpdated { staking: Staking },
-    Tick,
+    StakingUpdated {
+        staking: Staking,
+    },
     CcpCommitted {
         cut: Cut,
         previous_cut: Option<Cut>,
@@ -105,17 +106,7 @@ impl Module for DisseminationManager {
 
     async fn build(bus: hyli_modules::bus::SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus = DisseminationBusClient::new_from_bus(bus.new_handle()).await;
-        let lanes_tip = Self::load_from_disk::<
-            std::collections::BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>,
-        >(
-            ctx.config
-                .data_directory
-                .join("mempool_lanes_tip.bin")
-                .as_path(),
-        )
-        .unwrap_or_default();
-
-        let lanes = shared_lanes_storage(&ctx.config.data_directory, lanes_tip)?;
+        let lanes = shared_lanes_storage(&ctx.config.data_directory)?;
 
         Ok(DisseminationManager {
             bus,
@@ -131,10 +122,17 @@ impl Module for DisseminationManager {
     }
 
     async fn run(&mut self) -> Result<()> {
+        let mut disseminate_timer = tokio::time::interval(std::time::Duration::from_secs(15));
+        disseminate_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
         module_handle_messages! {
             on_self self,
             listen<DisseminationEvent> evt => {
                 _ = log_error!(self.on_event(evt).await, "Handling DisseminationEvent");
+            }
+            _ = disseminate_timer.tick() => {
+                _ = log_error!(self.redisseminate_owned_lanes().await, "Disseminate data proposals on tick");
+                disseminate_timer.reset();
             }
         };
 
@@ -159,10 +157,8 @@ impl DisseminationManager {
             DisseminationEvent::DpStored {
                 lane_id,
                 data_proposal_hash,
-                cumul_size,
+                ..
             } => {
-                self.lanes
-                    .update_lane_tip(lane_id.clone(), data_proposal_hash.clone(), cumul_size);
                 if self.owned_lanes.contains(&lane_id) {
                     self.maybe_disseminate_dp(&lane_id, &data_proposal_hash)?;
                 }
@@ -179,7 +175,11 @@ impl DisseminationManager {
                 data_proposal_hash,
                 signatures,
             } => {
-                self.on_poda_updated(lane_id.clone(), data_proposal_hash.clone(), signatures.clone());
+                self.on_poda_updated(
+                    lane_id.clone(),
+                    data_proposal_hash.clone(),
+                    signatures.clone(),
+                );
                 self.send_poda_update(lane_id, data_proposal_hash, signatures)?;
             }
             DisseminationEvent::SyncRequestIn {
@@ -201,22 +201,12 @@ impl DisseminationManager {
             DisseminationEvent::StakingUpdated { staking } => {
                 self.staking = staking;
             }
-            DisseminationEvent::Tick => {
-                self.redisseminate_owned_lanes().await?;
-            }
             DisseminationEvent::CcpCommitted { cut, .. } => {
-                self.last_cut = Some(cut.clone());
-                self.sync_lane_tips_from_cut(cut);
+                self.last_cut = Some(cut);
             }
         }
 
         Ok(())
-    }
-
-    fn sync_lane_tips_from_cut(&mut self, cut: Cut) {
-        for (lane_id, dp_hash, cumul_size, _) in cut.into_iter() {
-            self.lanes.update_lane_tip(lane_id, dp_hash, cumul_size);
-        }
     }
 
     fn on_poda_updated(
@@ -358,7 +348,10 @@ impl DisseminationManager {
     ) -> Result<()> {
         let signed_message = self.crypto.sign_msg_with_header(net_message)?;
         self.bus
-            .send(OutboundMessage::broadcast_only_for(only_for, signed_message))
+            .send(OutboundMessage::broadcast_only_for(
+                only_for,
+                signed_message,
+            ))
             .context("Broadcasting mempool message only for targets")?;
         Ok(())
     }
