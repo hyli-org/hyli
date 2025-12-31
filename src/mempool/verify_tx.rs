@@ -530,7 +530,7 @@ pub mod test {
                 ))?;
 
         ctx.mempool
-            .handle_net_message(signed_msg, &ctx.mempool_sync_request_sender)
+            .handle_net_message(signed_msg)
             .await
             .expect("should handle net message");
 

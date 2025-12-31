@@ -460,7 +460,8 @@ pub mod test {
         let crypto3 = BlstCrypto::new("validator3").unwrap();
         let crypto4 = BlstCrypto::new("validator4").unwrap();
         let crypto5 = BlstCrypto::new("validator5").unwrap();
-        ctx.setup_node(&[pubkey, crypto2.clone(), crypto3.clone(), crypto4, crypto5]);
+        ctx.setup_node(&[pubkey, crypto2.clone(), crypto3.clone(), crypto4, crypto5])
+            .await;
 
         let register_tx = make_register_contract_tx(ContractName::new("test1"));
         let dp = ctx.create_data_proposal(None, &[register_tx]);
@@ -482,16 +483,10 @@ pub mod test {
         // Clear event receiver
         while ctx.dissemination_event_receiver.try_recv().is_ok() {}
         ctx.mempool
-            .handle_net_message(
-                crypto2.sign_msg_with_header(signed_msg2)?,
-                &ctx.mempool_sync_request_sender,
-            )
+            .handle_net_message(crypto2.sign_msg_with_header(signed_msg2)?)
             .await?;
         ctx.mempool
-            .handle_net_message(
-                crypto3.sign_msg_with_header(signed_msg3)?,
-                &ctx.mempool_sync_request_sender,
-            )
+            .handle_net_message(crypto3.sign_msg_with_header(signed_msg3)?)
             .await?;
 
         // Assert that PoDAReady message is sent to dissemination
@@ -532,7 +527,7 @@ pub mod test {
         // Bond self and another validator so broadcast happens
         let crypto2 = BlstCrypto::new("validator2").unwrap();
         let self_crypto = (*ctx.mempool.crypto).clone();
-        ctx.setup_node(&[self_crypto, crypto2.clone()]);
+        ctx.setup_node(&[self_crypto, crypto2.clone()]).await;
 
         // Build DP with a VerifiedProof tx including the proof
         let proof = ProofData(vec![9, 9, 9, 9]);
@@ -613,10 +608,7 @@ pub mod test {
             create_data_vote(&temp_crypto, lane_id.clone(), data_proposal.hashed(), size)?;
         assert!(ctx
             .mempool
-            .handle_net_message(
-                temp_crypto.sign_msg_with_header(signed_msg)?,
-                &ctx.mempool_sync_request_sender,
-            )
+            .handle_net_message(temp_crypto.sign_msg_with_header(signed_msg)?)
             .await
             .is_err());
 
@@ -639,15 +631,12 @@ pub mod test {
 
         // Add new validator
         let crypto2 = BlstCrypto::new("2").unwrap();
-        ctx.add_trusted_validator(crypto2.validator_pubkey());
+        ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
 
         let signed_msg = create_data_vote(&crypto2, lane_id.clone(), data_proposal_hash, size)?;
 
         ctx.mempool
-            .handle_net_message(
-                crypto2.sign_msg_with_header(signed_msg)?,
-                &ctx.mempool_sync_request_sender,
-            )
+            .handle_net_message(crypto2.sign_msg_with_header(signed_msg)?)
             .await
             .expect("should handle net message");
 
@@ -665,7 +654,7 @@ pub mod test {
 
         // Add new validator
         let crypto2 = BlstCrypto::new("2").unwrap();
-        ctx.add_trusted_validator(crypto2.validator_pubkey());
+        ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
 
         let signed_msg = create_data_vote(
             &crypto2,
@@ -676,10 +665,7 @@ pub mod test {
 
         assert!(ctx
             .mempool
-            .handle_net_message(
-                crypto2.sign_msg_with_header(signed_msg)?,
-                &ctx.mempool_sync_request_sender,
-            )
+            .handle_net_message(crypto2.sign_msg_with_header(signed_msg)?)
             .await
             .is_err());
         Ok(())
@@ -702,7 +688,7 @@ pub mod test {
         ];
         for ctx in [&mut ctx1, &mut ctx2, &mut ctx3, &mut ctx4] {
             for pk in &all_pubkeys {
-                ctx.add_trusted_validator(pk);
+                ctx.add_trusted_validator(pk).await;
             }
         }
 
