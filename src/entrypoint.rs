@@ -1,9 +1,5 @@
 #![allow(clippy::expect_used, reason = "Fail on misconfiguration")]
 
-mod metrics;
-#[cfg(feature = "turmoil")]
-mod turmoil_time;
-
 use crate::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     consensus::Consensus,
@@ -19,6 +15,7 @@ use crate::{
     tcp_server::TcpServer,
     utils::{
         conf::{self, P2pMode},
+        setup_metrics,
         modules::ModulesHandler,
     },
 };
@@ -220,8 +217,8 @@ async fn common_main(
     welcome_message(&config);
     info!("Starting node with config: {:?}", &config);
 
-    let (provider, registry) = metrics::build_meter_provider(&config)?;
-    metrics::spawn_metric_tasks(provider.clone(), &config);
+    let (provider, registry) = setup_metrics::build_meter_provider(&config)?;
+    setup_metrics::spawn_metric_tasks(provider.clone(), &config);
     opentelemetry::global::set_meter_provider(provider.clone());
 
     #[cfg(feature = "monitoring")]

@@ -9,7 +9,7 @@ use std::time::Duration;
 use tracing::info;
 
 #[cfg(feature = "turmoil")]
-use crate::entrypoint::turmoil_time::SimulatedTimeExporter;
+use crate::utils::turmoil_time::SimulatedTimeExporter;
 #[cfg(feature = "turmoil")]
 use hyli_net::clock::TimestampMsClock;
 
