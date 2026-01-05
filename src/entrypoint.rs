@@ -4,7 +4,6 @@ mod metrics;
 #[cfg(feature = "turmoil")]
 mod turmoil_time;
 
-#[cfg(feature = "turmoil")]
 use crate::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     consensus::Consensus,

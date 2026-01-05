@@ -47,6 +47,13 @@ pub struct E2ECtx {
 }
 
 impl E2ECtx {
+    fn init_risc0_env() {
+        std::env::set_var("RISC0_DEV_MODE", "1");
+        if std::env::var("RISC0_PROVER").is_err() {
+            std::env::set_var("RISC0_PROVER", "mock");
+        }
+    }
+
     async fn init() -> ContainerAsync<Postgres> {
         // Start postgres DB with default settings for the indexer.
         Postgres::default()
@@ -96,7 +103,7 @@ impl E2ECtx {
     }
 
     pub async fn new_single(slot_duration_ms: u64) -> Result<E2ECtx> {
-        std::env::set_var("RISC0_DEV_MODE", "1");
+        Self::init_risc0_env();
         std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let mut conf_maker = ConfMaker::default();
@@ -130,7 +137,7 @@ impl E2ECtx {
     }
 
     pub async fn new_single_with_indexer(slot_duration_ms: u64) -> Result<E2ECtx> {
-        std::env::set_var("RISC0_DEV_MODE", "1");
+        Self::init_risc0_env();
         std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let pg = Self::init().await;
@@ -189,7 +196,7 @@ impl E2ECtx {
         })
     }
     pub async fn new_multi(count: usize, slot_duration_ms: u64) -> Result<E2ECtx> {
-        std::env::set_var("RISC0_DEV_MODE", "1");
+        Self::init_risc0_env();
         std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let mut conf_maker = ConfMaker::default();
@@ -277,7 +284,7 @@ impl E2ECtx {
         slot_duration_ms: u64,
         timestamp_checks: TimestampCheck,
     ) -> Result<E2ECtx> {
-        std::env::set_var("RISC0_DEV_MODE", "1");
+        Self::init_risc0_env();
         std::env::set_var("RUN_HYLLAR2_CSI", "1");
 
         let pg = Self::init().await;
