@@ -3,6 +3,8 @@ pub mod da_codec;
 pub mod db;
 pub mod deterministic_rng;
 pub mod logger;
+#[cfg(feature = "turmoil")]
+pub mod turmoil_time;
 pub mod native_verifier_handler;
 pub mod profiling;
 pub mod static_type_map;

@@ -6,6 +6,10 @@ use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
 use std::time::{Duration, SystemTime};
 use tracing::debug;
 
+pub fn refresh_sim_elapsed() {
+    TimestampMsClock::refresh_sim_elapsed();
+}
+
 fn simulated_system_time() -> SystemTime {
     let sim_ms = TimestampMsClock::now().0 as u64;
     SystemTime::UNIX_EPOCH + Duration::from_millis(sim_ms)
@@ -32,12 +36,7 @@ fn rewrite_metric_times(metric: &mut Metric, sim_time: SystemTime) {
     }
     macro_rules! set_hist {
         ($t:ty) => {
-            if let Some(h) = metric
-                .data
-                .as_mut()
-                .as_mut()
-                .downcast_mut::<Histogram<$t>>()
-            {
+            if let Some(h) = metric.data.as_mut().as_mut().downcast_mut::<Histogram<$t>>() {
                 h.start_time = sim_time;
                 h.time = sim_time;
                 return;
@@ -80,10 +79,7 @@ impl<E> PushMetricExporter for SimulatedTimeExporter<E>
 where
     E: PushMetricExporter,
 {
-    async fn export(
-        &self,
-        metrics: &mut ResourceMetrics,
-    ) -> opentelemetry_sdk::error::OTelSdkResult {
+    async fn export(&self, metrics: &mut ResourceMetrics) -> opentelemetry_sdk::error::OTelSdkResult {
         let scopes = metrics.scope_metrics.len();
         let metric_count: usize = metrics.scope_metrics.iter().map(|s| s.metrics.len()).sum();
         debug!(

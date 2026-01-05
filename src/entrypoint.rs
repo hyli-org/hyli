@@ -15,7 +15,6 @@ use crate::{
     tcp_server::TcpServer,
     utils::{
         conf::{self, P2pMode},
-        setup_metrics,
         modules::ModulesHandler,
     },
 };
@@ -40,7 +39,7 @@ use hyli_modules::{
         module::{NodeStateCtx, NodeStateModule},
         NodeStateStore,
     },
-    utils::db::use_fresh_db,
+    utils::{db::use_fresh_db, logger as logging},
 };
 use hyllar::Hyllar;
 use smt_token::account::AccountSMT;
@@ -217,8 +216,12 @@ async fn common_main(
     welcome_message(&config);
     info!("Starting node with config: {:?}", &config);
 
-    let (provider, registry) = setup_metrics::build_meter_provider(&config)?;
-    setup_metrics::spawn_metric_tasks(provider.clone(), &config);
+    let (provider, registry) = logging::build_meter_provider(
+        &config.id,
+        &config.otlp_metrics_endpoint,
+        config.otlp_metrics_export_interval_ms,
+    )?;
+    logging::spawn_metric_tasks(provider.clone(), &config.otlp_metrics_endpoint);
     opentelemetry::global::set_meter_provider(provider.clone());
 
     #[cfg(feature = "monitoring")]

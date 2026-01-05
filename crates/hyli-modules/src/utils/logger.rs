@@ -1,4 +1,12 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+use opentelemetry_otlp::{MetricExporter, Protocol, WithExportConfig};
+use opentelemetry_sdk::metrics::exporter::PushMetricExporter;
+use opentelemetry_sdk::resource::Resource;
+use prometheus::Registry as PrometheusRegistry;
+use std::time::Duration;
+use tracing::info;
+#[cfg(feature = "turmoil")]
+use crate::utils::turmoil_time::{refresh_sim_elapsed, SimulatedTimeExporter};
 #[cfg(feature = "instrumentation")]
 use opentelemetry::trace::TracerProvider;
 use tracing::level_filters::LevelFilter;
@@ -203,6 +211,86 @@ pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) ->
     tracing.with(log_layer).init();
 
     Ok(())
+}
+
+#[cfg(feature = "turmoil")]
+fn wrap_metric_exporter<E: PushMetricExporter>(inner: E) -> SimulatedTimeExporter<E> {
+    SimulatedTimeExporter::new(inner)
+}
+
+#[cfg(not(feature = "turmoil"))]
+fn wrap_metric_exporter<E: PushMetricExporter>(inner: E) -> E {
+    inner
+}
+
+pub fn build_meter_provider(
+    service_name: &str,
+    otlp_metrics_endpoint: &str,
+    otlp_metrics_export_interval_ms: u64,
+) -> anyhow::Result<(opentelemetry_sdk::metrics::SdkMeterProvider, PrometheusRegistry)> {
+    let registry = PrometheusRegistry::new();
+    let resource = Resource::builder()
+        .with_service_name(service_name.to_string())
+        .with_attribute(opentelemetry::KeyValue::new(
+            "service.instance.id",
+            service_name.to_string(),
+        ))
+        .build();
+
+    let mut meter_provider_builder = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+        .with_resource(resource)
+        .with_reader(
+            opentelemetry_prometheus::exporter()
+                .with_registry(registry.clone())
+                .build()
+                .context("starting prometheus exporter")?,
+        );
+
+    if !otlp_metrics_endpoint.is_empty() {
+        let exporter = MetricExporter::builder()
+            .with_http()
+            .with_protocol(Protocol::HttpBinary)
+            .with_endpoint(otlp_metrics_endpoint.to_string())
+            .with_timeout(Duration::from_secs(5))
+            .build()
+            .context("starting otlp metrics exporter")?;
+
+        let interval_ms = std::cmp::max(otlp_metrics_export_interval_ms, 1);
+        let reader =
+            opentelemetry_sdk::metrics::PeriodicReader::builder(wrap_metric_exporter(exporter))
+                .with_interval(Duration::from_millis(interval_ms))
+                .build();
+
+        meter_provider_builder = meter_provider_builder.with_reader(reader);
+        info!(
+            "OTLP metrics exporter enabled toward {} ({}ms interval)",
+            otlp_metrics_endpoint, interval_ms
+        );
+    } else {
+        info!("OTLP metrics exporter disabled (no endpoint configured)");
+    }
+
+    Ok((meter_provider_builder.build(), registry))
+}
+
+pub fn spawn_metric_tasks(
+    provider: opentelemetry_sdk::metrics::SdkMeterProvider,
+    otlp_metrics_endpoint: &str,
+) {
+    if !otlp_metrics_endpoint.is_empty() {
+        tokio::spawn({
+            let provider = provider.clone();
+            async move {
+                let mut ticker = tokio::time::interval(Duration::from_secs(1));
+                loop {
+                    #[cfg(feature = "turmoil")]
+                    refresh_sim_elapsed();
+                    let _ = ticker.tick().await;
+                    let _ = provider.force_flush();
+                }
+            }
+        });
+    }
 }
 
 #[cfg(feature = "instrumentation")]
