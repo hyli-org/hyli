@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
     setup_otlp(
         &config.log_format,
         format!(
-            "{}({})",
+            "{}-{}",
             config.id.clone(),
             pubkey.clone().unwrap_or_default()
         ),

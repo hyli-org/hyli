@@ -20,12 +20,13 @@ use hyli_crypto::BlstCrypto;
 use hyli_crypto::SharedBlstCrypto;
 use hyli_model::utils::TimestampMs;
 use hyli_modules::bus::BusMessage;
+use hyli_modules::info_span_ctx;
 use hyli_modules::modules::admin::{
     QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse,
 };
 use hyli_modules::{log_error, module_bus_client, module_handle_messages, modules::Module};
 use hyli_net::clock::TimestampMsClock;
-use metrics::ConsensusMetrics;
+use metrics::{ConsensusMetrics, ConsensusStateMetric};
 use role_follower::FollowerState;
 use role_leader::LeaderState;
 use role_timeout::TimeoutRoleState;
@@ -120,7 +121,7 @@ pub struct BFTRoundState {
     state_tag: StateTag,
 }
 
-#[derive(BorshSerialize, BorshDeserialize, Default, Debug)]
+#[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone, Copy, PartialEq, Eq)]
 enum StateTag {
     #[default]
     Joining,
@@ -190,6 +191,33 @@ macro_rules! current_proposal {
 pub(crate) use current_proposal;
 
 impl Consensus {
+    fn set_state_tag(&mut self, state_tag: StateTag) {
+        self.bft_round_state.state_tag = state_tag;
+        self.record_consensus_state_metric();
+    }
+
+    fn record_consensus_state_metric(&self) {
+        let state = if self.is_in_timeout_phase() {
+            ConsensusStateMetric::Timeout
+        } else {
+            match self.bft_round_state.state_tag {
+                StateTag::Joining => ConsensusStateMetric::Joining,
+                StateTag::Leader => ConsensusStateMetric::Leader,
+                StateTag::Follower => ConsensusStateMetric::Follower,
+            }
+        };
+
+        self.metrics.set_state(state);
+    }
+
+    fn is_in_timeout_phase(&self) -> bool {
+        self.bft_round_state.timeout.requests.iter().any(|r| {
+            r.0.msg.0 == self.bft_round_state.slot
+                && r.0.msg.1 == self.bft_round_state.view
+                && &r.0.signature.validator == self.crypto.validator_pubkey()
+        })
+    }
+
     fn round_leader(&self) -> Result<ValidatorPublicKey> {
         // Find out who the next leader will be.
         // For now, this is round-robin on slot + view for simplicity.
@@ -299,10 +327,10 @@ impl Consensus {
 
         let round_leader = self.round_leader()?;
         if round_leader == *self.crypto.validator_pubkey() {
-            self.bft_round_state.state_tag = StateTag::Leader;
+            self.set_state_tag(StateTag::Leader);
             debug!("👑 I'm the new leader! 👑")
         } else {
-            self.bft_round_state.state_tag = StateTag::Follower;
+            self.set_state_tag(StateTag::Follower);
             self.store
                 .bft_round_state
                 .timeout
@@ -518,6 +546,7 @@ impl Consensus {
     }
 
     /// Apply ticket locally, and start new round with it
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, ticket)))]
     fn advance_round(&mut self, ticket: Ticket) -> Result<()> {
         self.apply_ticket(ticket.clone())?;
 
@@ -589,6 +618,10 @@ impl Consensus {
     }
 
     /// Message received by leader & follower.
+    #[cfg_attr(
+        feature = "instrumentation",
+        tracing::instrument(skip(self, candidacy))
+    )]
     fn on_validator_candidacy(
         &mut self,
         candidacy: SignedByValidator<ValidatorCandidacy>,
@@ -658,6 +691,7 @@ impl Consensus {
                         self.bft_round_state.timeout.requests.clear();
                     }
                 }
+                self.record_consensus_state_metric();
                 Ok(())
             }
         }
@@ -727,10 +761,10 @@ impl Consensus {
                         let round_leader = self.round_leader()?;
 
                         if round_leader == *self.crypto.validator_pubkey() {
-                            self.bft_round_state.state_tag = StateTag::Leader;
+                            self.set_state_tag(StateTag::Leader);
                             info!("👑 Starting consensus as leader");
                         } else {
-                            self.bft_round_state.state_tag = StateTag::Follower;
+                            self.set_state_tag(StateTag::Follower);
                             info!(
                                 "💂‍♂️ Starting consensus as follower of leader {}",
                                 round_leader
@@ -759,7 +793,7 @@ impl Consensus {
                         // maybe we were about to be the leader and got byzantined out.
                         // Regardless, we should probably assume that we need to catch up.
                         // TODO: this logic can be improved.
-                        self.bft_round_state.state_tag = StateTag::Joining;
+                        self.set_state_tag(StateTag::Joining);
                         // Set up an initial timeout to ensure we don't get stuck if we miss commits
                         self.store.bft_round_state.timeout.state.schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
 
@@ -784,6 +818,7 @@ impl Consensus {
             "🚀 Starting consensus as {:?}",
             self.bft_round_state.state_tag
         );
+        self.record_consensus_state_metric();
 
         let mut timeout_ticker = interval(Duration::from_millis(200));
         timeout_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -796,7 +831,8 @@ impl Consensus {
             listen<ConsensusCommand> cmd => {
                 let _ = log_error!(self.handle_command(cmd).await, "Error while handling consensus command");
             }
-            listen<MsgWithHeader<ConsensusNetMessage>> msg => {
+            listen<MsgWithHeader<ConsensusNetMessage>> msg, span(ctx) => {
+                let _span = info_span_ctx!("handle_consensus_net_message", ctx).entered();
                 let _ = log_error!(self.handle_net_message(msg), "Consensus message failed");
             }
             command_response<QueryConsensusInfo, ConsensusInfo> _ => {
@@ -997,11 +1033,19 @@ pub mod test {
             }
         }
 
+        /// Set a node up to catchup to the consensus without being part of it.
         pub fn setup_for_joining(&mut self, nodes: &[&ConsensusTestCtx]) {
             for other_node in nodes.iter() {
                 self.add_trusted_validator(other_node.consensus.crypto.validator_pubkey());
             }
             self.consensus.bft_round_state.state_tag = StateTag::Joining;
+        }
+
+        /// Set a node up to catchup to the consensus while already being part of it (e.g. after starting)
+        pub fn setup_for_rejoining(&mut self, slot: u64) {
+            self.consensus.bft_round_state.state_tag = StateTag::Joining;
+            self.consensus.bft_round_state.slot = slot;
+            self.consensus.bft_round_state.view = 0;
         }
 
         pub fn validator_pubkey(&self) -> ValidatorPublicKey {
@@ -1070,16 +1114,11 @@ pub mod test {
             matches!(self.consensus.bft_round_state.state_tag, StateTag::Joining)
         }
 
-        pub fn setup_for_round(
-            nodes: &mut [&mut ConsensusTestCtx],
-            leader: usize,
-            slot: u64,
-            view: u64,
-        ) {
+        pub fn setup_for_round(nodes: &mut [&mut ConsensusTestCtx], slot: u64, view: u64) {
             // TODO: write a real one?
             let commit_qc = QuorumCertificate(AggregateSignature::default(), ConfirmAckMarker);
 
-            for (index, node) in nodes.iter_mut().enumerate() {
+            for node in nodes.iter_mut() {
                 node.consensus.bft_round_state.slot = slot;
                 node.consensus.bft_round_state.view = view;
 
@@ -1088,7 +1127,7 @@ pub mod test {
                     .follower
                     .buffered_quorum_certificate = Some(commit_qc.clone());
 
-                if index == leader {
+                if node.consensus.round_leader().unwrap() == node.pubkey() {
                     node.consensus.bft_round_state.state_tag = StateTag::Leader;
                     node.consensus.bft_round_state.leader.pending_ticket =
                         Some(Ticket::CommitQC(commit_qc.clone()));
@@ -1248,12 +1287,12 @@ pub mod test {
                 .expect(format!("{description}: No message sent").as_str())
                 .into_message();
             if let OutboundMessage::SendMessage {
-                validator_id: dest,
+                validator_id,
                 msg: net_msg,
             } = rec
             {
                 if let NetMessage::ConsensusMessage(msg) = net_msg {
-                    assert_eq!(to, &dest, "Got message {msg:?}");
+                    assert_eq!(to, &validator_id, "Got message {msg:?}");
                     Box::pin(async move { msg })
                 } else {
                     warn!("{description}: skipping non-consensus message, details in debug");

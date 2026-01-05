@@ -13,12 +13,13 @@ use hyli_modules::{
     bus::{BusMessage, SharedMessageBus},
     log_warn, module_handle_messages,
     modules::{module_bus_client, Module},
+    utils::tracing::extract,
 };
 use hyli_net::{
     clock::TimestampMsClock,
     tcp::{
         p2p_server::{P2PServer, P2PServerEvent, P2PTimeouts},
-        Canal,
+        Canal, TcpHeaders,
     },
 };
 use network::{
@@ -120,8 +121,8 @@ impl P2P {
         );
 
         for peer_ip in self.config.p2p.peers.clone() {
-            _ = p2p_server.try_start_connection(peer_ip.clone(), Canal::new("mempool"));
-            _ = p2p_server.try_start_connection(peer_ip, Canal::new("consensus"));
+            p2p_server.try_start_connection(peer_ip.clone(), Canal::new("mempool"));
+            p2p_server.try_start_connection(peer_ip, Canal::new("consensus"));
         }
 
         module_handle_messages! {
@@ -134,7 +135,7 @@ impl P2P {
             listen<P2PCommand> cmd => {
                 match cmd {
                     P2PCommand::ConnectTo { peer } => {
-                        _ = p2p_server.try_start_connection(peer, Canal::new("consensus"));
+                        p2p_server.try_start_connection(peer, Canal::new("consensus"));
                     }
                 }
             }
@@ -153,12 +154,12 @@ impl P2P {
                         }
                     }
                     OutboundMessage::BroadcastMessage(message) => {
-                        let _ = _span.entered();
+                        let _span = _span.entered();
                         let canal = Self::choose_canal(&message);
                         p2p_server.broadcast(message.clone(), canal)
                     }
                     OutboundMessage::BroadcastMessageOnlyFor(only_for, message) => {
-                        let _ = _span.entered();
+                        let _span = _span.entered();
                         let canal = Self::choose_canal(&message);
                         p2p_server.broadcast_only_for(&only_for, canal, message.clone())
                     }
@@ -176,8 +177,8 @@ impl P2P {
                                 height: BlockHeight(height)
                             }), "Sending new peer event");
                         },
-                        P2PServerEvent::P2PMessage { msg: net_message, headers: _ } => {
-                            let _ = log_warn!(self.handle_net_message(net_message).await, "Handling P2P net message");
+                        P2PServerEvent::P2PMessage { msg: net_message, headers } => {
+                            let _ = log_warn!(self.handle_net_message(net_message, headers).await, "Handling P2P net message");
                         },
                     }
                 }
@@ -219,7 +220,11 @@ impl P2P {
         );
     }
 
-    async fn handle_net_message(&mut self, msg: NetMessage) -> Result<(), Error> {
+    async fn handle_net_message(
+        &mut self,
+        msg: NetMessage,
+        headers: TcpHeaders,
+    ) -> Result<(), Error> {
         trace!("RECV: {:?}", msg);
         match msg {
             NetMessage::MempoolMessage(mempool_msg) => {
@@ -243,7 +248,7 @@ impl P2P {
                     "consensus",
                 );
                 self.bus
-                    .send(consensus_msg)
+                    .send_with_context(consensus_msg, extract(headers))
                     .context("Receiving consensus net message")?;
             }
         }

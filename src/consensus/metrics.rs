@@ -3,9 +3,21 @@ use opentelemetry::{
     InstrumentationScope,
 };
 
+#[repr(u64)]
+#[derive(Clone, Copy)]
+/// Encodes the consensus role into the `consensus_state` gauge.
+/// Values: 0 = Joining, 1 = Follower, 2 = Leader, 3 = Timeout.
+pub enum ConsensusStateMetric {
+    Joining = 0,
+    Follower = 1,
+    Leader = 2,
+    Timeout = 3,
+}
+
 pub struct ConsensusMetrics {
     current_slot: Gauge<u64>,
     current_view: Gauge<u64>,
+    state: Gauge<u64>,
 
     last_started_round: Gauge<u64>,
 
@@ -43,6 +55,7 @@ impl ConsensusMetrics {
         ConsensusMetrics {
             current_slot: build!(my_meter, gauge, "current_slot"),
             current_view: build!(my_meter, gauge, "current_view"),
+            state: build!(my_meter, gauge, "state"),
             last_started_round: build!(my_meter, gauge, "last_started_round"),
             commit: build!(my_meter, counter, "commit"),
             on_prepare_ok: build!(my_meter, counter, "on_prepare_ok"),
@@ -71,6 +84,10 @@ impl ConsensusMetrics {
     pub fn at_round(&self, slot: u64, view: u64) {
         self.current_slot.record(slot, &[]);
         self.current_view.record(view, &[]);
+    }
+
+    pub fn set_state(&self, state: ConsensusStateMetric) {
+        self.state.record(state as u64, &[]);
     }
 
     pub fn start_new_round(&self, slot: u64) {

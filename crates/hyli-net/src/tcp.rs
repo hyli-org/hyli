@@ -2,7 +2,10 @@ pub mod p2p_server;
 pub mod tcp_client;
 pub mod tcp_server;
 
-use std::{fmt::Display, sync::Arc};
+use std::{
+    fmt::Display,
+    sync::{Arc, RwLock},
+};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
@@ -12,6 +15,26 @@ use tokio::task::JoinHandle;
 use anyhow::Result;
 
 pub type TcpHeaders = Vec<(String, String)>;
+
+pub fn headers_from_span() -> TcpHeaders {
+    #[cfg(feature = "instrumentation")]
+    {
+        let mut headers: TcpHeaders = Vec::new();
+        opentelemetry::global::get_text_map_propagator(|propagator| {
+            use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+            let mut carrier = std::collections::HashMap::new();
+            let context = tracing::Span::current().context();
+            propagator.inject_context(&context, &mut carrier);
+            headers = carrier.into_iter().collect();
+        });
+        headers
+    }
+    #[cfg(not(feature = "instrumentation"))]
+    {
+        Vec::new()
+    }
+}
 
 #[derive(Clone, BorshDeserialize, BorshSerialize, PartialEq)]
 pub enum TcpMessage {
@@ -33,7 +56,7 @@ impl TcpData {
         }
     }
 
-    pub fn with_headers(headers: TcpHeaders, payload: Vec<u8>) -> Self {
+    pub fn with_headers(payload: Vec<u8>, headers: TcpHeaders) -> Self {
         Self {
             headers,
             payload: Arc::new(payload),
@@ -75,7 +98,7 @@ fn to_tcp_message_with_headers(
     headers: TcpHeaders,
 ) -> Result<TcpMessage> {
     let binary = borsh::to_vec(data)?;
-    Ok(TcpMessage::Data(TcpData::with_headers(headers, binary)))
+    Ok(TcpMessage::Data(TcpData::with_headers(binary, headers)))
 }
 
 pub fn decode_tcp_payload<Data: BorshDeserialize>(bytes: &[u8]) -> Result<(TcpHeaders, Data)> {
@@ -192,16 +215,16 @@ pub struct NodeConnectionData {
 #[derive(Debug, Clone)]
 pub enum TcpEvent<Data: BorshDeserialize> {
     Message {
-        dest: String,
+        socket_addr: String,
         data: Data,
         headers: TcpHeaders,
     },
     Error {
-        dest: String,
+        socket_addr: String,
         error: String,
     },
     Closed {
-        dest: String,
+        socket_addr: String,
     },
 }
 
@@ -210,6 +233,8 @@ pub enum TcpEvent<Data: BorshDeserialize> {
 struct SocketStream {
     /// Last timestamp we received a ping from the peer.
     last_ping: TimestampMs,
+    /// Best-effort human label for logging (defaults to socket addr).
+    socket_label: Arc<RwLock<String>>,
     /// Sender to stream data to the peer
     sender: tokio::sync::mpsc::Sender<TcpMessage>,
     /// Handle to abort the sending side of the stream

@@ -15,11 +15,12 @@ pub(crate) struct P2PMetrics {
     ping: Counter<u64>,
     peers: Gauge<u64>,
     message: Counter<u64>,
-    message_error: Counter<u64>,
-    message_closed: Counter<u64>,
-    handshake_connection: Counter<u64>,
-    handshake_hello: Counter<u64>,
-    handshake_verack: Counter<u64>,
+    handshake: Counter<u64>,
+    handshake_throttle: Counter<u64>,
+    poison: Counter<u64>,
+    tcp_event: Counter<u64>,
+    rehandshake_error: Counter<u64>,
+    handshake_latency: Histogram<f64>,
 }
 
 impl P2PMetrics {
@@ -31,11 +32,14 @@ impl P2PMetrics {
             ping: build!(my_meter, counter, "ping"),
             peers: build!(my_meter, gauge, "peers"),
             message: build!(my_meter, counter, "message"),
-            message_error: build!(my_meter, counter, "message_error"),
-            message_closed: build!(my_meter, counter, "message_closed"),
-            handshake_connection: build!(my_meter, counter, "handshake_connection"),
-            handshake_hello: build!(my_meter, counter, "handshake_hello"),
-            handshake_verack: build!(my_meter, counter, "handshake_verack"),
+            handshake: build!(my_meter, counter, "handshake"),
+            handshake_throttle: build!(my_meter, counter, "handshake_throttle"),
+            poison: build!(my_meter, counter, "poison"),
+            tcp_event: build!(my_meter, counter, "tcp_event"),
+            rehandshake_error: build!(my_meter, counter, "rehandshake_error"),
+            handshake_latency: my_meter
+                .f64_histogram("p2p_server_handshake_latency_seconds")
+                .build(),
         }
     }
 
@@ -48,26 +52,32 @@ impl P2PMetrics {
             1,
             &[
                 KeyValue::new("from", from),
+                KeyValue::new("direction", "rx"),
+                KeyValue::new("result", "ok"),
                 KeyValue::new("canal", canal.to_string()),
             ],
         );
     }
 
     pub fn message_error(&self, from: String, canal: Canal) {
-        self.message_error.add(
+        self.message.add(
             1,
             &[
                 KeyValue::new("from", from),
+                KeyValue::new("direction", "rx"),
+                KeyValue::new("result", "error"),
                 KeyValue::new("canal", canal.to_string()),
             ],
         );
     }
 
     pub fn message_closed(&self, from: String, canal: Canal) {
-        self.message_closed.add(
+        self.message.add(
             1,
             &[
                 KeyValue::new("from", from),
+                KeyValue::new("direction", "rx"),
+                KeyValue::new("result", "closed"),
                 KeyValue::new("canal", canal.to_string()),
             ],
         );
@@ -88,59 +98,171 @@ impl P2PMetrics {
             1,
             &[
                 KeyValue::new("to", to),
+                KeyValue::new("direction", "tx"),
+                KeyValue::new("result", "ok"),
                 KeyValue::new("canal", canal.to_string()),
             ],
         );
     }
 
     pub fn handshake_connection_emitted(&self, to: String, canal: Canal) {
-        self.handshake_connection.add(
+        self.handshake.add(
             1,
             &[
                 KeyValue::new("to", to),
+                KeyValue::new("phase", "connection"),
+                KeyValue::new("direction", "tx"),
                 KeyValue::new("canal", canal.to_string()),
             ],
         )
     }
 
     pub fn handshake_hello_emitted(&self, to: String, canal: Canal) {
-        self.handshake_hello.add(
+        self.handshake.add(
             1,
             &[
                 KeyValue::new("to", to),
+                KeyValue::new("phase", "hello"),
+                KeyValue::new("direction", "tx"),
                 KeyValue::new("canal", canal.to_string()),
             ],
         )
     }
 
     pub fn handshake_hello_received(&self, from: String, canal: Canal) {
-        self.handshake_hello.add(
+        self.handshake.add(
             1,
             &[
                 KeyValue::new("from", from),
+                KeyValue::new("phase", "hello"),
+                KeyValue::new("direction", "rx"),
                 KeyValue::new("canal", canal.to_string()),
             ],
         )
     }
 
     pub fn handshake_verack_emitted(&self, to: String, canal: Canal) {
-        self.handshake_verack.add(
+        self.handshake.add(
             1,
             &[
                 KeyValue::new("to", to),
+                KeyValue::new("phase", "verack"),
+                KeyValue::new("direction", "tx"),
                 KeyValue::new("canal", canal.to_string()),
             ],
         )
     }
 
     pub fn handshake_verack_received(&self, from: String, canal: Canal) {
-        self.handshake_verack.add(
+        self.handshake.add(
             1,
             &[
                 KeyValue::new("from", from),
+                KeyValue::new("phase", "verack"),
+                KeyValue::new("direction", "rx"),
                 KeyValue::new("canal", canal.to_string()),
             ],
         )
+    }
+
+    pub fn handshake_latency(&self, canal: Canal, seconds: f64) {
+        self.handshake_latency
+            .record(seconds, &[KeyValue::new("canal", canal.to_string())]);
+    }
+
+    pub fn poison_marked(&self, peer: String, canal: Canal) {
+        self.poison.add(
+            1,
+            &[
+                KeyValue::new("peer", peer),
+                KeyValue::new("canal", canal.to_string()),
+                KeyValue::new("action", "marked"),
+            ],
+        );
+    }
+
+    pub fn poison_send_skipped(&self, peer: String, canal: Canal) {
+        self.poison.add(
+            1,
+            &[
+                KeyValue::new("peer", peer),
+                KeyValue::new("canal", canal.to_string()),
+                KeyValue::new("action", "send_skipped"),
+            ],
+        );
+    }
+
+    pub fn poison_retry(&self, peer: String, canal: Canal) {
+        self.poison.add(
+            1,
+            &[
+                KeyValue::new("peer", peer),
+                KeyValue::new("canal", canal.to_string()),
+                KeyValue::new("action", "retry"),
+            ],
+        );
+    }
+
+    pub fn handshake_throttle_tcp_client(&self, peer: String, canal: Canal) {
+        self.handshake_throttle.add(
+            1,
+            &[
+                KeyValue::new("peer", peer),
+                KeyValue::new("canal", canal.to_string()),
+                KeyValue::new("phase", "tcp_client"),
+            ],
+        );
+    }
+
+    pub fn handshake_throttle_handshake(&self, peer: String, canal: Canal) {
+        self.handshake_throttle.add(
+            1,
+            &[
+                KeyValue::new("peer", peer),
+                KeyValue::new("canal", canal.to_string()),
+                KeyValue::new("phase", "handshake"),
+            ],
+        );
+    }
+
+    pub fn tcp_error_event(&self, canal: Option<Canal>) {
+        self.tcp_event.add(
+            1,
+            &[
+                KeyValue::new(
+                    "canal",
+                    canal
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
+                ),
+                KeyValue::new("type", "error"),
+            ],
+        );
+    }
+
+    pub fn tcp_closed_event(&self, canal: Option<Canal>) {
+        self.tcp_event.add(
+            1,
+            &[
+                KeyValue::new(
+                    "canal",
+                    canal
+                        .map(|c| c.to_string())
+                        .unwrap_or_else(|| "unknown".to_string()),
+                ),
+                KeyValue::new("type", "closed"),
+            ],
+        );
+    }
+
+    pub fn rehandshake_error(&self, peer: String, canal: Canal) {
+        self.rehandshake_error.add(
+            1,
+            &[
+                KeyValue::new("peer", peer),
+                KeyValue::new("canal", canal.to_string()),
+            ],
+        );
     }
 }
 
@@ -220,5 +342,84 @@ impl TcpServerMetrics {
     pub(crate) fn message_received_bytes(&self, len: u64) {
         self.message_received_bytes
             .add(len, &self.server_name_label);
+    }
+}
+
+#[derive(Clone)]
+pub struct TcpClientMetrics {
+    message_received: Counter<u64>,
+    message_received_bytes: Counter<u64>,
+    message_emitted: Counter<u64>,
+    message_emitted_bytes: Counter<u64>,
+    message_error: Counter<u64>,
+    message_closed: Counter<u64>,
+    message_send_error: Counter<u64>,
+    message_send_time: Histogram<f64>,
+    client_name_label: Vec<KeyValue>,
+}
+
+impl TcpClientMetrics {
+    pub fn global(client_name: String) -> TcpClientMetrics {
+        let scope = InstrumentationScope::builder(client_name.clone()).build();
+        let my_meter = opentelemetry::global::meter_with_scope(scope);
+        TcpClientMetrics {
+            message_received: my_meter.u64_counter("tcp_client_message_received").build(),
+            message_received_bytes: my_meter
+                .u64_counter("tcp_client_message_received_bytes")
+                .build(),
+            message_emitted: my_meter.u64_counter("tcp_client_message_emitted").build(),
+            message_emitted_bytes: my_meter
+                .u64_counter("tcp_client_message_emitted_bytes")
+                .build(),
+            message_error: my_meter.u64_counter("tcp_client_message_error").build(),
+            message_closed: my_meter.u64_counter("tcp_client_message_closed").build(),
+            message_send_error: my_meter
+                .u64_counter("tcp_client_message_send_error")
+                .build(),
+            message_send_time: my_meter
+                .f64_histogram("tcp_client_message_send_time_seconds")
+                .build(),
+            client_name_label: vec![KeyValue::new("client_name", client_name)],
+        }
+    }
+
+    pub fn message_received(&self) {
+        self.message_received.add(1, &self.client_name_label);
+    }
+
+    pub fn message_emitted(&self) {
+        self.message_emitted.add(1, &self.client_name_label);
+    }
+
+    pub fn message_emitted_bytes(&self, len: u64) {
+        self.message_emitted_bytes.add(len, &self.client_name_label);
+    }
+
+    pub fn message_error(&self) {
+        self.message_error.add(1, &self.client_name_label);
+    }
+
+    pub fn message_closed(&self) {
+        self.message_closed.add(1, &self.client_name_label);
+    }
+
+    pub fn message_send_error(&self) {
+        self.message_send_error.add(1, &self.client_name_label);
+    }
+
+    pub fn message_send_time(&self, duration: f64) {
+        self.message_send_time
+            .record(duration, &self.client_name_label);
+    }
+
+    pub(crate) fn message_received_bytes(&self, len: u64) {
+        self.message_received_bytes
+            .add(len, &self.client_name_label);
+    }
+}
+
+impl std::fmt::Debug for TcpClientMetrics {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TcpClientMetrics").finish()
     }
 }

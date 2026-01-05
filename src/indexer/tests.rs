@@ -4,8 +4,8 @@ use crate::{
     bus::SharedMessageBus,
     explorer::Explorer,
     model::{
-        Blob, BlobData, BlobProofOutput, ProofData, SignedBlock, Transaction, TransactionData,
-        VerifiedProofTransaction,
+        Blob, BlobData, BlobProofOutput, DataProposal, LaneId, ProofData, SignedBlock, Transaction,
+        TransactionData, ValidatorPublicKey, VerifiedProofTransaction,
     },
     utils::conf::IndexerConf,
 };
@@ -19,8 +19,8 @@ use hyli_model::api::{
 };
 use hyli_modules::node_state::test::{craft_signed_block, craft_signed_block_with_parent_dp_hash};
 use serde_json::json;
-use sqlx::postgres::PgPoolOptions;
-use std::future::IntoFuture;
+use sqlx::postgres::{PgListener, PgPoolOptions};
+use std::{future::IntoFuture, time::Duration};
 use testcontainers_modules::{
     postgres::Postgres,
     testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
@@ -634,6 +634,70 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
         .get("/proof/hash/1111111111111111111111111111111111111111111111111111111111111111")
         .await;
     non_existent_proof.assert_status_not_found();
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_contract_notifications_sent() -> Result<()> {
+    let container = Postgres::default()
+        .with_tag("17-alpine")
+        .with_cmd(["postgres", "-c", "log_statement=all"])
+        .start()
+        .await
+        .unwrap();
+    let db_url = format!(
+        "postgresql://postgres:postgres@localhost:{}/postgres",
+        container.get_host_port_ipv4(5432).await.unwrap()
+    );
+    let db = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&db_url)
+        .await
+        .unwrap();
+    MIGRATOR.run(&db).await.unwrap();
+
+    let contract_name = ContractName::new("notify_contract");
+
+    let mut listener = PgListener::connect(&db_url).await.unwrap();
+    listener.listen(&contract_name.0).await.unwrap();
+
+    let (mut indexer, _) = new_indexer(db).await;
+
+    let register_tx = new_register_tx(contract_name.clone(), StateCommitment(vec![])).into();
+    let blob_transaction = new_blob_tx(
+        Identity::new(format!("test@{}", contract_name)),
+        contract_name.clone(),
+        ContractName::new("other"),
+    );
+
+    let parent_data_proposal = DataProposal::new(None, vec![register_tx, blob_transaction]);
+    let mut signed_block = SignedBlock::default();
+    signed_block.consensus_proposal.slot = 1;
+    signed_block.data_proposals.push((
+        LaneId(ValidatorPublicKey("ttt".into())),
+        vec![parent_data_proposal],
+    ));
+    let expected_block = signed_block.clone();
+
+    indexer
+        .handle_signed_block(signed_block)
+        .await
+        .expect("Failed to handle block");
+    indexer
+        .dump_store_to_db()
+        .await
+        .expect("Failed to dump store to DB");
+
+    let notification = tokio::time::timeout(Duration::from_secs(5), listener.recv())
+        .await
+        .expect("Notification timed out")
+        .expect("Failed to receive notification");
+
+    let payload: BlockHeight =
+        serde_json::from_str(notification.payload()).expect("Invalid payload");
+    assert_eq!(notification.channel(), &contract_name.0);
+    assert_eq!(payload, expected_block.height());
 
     Ok(())
 }
