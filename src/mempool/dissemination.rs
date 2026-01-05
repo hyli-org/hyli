@@ -88,7 +88,7 @@ impl hyli_modules::bus::BusMessage for DisseminationEvent {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvidenceState {
-    DefinitelyHas,
+    ObservedHas,
     StrongHas,
     WeakHas,
     DefinitelyDoesNotHave,
@@ -133,31 +133,46 @@ impl PendingSyncRequest {
             return None;
         }
 
-        if self.next_peer_idx < 3 {
-            let mut strong_candidates = Vec::new();
-            for peer in peers.iter() {
-                let key = (self.lane_id.clone(), self.to.clone(), peer.clone());
-                match knowledge.get(&key) {
-                    Some(EvidenceState::DefinitelyHas) | Some(EvidenceState::StrongHas) => {
-                        strong_candidates.push(peer.clone());
-                    }
-                    _ => {}
-                }
-            }
+        let lane_operator = &self.lane_id.0;
+        let mut strong_candidates = Vec::new();
+        let mut weak_candidates = Vec::new();
+        let mut unknown_candidates = Vec::new();
 
-            if !strong_candidates.is_empty() {
-                let idx = self.next_peer_idx % strong_candidates.len();
-                return strong_candidates.get(idx).cloned();
+        for peer in peers.iter() {
+            let key = (self.lane_id.clone(), self.to.clone(), peer.clone());
+            match knowledge.get(&key) {
+                Some(EvidenceState::ObservedHas) | Some(EvidenceState::StrongHas) => {
+                    strong_candidates.push(peer.clone());
+                }
+                Some(EvidenceState::WeakHas) => {
+                    weak_candidates.push(peer.clone());
+                }
+                Some(EvidenceState::DefinitelyDoesNotHave) => {}
+                None | Some(EvidenceState::Unknown) => {
+                    unknown_candidates.push(peer.clone());
+                }
             }
         }
 
-        let lane_operator = &self.lane_id.0;
-        if self.next_peer_idx == 0 && peers.contains(lane_operator) {
+        if strong_candidates.is_empty()
+            && weak_candidates.is_empty()
+            && self.next_peer_idx == 0
+            && peers.contains(lane_operator)
+        {
             return Some(lane_operator.clone());
         }
 
-        let idx = self.next_peer_idx % peers.len();
-        peers.get(idx).cloned()
+        let mut ordered_candidates = Vec::new();
+        ordered_candidates.extend(strong_candidates);
+        ordered_candidates.extend(weak_candidates);
+        ordered_candidates.extend(unknown_candidates);
+
+        if ordered_candidates.is_empty() {
+            return None;
+        }
+
+        let idx = self.next_peer_idx % ordered_candidates.len();
+        ordered_candidates.get(idx).cloned()
     }
 
     fn record_sent(&mut self, now: TimestampMs) {
@@ -312,7 +327,7 @@ impl DisseminationManager {
             } => {
                 self.knowledge.by_dp.insert(
                     (lane_id.clone(), data_proposal_hash.clone(), voter.clone()),
-                    EvidenceState::DefinitelyHas,
+                    EvidenceState::ObservedHas,
                 );
             }
             DisseminationEvent::SyncRequestIn {
@@ -338,7 +353,6 @@ impl DisseminationManager {
                     .await?;
             }
         }
-
         Ok(())
     }
 
@@ -351,7 +365,7 @@ impl DisseminationManager {
                     for validator in poda.validators.iter() {
                         self.knowledge.by_dp.insert(
                             (lane_id.clone(), dp_hash.clone(), validator.clone()),
-                            EvidenceState::DefinitelyHas,
+                            EvidenceState::ObservedHas,
                         );
                     }
                 }
@@ -632,7 +646,7 @@ impl DisseminationManager {
             match self.knowledge.by_dp.get(&key) {
                 Some(EvidenceState::WeakHas)
                 | Some(EvidenceState::StrongHas)
-                | Some(EvidenceState::DefinitelyHas) => {}
+                | Some(EvidenceState::ObservedHas) => {}
                 _ => return false,
             }
         }
@@ -653,7 +667,7 @@ impl DisseminationManager {
             );
             self.knowledge
                 .by_dp
-                .insert(entry, EvidenceState::DefinitelyHas);
+                .insert(entry, EvidenceState::ObservedHas);
         }
     }
 
@@ -799,9 +813,25 @@ impl DisseminationManager {
     ) {
         let key = (lane_id.clone(), dp_hash.clone(), peer.clone());
         match self.knowledge.by_dp.get(&key) {
-            Some(EvidenceState::DefinitelyHas) | Some(EvidenceState::StrongHas) => {}
+            Some(EvidenceState::ObservedHas) | Some(EvidenceState::StrongHas) => {}
             _ => {
                 self.knowledge.by_dp.insert(key, EvidenceState::WeakHas);
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    fn mark_strong_has(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+        peer: &ValidatorPublicKey,
+    ) {
+        let key = (lane_id.clone(), dp_hash.clone(), peer.clone());
+        match self.knowledge.by_dp.get(&key) {
+            Some(EvidenceState::ObservedHas) => {}
+            _ => {
+                self.knowledge.by_dp.insert(key, EvidenceState::StrongHas);
             }
         }
     }
