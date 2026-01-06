@@ -326,10 +326,10 @@ impl ContractListener {
                 ON blk.hash = t.block_hash
                 AND b.tx_hash = t.tx_hash
                 WHERE b.contract_name = $1
-                AND t.transaction_status = 'sequenced'
-                AND t.block_height = $2
+                AND t.block_height >= $2
+                AND t.block_height <= $3
             )
-            SELECT ct.tx_hash, ct.index, ct.lane_id, ct.timestamp, ct.block_hash, ct.transaction_status, b.blob_index, b.data, b.contract_name
+            SELECT ct.tx_hash, ct.index, ct.lane_id, ct.timestamp, ct.block_hash, ct.transaction_status, ct.block_height, b.blob_index, b.data, b.contract_name
             FROM contract_txs ct
             JOIN blobs b
             ON b.parent_dp_hash = ct.parent_dp_hash
@@ -338,6 +338,7 @@ impl ContractListener {
             "#,
         )
         .bind(&contract_name.0)
+        .bind(height_entry.0 as i64)
         .bind(block_height.0 as i64)
         .fetch_all(&self.pool)
         .await?;
@@ -352,6 +353,7 @@ impl ContractListener {
             let timestamp: TimestampMs = row.try_get("timestamp")?;
             let transaction_status: TransactionStatusDb = row.try_get("transaction_status")?;
             let blob_contract_name: ContractName = row.try_get("contract_name")?;
+            let tx_block_height = BlockHeight(row.try_get::<i64, _>("block_height")? as u64);
 
             let blob_index = BlobIndex(row.try_get::<i32, _>("blob_index")? as usize);
             let blob_data = row.try_get::<Vec<u8>, _>("data")?;
@@ -361,7 +363,7 @@ impl ContractListener {
             };
 
             let tx_ctx = TxContext {
-                block_height,
+                block_height: tx_block_height,
                 lane_id,
                 block_hash,
                 timestamp,

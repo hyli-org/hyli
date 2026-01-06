@@ -94,6 +94,39 @@ async fn drain_event(
     }
 }
 
+async fn expect_event(
+    receiver: &mut Receiver<BusEnvelope<ContractListenerEvent>>,
+    expected_hash: &TxHash,
+    expected_height: BlockHeight,
+    expected_status: TransactionStatusDb,
+) -> Result<()> {
+    let mut seen: Vec<String> = Vec::new();
+    let wait = timeout(Duration::from_secs(2), async {
+        loop {
+            let ContractListenerEvent::NewTx(seen_hash, _, ctx, status) =
+                drain_event(receiver).await?;
+            if &seen_hash == expected_hash
+                && ctx.block_height == expected_height
+                && status == expected_status
+            {
+                return Ok(());
+            }
+            seen.push(format!(
+                "{}:{}:{:?}",
+                seen_hash.0, ctx.block_height.0, status
+            ));
+        }
+    })
+    .await;
+
+    match wait {
+        Ok(result) => result,
+        Err(_) => anyhow::bail!(
+            "timeout waiting for {expected_hash:?} at {expected_height:?} with {expected_status:?}; last seen: {seen:?}"
+        ),
+    }
+}
+
 async fn insert_settled_tx(
     pool: &PgPool,
     contract: &ContractName,
@@ -184,6 +217,33 @@ async fn insert_sequenced_tx(
     .await?;
 
     Ok((tx_hash, ConsensusProposalHash(block_hash)))
+}
+
+async fn update_tx_status(
+    pool: &PgPool,
+    tx_hash: &TxHash,
+    status: &str,
+    height: i64,
+) -> Result<()> {
+    let block_hash = hash(&format!("block-{height}"));
+    let parent_hash = hash(&format!("block-{}", height - 1));
+    insert_block(pool, &block_hash, &parent_hash, height).await?;
+
+    sqlx::query(
+        r#"
+        UPDATE transactions
+        SET transaction_status = $1::transaction_status, block_hash = $2, block_height = $3
+        WHERE tx_hash = $4
+        "#,
+    )
+    .bind(status)
+    .bind(&block_hash)
+    .bind(height)
+    .bind(&tx_hash.0)
+    .execute(pool)
+    .await?;
+
+    Ok(())
 }
 
 async fn notify_contract(
@@ -293,6 +353,103 @@ async fn dispatches_unprocessed_blocks_on_startup() -> Result<()> {
     assert_eq!(blobs.len(), 1);
     assert_eq!(blobs[0].0, BlobIndex(0));
     assert_eq!(blobs[0].1.contract_name, contract);
+
+    shutdown
+        .send(ShutdownModule {
+            module: std::any::type_name::<ContractListener>().to_string(),
+        })
+        .expect("failed to send shutdown");
+    let _ = timeout(Duration::from_secs(2), handle).await??;
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn emits_status_updates_for_same_tx_and_new_txs() -> Result<()> {
+    let PgTestCtx {
+        pool,
+        database_url,
+        _container,
+    } = setup_pg().await?;
+    let contract = ContractName("contract_1".to_string());
+
+    let bus = SharedMessageBus::new(BusMetrics::global("contract-listener-status".into()));
+    let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
+    let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
+
+    let conf = ContractListenerConf {
+        database_url: database_url.clone(),
+        contracts: HashSet::from([contract.clone()]),
+        poll_interval: Duration::from_secs(5),
+    };
+
+    let mut module = ContractListener::build(bus.new_handle(), conf).await?;
+    let handle = tokio::spawn(async move { module.run().await });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Sequenced -> Success.
+    let (tx1_hash, _) = insert_sequenced_tx(&pool, &contract, 1).await?;
+    notify_contract(&pool, &contract, BlockHeight(1)).await?;
+    expect_event(
+        &mut receiver,
+        &tx1_hash,
+        BlockHeight(1),
+        TransactionStatusDb::Sequenced,
+    )
+    .await?;
+
+    update_tx_status(&pool, &tx1_hash, "success", 2).await?;
+    notify_contract(&pool, &contract, BlockHeight(2)).await?;
+    expect_event(
+        &mut receiver,
+        &tx1_hash,
+        BlockHeight(2),
+        TransactionStatusDb::Success,
+    )
+    .await?;
+
+    // Sequenced -> Failure.
+    let (tx2_hash, _) = insert_sequenced_tx(&pool, &contract, 3).await?;
+    notify_contract(&pool, &contract, BlockHeight(3)).await?;
+    expect_event(
+        &mut receiver,
+        &tx2_hash,
+        BlockHeight(3),
+        TransactionStatusDb::Sequenced,
+    )
+    .await?;
+
+    update_tx_status(&pool, &tx2_hash, "failure", 4).await?;
+    notify_contract(&pool, &contract, BlockHeight(4)).await?;
+    expect_event(
+        &mut receiver,
+        &tx2_hash,
+        BlockHeight(4),
+        TransactionStatusDb::Failure,
+    )
+    .await?;
+
+    // Sequenced -> TimedOut.
+    let (tx3_hash, _) = insert_sequenced_tx(&pool, &contract, 5).await?;
+    notify_contract(&pool, &contract, BlockHeight(5)).await?;
+    expect_event(
+        &mut receiver,
+        &tx3_hash,
+        BlockHeight(5),
+        TransactionStatusDb::Sequenced,
+    )
+    .await?;
+
+    update_tx_status(&pool, &tx3_hash, "timed_out", 6).await?;
+    notify_contract(&pool, &contract, BlockHeight(6)).await?;
+    expect_event(
+        &mut receiver,
+        &tx3_hash,
+        BlockHeight(6),
+        TransactionStatusDb::TimedOut,
+    )
+    .await?;
 
     shutdown
         .send(ShutdownModule {
