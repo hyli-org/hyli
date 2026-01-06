@@ -262,7 +262,7 @@ impl NodeApiHttpClient {
     /// Create a client with the retry configuration (n=3, duration=1000ms)
     #[allow(dead_code)]
     pub fn retry_15times_1000ms(&self) -> Self {
-        self.with_retry(8, Duration::from_millis(4000))
+        self.with_retry(15, Duration::from_millis(1000))
     }
 }
 
