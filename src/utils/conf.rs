@@ -120,6 +120,24 @@ pub struct IndexerConf {
     pub persist_proofs: bool,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct OwnLaneConf {
+    pub suffixes: Vec<String>,
+    pub default_blob_suffix: String,
+    pub default_proof_suffix: String,
+}
+
+impl Default for OwnLaneConf {
+    fn default() -> Self {
+        let suffix = "default".to_string();
+        Self {
+            suffixes: vec![suffix.clone()],
+            default_blob_suffix: suffix.clone(),
+            default_proof_suffix: suffix,
+        }
+    }
+}
+
 impl From<NodeWebSocketConfig> for WebSocketConfig {
     fn from(config: NodeWebSocketConfig) -> Self {
         Self {
@@ -203,6 +221,9 @@ pub struct Conf {
     /// Configuration for the indexer module
     pub indexer: IndexerConf,
 
+    /// Own-lane configuration
+    pub own_lanes: OwnLaneConf,
+
     /// GCSUploader configuration
     pub gcs: GCSConf,
 }
@@ -228,6 +249,7 @@ impl Conf {
                     .prefix_separator("_")
                     .list_separator(",")
                     .with_list_parse_key("p2p.peers") // Parse this key into Vec<String>
+                    .with_list_parse_key("own_lanes.suffixes")
                     .try_parsing(true),
             )
             .set_override_option("data_directory", data_directory)?

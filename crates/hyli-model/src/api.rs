@@ -67,7 +67,7 @@ pub struct APIStaking {
 #[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq, Eq)]
 pub struct APIFeesBalance {
     pub balance: i128,
-    pub cumul_size: LaneBytesSize,
+    pub cumul_sizes: BTreeMap<LaneId, LaneBytesSize>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, ToSchema, Clone, PartialEq, Eq)]

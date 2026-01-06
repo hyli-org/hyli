@@ -1,24 +1,164 @@
 //! Logic for processing the API inbound TXs in the mempool.
 
-use crate::{bus::BusClientSender, model::*};
+use crate::{bus::BusClientSender, model::*, utils::serialize::BorshableIndexMap};
 
 use anyhow::{bail, Context, Result};
 use client_sdk::tcp_client::TcpServerMessage;
-use tracing::{debug, trace};
+use tracing::{debug, info, trace};
 
 use super::verifiers::{verify_proof, verify_recursive_proof};
 #[cfg(test)]
 use super::MempoolNetMessage;
 use super::{api::RestApiMessage, storage::Storage};
 use super::{DisseminationEvent, ValidatorDAG};
+use indexmap::IndexMap;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+use tokio::task::Id as TaskId;
+use tokio::task::JoinSet;
 
-impl super::Mempool {
-    fn get_last_data_prop_hash_in_own_lane(&self) -> Option<DataProposalHash> {
-        self.lanes.get_lane_hash_tip(&self.own_lane_id())
+const MAX_DP_SIZE: usize = 40_000_000; // About 40 MB
+
+#[derive(Default)]
+pub(super) struct OwnDataProposalPreparation {
+    tasks: JoinSet<(LaneId, DataProposalHash)>,
+    lanes: HashSet<LaneId>,
+    prepared: HashMap<LaneId, Arc<DataProposal>>,
+    task_ids: HashMap<TaskId, LaneId>,
+}
+
+impl OwnDataProposalPreparation {
+    pub(super) fn is_empty(&self) -> bool {
+        self.tasks.is_empty()
     }
 
+    pub(super) fn is_lane_in_flight(&self, lane_id: &LaneId) -> bool {
+        self.lanes.contains(lane_id)
+    }
+
+    pub(super) fn spawn_on(
+        &mut self,
+        lane_id: LaneId,
+        data_proposal: DataProposal,
+        handle: &tokio::runtime::Handle,
+    ) {
+        let data_proposal = Arc::new(data_proposal);
+        self.lanes.insert(lane_id.clone());
+        self.prepared
+            .insert(lane_id.clone(), Arc::clone(&data_proposal));
+        let lane_id_clone = lane_id.clone();
+        let task = self.tasks.spawn_on(
+            async move { (lane_id_clone, data_proposal.hashed()) },
+            handle,
+        );
+        self.task_ids.insert(task.id(), lane_id);
+    }
+
+    pub(super) fn take_failed_by_task_id(
+        &mut self,
+        task_id: TaskId,
+    ) -> Option<(LaneId, Arc<DataProposal>)> {
+        let lane_id = self.task_ids.remove(&task_id)?;
+        self.lanes.remove(&lane_id);
+        let data_proposal = self.prepared.remove(&lane_id)?;
+        Some((lane_id, data_proposal))
+    }
+
+    pub(super) fn take_prepared_by_lane(&mut self, lane_id: &LaneId) -> Option<Arc<DataProposal>> {
+        self.lanes.remove(lane_id);
+        self.task_ids
+            .retain(|_, stored_lane| stored_lane != lane_id);
+        self.prepared.remove(lane_id)
+    }
+
+    pub(super) async fn join_next(
+        &mut self,
+    ) -> Option<Result<(LaneId, DataProposalHash), tokio::task::JoinError>> {
+        self.tasks.join_next().await
+    }
+}
+
+impl super::Mempool {
+    fn get_last_data_prop_hash_in_own_lane(&self, lane_id: &LaneId) -> Option<DataProposalHash> {
+        self.lanes.get_lane_hash_tip(lane_id)
+    }
+
+    #[cfg(test)]
     pub(super) fn own_lane_id(&self) -> LaneId {
-        LaneId(self.crypto.validator_pubkey().clone())
+        self.lane_id_for_suffix(self.default_blob_suffix())
+    }
+
+    fn is_configured_owned_lane(&self, lane_id: &LaneId) -> bool {
+        lane_id.operator() == self.crypto.validator_pubkey()
+            && self.is_configured_suffix(lane_id.suffix())
+    }
+
+    fn default_blob_suffix(&self) -> &str {
+        if self.conf.own_lanes.default_blob_suffix.is_empty() {
+            LaneId::DEFAULT_SUFFIX
+        } else {
+            self.conf.own_lanes.default_blob_suffix.as_str()
+        }
+    }
+
+    fn default_proof_suffix(&self) -> &str {
+        if self.conf.own_lanes.default_proof_suffix.is_empty() {
+            LaneId::DEFAULT_SUFFIX
+        } else {
+            self.conf.own_lanes.default_proof_suffix.as_str()
+        }
+    }
+
+    fn is_configured_suffix(&self, suffix: &str) -> bool {
+        !suffix.is_empty()
+            && (self
+                .conf
+                .own_lanes
+                .suffixes
+                .iter()
+                .any(|known| known == suffix)
+                || suffix == self.default_blob_suffix()
+                || suffix == self.default_proof_suffix())
+    }
+
+    fn lane_id_for_suffix(&self, suffix: &str) -> LaneId {
+        LaneId::with_suffix(self.crypto.validator_pubkey().clone(), suffix.to_string())
+    }
+
+    fn resolve_lane_suffix_for_tx(
+        &self,
+        tx: &Transaction,
+        lane_suffix: Option<&LaneSuffix>,
+    ) -> LaneSuffix {
+        let suffix = match lane_suffix {
+            Some(suffix) => suffix.as_str(),
+            None => match tx.transaction_data {
+                TransactionData::Blob(_) => self.default_blob_suffix(),
+                TransactionData::Proof(_) | TransactionData::VerifiedProof(_) => {
+                    self.default_proof_suffix()
+                }
+            },
+        };
+
+        suffix.to_string()
+    }
+
+    fn lane_id_for_tx(&self, _tx: &Transaction, lane_suffix: &LaneSuffix) -> Option<LaneId> {
+        let suffix = lane_suffix.as_str();
+        if self.is_configured_suffix(suffix) {
+            Some(self.lane_id_for_suffix(suffix))
+        } else {
+            None
+        }
+    }
+
+    fn pending_txs_total(&self) -> usize {
+        self.waiting_dissemination_txs
+            .values()
+            .map(|txs| txs.len())
+            .sum()
     }
 
     pub(super) fn on_data_vote(&mut self, lane_id: LaneId, vdag: ValidatorDAG) -> Result<()> {
@@ -26,7 +166,7 @@ impl super::Mempool {
 
         let validator = vdag.signature.validator.clone();
         let data_proposal_hash = vdag.msg.0.clone();
-        if lane_id != self.own_lane_id() {
+        if !self.is_configured_owned_lane(&lane_id) {
             debug!(
                 "Ignoring vote from {} for non-owned lane {} (dp {})",
                 validator, lane_id, data_proposal_hash
@@ -79,57 +219,107 @@ impl super::Mempool {
 
     pub(super) fn prepare_new_data_proposal(&mut self) -> Result<bool> {
         trace!("🐣 Prepare new owned data proposal");
-        let Some(dp) = self.init_dp_preparation_if_pending()? else {
-            return Ok(false);
-        };
+        let mut started = false;
+        let lane_ids: Vec<LaneId> = self.waiting_dissemination_txs.keys().cloned().collect();
 
-        let handle = self.inner.long_tasks_runtime.handle();
+        for lane_id in lane_ids {
+            if self
+                .inner
+                .own_data_proposal_in_preparation
+                .is_lane_in_flight(&lane_id)
+            {
+                continue;
+            }
+            let Some(dp) = self.init_dp_preparation_if_pending(&lane_id)? else {
+                continue;
+            };
 
-        self.inner
-            .own_data_proposal_in_preparation
-            .spawn_on(async move { (dp.hashed(), dp) }, handle);
+            let handle = self.inner.long_tasks_runtime.handle();
+            self.inner
+                .own_data_proposal_in_preparation
+                .spawn_on(lane_id.clone(), dp, handle);
+            started = true;
+        }
 
-        Ok(true)
+        Ok(started)
     }
 
-    pub(super) async fn resume_new_data_proposal(
+    pub(super) async fn handle_own_data_proposal_preparation(
         &mut self,
-        data_proposal: DataProposal,
+        result: Result<(LaneId, DataProposalHash), tokio::task::JoinError>,
     ) -> Result<()> {
-        trace!("🐣 Create new data proposal");
-
-        self.register_new_data_proposal(data_proposal)?;
+        // Requeue TXs if data proposal preparation fails to avoid losing work.
+        match result {
+            Ok((lane_id, _data_proposal_hash)) => {
+                self.resume_new_data_proposal(lane_id).await?;
+            }
+            Err(err) => {
+                tracing::warn!("Data proposal preparation task failed: {:?}", err);
+                if let Some((lane_id, data_proposal)) = self
+                    .inner
+                    .own_data_proposal_in_preparation
+                    .take_failed_by_task_id(err.id())
+                {
+                    self.restore_prepared_txs(lane_id, data_proposal)?;
+                } else {
+                    tracing::warn!("Failed to map data proposal preparation task to lane");
+                }
+            }
+        }
         Ok(())
     }
 
-    /// Inits DataProposal preparation if there are pending transactions
-    fn init_dp_preparation_if_pending(&mut self) -> Result<Option<DataProposal>> {
-        self.metrics
-            .snapshot_pending_tx(self.waiting_dissemination_txs.len());
-        if self.waiting_dissemination_txs.is_empty()
-            || !self.own_data_proposal_in_preparation.is_empty()
-        {
-            return Ok(None);
-        }
+    pub(super) async fn resume_new_data_proposal(&mut self, lane_id: LaneId) -> Result<()> {
+        trace!("🐣 Create new data proposal");
 
-        let mut cumulative_size = 0;
-        let mut current_idx = 0;
-        while cumulative_size < 40_000_000 && current_idx < self.waiting_dissemination_txs.len() {
-            if let Some((_tx_hash, tx)) = self.waiting_dissemination_txs.get_index(current_idx) {
-                cumulative_size += tx.estimate_size();
-                current_idx += 1;
+        let Some(data_proposal) = self
+            .inner
+            .own_data_proposal_in_preparation
+            .take_prepared_by_lane(&lane_id)
+        else {
+            bail!("Missing prepared data proposal for lane {}", lane_id);
+        };
+        #[allow(clippy::expect_used)]
+        let data_proposal = Arc::try_unwrap(data_proposal)
+            .expect("Prepared data proposal should be uniquely owned after task completion");
+        self.register_new_data_proposal(lane_id, data_proposal)
+    }
+
+    /// Inits DataProposal preparation if there are pending transactions
+    fn init_dp_preparation_if_pending(&mut self, lane_id: &LaneId) -> Result<Option<DataProposal>> {
+        self.metrics.snapshot_pending_tx(self.pending_txs_total());
+        let parent_hash = self.get_last_data_prop_hash_in_own_lane(lane_id);
+        let parent_hash_for_status = parent_hash
+            .clone()
+            .unwrap_or(DataProposalHash(lane_id.to_string()));
+
+        let (collected_txs, cumulative_size, remaining_len) = {
+            let Some(waiting) = self.waiting_dissemination_txs.get_mut(lane_id) else {
+                return Ok(None);
+            };
+            if waiting.is_empty() {
+                return Ok(None);
             }
-        }
-        let collected_txs: Vec<Transaction> = self
-            .waiting_dissemination_txs
-            .drain(0..current_idx)
-            .map(|(_tx_hash, tx)| tx)
-            .collect();
+
+            let mut cumulative_size = 0;
+            let mut current_idx = 0;
+            while cumulative_size < MAX_DP_SIZE && current_idx < waiting.len() {
+                if let Some((_tx_hash, tx)) = waiting.get_index(current_idx) {
+                    cumulative_size += tx.estimate_size();
+                    current_idx += 1;
+                }
+            }
+            let collected_txs: Vec<Transaction> = waiting
+                .drain(0..current_idx)
+                .map(|(_tx_hash, tx)| tx)
+                .collect();
+            let remaining_len = waiting.len();
+
+            (collected_txs, cumulative_size, remaining_len)
+        };
 
         let status_event = MempoolStatusEvent::WaitingDissemination {
-            parent_data_proposal_hash: self
-                .get_last_data_prop_hash_in_own_lane()
-                .unwrap_or(DataProposalHash(self.crypto.validator_pubkey().to_string())),
+            parent_data_proposal_hash: parent_hash_for_status,
             txs: collected_txs.clone(),
         };
 
@@ -141,18 +331,21 @@ impl super::Mempool {
             "🌝 Creating new data proposals with {} txs (est. size {}). {} tx remain.",
             collected_txs.len(),
             cumulative_size,
-            self.waiting_dissemination_txs.len()
+            remaining_len
         );
 
         // Create new data proposal
-        let data_proposal =
-            DataProposal::new(self.get_last_data_prop_hash_in_own_lane(), collected_txs);
+        let data_proposal = DataProposal::new(parent_hash, collected_txs);
 
         Ok(Some(data_proposal))
     }
 
     /// Register and do effects locally on own lane with prepared data proposal
-    fn register_new_data_proposal(&mut self, data_proposal: DataProposal) -> Result<()> {
+    fn register_new_data_proposal(
+        &mut self,
+        lane_id: LaneId,
+        data_proposal: DataProposal,
+    ) -> Result<()> {
         let validator_key = self.crypto.validator_pubkey().clone();
         debug!(
             "Creating new DataProposal in local lane ({}) with {} transactions (parent: {:?})",
@@ -165,7 +358,7 @@ impl super::Mempool {
         let parent_data_proposal_hash = data_proposal
             .parent_data_proposal_hash
             .clone()
-            .unwrap_or(DataProposalHash(validator_key.to_string()));
+            .unwrap_or(DataProposalHash(lane_id.to_string()));
 
         let txs_metadatas = data_proposal
             .txs
@@ -188,14 +381,14 @@ impl super::Mempool {
 
         let (data_proposal_hash, cumul_size) =
             self.lanes
-                .store_data_proposal(&self.crypto, &self.own_lane_id(), data_proposal)?;
+                .store_data_proposal(&self.crypto, &lane_id, data_proposal)?;
 
         self.send_dissemination_event(DisseminationEvent::NewDpCreated {
-            lane_id: self.own_lane_id(),
+            lane_id: lane_id.clone(),
             data_proposal_hash: data_proposal_hash.clone(),
         })?;
         self.send_dissemination_event(DisseminationEvent::DpStored {
-            lane_id: self.own_lane_id(),
+            lane_id,
             data_proposal_hash,
             cumul_size,
         })?;
@@ -203,40 +396,73 @@ impl super::Mempool {
         Ok(())
     }
 
+    pub(super) fn restore_prepared_txs(
+        &mut self,
+        lane_id: LaneId,
+        data_proposal: Arc<DataProposal>,
+    ) -> Result<()> {
+        let waiting_lane = self.waiting_dissemination_txs.entry(lane_id).or_default();
+        let existing = std::mem::take(waiting_lane);
+        let mut new_map = IndexMap::with_capacity(data_proposal.txs.len() + existing.len());
+        for tx in data_proposal.txs.iter().cloned() {
+            new_map.insert(tx.hashed(), tx);
+        }
+        for (tx_hash, tx) in existing.0 {
+            new_map.insert(tx_hash, tx);
+        }
+        *waiting_lane = BorshableIndexMap(new_map);
+        Ok(())
+    }
+
     pub(super) fn handle_api_message(&mut self, command: RestApiMessage) -> Result<()> {
         match command {
-            RestApiMessage::NewTx(tx) => self.on_new_api_tx(tx)?,
+            RestApiMessage::NewTx { tx, lane_suffix } => self.on_new_api_tx(tx, lane_suffix)?,
         }
         Ok(())
     }
 
     pub(super) fn handle_tcp_server_message(&mut self, command: TcpServerMessage) -> Result<()> {
         match command {
-            TcpServerMessage::NewTx(tx) => self.on_new_api_tx(tx)?,
+            TcpServerMessage::NewTx(tx) => self.on_new_api_tx(tx, None)?,
         }
         Ok(())
     }
 
-    pub(super) fn on_new_api_tx(&mut self, tx: Transaction) -> Result<()> {
+    pub(super) fn on_new_api_tx(
+        &mut self,
+        tx: Transaction,
+        lane_suffix: Option<LaneSuffix>,
+    ) -> Result<()> {
+        let lane_suffix = self.resolve_lane_suffix_for_tx(&tx, lane_suffix.as_ref());
         // This is annoying to run in tests because we don't have the event loop setup, so go synchronous.
         #[cfg(test)]
-        self.on_new_tx(tx.clone())?;
+        self.on_new_tx(tx.clone(), &lane_suffix)?;
         #[cfg(not(test))]
         self.inner.processing_txs.spawn_on(
             async move {
                 tx.hashed();
-                Ok(tx)
+                Ok((tx, lane_suffix))
             },
             self.inner.long_tasks_runtime.handle(),
         );
         Ok(())
     }
 
-    pub(super) fn on_new_tx(&mut self, tx: Transaction) -> Result<()> {
+    pub(super) fn on_new_tx(&mut self, tx: Transaction, lane_suffix: &LaneSuffix) -> Result<()> {
         // TODO: Verify fees ?
 
         let tx_type: &'static str = (&tx.transaction_data).into();
         trace!("Tx {} received in mempool", tx_type);
+        let lane_suffix_owned = lane_suffix.clone();
+
+        let Some(lane_id) = self.lane_id_for_tx(&tx, lane_suffix) else {
+            info!(
+                "Dropping tx {} for unknown lane suffix {:?}",
+                tx.hashed(),
+                lane_suffix
+            );
+            return Ok(());
+        };
 
         match tx.transaction_data {
             TransactionData::Blob(ref blob_tx) => {
@@ -254,11 +480,12 @@ impl super::Mempool {
                     tx.hashed(),
                     proof_tx.contract_name
                 );
+                let lane_suffix_owned = lane_suffix_owned.clone();
                 self.inner.processing_txs.spawn_on(
                     async move {
                         let tx =
                             Self::process_proof_tx(tx).context("Processing proof tx in blocker")?;
-                        Ok(tx)
+                        Ok((tx, lane_suffix_owned))
                     },
                     self.inner.long_tasks_runtime.handle(),
                 );
@@ -277,18 +504,18 @@ impl super::Mempool {
         let tx_type: &'static str = (&tx.transaction_data).into();
 
         let tx_hash = tx.hashed();
-        if self.waiting_dissemination_txs.contains_key(&tx_hash) {
+        let waiting_lane = self.waiting_dissemination_txs.entry(lane_id).or_default();
+
+        if waiting_lane.contains_key(&tx_hash) {
             debug!("Dropping duplicate tx {}", tx_hash);
             self.metrics.drop_api_tx(tx_type);
         } else {
-            self.waiting_dissemination_txs
-                .insert(tx_hash.clone(), tx.clone());
+            waiting_lane.insert(tx_hash.clone(), tx.clone());
 
             self.metrics.add_api_tx(tx_type);
         }
 
-        self.metrics
-            .snapshot_pending_tx(self.waiting_dissemination_txs.len());
+        self.metrics.snapshot_pending_tx(self.pending_txs_total());
 
         Ok(())
     }
@@ -419,14 +646,17 @@ pub mod test {
         assert_chanmsg_matches!(
             ctx.mempool_status_event_receiver,
             MempoolStatusEvent::WaitingDissemination { parent_data_proposal_hash, txs } => {
-                assert_eq!(parent_data_proposal_hash, DataProposalHash(ctx.mempool.crypto.validator_pubkey().to_string()));
+                assert_eq!(
+                    parent_data_proposal_hash,
+                    DataProposalHash(ctx.mempool.own_lane_id().to_string())
+                );
                 assert_eq!(txs, actual_txs);
             }
         );
         assert_eq!(dp.txs, actual_txs);
 
         // Assert that pending_tx has been flushed
-        assert!(ctx.mempool.waiting_dissemination_txs.is_empty());
+        assert_eq!(ctx.mempool.pending_txs_total(), 0);
 
         assert_chanmsg_matches!(
             ctx.mempool_status_event_receiver,
@@ -441,7 +671,9 @@ pub mod test {
         ctx.timer_tick().await?;
 
         assert_eq!(
-            ctx.mempool.get_last_data_prop_hash_in_own_lane().unwrap(),
+            ctx.mempool
+                .get_last_data_prop_hash_in_own_lane(&ctx.own_lane())
+                .unwrap(),
             dp.hashed()
         );
 
@@ -575,7 +807,7 @@ pub mod test {
         }
 
         // The stored DP should remain without proofs
-        let lane = LaneId(ctx.validator_pubkey().clone());
+        let lane = LaneId::new(ctx.validator_pubkey().clone());
         let (_, dp_hash) = ctx.last_lane_entry(&lane);
         let stored_dp = ctx
             .mempool
@@ -641,7 +873,7 @@ pub mod test {
 
         // Assert that we added the vote to the signatures
         let ((LaneEntryMetadata { signatures, .. }, _), _) =
-            ctx.last_lane_entry(&LaneId(ctx.validator_pubkey().clone()));
+            ctx.last_lane_entry(&LaneId::new(ctx.validator_pubkey().clone()));
 
         assert_eq!(signatures.len(), 2);
         Ok(())

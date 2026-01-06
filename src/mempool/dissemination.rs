@@ -133,7 +133,7 @@ impl PendingSyncRequest {
             return None;
         }
 
-        let lane_operator = &self.lane_id.0;
+        let lane_operator = self.lane_id.operator();
         let mut strong_candidates = Vec::new();
         let mut weak_candidates = Vec::new();
         let mut unknown_candidates = Vec::new();

@@ -123,7 +123,7 @@ impl SignedBlock {
                     dp.parent_data_proposal_hash
                         .clone()
                         // This is weird but has to match the workaround in own_lane.rs
-                        .unwrap_or(DataProposalHash(lane_id.0.to_string())),
+                        .unwrap_or(DataProposalHash(lane_id.to_string())),
                     &dp.txs,
                 )
             })

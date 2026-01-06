@@ -436,7 +436,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_put_contains_get() {
         let crypto = BlstCrypto::new("1").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
 
         let data_proposal = DataProposal::new(None, vec![]);
@@ -468,7 +468,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_store_proofs_separately_and_hydrate() {
         let crypto = BlstCrypto::new("proofs").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
 
         // Build a DataProposal with a VerifiedProof tx that includes an inlined proof
@@ -541,7 +541,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_update() {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
         let data_proposal = DataProposal::new(None, vec![]);
         let cumul_size: LaneBytesSize = LaneBytesSize(data_proposal.estimate_size() as u64);
@@ -574,7 +574,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_on_data_vote() {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
 
         let crypto2: BlstCrypto = BlstCrypto::new("2").unwrap();
@@ -607,7 +607,7 @@ mod tests {
         let mut storage = setup_storage();
 
         let crypto2: BlstCrypto = BlstCrypto::new("2").unwrap();
-        let lane_id2 = &LaneId(crypto2.validator_pubkey().clone());
+        let lane_id2 = &LaneId::new(crypto2.validator_pubkey().clone());
         let crypto3: BlstCrypto = BlstCrypto::new("3").unwrap();
 
         let dp = DataProposal::new(None, vec![]);
@@ -647,7 +647,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_get_lane_entries_between_hashes() {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
         let dp1 = DataProposal::new(None, vec![]);
         let dp2 = DataProposal::new(Some(dp1.hashed()), vec![]);
@@ -740,7 +740,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_get_oldest_pending_entry() {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
 
         let dp1 = DataProposal::new(None, vec![]);
@@ -770,7 +770,7 @@ mod tests {
     #[test_log::test]
     fn test_lane_size() {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
 
         let dp1 = DataProposal::new(None, vec![Transaction::default()]);
@@ -801,7 +801,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_get_lane_pending_entries() {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
         let data_proposal = DataProposal::new(None, vec![]);
         let cumul_size: LaneBytesSize = LaneBytesSize(data_proposal.estimate_size() as u64);
@@ -858,7 +858,7 @@ mod tests {
             1000,
             vec![Identity::new("jane.doe")],
         );
-        let lane_id = &LaneId(crypto1.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto1.validator_pubkey().clone());
 
         // Helper lambdas so the repeated examples below are shorter.
         let add_signatures = |storage: &mut LanesStorage,

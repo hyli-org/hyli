@@ -278,7 +278,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     let mut signed_block = SignedBlock::default();
     signed_block.consensus_proposal.slot = 1;
     signed_block.data_proposals.push((
-        LaneId(ValidatorPublicKey("ttt".into())),
+        LaneId::new(ValidatorPublicKey("ttt".into())),
         vec![parent_data_proposal.clone()],
     ));
 
@@ -461,7 +461,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     signed_block.consensus_proposal.timestamp = TimestampMs(12345);
     signed_block.consensus_proposal.slot = 2;
     signed_block.data_proposals.push((
-        LaneId(ValidatorPublicKey("ttt".into())),
+        LaneId::new(ValidatorPublicKey("ttt".into())),
         vec![data_proposal, data_proposal_2],
     ));
     let block_2_hash = signed_block.hashed();
@@ -675,7 +675,7 @@ async fn test_contract_notifications_sent() -> Result<()> {
     let mut signed_block = SignedBlock::default();
     signed_block.consensus_proposal.slot = 1;
     signed_block.data_proposals.push((
-        LaneId(ValidatorPublicKey("ttt".into())),
+        LaneId::new(ValidatorPublicKey("ttt".into())),
         vec![parent_data_proposal],
     ));
     let expected_block = signed_block.clone();

@@ -190,7 +190,7 @@ macro_rules! simple_commit_round {
 macro_rules! disseminate {
     (txs: [$($txs:expr),+], owner: $owner:expr, voters: [$($voter:expr),+]) => {{
 
-        let lane_id = LaneId($owner.validator_pubkey().clone());
+        let lane_id = LaneId::new($owner.validator_pubkey().clone());
         let dp = $owner.create_data_proposal_on_top(lane_id, &[$($txs),+]);
         $owner
             .process_new_data_proposal(dp.clone())
@@ -660,7 +660,7 @@ async fn mempool_podaupdate_too_early() {
 
     let register_tx = make_register_contract_tx(ContractName::new("test1"));
 
-    let lane_id = LaneId(node1.mempool_ctx.validator_pubkey().clone());
+    let lane_id = LaneId::new(node1.mempool_ctx.validator_pubkey().clone());
     let (dp, dp_msg, poda, poda2, _poda3) = disseminate! {
         txs: [register_tx],
         owner: node1.mempool_ctx,
@@ -2775,10 +2775,10 @@ async fn follower_commits_cut_then_mempool_sends_stale_lane() {
         CutDisplay(&cp.cut).to_string(),
         format!(
             "{}:{}({} B), {}:{}({} B),",
-            LaneId(node1.consensus_ctx.validator_pubkey()),
+            LaneId::new(node1.consensus_ctx.validator_pubkey()),
             dp1b.hashed(),
             dp.estimate_size() + dp1b.estimate_size(),
-            LaneId(node2.consensus_ctx.validator_pubkey()),
+            LaneId::new(node2.consensus_ctx.validator_pubkey()),
             dp2.hashed(),
             dp2.estimate_size(),
         )

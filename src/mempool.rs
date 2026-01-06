@@ -30,7 +30,6 @@ use std::{
     time::Duration,
 };
 use storage::{LaneEntryMetadata, Storage};
-use tokio::task::JoinSet;
 use verify_tx::DataProposalVerdict;
 // Pick one of the two implementations
 // use storage_memory::LanesStorage;
@@ -112,13 +111,13 @@ type UnaggregatedPoDA = Vec<ValidatorDAG>;
 #[derive(Default, BorshSerialize, BorshDeserialize)]
 pub struct MempoolStore {
     // own_lane.rs
-    waiting_dissemination_txs: BorshableIndexMap<TxHash, Transaction>,
+    waiting_dissemination_txs: HashMap<LaneId, BorshableIndexMap<TxHash, Transaction>>,
     // TODO: implement serialization, probably with a custom future that yields the unmodified Tx
     // on cancellation
     #[borsh(skip)]
-    processing_txs: OrderedJoinSet<Result<Transaction>>,
+    processing_txs: OrderedJoinSet<Result<(Transaction, LaneSuffix)>>,
     #[borsh(skip)]
-    own_data_proposal_in_preparation: JoinSet<(DataProposalHash, DataProposal)>,
+    own_data_proposal_in_preparation: own_lane::OwnDataProposalPreparation,
     // Skipped to clear on reset
     #[borsh(skip)]
     buffered_proposals: BTreeMap<LaneId, IndexSet<DataProposal>>, // This is an indexSet just so we can pop by idx.
@@ -353,6 +352,9 @@ impl Mempool {
 
         match msg.msg {
             MempoolNetMessage::DataProposal(lane_id, data_proposal_hash, data_proposal) => {
+                if lane_id.operator() != validator {
+                    bail!("DP from non-operator {} for lane {}", validator, lane_id);
+                }
                 self.on_data_proposal(&lane_id, data_proposal_hash, data_proposal)?;
             }
             MempoolNetMessage::DataVote(lane_id, vdag) => {
@@ -529,7 +531,7 @@ impl Mempool {
     }
 
     fn get_lane_operator<'a>(&self, lane_id: &'a LaneId) -> &'a ValidatorPublicKey {
-        &lane_id.0
+        lane_id.operator()
     }
 
     fn send_sync_request(

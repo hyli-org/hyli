@@ -76,7 +76,7 @@ impl Hashed<ConsensusProposalHash> for ConsensusProposal {
         let mut hasher = Sha3_256::new();
         hasher.update(self.slot.to_le_bytes());
         self.cut.iter().for_each(|(lane_id, hash, _, _)| {
-            hasher.update(&lane_id.0 .0);
+            lane_id.update_hasher(&mut hasher);
             hasher.update(hash.0.as_bytes());
         });
         self.staking_actions.iter().for_each(|val| match val {
@@ -87,7 +87,7 @@ impl Hashed<ConsensusProposalHash> for ConsensusProposal {
                 lane_id,
                 cumul_size,
             } => {
-                hasher.update(&lane_id.0 .0);
+                lane_id.update_hasher(&mut hasher);
                 hasher.update(cumul_size.0.to_le_bytes())
             }
         });
@@ -181,7 +181,7 @@ mod tests {
         let mut a = ConsensusProposal {
             slot: 1,
             cut: vec![(
-                LaneId(ValidatorPublicKey(vec![1])),
+                LaneId::new(ValidatorPublicKey(vec![1])),
                 DataProposalHash("propA".to_string()),
                 LaneBytesSize(1),
                 AggregateSignature::default(),
@@ -202,7 +202,7 @@ mod tests {
         let mut b = ConsensusProposal {
             slot: 1,
             cut: vec![(
-                LaneId(ValidatorPublicKey(vec![1])),
+                LaneId::new(ValidatorPublicKey(vec![1])),
                 DataProposalHash("propA".to_string()),
                 LaneBytesSize(1),
                 AggregateSignature {
