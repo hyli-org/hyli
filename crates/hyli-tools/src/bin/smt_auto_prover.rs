@@ -78,7 +78,7 @@ async fn main() -> Result<()> {
     .await?;
 
     handler
-        .build_module::<AutoProver<SmtTokenProvableState>>(Arc::new(AutoProverCtx {
+        .build_module::<AutoProver<SmtTokenProvableState, Risc0Prover>>(Arc::new(AutoProverCtx {
             data_directory: config.data_directory.clone(),
             prover: Arc::new(Risc0Prover::new(
                 smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF.to_vec(),
