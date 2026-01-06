@@ -284,7 +284,7 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_net_messages() -> Result<()> {
         let crypto2 = BlstCrypto::new("2").unwrap();
-        let lane_id = LaneId(crypto2.validator_pubkey().clone());
+        let lane_id = LaneId::new(crypto2.validator_pubkey().clone());
 
         // Test message with timestamp too far in future
         let mut bad_time_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(

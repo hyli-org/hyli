@@ -168,7 +168,7 @@ impl Hashed<DataProposalHash> for DataProposal {
             hasher.update(parent_data_proposal_hash.0.as_bytes());
         }
         for tx in self.txs.iter() {
-            hasher.update(tx.hashed().0);
+            hasher.update(tx.hashed().0.as_bytes());
         }
         let hash = DataProposalHash(hex::encode(hasher.finalize()));
         *self.hash_cache.write().unwrap() = Some(hash.clone());
@@ -196,7 +196,7 @@ impl Display for DataProposal {
 
 impl Display for LaneId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}-{}", self.operator, self.suffix)
     }
 }
 

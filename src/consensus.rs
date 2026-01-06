@@ -1013,7 +1013,7 @@ pub mod test {
             self.consensus.bft_round_state.parent_hash =
                 ConsensusProposalHash("genesis".to_string());
             self.consensus.bft_round_state.parent_cut = vec![(
-                LaneId(
+                LaneId::new(
                     cryptos
                         .first()
                         .expect("No cryptos available")
@@ -1462,7 +1462,7 @@ pub mod test {
             slot: 2,
             timestamp: TimestampMs(123),
             cut: vec![(
-                LaneId(node2.pubkey()),
+                LaneId::new(node2.pubkey()),
                 DataProposalHash("test".to_string()),
                 LaneBytesSize::default(),
                 AggregateSignature::default(),
@@ -1542,7 +1542,7 @@ pub mod test {
                     slot: 1,
                     timestamp: TimestampMs(123),
                     cut: vec![(
-                        LaneId(node2.pubkey()),
+                        LaneId::new(node2.pubkey()),
                         DataProposalHash("test".to_string()),
                         LaneBytesSize::default(),
                         AggregateSignature::default(),
@@ -1591,7 +1591,7 @@ pub mod test {
                     slot: 1,
                     timestamp: TimestampMs(123),
                     cut: vec![(
-                        LaneId(node2.pubkey()),
+                        LaneId::new(node2.pubkey()),
                         DataProposalHash("test".to_string()),
                         LaneBytesSize::default(),
                         AggregateSignature::default(),

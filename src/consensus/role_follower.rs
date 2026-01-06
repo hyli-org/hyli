@@ -377,10 +377,14 @@ impl Consensus {
                 .staking
                 .compute_voting_power(poda_sig.validators.as_slice());
 
-            // Check that this is a known lane.
+            // Check that this lane's operator is a known validator.
+            // This does not validate the lane suffix.
             // TODO: this prevents ever deleting lane which may or may not be desirable.
-            if !self.bft_round_state.staking.is_known(&lane_id.0) {
-                bail!("Lane {} is in cut but is not a valid lane", lane_id);
+            if !self.bft_round_state.staking.is_valid_lane_operator(lane_id) {
+                bail!(
+                    "Lane {} is in cut but its operator is not a known validator",
+                    lane_id
+                );
             }
 
             // If this same data proposal was in the last cut, ignore.

@@ -3,6 +3,7 @@ use serde::{
     de::{self, Visitor},
     Deserialize, Serialize,
 };
+use sha3::Digest;
 
 use crate::*;
 
@@ -129,19 +130,112 @@ impl std::fmt::Display for ValidatorPublicKey {
 #[derive(
     Clone,
     Debug,
-    Default,
-    Serialize,
-    Deserialize,
     BorshSerialize,
     BorshDeserialize,
+    Serialize,
+    Deserialize,
     PartialEq,
     Eq,
     Hash,
     Ord,
     PartialOrd,
 )]
-#[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
-pub struct LaneId(pub ValidatorPublicKey);
+#[serde(try_from = "String", into = "String")]
+pub struct LaneId {
+    pub operator: ValidatorPublicKey,
+    pub suffix: String,
+}
+
+pub type LaneSuffix = String;
+
+#[cfg(feature = "full")]
+impl utoipa::PartialSchema for LaneId {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        String::schema()
+    }
+}
+
+#[cfg(feature = "full")]
+impl utoipa::ToSchema for LaneId {}
+
+impl Default for LaneId {
+    fn default() -> Self {
+        LaneId::with_suffix(ValidatorPublicKey::default(), LaneId::DEFAULT_SUFFIX)
+    }
+}
+
+impl LaneId {
+    pub const DEFAULT_SUFFIX: &'static str = "default";
+
+    pub fn new(operator: ValidatorPublicKey) -> Self {
+        Self::with_suffix(operator, Self::DEFAULT_SUFFIX)
+    }
+
+    pub fn with_suffix(operator: ValidatorPublicKey, suffix: impl Into<String>) -> Self {
+        Self {
+            operator,
+            suffix: suffix.into(),
+        }
+    }
+
+    pub fn operator(&self) -> &ValidatorPublicKey {
+        &self.operator
+    }
+
+    pub fn suffix(&self) -> &str {
+        &self.suffix
+    }
+
+    pub fn update_hasher<D: Digest>(&self, hasher: &mut D) {
+        hasher.update(&self.operator.0);
+        hasher.update(b"-");
+        hasher.update(self.suffix.as_bytes());
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        if let Some((hex_part, suffix)) = value.split_once('-') {
+            if suffix.is_empty() {
+                return Err("LaneId suffix cannot be empty".to_string());
+            }
+            let bytes = hex::decode(hex_part).map_err(|e| e.to_string())?;
+            Ok(LaneId::with_suffix(ValidatorPublicKey(bytes), suffix))
+        } else {
+            let bytes = hex::decode(value).map_err(|e| e.to_string())?;
+            Ok(LaneId::with_suffix(
+                ValidatorPublicKey(bytes),
+                LaneId::DEFAULT_SUFFIX,
+            ))
+        }
+    }
+}
+
+impl From<ValidatorPublicKey> for LaneId {
+    fn from(value: ValidatorPublicKey) -> Self {
+        LaneId::new(value)
+    }
+}
+
+impl std::str::FromStr for LaneId {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::parse(value)
+    }
+}
+
+impl TryFrom<String> for LaneId {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::parse(&value)
+    }
+}
+
+impl From<LaneId> for String {
+    fn from(value: LaneId) -> Self {
+        value.to_string()
+    }
+}
 
 // Cumulative size of the lane from the beginning
 #[derive(

@@ -13,7 +13,7 @@ use crate::{
     },
 };
 use anyhow::Result;
-use hyli_model::{api::TransactionStatusDb, BlobIndex, BlockHeight, ContractName, TxHash};
+use hyli_model::{api::TransactionStatusDb, BlobIndex, BlockHeight, ContractName, LaneId, TxHash};
 use sdk::{BlockHash, ConsensusProposalHash};
 use sqlx::{postgres::PgPoolOptions, types::chrono::Utc, PgPool};
 use tempfile::tempdir;
@@ -151,17 +151,19 @@ async fn insert_settled_tx(
 
     let tx_hash = TxHash(hash(&format!("settled-{height}")));
     let parent_dp_hash = hash("dp-settled");
+    let lane_id = LaneId::default().to_string();
 
     sqlx::query(
         r#"
         INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity)
-        VALUES ($1, $2, 1, 'blob_transaction', 'success', $3, $4, '', 0, 'id')
+        VALUES ($1, $2, 1, 'blob_transaction', 'success', $3, $4, $5, 0, 'id')
         "#,
     )
     .bind(&parent_dp_hash)
     .bind(&tx_hash.0)
     .bind(&block_hash)
     .bind(height)
+    .bind(&lane_id)
     .execute(pool)
     .await?;
 
@@ -203,17 +205,19 @@ async fn insert_sequenced_tx(
 
     let tx_hash = TxHash(hash(&format!("sequenced-{height}")));
     let parent_dp_hash = hash("dp-sequenced");
+    let lane_id = LaneId::default().to_string();
 
     sqlx::query(
         r#"
         INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity)
-        VALUES ($1, $2, 1, 'blob_transaction', 'sequenced', $3, $4, '', 0, 'id')
+        VALUES ($1, $2, 1, 'blob_transaction', 'sequenced', $3, $4, $5, 0, 'id')
         "#,
     )
     .bind(&parent_dp_hash)
     .bind(&tx_hash.0)
     .bind(&block_hash)
     .bind(height)
+    .bind(&lane_id)
     .execute(pool)
     .await?;
 

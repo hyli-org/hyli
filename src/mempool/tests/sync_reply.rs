@@ -2,7 +2,7 @@ use super::*;
 
 use anyhow::Result;
 use hyli_crypto::BlstCrypto;
-use hyli_model::{AggregateSignature, LaneBytesSize};
+use hyli_model::{AggregateSignature, LaneBytesSize, Signature};
 use hyli_net::clock::TimestampMsClock;
 use std::time::Duration;
 
@@ -13,7 +13,7 @@ async fn throttles_outbound_sync_requests_during_backoff() -> Result<()> {
     let crypto2 = BlstCrypto::new("2")?;
     ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
 
-    let lane_id = LaneId(crypto2.validator_pubkey().clone());
+    let lane_id = LaneId::new(crypto2.validator_pubkey().clone());
     let dp_hash = DataProposalHash("missing_dp".to_string());
     ctx.dissemination_manager.set_request_backoff_for_test(
         lane_id.clone(),
@@ -40,7 +40,7 @@ async fn sends_request_after_backoff_window_expires() -> Result<()> {
     let crypto2 = BlstCrypto::new("2")?;
     ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
 
-    let lane_id = LaneId(crypto2.validator_pubkey().clone());
+    let lane_id = LaneId::new(crypto2.validator_pubkey().clone());
     let dp_hash = DataProposalHash("missing_dp".to_string());
     ctx.dissemination_manager.set_request_backoff_for_test(
         lane_id.clone(),
@@ -92,7 +92,7 @@ async fn prefers_ccp_signers_for_sync_requests() -> Result<()> {
     let strong_peer = peers[1].clone();
     assert_ne!(peers[0], strong_peer);
 
-    let lane_id = LaneId(peers[0].clone());
+    let lane_id = LaneId::new(peers[0].clone());
     let dp_hash = DataProposalHash("missing_dp".to_string());
     ctx.dissemination_manager.set_request_backoff_for_test(
         lane_id.clone(),
@@ -102,18 +102,24 @@ async fn prefers_ccp_signers_for_sync_requests() -> Result<()> {
         peers.len(),
     );
 
-    ctx.deferred_dissemination_events
-        .push(DisseminationEvent::CcpCommitted {
-            cut: vec![(
-                lane_id.clone(),
-                dp_hash.clone(),
-                LaneBytesSize(0),
-                AggregateSignature::default(),
-            )],
-            previous_cut: None,
-            slot: 1,
-            ccp_signers: vec![strong_peer.clone()],
-        });
+    ctx.dissemination_manager.on_consensus_event(
+        ConsensusEvent::CommitConsensusProposal(CommittedConsensusProposal {
+            staking: ctx.mempool.staking.clone(),
+            consensus_proposal: ConsensusProposal {
+                cut: vec![(
+                    lane_id.clone(),
+                    dp_hash.clone(),
+                    LaneBytesSize(0),
+                    AggregateSignature {
+                        signature: Signature::default(),
+                        validators: vec![strong_peer.clone()],
+                    },
+                )],
+                ..ConsensusProposal::default()
+            },
+            certificate: AggregateSignature::default(),
+        }),
+    )?;
 
     ctx.process_sync().await?;
 

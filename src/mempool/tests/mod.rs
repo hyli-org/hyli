@@ -186,14 +186,14 @@ impl MempoolTestCtx {
             return self.disseminate_owned_lanes().await;
         };
 
-        let (_dp_hash, dp) = self
+        let (lane_id, _dp_hash) = self
             .mempool
             .own_data_proposal_in_preparation
             .join_next()
             .await
             .context("join next data proposal in preparation")??;
 
-        self.mempool.resume_new_data_proposal(dp).await?;
+        self.mempool.resume_new_data_proposal(lane_id).await?;
 
         self.disseminate_owned_lanes().await
     }
@@ -390,12 +390,12 @@ impl MempoolTestCtx {
     }
 
     pub fn current_size(&self) -> Option<LaneBytesSize> {
-        let lane_id = LaneId(self.validator_pubkey().clone());
+        let lane_id = LaneId::new(self.validator_pubkey().clone());
         self.current_size_of(&lane_id)
     }
 
     pub fn push_data_proposal(&mut self, dp: DataProposal) {
-        let lane_id = LaneId(self.validator_pubkey().clone());
+        let lane_id = LaneId::new(self.validator_pubkey().clone());
 
         let lane_size = self.current_size().unwrap();
         let size = lane_size + dp.estimate_size();
@@ -430,7 +430,10 @@ impl MempoolTestCtx {
 
     pub fn submit_tx(&mut self, tx: &Transaction) {
         self.mempool
-            .handle_api_message(RestApiMessage::NewTx(tx.clone()))
+            .handle_api_message(RestApiMessage::NewTx {
+                tx: tx.clone(),
+                lane_suffix: None,
+            })
             .unwrap();
     }
 
@@ -453,10 +456,10 @@ impl MempoolTestCtx {
     pub fn process_new_data_proposal(&mut self, dp: DataProposal) -> Result<()> {
         let (dp_hash, cumul_size) = self.mempool.lanes.store_data_proposal(
             &self.mempool.crypto,
-            &LaneId(self.mempool.crypto.validator_pubkey().clone()),
+            &LaneId::new(self.mempool.crypto.validator_pubkey().clone()),
             dp,
         )?;
-        let lane_id = LaneId(self.mempool.crypto.validator_pubkey().clone());
+        let lane_id = LaneId::new(self.mempool.crypto.validator_pubkey().clone());
         self.mempool
             .send_dissemination_event(DisseminationEvent::NewDpCreated {
                 lane_id: lane_id.clone(),
@@ -501,7 +504,7 @@ impl MempoolTestCtx {
         slot: u64,
     ) -> Result<Cut> {
         let cut = vec![(
-            LaneId(leader.clone()),
+            LaneId::new(leader.clone()),
             dp_hash.clone(),
             cumul_size,
             AggregateSignature::default(),
@@ -559,7 +562,7 @@ async fn test_sending_sync_request() -> Result<()> {
     let mut ctx = MempoolTestCtx::new("mempool").await;
     let crypto2 = BlstCrypto::new("2").unwrap();
     let pubkey2 = crypto2.validator_pubkey();
-    let lane_id = LaneId(pubkey2.clone());
+    let lane_id = LaneId::new(pubkey2.clone());
     ctx.add_trusted_validator(pubkey2).await;
 
     ctx.handle_consensus_event(ConsensusProposal {
@@ -600,7 +603,7 @@ async fn test_receiving_sync_request() -> Result<()> {
     ctx.process_new_data_proposal(data_proposal.clone())?;
 
     // Since mempool is alone, no broadcast
-    let (..) = ctx.last_lane_entry(&LaneId(ctx.validator_pubkey().clone()));
+    let (..) = ctx.last_lane_entry(&LaneId::new(ctx.validator_pubkey().clone()));
     let lane_id = ctx.mempool.own_lane_id();
 
     // Add new validator
@@ -681,7 +684,7 @@ async fn test_receiving_sync_requests_multiple_dps() -> Result<()> {
     ctx.process_new_data_proposal(data_proposal2.clone())?;
 
     // Since mempool is alone, no broadcast
-    let (..) = ctx.last_lane_entry(&LaneId(ctx.validator_pubkey().clone()));
+    let (..) = ctx.last_lane_entry(&LaneId::new(ctx.validator_pubkey().clone()));
     let lane_id = ctx.mempool.own_lane_id();
 
     // Add new validator
