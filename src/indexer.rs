@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{Context, Error, Result};
 use chrono::{DateTime, Utc};
-use hyli_model::api::{TransactionStatusDb, TransactionTypeDb};
+use hyli_model::api::{ContractChangeType, TransactionStatusDb, TransactionTypeDb};
 use hyli_model::utils::TimestampMs;
 use hyli_modules::{
     bus::BusClientSender, modules::indexer::MIGRATOR, node_state::BlockNodeStateCallback,
@@ -182,6 +182,8 @@ pub(crate) struct IndexerHandlerStore {
     blob_proof_outputs: StreamableData,
     contract_inserts: Vec<ContractInsertStore>,
     contract_updates: HashMap<ContractName, ContractUpdateStore>,
+    contract_history: HashMap<ContractHistoryKey, ContractHistoryStore>,
+    tx_index_map: HashMap<TxId, i32>,
 }
 
 impl std::fmt::Debug for IndexerHandlerStore {
@@ -240,6 +242,58 @@ struct ContractUpdateStore {
     pub timeout_window: Option<TimeoutWindow>,
     pub state_commitment: Option<Vec<u8>>,
     pub deleted_at_height: Option<i32>,
+}
+
+#[derive(Debug)]
+struct ContractHistoryStore {
+    pub contract_name: ContractName,
+    pub block_height: BlockHeight,
+    pub tx_index: i32,
+    pub change_type: Vec<ContractChangeType>,
+    pub verifier: String,
+    pub program_id: Vec<u8>,
+    pub state_commitment: Vec<u8>,
+    pub soft_timeout: Option<i64>,
+    pub hard_timeout: Option<i64>,
+    pub deleted_at_height: Option<i32>,
+    pub parent_dp_hash: DataProposalHash,
+    pub tx_hash: TxHash,
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct ContractHistoryKey {
+    pub contract_name: ContractName,
+    pub block_height: BlockHeight,
+    pub tx_index: i32,
+}
+
+impl IndexerHandlerStore {
+    fn record_contract_history(&mut self, history: ContractHistoryStore) {
+        let key = ContractHistoryKey {
+            contract_name: history.contract_name.clone(),
+            block_height: history.block_height,
+            tx_index: history.tx_index,
+        };
+
+        self.contract_history
+            .entry(key)
+            .and_modify(|entry| {
+                for change_type in &history.change_type {
+                    if !entry.change_type.contains(change_type) {
+                        entry.change_type.push(change_type.clone());
+                    }
+                }
+                entry.verifier = history.verifier.clone();
+                entry.program_id = history.program_id.clone();
+                entry.state_commitment = history.state_commitment.clone();
+                entry.soft_timeout = history.soft_timeout;
+                entry.hard_timeout = history.hard_timeout;
+                entry.deleted_at_height = history.deleted_at_height;
+                entry.parent_dp_hash = history.parent_dp_hash.clone();
+                entry.tx_hash = history.tx_hash.clone();
+            })
+            .or_insert(history);
+    }
 }
 
 impl Indexer {
@@ -363,6 +417,7 @@ impl NodeStateCallback for IndexerHandlerStore {
             }
             TxEvent::SequencedBlobTransaction(tx_id, lane_id, index, blob_tx, _tx_context)
             | TxEvent::RejectedBlobTransaction(tx_id, lane_id, index, blob_tx, _tx_context) => {
+                self.tx_index_map.insert(tx_id.clone(), index as i32);
                 self.txs.push_front(TxStore {
                     tx_hash: tx_id.1.clone(),
                     dp_hash: tx_id.0.clone(),
@@ -414,6 +469,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                 }
             }
             TxEvent::SequencedProofTransaction(tx_id, lane_id, index, ..) => {
+                self.tx_index_map.insert(tx_id.clone(), index as i32);
                 self.txs.push_front(TxStore {
                     tx_hash: tx_id.1.clone(),
                     dp_hash: tx_id.0.clone(),
@@ -461,6 +517,26 @@ impl NodeStateCallback for IndexerHandlerStore {
                 }
             }
             TxEvent::ContractRegistered(tx_id, contract_name, contract, metadata) => {
+                tracing::info!("ContractRegistered event for contract: {}", contract_name);
+                let tx_index = self.tx_index_map.get(tx_id).copied().unwrap_or(0);
+                let (soft_timeout, hard_timeout) =
+                    timeout_columns(&contract.timeout_window).unwrap_or_default();
+
+                self.record_contract_history(ContractHistoryStore {
+                    contract_name: contract_name.clone(),
+                    block_height: self.block_height,
+                    tx_index,
+                    change_type: vec![ContractChangeType::Registered],
+                    verifier: contract.verifier.0.clone(),
+                    program_id: contract.program_id.0.clone(),
+                    state_commitment: contract.state.0.clone(),
+                    soft_timeout,
+                    hard_timeout,
+                    deleted_at_height: None,
+                    parent_dp_hash: tx_id.0.clone(),
+                    tx_hash: tx_id.1.clone(),
+                });
+
                 self.contract_inserts.push(ContractInsertStore {
                     contract_name: contract_name.clone(),
                     verifier: contract.verifier.0.clone(),
@@ -488,7 +564,26 @@ impl NodeStateCallback for IndexerHandlerStore {
                 // Don't push events
                 return;
             }
-            TxEvent::ContractStateUpdated(_, contract_name, _contract, state_commitment) => {
+            TxEvent::ContractStateUpdated(tx_id, contract_name, contract, state_commitment) => {
+                let tx_index = self.tx_index_map.get(tx_id).copied().unwrap_or(0);
+                let (soft_timeout, hard_timeout) =
+                    timeout_columns(&contract.timeout_window).unwrap_or_default();
+
+                self.record_contract_history(ContractHistoryStore {
+                    contract_name: contract_name.clone(),
+                    block_height: self.block_height,
+                    tx_index,
+                    change_type: vec![ContractChangeType::StateUpdated],
+                    verifier: contract.verifier.0.clone(),
+                    program_id: contract.program_id.0.clone(),
+                    state_commitment: state_commitment.0.clone(),
+                    soft_timeout,
+                    hard_timeout,
+                    deleted_at_height: None,
+                    parent_dp_hash: tx_id.0.clone(),
+                    tx_hash: tx_id.1.clone(),
+                });
+
                 self.contract_updates
                     .entry(contract_name.clone())
                     .and_modify(|e| {
@@ -501,7 +596,30 @@ impl NodeStateCallback for IndexerHandlerStore {
                 // Don't push events
                 return;
             }
-            TxEvent::ContractProgramIdUpdated(_, contract_name, _contract, program_id) => {
+            TxEvent::ContractProgramIdUpdated(tx_id, contract_name, contract, program_id) => {
+                tracing::info!(
+                    "ContractProgramIdUpdated event for contract: {}",
+                    contract_name
+                );
+                let tx_index = self.tx_index_map.get(tx_id).copied().unwrap_or(0);
+                let (soft_timeout, hard_timeout) =
+                    timeout_columns(&contract.timeout_window).unwrap_or_default();
+
+                self.record_contract_history(ContractHistoryStore {
+                    contract_name: contract_name.clone(),
+                    block_height: self.block_height,
+                    tx_index,
+                    change_type: vec![ContractChangeType::ProgramIdUpdated],
+                    verifier: contract.verifier.0.clone(),
+                    program_id: program_id.0.clone(),
+                    state_commitment: contract.state.0.clone(),
+                    soft_timeout,
+                    hard_timeout,
+                    deleted_at_height: None,
+                    parent_dp_hash: tx_id.0.clone(),
+                    tx_hash: tx_id.1.clone(),
+                });
+
                 self.contract_updates
                     .entry(contract_name.clone())
                     .and_modify(|e| {
@@ -514,7 +632,31 @@ impl NodeStateCallback for IndexerHandlerStore {
                 // Don't push events
                 return;
             }
-            TxEvent::ContractTimeoutWindowUpdated(_, contract_name, _contract, timeout_window) => {
+            TxEvent::ContractTimeoutWindowUpdated(
+                tx_id,
+                contract_name,
+                contract,
+                timeout_window,
+            ) => {
+                let tx_index = self.tx_index_map.get(tx_id).copied().unwrap_or(0);
+                let (soft_timeout, hard_timeout) =
+                    timeout_columns(timeout_window).unwrap_or_default();
+
+                self.record_contract_history(ContractHistoryStore {
+                    contract_name: contract_name.clone(),
+                    block_height: self.block_height,
+                    tx_index,
+                    change_type: vec![ContractChangeType::TimeoutUpdated],
+                    verifier: contract.verifier.0.clone(),
+                    program_id: contract.program_id.0.clone(),
+                    state_commitment: contract.state.0.clone(),
+                    soft_timeout,
+                    hard_timeout,
+                    deleted_at_height: None,
+                    parent_dp_hash: tx_id.0.clone(),
+                    tx_hash: tx_id.1.clone(),
+                });
+
                 self.contract_updates
                     .entry(contract_name.clone())
                     .and_modify(|e| {
@@ -771,6 +913,39 @@ impl Indexer {
                 .bind(contract.metadata)
                 .execute(&mut *transaction)
                 .await?;
+        }
+
+        // Insert contract history
+        for history in self
+            .handler_store
+            .contract_history
+            .drain()
+            .map(|(_, history)| history)
+        {
+            tracing::info!(
+                "🌴 Inserting contract history for contract {}: {:?}",
+                history.contract_name,
+                history
+            );
+            sqlx::query(
+                "INSERT INTO contract_history (contract_name, block_height, tx_index, change_type, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                 ON CONFLICT (contract_name, block_height, tx_index) DO NOTHING"
+            )
+            .bind(history.contract_name.0)
+            .bind(history.block_height.0 as i64)
+            .bind(history.tx_index)
+            .bind(history.change_type)
+            .bind(history.verifier)
+            .bind(history.program_id)
+            .bind(history.state_commitment)
+            .bind(history.soft_timeout)
+            .bind(history.hard_timeout)
+            .bind(history.deleted_at_height)
+            .bind(history.parent_dp_hash)
+            .bind(history.tx_hash)
+            .execute(&mut *transaction)
+            .await?;
         }
 
         // COPY seems about 2x faster than INSERT
