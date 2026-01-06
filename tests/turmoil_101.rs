@@ -111,6 +111,7 @@ turmoil_simple!(611..=620, simulation_one_more_node, submit_10_contracts);
 turmoil_simple!(621..=630, simulation_partition, submit_10_contracts);
 turmoil_simple!(631..=640, simulation_drop_storm, submit_10_contracts);
 turmoil_simple!(641..=650, simulation_restart_node, submit_10_contracts);
+turmoil_simple!(651..=660, simulation_realistic_network, submit_10_contracts);
 
 /// **Simulation**
 ///

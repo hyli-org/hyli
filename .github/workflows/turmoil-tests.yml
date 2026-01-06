@@ -46,6 +46,14 @@ jobs:
         run: cargo test turmoil_simulation_slow_node --features turmoil
       - name: Run turmoil tests - 2 Slow Nodes
         run: cargo test turmoil_simulation_two_slow_nodes --features turmoil
+      - name: Run turmoil tests - Partition
+        run: cargo test turmoil_simulation_partition --features turmoil
+      - name: Run turmoil tests - Drop Storm
+        run: cargo test turmoil_simulation_drop_storm --features turmoil
+      - name: Run turmoil tests - Restart Node
+        run: cargo test turmoil_simulation_restart_node --features turmoil
+      - name: Run turmoil tests - Realistic Network
+        run: cargo test turmoil_simulation_realistic_network --features turmoil
 
       - name: Save cache to shared storage
         if: always() && github.ref == 'refs/heads/main'
