@@ -62,6 +62,19 @@ pub trait ClientSdkProver<T: BorshSerialize + Send> {
     ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>>;
     fn info(&self) -> ProverInfo;
     fn program_id(&self) -> ProgramId;
+    fn new_from_registry(
+        _contract_name: &ContractName,
+        _program_id: ProgramId,
+    ) -> impl std::future::Future<Output = Result<Self>> + Send
+    where
+        Self: Sized,
+    {
+        async move {
+            Err(anyhow::anyhow!(
+                "new_from_registry not implemented for this prover"
+            ))
+        }
+    }
 
     // investigate dedundacy between info().zkvm
     fn verifier(&self) -> Verifier;
@@ -75,12 +88,12 @@ pub mod risc0 {
 
     use super::*;
 
-    pub struct Risc0Prover<'a> {
-        binary: &'a [u8],
+    pub struct Risc0Prover {
+        binary: Vec<u8>,
         program_id: [u8; 32],
     }
-    impl<'a> Risc0Prover<'a> {
-        pub fn new(binary: &'a [u8], program_id: [u8; 32]) -> Self {
+    impl<'a> Risc0Prover {
+        pub fn new(binary: Vec<u8>, program_id: [u8; 32]) -> Self {
             Self { binary, program_id }
         }
         pub async fn prove<T: BorshSerialize>(
@@ -93,7 +106,7 @@ pub mod risc0 {
                 "bonsai" => {
                     let input_data =
                         bonsai_runner::as_input_data(&(commitment_metadata, calldatas))?;
-                    let res = bonsai_runner::run_bonsai(self.binary, input_data.clone()).await?;
+                    let res = bonsai_runner::run_bonsai(&self.binary, input_data.clone()).await?;
                     (
                         res.receipt,
                         ProofMetadata {
@@ -106,7 +119,7 @@ pub mod risc0 {
                 "boundless" => {
                     let input_data =
                         bonsai_runner::as_input_data(&(commitment_metadata, calldatas))?;
-                    let res = bonsai_runner::run_boundless(self.binary, input_data).await?;
+                    let res = bonsai_runner::run_boundless(&self.binary, input_data).await?;
                     (
                         res.receipt,
                         ProofMetadata {
@@ -125,7 +138,7 @@ pub mod risc0 {
                         .unwrap();
 
                     let prover = risc0_zkvm::default_prover();
-                    let prove_info = prover.prove(env, self.binary)?;
+                    let prove_info = prover.prove(env, &self.binary)?;
                     (
                         prove_info.receipt,
                         ProofMetadata {
@@ -145,7 +158,7 @@ pub mod risc0 {
         }
     }
 
-    impl<T: BorshSerialize + Send + 'static> ClientSdkProver<T> for Risc0Prover<'_> {
+    impl<T: BorshSerialize + Send + 'static> ClientSdkProver<T> for Risc0Prover {
         fn prove(
             &self,
             commitment_metadata: Vec<u8>,
@@ -167,6 +180,21 @@ pub mod risc0 {
 
         fn program_id(&self) -> ProgramId {
             ProgramId(self.program_id.into())
+        }
+
+        async fn new_from_registry(
+            contract_name: &ContractName,
+            program_id: ProgramId,
+        ) -> Result<Self>
+        where
+            Self: Sized,
+        {
+            let binding = hex::encode(program_id.0.clone());
+            let binary = hyli_registry::download_elf(&contract_name.0, &binding);
+            let binary = binary
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to get Risc0 ELF: {}", e))?;
+            Ok(Risc0Prover::new(binary, program_id.0.try_into().unwrap()))
         }
     }
 }
@@ -309,6 +337,20 @@ pub mod sp1 {
         fn program_id(&self) -> ProgramId {
             ProgramId(serde_json::to_vec(&self.pk.vk).expect("Failed to serialize SP1 Proving Key"))
         }
+
+        async fn new_from_registry(
+            contract_name: &ContractName,
+            program_id: ProgramId,
+        ) -> Result<Self>
+        where
+            Self: Sized,
+        {
+            let binding = hex::encode(program_id.0.clone());
+            let pk_bytes = hyli_registry::download_elf(&contract_name.0, &binding).await?;
+            let pk: SP1ProvingKey = serde_json::from_slice(&pk_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to deserialize SP1 Proving Key: {}", e))?;
+            Ok(SP1Prover::new(pk).await)
+        }
     }
 }
 
@@ -320,12 +362,21 @@ pub mod test {
 
     /// Generates valid proofs for the 'test' verifier using the TxExecutor
     pub struct TxExecutorTestProver<C: ZkContract> {
+        program_id: ProgramId,
         phantom: std::marker::PhantomData<C>,
     }
 
     impl<C: ZkContract> TxExecutorTestProver<C> {
         pub fn new() -> Self {
             Self {
+                program_id: ProgramId(vec![]),
+                phantom: std::marker::PhantomData,
+            }
+        }
+
+        pub fn new_with_program_id(program_id: ProgramId) -> Self {
+            Self {
+                program_id,
                 phantom: std::marker::PhantomData,
             }
         }
@@ -368,7 +419,17 @@ pub mod test {
         }
 
         fn program_id(&self) -> ProgramId {
-            ProgramId(vec![])
+            self.program_id.clone()
+        }
+
+        async fn new_from_registry(
+            _contract_name: &ContractName,
+            program_id: ProgramId,
+        ) -> Result<Self>
+        where
+            Self: Sized,
+        {
+            Ok(Self::new_with_program_id(program_id))
         }
 
         fn verifier(&self) -> Verifier {

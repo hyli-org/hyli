@@ -33,9 +33,13 @@ use super::prover_metrics::AutoProverMetrics;
 /// multiple blocks.
 /// This module requires the ELF to support multiproof. i.e. it requires the ELF to read
 /// a `Vec<Calldata>` as input.
-pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
+pub struct AutoProver<
+    Contract: Send + Sync + Clone + 'static,
+    Prover: ClientSdkProver<Vec<Calldata>> + Send + Sync,
+> {
     bus: AutoProverBusClient<Contract>,
-    ctx: Arc<AutoProverCtx<Contract>>,
+    ctx: Arc<AutoProverCtx<Contract, Prover>>,
+    prover: Arc<Prover>,
     store: AutoProverStore<Contract>,
     metrics: AutoProverMetrics,
     // If Some, the block to catch up to
@@ -75,9 +79,9 @@ pub struct AutoProverBusClient<Contract: Send + Sync + Clone + 'static> {
 }
 }
 
-pub struct AutoProverCtx<Contract> {
+pub struct AutoProverCtx<Contract, Prover: ClientSdkProver<Vec<Calldata>> + Send + Sync> {
     pub data_directory: PathBuf,
-    pub prover: Arc<dyn ClientSdkProver<Vec<Calldata>> + Send + Sync>,
+    pub prover: Arc<Prover>,
     pub contract_name: ContractName,
     pub node: Arc<dyn NodeApiClient + Send + Sync>,
     // Optional API for readiness information
@@ -103,7 +107,7 @@ impl<Contract> BusMessage for AutoProverEvent<Contract> {
     const CAPACITY: usize = crate::bus::LOW_CAPACITY;
 }
 
-impl<Contract> Module for AutoProver<Contract>
+impl<Contract, Prover> Module for AutoProver<Contract, Prover>
 where
     Contract: TxExecutorHandler
         + BorshSerialize
@@ -113,8 +117,9 @@ where
         + Sync
         + Clone
         + 'static,
+    Prover: ClientSdkProver<Vec<Calldata>> + Send + Sync + 'static,
 {
-    type Context = Arc<AutoProverCtx<Contract>>;
+    type Context = Arc<AutoProverCtx<Contract, Prover>>;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus = AutoProverBusClient::<Contract>::new_from_bus(bus.new_handle()).await;
@@ -141,6 +146,7 @@ where
         };
 
         let infos = ctx.prover.info();
+        let prover = ctx.prover.clone();
 
         let metrics = AutoProverMetrics::global(ctx.contract_name.to_string(), infos);
 
@@ -208,6 +214,7 @@ where
             bus,
             store,
             ctx,
+            prover,
             metrics,
             catching_up,
             catching_up_state,
@@ -260,9 +267,10 @@ pub async fn is_ready(
     }
 }
 
-impl<Contract> AutoProver<Contract>
+impl<Contract, Prover> AutoProver<Contract, Prover>
 where
     Contract: TxExecutorHandler + Debug + Clone + Send + Sync + 'static,
+    Prover: ClientSdkProver<Vec<Calldata>> + Send + Sync + 'static,
 {
     async fn handle_block(
         &mut self,
@@ -534,6 +542,19 @@ where
                 StatefulEvent::ContractUpdate(contract_name, contract) => {
                     if *contract_name != self.ctx.contract_name {
                         continue;
+                    }
+                    if contract.program_id != self.prover.program_id() {
+                        // ProgramId changed, download new ELF from registry
+                        info!(
+                            cn =% self.ctx.contract_name,
+                            block_height =% block_height,
+                            "Program ID changed for contract {}, Trying to update prover from {} to {}",
+                            contract_name,
+                            self.prover.program_id(),
+                            contract.program_id
+                        );
+
+                        self.update_prover_elf(contract).await?;
                     }
                     last_contract_state = Some(&contract.state);
                 }
@@ -1117,6 +1138,21 @@ where
         if !remaining_blobs.is_empty() {
             self.prove_supported_blob(remaining_blobs, join_handles)?;
         }
+        Ok(())
+    }
+
+    async fn update_prover_elf(&mut self, contract: &sdk::Contract) -> Result<()> {
+        self.prover = Arc::new(
+            Prover::new_from_registry(&self.ctx.contract_name, contract.program_id.clone())
+                .await
+                .context("Creating new prover with updated ELF")?,
+        );
+
+        info!(
+            cn =% self.ctx.contract_name,
+            "Prover ELF updated for program ID: {}",
+            contract.program_id
+        );
         Ok(())
     }
 }

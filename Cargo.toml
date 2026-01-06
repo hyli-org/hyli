@@ -61,6 +61,8 @@ uuid-tld = { version = "0.14.0", default-features = false, path = "crates/contra
 hyli-contracts = { version = "0.14.0", default-features = false, path = "crates/contracts", package = "hyli-contracts" }
 hyli-modules = { version = "0.14.0", default-features = false, path = "crates/hyli-modules", package = "hyli-modules" }
 
+hyli-registry = { version = "0.3.0" }
+
 # Common external dependencies
 alloy-consensus = { version = "1.1.0", default-features = false }
 alloy-eips = { version = "1.1.0", default-features = false }
@@ -83,7 +85,9 @@ boundless-market = { version = "1.0.0", default-features = false }
 bytemuck = { version = "1.23.1", default-features = false }
 bytes = { version = "1.10.0", default-features = false }
 alloy-signer = { version = "1.0.41", default-features = false }
-alloy-signer-local = { version = "1.0.41", default-features = false, features = ["mnemonic"] }
+alloy-signer-local = { version = "1.0.41", default-features = false, features = [
+  "mnemonic",
+] }
 chrono = { version = "0.4", default-features = false }
 clap = { version = "4.5.48", default-features = false, features = ["derive"] }
 config = { version = "0.15.13", default-features = false }
@@ -100,7 +104,10 @@ hyper = { version = "1.6.0", default-features = false }
 hyper-util = { version = "0.1.18", default-features = false }
 indexmap = { version = "2.11.0", default-features = false }
 keyring = { version = "3", default-features = false }
-k256 = { version = "0.13", default-features = false, features = ["ecdsa", "arithmetic"] }
+k256 = { version = "0.13", default-features = false, features = [
+  "ecdsa",
+  "arithmetic",
+] }
 mockall = { version = "0.13.0", default-features = false }
 once_cell = { version = "1.19.0", default-features = false }
 opentelemetry = { version = "0.28.0" }
@@ -301,7 +308,7 @@ risc0-zkvm = { workspace = true, default-features = false, features = [
 signal-child = "1.0.6"
 
 [features]
-default = ["risc0", "instrumentation"]
+default = ["risc0", "sp1", "instrumentation"]
 
 turmoil = ["hyli-net/turmoil", "client-sdk/turmoil", "hyli-modules/turmoil"]
 

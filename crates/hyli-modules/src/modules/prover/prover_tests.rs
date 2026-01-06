@@ -83,9 +83,11 @@ impl TxExecutorHandler for TestContract {
     }
 }
 
+type TestAutoProver = AutoProver<TestContract, TxExecutorTestProver<TestContract>>;
+
 async fn setup_with_timeout(
     timeout: u64,
-) -> Result<(NodeState, AutoProver<TestContract>, Arc<NodeApiMockClient>)> {
+) -> Result<(NodeState, TestAutoProver, Arc<NodeApiMockClient>)> {
     let mut node_state = new_node_state().await;
     let register = RegisterContractEffect {
         verifier: "test".into(),
@@ -113,13 +115,11 @@ async fn setup_with_timeout(
     Ok((node_state, auto_prover, api_client))
 }
 
-async fn setup() -> Result<(NodeState, AutoProver<TestContract>, Arc<NodeApiMockClient>)> {
+async fn setup() -> Result<(NodeState, TestAutoProver, Arc<NodeApiMockClient>)> {
     setup_with_timeout(5).await
 }
 
-async fn new_simple_auto_prover(
-    api_client: Arc<NodeApiMockClient>,
-) -> Result<AutoProver<TestContract>> {
+async fn new_simple_auto_prover(api_client: Arc<NodeApiMockClient>) -> Result<TestAutoProver> {
     new_buffering_auto_prover(api_client, 0, 100).await
 }
 
@@ -127,7 +127,7 @@ async fn new_buffering_auto_prover(
     api_client: Arc<NodeApiMockClient>,
     buffer_blocks: u32,
     max_txs_per_proof: usize,
-) -> Result<AutoProver<TestContract>> {
+) -> Result<TestAutoProver> {
     let temp_dir = tempdir()?;
     let data_dir = temp_dir.path().to_path_buf();
     let ctx = Arc::new(AutoProverCtx {
@@ -143,7 +143,7 @@ async fn new_buffering_auto_prover(
     });
 
     let bus = SharedMessageBus::new(BusMetrics::global("default".to_string()));
-    AutoProver::<TestContract>::build(bus.new_handle(), ctx).await
+    TestAutoProver::build(bus.new_handle(), ctx).await
 }
 
 async fn get_txs(api_client: &Arc<NodeApiMockClient>) -> Vec<Transaction> {
@@ -251,9 +251,10 @@ fn read_contract_state(node_state: &NodeState) -> TestContract {
     borsh::from_slice::<TestContract>(&state.0).expect("Failed to decode contract state")
 }
 
-impl<Contract> AutoProver<Contract>
+impl<Contract, Prover> AutoProver<Contract, Prover>
 where
     Contract: TxExecutorHandler + Debug + Clone + Send + Sync + 'static,
+    Prover: ClientSdkProver<Vec<Calldata>> + Send + Sync + 'static,
 {
     async fn handle_node_state_block(&mut self, block: NodeStateBlock) -> Result<()> {
         self.handle_block(block.signed_block.height(), block.stateful_events)
@@ -1295,7 +1296,7 @@ async fn scenario_auto_prover_artificial_middle_blob_failure_setup(
 async fn scenario_auto_prover_artificial_middle_blob_failure(
     mut node_state: NodeState,
     api_client: Arc<NodeApiMockClient>,
-    mut auto_prover: AutoProver<TestContract>,
+    mut auto_prover: TestAutoProver,
 ) -> Result<()> {
     tracing::info!("✨ Block 1");
     let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
@@ -1599,7 +1600,7 @@ async fn test_auto_prover_serialize_and_resume() -> Result<()> {
     });
 
     let bus = SharedMessageBus::new(BusMetrics::global("default".to_string()));
-    let mut auto_prover = AutoProver::<TestContract>::build(bus.new_handle(), ctx.clone())
+    let mut auto_prover = TestAutoProver::build(bus.new_handle(), ctx.clone())
         .await
         .unwrap();
 
@@ -1621,9 +1622,7 @@ async fn test_auto_prover_serialize_and_resume() -> Result<()> {
 
     api_client.set_block_height(BlockHeight(5));
 
-    let mut auto_prover = AutoProver::<TestContract>::build(bus.new_handle(), ctx)
-        .await
-        .unwrap();
+    let mut auto_prover = TestAutoProver::build(bus.new_handle(), ctx).await.unwrap();
 
     // Step 6: Catch up again with all blocks
     for block in more_blocks.iter() {
@@ -1640,5 +1639,103 @@ async fn test_auto_prover_serialize_and_resume() -> Result<()> {
     // Step 7: Check that the contract state is as expected
     let expected = 1 + 2 + 4 + 5;
     assert_eq!(read_contract_state(&node_state).value, expected);
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_auto_prover_contract_update_program_id() -> Result<()> {
+    let (mut node_state, _, api_client) = setup().await?;
+
+    // Setup with initial program_id
+    let initial_program_id = ProgramId(vec![1, 0, 0, 0]);
+    let temp_dir = tempdir()?;
+    let data_dir = temp_dir.path().to_path_buf();
+    let ctx = Arc::new(AutoProverCtx {
+        data_directory: data_dir,
+        prover: Arc::new(TxExecutorTestProver::<TestContract>::new_with_program_id(
+            initial_program_id.clone(),
+        )),
+        contract_name: ContractName("test".into()),
+        api: None,
+        node: api_client.clone(),
+        default_state: TestContract::default(),
+        buffer_blocks: 0,
+        max_txs_per_proof: 100,
+        tx_working_window_size: 100,
+    });
+
+    let bus = SharedMessageBus::new(BusMetrics::global("default".to_string()));
+    let mut auto_prover = TestAutoProver::build(bus.new_handle(), ctx).await?;
+
+    // Verify initial program_id
+    assert_eq!(auto_prover.prover.program_id(), initial_program_id);
+
+    tracing::info!("✨ Block 1: Initial transaction");
+    let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
+    auto_prover.handle_processed(block_1).await?;
+
+    let proofs = get_txs(&api_client).await;
+    assert_eq!(proofs.len(), 1);
+
+    tracing::info!("✨ Block 2: Settle initial transaction");
+    let block_2 = node_state.craft_new_block_and_handle(2, proofs);
+    auto_prover.handle_processed(block_2).await?;
+    assert_eq!(read_contract_state(&node_state).value, 1);
+
+    tracing::info!("✨ Block 3: Contract update with new program_id");
+    let new_program_id = ProgramId(vec![2, 0, 0, 0]);
+
+    // Manually inject a ContractUpdate event
+    let block_3_txs = vec![new_blob_tx(3)];
+    let mut block_3 = node_state.craft_new_block_and_handle(3, block_3_txs);
+
+    // Add ContractUpdate event to the block
+    let contract_update = sdk::Contract {
+        name: ContractName("test".into()),
+        verifier: "test".into(),
+        program_id: new_program_id.clone(),
+        state: TestContract { value: 1 }.commit(),
+        timeout_window: TimeoutWindow::timeout(BlockHeight(5), BlockHeight(5)),
+    };
+
+    Arc::get_mut(&mut block_3.stateful_events)
+        .unwrap()
+        .events
+        .push((
+            TxId(
+                sdk::DataProposalHash("update_proposal".to_string()),
+                sdk::TxHash("contract_update_tx".to_string()),
+            ),
+            StatefulEvent::ContractUpdate(ContractName("test".into()), contract_update),
+        ));
+
+    auto_prover.handle_processed(block_3).await?;
+
+    // Verify program_id has been updated
+    assert_eq!(auto_prover.prover.program_id(), new_program_id);
+    tracing::info!("✅ Program ID successfully updated from {:?} to {:?}",
+        initial_program_id, new_program_id);
+
+    // Continue processing to ensure prover still works
+    let proofs_3 = get_txs(&api_client).await;
+    assert_eq!(proofs_3.len(), 1);
+
+    tracing::info!("✨ Block 4: Settle transaction with new program_id");
+    let block_4 = node_state.craft_new_block_and_handle(4, proofs_3);
+    auto_prover.handle_processed(block_4).await?;
+    assert_eq!(read_contract_state(&node_state).value, 1 + 3);
+
+    tracing::info!("✨ Block 5: Process another transaction");
+    let block_5 = node_state.craft_new_block_and_handle(5, vec![new_blob_tx(5)]);
+    auto_prover.handle_processed(block_5).await?;
+
+    let proofs_5 = get_txs(&api_client).await;
+    assert_eq!(proofs_5.len(), 1);
+
+    tracing::info!("✨ Block 6: Final settlement");
+    let block_6 = node_state.craft_new_block_and_handle(6, proofs_5);
+    auto_prover.handle_processed(block_6).await?;
+    assert_eq!(read_contract_state(&node_state).value, 1 + 3 + 5);
+
     Ok(())
 }
