@@ -364,13 +364,9 @@ pub fn simulation_restart_node(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyho
         let now = sim.elapsed();
 
         // Simulate a restart by isolating the node for a short downtime, then reconnecting.
-        if offline_until.is_none() && now > warmup && now.saturating_sub(last_cycle) > downtime * 2 {
-            for other in ctx
-                .nodes
-                .clone()
-                .iter()
-                .filter(|n| n.conf.id != target)
-            {
+        if offline_until.is_none() && now > warmup && now.saturating_sub(last_cycle) > downtime * 2
+        {
+            for other in ctx.nodes.clone().iter().filter(|n| n.conf.id != target) {
                 sim.hold(target.clone(), other.conf.id.clone());
                 sim.hold(other.conf.id.clone(), target.clone());
             }
@@ -380,12 +376,7 @@ pub fn simulation_restart_node(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyho
 
         if let Some(until) = offline_until {
             if now >= until {
-                for other in ctx
-                    .nodes
-                    .clone()
-                    .iter()
-                    .filter(|n| n.conf.id != target)
-                {
+                for other in ctx.nodes.clone().iter().filter(|n| n.conf.id != target) {
                     sim.release(target.clone(), other.conf.id.clone());
                     sim.release(other.conf.id.clone(), target.clone());
                 }
