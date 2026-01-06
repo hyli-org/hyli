@@ -32,6 +32,7 @@ use super::{
 
 #[derive(Clone)]
 pub struct SyncRequest {
+    pub lane_id: LaneId,
     pub from: Option<DataProposalHash>,
     pub to: DataProposalHash,
     pub validator: ValidatorPublicKey,
@@ -39,8 +40,6 @@ pub struct SyncRequest {
 
 /// Submodule of Mempool dedicated to SyncRequest/SyncReply handling
 pub struct MempoolSync {
-    // TODO: Remove after putting lane id in sync request/sync reply
-    lane_id: LaneId,
     /// Storage handle
     lanes: LanesStorage,
     /// Crypto handle
@@ -48,9 +47,10 @@ pub struct MempoolSync {
     /// Metrics handle
     metrics: MempoolMetrics,
     /// Keeping track of last time we sent a reply to the validator and the data proposal hash
-    by_pubkey_by_dp_hash: HashMap<ValidatorPublicKey, HashMap<DataProposalHash, ThrottleState>>,
+    by_pubkey_by_dp_hash:
+        HashMap<ValidatorPublicKey, HashMap<(LaneId, DataProposalHash), ThrottleState>>,
     /// Map containing per data proposal, which validators are interested in a sync reply
-    todo: HashMap<DataProposalHash, (LaneEntryMetadata, HashSet<ValidatorPublicKey>)>,
+    todo: HashMap<(LaneId, DataProposalHash), (LaneEntryMetadata, HashSet<ValidatorPublicKey>)>,
     /// Network message channel
     net_sender: BusSender<OutboundMessage>,
     /// Chan where Mempool puts received Sync Requests to handle
@@ -65,7 +65,6 @@ struct ThrottleState {
 
 impl MempoolSync {
     pub fn create(
-        lane_id: LaneId,
         lanes: LanesStorage,
         crypto: SharedBlstCrypto,
         metrics: MempoolMetrics,
@@ -73,7 +72,6 @@ impl MempoolSync {
         sync_request_receiver: tokio::sync::mpsc::Receiver<SyncRequest>,
     ) -> MempoolSync {
         MempoolSync {
-            lane_id,
             lanes,
             crypto,
             metrics,
@@ -107,13 +105,16 @@ impl MempoolSync {
     /// - it was emitted a long time ago
     fn should_throttle(
         &self,
+        lane_id: &LaneId,
         validator: &ValidatorPublicKey,
         data_proposal_hash: &DataProposalHash,
     ) -> bool {
-        let Some(data_proposal_record) = self
-            .by_pubkey_by_dp_hash
-            .get(validator)
-            .and_then(|validator_records| validator_records.get(data_proposal_hash))
+        let Some(data_proposal_record) =
+            self.by_pubkey_by_dp_hash
+                .get(validator)
+                .and_then(|validator_records| {
+                    validator_records.get(&(lane_id.clone(), data_proposal_hash.clone()))
+                })
         else {
             return false;
         };
@@ -125,6 +126,7 @@ impl MempoolSync {
     async fn unfold_sync_request_interval(
         &mut self,
         SyncRequest {
+            lane_id,
             from,
             to,
             validator,
@@ -136,7 +138,7 @@ impl MempoolSync {
         }
 
         pin! {
-            let stream = self.lanes.get_entries_metadata_between_hashes(&self.lane_id, from.clone(), Some(to.clone()));
+            let stream = self.lanes.get_entries_metadata_between_hashes(&lane_id, from.clone(), Some(to.clone()));
         };
 
         while let Some(entry) = stream.next().await {
@@ -144,7 +146,7 @@ impl MempoolSync {
                 log_warn!(entry, "Getting entry metada to prepare sync replies")
             {
                 self.todo
-                    .entry(dp_hash)
+                    .entry((lane_id.clone(), dp_hash))
                     .or_insert((metadata, Default::default()))
                     .1
                     .insert(validator.clone());
@@ -162,7 +164,8 @@ impl MempoolSync {
         Ok(())
     }
 
-    /// Try to send replies based on what is stored in the todo hashmap. Every time a reply is sent, it stored a timestamp to throttle upcoming SyncRequests, and remove it from the todo hashmap
+    /// Try to send replies based on what is stored in the todo hashmap. Every time a reply is sent,
+    /// we store a timestamp to throttle upcoming SyncRequests and remove it from the todo hashmap.
     async fn send_replies(&mut self) {
         if self.todo.is_empty() {
             return;
@@ -172,23 +175,23 @@ impl MempoolSync {
 
         std::mem::swap(&mut self.todo, &mut todo);
 
-        for (dp_hash, (metadata, validators)) in todo.into_iter() {
+        for ((lane_id, dp_hash), (metadata, validators)) in todo.into_iter() {
             for validator in validators.into_iter() {
-                if self.should_throttle(&validator, &dp_hash) {
+                if self.should_throttle(&lane_id, &validator, &dp_hash) {
                     debug!(
                         "Throttling reply for DP Hash: {} to: {}",
                         &dp_hash, &validator
                     );
-                    self.metrics
-                        .mempool_sync_throttled(&self.lane_id, &validator);
+                    self.metrics.mempool_sync_throttled(&lane_id, &validator);
                 } else {
                     if let Ok(Some(data_proposal)) = log_error!(
-                        self.lanes.get_dp_by_hash(&self.lane_id, &dp_hash),
+                        self.lanes.get_dp_by_hash(&lane_id, &dp_hash),
                         "Getting data proposal for to prepare a SyncReply"
                     ) {
                         let signed_reply =
                             self.crypto
                                 .sign_msg_with_header(MempoolNetMessage::SyncReply(
+                                    lane_id.clone(),
                                     metadata.clone(),
                                     data_proposal,
                                 ));
@@ -203,11 +206,10 @@ impl MempoolSync {
                             .is_ok()
                             {
                                 debug!("Sent reply for DP Hash: {} to: {}", &dp_hash, &validator);
-                                self.metrics
-                                    .mempool_sync_processed(&self.lane_id, &validator);
+                                self.metrics.mempool_sync_processed(&lane_id, &validator);
                                 // Update last dissemination time only after a successful send so we
                                 // do not throttle retries that failed to go out.
-                                self.record_success(&validator, &dp_hash);
+                                self.record_success(&lane_id, &validator, &dp_hash);
                                 // In case of success, we don't put back this reply in the todo map
                                 continue;
                             }
@@ -218,11 +220,11 @@ impl MempoolSync {
                         "Could not send reply for DP Hash: {} to: {}, retrying later.",
                         &dp_hash, &validator
                     );
-                    self.metrics.mempool_sync_failure(&self.lane_id, &validator);
-                    self.record_failure(&validator, &dp_hash);
+                    self.metrics.mempool_sync_failure(&lane_id, &validator);
+                    self.record_failure(&lane_id, &validator, &dp_hash);
 
                     self.todo
-                        .entry(dp_hash.clone())
+                        .entry((lane_id.clone(), dp_hash.clone()))
                         .or_insert((metadata.clone(), Default::default()))
                         .1
                         .insert(validator);
@@ -231,13 +233,18 @@ impl MempoolSync {
         }
     }
 
-    fn record_success(&mut self, validator: &ValidatorPublicKey, dp_hash: &DataProposalHash) {
+    fn record_success(
+        &mut self,
+        lane_id: &LaneId,
+        validator: &ValidatorPublicKey,
+        dp_hash: &DataProposalHash,
+    ) {
         let now = TimestampMsClock::now();
         self.by_pubkey_by_dp_hash
             .entry(validator.clone())
             .or_default()
             .insert(
-                dp_hash.clone(),
+                (lane_id.clone(), dp_hash.clone()),
                 ThrottleState {
                     last_sent: now,
                     backoff: REPLY_BACKOFF_INITIAL,
@@ -245,19 +252,24 @@ impl MempoolSync {
             );
     }
 
-    fn record_failure(&mut self, validator: &ValidatorPublicKey, dp_hash: &DataProposalHash) {
+    fn record_failure(
+        &mut self,
+        lane_id: &LaneId,
+        validator: &ValidatorPublicKey,
+        dp_hash: &DataProposalHash,
+    ) {
         let now = TimestampMsClock::now();
         let prev_backoff = self
             .by_pubkey_by_dp_hash
             .get(validator)
-            .and_then(|m| m.get(dp_hash))
+            .and_then(|m| m.get(&(lane_id.clone(), dp_hash.clone())))
             .map(|s| s.backoff);
         let backoff = next_backoff(prev_backoff);
         self.by_pubkey_by_dp_hash
             .entry(validator.clone())
             .or_default()
             .insert(
-                dp_hash.clone(),
+                (lane_id.clone(), dp_hash.clone()),
                 ThrottleState {
                     last_sent: now,
                     backoff,
@@ -297,6 +309,7 @@ mod tests {
     struct SyncTestHarness {
         mempool_sync: MempoolSync,
         validator: ValidatorPublicKey,
+        lane_id: LaneId,
         dp_hash: DataProposalHash,
         data_proposal: DataProposal,
         receiver: BusReceiver<OutboundMessage>,
@@ -317,7 +330,6 @@ mod tests {
         let (_sync_request_sender, sync_request_receiver) = tokio::sync::mpsc::channel(8);
 
         let mempool_sync = MempoolSync::create(
-            lane_id,
             lanes,
             Arc::new(crypto),
             metrics,
@@ -328,6 +340,7 @@ mod tests {
         Ok(SyncTestHarness {
             mempool_sync,
             validator,
+            lane_id,
             dp_hash,
             data_proposal,
             receiver,
@@ -344,7 +357,7 @@ mod tests {
                 assert_eq!(&validator_id, expected_validator);
                 match msg {
                     crate::p2p::network::NetMessage::MempoolMessage(msg) => match msg.msg {
-                        MempoolNetMessage::SyncReply(_, dp) => {
+                        MempoolNetMessage::SyncReply(_, _, dp) => {
                             assert_eq!(&dp, expected_dp);
                         }
                         other => panic!("Expected SyncReply message, got {other:?}"),
@@ -400,54 +413,55 @@ mod tests {
     async fn exponential_backoff_doubles_and_caps() -> Result<()> {
         let mut harness = setup_sync_harness()?;
         let v = harness.validator.clone();
+        let lane_id = harness.lane_id.clone();
         let dp = harness.dp_hash.clone();
 
-        harness.mempool_sync.record_failure(&v, &dp);
+        harness.mempool_sync.record_failure(&lane_id, &v, &dp);
         let state = harness
             .mempool_sync
             .by_pubkey_by_dp_hash
             .get(&v)
-            .and_then(|m| m.get(&dp))
+            .and_then(|m| m.get(&(lane_id.clone(), dp.clone())))
             .cloned()
             .expect("state should exist");
         assert_eq!(state.backoff, REPLY_BACKOFF_INITIAL);
 
-        harness.mempool_sync.record_failure(&v, &dp);
+        harness.mempool_sync.record_failure(&lane_id, &v, &dp);
         let state = harness
             .mempool_sync
             .by_pubkey_by_dp_hash
             .get(&v)
-            .and_then(|m| m.get(&dp))
+            .and_then(|m| m.get(&(lane_id.clone(), dp.clone())))
             .cloned()
             .expect("state should exist");
         assert_eq!(state.backoff, Duration::from_secs(2));
 
-        harness.mempool_sync.record_failure(&v, &dp);
+        harness.mempool_sync.record_failure(&lane_id, &v, &dp);
         let state = harness
             .mempool_sync
             .by_pubkey_by_dp_hash
             .get(&v)
-            .and_then(|m| m.get(&dp))
+            .and_then(|m| m.get(&(lane_id.clone(), dp.clone())))
             .cloned()
             .expect("state should exist");
         assert_eq!(state.backoff, Duration::from_secs(4));
 
-        harness.mempool_sync.record_failure(&v, &dp);
+        harness.mempool_sync.record_failure(&lane_id, &v, &dp);
         let state = harness
             .mempool_sync
             .by_pubkey_by_dp_hash
             .get(&v)
-            .and_then(|m| m.get(&dp))
+            .and_then(|m| m.get(&(lane_id.clone(), dp.clone())))
             .cloned()
             .expect("state should exist");
         assert_eq!(state.backoff, REPLY_BACKOFF_MAX);
 
-        harness.mempool_sync.record_success(&v, &dp);
+        harness.mempool_sync.record_success(&lane_id, &v, &dp);
         let state = harness
             .mempool_sync
             .by_pubkey_by_dp_hash
             .get(&v)
-            .and_then(|m| m.get(&dp))
+            .and_then(|m| m.get(&(lane_id.clone(), dp.clone())))
             .cloned()
             .expect("state should exist");
         assert_eq!(state.backoff, REPLY_BACKOFF_INITIAL);
@@ -460,6 +474,7 @@ mod tests {
         let mut harness = setup_sync_harness()?;
         let mut receiver = harness.receiver.resubscribe();
         let request = SyncRequest {
+            lane_id: harness.lane_id.clone(),
             from: None,
             to: harness.dp_hash.clone(),
             validator: harness.validator.clone(),
@@ -492,6 +507,7 @@ mod tests {
         let mut harness = setup_sync_harness()?;
         let mut receiver = harness.receiver.resubscribe();
         let request = SyncRequest {
+            lane_id: harness.lane_id.clone(),
             from: None,
             to: harness.dp_hash.clone(),
             validator: harness.validator.clone(),
@@ -520,7 +536,7 @@ mod tests {
             .entry(harness.validator.clone())
             .or_default()
             .insert(
-                harness.dp_hash.clone(),
+                (harness.lane_id.clone(), harness.dp_hash.clone()),
                 ThrottleState {
                     last_sent: past,
                     backoff: REPLY_BACKOFF_INITIAL,

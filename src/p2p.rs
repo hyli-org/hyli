@@ -277,34 +277,45 @@ impl P2P {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::LaneId;
     use crate::p2p::network::{HeaderSignableData, HeaderSigner};
     use assertables::assert_err;
 
     #[tokio::test]
     async fn test_invalid_net_messages() -> Result<()> {
         let crypto2 = BlstCrypto::new("2").unwrap();
+        let lane_id = LaneId(crypto2.validator_pubkey().clone());
 
         // Test message with timestamp too far in future
-        let mut bad_time_msg =
-            crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(None, None))?;
+        let mut bad_time_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(
+            lane_id.clone(),
+            None,
+            None,
+        ))?;
         bad_time_msg.header.msg.timestamp = TimestampMsClock::now().0 + 7200000; // 2h in future
         assert_err!(P2P::verify_msg_header(bad_time_msg.clone()));
 
         // Test message with timestamp too far in past
-        let mut bad_time_msg =
-            crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(None, None))?;
-        bad_time_msg.header.msg.timestamp = TimestampMsClock::now().0 - 7200000; // 2h in future
+        let mut bad_time_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(
+            lane_id.clone(),
+            None,
+            None,
+        ))?;
+        bad_time_msg.header.msg.timestamp = TimestampMsClock::now().0 - 7200000; // 2h in past
         assert_err!(P2P::verify_msg_header(bad_time_msg.clone()));
 
         // Test message with bad signature
-        let mut bad_sig_msg =
-            crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(None, None))?;
+        let mut bad_sig_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(
+            lane_id.clone(),
+            None,
+            None,
+        ))?;
         bad_sig_msg.header.signature.signature.0 = vec![0, 1, 2, 3]; // Invalid signature bytes
         assert_err!(P2P::verify_msg_header(bad_sig_msg.clone()));
 
         // Test message with mismatched hash
         let mut bad_hash_msg =
-            crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(None, None))?;
+            crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(lane_id, None, None))?;
         bad_hash_msg.header.msg.hash = HeaderSignableData(vec![9, 9, 9]); // Wrong hash
         assert_err!(P2P::verify_msg_header(bad_hash_msg.clone()));
 

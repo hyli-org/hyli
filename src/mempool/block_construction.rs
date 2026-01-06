@@ -570,7 +570,8 @@ pub mod test {
             .await
             .msg
         {
-            MempoolNetMessage::SyncRequest(from, to) => {
+            MempoolNetMessage::SyncRequest(lane_id, from, to) => {
+                assert_eq!(lane_id, lane_id2);
                 assert_eq!(from, None);
                 assert_eq!(to, Some(dp4_hash.clone()));
             }
@@ -673,7 +674,8 @@ pub mod test {
             .await
             .msg
         {
-            MempoolNetMessage::SyncRequest(from, to) => {
+            MempoolNetMessage::SyncRequest(req_lane_id, from, to) => {
+                assert_eq!(req_lane_id, lane_id);
                 assert_eq!(from, None);
                 assert_eq!(to, Some(dp2_hash.clone()));
             }
