@@ -221,7 +221,6 @@ async fn common_main(
         &config.otlp_metrics_endpoint,
         config.otlp_metrics_export_interval_ms,
     )?;
-    logging::spawn_metric_tasks(provider.clone(), &config.otlp_metrics_endpoint);
     opentelemetry::global::set_meter_provider(provider.clone());
 
     #[cfg(feature = "monitoring")]

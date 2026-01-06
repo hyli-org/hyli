@@ -6,7 +6,7 @@ use prometheus::Registry as PrometheusRegistry;
 use std::time::Duration;
 use tracing::info;
 #[cfg(feature = "turmoil")]
-use crate::utils::turmoil_time::{refresh_sim_elapsed, SimulatedTimeExporter};
+use crate::utils::turmoil_time::SimulatedTimeExporter;
 #[cfg(feature = "instrumentation")]
 use opentelemetry::trace::TracerProvider;
 use tracing::level_filters::LevelFilter;
@@ -213,6 +213,13 @@ pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) ->
     Ok(())
 }
 
+// NOTE: The OpenTelemetry SDK's PeriodicReader assigns timestamps using std::time::SystemTime
+// internally and doesn't expose a clock hook. When we run with the `turmoil` feature we need
+// metrics timestamps to be based on TimestampMsClock (simulation time), otherwise the exporter
+// emits wall-clock times and breaks time-sensitive tests/analysis. The simplest and most robust
+// solution is to wrap the PushMetricExporter and rewrite timestamps immediately before export.
+// If we ever replace this with a custom MetricReader that uses a simulated clock, we can remove
+// this wrapper and the rewrite logic.
 #[cfg(feature = "turmoil")]
 fn wrap_metric_exporter<E: PushMetricExporter>(inner: E) -> SimulatedTimeExporter<E> {
     SimulatedTimeExporter::new(inner)
@@ -255,42 +262,22 @@ pub fn build_meter_provider(
             .build()
             .context("starting otlp metrics exporter")?;
 
-        let interval_ms = std::cmp::max(otlp_metrics_export_interval_ms, 1);
+        let _ = otlp_metrics_export_interval_ms;
         let reader =
             opentelemetry_sdk::metrics::PeriodicReader::builder(wrap_metric_exporter(exporter))
-                .with_interval(Duration::from_millis(interval_ms))
+                .with_interval(Duration::from_secs(1))
                 .build();
 
         meter_provider_builder = meter_provider_builder.with_reader(reader);
         info!(
-            "OTLP metrics exporter enabled toward {} ({}ms interval)",
-            otlp_metrics_endpoint, interval_ms
+            "OTLP metrics exporter enabled toward {} (1s interval)",
+            otlp_metrics_endpoint
         );
     } else {
         info!("OTLP metrics exporter disabled (no endpoint configured)");
     }
 
     Ok((meter_provider_builder.build(), registry))
-}
-
-pub fn spawn_metric_tasks(
-    provider: opentelemetry_sdk::metrics::SdkMeterProvider,
-    otlp_metrics_endpoint: &str,
-) {
-    if !otlp_metrics_endpoint.is_empty() {
-        tokio::spawn({
-            let provider = provider.clone();
-            async move {
-                let mut ticker = tokio::time::interval(Duration::from_secs(1));
-                loop {
-                    #[cfg(feature = "turmoil")]
-                    refresh_sim_elapsed();
-                    let _ = ticker.tick().await;
-                    let _ = provider.force_flush();
-                }
-            }
-        });
-    }
 }
 
 #[cfg(feature = "instrumentation")]
