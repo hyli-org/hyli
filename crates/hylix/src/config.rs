@@ -181,9 +181,9 @@ impl Default for DevnetConfig {
             node_image: "ghcr.io/hyli-org/hyli:latest".to_string(),
             wallet_server_image: "ghcr.io/hyli-org/wallet/wallet-server:main".to_string(),
             wallet_ui_image: "ghcr.io/hyli-org/wallet/wallet-ui:main".to_string(),
-            registry_server_image: "ghcr.io/hyli-org/hyli-registry/hyli-registry-server:latest"
+            registry_server_image: "ghcr.io/hyli-org/hyli-registry/zkvm-registry-server:latest"
                 .to_string(),
-            registry_ui_image: "ghcr.io/hyli-org/hyli-registry/hyli-registry-ui:latest".to_string(),
+            registry_ui_image: "ghcr.io/hyli-org/hyli-registry/zkvm-registry-ui:latest".to_string(),
             da_port: 4141,
             node_rust_log: "info".to_string(),
             node_port: 4321,
@@ -341,7 +341,7 @@ impl HylixConfig {
                             if !devnet_table.contains_key("registry_server_image") {
                                 devnet_table.insert(
                                     "registry_server_image".to_string(),
-                                    toml::Value::String("ghcr.io/hyli-org/hyli-registry/hyli-registry-server:latest".to_string()),
+                                    toml::Value::String("ghcr.io/hyli-org/hyli-registry/zkvm-registry-server:latest".to_string()),
                                 );
                             }
                             // Add registry_ui_image if missing
@@ -349,7 +349,7 @@ impl HylixConfig {
                                 devnet_table.insert(
                                     "registry_ui_image".to_string(),
                                     toml::Value::String(
-                                        "ghcr.io/hyli-org/hyli-registry/hyli-registry-ui:latest"
+                                        "ghcr.io/hyli-org/hyli-registry/zkvm-registry-ui:latest"
                                             .to_string(),
                                     ),
                                 );
