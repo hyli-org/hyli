@@ -6,7 +6,7 @@ use crate::logging::{log_error, log_info};
 
 /// Default configuration version
 fn default_config_version() -> String {
-    "0.6.0".to_string()
+    "0.9.0".to_string()
 }
 
 /// Hylix configuration
@@ -65,6 +65,10 @@ pub struct DevnetConfig {
     pub wallet_server_image: String,
     /// Custom image for the wallet UI
     pub wallet_ui_image: String,
+    /// Custom image for the registry server
+    pub registry_server_image: String,
+    /// Custom image for the registry UI
+    pub registry_ui_image: String,
     /// Default port for the local node
     pub node_port: u16,
     /// Default port for the DA server
@@ -81,6 +85,10 @@ pub struct DevnetConfig {
     pub indexer_port: u16,
     /// Default port for the postgres server
     pub postgres_port: u16,
+    /// Default port for the registry server
+    pub registry_server_port: u16,
+    /// Default port for the registry UI
+    pub registry_ui_port: u16,
     /// Auto-start devnet on test command
     pub auto_start: bool,
     /// Custom environment variables for containers
@@ -100,6 +108,8 @@ pub struct ContainerEnvConfig {
     pub wallet_ui: Vec<String>,
     /// Custom environment variables for the postgres container
     pub postgres: Vec<String>,
+    /// Custom environment variables for the registry server container
+    pub registry_server: Vec<String>,
 }
 
 /// Build configuration
@@ -171,6 +181,9 @@ impl Default for DevnetConfig {
             node_image: "ghcr.io/hyli-org/hyli:latest".to_string(),
             wallet_server_image: "ghcr.io/hyli-org/wallet/wallet-server:main".to_string(),
             wallet_ui_image: "ghcr.io/hyli-org/wallet/wallet-ui:main".to_string(),
+            registry_server_image: "ghcr.io/hyli-org/hyli-registry/hyli-registry-server:latest"
+                .to_string(),
+            registry_ui_image: "ghcr.io/hyli-org/hyli-registry/hyli-registry-ui:latest".to_string(),
             da_port: 4141,
             node_rust_log: "info".to_string(),
             node_port: 4321,
@@ -179,6 +192,8 @@ impl Default for DevnetConfig {
             wallet_ui_port: 8080,
             wallet_api_port: 4000,
             wallet_ws_port: 8081,
+            registry_server_port: 9003,
+            registry_ui_port: 8082,
             auto_start: true,
             container_env: ContainerEnvConfig::default(),
         }
@@ -306,6 +321,70 @@ impl HylixConfig {
                         return Err(crate::error::HylixError::config(
                             "Devnet section not found in configuration".to_string(),
                         ));
+                    }
+                }
+            }
+            "0.6.0" => {
+                log_info("Migrating from configuration version 0.6.0 to 0.9.0");
+
+                if let Some(table) = toml_value.as_table_mut() {
+                    // Update version field
+                    table.insert(
+                        "version".to_string(),
+                        toml::Value::String(current_version.clone()),
+                    );
+
+                    // Add registry fields to devnet section
+                    if let Some(devnet) = table.get_mut("devnet") {
+                        if let Some(devnet_table) = devnet.as_table_mut() {
+                            // Add registry_server_image if missing
+                            if !devnet_table.contains_key("registry_server_image") {
+                                devnet_table.insert(
+                                    "registry_server_image".to_string(),
+                                    toml::Value::String("ghcr.io/hyli-org/hyli-registry/hyli-registry-server:latest".to_string()),
+                                );
+                            }
+                            // Add registry_ui_image if missing
+                            if !devnet_table.contains_key("registry_ui_image") {
+                                devnet_table.insert(
+                                    "registry_ui_image".to_string(),
+                                    toml::Value::String(
+                                        "ghcr.io/hyli-org/hyli-registry/hyli-registry-ui:latest"
+                                            .to_string(),
+                                    ),
+                                );
+                            }
+                            // Add registry_server_port if missing
+                            if !devnet_table.contains_key("registry_server_port") {
+                                devnet_table.insert(
+                                    "registry_server_port".to_string(),
+                                    toml::Value::Integer(9003),
+                                );
+                            }
+                            // Add registry_ui_port if missing
+                            if !devnet_table.contains_key("registry_ui_port") {
+                                devnet_table.insert(
+                                    "registry_ui_port".to_string(),
+                                    toml::Value::Integer(8082),
+                                );
+                            }
+                        }
+                    }
+
+                    // Add registry_server to container_env if it exists
+                    if let Some(devnet) = table.get_mut("devnet") {
+                        if let Some(devnet_table) = devnet.as_table_mut() {
+                            if let Some(container_env) = devnet_table.get_mut("container_env") {
+                                if let Some(container_env_table) = container_env.as_table_mut() {
+                                    if !container_env_table.contains_key("registry_server") {
+                                        container_env_table.insert(
+                                            "registry_server".to_string(),
+                                            toml::Value::Array(vec![]),
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
