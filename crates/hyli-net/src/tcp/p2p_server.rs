@@ -369,8 +369,11 @@ where
                             .unwrap_or(true);
                         if should_retry {
                             self.metrics.poison_retry(pubkey.to_string(), canal.clone());
-                            self.metrics
-                                .reconnect_attempt(pubkey.to_string(), canal.clone(), "poison_retry");
+                            self.metrics.reconnect_attempt(
+                                pubkey.to_string(),
+                                canal.clone(),
+                                "poison_retry",
+                            );
                             if let Err(e) =
                                 self.try_start_connection_for_peer(&pubkey, canal.clone())
                             {
@@ -1157,8 +1160,7 @@ where
                     .get(pubkey)
                     .map(|peer| peer.node_connection_data.p2p_public_address.clone())
                     .unwrap_or_else(|| socket_addr.clone());
-                self.metrics
-                    .message_emitted(peer_p2p_addr, canal.clone());
+                self.metrics.message_emitted(peer_p2p_addr, canal.clone());
             }
         }
 
@@ -1365,7 +1367,9 @@ pub mod tests {
 
     fn attrs_match(expected: &[KeyValue], actual: &[KeyValue]) -> bool {
         expected.iter().all(|expect| {
-            actual.iter().any(|kv| kv.key == expect.key && kv.value == expect.value)
+            actual
+                .iter()
+                .any(|kv| kv.key == expect.key && kv.value == expect.value)
         })
     }
 
@@ -1464,18 +1468,8 @@ pub mod tests {
             KeyValue::new("canal", "A"),
         ];
 
-        let tx_count = sum_metric_u64(
-            &metrics.reader,
-            "node1",
-            "p2p_server_message",
-            &tx_attrs,
-        );
-        let rx_count = sum_metric_u64(
-            &metrics.reader,
-            "node2",
-            "p2p_server_message",
-            &rx_attrs,
-        );
+        let tx_count = sum_metric_u64(&metrics.reader, "node1", "p2p_server_message", &tx_attrs);
+        let rx_count = sum_metric_u64(&metrics.reader, "node2", "p2p_server_message", &rx_attrs);
 
         assert!(tx_count >= 1, "expected tx count >= 1, got {tx_count}");
         assert!(rx_count >= 1, "expected rx count >= 1, got {rx_count}");
@@ -1508,14 +1502,12 @@ pub mod tests {
             KeyValue::new("result", "error"),
             KeyValue::new("canal", "A"),
         ];
-        let err_count = sum_metric_u64(
-            &metrics.reader,
-            "node1",
-            "p2p_server_message",
-            &err_attrs,
-        );
+        let err_count = sum_metric_u64(&metrics.reader, "node1", "p2p_server_message", &err_attrs);
 
-        assert!(err_count >= 1, "expected tx error count >= 1, got {err_count}");
+        assert!(
+            err_count >= 1,
+            "expected tx error count >= 1, got {err_count}"
+        );
         Ok(())
     }
 
