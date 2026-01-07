@@ -31,7 +31,7 @@ use super::{
     metrics::MempoolMetrics,
     shared_lanes_storage,
     storage::{LaneEntryMetadata, MetadataOrMissingHash, Storage},
-    LanesStorage, MempoolNetMessage, ValidatorDAG,
+    LanesStorage, MempoolNetMessage,
 };
 
 use crate::model::SharedRunContext;
@@ -56,11 +56,6 @@ pub enum DisseminationEvent {
         data_proposal_hash: DataProposalHash,
         cumul_size: LaneBytesSize,
     },
-    PoDAUpdated {
-        lane_id: LaneId,
-        data_proposal_hash: DataProposalHash,
-        signatures: Vec<ValidatorDAG>,
-    },
     SyncRequestNeeded {
         lane_id: LaneId,
         from: Option<DataProposalHash>,
@@ -71,11 +66,6 @@ pub enum DisseminationEvent {
         from: Option<DataProposalHash>,
         to: Option<DataProposalHash>,
         requester: ValidatorPublicKey,
-    },
-    PoDAReady {
-        lane_id: LaneId,
-        data_proposal_hash: DataProposalHash,
-        signatures: Vec<ValidatorDAG>,
     },
     VoteReceived {
         lane_id: LaneId,
@@ -282,13 +272,6 @@ impl DisseminationManager {
                     self.maybe_disseminate_dp(&lane_id, &data_proposal_hash)?;
                 }
             }
-            DisseminationEvent::PoDAUpdated {
-                lane_id,
-                data_proposal_hash,
-                signatures,
-            } => {
-                self.on_poda_updated(lane_id, data_proposal_hash, signatures);
-            }
             DisseminationEvent::SyncRequestNeeded { lane_id, from, to } => {
                 let Some(to) = to else {
                     debug!("SyncRequestNeeded missing 'to' for lane {}", lane_id);
@@ -307,18 +290,6 @@ impl DisseminationManager {
                         },
                         next_peer_idx: 0,
                     });
-            }
-            DisseminationEvent::PoDAReady {
-                lane_id,
-                data_proposal_hash,
-                signatures,
-            } => {
-                self.on_poda_updated(
-                    lane_id.clone(),
-                    data_proposal_hash.clone(),
-                    signatures.clone(),
-                );
-                self.send_poda_update(lane_id, data_proposal_hash, signatures)?;
             }
             DisseminationEvent::VoteReceived {
                 lane_id,
@@ -653,37 +624,6 @@ impl DisseminationManager {
         true
     }
 
-    fn on_poda_updated(
-        &mut self,
-        lane_id: LaneId,
-        data_proposal_hash: DataProposalHash,
-        signatures: Vec<ValidatorDAG>,
-    ) {
-        for signature in signatures.into_iter() {
-            let entry = (
-                lane_id.clone(),
-                data_proposal_hash.clone(),
-                signature.signature.validator,
-            );
-            self.knowledge
-                .by_dp
-                .insert(entry, EvidenceState::ObservedHas);
-        }
-    }
-
-    fn send_poda_update(
-        &mut self,
-        lane_id: LaneId,
-        data_proposal_hash: DataProposalHash,
-        signatures: Vec<ValidatorDAG>,
-    ) -> Result<()> {
-        self.send_net_message(MempoolNetMessage::PoDAUpdate(
-            lane_id,
-            data_proposal_hash,
-            signatures,
-        ))
-    }
-
     pub(super) fn maybe_disseminate_dp(
         &mut self,
         lane_id: &LaneId,
@@ -782,8 +722,22 @@ impl DisseminationManager {
         };
         data_proposal.hydrate_proofs(proofs);
 
-        let net_message =
-            MempoolNetMessage::DataProposal(lane_id.clone(), data_proposal.hashed(), data_proposal);
+        let expected_msg = (dp_hash.clone(), entry_metadata.cumul_size);
+        let vote = entry_metadata
+            .signatures
+            .iter()
+            .find(|sig| {
+                sig.signature.validator == *self.crypto.validator_pubkey()
+                    && sig.msg == expected_msg
+            })
+            .cloned()
+            .unwrap_or(self.crypto.sign(expected_msg)?);
+        let net_message = MempoolNetMessage::DataProposal(
+            lane_id.clone(),
+            data_proposal.hashed(),
+            data_proposal,
+            vote,
+        );
 
         if filtered_targets.len() == bonded_validators_len && there_are_other_validators {
             self.metrics
