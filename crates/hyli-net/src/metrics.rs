@@ -14,13 +14,23 @@ macro_rules! build {
 pub(crate) struct P2PMetrics {
     ping: Counter<u64>,
     peers: Gauge<u64>,
+    peers_canal: Gauge<u64>,
+    connecting: Gauge<u64>,
     message: Counter<u64>,
     handshake: Counter<u64>,
     handshake_throttle: Counter<u64>,
+    handshake_error: Counter<u64>,
+    connect: Counter<u64>,
+    reconnect_attempt: Counter<u64>,
+    unknown_peer: Counter<u64>,
+    canal_jobs: Gauge<u64>,
+    broadcast_targets: Counter<u64>,
+    broadcast_failures: Counter<u64>,
     poison: Counter<u64>,
     tcp_event: Counter<u64>,
     rehandshake_error: Counter<u64>,
     handshake_latency: Histogram<f64>,
+    connect_latency: Histogram<f64>,
 }
 
 impl P2PMetrics {
@@ -31,20 +41,41 @@ impl P2PMetrics {
         P2PMetrics {
             ping: build!(my_meter, counter, "ping"),
             peers: build!(my_meter, gauge, "peers"),
+            peers_canal: build!(my_meter, gauge, "peers_canal"),
+            connecting: build!(my_meter, gauge, "connecting"),
             message: build!(my_meter, counter, "message"),
             handshake: build!(my_meter, counter, "handshake"),
             handshake_throttle: build!(my_meter, counter, "handshake_throttle"),
+            handshake_error: build!(my_meter, counter, "handshake_error"),
+            connect: build!(my_meter, counter, "connect"),
+            reconnect_attempt: build!(my_meter, counter, "reconnect_attempt"),
+            unknown_peer: build!(my_meter, counter, "unknown_peer"),
+            canal_jobs: build!(my_meter, gauge, "canal_jobs"),
+            broadcast_targets: build!(my_meter, counter, "broadcast_targets"),
+            broadcast_failures: build!(my_meter, counter, "broadcast_failures"),
             poison: build!(my_meter, counter, "poison"),
             tcp_event: build!(my_meter, counter, "tcp_event"),
             rehandshake_error: build!(my_meter, counter, "rehandshake_error"),
             handshake_latency: my_meter
                 .f64_histogram("p2p_server_handshake_latency_seconds")
                 .build(),
+            connect_latency: my_meter
+                .f64_histogram("p2p_server_connect_latency_seconds")
+                .build(),
         }
     }
 
     pub fn peers_snapshot(&mut self, nb: u64) {
         self.peers.record(nb, &[]);
+    }
+
+    pub fn peers_canal_snapshot(&mut self, canal: Canal, nb: u64) {
+        self.peers_canal
+            .record(nb, &[KeyValue::new("canal", canal.to_string())]);
+    }
+
+    pub fn connecting_snapshot(&mut self, nb: u64) {
+        self.connecting.record(nb, &[]);
     }
 
     pub fn message_received(&self, from: String, canal: Canal) {
@@ -100,6 +131,18 @@ impl P2PMetrics {
                 KeyValue::new("to", to),
                 KeyValue::new("direction", "tx"),
                 KeyValue::new("result", "ok"),
+                KeyValue::new("canal", canal.to_string()),
+            ],
+        );
+    }
+
+    pub fn message_send_error(&self, to: String, canal: Canal) {
+        self.message.add(
+            1,
+            &[
+                KeyValue::new("to", to),
+                KeyValue::new("direction", "tx"),
+                KeyValue::new("result", "error"),
                 KeyValue::new("canal", canal.to_string()),
             ],
         );
@@ -168,6 +211,84 @@ impl P2PMetrics {
     pub fn handshake_latency(&self, canal: Canal, seconds: f64) {
         self.handshake_latency
             .record(seconds, &[KeyValue::new("canal", canal.to_string())]);
+    }
+
+    pub fn connect_latency(&self, canal: Canal, seconds: f64) {
+        self.connect_latency
+            .record(seconds, &[KeyValue::new("canal", canal.to_string())]);
+    }
+
+    pub fn connect_attempt(&self, peer: String, canal: Canal) {
+        self.connect.add(
+            1,
+            &[
+                KeyValue::new("peer", peer),
+                KeyValue::new("canal", canal.to_string()),
+                KeyValue::new("result", "attempt"),
+                KeyValue::new("reason", "none"),
+            ],
+        );
+    }
+
+    pub fn connect_result(&self, peer: String, canal: Canal, result: &str, reason: &str) {
+        self.connect.add(
+            1,
+            &[
+                KeyValue::new("peer", peer),
+                KeyValue::new("canal", canal.to_string()),
+                KeyValue::new("result", result.to_string()),
+                KeyValue::new("reason", reason.to_string()),
+            ],
+        );
+    }
+
+    pub fn reconnect_attempt(&self, peer: String, canal: Canal, reason: &str) {
+        self.reconnect_attempt.add(
+            1,
+            &[
+                KeyValue::new("peer", peer),
+                KeyValue::new("canal", canal.to_string()),
+                KeyValue::new("reason", reason.to_string()),
+            ],
+        );
+    }
+
+    pub fn handshake_error(&self, peer: String, canal: Canal, phase: &str, reason: &str) {
+        self.handshake_error.add(
+            1,
+            &[
+                KeyValue::new("peer", peer),
+                KeyValue::new("canal", canal.to_string()),
+                KeyValue::new("phase", phase.to_string()),
+                KeyValue::new("reason", reason.to_string()),
+            ],
+        );
+    }
+
+    pub fn unknown_peer(&self, direction: &str, canal: Canal, reason: &str) {
+        self.unknown_peer.add(
+            1,
+            &[
+                KeyValue::new("direction", direction.to_string()),
+                KeyValue::new("canal", canal.to_string()),
+                KeyValue::new("reason", reason.to_string()),
+            ],
+        );
+    }
+
+    pub fn canal_jobs_snapshot(&self, canal: Canal, nb: u64) {
+        self.canal_jobs
+            .record(nb, &[KeyValue::new("canal", canal.to_string())]);
+    }
+
+    pub fn broadcast_targets(&self, canal: Canal, count: u64) {
+        self.broadcast_targets
+            .add(count, &[KeyValue::new("canal", canal.to_string())]);
+    }
+
+    pub fn broadcast_failures(&self, canal: Canal, count: u64) {
+        self.broadcast_failures
+            .add(count, &[KeyValue::new("canal", canal.to_string())]);
     }
 
     pub fn poison_marked(&self, peer: String, canal: Canal) {

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
 
 use crate::{
-    mempool::{MempoolNetMessage, ProcessedDPEvent},
+    mempool::{DisseminationEvent, MempoolNetMessage, ProcessedDPEvent},
     model::{BlobProofOutput, DataProposal, Hashed, TransactionData},
 };
 
@@ -218,6 +218,11 @@ impl super::Mempool {
                 let (hash, size) =
                     self.lanes
                         .store_data_proposal(&crypto, &lane_id, data_proposal)?;
+                self.send_dissemination_event(DisseminationEvent::DpStored {
+                    lane_id: lane_id.clone(),
+                    data_proposal_hash: hash.clone(),
+                    cumul_size: size,
+                })?;
                 self.send_vote(
                     &lane_id,
                     self.get_lane_operator(&lane_id),

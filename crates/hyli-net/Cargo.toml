@@ -39,6 +39,7 @@ tracing-opentelemetry = { workspace = true, optional = true }
 rand = { workspace = true, features = ["std"] }
 seq-macro = { workspace = true }
 test-log = { workspace = true, features = ["color", "trace"] }
+opentelemetry_sdk = { workspace = true }
 
 [features]
 # default = ["turmoil"]

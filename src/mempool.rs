@@ -23,7 +23,7 @@ use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     fmt::Display,
     ops::{Deref, DerefMut},
     path::PathBuf,
@@ -35,12 +35,15 @@ use tokio::task::JoinSet;
 use verify_tx::DataProposalVerdict;
 // Pick one of the two implementations
 // use storage_memory::LanesStorage;
-use storage_fjall::LanesStorage;
+// Pick one of the two implementations by changing the re-export below.
+// pub use storage_memory::{shared_lanes_storage, LanesStorage};
+pub use storage_fjall::{shared_lanes_storage, LanesStorage};
 use strum_macros::IntoStaticStr;
 use tracing::{debug, info, trace};
 
 pub mod api;
 pub mod block_construction;
+pub mod dissemination;
 pub mod metrics;
 pub mod module;
 pub mod own_lane;
@@ -53,6 +56,8 @@ pub mod verify_tx;
 
 #[cfg(test)]
 pub mod tests;
+
+pub use dissemination::DisseminationEvent;
 
 pub struct LongTasksRuntime(std::mem::ManuallyDrop<tokio::runtime::Runtime>);
 impl Default for LongTasksRuntime {
@@ -178,6 +183,7 @@ struct MempoolBusClient {
     sender(OutboundMessage),
     sender(MempoolBlockEvent),
     sender(MempoolStatusEvent),
+    sender(DisseminationEvent),
     receiver(MsgWithHeader<MempoolNetMessage>),
     receiver(RestApiMessage),
     receiver(TcpServerMessage),
@@ -269,6 +275,7 @@ impl Mempool {
     }
 
     /// Creates a cut with local material on QueryNewCut message reception (from consensus)
+    /// DO NOT make this async without proper deadlock considerations, see below.
     fn handle_querynewcut(&mut self, staking: &mut QueryNewCut) -> Result<Cut> {
         self.metrics.query_new_cut(staking);
         let emptyvec = vec![];
@@ -279,7 +286,11 @@ impl Mempool {
             .unwrap_or(&emptyvec);
 
         let mut cut: Cut = vec![];
-        for lane_id in self.lanes.get_lane_ids() {
+        // We lock in read for the full loop for performance
+        // Because all writes to tips happen in mempool, this should be essentially free.
+        // NB: if this function ever becomes async, we must consider deadlocks here as this is a std::sync::RwLock
+        let lane_tips = self.lanes.lane_tips_read();
+        for lane_id in lane_tips.keys() {
             let previous_entry = previous_cut
                 .iter()
                 .find(|(lane_id_, _, _, _)| lane_id_ == lane_id);
@@ -344,7 +355,6 @@ impl Mempool {
 
                 // Removes all DPs that are not in the new cut, updates lane tip and sends SyncRequest for missing DPs
                 self.clean_and_update_lanes(&cut, &previous_cut)?;
-
                 Ok(())
             }
         }
@@ -410,15 +420,17 @@ impl Mempool {
             lane_id, to
         );
 
-        let Some(to) = to.or(self
-            .lanes
-            .lanes_tip
-            .get(&lane_id)
-            .map(|lane_id| lane_id.0.clone()))
-        else {
+        let Some(to) = to.or(self.lanes.get_lane_hash_tip(&lane_id)) else {
             info!("Nothing to do for this SyncRequest");
             return Ok(());
         };
+
+        self.send_dissemination_event(DisseminationEvent::SyncRequestIn {
+            lane_id: lane_id.clone(),
+            from: from.clone(),
+            to: Some(to.clone()),
+            requester: validator.clone(),
+        })?;
 
         // Transmit sync request to the Mempool submodule, to build a reply
         sync_request_sender
@@ -533,6 +545,12 @@ impl Mempool {
                 .or_default();
 
             lane.push(podas);
+        } else {
+            self.send_dissemination_event(DisseminationEvent::PoDAUpdated {
+                lane_id: lane_id.clone(),
+                data_proposal_hash: data_proposal_hash.clone(),
+                signatures: podas,
+            })?;
         }
 
         Ok(())
@@ -568,38 +586,6 @@ impl Mempool {
     }
 
     #[inline(always)]
-    fn broadcast_net_message(&mut self, net_message: MempoolNetMessage) -> Result<()> {
-        let enum_variant_name: &'static str = (&net_message).into();
-        let error_msg =
-            format!("Broadcasting MempoolNetMessage::{enum_variant_name} msg on the bus");
-        self.bus
-            .send(OutboundMessage::broadcast(
-                self.crypto.sign_msg_with_header(net_message)?,
-            ))
-            .context(error_msg)?;
-        Ok(())
-    }
-
-    #[inline(always)]
-    fn broadcast_only_for_net_message(
-        &mut self,
-        only_for: HashSet<ValidatorPublicKey>,
-        net_message: MempoolNetMessage,
-    ) -> Result<()> {
-        let enum_variant_name: &'static str = (&net_message).into();
-        let error_msg = format!(
-            "Broadcasting MempoolNetMessage::{enum_variant_name} msg only for: {only_for:?} on the bus"
-        );
-        self.bus
-            .send(OutboundMessage::broadcast_only_for(
-                only_for,
-                self.crypto.sign_msg_with_header(net_message)?,
-            ))
-            .context(error_msg)?;
-        Ok(())
-    }
-
-    #[inline(always)]
     fn send_net_message(
         &mut self,
         to: ValidatorPublicKey,
@@ -613,6 +599,14 @@ impl Mempool {
                 self.crypto.sign_msg_with_header(net_message)?,
             ))
             .context(error_msg)?;
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn send_dissemination_event(&mut self, event: DisseminationEvent) -> Result<()> {
+        let enum_variant_name: &'static str = (&event).into();
+        let error_msg = format!("Sending DisseminationEvent::{enum_variant_name} msg on the bus");
+        self.bus.send(event).context(error_msg)?;
         Ok(())
     }
 }
