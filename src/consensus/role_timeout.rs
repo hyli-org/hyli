@@ -144,12 +144,6 @@ impl Consensus {
         received_slot: Slot,
         received_view: View,
     ) -> Result<()> {
-        self.cache_timeout_certificate(
-            received_slot,
-            received_view,
-            received_timeout_certificate.clone(),
-            received_proposal_qc.clone(),
-        );
         self.verify_and_process_tc_ticket(
             received_timeout_certificate,
             &received_proposal_qc,
@@ -157,6 +151,12 @@ impl Consensus {
             received_view,
             None,
         )?;
+        self.cache_timeout_certificate(
+            received_slot,
+            received_view,
+            received_timeout_certificate,
+            received_proposal_qc,
+        );
         Ok(())
     }
 

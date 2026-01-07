@@ -2201,12 +2201,8 @@ async fn autobahn_timeout_split_views_no_tc() {
         message_matches: ConsensusNetMessage::TimeoutCertificate(..)
     };
 
-    node0
-        .consensus_ctx
-        .assert_no_broadcast("No TC from node0");
-    node1
-        .consensus_ctx
-        .assert_no_broadcast("No TC from node1");
+    node0.consensus_ctx.assert_no_broadcast("No TC from node0");
+    node1.consensus_ctx.assert_no_broadcast("No TC from node1");
 
     ConsensusTestCtx::timeout(&mut [&mut node0.consensus_ctx]).await;
 
