@@ -346,10 +346,10 @@ pub mod sp1 {
             Self: Sized,
         {
             let binding = hex::encode(program_id.0.clone());
-            let pk_bytes = hyli_registry::download_elf(&contract_name.0, &binding).await?;
+            let elf = hyli_registry::download_elf(&contract_name.0, &binding).await?;
 
             let local_client = ProverClient::builder().cpu().build();
-            let (pk, _) = sp1_sdk::Prover::setup(&local_client, &pk_bytes);
+            let (pk, _) = sp1_sdk::Prover::setup(&local_client, &elf);
 
             Ok(SP1Prover::new(pk).await)
         }
