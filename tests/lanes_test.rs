@@ -155,25 +155,43 @@ async fn scenario_lane_manager_outside_consensus(mut ctx: E2ECtx, delegate: bool
 
     let indexer_client = ctx.indexer_client();
 
+    let mut tries = 0;
     loop {
         match indexer_client.get_transaction_with_hash(&tx_hash).await {
-            Ok(_) => {
-                break;
-            }
-            Err(_) => {
-                std::thread::sleep(std::time::Duration::from_millis(200));
+            Ok(_) => break,
+            Err(err) => {
+                tries += 1;
+                if tries > 150 {
+                    return Err(anyhow::anyhow!(
+                        "Indexer did not catch up in time for tx {tx_hash}: {err}"
+                    ));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
         }
     }
 
-    assert_eq!(
-        indexer_client
+    let mut tries = 0;
+    loop {
+        match indexer_client
             .get_indexer_contract(&ContractName::new("test"))
             .await
-            .unwrap()
-            .program_id,
-        vec![1, 2, 3]
-    );
+        {
+            Ok(contract) => {
+                assert_eq!(contract.program_id, vec![1, 2, 3]);
+                break;
+            }
+            Err(err) => {
+                tries += 1;
+                if tries > 150 {
+                    return Err(anyhow::anyhow!(
+                        "Indexer did not expose contract in time: {err}"
+                    ));
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+        }
+    }
 
     Ok(())
 }
