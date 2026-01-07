@@ -69,6 +69,7 @@ async fn insert_block(pool: &PgPool, hash: &str, parent_hash: &str, height: i64)
         r#"
         INSERT INTO blocks (hash, parent_hash, height, timestamp, total_txs)
         VALUES ($1, $2, $3, $4, 1)
+        ON CONFLICT (hash) DO NOTHING
         "#,
     )
     .bind(hash)
@@ -145,23 +146,33 @@ async fn insert_settled_tx(
     contract: &ContractName,
     height: i64,
 ) -> Result<(TxHash, String)> {
+    insert_settled_tx_with_index(pool, contract, height, 0).await
+}
+
+async fn insert_settled_tx_with_index(
+    pool: &PgPool,
+    contract: &ContractName,
+    height: i64,
+    index: i32,
+) -> Result<(TxHash, String)> {
     let block_hash = hash(&format!("block-{height}"));
     let parent_hash = hash(&format!("block-{}", height - 1));
     insert_block(pool, &block_hash, &parent_hash, height).await?;
 
-    let tx_hash = TxHash(hash(&format!("settled-{height}")));
+    let tx_hash = TxHash(hash(&format!("settled-{height}-{index}")));
     let parent_dp_hash = hash("dp-settled");
 
     sqlx::query(
         r#"
         INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity)
-        VALUES ($1, $2, 1, 'blob_transaction', 'success', $3, $4, '', 0, 'id')
+        VALUES ($1, $2, 1, 'blob_transaction', 'success', $3, $4, '', $5, 'id')
         "#,
     )
     .bind(&parent_dp_hash)
     .bind(&tx_hash.0)
     .bind(&block_hash)
     .bind(height)
+    .bind(index)
     .execute(pool)
     .await?;
 
@@ -197,23 +208,33 @@ async fn insert_sequenced_tx(
     contract: &ContractName,
     height: i64,
 ) -> Result<(TxHash, BlockHash)> {
+    insert_sequenced_tx_with_index(pool, contract, height, 0).await
+}
+
+async fn insert_sequenced_tx_with_index(
+    pool: &PgPool,
+    contract: &ContractName,
+    height: i64,
+    index: i32,
+) -> Result<(TxHash, BlockHash)> {
     let block_hash = hash(&format!("block-{height}"));
     let parent_hash = hash(&format!("block-{}", height - 1));
     insert_block(pool, &block_hash, &parent_hash, height).await?;
 
-    let tx_hash = TxHash(hash(&format!("sequenced-{height}")));
+    let tx_hash = TxHash(hash(&format!("sequenced-{height}-{index}")));
     let parent_dp_hash = hash("dp-sequenced");
 
     sqlx::query(
         r#"
         INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity)
-        VALUES ($1, $2, 1, 'blob_transaction', 'sequenced', $3, $4, '', 0, 'id')
+        VALUES ($1, $2, 1, 'blob_transaction', 'sequenced', $3, $4, '', $5, 'id')
         "#,
     )
     .bind(&parent_dp_hash)
     .bind(&tx_hash.0)
     .bind(&block_hash)
     .bind(height)
+    .bind(index)
     .execute(pool)
     .await?;
 
@@ -289,8 +310,30 @@ async fn notify_contract(
     Ok(())
 }
 
+async fn expect_no_event(
+    receiver: &mut Receiver<BusEnvelope<ContractListenerEvent>>,
+    duration: Duration,
+) -> Result<()> {
+    match timeout(duration, receiver.recv()).await {
+        Ok(Ok(msg)) => {
+            let event = msg.into_message();
+            let label = match event {
+                ContractListenerEvent::SequencedTx(_, _, _) => "sequenced",
+                ContractListenerEvent::SettledTx(_, _, _, _) => "settled",
+            };
+            anyhow::bail!("unexpected {label} event");
+        }
+        Ok(Err(RecvError::Lagged(skipped))) => {
+            anyhow::bail!("unexpected lagged by {skipped} events")
+        }
+        Ok(Err(RecvError::Closed)) => anyhow::bail!("receiver closed"),
+        Err(_) => Ok(()),
+    }
+}
+
 #[test_log::test(tokio::test)]
 async fn emits_new_tx_on_notifications() -> Result<()> {
+    // Scenario: a sequenced tx arrives and a notification triggers a sequenced event with correct context/blobs.
     let PgTestCtx {
         pool,
         database_url,
@@ -345,6 +388,7 @@ async fn emits_new_tx_on_notifications() -> Result<()> {
 
 #[test_log::test(tokio::test)]
 async fn dispatches_unprocessed_blocks_on_startup() -> Result<()> {
+    // Scenario: pre-existing sequenced and settled txs are dispatched once on startup.
     let PgTestCtx {
         pool,
         database_url,
@@ -414,6 +458,7 @@ async fn dispatches_unprocessed_blocks_on_startup() -> Result<()> {
 
 #[test_log::test(tokio::test)]
 async fn emits_status_updates_for_same_tx_and_new_txs() -> Result<()> {
+    // Scenario: a sequenced tx transitions to each terminal status and emits the expected events.
     let PgTestCtx {
         pool,
         database_url,
@@ -512,7 +557,126 @@ async fn emits_status_updates_for_same_tx_and_new_txs() -> Result<()> {
 }
 
 #[test_log::test(tokio::test)]
+async fn emits_sequenced_events_within_same_block_by_index() -> Result<()> {
+    // Scenario: multiple sequenced txs in the same block are emitted in index order without duplicates.
+    let PgTestCtx {
+        pool,
+        database_url,
+        _container,
+    } = setup_pg().await?;
+    let contract = ContractName("contract_1".to_string());
+
+    let bus = SharedMessageBus::new(BusMetrics::global(
+        "contract-listener-sequenced-index".into(),
+    ));
+    let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
+    let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
+
+    let data_dir = tempdir()?;
+    let conf = ContractListenerConf {
+        database_url: database_url.clone(),
+        data_directory: data_dir.path().to_path_buf(),
+        contracts: HashSet::from([contract.clone()]),
+        poll_interval: Duration::from_secs(5),
+    };
+
+    let mut module = ContractListener::build(bus.new_handle(), conf).await?;
+    let handle = tokio::spawn(async move { module.run().await });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (tx1_hash, _) = insert_sequenced_tx_with_index(&pool, &contract, 7, 0).await?;
+    notify_contract(&pool, &contract, BlockHeight(7)).await?;
+    expect_event(
+        &mut receiver,
+        &tx1_hash,
+        BlockHeight(7),
+        TransactionStatusDb::Sequenced,
+    )
+    .await?;
+
+    let (tx2_hash, _) = insert_sequenced_tx_with_index(&pool, &contract, 7, 1).await?;
+    notify_contract(&pool, &contract, BlockHeight(7)).await?;
+    expect_event(
+        &mut receiver,
+        &tx2_hash,
+        BlockHeight(7),
+        TransactionStatusDb::Sequenced,
+    )
+    .await?;
+    expect_no_event(&mut receiver, Duration::from_millis(200)).await?;
+
+    shutdown
+        .send(ShutdownModule {
+            module: std::any::type_name::<ContractListener>().to_string(),
+        })
+        .expect("failed to send shutdown");
+    let _ = timeout(Duration::from_secs(2), handle).await??;
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn emits_settled_events_within_same_block_by_index() -> Result<()> {
+    // Scenario: multiple settled txs in the same block are emitted in index order without duplicates.
+    let PgTestCtx {
+        pool,
+        database_url,
+        _container,
+    } = setup_pg().await?;
+    let contract = ContractName("contract_1".to_string());
+
+    let bus = SharedMessageBus::new(BusMetrics::global("contract-listener-settled-index".into()));
+    let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
+    let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
+
+    let data_dir = tempdir()?;
+    let conf = ContractListenerConf {
+        database_url: database_url.clone(),
+        data_directory: data_dir.path().to_path_buf(),
+        contracts: HashSet::from([contract.clone()]),
+        poll_interval: Duration::from_secs(5),
+    };
+
+    let mut module = ContractListener::build(bus.new_handle(), conf).await?;
+    let handle = tokio::spawn(async move { module.run().await });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (tx1_hash, _) = insert_settled_tx_with_index(&pool, &contract, 8, 0).await?;
+    notify_contract(&pool, &contract, BlockHeight(8)).await?;
+    expect_event(
+        &mut receiver,
+        &tx1_hash,
+        BlockHeight(8),
+        TransactionStatusDb::Success,
+    )
+    .await?;
+
+    let (tx2_hash, _) = insert_settled_tx_with_index(&pool, &contract, 8, 1).await?;
+    notify_contract(&pool, &contract, BlockHeight(8)).await?;
+    expect_event(
+        &mut receiver,
+        &tx2_hash,
+        BlockHeight(8),
+        TransactionStatusDb::Success,
+    )
+    .await?;
+    expect_no_event(&mut receiver, Duration::from_millis(200)).await?;
+
+    shutdown
+        .send(ShutdownModule {
+            module: std::any::type_name::<ContractListener>().to_string(),
+        })
+        .expect("failed to send shutdown");
+    let _ = timeout(Duration::from_secs(2), handle).await??;
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
 async fn emits_settled_update_below_last_seen_height() -> Result<()> {
+    // Scenario: a settled status for a lower-height tx is still emitted after higher sequenced activity.
     let PgTestCtx {
         pool,
         database_url,
