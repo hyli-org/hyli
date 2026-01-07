@@ -5861,6 +5861,7 @@ dependencies = [
  "hyper 1.8.1",
  "hyper-util",
  "opentelemetry",
+ "opentelemetry_sdk",
  "paste",
  "rand 0.9.2",
  "seq-macro",
