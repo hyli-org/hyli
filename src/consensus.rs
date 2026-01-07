@@ -35,7 +35,7 @@ use staking::state::{Staking, MIN_STAKE};
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::time::Duration;
-use std::{collections::HashMap, default::Default, path::PathBuf};
+use std::{collections::HashMap, collections::VecDeque, default::Default, path::PathBuf};
 use tokio::time::interval;
 use tracing::{debug, info, trace};
 
@@ -153,6 +153,15 @@ pub struct Consensus {
     #[allow(dead_code)]
     config: SharedConf,
     crypto: SharedBlstCrypto,
+    recent_timeout_certificates: VecDeque<TimeoutCertificateCacheEntry>,
+}
+
+#[derive(Clone, Debug)]
+struct TimeoutCertificateCacheEntry {
+    slot: Slot,
+    view: View,
+    timeout_qc: TimeoutQC,
+    tc_kind: TCKind,
 }
 
 impl Deref for Consensus {
@@ -216,6 +225,44 @@ impl Consensus {
                 && r.0.msg.1 == self.bft_round_state.view
                 && &r.0.signature.validator == self.crypto.validator_pubkey()
         })
+    }
+
+    fn cache_timeout_certificate(
+        &mut self,
+        slot: Slot,
+        view: View,
+        timeout_qc: TimeoutQC,
+        tc_kind: TCKind,
+    ) {
+        let cache_size = self.config.consensus.timeout_certificate_cache_size;
+        if cache_size == 0 {
+            return;
+        }
+        self.recent_timeout_certificates
+            .retain(|entry| !(entry.slot == slot && entry.view == view));
+        self.recent_timeout_certificates
+            .push_back(TimeoutCertificateCacheEntry {
+                slot,
+                view,
+                timeout_qc,
+                tc_kind,
+            });
+        while self.recent_timeout_certificates.len() > cache_size {
+            self.recent_timeout_certificates.pop_front();
+        }
+    }
+
+    fn cached_timeout_certificate(&self, slot: Slot, view: View) -> Option<(TimeoutQC, TCKind)> {
+        self.recent_timeout_certificates
+            .iter()
+            .rev()
+            .find_map(|entry| {
+                if entry.slot == slot && entry.view == view {
+                    Some((entry.timeout_qc.clone(), entry.tc_kind.clone()))
+                } else {
+                    None
+                }
+            })
     }
 
     fn round_leader(&self) -> Result<ValidatorPublicKey> {
@@ -600,7 +647,8 @@ impl Consensus {
         self.metrics.commit();
 
         let current_proposal = current_proposal!(self)
-            .context("Cannot emit commit event without a current proposal")?;
+            .context("Cannot emit commit event without a current proposal")?
+            .clone();
 
         self.bus
             .send(ConsensusEvent::CommitConsensusProposal(
@@ -974,6 +1022,7 @@ pub mod test {
                 store,
                 config: Arc::new(conf),
                 crypto: Arc::new(crypto),
+                recent_timeout_certificates: VecDeque::new(),
             }
         }
 

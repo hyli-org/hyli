@@ -144,6 +144,12 @@ impl Consensus {
         received_slot: Slot,
         received_view: View,
     ) -> Result<()> {
+        self.cache_timeout_certificate(
+            received_slot,
+            received_view,
+            received_timeout_certificate.clone(),
+            received_proposal_qc.clone(),
+        );
         self.verify_and_process_tc_ticket(
             received_timeout_certificate,
             &received_proposal_qc,
@@ -210,6 +216,26 @@ impl Consensus {
             msg: (received_slot, received_view, received_parent_hash, _),
             ..
         } = &received_timeout;
+
+        let sender = received_timeout.signature.validator.clone();
+        if sender != *self.crypto.validator_pubkey()
+            && received_slot == &self.bft_round_state.slot
+            && received_view < &self.bft_round_state.view
+        {
+            if let Some((timeout_qc, tc_kind)) =
+                self.cached_timeout_certificate(*received_slot, *received_view)
+            {
+                self.send_net_message(
+                    sender,
+                    ConsensusNetMessage::TimeoutCertificate(
+                        timeout_qc,
+                        tc_kind,
+                        *received_slot,
+                        *received_view,
+                    ),
+                )?;
+            }
+        }
 
         if received_slot < &self.bft_round_state.slot {
             debug!(
@@ -438,6 +464,13 @@ impl Consensus {
                 }
             };
             let ticket = (tqc, tqc_kind);
+
+            self.cache_timeout_certificate(
+                *received_slot,
+                *received_view,
+                ticket.0.clone(),
+                ticket.1.clone(),
+            );
 
             self.store
                 .bft_round_state
