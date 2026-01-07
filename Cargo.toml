@@ -83,7 +83,9 @@ boundless-market = { version = "1.0.0", default-features = false }
 bytemuck = { version = "1.23.1", default-features = false }
 bytes = { version = "1.10.0", default-features = false }
 alloy-signer = { version = "1.0.41", default-features = false }
-alloy-signer-local = { version = "1.0.41", default-features = false, features = ["mnemonic"] }
+alloy-signer-local = { version = "1.0.41", default-features = false, features = [
+  "mnemonic",
+] }
 chrono = { version = "0.4", default-features = false }
 clap = { version = "4.5.48", default-features = false, features = ["derive"] }
 config = { version = "0.15.13", default-features = false }
@@ -93,14 +95,17 @@ derive_more = { version = "2.0.1", default-features = false }
 dhat = { version = "0.3.3", default-features = false }
 fjall = { version = "2.11.1" }
 futures = { version = "0.3.31" }
-google-cloud-storage = { version = "0.24.0" }
+google-cloud-storage = { version = "1.5.0" }
 hex = { version = "0.4.3" }
 http-body-util = { version = "0.1.3", default-features = false }
 hyper = { version = "1.6.0", default-features = false }
 hyper-util = { version = "0.1.18", default-features = false }
 indexmap = { version = "2.11.0", default-features = false }
 keyring = { version = "3", default-features = false }
-k256 = { version = "0.13", default-features = false, features = ["ecdsa", "arithmetic"] }
+k256 = { version = "0.13", default-features = false, features = [
+  "ecdsa",
+  "arithmetic",
+] }
 mockall = { version = "0.13.0", default-features = false }
 once_cell = { version = "1.19.0", default-features = false }
 opentelemetry = { version = "0.28.0" }
