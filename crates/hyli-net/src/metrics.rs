@@ -236,8 +236,8 @@ impl P2PMetrics {
             &[
                 KeyValue::new("peer", peer),
                 KeyValue::new("canal", canal.to_string()),
-                KeyValue::new("result", result),
-                KeyValue::new("reason", reason),
+                KeyValue::new("result", result.to_string()),
+                KeyValue::new("reason", reason.to_string()),
             ],
         );
     }
@@ -248,7 +248,7 @@ impl P2PMetrics {
             &[
                 KeyValue::new("peer", peer),
                 KeyValue::new("canal", canal.to_string()),
-                KeyValue::new("reason", reason),
+                KeyValue::new("reason", reason.to_string()),
             ],
         );
     }
@@ -259,8 +259,8 @@ impl P2PMetrics {
             &[
                 KeyValue::new("peer", peer),
                 KeyValue::new("canal", canal.to_string()),
-                KeyValue::new("phase", phase),
-                KeyValue::new("reason", reason),
+                KeyValue::new("phase", phase.to_string()),
+                KeyValue::new("reason", reason.to_string()),
             ],
         );
     }
@@ -269,9 +269,9 @@ impl P2PMetrics {
         self.unknown_peer.add(
             1,
             &[
-                KeyValue::new("direction", direction),
+                KeyValue::new("direction", direction.to_string()),
                 KeyValue::new("canal", canal.to_string()),
-                KeyValue::new("reason", reason),
+                KeyValue::new("reason", reason.to_string()),
             ],
         );
     }

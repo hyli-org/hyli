@@ -267,7 +267,7 @@ where
                         continue
                     };
                     // TODO: handle errors?
-                    self.actually_send_to(pubkeys, canal, msg, headers).await;
+                    self.actually_send_to(pubkeys, &canal, msg, headers).await;
                     if let Some(jobs) = self.canal_jobs.get(&canal) {
                         self.metrics
                             .canal_jobs_snapshot(canal.clone(), jobs.len() as u64);
@@ -1119,7 +1119,7 @@ where
     async fn actually_send_to(
         &mut self,
         only_for: HashSet<ValidatorPublicKey>,
-        canal: Canal,
+        canal: &Canal,
         msg: Vec<u8>,
         headers: TcpHeaders,
     ) -> HashMap<ValidatorPublicKey, anyhow::Error> {
@@ -1128,7 +1128,7 @@ where
             .iter()
             .filter_map(|(pubkey, peer)| {
                 if only_for.contains(pubkey) {
-                    peer.canals.get(&canal).and_then(|socket| {
+                    peer.canals.get(canal).and_then(|socket| {
                         socket
                             .poisoned_at
                             .is_none()
@@ -1170,7 +1170,7 @@ where
                     .map(|peer| peer.node_connection_data.p2p_public_address.clone())
                     .unwrap_or_else(|| k.clone());
                 self.metrics
-                    .message_send_error(peer_p2p_addr, canal.clone());
+                    .message_send_error(peer_p2p_addr.clone(), canal.clone());
                 self.metrics.reconnect_attempt(
                     peer_p2p_addr.clone(),
                     canal.clone(),
@@ -1499,7 +1499,7 @@ pub mod tests {
 
         let msg = borsh::to_vec(&P2PTcpMessage::Data(TestMessage("boom".to_string())))?;
         let send_errors = p2p_server1
-            .actually_send_to(HashSet::from_iter(vec![peer_pubkey]), canal.clone(), msg, vec![])
+            .actually_send_to(HashSet::from_iter(vec![peer_pubkey]), &canal, msg, vec![])
             .await;
         assert!(!send_errors.is_empty(), "expected broadcast send errors");
 
