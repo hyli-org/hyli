@@ -9,8 +9,10 @@ use std::sync::Arc;
 use super::*;
 use crate::bus::metrics::BusMetrics;
 use crate::bus::SharedMessageBus;
+use crate::mempool::dissemination::DisseminationManager;
 use crate::model;
 use crate::p2p::network::NetMessage;
+use crate::utils::conf::Conf;
 use crate::{
     bus::dont_use_this::get_receiver,
     p2p::network::{HeaderSigner, MsgWithHeader},
@@ -20,7 +22,10 @@ use assertables::assert_ok;
 use hyli_contract_sdk::StateCommitment;
 use hyli_crypto::BlstCrypto;
 use hyli_modules::bus::BusReceiver;
+use hyli_modules::modules::BuildApiContextInner;
 use hyli_modules::modules::Module;
+use std::path::{Path, PathBuf};
+use tokio::sync::broadcast::error::TryRecvError;
 use utils::TimestampMs;
 
 pub struct MempoolTestCtx {
@@ -29,35 +34,67 @@ pub struct MempoolTestCtx {
     pub mempool_sync_request_sender: tokio::sync::mpsc::Sender<SyncRequest>,
     pub mempool_event_receiver: BusReceiver<MempoolBlockEvent>,
     pub mempool_status_event_receiver: BusReceiver<MempoolStatusEvent>,
+    pub dissemination_event_receiver: BusReceiver<DisseminationEvent>,
     pub mempool: Mempool,
+    pub dissemination_manager: DisseminationManager,
+    pub data_dir: PathBuf,
 }
 
 impl MempoolTestCtx {
-    pub async fn build_mempool(shared_bus: &SharedMessageBus, crypto: BlstCrypto) -> Mempool {
-        let tmp_dir = tempfile::tempdir().unwrap().keep();
-        let lanes = LanesStorage::new(&tmp_dir, BTreeMap::default()).unwrap();
+    async fn build_mempool(
+        shared_bus: &SharedMessageBus,
+        crypto: BlstCrypto,
+        data_dir: &Path,
+    ) -> (Mempool, DisseminationManager) {
+        let lanes = shared_lanes_storage(data_dir).unwrap();
         let bus = MempoolBusClient::new_from_bus(shared_bus.new_handle()).await;
 
+        let conf = Conf::new(
+            vec![],
+            Some(data_dir.to_string_lossy().to_string()),
+            Some(false),
+        );
+        let ctx = crate::model::SharedRunContext {
+            config: conf.unwrap_or_default().into(),
+            api: Arc::new(BuildApiContextInner::default()),
+            crypto: crypto.clone().into(),
+            start_height: None,
+        };
+
+        // TODO: split module from functionality?
+        let dissemination_manager =
+            super::dissemination::DisseminationManager::build(shared_bus.new_handle(), ctx)
+                .await
+                .expect("Failed to build DisseminationManager");
+
         // Initialize Mempool
-        Mempool {
-            bus,
-            file: None,
-            conf: SharedConf::default(),
-            crypto: Arc::new(crypto),
-            metrics: MempoolMetrics::global("id".to_string()),
-            lanes,
-            inner: MempoolStore::default(),
-        }
+        (
+            Mempool {
+                bus,
+                file: None,
+                conf: SharedConf::default(),
+                crypto: Arc::new(crypto),
+                metrics: MempoolMetrics::global("id".to_string()),
+                lanes,
+                inner: MempoolStore::default(),
+            },
+            dissemination_manager,
+        )
     }
 
-    pub async fn new(name: &str) -> Self {
-        let crypto = BlstCrypto::new(name).unwrap();
-        let shared_bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
+    pub async fn new_with_shared_bus(
+        name: &str,
+        shared_bus: &SharedMessageBus,
+        crypto: BlstCrypto,
+    ) -> Self {
+        let out_receiver = get_receiver::<OutboundMessage>(shared_bus).await;
+        let mempool_event_receiver = get_receiver::<MempoolBlockEvent>(shared_bus).await;
+        let mempool_status_event_receiver = get_receiver::<MempoolStatusEvent>(shared_bus).await;
+        let dissemination_event_receiver = get_receiver::<DisseminationEvent>(shared_bus).await;
 
-        let out_receiver = get_receiver::<OutboundMessage>(&shared_bus).await;
-        let mempool_event_receiver = get_receiver::<MempoolBlockEvent>(&shared_bus).await;
-        let mempool_status_event_receiver = get_receiver::<MempoolStatusEvent>(&shared_bus).await;
-        let mempool = Self::build_mempool(&shared_bus, crypto).await;
+        let data_dir = tempfile::tempdir().unwrap().keep();
+        let (mempool, dissemination_manager) =
+            Self::build_mempool(shared_bus, crypto, &data_dir).await;
         let mempool_sync_request_sender = mempool.start_mempool_sync();
 
         MempoolTestCtx {
@@ -66,8 +103,17 @@ impl MempoolTestCtx {
             mempool_sync_request_sender,
             mempool_event_receiver,
             mempool_status_event_receiver,
+            dissemination_event_receiver,
             mempool,
+            dissemination_manager,
+            data_dir,
         }
+    }
+
+    pub async fn new(name: &str) -> Self {
+        let crypto = BlstCrypto::new(name).unwrap();
+        let shared_bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
+        Self::new_with_shared_bus(name, &shared_bus, crypto).await
     }
 
     pub fn setup_node(&mut self, cryptos: &[BlstCrypto]) {
@@ -99,6 +145,16 @@ impl MempoolTestCtx {
             .staking
             .bond(pubkey.clone())
             .expect("cannot bond trusted validator");
+
+        self.dissemination_manager
+            .on_consensus_event(ConsensusEvent::CommitConsensusProposal(
+                CommittedConsensusProposal {
+                    staking: self.mempool.staking.clone(),
+                    consensus_proposal: ConsensusProposal::default(),
+                    certificate: AggregateSignature::default(),
+                },
+            ))
+            .expect("update dissemination staking");
     }
 
     pub fn sign_data<T: borsh::BorshSerialize>(&self, data: T) -> Result<SignedByValidator<T>> {
@@ -121,25 +177,37 @@ impl MempoolTestCtx {
             .unwrap()
     }
 
-    pub async fn timer_tick(&mut self) -> Result<bool> {
+    pub async fn timer_tick(&mut self) -> Result<()> {
         let Ok(true) = self.mempool.prepare_new_data_proposal() else {
             debug!("No new data proposal to prepare");
-            return self.mempool.disseminate_data_proposals(None).await;
+            return self.disseminate_owned_lanes().await;
         };
 
-        let (dp_hash, dp) = self
+        let (_dp_hash, dp) = self
             .mempool
             .own_data_proposal_in_preparation
             .join_next()
             .await
             .context("join next data proposal in preparation")??;
 
-        Ok(self.mempool.resume_new_data_proposal(dp, dp_hash).await?
-            || self.mempool.disseminate_data_proposals(None).await?)
+        self.mempool.resume_new_data_proposal(dp).await?;
+
+        self.disseminate_owned_lanes().await
     }
 
-    pub async fn disseminate_timer_tick(&mut self) -> Result<bool> {
-        self.mempool.redisseminate_oldest_data_proposal().await
+    pub async fn disseminate_owned_lanes(&mut self) -> Result<()> {
+        self.dissemination_manager
+            .add_owned_lane(self.mempool.own_lane_id());
+        self.dissemination_manager.redisseminate_owned_lanes().await
+    }
+
+    pub fn maybe_disseminate_dp(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+    ) -> Result<()> {
+        self.dissemination_manager
+            .maybe_disseminate_dp(lane_id, dp_hash)
     }
 
     pub async fn handle_poda_update(
@@ -268,7 +336,8 @@ impl MempoolTestCtx {
                 .into_message();
 
             match rec {
-                OutboundMessage::BroadcastMessage(net_msg) => {
+                OutboundMessage::BroadcastMessage(net_msg)
+                | OutboundMessage::BroadcastMessageOnlyFor(_, net_msg) => {
                     if let NetMessage::MempoolMessage(msg) = net_msg {
                         msg
                     } else {
@@ -293,21 +362,11 @@ impl MempoolTestCtx {
     }
 
     pub fn current_hash(&self, lane_id: &LaneId) -> Option<DataProposalHash> {
-        self.mempool
-            .lanes
-            .lanes_tip
-            .get(lane_id)
-            .cloned()
-            .map(|(h, _)| h)
+        self.mempool.lanes.get_lane_hash_tip(lane_id)
     }
 
     pub fn current_size_of(&self, lane_id: &LaneId) -> Option<LaneBytesSize> {
-        self.mempool
-            .lanes
-            .lanes_tip
-            .get(lane_id)
-            .cloned()
-            .map(|(_, s)| s)
+        self.mempool.lanes.get_lane_size_tip(lane_id)
     }
 
     pub fn last_lane_entry(
@@ -393,11 +452,34 @@ impl MempoolTestCtx {
     }
 
     pub fn process_new_data_proposal(&mut self, dp: DataProposal) -> Result<()> {
-        self.mempool.lanes.store_data_proposal(
+        let (dp_hash, cumul_size) = self.mempool.lanes.store_data_proposal(
             &self.mempool.crypto,
             &LaneId(self.mempool.crypto.validator_pubkey().clone()),
             dp,
         )?;
+        let lane_id = LaneId(self.mempool.crypto.validator_pubkey().clone());
+        self.mempool
+            .send_dissemination_event(DisseminationEvent::NewDpCreated {
+                lane_id: lane_id.clone(),
+                data_proposal_hash: dp_hash.clone(),
+            })?;
+        self.mempool
+            .send_dissemination_event(DisseminationEvent::DpStored {
+                lane_id,
+                data_proposal_hash: dp_hash,
+                cumul_size,
+            })?;
+        Ok(())
+    }
+
+    pub fn process_dissemination_events(&mut self) -> Result<()> {
+        loop {
+            match self.dissemination_event_receiver.try_recv() {
+                Ok(event) => self.dissemination_manager.on_event(event.into_message())?,
+                Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
+                Err(TryRecvError::Lagged(_)) => continue,
+            }
+        }
         Ok(())
     }
 
