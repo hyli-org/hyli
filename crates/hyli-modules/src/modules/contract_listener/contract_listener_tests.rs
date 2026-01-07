@@ -16,6 +16,7 @@ use anyhow::Result;
 use hyli_model::{api::TransactionStatusDb, BlobIndex, BlockHeight, ContractName, TxHash};
 use sdk::{BlockHash, ConsensusProposalHash};
 use sqlx::{postgres::PgPoolOptions, types::chrono::Utc, PgPool};
+use tempfile::tempdir;
 use testcontainers_modules::{
     postgres::Postgres,
     testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
@@ -103,18 +104,30 @@ async fn expect_event(
     let mut seen: Vec<String> = Vec::new();
     let wait = timeout(Duration::from_secs(2), async {
         loop {
-            let ContractListenerEvent::NewTx(seen_hash, _, ctx, status) =
-                drain_event(receiver).await?;
-            if &seen_hash == expected_hash
-                && ctx.block_height == expected_height
-                && status == expected_status
-            {
-                return Ok(());
+            let event = drain_event(receiver).await?;
+            match event {
+                ContractListenerEvent::SequencedTx(seen_hash, _blobs, ctx) => {
+                    if expected_status == TransactionStatusDb::Sequenced
+                        && &seen_hash == expected_hash
+                        && ctx.block_height == expected_height
+                    {
+                        return Ok(());
+                    }
+                    seen.push(format!("sequenced:{}:{}", seen_hash.0, ctx.block_height.0));
+                }
+                ContractListenerEvent::SettledTx(seen_hash, _blobs, ctx, status) => {
+                    if &seen_hash == expected_hash
+                        && ctx.block_height == expected_height
+                        && status == expected_status
+                    {
+                        return Ok(());
+                    }
+                    seen.push(format!(
+                        "settled:{}:{}:{:?}",
+                        seen_hash.0, ctx.block_height.0, status
+                    ));
+                }
             }
-            seen.push(format!(
-                "{}:{}:{:?}",
-                seen_hash.0, ctx.block_height.0, status
-            ));
         }
     })
     .await;
@@ -246,6 +259,22 @@ async fn update_tx_status(
     Ok(())
 }
 
+async fn update_tx_status_in_place(pool: &PgPool, tx_hash: &TxHash, status: &str) -> Result<()> {
+    sqlx::query(
+        r#"
+        UPDATE transactions
+        SET transaction_status = $1::transaction_status
+        WHERE tx_hash = $2
+        "#,
+    )
+    .bind(status)
+    .bind(&tx_hash.0)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 async fn notify_contract(
     pool: &PgPool,
     contract: &ContractName,
@@ -275,8 +304,10 @@ async fn emits_new_tx_on_notifications() -> Result<()> {
     > = get_receiver::<ContractListenerEvent>(&bus).await;
     let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
 
+    let data_dir = tempdir()?;
     let conf = ContractListenerConf {
         database_url: database_url.clone(),
+        data_directory: data_dir.path().to_path_buf(),
         contracts: HashSet::from([contract.clone()]),
         poll_interval: Duration::from_secs(5),
     };
@@ -287,13 +318,17 @@ async fn emits_new_tx_on_notifications() -> Result<()> {
     let (tx_hash, block_hash) = insert_sequenced_tx(&pool, &contract, 2).await?;
     notify_contract(&pool, &contract, BlockHeight(2)).await?;
 
-    let ContractListenerEvent::NewTx(seen_hash, blobs, ctx, status) =
-        drain_event(&mut receiver).await?;
+    let event = drain_event(&mut receiver).await?;
+    let (seen_hash, blobs, ctx) = match event {
+        ContractListenerEvent::SequencedTx(seen_hash, blobs, ctx) => (seen_hash, blobs, ctx),
+        ContractListenerEvent::SettledTx(_, _, _, _) => {
+            anyhow::bail!("unexpected settled event for sequenced notification")
+        }
+    };
 
     assert_eq!(seen_hash, tx_hash);
     assert_eq!(ctx.block_hash, block_hash);
     assert_eq!(ctx.block_height, BlockHeight(2));
-    assert_eq!(status, TransactionStatusDb::Sequenced);
     assert_eq!(blobs.len(), 1);
     assert_eq!(blobs[0].0, BlobIndex(0));
     assert_eq!(blobs[0].1.contract_name, contract);
@@ -323,8 +358,10 @@ async fn dispatches_unprocessed_blocks_on_startup() -> Result<()> {
     let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
     let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
 
+    let data_dir = tempdir()?;
     let conf = ContractListenerConf {
         database_url: database_url.clone(),
+        data_directory: data_dir.path().to_path_buf(),
         contracts: HashSet::from([contract.clone()]),
         poll_interval: Duration::from_secs(5),
     };
@@ -332,27 +369,38 @@ async fn dispatches_unprocessed_blocks_on_startup() -> Result<()> {
     let mut module = ContractListener::build(bus.new_handle(), conf).await?;
     let handle = tokio::spawn(async move { module.run().await });
 
-    // Settled tx
-    let ContractListenerEvent::NewTx(seen_hash, blobs, ctx, status) =
-        drain_event(&mut receiver).await?;
+    let events = vec![
+        drain_event(&mut receiver).await?,
+        drain_event(&mut receiver).await?,
+    ];
 
-    assert_eq!(seen_hash, settled_tx_hash);
-    assert_eq!(ctx.block_height, BlockHeight(1));
-    assert_eq!(status, TransactionStatusDb::Success);
-    assert_eq!(blobs.len(), 1);
-    assert_eq!(blobs[0].0, BlobIndex(0));
-    assert_eq!(blobs[0].1.contract_name, contract);
+    let mut saw_settled = false;
+    let mut saw_sequenced = false;
 
-    // Sequenced tx
-    let ContractListenerEvent::NewTx(seen_hash, blobs, ctx, status) =
-        drain_event(&mut receiver).await?;
+    for event in events {
+        match event {
+            ContractListenerEvent::SequencedTx(seen_hash, blobs, ctx) => {
+                assert_eq!(seen_hash, sequenced_tx_hash);
+                assert_eq!(ctx.block_height, BlockHeight(2));
+                assert_eq!(blobs.len(), 1);
+                assert_eq!(blobs[0].0, BlobIndex(0));
+                assert_eq!(blobs[0].1.contract_name, contract);
+                saw_sequenced = true;
+            }
+            ContractListenerEvent::SettledTx(seen_hash, blobs, ctx, status) => {
+                assert_eq!(status, TransactionStatusDb::Success);
+                assert_eq!(seen_hash, settled_tx_hash);
+                assert_eq!(ctx.block_height, BlockHeight(1));
+                assert_eq!(blobs.len(), 1);
+                assert_eq!(blobs[0].0, BlobIndex(0));
+                assert_eq!(blobs[0].1.contract_name, contract);
+                saw_settled = true;
+            }
+        }
+    }
 
-    assert_eq!(seen_hash, sequenced_tx_hash);
-    assert_eq!(ctx.block_height, BlockHeight(2));
-    assert_eq!(status, TransactionStatusDb::Sequenced);
-    assert_eq!(blobs.len(), 1);
-    assert_eq!(blobs[0].0, BlobIndex(0));
-    assert_eq!(blobs[0].1.contract_name, contract);
+    assert!(saw_settled, "missing settled tx event on startup");
+    assert!(saw_sequenced, "missing sequenced tx event on startup");
 
     shutdown
         .send(ShutdownModule {
@@ -377,8 +425,10 @@ async fn emits_status_updates_for_same_tx_and_new_txs() -> Result<()> {
     let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
     let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
 
+    let data_dir = tempdir()?;
     let conf = ContractListenerConf {
         database_url: database_url.clone(),
+        data_directory: data_dir.path().to_path_buf(),
         contracts: HashSet::from([contract.clone()]),
         poll_interval: Duration::from_secs(5),
     };
@@ -448,6 +498,65 @@ async fn emits_status_updates_for_same_tx_and_new_txs() -> Result<()> {
         &tx3_hash,
         BlockHeight(6),
         TransactionStatusDb::TimedOut,
+    )
+    .await?;
+
+    shutdown
+        .send(ShutdownModule {
+            module: std::any::type_name::<ContractListener>().to_string(),
+        })
+        .expect("failed to send shutdown");
+    let _ = timeout(Duration::from_secs(2), handle).await??;
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn emits_settled_update_below_last_seen_height() -> Result<()> {
+    let PgTestCtx {
+        pool,
+        database_url,
+        _container,
+    } = setup_pg().await?;
+    let contract = ContractName("contract_1".to_string());
+
+    let bus = SharedMessageBus::new(BusMetrics::global(
+        "contract-listener-settled-backfill".into(),
+    ));
+    let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
+    let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
+
+    let data_dir = tempdir()?;
+    let conf = ContractListenerConf {
+        database_url: database_url.clone(),
+        data_directory: data_dir.path().to_path_buf(),
+        contracts: HashSet::from([contract.clone()]),
+        poll_interval: Duration::from_secs(5),
+    };
+
+    let mut module = ContractListener::build(bus.new_handle(), conf).await?;
+    let handle = tokio::spawn(async move { module.run().await });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (high_hash, _) = insert_sequenced_tx(&pool, &contract, 10).await?;
+    notify_contract(&pool, &contract, BlockHeight(10)).await?;
+    expect_event(
+        &mut receiver,
+        &high_hash,
+        BlockHeight(10),
+        TransactionStatusDb::Sequenced,
+    )
+    .await?;
+
+    let (low_hash, _) = insert_sequenced_tx(&pool, &contract, 3).await?;
+    update_tx_status_in_place(&pool, &low_hash, "success").await?;
+    notify_contract(&pool, &contract, BlockHeight(11)).await?;
+    expect_event(
+        &mut receiver,
+        &low_hash,
+        BlockHeight(3),
+        TransactionStatusDb::Success,
     )
     .await?;
 
