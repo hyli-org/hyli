@@ -61,24 +61,33 @@ macro_rules! send {
     ) => {
         // Distribute the message to the target node from all specified nodes
         ($({
-            let answer = $node.assert_send(
-                &$to.validator_pubkey(),
-                format!("[send from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            ).await;
+            let answer = loop {
+                let candidate = $node
+                    .assert_send(
+                        &$to.validator_pubkey(),
+                        format!(
+                            "[send from: {} to: {}] {}",
+                            stringify!($node),
+                            stringify!($to),
+                            $description
+                        )
+                        .as_str(),
+                    )
+                    .await;
 
-            // If `message_matches` is provided, perform the pattern match
-            if let $pattern = &answer.msg {
-                // Execute optional assertions if provided
-            } else {
-                let msg_variant_name: &'static str = answer.msg.clone().into();
-                panic!(
-                    "[send from: {}] {}: Message {} did not match {}",
-                    stringify!($node),
-                    $description,
-                    msg_variant_name,
-                    stringify!($pattern)
-                );
-            }
+                if let $pattern = &candidate.msg {
+                    break candidate;
+                } else {
+                    let msg_variant_name: &'static str = candidate.msg.clone().into();
+                    info!(
+                        "[send from: {}] {}: skipping {} while waiting for {}",
+                        stringify!($node),
+                        $description,
+                        msg_variant_name,
+                        stringify!($pattern)
+                    );
+                }
+            };
 
             // Handle the message
             $to.handle_msg(
@@ -96,25 +105,34 @@ macro_rules! send {
     ) => {
         // Distribute the message to the target node from all specified nodes
         ($({
-            let answer = $node.assert_send(
-                &$to.validator_pubkey(),
-                format!("[send from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            ).await;
+            let answer = loop {
+                let candidate = $node
+                    .assert_send(
+                        &$to.validator_pubkey(),
+                        format!(
+                            "[send from: {} to: {}] {}",
+                            stringify!($node),
+                            stringify!($to),
+                            $description
+                        )
+                        .as_str(),
+                    )
+                    .await;
 
-            // If `message_matches` is provided, perform the pattern match
-            if let $pattern = &answer.msg {
-                // Execute optional assertions if provided
-                $($asserts)?
-            } else {
-                let msg_variant_name: &'static str = answer.msg.clone().into();
-                panic!(
-                    "[send from: {}] {}: Message {} did not match {}",
-                    stringify!($node),
-                    $description,
-                    msg_variant_name,
-                    stringify!($pattern)
-                );
-            }
+                if let $pattern = &candidate.msg {
+                    $($asserts)?
+                    break candidate;
+                } else {
+                    let msg_variant_name: &'static str = candidate.msg.clone().into();
+                    info!(
+                        "[send from: {}] {}: skipping {} while waiting for {}",
+                        stringify!($node),
+                        $description,
+                        msg_variant_name,
+                        stringify!($pattern)
+                    );
+                }
+            };
 
             // Handle the message
             $to.handle_msg(

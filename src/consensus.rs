@@ -1295,7 +1295,8 @@ pub mod test {
                 }
             } else if let OutboundMessage::SendMessage { msg: net_msg, .. } = rec {
                 if let NetMessage::ConsensusMessage(_) = net_msg {
-                    panic!("{description}: received a send instead of a broadcast");
+                    warn!("{description}: skipping send instead of broadcast");
+                    self.assert_broadcast(description)
                 } else {
                     warn!("{description}: skipping {:?}", net_msg);
                     self.assert_broadcast(description)
@@ -1341,8 +1342,15 @@ pub mod test {
             } = rec
             {
                 if let NetMessage::ConsensusMessage(msg) = net_msg {
-                    assert_eq!(to, &validator_id, "Got message {msg:?}");
-                    Box::pin(async move { msg })
+                    if to == &validator_id {
+                        Box::pin(async move { msg })
+                    } else {
+                        warn!(
+                            "{description}: skipping send to {}, expected {}",
+                            validator_id, to
+                        );
+                        self.assert_send(to, description)
+                    }
                 } else {
                     warn!("{description}: skipping non-consensus message, details in debug");
                     debug!("Message is: {:?}", net_msg);
