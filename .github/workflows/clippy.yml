@@ -13,11 +13,6 @@ permissions:
   pull-requests: write
   checks: write
 
-env:
-  CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/target
-  CARGO_HOME: ${{ github.workspace }}/.cache/cargo-home
-  SHARED_CACHE_DIR: /home/runner/.cache/node-cache/rust
-
 jobs:
   clippy:
     name: clippy check
@@ -25,9 +20,6 @@ jobs:
     runs-on: arc-runner-set
     steps:
       - uses: actions/checkout@v4
-
-      - name: Copy cache from shared storage
-        run: .github/scripts/copy-cache.sh "hyli-clippy"
 
       # For keyring dependencies
       - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config wget build-essential libssl-dev
@@ -43,7 +35,3 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Run cargo check
         run: cargo check --workspace
-
-      - name: Save cache to shared storage
-        if: always() && github.ref == 'refs/heads/main'
-        run: .github/scripts/save-cache.sh "hyli-clippy"
