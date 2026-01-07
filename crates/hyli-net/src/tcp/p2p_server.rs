@@ -1304,7 +1304,7 @@ pub mod tests {
         }
     }
 
-    #[derive(Clone)]
+    #[derive(Clone, Debug)]
     struct TestReader {
         inner: Arc<ManualReader>,
     }
