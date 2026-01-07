@@ -685,7 +685,7 @@ pub mod test {
                 assert_eq!(from, None);
                 assert_eq!(to, Some(dp2_hash.clone()));
             }
-            _ => panic!("Expected DataProposal message"),
+            _ => panic!("Expected SyncRequest message"),
         };
 
         Ok(())

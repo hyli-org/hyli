@@ -10,7 +10,7 @@ use super::verifiers::{verify_proof, verify_recursive_proof};
 #[cfg(test)]
 use super::MempoolNetMessage;
 use super::{api::RestApiMessage, storage::Storage};
-use super::{DisseminationEvent, ValidatorDAG};
+use super::DisseminationEvent;
 use indexmap::IndexMap;
 use std::{
     collections::{HashMap, HashSet},
@@ -88,11 +88,6 @@ impl super::Mempool {
         self.lane_id_for_suffix(self.default_blob_suffix())
     }
 
-    fn is_configured_owned_lane(&self, lane_id: &LaneId) -> bool {
-        lane_id.operator() == self.crypto.validator_pubkey()
-            && self.is_configured_suffix(lane_id.suffix())
-    }
-
     fn default_blob_suffix(&self) -> &str {
         if self.conf.own_lanes.default_blob_suffix.is_empty() {
             LaneId::DEFAULT_SUFFIX
@@ -157,62 +152,6 @@ impl super::Mempool {
             .values()
             .map(|txs| txs.len())
             .sum()
-    }
-
-    pub(super) fn on_data_vote(&mut self, lane_id: LaneId, vdag: ValidatorDAG) -> Result<()> {
-        self.metrics.on_data_vote.add(1, &[]);
-
-        let validator = vdag.signature.validator.clone();
-        let data_proposal_hash = vdag.msg.0.clone();
-        if !self.is_configured_owned_lane(&lane_id) {
-            debug!(
-                "Ignoring vote from {} for non-owned lane {} (dp {})",
-                validator, lane_id, data_proposal_hash
-            );
-            return Ok(());
-        }
-        debug!(
-            "Vote from {} on own lane {}, dp {}",
-            validator, lane_id, data_proposal_hash
-        );
-
-        let signatures =
-            self.lanes
-                .add_signatures(&lane_id, &data_proposal_hash, std::iter::once(vdag))?;
-        self.send_dissemination_event(DisseminationEvent::VoteReceived {
-            lane_id: lane_id.clone(),
-            data_proposal_hash: data_proposal_hash.clone(),
-            voter: validator.clone(),
-        })?;
-
-        // Compute voting power of all signers to check if the DataProposal received enough votes
-        let validators: Vec<ValidatorPublicKey> = signatures
-            .iter()
-            .map(|s| s.signature.validator.clone())
-            .collect();
-        let old_voting_power = self.staking.compute_voting_power(
-            validators
-                .iter()
-                .filter(|v| *v != &validator)
-                .cloned()
-                .collect::<Vec<_>>()
-                .as_slice(),
-        );
-        let new_voting_power = self.staking.compute_voting_power(validators.as_slice());
-        let f = self.staking.compute_f();
-        // Only send the message if voting power exceeds f, 2 * f or is exactly 3 * f + 1
-        // This garentees that the message is sent only once per threshold
-        if old_voting_power < f && new_voting_power >= f
-            || old_voting_power < 2 * f && new_voting_power >= 2 * f
-            || new_voting_power > 3 * f
-        {
-            self.send_dissemination_event(DisseminationEvent::PoDAReady {
-                lane_id,
-                data_proposal_hash,
-                signatures,
-            })?;
-        }
-        Ok(())
     }
 
     pub(super) fn prepare_new_data_proposal(&mut self) -> Result<bool> {
@@ -679,12 +618,12 @@ pub mod test {
     }
 
     #[test_log::test(tokio::test)]
-    async fn test_send_poda_update() -> Result<()> {
+    async fn test_cache_poda_on_votes() -> Result<()> {
         let mut ctx = MempoolTestCtx::new("mempool").await;
         let pubkey = (*ctx.mempool.crypto).clone();
 
         // Adding 4 other validators
-        // Total voting_power = 500; f = 167 --> You need at least 2 signatures to send PoDAUpdate
+        // Total voting_power = 500; f = 167 --> You need at least 2 signatures to cache PoDA
         let crypto2 = BlstCrypto::new("validator2").unwrap();
         let crypto3 = BlstCrypto::new("validator3").unwrap();
         let crypto4 = BlstCrypto::new("validator4").unwrap();
@@ -698,7 +637,7 @@ pub mod test {
         ctx.timer_tick().await?;
 
         let data_proposal = match ctx.assert_broadcast("DataProposal").await.msg {
-            MempoolNetMessage::DataProposal(_, _, dp) => dp,
+            MempoolNetMessage::DataProposal(_, _, dp, _) => dp,
             _ => panic!("Expected DataProposal message"),
         };
         let size = LaneBytesSize(data_proposal.estimate_size() as u64);
@@ -718,28 +657,13 @@ pub mod test {
             .handle_net_message(crypto3.sign_msg_with_header(signed_msg3)?)
             .await?;
 
-        // Assert that PoDAReady message is sent to dissemination
-        loop {
-            match ctx
-                .dissemination_event_receiver
-                .recv()
-                .await
-                .unwrap()
-                .into_message()
-            {
-                DisseminationEvent::PoDAReady {
-                    data_proposal_hash,
-                    signatures,
-                    ..
-                } => {
-                    assert_eq!(data_proposal_hash, data_proposal.hashed());
-                    assert_eq!(signatures.len(), 2);
-                    break;
-                }
-                DisseminationEvent::VoteReceived { .. } => continue,
-                _ => panic!("Expected PoDAReady message"),
-            }
-        }
+        // Assert that PoDA is cached once we cross f+1 votes
+        let metadata = ctx
+            .mempool
+            .lanes
+            .get_metadata_by_hash(&lane_id, &data_proposal.hashed())?
+            .expect("metadata should exist");
+        assert!(metadata.cached_poda.is_some());
 
         Ok(())
     }
@@ -791,7 +715,7 @@ pub mod test {
         // We should broadcast a DataProposal with rehydrated proofs
         let broadcast = ctx.assert_broadcast("DataProposal").await;
         let dp_broadcast = match broadcast.msg {
-            MempoolNetMessage::DataProposal(_, _, dp) => dp,
+            MempoolNetMessage::DataProposal(_, _, dp, _) => dp,
             _ => panic!("Expected DataProposal message"),
         };
 
@@ -835,11 +759,20 @@ pub mod test {
         let temp_crypto = BlstCrypto::new("temp_crypto").unwrap();
         let signed_msg =
             create_data_vote(&temp_crypto, lane_id.clone(), data_proposal.hashed(), size)?;
-        assert!(ctx
-            .mempool
+        ctx.mempool
             .handle_net_message(temp_crypto.sign_msg_with_header(signed_msg)?)
             .await
-            .is_err());
+            .expect("vote should be buffered");
+
+        let buffered = ctx
+            .mempool
+            .inner
+            .buffered_votes
+            .get(&lane_id)
+            .and_then(|lane| lane.get(&data_proposal.hashed()))
+            .map(|votes| votes.len())
+            .unwrap_or_default();
+        assert_eq!(buffered, 1);
 
         Ok(())
     }
@@ -892,11 +825,20 @@ pub mod test {
             LaneBytesSize(0),
         )?;
 
-        assert!(ctx
-            .mempool
+        ctx.mempool
             .handle_net_message(crypto2.sign_msg_with_header(signed_msg)?)
             .await
-            .is_err());
+            .expect("vote should be buffered");
+
+        let buffered = ctx
+            .mempool
+            .inner
+            .buffered_votes
+            .get(&ctx.mempool.own_lane_id())
+            .and_then(|lane| lane.get(&DataProposalHash("non_existent".to_owned())))
+            .map(|votes| votes.len())
+            .unwrap_or_default();
+        assert_eq!(buffered, 1);
         Ok(())
     }
 
@@ -934,7 +876,7 @@ pub mod test {
         let mut dps = vec![];
         for _ in 0..2 {
             match ctx1.assert_broadcast("DataProposal").await.msg {
-                MempoolNetMessage::DataProposal(_, hash, dp) => dps.push((hash, dp)),
+                MempoolNetMessage::DataProposal(_, hash, dp, _) => dps.push((hash, dp)),
                 _ => panic!("Expected DataProposal message"),
             }
         }
@@ -962,7 +904,7 @@ pub mod test {
         let mut dps = vec![];
         for _ in 0..1 {
             match ctx1.assert_broadcast("DataProposal").await.msg {
-                MempoolNetMessage::DataProposal(_, hash, dp) => dps.push((hash, dp)),
+                MempoolNetMessage::DataProposal(_, hash, dp, _) => dps.push((hash, dp)),
                 _ => panic!("Expected DataProposal message"),
             }
         }

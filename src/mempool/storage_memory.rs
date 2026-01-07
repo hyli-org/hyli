@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
     mempool::storage::MetadataOrMissingHash,
-    model::{DataProposal, DataProposalHash, Hashed},
+    model::{DataProposal, DataProposalHash, Hashed, PoDA},
 };
 
 #[derive(Clone)]
@@ -281,6 +281,26 @@ impl Storage for LanesStorage {
             }
         }
         Ok(metadata.signatures.clone())
+    }
+
+    fn set_cached_poda(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+        poda: PoDA,
+    ) -> Result<()> {
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let mut guard = self.by_hash.write().unwrap();
+        let Some(lane) = guard.get_mut(lane_id) else {
+            bail!("Can't find validator {}", lane_id);
+        };
+
+        let Some((metadata, _data_proposal)) = lane.get_mut(dp_hash) else {
+            bail!("Can't find DP {} for validator {}", dp_hash, lane_id);
+        };
+
+        metadata.cached_poda = Some(poda);
+        Ok(())
     }
 
     fn get_lane_ids(&self) -> Vec<LaneId> {
