@@ -9,7 +9,7 @@ use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::Arc, time::Dura
 use strum_macros::IntoStaticStr;
 
 #[serde_as]
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Consensus {
     #[serde_as(as = "DurationMilliSeconds")]
     pub slot_duration: Duration,
@@ -23,19 +23,6 @@ pub struct Consensus {
     pub genesis_timestamp: u64,
     /// Number of recent timeout certificates to keep for timeout recovery.
     pub timeout_certificate_cache_size: usize,
-}
-
-impl Default for Consensus {
-    fn default() -> Self {
-        Self {
-            slot_duration: Duration::default(),
-            timeout_after: Duration::default(),
-            timestamp_checks: TimestampCheck::default(),
-            solo: false,
-            genesis_timestamp: 0,
-            timeout_certificate_cache_size: 100,
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, IntoStaticStr)]
