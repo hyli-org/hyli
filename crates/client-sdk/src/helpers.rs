@@ -347,8 +347,10 @@ pub mod sp1 {
         {
             let binding = hex::encode(program_id.0.clone());
             let pk_bytes = hyli_registry::download_elf(&contract_name.0, &binding).await?;
-            let pk: SP1ProvingKey = serde_json::from_slice(&pk_bytes)
-                .map_err(|e| anyhow::anyhow!("Failed to deserialize SP1 Proving Key: {}", e))?;
+
+            let local_client = ProverClient::builder().cpu().build();
+            let (pk, _) = sp1_sdk::Prover::setup(&local_client, &pk_bytes);
+
             Ok(SP1Prover::new(pk).await)
         }
     }
