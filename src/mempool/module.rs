@@ -57,8 +57,6 @@ impl Module for Mempool {
         let mut new_dp_timer = tokio::time::interval(tick_interval);
         new_dp_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-        let sync_request_sender = self.start_mempool_sync();
-
         // TODO: Recompute optimistic node_state for contract registrations.
         module_handle_messages! {
             on_self self,
@@ -67,7 +65,7 @@ impl Module for Mempool {
                 self.processing_dps.is_empty() && self.processing_txs.is_empty() && self.own_data_proposal_in_preparation.is_empty()
             },
             listen<MsgWithHeader<MempoolNetMessage>> cmd => {
-                let _ = log_error!(self.handle_net_message(cmd, &sync_request_sender).await, "Handling MempoolNetMessage in Mempool");
+                let _ = log_error!(self.handle_net_message(cmd).await, "Handling MempoolNetMessage in Mempool");
             }
             listen<RestApiMessage> cmd => {
                 let _ = log_error!(self.handle_api_message(cmd), "Handling API Message in Mempool");
