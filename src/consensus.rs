@@ -1013,6 +1013,7 @@ pub mod test {
             let mut conf = Conf::default();
             conf.consensus.slot_duration = Duration::from_millis(1000);
             conf.consensus.timeout_after = Duration::from_millis(5000);
+            conf.consensus.timeout_certificate_cache_size = 100;
             let bus = ConsensusBusClient::new_from_bus(shared_bus.new_handle()).await;
 
             Consensus {
