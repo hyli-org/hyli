@@ -92,18 +92,13 @@ async fn scenario(identity: Identity, blob: Blob) -> Result<()> {
         match evt {
             NodeStateEvent::NewBlock(block) => {
                 info!("Got Block");
-                if block
-                    .stateful_events
-                    .events
-                    .iter()
-                    .any(|(tx_id, event)| {
-                        matches!(
-                            event,
-                            StatefulEvent::SettledTx(unsettled_tx)
-                                if tx_id.1 == blob_tx_hash && unsettled_tx.tx_id.1 == blob_tx_hash
-                        )
-                    })
-                {
+                if block.stateful_events.events.iter().any(|(tx_id, event)| {
+                    matches!(
+                        event,
+                        StatefulEvent::SettledTx(unsettled_tx)
+                            if tx_id.1 == blob_tx_hash && unsettled_tx.tx_id.1 == blob_tx_hash
+                    )
+                }) {
                     break;
                 }
             }
