@@ -17,7 +17,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
 use hyli_crypto::SharedBlstCrypto;
 use hyli_modules::{bus::BusMessage, log_warn, module_bus_client};
-use hyli_net::ordered_join_set::OrderedJoinSet;
+use hyli_net::{ordered_join_set::OrderedJoinSet, tcp::TcpMessageLabel};
 use indexmap::IndexSet;
 use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
@@ -219,6 +219,26 @@ impl Display for MempoolNetMessage {
         write!(f, "{enum_variant}")
     }
 }
+
+macro_rules! impl_tcp_message_label_with_prefix {
+    ($ty:ty, $prefix:literal, { $( $variant:ident ),+ $(,)? }) => {
+        impl TcpMessageLabel for $ty {
+            fn message_label(&self) -> &'static str {
+                match self {
+                    $( Self::$variant(..) => concat!($prefix, "::", stringify!($variant)), )+
+                }
+            }
+        }
+    };
+}
+
+impl_tcp_message_label_with_prefix!(MempoolNetMessage, "MempoolNetMessage", {
+    DataProposal,
+    DataVote,
+    PoDAUpdate,
+    SyncRequest,
+    SyncReply,
+});
 
 impl IntoHeaderSignableData for MempoolNetMessage {
     fn to_header_signable_data(&self) -> HeaderSignableData {

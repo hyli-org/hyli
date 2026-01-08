@@ -5867,6 +5867,7 @@ dependencies = [
  "seq-macro",
  "serde",
  "serde_json",
+ "strum_macros 0.27.2",
  "test-log",
  "tokio",
  "tokio-util",

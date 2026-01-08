@@ -9,12 +9,17 @@ use std::{
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
-use sdk::hyli_model_utils::TimestampMs;
+use sdk::{hyli_model_utils::TimestampMs, DataAvailabilityEvent, DataAvailabilityRequest};
+use strum_macros::IntoStaticStr;
 use tokio::task::JoinHandle;
 
 use anyhow::Result;
 
 pub type TcpHeaders = Vec<(String, String)>;
+
+pub trait TcpMessageLabel {
+    fn message_label(&self) -> &'static str;
+}
 
 pub fn headers_from_span() -> TcpHeaders {
     #[cfg(feature = "instrumentation")]
@@ -36,7 +41,7 @@ pub fn headers_from_span() -> TcpHeaders {
     }
 }
 
-#[derive(Clone, BorshDeserialize, BorshSerialize, PartialEq)]
+#[derive(Clone, BorshDeserialize, BorshSerialize, PartialEq, IntoStaticStr)]
 pub enum TcpMessage {
     Ping,
     Data(TcpData),
@@ -160,13 +165,30 @@ impl std::fmt::Debug for TcpMessage {
     }
 }
 
+impl TcpMessageLabel for TcpMessage {
+    fn message_label(&self) -> &'static str {
+        self.clone().into()
+    }
+}
+
 #[derive(Debug, Clone, BorshDeserialize, BorshSerialize, PartialEq)]
 pub enum P2PTcpMessage<Data: BorshDeserialize + BorshSerialize> {
     Handshake(Handshake),
     Data(Data),
 }
 
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
+impl<Data: BorshDeserialize + BorshSerialize + TcpMessageLabel> TcpMessageLabel
+    for P2PTcpMessage<Data>
+{
+    fn message_label(&self) -> &'static str {
+        match self {
+            P2PTcpMessage::Handshake(handshake) => handshake.message_label(),
+            P2PTcpMessage::Data(data) => data.message_label(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, PartialEq, IntoStaticStr)]
 pub enum Handshake {
     Hello(
         (
@@ -182,6 +204,41 @@ pub enum Handshake {
             TimestampMs,
         ),
     ),
+}
+
+impl TcpMessageLabel for Handshake {
+    fn message_label(&self) -> &'static str {
+        self.clone().into()
+    }
+}
+
+impl TcpMessageLabel for Vec<u8> {
+    fn message_label(&self) -> &'static str {
+        "bytes"
+    }
+}
+
+impl TcpMessageLabel for String {
+    fn message_label(&self) -> &'static str {
+        "string"
+    }
+}
+
+impl TcpMessageLabel for DataAvailabilityRequest {
+    fn message_label(&self) -> &'static str {
+        "DataAvailabilityRequest"
+    }
+}
+
+impl TcpMessageLabel for DataAvailabilityEvent {
+    fn message_label(&self) -> &'static str {
+        match self {
+            DataAvailabilityEvent::SignedBlock(_) => "DataAvailabilityEvent::SignedBlock",
+            DataAvailabilityEvent::MempoolStatusEvent(_) => {
+                "DataAvailabilityEvent::MempoolStatusEvent"
+            }
+        }
+    }
 }
 
 #[derive(
@@ -228,6 +285,12 @@ pub enum TcpEvent<Data: BorshDeserialize> {
     },
 }
 
+#[derive(Clone)]
+pub(crate) struct TcpOutboundMessage {
+    pub message: TcpMessage,
+    pub message_label: &'static str,
+}
+
 /// A socket abstraction to send a receive data
 #[derive(Debug)]
 struct SocketStream {
@@ -236,7 +299,7 @@ struct SocketStream {
     /// Best-effort human label for logging (defaults to socket addr).
     socket_label: Arc<RwLock<String>>,
     /// Sender to stream data to the peer
-    sender: tokio::sync::mpsc::Sender<TcpMessage>,
+    sender: tokio::sync::mpsc::Sender<TcpOutboundMessage>,
     /// Handle to abort the sending side of the stream
     abort_sender_task: JoinHandle<()>,
     /// Handle to abort the receiving side of the stream

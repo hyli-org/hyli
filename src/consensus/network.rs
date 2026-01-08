@@ -7,6 +7,8 @@ use sha3::{Digest, Sha3_256};
 use std::{fmt::Display, ops::Deref};
 use strum_macros::IntoStaticStr;
 
+use hyli_net::tcp::TcpMessageLabel;
+
 use hyli_model::*;
 
 use crate::p2p::network::{HeaderSignableData, IntoHeaderSignableData};
@@ -445,6 +447,31 @@ impl Display for ConsensusNetMessage {
         }
     }
 }
+
+macro_rules! impl_tcp_message_label_with_prefix {
+    ($ty:ty, $prefix:literal, { $( $variant:ident ),+ $(,)? }) => {
+        impl TcpMessageLabel for $ty {
+            fn message_label(&self) -> &'static str {
+                match self {
+                    $( Self::$variant(..) => concat!($prefix, "::", stringify!($variant)), )+
+                }
+            }
+        }
+    };
+}
+
+impl_tcp_message_label_with_prefix!(ConsensusNetMessage, "ConsensusNetMessage", {
+    Prepare,
+    PrepareVote,
+    Confirm,
+    ConfirmAck,
+    Commit,
+    Timeout,
+    TimeoutCertificate,
+    ValidatorCandidacy,
+    SyncRequest,
+    SyncReply,
+});
 
 impl IntoHeaderSignableData for ConsensusNetMessage {
     // This signature is just for DOS / efficiency
