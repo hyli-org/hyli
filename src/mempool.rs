@@ -17,7 +17,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
 use hyli_crypto::SharedBlstCrypto;
 use hyli_modules::{bus::BusMessage, log_warn, module_bus_client};
-use hyli_net::{ordered_join_set::OrderedJoinSet, tcp::TcpMessageLabel};
+use hyli_net::ordered_join_set::OrderedJoinSet;
 use indexmap::IndexSet;
 use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
@@ -220,19 +220,7 @@ impl Display for MempoolNetMessage {
     }
 }
 
-macro_rules! impl_tcp_message_label_with_prefix {
-    ($ty:ty, $prefix:literal, { $( $variant:ident ),+ $(,)? }) => {
-        impl TcpMessageLabel for $ty {
-            fn message_label(&self) -> &'static str {
-                match self {
-                    $( Self::$variant(..) => concat!($prefix, "::", stringify!($variant)), )+
-                }
-            }
-        }
-    };
-}
-
-impl_tcp_message_label_with_prefix!(MempoolNetMessage, "MempoolNetMessage", {
+hyli_net::impl_tcp_message_label_with_prefix!(MempoolNetMessage, "MempoolNetMessage", {
     DataProposal,
     DataVote,
     PoDAUpdate,

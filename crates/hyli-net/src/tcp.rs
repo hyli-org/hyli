@@ -17,6 +17,19 @@ use anyhow::Result;
 
 pub type TcpHeaders = Vec<(String, String)>;
 
+#[macro_export]
+macro_rules! impl_tcp_message_label_with_prefix {
+    ($ty:ty, $prefix:literal, { $( $variant:ident ),+ $(,)? }) => {
+        impl $crate::tcp::TcpMessageLabel for $ty {
+            fn message_label(&self) -> &'static str {
+                match self {
+                    $( Self::$variant(..) => concat!($prefix, "::", stringify!($variant)), )+
+                }
+            }
+        }
+    };
+}
+
 pub trait TcpMessageLabel {
     fn message_label(&self) -> &'static str;
 }
