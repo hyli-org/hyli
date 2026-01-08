@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
-use client_sdk::rest_client::NodeApiHttpClient;
+use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli::{entrypoint::main_process, utils::conf::Conf};
 use hyli_crypto::BlstCrypto;
 use hyli_net::net::Sim;
@@ -219,5 +219,37 @@ impl TurmoilCtx {
         };
 
         (from, to)
+    }
+
+    /// Check that all nodes converge to the same height and commit root.
+    pub async fn assert_cluster_converged(&self, min_height: u64) -> anyhow::Result<()> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+
+        loop {
+            let mut heights = Vec::new();
+            for node in self.nodes.iter() {
+                let height = node.client.get_block_height().await?;
+                heights.push((node.conf.id.clone(), height.0));
+            }
+
+            let min = heights.iter().map(|(_, h)| *h).min().unwrap();
+            let max = heights.iter().map(|(_, h)| *h).max().unwrap();
+
+            if min >= min_height && min == max {
+                return Ok(());
+            }
+
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "Cluster did not converge: min height {}, max height {}, expected >= {} ({:?})",
+                    min,
+                    max,
+                    min_height,
+                    heights
+                );
+            }
+
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
     }
 }

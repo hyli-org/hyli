@@ -2,7 +2,7 @@
 path = "junit.xml"
 
 [profile.ci]
-slow-timeout = { period = "120s", terminate-after = 2 }
+slow-timeout = { period = "90s", terminate-after = 2 }
 test-threads = 4
 
 [profile.default]

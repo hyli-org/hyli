@@ -16,8 +16,8 @@ use block_construction::BlockUnderConstruction;
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
 use hyli_crypto::SharedBlstCrypto;
-use hyli_modules::{bus::BusMessage, log_warn, module_bus_client, utils::static_type_map::Pick};
-use hyli_net::{logged_task::logged_task, ordered_join_set::OrderedJoinSet};
+use hyli_modules::{bus::BusMessage, log_warn, module_bus_client};
+use hyli_net::ordered_join_set::OrderedJoinSet;
 use indexmap::IndexSet;
 use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
@@ -30,7 +30,6 @@ use std::{
     time::Duration,
 };
 use storage::{LaneEntryMetadata, Storage};
-use sync_request_reply::{MempoolSync, SyncRequest};
 use tokio::task::JoinSet;
 use verify_tx::DataProposalVerdict;
 // Pick one of the two implementations
@@ -50,7 +49,6 @@ pub mod own_lane;
 pub mod storage;
 pub mod storage_fjall;
 pub mod storage_memory;
-pub mod sync_request_reply;
 pub mod verifiers;
 pub mod verify_tx;
 
@@ -255,25 +253,6 @@ pub enum ProcessedDPEvent {
 }
 
 impl Mempool {
-    pub fn start_mempool_sync(&self) -> tokio::sync::mpsc::Sender<SyncRequest> {
-        let (sync_request_sender, sync_request_receiver) =
-            tokio::sync::mpsc::channel::<SyncRequest>(30);
-        let net_sender =
-            Pick::<hyli_modules::bus::BusSender<OutboundMessage>>::get(&self.bus).clone();
-
-        let mut mempool_sync = MempoolSync::create(
-            self.lanes.new_handle(),
-            self.crypto.clone(),
-            self.metrics.clone(),
-            net_sender,
-            sync_request_receiver,
-        );
-
-        logged_task(async move { mempool_sync.start().await });
-
-        sync_request_sender
-    }
-
     /// Creates a cut with local material on QueryNewCut message reception (from consensus)
     /// DO NOT make this async without proper deadlock considerations, see below.
     fn handle_querynewcut(&mut self, staking: &mut QueryNewCut) -> Result<Cut> {
@@ -355,16 +334,13 @@ impl Mempool {
 
                 // Removes all DPs that are not in the new cut, updates lane tip and sends SyncRequest for missing DPs
                 self.clean_and_update_lanes(&cut, &previous_cut)?;
+
                 Ok(())
             }
         }
     }
 
-    async fn handle_net_message(
-        &mut self,
-        msg: MsgWithHeader<MempoolNetMessage>,
-        sync_request_sender: &tokio::sync::mpsc::Sender<SyncRequest>,
-    ) -> Result<()> {
+    async fn handle_net_message(&mut self, msg: MsgWithHeader<MempoolNetMessage>) -> Result<()> {
         let validator = &msg.header.signature.validator;
         // TODO: adapt can_rejoin test to emit a stake tx before turning on the joining node
         // if !self.validators.contains(validator) {
@@ -392,7 +368,6 @@ impl Mempool {
             ) => {
                 self.on_sync_request(
                     lane_id,
-                    sync_request_sender,
                     from_data_proposal_hash,
                     to_data_proposal_hash,
                     validator.clone(),
@@ -410,7 +385,6 @@ impl Mempool {
     async fn on_sync_request(
         &mut self,
         lane_id: LaneId,
-        sync_request_sender: &tokio::sync::mpsc::Sender<SyncRequest>,
         from: Option<DataProposalHash>,
         to: Option<DataProposalHash>,
         validator: ValidatorPublicKey,
@@ -431,17 +405,6 @@ impl Mempool {
             to: Some(to.clone()),
             requester: validator.clone(),
         })?;
-
-        // Transmit sync request to the Mempool submodule, to build a reply
-        sync_request_sender
-            .send(SyncRequest {
-                lane_id,
-                from,
-                to,
-                validator: validator.clone(),
-            })
-            .await
-            .context("Sending SyncRequest to Mempool submodule")?;
 
         Ok(())
     }
@@ -483,9 +446,18 @@ impl Mempool {
             metadata.parent_data_proposal_hash
         );
 
+        let dp_hash = data_proposal.hashed();
+        let cumul_size = metadata.cumul_size;
+
         // SyncReply only comes for missing data proposals. We should NEVER update the lane tip
         self.lanes
             .put_no_verification(lane_id.clone(), (metadata, data_proposal))?;
+
+        self.send_dissemination_event(DisseminationEvent::DpStored {
+            lane_id: lane_id.clone(),
+            data_proposal_hash: dp_hash,
+            cumul_size,
+        })?;
 
         // Retry all buffered proposals in this lane.
         // We'll re-buffer them in the on_data_proposal logic if they fail to be processed.
@@ -566,22 +538,11 @@ impl Mempool {
         from_data_proposal_hash: Option<&DataProposalHash>,
         to_data_proposal_hash: Option<&DataProposalHash>,
     ) -> Result<()> {
-        // TODO: use a more clever targeting system.
-        let validator = &lane_id.0;
-        debug!(
-            "🔍 Sending SyncRequest to {} for DataProposal from {:?} to {:?}",
-            validator, from_data_proposal_hash, to_data_proposal_hash
-        );
-        self.metrics
-            .sync_request_send(lane_id, self.crypto.validator_pubkey());
-        self.send_net_message(
-            validator.clone(),
-            MempoolNetMessage::SyncRequest(
-                lane_id.clone(),
-                from_data_proposal_hash.cloned(),
-                to_data_proposal_hash.cloned(),
-            ),
-        )?;
+        self.send_dissemination_event(DisseminationEvent::SyncRequestNeeded {
+            lane_id: lane_id.clone(),
+            from: from_data_proposal_hash.cloned(),
+            to: to_data_proposal_hash.cloned(),
+        })?;
         Ok(())
     }
 
