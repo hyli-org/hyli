@@ -5,12 +5,11 @@ use hyli_modules::{
     modules::{files::CONSENSUS_BIN, Module},
 };
 
-use crate::model::SharedRunContext;
-
 use super::{
     api, consensus_bus_client::ConsensusBusClient, metrics::ConsensusMetrics, Consensus,
     ConsensusStore,
 };
+use crate::model::SharedRunContext;
 
 impl Module for Consensus {
     type Context = SharedRunContext;
