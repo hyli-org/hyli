@@ -1456,7 +1456,13 @@ async fn test_auto_prover_early_fail_while_buffered() -> Result<()> {
     // Should settle the final TX
     tracing::info!("✨ Block 14");
     let block = node_state.craft_new_block_and_handle(14, proofs);
-    assert_eq!(block.parsed_block.successful_txs, vec![hash]);
+    assert!(
+        block
+            .stateful_events
+            .events
+            .iter()
+            .any(|(tx_id, event)| matches!(event, StatefulEvent::SettledTx(_)) && tx_id.1 == hash)
+    );
     assert!(node_state
         .get_earliest_unsettled_height(&ContractName::new("test"))
         .is_none(),);

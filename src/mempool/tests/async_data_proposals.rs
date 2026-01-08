@@ -149,11 +149,11 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
         match evt {
             NodeStateEvent::NewBlock(block) => {
                 info!("Got Block");
-                if block.parsed_block.txs.iter().any(|(tx_id, tx)| {
+                if block.signed_block.iter_txs_with_id().any(|(_lane_id, tx_id, tx)| {
                     if let TransactionData::VerifiedProof(data) = &tx.transaction_data {
                         info!(
                             "Got TX {} in block {}",
-                            tx_id, block.parsed_block.block_height
+                            tx_id, block.signed_block.height()
                         );
                         data.contract_name == contract_name
                     } else {
@@ -241,7 +241,7 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
         let cut: NodeStateEvent = node_client.recv().await?;
         match cut {
             NodeStateEvent::NewBlock(block) => {
-                if block.parsed_block.txs.iter().any(|(_tx_id, tx)| {
+                if block.signed_block.iter_txs_with_id().any(|(_lane_id, _tx_id, tx)| {
                     if let TransactionData::VerifiedProof(data) = &tx.transaction_data {
                         data.contract_name == contract_name
                     } else {
