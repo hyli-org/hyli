@@ -6,6 +6,7 @@ mod fixtures;
 
 use std::time::Duration;
 
+use anyhow::ensure;
 use client_sdk::rest_client::NodeApiClient;
 use fixtures::turmoil::TurmoilHost;
 use hyli_model::{
@@ -13,7 +14,6 @@ use hyli_model::{
 };
 use hyli_modules::log_error;
 use hyli_net::net::Sim;
-use anyhow::ensure;
 use tracing::warn;
 
 use crate::fixtures::{test_helpers::wait_height, turmoil::TurmoilCtx};
@@ -156,7 +156,11 @@ turmoil_simple!(621..=630, simulation_partition, submit_10_contracts);
 turmoil_simple_flaky!(631..=640, simulation_drop_storm, submit_10_contracts);
 turmoil_simple!(641..=650, simulation_restart_node, submit_10_contracts);
 turmoil_simple!(651..=660, simulation_realistic_network, submit_10_contracts);
-turmoil_simple!(661..=670, simulation_timeout_split_view, timeout_split_view_recovery);
+turmoil_simple!(
+    661..=670,
+    simulation_timeout_split_view,
+    timeout_split_view_recovery
+);
 
 /// **Simulation**
 ///
@@ -396,7 +400,10 @@ pub fn simulation_drop_storm(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow:
 ///
 /// Create a view split by holding messages from two nodes to the other two,
 /// then heal the links so the cluster can continue.
-pub fn simulation_timeout_split_view(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::Result<()> {
+pub fn simulation_timeout_split_view(
+    ctx: &mut TurmoilCtx,
+    sim: &mut Sim<'_>,
+) -> anyhow::Result<()> {
     let nodes = ctx.nodes.clone();
     let tc_nodes = nodes[..2].to_vec();
     let non_tc_nodes = nodes[2..].to_vec();
@@ -630,7 +637,10 @@ pub async fn timeout_split_view_recovery(node: TurmoilHost) -> anyhow::Result<()
     tokio::time::sleep(Duration::from_secs(6)).await;
     let during = client_with_retries.get_block_height().await?.0;
     tracing::info!("Timeout split view: height during stall check: {}", during);
-    ensure!(during == before, "expected a stalled height during view split");
+    ensure!(
+        during == before,
+        "expected a stalled height during view split"
+    );
 
     tokio::time::sleep(Duration::from_secs(15)).await;
     let after = client_with_retries.get_block_height().await?.0;
