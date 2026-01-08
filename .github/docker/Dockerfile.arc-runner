@@ -1,0 +1,27 @@
+FROM ghcr.io/actions/actions-runner:latest
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libssl-dev \
+    libdbus-1-dev \
+    pkg-config \
+    wget \
+    curl \
+    ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+USER runner
+
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+
+RUN cargo install cargo-nextest --locked \
+  && cargo install cargo-llvm-cov --locked \
+  && cargo install sccache --locked
+
+RUN if [ "$(uname -m)" = "x86_64" ]; then \
+      curl -L https://risczero.com/install | bash && \
+      /home/runner/.risc0/bin/rzup install r0vm 3.0.3 && \
+      ln -sf /home/runner/.risc0/bin/r0vm /home/runner/.cargo/bin/r0vm && \
+      ln -sf /home/runner/.risc0/bin/rzup /home/runner/.cargo/bin/rzup ; \
+    fi

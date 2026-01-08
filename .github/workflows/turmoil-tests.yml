@@ -24,8 +24,6 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - run: sudo apt update && sudo apt install -y build-essential libssl-dev pkg-config
-
       - name: Run turmoil tests - Basic
         run: cargo test turmoil_simulation_basic --features turmoil
       - name: Run turmoil tests - Add a node

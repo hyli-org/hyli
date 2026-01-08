@@ -2,7 +2,9 @@ name: Custom Docker images
 
 on:
   push:
-    paths: [".github/docker/Dockerfile.base"]
+    paths:
+      - ".github/docker/**"
+      - ".github/workflows/custom-docker.yml"
     branches:
       - main
   workflow_dispatch: {}
@@ -25,6 +27,11 @@ jobs:
             context: .github/docker
             images: |
               ghcr.io/hyli-org/base
+          - file: .github/docker/Dockerfile.arc-runner
+            name: arc-runner
+            context: .github/docker
+            images: |
+              ghcr.io/hyli-org/arc-runner
 
     name: ${{ matrix.mode.name }}
     steps:
