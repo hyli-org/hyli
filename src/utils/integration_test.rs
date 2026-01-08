@@ -26,7 +26,7 @@ use axum::Router;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli_crypto::BlstCrypto;
 use hyli_model::{api::NodeInfo, TxHash};
-use hyli_model::{NodeStateEvent, StatefulEvent};
+use hyli_model::{NodeStateEvent, StatefulEvent, TxId};
 use hyli_modules::node_state::module::NodeStateModule;
 use hyli_modules::{
     module_bus_client, module_handle_messages,
