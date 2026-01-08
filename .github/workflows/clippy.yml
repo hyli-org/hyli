@@ -18,8 +18,6 @@ jobs:
     name: clippy check
     if: github.event.pull_request.draft == false
     runs-on: arc-runner-set
-    container:
-      image: ghcr.io/hyli-org/arc-runner:custom_docker_ci
     steps:
       - uses: actions/checkout@v4
 

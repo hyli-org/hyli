@@ -16,9 +16,6 @@ concurrency:
 jobs:
   test-turmoil:
     runs-on: arc-runner-set
-    container:
-      image: ghcr.io/hyli-org/arc-runner:custom_docker_ci
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
