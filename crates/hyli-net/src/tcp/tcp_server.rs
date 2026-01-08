@@ -14,18 +14,18 @@ use futures::stream::{SplitSink, SplitStream};
 use futures::{FutureExt, SinkExt, StreamExt};
 use tokio::sync::mpsc::{Receiver, Sender};
 
+#[cfg(feature = "turmoil")]
+use crate::tcp::intercept;
 use crate::{
     clock::TimestampMsClock,
     logged_task::logged_task,
     metrics::TcpServerMetrics,
     net::TcpListener,
     tcp::{
-        decode_tcp_payload, framed_stream, to_tcp_message, to_tcp_message_with_headers, TcpData,
-        TcpHeaders, FramedStream, TcpMessage,
+        decode_tcp_payload, framed_stream, to_tcp_message, to_tcp_message_with_headers,
+        FramedStream, TcpData, TcpHeaders, TcpMessage,
     },
 };
-#[cfg(feature = "turmoil")]
-use crate::tcp::intercept;
 use tracing::{debug, error, trace, warn};
 
 use super::{tcp_client::TcpClient, SocketStream, TcpEvent};
@@ -602,10 +602,10 @@ where
 pub mod tests {
     use std::time::Duration;
 
+    use super::TcpServer;
     use crate::tcp::{
         tcp_client::TcpClient, tcp_server::peer_label_or_addr, to_tcp_message, TcpEvent, TcpMessage,
     };
-    use super::TcpServer;
     use anyhow::Result;
     use bytes::Bytes;
     use futures::{SinkExt, TryStreamExt};
@@ -657,7 +657,6 @@ pub mod tests {
 
         Ok(())
     }
-
 
     #[tokio::test]
     async fn tcp_broadcast() -> Result<()> {

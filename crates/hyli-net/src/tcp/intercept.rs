@@ -24,18 +24,24 @@ pub fn set_message_intercept<F>(hook: F)
 where
     F: FnMut(&[u8]) -> bool + Send + 'static,
 {
-    let mut guard = hook_slot().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = hook_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     *guard = Some(Box::new(hook));
 }
 
 /// Clear the previously installed hook.
 pub fn clear_message_intercept() {
-    let mut guard = hook_slot().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = hook_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     *guard = None;
 }
 
 pub(crate) fn should_drop(bytes: &[u8]) -> bool {
-    let mut guard = hook_slot().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut guard = hook_slot()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     match guard.as_mut() {
         Some(hook) => hook(bytes),
         None => false,

@@ -44,7 +44,8 @@ fn turmoil_drop_mempool_data_proposals() -> anyhow::Result<()> {
     let proposal3_for_client = proposal3.clone();
 
     sim.client("server", async move {
-        let mut server = TcpServer::<DataProposal, DataProposal>::start(4000, "MempoolServer").await?;
+        let mut server =
+            TcpServer::<DataProposal, DataProposal>::start(4000, "MempoolServer").await?;
         loop {
             if let Some(TcpEvent::Message { data, .. }) = server.listen_next().await {
                 let _ = result_tx.send(data);
