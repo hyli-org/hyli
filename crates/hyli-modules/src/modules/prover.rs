@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use std::time::Duration;
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
@@ -17,7 +17,7 @@ use hyli_net::logged_task::logged_task;
 use indexmap::IndexMap;
 use sdk::{
     BlobIndex, BlobTransaction, BlockHeight, Calldata, ContractName, Hashed, NodeStateEvent,
-    ProofTransaction, StateCommitment, StatefulEvent, StatefulEvents, TxContext, TxId,
+    ProgramId, ProofTransaction, StateCommitment, StatefulEvent, StatefulEvents, TxContext, TxId,
 };
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
@@ -39,7 +39,7 @@ pub struct AutoProver<
 > {
     bus: AutoProverBusClient<Contract>,
     ctx: Arc<AutoProverCtx<Contract, Prover>>,
-    prover: Arc<Prover>,
+    provers: HashMap<ProgramId, Arc<Prover>>,
     store: AutoProverStore<Contract>,
     metrics: AutoProverMetrics,
     // If Some, the block to catch up to
@@ -146,7 +146,8 @@ where
         };
 
         let infos = ctx.prover.info();
-        let prover = ctx.prover.clone();
+        let mut provers = HashMap::new();
+        provers.insert(ctx.prover.program_id(), ctx.prover.clone());
 
         let metrics = AutoProverMetrics::global(ctx.contract_name.to_string(), infos);
 
@@ -214,7 +215,7 @@ where
             bus,
             store,
             ctx,
-            prover,
+            provers,
             metrics,
             catching_up,
             catching_up_state,
@@ -543,18 +544,17 @@ where
                     if *contract_name != self.ctx.contract_name {
                         continue;
                     }
-                    if contract.program_id != self.prover.program_id() {
+                    if !self.provers.contains_key(&contract.program_id) {
                         // ProgramId changed, download new ELF from registry
                         info!(
                             cn =% self.ctx.contract_name,
                             block_height =% block_height,
-                            "Program ID changed for contract {}, Trying to update prover from {} to {}",
+                            "Program ID changed for contract {}, Trying to download prover for {}",
                             contract_name,
-                            self.prover.program_id(),
                             contract.program_id
                         );
 
-                        self.update_prover_elf(contract).await?;
+                        self.add_prover(&contract.program_id).await?;
                     }
                     last_contract_state = Some(&contract.state);
                 }
@@ -1061,7 +1061,16 @@ where
         };
 
         let node_client = self.ctx.node.clone();
-        let prover = self.ctx.prover.clone();
+        let program_id = ???;
+        let prover = self
+            .provers
+            .get(&program_id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "No prover found for program ID: {}",
+                    program_id
+                )
+            })?;
         let contract_name = self.ctx.contract_name.clone();
 
         let metrics = self.metrics.clone();
@@ -1141,17 +1150,19 @@ where
         Ok(())
     }
 
-    async fn update_prover_elf(&mut self, contract: &sdk::Contract) -> Result<()> {
-        self.prover = Arc::new(
-            Prover::new_from_registry(&self.ctx.contract_name, contract.program_id.clone())
+    async fn add_prover(&mut self, program_id: &ProgramId) -> Result<()> {
+        let prover = Arc::new(
+            Prover::new_from_registry(&self.ctx.contract_name, program_id.clone())
                 .await
                 .context("Creating new prover with updated ELF")?,
         );
 
+        self.provers.insert(program_id.clone(), prover);
+
         info!(
             cn =% self.ctx.contract_name,
-            "Prover ELF updated for program ID: {}",
-            contract.program_id
+            "Prover ELF downloaded for program ID: {}",
+            program_id
         );
         Ok(())
     }

@@ -92,7 +92,7 @@ pub mod risc0 {
         binary: Vec<u8>,
         program_id: [u8; 32],
     }
-    impl<'a> Risc0Prover {
+    impl Risc0Prover {
         pub fn new(binary: Vec<u8>, program_id: [u8; 32]) -> Self {
             Self { binary, program_id }
         }

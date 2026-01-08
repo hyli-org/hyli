@@ -1668,7 +1668,7 @@ async fn test_auto_prover_contract_update_program_id() -> Result<()> {
     let mut auto_prover = TestAutoProver::build(bus.new_handle(), ctx).await?;
 
     // Verify initial program_id
-    assert_eq!(auto_prover.prover.program_id(), initial_program_id);
+    assert!(auto_prover.provers.contains_key(&initial_program_id));
 
     tracing::info!("✨ Block 1: Initial transaction");
     let block_1 = node_state.craft_new_block_and_handle(1, vec![new_blob_tx(1)]);
@@ -1712,9 +1712,12 @@ async fn test_auto_prover_contract_update_program_id() -> Result<()> {
     auto_prover.handle_processed(block_3).await?;
 
     // Verify program_id has been updated
-    assert_eq!(auto_prover.prover.program_id(), new_program_id);
-    tracing::info!("✅ Program ID successfully updated from {:?} to {:?}",
-        initial_program_id, new_program_id);
+    assert!(auto_prover.provers.contains_key(&new_program_id));
+    tracing::info!(
+        "✅ Program ID successfully updated from {:?} to {:?}",
+        initial_program_id,
+        new_program_id
+    );
 
     // Continue processing to ensure prover still works
     let proofs_3 = get_txs(&api_client).await;
