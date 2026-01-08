@@ -21,8 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # For keyring dependencies
-      - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config wget build-essential libssl-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
