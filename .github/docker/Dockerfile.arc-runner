@@ -13,8 +13,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 USER runner
 
-RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable \
-  && . "$HOME/.cargo/env"
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+
+ENV PATH="/home/runner/.cargo/bin:${PATH}"
 
 RUN cargo install cargo-nextest --locked \
   && cargo install cargo-llvm-cov --locked \
