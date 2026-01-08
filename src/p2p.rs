@@ -128,8 +128,9 @@ impl P2P {
         module_handle_messages! {
             on_self self,
             listen<NodeStateEvent> NodeStateEvent::NewBlock(b) => {
-                if b.parsed_block.block_height.0 > p2p_server.current_height {
-                    p2p_server.current_height = b.parsed_block.block_height.0;
+                let height = b.signed_block.height().0;
+                if height > p2p_server.current_height {
+                    p2p_server.current_height = height;
                 }
             }
             listen<P2PCommand> cmd => {
