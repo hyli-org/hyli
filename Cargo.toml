@@ -105,7 +105,7 @@ mockall = { version = "0.13.0", default-features = false }
 once_cell = { version = "1.19.0", default-features = false }
 opentelemetry = { version = "0.28.0" }
 opentelemetry-prometheus = { version = "0.28.0" }
-opentelemetry_sdk = { version = "0.28.0" }
+opentelemetry_sdk = { version = "0.31.0" }
 opentelemetry-otlp = { version = "0.28.0", features = ["grpc-tonic", "trace"] }
 opentelemetry-http = { version = "0.28" }
 paste = { version = "1.0.15", default-features = false }
