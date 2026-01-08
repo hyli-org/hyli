@@ -24,7 +24,7 @@ use crate::{
     net::{TcpListener, TcpStream},
     tcp::{
         decode_tcp_payload, to_tcp_message, to_tcp_message_with_headers, TcpData, TcpHeaders,
-        TcpMessage,
+        TcpMessage, TcpMessageLabel, TcpOutboundMessage,
     },
 };
 use tracing::{debug, error, trace, warn};
@@ -76,8 +76,8 @@ where
 
 impl<Req, Res> TcpServer<Req, Res>
 where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug,
+    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
+    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel,
 {
     pub async fn start(port: u16, pool_name: &str) -> anyhow::Result<Self> {
         Self::start_with_options(port, pool_name, TcpServerOptions::default()).await
@@ -177,6 +177,7 @@ where
     pub async fn broadcast(&mut self, msg: Res) -> HashMap<String, anyhow::Error> {
         let mut tasks = vec![];
 
+        let message_label = msg.message_label();
         let Ok(binary_data) = to_tcp_message(&msg) else {
             return self
                 .sockets
@@ -195,7 +196,10 @@ where
             tasks.push(
                 socket
                     .sender
-                    .send(binary_data.clone())
+                    .send(TcpOutboundMessage {
+                        message: binary_data.clone(),
+                        message_label,
+                    })
                     .map(|res| (name.clone(), res)),
             );
         }
@@ -234,6 +238,7 @@ where
         let all_sent = {
             let message = TcpMessage::Data(TcpData::with_headers(msg, headers));
             debug!("Broadcasting msg {:?} to all", message);
+            let message_label = "raw";
             let mut tasks = vec![];
             for (name, socket) in self
                 .sockets
@@ -244,7 +249,10 @@ where
                 tasks.push(
                     socket
                         .sender
-                        .send(message.clone())
+                        .send(TcpOutboundMessage {
+                            message: message.clone(),
+                            message_label,
+                        })
                         .map(|res| (name.clone(), res)),
                 );
             }
@@ -280,6 +288,7 @@ where
         headers: TcpHeaders,
     ) -> anyhow::Result<()> {
         debug!(pool = %self.pool_name, "Sending msg {:?} to {}", msg, socket_addr);
+        let message_label = msg.message_label();
         let stream = self
             .sockets
             .get_mut(&socket_addr)
@@ -288,13 +297,17 @@ where
         let binary_data = to_tcp_message_with_headers(&msg, headers)?;
         stream
             .sender
-            .send(binary_data)
+            .send(TcpOutboundMessage {
+                message: binary_data,
+                message_label,
+            })
             .await
             .map_err(|e| anyhow::anyhow!("Sending msg to client {}: {}", socket_addr, e))
     }
 
     pub fn try_send(&mut self, socket_addr: String, msg: Res) -> anyhow::Result<()> {
         debug!(pool = %self.pool_name, "Try Sending msg {:?} to {}", msg, socket_addr);
+        let message_label = msg.message_label();
         let stream = self
             .sockets
             .get_mut(&socket_addr)
@@ -303,7 +316,10 @@ where
         let binary_data = to_tcp_message(&msg)?;
         stream
             .sender
-            .try_send(binary_data)
+            .try_send(TcpOutboundMessage {
+                message: binary_data,
+                message_label,
+            })
             .map_err(|e| anyhow::anyhow!("Try sending msg to client {}: {}", socket_addr, e))
     }
 
@@ -315,7 +331,10 @@ where
 
         stream
             .sender
-            .send(TcpMessage::Ping)
+            .send(TcpOutboundMessage {
+                message: TcpMessage::Ping,
+                message_label: "ping",
+            })
             .await
             .map_err(|e| anyhow::anyhow!("Sending ping to client {}: {}", socket_addr, e))
     }
@@ -372,15 +391,21 @@ where
                                     frames_received,
                                     bytes.len()
                                 );
-                                metrics.message_received();
-                                metrics.message_received_bytes(bytes.len() as u64);
                                 // Try non-blocking send first to detect channel pressure.
-                                let event = match decode_tcp_payload(&bytes) {
-                                    Ok((headers, data)) => TcpEvent::Message {
-                                        socket_addr: cloned_socket_addr.clone(),
-                                        data,
-                                        headers,
-                                    },
+                                let event = match decode_tcp_payload::<Req>(&bytes) {
+                                    Ok((headers, data)) => {
+                                        let message_label = data.message_label();
+                                        metrics.message_received(message_label);
+                                        metrics.message_received_bytes(
+                                            bytes.len() as u64,
+                                            message_label,
+                                        );
+                                        TcpEvent::Message {
+                                            socket_addr: cloned_socket_addr.clone(),
+                                            data,
+                                            headers,
+                                        }
+                                    }
                                     Err(io) => {
                                         metrics.message_error();
                                         warn!(
@@ -475,7 +500,7 @@ where
             }
         });
 
-        let (sender_snd, mut sender_recv) = tokio::sync::mpsc::channel::<TcpMessage>(1000);
+        let (sender_snd, mut sender_recv) = tokio::sync::mpsc::channel::<TcpOutboundMessage>(1000);
         let metrics = self.metrics.clone();
 
         let abort_sender_task = logged_task({
@@ -484,8 +509,9 @@ where
             let pool = pool.clone();
             let pool_sender = pool_sender_for_sender.clone();
             async move {
-                while let Some(msg) = sender_recv.recv().await {
-                    let Ok(msg_bytes) = msg.try_into() else {
+                while let Some(outbound) = sender_recv.recv().await {
+                    let message_label = outbound.message_label;
+                    let Ok(msg_bytes) = outbound.message.try_into() else {
                         let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
                         error!(
                             pool = %pool,
@@ -531,8 +557,8 @@ where
                             break;
                         }
                         Ok(Ok(_)) => {
-                            metrics.message_emitted();
-                            metrics.message_emitted_bytes(nb_bytes as u64);
+                            metrics.message_emitted(message_label);
+                            metrics.message_emitted_bytes(nb_bytes as u64, message_label);
                         }
                     }
                     metrics.message_send_time(start.elapsed().as_secs_f64());

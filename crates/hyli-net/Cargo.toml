@@ -15,6 +15,7 @@ hyli-crypto = { workspace = true }
 anyhow = { workspace = true }
 borsh = { workspace = true }
 tracing = { workspace = true }
+strum_macros = { workspace = true }
 
 # Tcp feature
 tokio = { workspace = true }

@@ -446,6 +446,19 @@ impl Display for ConsensusNetMessage {
     }
 }
 
+hyli_net::impl_tcp_message_label_with_prefix!(ConsensusNetMessage, "ConsensusNetMessage", {
+    Prepare,
+    PrepareVote,
+    Confirm,
+    ConfirmAck,
+    Commit,
+    Timeout,
+    TimeoutCertificate,
+    ValidatorCandidacy,
+    SyncRequest,
+    SyncReply,
+});
+
 impl IntoHeaderSignableData for ConsensusNetMessage {
     // This signature is just for DOS / efficiency
     fn to_header_signable_data(&self) -> HeaderSignableData {

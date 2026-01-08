@@ -20,7 +20,7 @@ use crate::{
     clock::TimestampMsClock,
     metrics::P2PMetrics,
     ordered_join_set::OrderedJoinSet,
-    tcp::{tcp_client::TcpClient, Handshake, TcpHeaders},
+    tcp::{tcp_client::TcpClient, Handshake, TcpHeaders, TcpMessageLabel},
 };
 
 use super::{
@@ -114,7 +114,7 @@ pub enum HandshakeOngoing {
 /// The connection is kept alive, hance restarted if it disconnects.
 pub struct P2PServer<Msg>
 where
-    Msg: std::fmt::Debug + BorshDeserialize + BorshSerialize,
+    Msg: std::fmt::Debug + BorshDeserialize + BorshSerialize + TcpMessageLabel,
 {
     // Crypto object used to sign and verify messages
     crypto: Arc<BlstCrypto>,
@@ -138,7 +138,7 @@ where
 
 impl<Msg> P2PServer<Msg>
 where
-    Msg: std::fmt::Debug + BorshDeserialize + BorshSerialize + Send + 'static,
+    Msg: std::fmt::Debug + BorshDeserialize + BorshSerialize + TcpMessageLabel + Send + 'static,
 {
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
@@ -1218,6 +1218,12 @@ pub mod tests {
     // Simple message type for testing
     #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Eq, PartialEq, PartialOrd, Ord)]
     pub struct TestMessage(String);
+
+    impl crate::tcp::TcpMessageLabel for TestMessage {
+        fn message_label(&self) -> &'static str {
+            "TestMessage"
+        }
+    }
 
     macro_rules! receive_and_handle_event {
         ($server:expr, $pattern:pat, $error_msg:expr) => {{
