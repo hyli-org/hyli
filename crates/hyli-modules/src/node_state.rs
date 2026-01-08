@@ -318,12 +318,11 @@ impl NodeState {
 
     /// Further convenience wrapper
     pub fn handle_signed_block(&mut self, signed_block: SignedBlock) -> Result<NodeStateBlock> {
-        let mut callback = BlockNodeStateCallback::from_signed(&signed_block);
+        let mut callback = NodeStateEventCallback::from_signed(&signed_block);
         self.process_signed_block(&signed_block, &mut callback)?;
-        let (parsed_block, staking_data, stateful_events) = callback.take();
+        let (staking_data, stateful_events) = callback.take();
         Ok(NodeStateBlock {
             signed_block: signed_block.into(),
-            parsed_block: parsed_block.into(),
             staking_data: staking_data.into(),
             stateful_events: stateful_events.into(),
         })
@@ -1736,22 +1735,14 @@ impl<'any> NodeStateProcessing<'any> {
 }
 
 #[derive(Default)]
-pub struct BlockNodeStateCallback {
-    block_under_construction: Block,
+pub struct NodeStateEventCallback {
     staking_data: BlockStakingData,
     stateful_events: StatefulEvents,
 }
 
-impl BlockNodeStateCallback {
+impl NodeStateEventCallback {
     pub fn from_signed(signed_block: &SignedBlock) -> Self {
-        BlockNodeStateCallback {
-            block_under_construction: Block {
-                parent_hash: signed_block.parent_hash().clone(),
-                hash: signed_block.hashed(),
-                block_height: signed_block.height(),
-                block_timestamp: signed_block.consensus_proposal.timestamp.clone(),
-                ..Default::default()
-            },
+        NodeStateEventCallback {
             staking_data: BlockStakingData {
                 new_bounded_validators: signed_block
                     .consensus_proposal
@@ -1770,156 +1761,41 @@ impl BlockNodeStateCallback {
         }
     }
 
-    pub fn take(&mut self) -> (Block, BlockStakingData, StatefulEvents) {
+    pub fn take(&mut self) -> (BlockStakingData, StatefulEvents) {
         (
-            std::mem::take(&mut self.block_under_construction),
             std::mem::take(&mut self.staking_data),
             std::mem::take(&mut self.stateful_events),
         )
     }
 }
 
-impl NodeStateCallback for BlockNodeStateCallback {
+impl NodeStateCallback for NodeStateEventCallback {
     fn on_event(&mut self, event: &TxEvent) {
         match *event {
-            TxEvent::RejectedBlobTransaction(tx_id, ..) => {
-                self.block_under_construction
-                    .failed_txs
-                    .push(tx_id.1.clone());
-                self.block_under_construction
-                    .dp_parent_hashes
-                    .insert(tx_id.1.clone(), tx_id.0.clone());
-            }
-            TxEvent::DuplicateBlobTransaction(tx_id) => {
-                self.block_under_construction
-                    .dropped_duplicate_txs
-                    .push(tx_id.clone());
-                self.block_under_construction
-                    .dp_parent_hashes
-                    .insert(tx_id.1.clone(), tx_id.0.clone());
-            }
-            TxEvent::SequencedBlobTransaction(tx_id, lane_id, _, blob_tx, tx_context) => {
-                self.block_under_construction
-                    .txs
-                    .push((tx_id.clone(), blob_tx.clone().into()));
-                self.block_under_construction
-                    .dp_parent_hashes
-                    .insert(tx_id.1.clone(), tx_id.0.clone());
-                self.block_under_construction
-                    .lane_ids
-                    .insert(tx_id.1.clone(), lane_id.clone());
+            TxEvent::SequencedBlobTransaction(tx_id, _lane_id, _index, blob_tx, tx_context) => {
                 self.stateful_events.events.push((
                     tx_id.clone(),
                     StatefulEvent::SequencedTx(blob_tx.clone(), tx_context.clone()),
                 ));
             }
-            TxEvent::SequencedProofTransaction(tx_id, lane_id, _, proof_tx) => {
-                self.block_under_construction
-                    .txs
-                    .push((tx_id.clone(), proof_tx.clone().into()));
-                self.block_under_construction
-                    .dp_parent_hashes
-                    .insert(tx_id.1.clone(), tx_id.0.clone());
-                self.block_under_construction
-                    .lane_ids
-                    .insert(tx_id.1.clone(), lane_id.clone());
-            }
             TxEvent::Settled(tx_id, unsettled_tx) => {
-                self.block_under_construction
-                    .successful_txs
-                    .push(tx_id.1.clone());
-                self.block_under_construction
-                    .dp_parent_hashes
-                    .insert(tx_id.1.clone(), tx_id.0.clone());
-                self.block_under_construction
-                    .lane_ids
-                    .insert(tx_id.1.clone(), unsettled_tx.tx_context.lane_id.clone());
-                self.block_under_construction
-                    .transactions_events
-                    .entry(tx_id.1.clone())
-                    .or_default()
-                    .push(TransactionStateEvent::Settled);
                 self.stateful_events.events.push((
                     tx_id.clone(),
                     StatefulEvent::SettledTx(unsettled_tx.clone()),
                 ));
             }
             TxEvent::SettledAsFailed(tx_id, unsettled_tx) => {
-                self.block_under_construction
-                    .failed_txs
-                    .push(tx_id.1.clone());
-                self.block_under_construction
-                    .dp_parent_hashes
-                    .insert(tx_id.1.clone(), tx_id.0.clone());
-                self.block_under_construction
-                    .transactions_events
-                    .entry(tx_id.1.clone())
-                    .or_default()
-                    .push(TransactionStateEvent::SettledAsFailed);
                 self.stateful_events
                     .events
                     .push((tx_id.clone(), StatefulEvent::FailedTx(unsettled_tx.clone())));
             }
             TxEvent::TimedOut(tx_id, unsettled_tx) => {
-                self.block_under_construction
-                    .timed_out_txs
-                    .push(tx_id.1.clone());
-                self.block_under_construction
-                    .dp_parent_hashes
-                    .insert(tx_id.1.clone(), tx_id.0.clone());
-                self.block_under_construction
-                    .transactions_events
-                    .entry(tx_id.1.clone())
-                    .or_default()
-                    .push(TransactionStateEvent::TimedOut);
                 self.stateful_events.events.push((
                     tx_id.clone(),
                     StatefulEvent::TimedOutTx(unsettled_tx.clone()),
                 ));
             }
-            TxEvent::TxError(tx_id, err) => {
-                self.block_under_construction
-                    .transactions_events
-                    .entry(tx_id.1.clone())
-                    .or_default()
-                    .push(TransactionStateEvent::Error(err.to_string()));
-            }
-            TxEvent::NewProof(tx_id, blob, blob_index, proof_data, blob_proof_index) => {
-                self.block_under_construction
-                    .dp_parent_hashes
-                    .insert(tx_id.1.clone(), tx_id.0.clone());
-                self.block_under_construction
-                    .dp_parent_hashes
-                    .insert(proof_data.2 .1.clone(), proof_data.2 .0.clone());
-                self.block_under_construction
-                    .transactions_events
-                    .entry(tx_id.1.clone())
-                    .or_default()
-                    .push(TransactionStateEvent::NewProof {
-                        blob_index,
-                        proof_tx_hash: proof_data.2 .1.clone(),
-                        program_output: proof_data.3.program_outputs.clone(),
-                    });
-                self.block_under_construction
-                    .blob_proof_outputs
-                    .push(HandledBlobProofOutput {
-                        proof_tx_hash: proof_data.2 .1.clone(),
-                        blob_tx_hash: tx_id.1.clone(),
-                        blob_index,
-                        contract_name: blob.contract_name.clone(),
-                        verifier: proof_data.1.clone(),
-                        program_id: proof_data.0.clone(),
-                        hyli_output: proof_data.3.clone(),
-                        blob_proof_output_index: blob_proof_index,
-                    });
-            }
-            TxEvent::BlobSettled(tx_id, tx, blob, blob_index, _, blob_proof_index) => {
-                self.block_under_construction.verified_blobs.push((
-                    tx_id.1.clone(),
-                    blob_index,
-                    Some(blob_proof_index),
-                ));
-                // Keep track of all stakers
+            TxEvent::BlobSettled(_tx_id, tx, blob, _blob_index, _, _blob_proof_index) => {
                 if blob.contract_name.0 == "staking" {
                     if let Ok(structured_blob) = StructuredBlob::try_from(blob.clone()) {
                         let staking_action: StakingAction = structured_blob.data.parameters;
@@ -1931,32 +1807,7 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     }
                 }
             }
-            TxEvent::ContractDeleted(tx_id, contract_name) => {
-                self.block_under_construction
-                    .registered_contracts
-                    .remove(contract_name);
-                self.block_under_construction
-                    .deleted_contracts
-                    .insert(contract_name.clone(), tx_id.1.clone());
-            }
             TxEvent::ContractRegistered(tx_id, contract_name, contract, metadata) => {
-                self.block_under_construction
-                    .deleted_contracts
-                    .remove(contract_name);
-                self.block_under_construction.registered_contracts.insert(
-                    contract_name.clone(),
-                    (
-                        tx_id.1.clone(),
-                        RegisterContractEffect {
-                            verifier: contract.verifier.clone(),
-                            program_id: contract.program_id.clone(),
-                            state_commitment: contract.state.clone(),
-                            contract_name: contract_name.clone(),
-                            timeout_window: Some(contract.timeout_window.clone()),
-                        },
-                        metadata.clone(),
-                    ),
-                );
                 self.stateful_events.events.push((
                     tx_id.clone(),
                     StatefulEvent::ContractRegistration(
@@ -1966,19 +1817,13 @@ impl NodeStateCallback for BlockNodeStateCallback {
                     ),
                 ));
             }
-            TxEvent::ContractStateUpdated(tx_id, contract_name, contract, state_commitment) => {
-                self.block_under_construction
-                    .updated_states
-                    .insert(contract_name.clone(), state_commitment.clone());
+            TxEvent::ContractStateUpdated(tx_id, contract_name, contract, _state_commitment) => {
                 self.stateful_events.events.push((
                     tx_id.clone(),
                     StatefulEvent::ContractUpdate(contract_name.clone(), contract.clone()),
                 ));
             }
-            TxEvent::ContractProgramIdUpdated(tx_id, contract_name, contract, program_id) => {
-                self.block_under_construction
-                    .updated_program_ids
-                    .insert(contract_name.clone(), program_id.clone());
+            TxEvent::ContractProgramIdUpdated(tx_id, contract_name, contract, _program_id) => {
                 self.stateful_events.events.push((
                     tx_id.clone(),
                     StatefulEvent::ContractUpdate(contract_name.clone(), contract.clone()),
@@ -1988,16 +1833,14 @@ impl NodeStateCallback for BlockNodeStateCallback {
                 tx_id,
                 contract_name,
                 contract,
-                timeout_window,
+                _timeout_window,
             ) => {
-                self.block_under_construction
-                    .updated_timeout_windows
-                    .insert(contract_name.clone(), timeout_window.clone());
                 self.stateful_events.events.push((
                     tx_id.clone(),
                     StatefulEvent::ContractUpdate(contract_name.clone(), contract.clone()),
                 ));
             }
+            _ => {}
         };
     }
 }
@@ -2261,7 +2104,7 @@ pub mod test {
         fn for_testing(&'_ mut self) -> NodeStateProcessing<'_> {
             NodeStateProcessing {
                 this: self,
-                callback: Box::leak(Box::new(BlockNodeStateCallback::default())),
+                callback: Box::leak(Box::new(NodeStateEventCallback::default())),
             }
         }
 
