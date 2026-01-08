@@ -19,7 +19,7 @@ jobs:
     name: Test
     runs-on: arc-runner-set
     container:
-      image: ghcr.io/hyli-org/arc-runner:main
+      image: ghcr.io/hyli-org/arc-runner
     timeout-minutes: 20
     strategy:
       matrix:
@@ -67,7 +67,7 @@ jobs:
     name: Unit tests coverage
     runs-on: arc-runner-set
     container:
-      image: ghcr.io/hyli-org/arc-runner:main
+      image: ghcr.io/hyli-org/arc-runner
     timeout-minutes: 15
     strategy:
       matrix:
@@ -98,7 +98,7 @@ jobs:
     name: Build with different feature flags
     runs-on: arc-runner-set
     container:
-      image: ghcr.io/hyli-org/arc-runner:main
+      image: ghcr.io/hyli-org/arc-runner
     timeout-minutes: 10
     strategy:
       matrix:
@@ -124,7 +124,7 @@ jobs:
     if: github.event.pull_request.draft == false
     runs-on: arc-runner-set
     container:
-      image: ghcr.io/hyli-org/arc-runner:main
+      image: ghcr.io/hyli-org/arc-runner
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

@@ -12,7 +12,7 @@ jobs:
   update-files:
     runs-on: arc-runner-set
     container:
-      image: ghcr.io/hyli-org/arc-runner:main
+      image: ghcr.io/hyli-org/arc-runner
 
     steps:
       - name: Checkout repository
