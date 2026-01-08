@@ -21,6 +21,8 @@ pub struct Consensus {
     pub solo: bool,
     /// The timestamp of the genesis block, in seconds since the Unix epoch.
     pub genesis_timestamp: u64,
+    /// Number of recent timeout certificates to keep for timeout recovery.
+    pub timeout_certificate_cache_size: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, IntoStaticStr)]

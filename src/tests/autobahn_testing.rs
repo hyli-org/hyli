@@ -61,24 +61,33 @@ macro_rules! send {
     ) => {
         // Distribute the message to the target node from all specified nodes
         ($({
-            let answer = $node.assert_send(
-                &$to.validator_pubkey(),
-                format!("[send from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            ).await;
+            let answer = loop {
+                let candidate = $node
+                    .assert_send(
+                        &$to.validator_pubkey(),
+                        format!(
+                            "[send from: {} to: {}] {}",
+                            stringify!($node),
+                            stringify!($to),
+                            $description
+                        )
+                        .as_str(),
+                    )
+                    .await;
 
-            // If `message_matches` is provided, perform the pattern match
-            if let $pattern = &answer.msg {
-                // Execute optional assertions if provided
-            } else {
-                let msg_variant_name: &'static str = answer.msg.clone().into();
-                panic!(
-                    "[send from: {}] {}: Message {} did not match {}",
-                    stringify!($node),
-                    $description,
-                    msg_variant_name,
-                    stringify!($pattern)
-                );
-            }
+                if let $pattern = &candidate.msg {
+                    break candidate;
+                } else {
+                    let msg_variant_name: &'static str = candidate.msg.clone().into();
+                    info!(
+                        "[send from: {}] {}: skipping {} while waiting for {}",
+                        stringify!($node),
+                        $description,
+                        msg_variant_name,
+                        stringify!($pattern)
+                    );
+                }
+            };
 
             // Handle the message
             $to.handle_msg(
@@ -96,25 +105,34 @@ macro_rules! send {
     ) => {
         // Distribute the message to the target node from all specified nodes
         ($({
-            let answer = $node.assert_send(
-                &$to.validator_pubkey(),
-                format!("[send from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            ).await;
+            let answer = loop {
+                let candidate = $node
+                    .assert_send(
+                        &$to.validator_pubkey(),
+                        format!(
+                            "[send from: {} to: {}] {}",
+                            stringify!($node),
+                            stringify!($to),
+                            $description
+                        )
+                        .as_str(),
+                    )
+                    .await;
 
-            // If `message_matches` is provided, perform the pattern match
-            if let $pattern = &answer.msg {
-                // Execute optional assertions if provided
-                $($asserts)?
-            } else {
-                let msg_variant_name: &'static str = answer.msg.clone().into();
-                panic!(
-                    "[send from: {}] {}: Message {} did not match {}",
-                    stringify!($node),
-                    $description,
-                    msg_variant_name,
-                    stringify!($pattern)
-                );
-            }
+                if let $pattern = &candidate.msg {
+                    $($asserts)?
+                    break candidate;
+                } else {
+                    let msg_variant_name: &'static str = candidate.msg.clone().into();
+                    info!(
+                        "[send from: {}] {}: skipping {} while waiting for {}",
+                        stringify!($node),
+                        $description,
+                        msg_variant_name,
+                        stringify!($pattern)
+                    );
+                }
+            };
 
             // Handle the message
             $to.handle_msg(
@@ -2150,6 +2168,85 @@ async fn autobahn_got_timed_out_during_sync() {
         description: "Commit",
         from: node2.consensus_ctx, to: [node0.consensus_ctx, node1.consensus_ctx, node3.consensus_ctx],
         message_matches: ConsensusNetMessage::Commit(..)
+    };
+}
+
+#[test_log::test(tokio::test)]
+async fn autobahn_timeout_split_views_no_tc() {
+    let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
+
+    ConsensusTestCtx::setup_for_round(
+        &mut [
+            &mut node0.consensus_ctx,
+            &mut node1.consensus_ctx,
+            &mut node2.consensus_ctx,
+            &mut node3.consensus_ctx,
+        ],
+        5,
+        0,
+    );
+
+    ConsensusTestCtx::timeout(&mut [
+        &mut node0.consensus_ctx,
+        &mut node1.consensus_ctx,
+        &mut node2.consensus_ctx,
+        &mut node3.consensus_ctx,
+    ])
+    .await;
+
+    broadcast! {
+        description: "Timeout v0 -> node2/node3",
+        from: node0.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Timeout v0 -> node2/node3",
+        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Timeout v0 -> dropped",
+        from: node2.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Timeout v0 -> dropped",
+        from: node3.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+
+    broadcast! {
+        description: "Timeout Certificate node2",
+        from: node2.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::TimeoutCertificate(..)
+    };
+    broadcast! {
+        description: "Timeout Certificate node3",
+        from: node3.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::TimeoutCertificate(..)
+    };
+
+    node0.consensus_ctx.assert_no_broadcast("No TC from node0");
+    node1.consensus_ctx.assert_no_broadcast("No TC from node1");
+
+    ConsensusTestCtx::timeout(&mut [&mut node0.consensus_ctx]).await;
+
+    broadcast! {
+        description: "Timeout v0 to node2",
+        from: node0.consensus_ctx, to: [node2.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout((signed_slot_view, _)) => {
+            assert_eq!(signed_slot_view.msg.1, 0);
+        }
+    };
+
+    send! {
+        description: "TimeoutCertificate reply to old view",
+        from: [
+            node2.consensus_ctx; ConsensusNetMessage::TimeoutCertificate(_, _, slot, view) => {
+                assert_eq!(*slot, 5);
+                assert_eq!(*view, 0);
+            }
+        ], to: node0.consensus_ctx
     };
 }
 

@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
-use google_cloud_storage::client::{Client, ClientConfig};
-use google_cloud_storage::http::objects::upload::{Media, UploadObjectRequest, UploadType};
+use bytes::Bytes;
+use google_cloud_storage::client::Storage;
 use sdk::{DataEvent, DataProposalHash, TxHash};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -51,7 +51,7 @@ pub struct GcsUploaderCtx {
 pub struct GcsUploader {
     ctx: GcsUploaderCtx,
     bus: GcsUploaderBusClient,
-    gcs_client: Client,
+    gcs_client: Storage,
 }
 
 impl Module for GcsUploader {
@@ -59,8 +59,7 @@ impl Module for GcsUploader {
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus = GcsUploaderBusClient::new_from_bus(bus.new_handle()).await;
-        let config = ClientConfig::default().with_auth().await.unwrap();
-        let gcs_client = Client::new(config);
+        let gcs_client = Storage::builder().build().await?;
         Ok(GcsUploader {
             ctx,
             bus,
@@ -112,17 +111,16 @@ impl GcsUploader {
         let prefix = &self.ctx.gcs_config.gcs_prefix;
         let object_name = format!("{prefix}/block_{block_height}.bin");
         let data = borsh::to_vec(&block)?;
-        let req = UploadObjectRequest {
-            bucket: self.ctx.gcs_config.gcs_bucket.clone(),
-            generation: Some(0), // 0 means - don't overwrite existing objects
-            ..Default::default()
-        };
-        let media = Media::new(object_name.clone());
-        let upload_type = UploadType::Simple(media);
         // Log, but ignore errors - could be that we already dumped this, or some other thing - we'll do our best to store everything.
         match self
             .gcs_client
-            .upload_object(&req, data, &upload_type)
+            .write_object(
+                self.gcs_bucket_path(),
+                object_name.clone(),
+                Bytes::from(data),
+            )
+            .set_if_generation_match(0_i64)
+            .send_unbuffered()
             .await
         {
             Ok(_) => {
@@ -157,18 +155,15 @@ impl GcsUploader {
             prefix, parent_data_proposal_hash.0, tx_hash.0
         );
 
-        let upload_request = UploadObjectRequest {
-            bucket: self.ctx.gcs_config.gcs_bucket.clone(),
-            generation: Some(0), // 0 means - don't overwrite existing objects
-            ..Default::default()
-        };
-
-        let media = Media::new(object_name.clone());
-        let upload_type = UploadType::Simple(media);
-
         match self
             .gcs_client
-            .upload_object(&upload_request, proof, &upload_type)
+            .write_object(
+                self.gcs_bucket_path(),
+                object_name.clone(),
+                Bytes::from(proof),
+            )
+            .set_if_generation_match(0_i64)
+            .send_buffered()
             .await
         {
             Ok(_) => {
@@ -188,5 +183,14 @@ impl GcsUploader {
             }
         }
         Ok(())
+    }
+
+    fn gcs_bucket_path(&self) -> String {
+        let bucket = &self.ctx.gcs_config.gcs_bucket;
+        if bucket.starts_with("projects/") {
+            bucket.clone()
+        } else {
+            format!("projects/_/buckets/{bucket}")
+        }
     }
 }
