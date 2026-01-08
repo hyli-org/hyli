@@ -10,6 +10,7 @@ use std::{
 use anyhow::Context;
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
+use futures::stream::{SplitSink, SplitStream};
 use futures::{FutureExt, SinkExt, StreamExt};
 use tokio::sync::mpsc::{Receiver, Sender};
 
@@ -17,10 +18,10 @@ use crate::{
     clock::TimestampMsClock,
     logged_task::logged_task,
     metrics::TcpServerMetrics,
-    net::{TcpListener, TcpStream},
+    net::TcpListener,
     tcp::{
-        decode_tcp_payload, framing, to_tcp_message, to_tcp_message_with_headers, TcpData,
-        TcpHeaders, TcpMessage,
+        decode_tcp_payload, framed_stream, to_tcp_message, to_tcp_message_with_headers, TcpData,
+        TcpHeaders, FramedStream, TcpMessage,
     },
 };
 #[cfg(feature = "turmoil")]
@@ -28,6 +29,9 @@ use crate::tcp::intercept;
 use tracing::{debug, error, trace, warn};
 
 use super::{tcp_client::TcpClient, SocketStream, TcpEvent};
+
+type TcpSender = SplitSink<FramedStream, Bytes>;
+type TcpReceiver = SplitStream<FramedStream>;
 
 fn peer_label_or_addr(peer_label: &RwLock<String>, socket_addr: &str) -> String {
     match peer_label.read() {
@@ -131,7 +135,7 @@ where
                     if let Some(len) = self.max_frame_length {
                         debug!("Setting max frame length to {}", len);
                     }
-                    let (sender, receiver) = framing::framed_stream(stream, self.max_frame_length).split();
+                    let (sender, receiver) = framed_stream(stream, self.max_frame_length).split();
                     self.setup_stream(sender, receiver, &socket_addr.to_string());
                 }
 
@@ -318,8 +322,8 @@ where
     /// Setup stream in the managed list for a new client
     fn setup_stream(
         &mut self,
-        mut sender: framing::TcpSender,
-        mut receiver: framing::TcpReceiver,
+        mut sender: TcpSender,
+        mut receiver: TcpReceiver,
         socket_addr: &String,
     ) {
         let send_timeout = self.send_timeout;
@@ -482,7 +486,7 @@ where
                 while let Some(msg) = sender_recv.recv().await {
                     #[cfg(feature = "turmoil")]
                     let should_check_drop = matches!(&msg, TcpMessage::Data(_));
-                    let Ok(msg_bytes) = msg.try_into() else {
+                    let Ok(msg_bytes) = Bytes::try_from(msg) else {
                         let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
                         error!(
                             pool = %pool,
@@ -504,7 +508,7 @@ where
                         continue;
                     }
                     let start = std::time::Instant::now();
-                    let nb_bytes: usize = (&msg_bytes as &Bytes).len();
+                    let nb_bytes: usize = msg_bytes.len();
                     match tokio::time::timeout(send_timeout, sender.send(msg_bytes)).await {
                         Err(e) => {
                             let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);

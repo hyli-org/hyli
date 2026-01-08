@@ -2,6 +2,7 @@ use std::{net::SocketAddr, time::Duration};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
+use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use sdk::hyli_model_utils::TimestampMs;
 
@@ -11,10 +12,10 @@ use tracing::{debug, info, trace, warn};
 
 #[cfg(feature = "turmoil")]
 use super::intercept;
-use super::{decode_tcp_payload, framing, to_tcp_message, TcpMessage};
+use super::{decode_tcp_payload, framed_stream, to_tcp_message, FramedStream, TcpMessage};
 
-type TcpSender = framing::TcpSender;
-type TcpReceiver = framing::TcpReceiver;
+type TcpSender = SplitSink<FramedStream, Bytes>;
+type TcpReceiver = SplitStream<FramedStream>;
 
 #[derive(Debug)]
 pub struct TcpClient<Req, Res>
@@ -96,7 +97,7 @@ where
         let addr = tcp_stream.peer_addr()?;
         info!("TcpClient {} - Connected to data stream on {}.", id, addr);
 
-        let (sender, receiver) = framing::framed_stream(tcp_stream, max_frame_length).split();
+        let (sender, receiver) = framed_stream(tcp_stream, max_frame_length).split();
 
         Ok(TcpClient::<Req, Res> {
             id: id.clone(),
