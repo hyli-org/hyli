@@ -2006,9 +2006,10 @@ impl NodeStateCallback for BlockNodeStateCallback {
 #[allow(unused)]
 pub mod test {
     mod contract_registration_tests;
+    mod helpers;
     mod node_state_tests;
 
-    use std::ops::Deref;
+    pub use helpers::*;
 
     use super::*;
     use hyli_net::clock::TimestampMsClock;
@@ -2284,9 +2285,13 @@ pub mod test {
             self.force_handle_block(block)
         }
 
-        pub fn craft_block_and_handle(&mut self, height: u64, txs: Vec<Transaction>) -> Block {
+        pub fn craft_block_and_handle(
+            &mut self,
+            height: u64,
+            txs: Vec<Transaction>,
+        ) -> NodeStateBlock {
             let block = craft_signed_block(height, txs);
-            self.force_handle_block(block).parsed_block.deref().clone()
+            self.force_handle_block(block)
         }
 
         pub fn craft_block_and_handle_with_parent_dp_hash(
@@ -2294,9 +2299,9 @@ pub mod test {
             height: u64,
             txs: Vec<Transaction>,
             parent_dp_hash: DataProposalHash,
-        ) -> Block {
+        ) -> NodeStateBlock {
             let block = craft_signed_block_with_parent_dp_hash(height, txs, parent_dp_hash);
-            self.force_handle_block(block).parsed_block.deref().clone()
+            self.force_handle_block(block)
         }
 
         pub fn handle_register_contract_effect(&mut self, tx: &RegisterContractEffect) {
@@ -2329,7 +2334,11 @@ pub mod test {
             self.this.force_handle_block(block)
         }
 
-        pub fn craft_block_and_handle(&mut self, height: u64, txs: Vec<Transaction>) -> Block {
+        pub fn craft_block_and_handle(
+            &mut self,
+            height: u64,
+            txs: Vec<Transaction>,
+        ) -> NodeStateBlock {
             self.this.craft_block_and_handle(height, txs)
         }
 
@@ -2338,7 +2347,7 @@ pub mod test {
             height: u64,
             txs: Vec<Transaction>,
             parent_dp_hash: DataProposalHash,
-        ) -> Block {
+        ) -> NodeStateBlock {
             self.this
                 .craft_block_and_handle_with_parent_dp_hash(height, txs, parent_dp_hash)
         }
