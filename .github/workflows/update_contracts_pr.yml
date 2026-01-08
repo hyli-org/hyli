@@ -11,16 +11,11 @@ on:
 jobs:
   update-files:
     runs-on: arc-runner-set
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0 # Récupère tout l'historique pour éviter les problèmes
-      - name: Install rzup
-        run: |
-          curl -L https://risczero.com/install | bash
-          /home/runner/.risc0/bin/rzup install
 
       - name: Run contract update command
         run: |
