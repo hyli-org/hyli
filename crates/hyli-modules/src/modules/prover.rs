@@ -544,19 +544,23 @@ where
                     if *contract_name != self.ctx.contract_name {
                         continue;
                     }
-                    if !self.provers.contains_key(&contract.program_id) {
-                        // ProgramId changed, download new ELF from registry
-                        info!(
-                            cn =% self.ctx.contract_name,
-                            block_height =% block_height,
-                            "Program ID changed for contract {}, Trying to download prover for {}",
-                            contract_name,
-                            contract.program_id
-                        );
-
-                        self.add_prover(&contract.program_id).await?;
-                    }
+                    self.ensure_prover_available(
+                        &contract.program_id,
+                        &format!("Program ID changed for contract {} at block {}", contract_name, block_height)
+                    ).await?;
                     last_contract_state = Some(&contract.state);
+
+                    // TODO: at this block we get the proof of a tx in the past that changed the program ID
+                    // All txs after that tx need to be replayed with the new program ID
+                    // For now we just warn out if that happens
+                    // If we upgrade a contract with no activity, the prover will be able to pick up the new program id
+                    // without needing to replay anything
+                    warn!(
+                        cn =% self.ctx.contract_name,
+                        block_height =% block_height,
+                        "Program ID changed for contract {} at block {}, but replaying past TXs with new program ID is not yet supported.",
+                        contract_name, block_height
+                    );
                 }
             }
         }
@@ -607,7 +611,7 @@ where
                 })
                 .collect::<Vec<_>>();
             let mut join_handles = Vec::new();
-            self.prove_supported_blob(post_failure_blobs, &mut join_handles)?;
+            self.prove_supported_blob(post_failure_blobs, &mut join_handles).await?;
             // Don't wait, we'll want to prove the other successful proofs.
         }
 
@@ -648,7 +652,7 @@ where
 
         if let Some(buffered) = buffered {
             let mut join_handles = Vec::new();
-            self.prove_supported_blob(buffered, &mut join_handles)?;
+            self.prove_supported_blob(buffered, &mut join_handles).await?;
             // Wait for all join handles, but with a 30 second timeout for the whole batch,
             // after which we'll move on.
             let join_handles_fut = async {
@@ -890,7 +894,7 @@ where
         Ok(())
     }
 
-    fn prove_supported_blob(
+    async fn prove_supported_blob(
         &mut self,
         mut blobs: Vec<(TxId, Vec<BlobIndex>, BlobTransaction, Arc<TxContext>)>,
         join_handles: &mut Vec<JoinHandle<()>>,
@@ -1008,6 +1012,25 @@ where
                             ));
                             // don't break here, we want this calldata to be stored
                         }
+                        let updated_program_id = hyli_output.onchain_effects.iter().find_map(|eff| {
+                            if let sdk::OnchainEffect::UpdateContractProgramId(
+                                contract_name,
+                                program_id,
+                            ) = eff
+                            {
+                                Some(program_id.clone())
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some(updated_program_id) = &updated_program_id {
+                            log_error!(
+                                self.ensure_prover_available(updated_program_id, 
+                                    &format!("Program ID updated for tx {}" , tx_id
+                                )).await,
+                                "Adding new prover after program ID update"
+                            );
+                        }
                     }
                 }
 
@@ -1048,14 +1071,14 @@ where
 
         if calldatas.is_empty() {
             if !remaining_blobs.is_empty() {
-                self.prove_supported_blob(remaining_blobs, join_handles)?;
+                self.prove_supported_blob(remaining_blobs, join_handles).await?;
             }
             return Ok(());
         }
 
         let Some(commitment_metadata) = initial_commitment_metadata else {
             if !remaining_blobs.is_empty() {
-                self.prove_supported_blob(remaining_blobs, join_handles)?;
+                self.prove_supported_blob(remaining_blobs, join_handles).await?;
             }
             return Ok(());
         };
@@ -1145,7 +1168,7 @@ where
         });
         join_handles.push(handle);
         if !remaining_blobs.is_empty() {
-            self.prove_supported_blob(remaining_blobs, join_handles)?;
+            self.prove_supported_blob(remaining_blobs, join_handles).await?;
         }
         Ok(())
     }
@@ -1164,6 +1187,26 @@ where
             "Prover ELF downloaded for program ID: {}",
             program_id
         );
+        Ok(())
+    }
+
+    /// Ensures a prover is available for the given program ID.
+    /// If not present, downloads the prover from the registry.
+    async fn ensure_prover_available(
+        &mut self,
+        program_id: &ProgramId,
+        context_info: &str,
+    ) -> Result<()> {
+        if !self.provers.contains_key(program_id) {
+            info!(
+                cn =% self.ctx.contract_name,
+                "{}, Trying to download prover for {}",
+                context_info,
+                program_id
+            );
+
+            self.add_prover(program_id).await?;
+        }
         Ok(())
     }
 }
