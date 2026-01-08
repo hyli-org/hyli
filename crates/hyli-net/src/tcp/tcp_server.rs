@@ -23,6 +23,8 @@ use crate::{
         TcpHeaders, TcpMessage,
     },
 };
+#[cfg(feature = "turmoil")]
+use crate::tcp::intercept;
 use tracing::{debug, error, trace, warn};
 
 use super::{tcp_client::TcpClient, SocketStream, TcpEvent};
@@ -478,6 +480,8 @@ where
             let pool_sender = pool_sender_for_sender.clone();
             async move {
                 while let Some(msg) = sender_recv.recv().await {
+                    #[cfg(feature = "turmoil")]
+                    let should_check_drop = matches!(&msg, TcpMessage::Data(_));
                     let Ok(msg_bytes) = msg.try_into() else {
                         let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
                         error!(
@@ -488,6 +492,17 @@ where
                         metrics.message_send_error();
                         break;
                     };
+                    #[cfg(feature = "turmoil")]
+                    if should_check_drop && intercept::should_drop(&msg_bytes) {
+                        let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
+                        trace!(
+                            pool = %pool,
+                            "Dropping outbound TCP frame for peer {} (socket_addr={})",
+                            label,
+                            cloned_socket_addr
+                        );
+                        continue;
+                    }
                     let start = std::time::Instant::now();
                     let nb_bytes: usize = (&msg_bytes as &Bytes).len();
                     match tokio::time::timeout(send_timeout, sender.send(msg_bytes)).await {

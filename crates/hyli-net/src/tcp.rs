@@ -1,5 +1,7 @@
 pub mod p2p_server;
 pub(crate) mod framing;
+#[cfg(feature = "turmoil")]
+pub mod intercept;
 pub mod tcp_client;
 pub mod tcp_server;
 

@@ -9,6 +9,8 @@ use crate::{clock::TimestampMsClock, metrics::TcpClientMetrics, net::TcpStream};
 use anyhow::{bail, Result};
 use tracing::{debug, info, trace, warn};
 
+#[cfg(feature = "turmoil")]
+use super::intercept;
 use super::{decode_tcp_payload, framing, to_tcp_message, TcpMessage};
 
 type TcpSender = framing::TcpSender;
@@ -109,6 +111,11 @@ where
 
     pub async fn send(&mut self, msg: Req) -> Result<()> {
         let msg_bytes: Bytes = to_tcp_message(&msg)?.try_into()?;
+        #[cfg(feature = "turmoil")]
+        if intercept::should_drop(&msg_bytes) {
+            trace!("Dropping outbound TCP frame for client {}", self.id);
+            return Ok(());
+        }
         let nb_bytes: usize = (&msg_bytes as &Bytes).len();
         let start = std::time::Instant::now();
         let res = self.sender.send(msg_bytes).await;
