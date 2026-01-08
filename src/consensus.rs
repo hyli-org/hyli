@@ -143,6 +143,7 @@ pub struct ConsensusStore {
     bft_round_state: BFTRoundState,
     /// Validators that asked to be part of consensus
     validator_candidates: Vec<SignedByValidator<ValidatorCandidacy>>,
+    recent_timeout_certificates: VecDeque<TimeoutCertificateCacheEntry>,
 }
 
 pub struct Consensus {
@@ -153,10 +154,9 @@ pub struct Consensus {
     #[allow(dead_code)]
     config: SharedConf,
     crypto: SharedBlstCrypto,
-    recent_timeout_certificates: VecDeque<TimeoutCertificateCacheEntry>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(BorshSerialize, BorshDeserialize, Clone, Debug)]
 struct TimeoutCertificateCacheEntry {
     slot: Slot,
     view: View,
@@ -238,22 +238,25 @@ impl Consensus {
         if cache_size == 0 {
             return;
         }
-        self.recent_timeout_certificates
+        self.store
+            .recent_timeout_certificates
             .retain(|entry| !(entry.slot == slot && entry.view == view));
-        self.recent_timeout_certificates
+        self.store
+            .recent_timeout_certificates
             .push_back(TimeoutCertificateCacheEntry {
                 slot,
                 view,
                 timeout_qc,
                 tc_kind,
             });
-        while self.recent_timeout_certificates.len() > cache_size {
-            self.recent_timeout_certificates.pop_front();
+        while self.store.recent_timeout_certificates.len() > cache_size {
+            self.store.recent_timeout_certificates.pop_front();
         }
     }
 
     fn cached_timeout_certificate(&self, slot: Slot, view: View) -> Option<(TimeoutQC, TCKind)> {
-        self.recent_timeout_certificates
+        self.store
+            .recent_timeout_certificates
             .iter()
             .rev()
             .find_map(|entry| {
@@ -925,6 +928,7 @@ impl Consensus {
                 ..Default::default()
             },
             validator_candidates: self.validator_candidates.clone(),
+            recent_timeout_certificates: VecDeque::new(),
         };
         let res = borsh::to_vec(&store_copy).context("Failed to serialize BFT round state")?;
         Ok(QueryConsensusCatchupStoreResponse(res))
@@ -1023,7 +1027,6 @@ pub mod test {
                 store,
                 config: Arc::new(conf),
                 crypto: Arc::new(crypto),
-                recent_timeout_certificates: VecDeque::new(),
             }
         }
 

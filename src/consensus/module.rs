@@ -6,8 +6,6 @@ use hyli_modules::{
 };
 
 use crate::model::SharedRunContext;
-use std::collections::VecDeque;
-
 use super::{
     api, consensus_bus_client::ConsensusBusClient, metrics::ConsensusMetrics, Consensus,
     ConsensusStore,
@@ -36,7 +34,6 @@ impl Module for Consensus {
             store,
             config: ctx.config.clone(),
             crypto: ctx.crypto.clone(),
-            recent_timeout_certificates: VecDeque::new(),
         })
     }
 
