@@ -718,11 +718,16 @@ async fn test_hyli_sub_delete() {
         ],
     );
 
-    assert!(!state.contracts.contains_key(&ContractName::new("c2.hyli")));
-    assert!(!state
-        .contracts
-        .contains_key(&ContractName::new("sub.c2.hyli")));
-    assert_eq!(state.contracts.len(), 2);
+    assert!(block.stateful_events.events.iter().any(|(_, event)| {
+        matches!(event, StatefulEvent::ContractDelete(cn) if cn == &ContractName::new("c2.hyli"))
+    }));
+    assert!(block.stateful_events.events.iter().any(|(_, event)| {
+        matches!(event, StatefulEvent::ContractDelete(cn) if cn == &ContractName::new("sub.c2.hyli"))
+    }));
+    assert_eq!(
+        state.contracts.keys().collect::<Vec<_>>(),
+        [&"hyli".into(), &"wallet".into()]
+    );
 }
 
 #[test_log::test(tokio::test)]
