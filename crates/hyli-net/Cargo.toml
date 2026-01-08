@@ -44,4 +44,5 @@ opentelemetry_sdk = { workspace = true }
 [features]
 # default = ["turmoil"]
 turmoil = ["dep:turmoil"]
+turmoil-framed = ["turmoil", "turmoil/unstable-framed"]
 instrumentation = ["tracing/attributes", "dep:tracing-opentelemetry"]

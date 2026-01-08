@@ -10,12 +10,8 @@ use std::{
 use anyhow::Context;
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
-use futures::{
-    stream::{SplitSink, SplitStream},
-    FutureExt, SinkExt, StreamExt,
-};
+use futures::{FutureExt, SinkExt, StreamExt};
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use crate::{
     clock::TimestampMsClock,
@@ -23,8 +19,8 @@ use crate::{
     metrics::TcpServerMetrics,
     net::{TcpListener, TcpStream},
     tcp::{
-        decode_tcp_payload, to_tcp_message, to_tcp_message_with_headers, TcpData, TcpHeaders,
-        TcpMessage,
+        decode_tcp_payload, framing, to_tcp_message, to_tcp_message_with_headers, TcpData,
+        TcpHeaders, TcpMessage,
     },
 };
 use tracing::{debug, error, trace, warn};
@@ -130,13 +126,10 @@ where
         loop {
             tokio::select! {
                 Ok((stream, socket_addr)) = self.tcp_listener.accept() => {
-                    let mut codec = LengthDelimitedCodec::new();
                     if let Some(len) = self.max_frame_length {
                         debug!("Setting max frame length to {}", len);
-                        codec.set_max_frame_length(len);
                     }
-
-                    let (sender, receiver) = Framed::new(stream, codec).split();
+                    let (sender, receiver) = framing::framed_stream(stream, self.max_frame_length).split();
                     self.setup_stream(sender, receiver, &socket_addr.to_string());
                 }
 
@@ -323,8 +316,8 @@ where
     /// Setup stream in the managed list for a new client
     fn setup_stream(
         &mut self,
-        mut sender: SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>,
-        mut receiver: SplitStream<Framed<TcpStream, LengthDelimitedCodec>>,
+        mut sender: framing::TcpSender,
+        mut receiver: framing::TcpReceiver,
         socket_addr: &String,
     ) {
         let send_timeout = self.send_timeout;

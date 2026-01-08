@@ -1,4 +1,5 @@
 pub mod p2p_server;
+pub(crate) mod framing;
 pub mod tcp_client;
 pub mod tcp_server;
 

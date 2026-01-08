@@ -2,21 +2,17 @@ use std::{net::SocketAddr, time::Duration};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
-use futures::{
-    stream::{SplitSink, SplitStream},
-    SinkExt, StreamExt,
-};
+use futures::{SinkExt, StreamExt};
 use sdk::hyli_model_utils::TimestampMs;
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use crate::{clock::TimestampMsClock, metrics::TcpClientMetrics, net::TcpStream};
 use anyhow::{bail, Result};
 use tracing::{debug, info, trace, warn};
 
-use super::{decode_tcp_payload, to_tcp_message, TcpMessage};
+use super::{decode_tcp_payload, framing, to_tcp_message, TcpMessage};
 
-type TcpSender = SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>;
-type TcpReceiver = SplitStream<Framed<TcpStream, LengthDelimitedCodec>>;
+type TcpSender = framing::TcpSender;
+type TcpReceiver = framing::TcpReceiver;
 
 #[derive(Debug)]
 pub struct TcpClient<Req, Res>
@@ -98,12 +94,7 @@ where
         let addr = tcp_stream.peer_addr()?;
         info!("TcpClient {} - Connected to data stream on {}.", id, addr);
 
-        let mut codec = LengthDelimitedCodec::new();
-        if let Some(mfl) = max_frame_length {
-            codec.set_max_frame_length(mfl);
-        }
-
-        let (sender, receiver) = Framed::new(tcp_stream, codec).split();
+        let (sender, receiver) = framing::framed_stream(tcp_stream, max_frame_length).split();
 
         Ok(TcpClient::<Req, Res> {
             id: id.clone(),
