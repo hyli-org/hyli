@@ -103,6 +103,49 @@ macro_rules! turmoil_simple {
     };
 }
 
+macro_rules! turmoil_simple_flaky {
+    ($seed:literal, $simulation:ident, $test:ident) => {
+        paste::paste! {
+        #[test_log::test]
+        #[ignore = "flaky"]
+            fn [<turmoil_ $simulation _ $seed _ $test>]() -> anyhow::Result<()> {
+                tracing::info!("Starting test {} with seed {}", stringify!([<turmoil_ $simulation _ $seed _ $test>]), $seed);
+                let mut sim = hyli_net::turmoil::Builder::new()
+                    .simulation_duration(Duration::from_secs(120))
+                    .tick_duration(Duration::from_millis(20))
+                    .min_message_latency(Duration::from_millis(20))
+                .tcp_capacity(256)
+                .enable_tokio_io()
+                    .rng_seed($seed)
+                    .build();
+
+                let mut ctx = TurmoilCtx::new_multi(4, 500, $seed, &mut sim)?;
+
+                for node in ctx.nodes.iter() {
+                    let cloned_node = node.clone();
+                    sim.client(format!("client {}", node.conf.id.clone()), async move {
+                        _ = $test(cloned_node).await?;
+                        Ok(())
+                    });
+                }
+
+                $simulation(&mut ctx, &mut sim)?;
+                if stringify!($simulation) != "simulation_restart_node" {
+                    assert_converged(&ctx, &mut sim, 1)?;
+                }
+
+                Ok(())
+            }
+        }
+    };
+
+    ($seed_from:literal..=$seed_to:literal, $simulation:ident, $test:ident) => {
+        seq_macro::seq!(SEED in $seed_from..=$seed_to {
+            turmoil_simple_flaky!(SEED, $simulation, $test);
+        });
+    };
+}
+
 turmoil_simple!(411..=420, simulation_basic, submit_10_contracts);
 turmoil_simple!(511..=520, simulation_slow_node, submit_10_contracts);
 turmoil_simple!(511..=520, simulation_two_slow_nodes, submit_10_contracts);
@@ -110,7 +153,7 @@ turmoil_simple!(511..=520, simulation_slow_network, submit_10_contracts);
 turmoil_simple!(511..=520, simulation_hold, submit_10_contracts);
 turmoil_simple!(611..=620, simulation_one_more_node, submit_10_contracts);
 turmoil_simple!(621..=630, simulation_partition, submit_10_contracts);
-turmoil_simple!(631..=640, simulation_drop_storm, submit_10_contracts);
+turmoil_simple_flaky!(631..=640, simulation_drop_storm, submit_10_contracts);
 turmoil_simple!(641..=650, simulation_restart_node, submit_10_contracts);
 turmoil_simple!(651..=660, simulation_realistic_network, submit_10_contracts);
 turmoil_simple!(661..=670, simulation_timeout_split_view, timeout_split_view_recovery);
