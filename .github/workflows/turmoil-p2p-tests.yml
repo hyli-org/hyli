@@ -13,15 +13,12 @@ concurrency:
 jobs:
   test-turmoil:
     runs-on: arc-runner-set
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - run: sudo apt update && sudo apt install -y build-essential libssl-dev
 
       - name: Run turmoil P2P tests - basic
         run: cargo test -p hyli-net --features turmoil turmoil_p2p
