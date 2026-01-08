@@ -18,6 +18,8 @@ jobs:
   test:
     name: Test
     runs-on: arc-runner-set
+    container:
+      image: ghcr.io/hyli-org/arc-runner:main
     timeout-minutes: 20
     strategy:
       matrix:
@@ -64,6 +66,8 @@ jobs:
   coverage:
     name: Unit tests coverage
     runs-on: arc-runner-set
+    container:
+      image: ghcr.io/hyli-org/arc-runner:main
     timeout-minutes: 15
     strategy:
       matrix:
@@ -93,6 +97,8 @@ jobs:
   features_flags:
     name: Build with different feature flags
     runs-on: arc-runner-set
+    container:
+      image: ghcr.io/hyli-org/arc-runner:main
     timeout-minutes: 10
     strategy:
       matrix:
@@ -117,6 +123,8 @@ jobs:
     name: Check unused dependencies
     if: github.event.pull_request.draft == false
     runs-on: arc-runner-set
+    container:
+      image: ghcr.io/hyli-org/arc-runner:main
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
