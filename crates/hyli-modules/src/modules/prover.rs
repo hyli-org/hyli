@@ -917,231 +917,237 @@ where
         Ok(())
     }
 
-    fn prove_supported_blob<'a>(
+    async fn prove_supported_blob<'a>(
         &'a mut self,
         mut blobs: Vec<(TxId, Vec<BlobIndex>, BlobTransaction, Arc<TxContext>)>,
         join_handles: &'a mut Vec<JoinHandle<()>>,
-    ) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
-            let remaining_blobs = if blobs.len() > self.ctx.max_txs_per_proof {
-                let remaining_blobs = blobs.split_off(self.ctx.max_txs_per_proof);
-                info!(
-                    cn =% self.ctx.contract_name,
-                    "Too many blobs to prove in one go: {} / {}. Splitting into multiple proofs. ({} remaining)",
-                    blobs.len() + remaining_blobs.len(),
-                    self.ctx.max_txs_per_proof,
-                    remaining_blobs.len()
-                );
-                remaining_blobs
-            } else {
-                vec![]
-            };
+    ) -> Result<()> {
+        let remaining_blobs = if blobs.len() > self.ctx.max_txs_per_proof {
+            let remaining_blobs = blobs.split_off(self.ctx.max_txs_per_proof);
+            info!(
+                cn =% self.ctx.contract_name,
+                "Too many blobs to prove in one go: {} / {}. Splitting into multiple proofs. ({} remaining)",
+                blobs.len() + remaining_blobs.len(),
+                self.ctx.max_txs_per_proof,
+                remaining_blobs.len()
+            );
+            remaining_blobs
+        } else {
+            vec![]
+        };
 
-            let blobs = blobs; // remove mut
+        let blobs = blobs; // remove mut
 
-            if blobs.is_empty() {
-                return Ok(());
-            }
-            let mut current_program_id = self.current_program_id.clone();
-            let mut calldatas = vec![];
-            let mut initial_commitment_metadata = None;
-            for (tx_id, blob_indexes, tx, tx_ctx) in blobs {
-                let mut contract = self
-                    .get_state_of_prev_tx(&tx_id)
-                    .ok_or_else(|| anyhow!("Failed to get state of previous tx {}", tx_id))?;
-                //let initial_contract = contract.clone();
-                let mut error: Option<String> = None;
-                let mut updated_program_id = None;
+        if blobs.is_empty() {
+            return Ok(());
+        }
+        let mut current_program_id = self.current_program_id.clone();
+        let mut calldatas = vec![];
+        let mut initial_commitment_metadata = None;
+        for (tx_id, blob_indexes, tx, tx_ctx) in blobs {
+            let mut contract = self
+                .get_state_of_prev_tx(&tx_id)
+                .ok_or_else(|| anyhow!("Failed to get state of previous tx {}", tx_id))?;
+            //let initial_contract = contract.clone();
+            let mut error: Option<String> = None;
+            let mut updated_program_id = None;
 
-                for blob_index in blob_indexes {
-                    let blob = tx.blobs.get(blob_index.0).ok_or_else(|| {
-                        anyhow!("Failed to get blob {} from tx {}", blob_index, tx.hashed())
-                    })?;
-                    let blobs = tx.blobs.clone();
+            for blob_index in blob_indexes {
+                let blob = tx.blobs.get(blob_index.0).ok_or_else(|| {
+                    anyhow!("Failed to get blob {} from tx {}", blob_index, tx.hashed())
+                })?;
+                let blobs = tx.blobs.clone();
 
-                    let state = contract
-                        .build_commitment_metadata(blob)
-                        .map_err(|e| anyhow!(e))
-                        .context("Failed to build commitment metadata");
+                let state = contract
+                    .build_commitment_metadata(blob)
+                    .map_err(|e| anyhow!(e))
+                    .context("Failed to build commitment metadata");
 
-                    // If failed to build commitment metadata, we skip the tx, but continue with next ones
-                    if let Err(e) = state {
-                        error!(
+                // If failed to build commitment metadata, we skip the tx, but continue with next ones
+                if let Err(e) = state {
+                    error!(
+                        cn =% self.ctx.contract_name,
+                        tx_hash =% tx.hashed(),
+                        tx_height =% tx_ctx.block_height,
+                        "{e:#}"
+                    );
+                    error = Some(e.to_string());
+                    break;
+                }
+                let state = state.unwrap();
+
+                let commitment_metadata = state;
+
+                if initial_commitment_metadata.is_none() {
+                    initial_commitment_metadata = Some(commitment_metadata.clone());
+                } else {
+                    initial_commitment_metadata = Some(
+                        contract
+                            .merge_commitment_metadata(
+                                initial_commitment_metadata.unwrap(),
+                                commitment_metadata.clone(),
+                            )
+                            .map_err(|e| anyhow!(e))
+                            .context("Merging commitment_metadata")?,
+                    );
+                }
+
+                let calldata = Calldata {
+                    identity: tx.identity.clone(),
+                    tx_hash: tx_id.1.clone(),
+                    private_input: vec![],
+                    blobs: blobs.clone().into(),
+                    index: blob_index,
+                    tx_ctx: Some((*tx_ctx).clone()),
+                    tx_blob_count: blobs.len(),
+                };
+
+                match contract.handle(&calldata).map_err(|e| anyhow!(e)) {
+                    Err(e) => {
+                        warn!(
                             cn =% self.ctx.contract_name,
                             tx_hash =% tx.hashed(),
                             tx_height =% tx_ctx.block_height,
-                            "{e:#}"
+                            "⚠️ Error executing contract, no proof generated: {e}"
                         );
                         error = Some(e.to_string());
                         break;
                     }
-                    let state = state.unwrap();
-
-                    let commitment_metadata = state;
-
-                    if initial_commitment_metadata.is_none() {
-                        initial_commitment_metadata = Some(commitment_metadata.clone());
-                    } else {
-                        initial_commitment_metadata = Some(
-                            contract
-                                .merge_commitment_metadata(
-                                    initial_commitment_metadata.unwrap(),
-                                    commitment_metadata.clone(),
-                                )
-                                .map_err(|e| anyhow!(e))
-                                .context("Merging commitment_metadata")?,
+                    Ok(hyli_output) => {
+                        info!(
+                            cn =% self.ctx.contract_name,
+                            tx_hash =% tx.hashed(),
+                            tx_height =% tx_ctx.block_height,
+                            "🔧 Executed contract: {}. Success: {}",
+                            String::from_utf8_lossy(&hyli_output.program_outputs),
+                            hyli_output.success
                         );
-                    }
-
-                    let calldata = Calldata {
-                        identity: tx.identity.clone(),
-                        tx_hash: tx_id.1.clone(),
-                        private_input: vec![],
-                        blobs: blobs.clone().into(),
-                        index: blob_index,
-                        tx_ctx: Some((*tx_ctx).clone()),
-                        tx_blob_count: blobs.len(),
-                    };
-
-                    match contract.handle(&calldata).map_err(|e| anyhow!(e)) {
-                        Err(e) => {
-                            warn!(
-                                cn =% self.ctx.contract_name,
-                                tx_hash =% tx.hashed(),
-                                tx_height =% tx_ctx.block_height,
-                                "⚠️ Error executing contract, no proof generated: {e}"
-                            );
-                            error = Some(e.to_string());
-                            break;
-                        }
-                        Ok(hyli_output) => {
-                            info!(
-                                cn =% self.ctx.contract_name,
-                                tx_hash =% tx.hashed(),
-                                tx_height =% tx_ctx.block_height,
-                                "🔧 Executed contract: {}. Success: {}",
+                        if !hyli_output.success {
+                            error = Some(format!(
+                                "Executed contract with error :{}",
                                 String::from_utf8_lossy(&hyli_output.program_outputs),
-                                hyli_output.success
-                            );
-                            if !hyli_output.success {
-                                error = Some(format!(
-                                    "Executed contract with error :{}",
-                                    String::from_utf8_lossy(&hyli_output.program_outputs),
-                                ));
-                                // don't break here, we want this calldata to be stored
-                            }
-                            let detected_program_id =
-                                hyli_output.onchain_effects.iter().find_map(|eff| {
-                                    if let sdk::OnchainEffect::UpdateContractProgramId(
-                                        _contract_name,
-                                        program_id,
-                                    ) = eff
-                                    {
-                                        Some(program_id.clone())
-                                    } else {
-                                        None
-                                    }
-                                });
-                            if let Some(updated_program_id) = &detected_program_id {
-                                log_error!(
-                                    self.ensure_prover_available(
-                                        updated_program_id,
-                                        &format!("Program ID updated for tx {}", tx_id),
-                                    )
-                                    .await,
-                                    "Adding new prover after program ID update"
-                                )?;
-                            }
-                            if detected_program_id.is_some() {
-                                updated_program_id = detected_program_id;
-                            }
+                            ));
+                            // don't break here, we want this calldata to be stored
                         }
-                    }
-
-                    calldatas.push(calldata);
-                    if error.is_some() {
-                        break;
-                    }
-                }
-                if let Some(e) = error {
-                    debug!(
-                        cn =% self.ctx.contract_name,
-                        tx_id =% tx_id,
-                        tx_height =% tx_ctx.block_height,
-                        "Tx {} failed, storing initial state. Error was: {e}",
-                        tx_id
-                    );
-                    self.bus.send(AutoProverEvent::FailedTx(tx_id.clone(), e))?;
-                    // Must exist - we failed above otherwise.
-                    let initial_contract = self.get_state_of_prev_tx(&tx_id).unwrap();
-                    self.store
-                        .state_history
-                        .insert(tx_id, (initial_contract, false));
-                } else {
-                    debug!(
-                        cn =% self.ctx.contract_name,
-                        tx_id =% tx_id,
-                        tx_height =% tx_ctx.block_height,
-                        "Adding state history for tx {}",
-                        tx.hashed()
-                    );
-                    /*self.bus.send(AutoProverEvent::SuccessTx(
-                        tx_hash.clone(),
-                        contract.clone(),
-                    ))?;*/
-                    self.store.state_history.insert(tx_id, (contract, true));
-                }
-
-                if let Some(next_program_id) = updated_program_id {
-                    if let Some(commitment_metadata) = initial_commitment_metadata.take() {
-                        if !calldatas.is_empty() {
-                            let batch_id = self.store.batch_id;
-                            self.store.batch_id += 1;
-                            self.spawn_proof_for_batch(
-                                &current_program_id,
-                                commitment_metadata,
-                                std::mem::take(&mut calldatas),
-                                batch_id,
-                                join_handles,
+                        let detected_program_id =
+                            hyli_output.onchain_effects.iter().find_map(|eff| {
+                                if let sdk::OnchainEffect::UpdateContractProgramId(
+                                    _contract_name,
+                                    program_id,
+                                ) = eff
+                                {
+                                    Some(program_id.clone())
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(updated_program_id) = &detected_program_id {
+                            log_error!(
+                                self.ensure_prover_available(
+                                    updated_program_id,
+                                    &format!("Program ID updated for tx {}", tx_id),
+                                )
+                                .await,
+                                "Adding new prover after program ID update"
                             )?;
                         }
+                        if detected_program_id.is_some() {
+                            updated_program_id = detected_program_id;
+                        }
                     }
-                    current_program_id = next_program_id;
+                }
+
+                calldatas.push(calldata);
+                if error.is_some() {
+                    break;
                 }
             }
-
-            self.current_program_id = current_program_id;
-
-            if calldatas.is_empty() {
-                if !remaining_blobs.is_empty() {
-                    self.prove_supported_blob(remaining_blobs, join_handles)
-                        .await?;
-                }
-                return Ok(());
+            if let Some(e) = error {
+                debug!(
+                    cn =% self.ctx.contract_name,
+                    tx_id =% tx_id,
+                    tx_height =% tx_ctx.block_height,
+                    "Tx {} failed, storing initial state. Error was: {e}",
+                    tx_id
+                );
+                self.bus.send(AutoProverEvent::FailedTx(tx_id.clone(), e))?;
+                // Must exist - we failed above otherwise.
+                let initial_contract = self.get_state_of_prev_tx(&tx_id).unwrap();
+                self.store
+                    .state_history
+                    .insert(tx_id, (initial_contract, false));
+            } else {
+                debug!(
+                    cn =% self.ctx.contract_name,
+                    tx_id =% tx_id,
+                    tx_height =% tx_ctx.block_height,
+                    "Adding state history for tx {}",
+                    tx.hashed()
+                );
+                /*self.bus.send(AutoProverEvent::SuccessTx(
+                    tx_hash.clone(),
+                    contract.clone(),
+                ))?;*/
+                self.store.state_history.insert(tx_id, (contract, true));
             }
 
-            let Some(commitment_metadata) = initial_commitment_metadata else {
-                if !remaining_blobs.is_empty() {
-                    self.prove_supported_blob(remaining_blobs, join_handles)
-                        .await?;
+            if let Some(next_program_id) = updated_program_id {
+                if let Some(commitment_metadata) = initial_commitment_metadata.take() {
+                    if !calldatas.is_empty() {
+                        let batch_id = self.store.batch_id;
+                        self.store.batch_id += 1;
+                        self.spawn_proof_for_batch(
+                            &current_program_id,
+                            commitment_metadata,
+                            std::mem::take(&mut calldatas),
+                            batch_id,
+                            join_handles,
+                        )?;
+                    }
                 }
-                return Ok(());
-            };
-            let batch_id = self.store.batch_id;
-            self.store.batch_id += 1;
-            self.spawn_proof_for_batch(
-                &self.current_program_id,
-                commitment_metadata,
-                calldatas,
-                batch_id,
-                join_handles,
-            )?;
+                current_program_id = next_program_id;
+            }
+        }
+
+        self.current_program_id = current_program_id;
+
+        if calldatas.is_empty() {
             if !remaining_blobs.is_empty() {
-                self.prove_supported_blob(remaining_blobs, join_handles)
+                self.prove_supported_blob_boxed(remaining_blobs, join_handles)
                     .await?;
             }
-            Ok(())
-        })
+            return Ok(());
+        }
+
+        let Some(commitment_metadata) = initial_commitment_metadata else {
+            if !remaining_blobs.is_empty() {
+                self.prove_supported_blob_boxed(remaining_blobs, join_handles)
+                    .await?;
+            }
+            return Ok(());
+        };
+        let batch_id = self.store.batch_id;
+        self.store.batch_id += 1;
+        self.spawn_proof_for_batch(
+            &self.current_program_id,
+            commitment_metadata,
+            calldatas,
+            batch_id,
+            join_handles,
+        )?;
+        if !remaining_blobs.is_empty() {
+            self.prove_supported_blob_boxed(remaining_blobs, join_handles)
+                .await?;
+        }
+        Ok(())
+    }
+
+    fn prove_supported_blob_boxed<'a>(
+        &'a mut self,
+        blobs: Vec<(TxId, Vec<BlobIndex>, BlobTransaction, Arc<TxContext>)>,
+        join_handles: &'a mut Vec<JoinHandle<()>>,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(self.prove_supported_blob(blobs, join_handles))
     }
 
     async fn add_prover(&mut self, program_id: &ProgramId) -> Result<()> {
