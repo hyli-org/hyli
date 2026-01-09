@@ -3,7 +3,9 @@ use std::time::Duration;
 use anyhow::Result;
 use assertables::assert_ok;
 use hyli_crypto::BlstCrypto;
-use hyli_model::{Blob, BlobTransaction, ContractName, Hashed, Identity, NodeStateEvent};
+use hyli_model::{
+    Blob, BlobTransaction, ContractName, Hashed, Identity, NodeStateEvent, StatefulEvent,
+};
 use sha3::Digest;
 use tracing::info;
 
@@ -90,12 +92,13 @@ async fn scenario(identity: Identity, blob: Blob) -> Result<()> {
         match evt {
             NodeStateEvent::NewBlock(block) => {
                 info!("Got Block");
-                if block
-                    .parsed_block
-                    .successful_txs
-                    .iter()
-                    .any(|tx_hash| tx_hash == &blob_tx_hash)
-                {
+                if block.stateful_events.events.iter().any(|(tx_id, event)| {
+                    matches!(
+                        event,
+                        StatefulEvent::SettledTx(unsettled_tx)
+                            if tx_id.1 == blob_tx_hash && unsettled_tx.tx_id.1 == blob_tx_hash
+                    )
+                }) {
                     break;
                 }
             }

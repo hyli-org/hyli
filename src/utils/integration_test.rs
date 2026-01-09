@@ -26,7 +26,7 @@ use axum::Router;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli_crypto::BlstCrypto;
 use hyli_model::{api::NodeInfo, TxHash};
-use hyli_model::{NodeStateEvent, StatefulEvent, TxId};
+use hyli_model::{NodeStateEvent, StatefulEvent};
 use hyli_modules::node_state::module::NodeStateModule;
 use hyli_modules::{
     module_bus_client, module_handle_messages,
@@ -407,14 +407,13 @@ impl NodeIntegrationCtx {
         loop {
             let event: NodeStateEvent = self.bus_client.recv().await?;
             let NodeStateEvent::NewBlock(block) = event;
-            if block
-                .stateful_events
-                .events
-                .iter()
-                .any(|(TxId(_, tx_hash), ev)| {
-                    tx_hash == &tx && matches!(ev, StatefulEvent::SettledTx(..))
-                })
-            {
+            if block.stateful_events.events.iter().any(|(_, event)| {
+                matches!(
+                    event,
+                    StatefulEvent::SettledTx(unsettled_tx)
+                        if unsettled_tx.tx_id.1 == tx
+                )
+            }) {
                 break;
             }
         }
