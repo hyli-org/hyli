@@ -364,3 +364,36 @@ pub struct APIBlob {
     pub proof_outputs: Vec<serde_json::Value>, // outputs of proofs
     pub verified: bool,        // Verification status
 }
+
+#[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
+#[cfg_attr(
+    feature = "sqlx",
+    sqlx(type_name = "contract_change_type", rename_all = "snake_case")
+)]
+#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ContractChangeType {
+    Registered,
+    ProgramIdUpdated,
+    StateUpdated,
+    TimeoutUpdated,
+    Deleted,
+}
+
+#[serde_as]
+#[derive(Debug, Serialize, Deserialize, ToSchema, Clone)]
+pub struct APIContractHistory {
+    pub contract_name: String,           // Contract name
+    pub block_height: u64,               // Block height where the change occurred
+    pub tx_index: i32,                   // Transaction index within the block
+    pub change_type: Vec<ContractChangeType>, // Types of change
+    pub verifier: String,                // Verifier at this point in time
+    #[serde_as(as = "serde_with::hex::Hex")]
+    pub program_id: Vec<u8>, // Program ID at this point in time
+    #[serde_as(as = "serde_with::hex::Hex")]
+    pub state_commitment: Vec<u8>, // State commitment at this point in time
+    pub soft_timeout: Option<i64>,       // Soft timeout value
+    pub hard_timeout: Option<i64>,       // Hard timeout value
+    pub tx_hash: TxHash,                 // Transaction that caused the change
+    pub parent_dp_hash: DataProposalHash, // Parent data proposal hash
+}

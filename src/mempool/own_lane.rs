@@ -419,11 +419,15 @@ impl super::Mempool {
                     tx.hashed(),
                     proof_tx.contract_name
                 );
+                let tx_hashed = tx.hashed();
+                let contract_name = proof_tx.contract_name.clone();
                 let lane_suffix_owned = lane_suffix_owned.clone();
                 self.inner.processing_txs.spawn_on(
                     async move {
-                        let tx =
-                            Self::process_proof_tx(tx).context("Processing proof tx in blocker")?;
+                        let tx = Self::process_proof_tx(tx).context(format!(
+                            "Processing proof tx {} in blocker for {}",
+                            tx_hashed, contract_name
+                        ))?;
                         Ok((tx, lane_suffix_owned))
                     },
                     self.inner.long_tasks_runtime.handle(),

@@ -19,6 +19,8 @@ jobs:
             features: sp1
           - crate: hyli-contract-sdk
             features: risc0
+          - crate: hyli-modules
+            features: risc0,sp1,db
         crate: ${{ fromJson(needs.list-crates.outputs.crates) }}
 
     needs: list-crates

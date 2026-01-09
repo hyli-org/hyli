@@ -1193,7 +1193,7 @@ impl<'any> NodeStateProcessing<'any> {
                         ));
                     }
                     if modified_fields.program_id {
-                        debug!(
+                        info!(
                             "✍️  Modify '{}' program_id to {}",
                             &contract_name,
                             hex::encode(&contract.program_id.0)
@@ -1207,7 +1207,7 @@ impl<'any> NodeStateProcessing<'any> {
                         ));
                     }
                     if modified_fields.timeout_window {
-                        debug!(
+                        info!(
                             "✍️  Modify '{}' timeout window to {}",
                             &contract_name, &contract.timeout_window
                         );

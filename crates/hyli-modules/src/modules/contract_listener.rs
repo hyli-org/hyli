@@ -1,5 +1,5 @@
-use std::collections::HashSet;
-use std::{collections::HashMap, path::PathBuf, time::Duration};
+use std::collections::{HashMap, HashSet};
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -180,7 +180,9 @@ impl ContractListener {
                                         self.handle_sequenced_txs(&contract_name).await?;
                                         self.handle_settled_txs(&contract_name).await?;
                                 }
-                                Err(err) => warn!("Failed to decode payload for {}: {err}", notification.channel()),
+                                Err(err) => {
+                                    warn!("Failed to decode payload for {} ({}): {err}", notification.channel(), notification.payload());
+                                }
                             }
                         }
                     }
