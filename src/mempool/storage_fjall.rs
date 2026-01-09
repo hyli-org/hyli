@@ -16,7 +16,7 @@ use tracing::{info, warn};
 
 use crate::{
     mempool::storage::MetadataOrMissingHash,
-    model::{DataProposal, DataProposalHash, Hashed},
+    model::{DataProposal, DataProposalHash, Hashed, PoDA},
 };
 use hyli_modules::log_warn;
 
@@ -339,6 +339,35 @@ impl Storage for LanesStorage {
         self.by_hash_metadata
             .insert(key, encode_metadata_to_item(lem)?)?;
         Ok(signatures)
+    }
+
+    fn set_cached_poda(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+        poda: PoDA,
+    ) -> Result<()> {
+        let key = format!("{lane_id}:{dp_hash}");
+        let Some(mut lem) = log_warn!(
+            self.by_hash_metadata.get(key.clone()),
+            "Can't find lane entry metadata {} for lane {}",
+            dp_hash,
+            lane_id
+        )?
+        .map(decode_metadata_from_item)
+        .transpose()?
+        else {
+            bail!(
+                "Can't find lane entry metadata {} for lane {}",
+                dp_hash,
+                lane_id
+            );
+        };
+
+        lem.cached_poda = Some(poda);
+        self.by_hash_metadata
+            .insert(key, encode_metadata_to_item(lem)?)?;
+        Ok(())
     }
 
     fn get_lane_ids(&self) -> Vec<LaneId> {

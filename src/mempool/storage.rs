@@ -41,6 +41,7 @@ pub struct LaneEntryMetadata {
     pub parent_data_proposal_hash: Option<DataProposalHash>,
     pub cumul_size: LaneBytesSize,
     pub signatures: Vec<ValidatorDAG>,
+    pub cached_poda: Option<PoDA>,
 }
 
 pub trait Storage {
@@ -79,6 +80,12 @@ pub trait Storage {
         dp_hash: &DataProposalHash,
         vote_msgs: T,
     ) -> Result<Vec<ValidatorDAG>>;
+    fn set_cached_poda(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+        poda: PoDA,
+    ) -> Result<()>;
 
     fn get_lane_ids(&self) -> Vec<LaneId>;
     fn get_lane_hash_tip(&self, lane_id: &LaneId) -> Option<DataProposalHash>;
@@ -123,6 +130,16 @@ pub trait Storage {
                 return Ok(None);
             };
 
+            let f = staking.compute_f();
+
+            if let Some(cached_poda) = &le.cached_poda {
+                let cached_voting_power =
+                    staking.compute_voting_power(cached_poda.validators.as_slice());
+                if cached_voting_power > f {
+                    return Ok(Some((current, le.cumul_size, cached_poda.clone())));
+                }
+            }
+
             let filtered: Vec<&SignedByValidator<(DataProposalHash, LaneBytesSize)>> = le
                 .signatures
                 .iter()
@@ -137,7 +154,6 @@ pub trait Storage {
 
             // TODO: take by reference to avoid cloning above
             let voting_power = staking.compute_voting_power(&filtered_validators);
-            let f = staking.compute_f();
 
             trace!("Checking for sufficient voting power: {voting_power} > {f} ?");
 
@@ -217,6 +233,7 @@ pub trait Storage {
                                 .clone(),
                             cumul_size,
                             signatures,
+                            cached_poda: None,
                         },
                         data_proposal,
                     ),
@@ -241,6 +258,7 @@ pub trait Storage {
                                 .clone(),
                             cumul_size,
                             signatures,
+                            cached_poda: None,
                         },
                         data_proposal,
                     ),
@@ -446,6 +464,7 @@ mod tests {
             parent_data_proposal_hash: None,
             cumul_size,
             signatures: vec![],
+            cached_poda: None,
         };
         let dp_hash = data_proposal.hashed();
         storage
@@ -499,6 +518,7 @@ mod tests {
             parent_data_proposal_hash: None,
             cumul_size,
             signatures: vec![],
+            cached_poda: None,
         };
         let dp_hash = dp.hashed();
 
@@ -549,6 +569,7 @@ mod tests {
             parent_data_proposal_hash: None,
             cumul_size,
             signatures: vec![],
+            cached_poda: None,
         };
         let dp_hash = data_proposal.hashed();
         storage
@@ -809,6 +830,7 @@ mod tests {
             parent_data_proposal_hash: None,
             cumul_size,
             signatures: vec![],
+            cached_poda: None,
         };
         storage
             .put_no_verification(lane_id.clone(), (entry, data_proposal.clone()))
