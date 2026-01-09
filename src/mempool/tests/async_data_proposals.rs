@@ -51,7 +51,7 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
 
     node_client.send(GenesisEvent::GenesisBlock(SignedBlock {
         data_proposals: vec![(
-            LaneId(node_modules.crypto.validator_pubkey().clone()),
+            LaneId::new(node_modules.crypto.validator_pubkey().clone()),
             vec![DataProposal::new(
                 None,
                 vec![BlobTransaction::new(
@@ -112,19 +112,23 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
     );
     let proof_hash = proof.hashed();
 
-    node_client.send(RestApiMessage::NewTx(blob_tx.clone().into()))?;
+    node_client.send(RestApiMessage::NewTx {
+        tx: blob_tx.clone().into(),
+        lane_suffix: None,
+    })?;
 
     // Send as many TXs as needed to hung all the workers if we were calling spawn
     for _ in 0..tokio::runtime::Handle::current().metrics().num_workers() {
-        node_client.send(RestApiMessage::NewTx(
-            ProofTransaction {
+        node_client.send(RestApiMessage::NewTx {
+            tx: ProofTransaction {
                 contract_name: contract_name.clone(),
                 verifier: "test-slow".into(),
                 program_id: ProgramId(vec![]),
                 proof: proof.clone(),
             }
             .into(),
-        ))?;
+            lane_suffix: None,
+        })?;
         info!("Sent new tx");
     }
 
@@ -222,12 +226,14 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
         }
     });
 
+    let lane_id = LaneId::new(node_modules.crypto.validator_pubkey().clone());
+    let data_proposal_hash = data_proposal.hashed();
+    let cumul_size = LaneBytesSize(data_proposal.estimate_size() as u64);
+    let proposal_sig = node_modules
+        .crypto
+        .sign((data_proposal_hash.clone(), cumul_size))?;
     node_client.send(node_modules.crypto.sign_msg_with_header(
-        MempoolNetMessage::DataProposal(
-            LaneId(node_modules.crypto.validator_pubkey().clone()),
-            data_proposal.hashed(),
-            data_proposal,
-        ),
+        MempoolNetMessage::DataProposal(lane_id, data_proposal_hash, data_proposal, proposal_sig),
     )?)?;
 
     // Wait until we commit this TX

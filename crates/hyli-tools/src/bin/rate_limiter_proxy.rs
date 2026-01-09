@@ -607,6 +607,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/metrics", get(get_metrics))
         // Blob transaction with custom rate limiting and contract parsing
         .route("/v1/tx/send/blob", post(blob_proxy_handler))
+        .route("/v1/tx/send/blob/:lane_suffix", post(blob_proxy_handler))
         .route("/v1/contract/register", post(contract_register_handler))
         .fallback(proxy_handler)
         .with_state(app_config)

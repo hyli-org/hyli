@@ -38,6 +38,10 @@ jobs:
       - name: Compile crate '${{ matrix.crate }}' with default features
         run: cargo build -p ${{ matrix.crate }}
 
+      - name: Clean workspace on hyli branch
+        if: matrix.crate == 'hyli'
+        run: cargo clean
+
       - name: Compile crate '${{ matrix.crate }}' with specific features
         if: matrix.features != ''
         run: cargo build -p ${{ matrix.crate }} --features ${{ matrix.features }}

@@ -16,15 +16,12 @@ concurrency:
 jobs:
   test-turmoil:
     runs-on: arc-runner-set
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-
-      - run: sudo apt update && sudo apt install -y build-essential libssl-dev pkg-config
 
       - name: Run turmoil tests - Basic
         run: cargo test turmoil_simulation_basic --features turmoil
