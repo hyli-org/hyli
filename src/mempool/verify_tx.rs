@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use hyli_model::{DataProposalHash, DataSized, LaneBytesSize, LaneId, ValidatorPublicKey};
+use hyli_model::{DataProposalHash, DataSized, LaneBytesSize, LaneId};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
 
@@ -67,12 +67,7 @@ impl super::Mempool {
                         "Resending vote for DataProposal {:?} on lane {}",
                         received_hash, lane_id
                     );
-                    return self.send_vote(
-                        lane_id,
-                        self.get_lane_operator(lane_id),
-                        received_hash,
-                        lane_size,
-                    );
+                    return self.send_vote(lane_id, received_hash, lane_size);
                 }
             }
             Some(DataProposalVerdict::Wait) | None => {}
@@ -146,12 +141,7 @@ impl super::Mempool {
                 // Normal case, we receive a proposal we already have the parent in store
                 trace!("Send vote for DataProposal");
                 #[allow(clippy::unwrap_used, reason = "we always have a size for Vote")]
-                self.send_vote(
-                    lane_id,
-                    self.get_lane_operator(lane_id),
-                    data_proposal_hash,
-                    lane_size.unwrap(),
-                )?;
+                self.send_vote(lane_id, data_proposal_hash, lane_size.unwrap())?;
             }
             DataProposalVerdict::Process => {
                 trace!("Further processing for DataProposal");
@@ -224,22 +214,17 @@ impl super::Mempool {
                     data_proposal_hash: hash.clone(),
                     cumul_size: size,
                 })?;
-                self.send_vote(
-                    &lane_id,
-                    self.get_lane_operator(&lane_id),
-                    hash.clone(),
-                    size,
-                )?;
+                self.send_vote(&lane_id, hash.clone(), size)?;
 
-                while let Some(poda_signatures) = self
+                while let Some(vote) = self
                     .inner
-                    .buffered_podas
+                    .buffered_votes
                     .get_mut(&lane_id)
                     .and_then(|lane| lane.get_mut(&hash))
-                    .and_then(|podas_list| podas_list.pop())
+                    .and_then(|votes| votes.pop())
                 {
-                    self.on_poda_update(&lane_id, &hash, poda_signatures)
-                        .context("Processing buffered poda")?;
+                    self.on_data_vote(lane_id.clone(), vote)
+                        .context("Processing buffered vote")?;
                 }
 
                 // Check if we maybe buffered a descendant of this DP.
@@ -424,20 +409,18 @@ impl super::Mempool {
     fn send_vote(
         &mut self,
         lane_id: &LaneId,
-        validator: &ValidatorPublicKey,
         data_proposal_hash: DataProposalHash,
         size: LaneBytesSize,
     ) -> Result<()> {
-        self.metrics
-            .add_dp_vote(self.crypto.validator_pubkey(), validator);
-        debug!("🗳️ Sending vote for DataProposal {data_proposal_hash} to {validator} (lane size: {size})");
-        self.send_net_message(
-            validator.clone(),
-            MempoolNetMessage::DataVote(
-                lane_id.clone(),
-                self.crypto.sign((data_proposal_hash, size))?,
-            ),
-        )?;
+        self.metrics.add_dp_vote(
+            self.crypto.validator_pubkey(),
+            self.crypto.validator_pubkey(),
+        );
+        debug!("🗳️ Broadcasting vote for DataProposal {data_proposal_hash} (lane size: {size})");
+        self.send_net_message_broadcast(MempoolNetMessage::DataVote(
+            lane_id.clone(),
+            self.crypto.sign((data_proposal_hash, size))?,
+        ))?;
         Ok(())
     }
 }
@@ -533,6 +516,7 @@ pub mod test {
                     lane_id,
                     hash.clone(),
                     data_proposal.clone(),
+                    ctx.mempool.crypto.sign((hash.clone(), size))?,
                 ))?;
 
         ctx.mempool
@@ -543,11 +527,7 @@ pub mod test {
         ctx.handle_processed_data_proposals().await;
 
         // Assert that we vote for that specific DataProposal
-        match ctx
-            .assert_send(&ctx.mempool.crypto.validator_pubkey().clone(), "DataVote")
-            .await
-            .msg
-        {
+        match ctx.assert_broadcast("DataVote").await.msg {
             MempoolNetMessage::DataVote(
                 _,
                 SignedByValidator {

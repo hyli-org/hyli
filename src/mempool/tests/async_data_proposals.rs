@@ -226,12 +226,14 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
         }
     });
 
+    let lane_id = LaneId::new(node_modules.crypto.validator_pubkey().clone());
+    let data_proposal_hash = data_proposal.hashed();
+    let cumul_size = LaneBytesSize(data_proposal.estimate_size() as u64);
+    let proposal_sig = node_modules
+        .crypto
+        .sign((data_proposal_hash.clone(), cumul_size))?;
     node_client.send(node_modules.crypto.sign_msg_with_header(
-        MempoolNetMessage::DataProposal(
-            LaneId::new(node_modules.crypto.validator_pubkey().clone()),
-            data_proposal.hashed(),
-            data_proposal,
-        ),
+        MempoolNetMessage::DataProposal(lane_id, data_proposal_hash, data_proposal, proposal_sig),
     )?)?;
 
     // Wait until we commit this TX

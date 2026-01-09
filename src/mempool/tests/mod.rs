@@ -409,6 +409,7 @@ impl MempoolTestCtx {
                         parent_data_proposal_hash: dp.parent_data_proposal_hash.clone(),
                         cumul_size: size,
                         signatures: vec![],
+                        cached_poda: None,
                     },
                     dp,
                 ),
@@ -793,6 +794,7 @@ async fn test_receiving_sync_reply() -> Result<()> {
             signatures: vec![crypto3
                 .sign((data_proposal.hashed(), cumul_size))
                 .expect("should sign")],
+            cached_poda: None,
         },
         data_proposal.clone(),
     ))?;
@@ -815,6 +817,7 @@ async fn test_receiving_sync_reply() -> Result<()> {
             signatures: vec![crypto2
                 .sign((data_proposal.hashed(), cumul_size))
                 .expect("should sign")],
+            cached_poda: None,
         },
         data_proposal.clone(),
     ))?;
@@ -838,6 +841,7 @@ async fn test_receiving_sync_reply() -> Result<()> {
             signatures: vec![crypto2
                 .sign((DataProposalHash("non_existent".to_owned()), cumul_size))
                 .expect("should sign")],
+            cached_poda: None,
         },
         data_proposal.clone(),
     ))?;
@@ -861,6 +865,7 @@ async fn test_receiving_sync_reply() -> Result<()> {
             signatures: vec![crypto2
                 .sign((data_proposal.hashed(), cumul_size))
                 .expect("should sign")],
+            cached_poda: None,
         },
         data_proposal.clone(),
     ))?;
@@ -886,6 +891,7 @@ async fn test_receiving_sync_reply() -> Result<()> {
                 .crypto
                 .sign((data_proposal.hashed(), cumul_size))
                 .expect("should sign")],
+            cached_poda: None,
         },
         data_proposal.clone(),
     ))?;
