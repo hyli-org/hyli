@@ -295,7 +295,7 @@ pub mod test {
                 assert_eq!(sb.consensus_proposal.cut, cut);
                 assert_eq!(
                     sb.data_proposals,
-                    vec![(LaneId(key.clone()), vec![dp_orig])]
+                    vec![(LaneId::new(key.clone()), vec![dp_orig])]
                 );
             }
         );
@@ -341,7 +341,7 @@ pub mod test {
         // Store it locally; this strips proofs into side-store
         ctx.process_new_data_proposal(dp.clone())?;
 
-        let lane_id = LaneId(ctx.validator_pubkey().clone());
+        let lane_id = LaneId::new(ctx.validator_pubkey().clone());
         // Ensure proofs exist before commit
         let proofs_before = ctx
             .mempool
@@ -424,7 +424,7 @@ pub mod test {
                 assert_eq!(sb.consensus_proposal.cut, cut);
                 assert_eq!(
                     sb.data_proposals,
-                    vec![(LaneId(key.clone()), vec![dp_orig, dp_orig2, dp_orig3])]
+                    vec![(LaneId::new(key.clone()), vec![dp_orig, dp_orig2, dp_orig3])]
                 );
             }
         );
@@ -600,11 +600,11 @@ pub mod test {
                 assert_eq!(signed_block.data_proposals.len(), 2);
                 assert_eq!(
                     signed_block.data_proposals[0],
-                    (LaneId(crypto1.validator_pubkey().clone()), vec![dp1, dp2])
+                    (LaneId::new(crypto1.validator_pubkey().clone()), vec![dp1, dp2])
                 );
                 assert_eq!(
                     signed_block.data_proposals[1],
-                    (LaneId(crypto2.validator_pubkey().clone()), vec![dp3, dp4])
+                    (LaneId::new(crypto2.validator_pubkey().clone()), vec![dp3, dp4])
                 );
             }
         );
