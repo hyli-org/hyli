@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sdk::{
     api::{APIBlock, APITransaction, TransactionTypeDb},
-    NodeStateEvent, TransactionData,
+    Hashed, NodeStateEvent, TransactionData,
 };
 use serde::Serialize;
 
@@ -83,14 +83,15 @@ impl NodeWebsocketConnector {
 
     fn handle_new_block(event: NodeStateEvent) -> Vec<WebsocketOutEvent> {
         let NodeStateEvent::NewBlock(block) = event;
-        let block = block.parsed_block;
+        let signed_block = block.signed_block;
 
+        let block_hash = signed_block.hashed();
         let api_block = APIBlock {
-            hash: block.hash.clone(),
-            parent_hash: block.parent_hash.clone(),
-            height: block.block_height.0,
-            timestamp: block.block_timestamp.0 as i64,
-            total_txs: block.txs.len() as u64,
+            hash: block_hash,
+            parent_hash: signed_block.parent_hash().clone(),
+            height: signed_block.height().0,
+            timestamp: signed_block.consensus_proposal.timestamp.0 as i64,
+            total_txs: signed_block.count_txs() as u64,
         };
 
         vec![WebsocketOutEvent::NewBlock(api_block)]
@@ -98,12 +99,14 @@ impl NodeWebsocketConnector {
 
     fn handle_new_tx(event: NodeStateEvent) -> Vec<WebsocketOutEvent> {
         let NodeStateEvent::NewBlock(block) = event;
-        let block = block.parsed_block;
+        let signed_block = block.signed_block;
         let mut txs = Vec::new();
+        let block_hash = signed_block.hashed();
+        let block_height = signed_block.height();
+        let block_timestamp = signed_block.consensus_proposal.timestamp.clone();
 
-        for (idx, (id, tx)) in block.txs.iter().enumerate() {
-            let metadata = tx.metadata(id.0.clone());
-            let transaction_type = match tx.transaction_data {
+        for (idx, (lane_id, tx_id, tx)) in signed_block.iter_txs_with_id().enumerate() {
+            let transaction_type = match &tx.transaction_data {
                 TransactionData::Blob(_) => TransactionTypeDb::BlobTransaction,
                 TransactionData::Proof(_) => TransactionTypeDb::ProofTransaction,
                 TransactionData::VerifiedProof(_) => TransactionTypeDb::ProofTransaction,
@@ -113,18 +116,17 @@ impl NodeWebsocketConnector {
                 _ => None,
             };
             let transaction_status = sdk::api::TransactionStatusDb::Sequenced;
-            let lane_id = block.lane_ids.get(&metadata.id.1).cloned();
             let api_tx = APITransaction {
-                tx_hash: metadata.id.1,
-                parent_dp_hash: metadata.id.0,
-                version: metadata.version,
+                tx_hash: tx_id.1.clone(),
+                parent_dp_hash: tx_id.0.clone(),
+                version: tx.version,
                 transaction_type,
                 transaction_status,
-                block_hash: Some(block.hash.clone()),
-                block_height: Some(block.block_height),
+                block_hash: Some(block_hash.clone()),
+                block_height: Some(block_height),
                 index: Some(idx as u32),
-                timestamp: Some(block.block_timestamp.clone()),
-                lane_id,
+                timestamp: Some(block_timestamp.clone()),
+                lane_id: Some(lane_id.clone()),
                 identity,
             };
             txs.push(WebsocketOutEvent::NewTx(api_tx));
