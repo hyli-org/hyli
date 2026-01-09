@@ -97,6 +97,11 @@ pub async fn run_backend(
             "HYLI_DA_READ_FROM",
             format!("localhost:{}", config.devnet.da_port),
         )
+        .env(
+            "HYLI_REGISTRY_URL",
+            format!("http://localhost:{}", config.devnet.registry_server_port),
+        )
+        .env("HYLI_REGISTRY_API_KEY", "dev")
         .stdout(if print_logs {
             std::process::Stdio::inherit()
         } else {
