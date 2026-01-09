@@ -1,12 +1,11 @@
 use hyli_modules::{log_error, module_handle_messages};
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use crate::{
     consensus::ConsensusEvent, model::*, p2p::network::MsgWithHeader, utils::conf::P2pMode,
 };
 
 use client_sdk::tcp_client::TcpServerMessage;
-use hyli_model::{DataProposalHash, LaneBytesSize, LaneId};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use tracing::warn;
 
@@ -15,8 +14,8 @@ use super::{api::RestApiMessage, MempoolNetMessage, QueryNewCut};
 use crate::model::SharedRunContext;
 
 use super::{
-    api, mempool_bus_client::MempoolBusClient, metrics::MempoolMetrics,
-    storage_fjall::LanesStorage, Mempool, MempoolStore,
+    api, mempool_bus_client::MempoolBusClient, metrics::MempoolMetrics, shared_lanes_storage,
+    Mempool, MempoolStore,
 };
 
 use anyhow::Result;
@@ -39,22 +38,13 @@ impl Module for Mempool {
         )
         .unwrap_or_default();
 
-        let lanes_tip =
-            Self::load_from_disk::<BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>>(
-                ctx.config
-                    .data_directory
-                    .join("mempool_lanes_tip.bin")
-                    .as_path(),
-            )
-            .unwrap_or_default();
-
         Ok(Mempool {
             bus,
             file: Some(ctx.config.data_directory.clone()),
             conf: ctx.config.clone(),
             crypto: Arc::clone(&ctx.crypto),
             metrics,
-            lanes: LanesStorage::new(&ctx.config.data_directory, lanes_tip)?,
+            lanes: shared_lanes_storage(&ctx.config.data_directory)?,
             inner: attributes,
         })
     }
@@ -65,14 +55,7 @@ impl Module for Mempool {
             Duration::from_millis(500),
         );
         let mut new_dp_timer = tokio::time::interval(tick_interval);
-        // We always disseminate new data proposals, so we can run the re-dissemination timer
-        // infrequently, as it will only be useful if we had a network issue that lead
-        // to a PoDA not being created.
-        let mut disseminate_timer = tokio::time::interval(Duration::from_secs(15));
         new_dp_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        disseminate_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-
-        let sync_request_sender = self.start_mempool_sync();
 
         // TODO: Recompute optimistic node_state for contract registrations.
         module_handle_messages! {
@@ -82,7 +65,7 @@ impl Module for Mempool {
                 self.processing_dps.is_empty() && self.processing_txs.is_empty() && self.own_data_proposal_in_preparation.is_empty()
             },
             listen<MsgWithHeader<MempoolNetMessage>> cmd => {
-                let _ = log_error!(self.handle_net_message(cmd, &sync_request_sender).await, "Handling MempoolNetMessage in Mempool");
+                let _ = log_error!(self.handle_net_message(cmd).await, "Handling MempoolNetMessage in Mempool");
             }
             listen<RestApiMessage> cmd => {
                 let _ = log_error!(self.handle_api_message(cmd), "Handling API Message in Mempool");
@@ -116,8 +99,8 @@ impl Module for Mempool {
             // own_lane.rs code below
             Some(Ok(tx)) = self.inner.processing_txs.join_next() => {
                 match tx {
-                    Ok(tx) => {
-                        let _ = log_error!(self.on_new_tx(tx), "Handling tx in Mempool");
+                    Ok((tx, lane_suffix)) => {
+                        let _ = log_error!(self.on_new_tx(tx, &lane_suffix), "Handling tx in Mempool");
                     }
                     Err(e) => {
                         warn!("Error processing tx: {:?}", e);
@@ -125,23 +108,13 @@ impl Module for Mempool {
                 }
             }
             Some(own_dp) = self.inner.own_data_proposal_in_preparation.join_next() => {
-                // Fatal here, if we loose the dp in the join next error, it's lost
-                if let Ok((own_dp_hash, own_dp)) = log_error!(own_dp, "Getting result for data proposal preparation from joinset"){
-                    _ = log_error!(self.resume_new_data_proposal(own_dp, own_dp_hash).await, "Resuming own data proposal creation");
-                }
+                _ = log_error!(
+                    self.handle_own_data_proposal_preparation(own_dp).await,
+                    "Handling data proposal preparation result"
+                );
             }
             _ = new_dp_timer.tick() => {
                 _  = log_error!(self.prepare_new_data_proposal(), "Try preparing a new data proposal on tick");
-            }
-            _ = disseminate_timer.tick() => {
-                if let Ok(true) = log_error!(
-                    self
-                    .redisseminate_oldest_data_proposal()
-                    .await,
-                    "Disseminate data proposals on tick"
-                ) {
-                    disseminate_timer.reset();
-                }
             }
         };
 
@@ -157,7 +130,7 @@ impl Module for Mempool {
             _ = log_error!(
                 Self::save_on_disk(
                     file.join("mempool_lanes_tip.bin").as_path(),
-                    &self.lanes.lanes_tip
+                    &self.lanes.lane_tips_snapshot()
                 ),
                 "Persisting Mempool lanes tip"
             );

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
 
 use crate::{
-    mempool::{MempoolNetMessage, ProcessedDPEvent},
+    mempool::{DisseminationEvent, MempoolNetMessage, ProcessedDPEvent},
     model::{BlobProofOutput, DataProposal, Hashed, TransactionData},
 };
 
@@ -30,8 +30,6 @@ impl super::Mempool {
         received_hash: DataProposalHash,
         data_proposal: DataProposal,
     ) -> Result<()> {
-        let lane_id = lane_id.clone();
-
         debug!(
             "Received DataProposal {:?} (unchecked) on lane {} ({} txs)",
             received_hash,
@@ -39,7 +37,7 @@ impl super::Mempool {
             data_proposal.txs.len(),
         );
 
-        self.metrics.add_received_dp(&lane_id);
+        self.metrics.add_received_dp(lane_id);
 
         // Check if we have a cached response to this DP hash (we can safely trust the hash here)
         // TODO: if we are currently hashing the same DP we'll still re-hash it
@@ -64,13 +62,14 @@ impl super::Mempool {
             Some(DataProposalVerdict::Vote) => {
                 // Resend our vote
                 // First fetch the lane size, if we somehow don't have it ignore.
-                if let Ok(lane_size) = self.lanes.get_lane_size_at(&lane_id, &received_hash) {
+                if let Ok(lane_size) = self.lanes.get_lane_size_at(lane_id, &received_hash) {
                     debug!(
                         "Resending vote for DataProposal {:?} on lane {}",
                         received_hash, lane_id
                     );
                     return self.send_vote(
-                        self.get_lane_operator(&lane_id),
+                        lane_id,
+                        self.get_lane_operator(lane_id),
                         received_hash,
                         lane_size,
                     );
@@ -90,26 +89,29 @@ impl super::Mempool {
                     data_proposal.hashed()
                 );
             }
-            self.on_hashed_data_proposal(&lane_id, data_proposal.clone())?;
+            self.on_hashed_data_proposal(lane_id, data_proposal.clone())?;
         }
         #[cfg(not(test))]
-        self.inner.processing_dps.spawn_on(
-            async move {
-                // We must verify the hash
-                if data_proposal.hashed() != received_hash {
-                    bail!(
-                        "Received DataProposal with wrong hash: expected {:?}, got {:?}",
-                        received_hash,
-                        data_proposal.hashed()
-                    );
-                }
-                Ok(ProcessedDPEvent::OnHashedDataProposal((
-                    lane_id,
-                    data_proposal,
-                )))
-            },
-            self.inner.long_tasks_runtime.handle(),
-        );
+        {
+            let lane_id_clone = lane_id.clone();
+            self.inner.processing_dps.spawn_on(
+                async move {
+                    // We must verify the hash
+                    if data_proposal.hashed() != received_hash {
+                        bail!(
+                            "Received DataProposal with wrong hash: expected {:?}, got {:?}",
+                            received_hash,
+                            data_proposal.hashed()
+                        );
+                    }
+                    Ok(ProcessedDPEvent::OnHashedDataProposal((
+                        lane_id_clone,
+                        data_proposal,
+                    )))
+                },
+                self.inner.long_tasks_runtime.handle(),
+            );
+        }
         Ok(())
     }
 
@@ -145,6 +147,7 @@ impl super::Mempool {
                 trace!("Send vote for DataProposal");
                 #[allow(clippy::unwrap_used, reason = "we always have a size for Vote")]
                 self.send_vote(
+                    lane_id,
                     self.get_lane_operator(lane_id),
                     data_proposal_hash,
                     lane_size.unwrap(),
@@ -216,7 +219,17 @@ impl super::Mempool {
                 let (hash, size) =
                     self.lanes
                         .store_data_proposal(&crypto, &lane_id, data_proposal)?;
-                self.send_vote(self.get_lane_operator(&lane_id), hash.clone(), size)?;
+                self.send_dissemination_event(DisseminationEvent::DpStored {
+                    lane_id: lane_id.clone(),
+                    data_proposal_hash: hash.clone(),
+                    cumul_size: size,
+                })?;
+                self.send_vote(
+                    &lane_id,
+                    self.get_lane_operator(&lane_id),
+                    hash.clone(),
+                    size,
+                )?;
 
                 while let Some(poda_signatures) = self
                     .inner
@@ -309,8 +322,7 @@ impl super::Mempool {
                 Ok((DataProposalVerdict::Refuse, None))
             }
             CanBePutOnTop::AlreadyOnTop => {
-                // This can happen if the lane tip is updated (via a commit) before the data proposal arrived.
-                // For performance reasons, we don't to process the data proposal
+                // Lane tip was updated (via commit) before this proposal arrived, so we ignore it.
                 Ok((DataProposalVerdict::Ignore, None))
             }
         }
@@ -411,6 +423,7 @@ impl super::Mempool {
 
     fn send_vote(
         &mut self,
+        lane_id: &LaneId,
         validator: &ValidatorPublicKey,
         data_proposal_hash: DataProposalHash,
         size: LaneBytesSize,
@@ -420,7 +433,10 @@ impl super::Mempool {
         debug!("🗳️ Sending vote for DataProposal {data_proposal_hash} to {validator} (lane size: {size})");
         self.send_net_message(
             validator.clone(),
-            MempoolNetMessage::DataVote(self.crypto.sign((data_proposal_hash, size))?),
+            MempoolNetMessage::DataVote(
+                lane_id.clone(),
+                self.crypto.sign((data_proposal_hash, size))?,
+            ),
         )?;
         Ok(())
     }
@@ -443,15 +459,15 @@ pub mod test {
     async fn test_get_verdict() {
         let mut ctx = MempoolTestCtx::new("mempool").await;
         let crypto2: BlstCrypto = BlstCrypto::new("2").unwrap();
-        let lane_id2 = &LaneId(crypto2.validator_pubkey().clone());
+        let lane_id2 = LaneId::new(crypto2.validator_pubkey().clone());
 
         let dp = DataProposal::new(None, vec![]);
         // 2 send a DP to 1
-        let (verdict, _) = ctx.mempool.get_verdict(lane_id2, &dp).unwrap();
+        let (verdict, _) = ctx.mempool.get_verdict(&lane_id2, &dp).unwrap();
         assert_eq!(verdict, DataProposalVerdict::Empty);
 
         let dp = DataProposal::new(None, vec![Transaction::default()]);
-        let (verdict, _) = ctx.mempool.get_verdict(lane_id2, &dp).unwrap();
+        let (verdict, _) = ctx.mempool.get_verdict(&lane_id2, &dp).unwrap();
         assert_eq!(verdict, DataProposalVerdict::Process);
 
         let dp_unknown_parent = DataProposal::new(
@@ -460,7 +476,7 @@ pub mod test {
         );
         let (verdict, _) = ctx
             .mempool
-            .get_verdict(lane_id2, &dp_unknown_parent)
+            .get_verdict(&lane_id2, &dp_unknown_parent)
             .unwrap();
         assert_eq!(verdict, DataProposalVerdict::Wait);
     }
@@ -469,24 +485,24 @@ pub mod test {
     async fn test_get_verdict_fork() {
         let mut ctx = MempoolTestCtx::new("mempool").await;
         let crypto2: BlstCrypto = BlstCrypto::new("2").unwrap();
-        let lane_id2 = &LaneId(crypto2.validator_pubkey().clone());
+        let lane_id2 = LaneId::new(crypto2.validator_pubkey().clone());
 
         let dp = DataProposal::new(None, vec![Transaction::default()]);
         let dp2 = DataProposal::new(Some(dp.hashed()), vec![Transaction::default()]);
 
         ctx.mempool
             .lanes
-            .store_data_proposal(&ctx.mempool.crypto, lane_id2, dp.clone())
+            .store_data_proposal(&ctx.mempool.crypto, &lane_id2, dp.clone())
             .unwrap();
         ctx.mempool
             .lanes
-            .store_data_proposal(&ctx.mempool.crypto, lane_id2, dp2.clone())
+            .store_data_proposal(&ctx.mempool.crypto, &lane_id2, dp2.clone())
             .unwrap();
 
         assert!(ctx
             .mempool
             .lanes
-            .store_data_proposal(&ctx.mempool.crypto, lane_id2, dp2)
+            .store_data_proposal(&ctx.mempool.crypto, &lane_id2, dp2)
             .is_err());
 
         let dp2_fork = DataProposal::new(
@@ -494,7 +510,7 @@ pub mod test {
             vec![Transaction::default(), Transaction::default()],
         );
 
-        let (verdict, _) = ctx.mempool.get_verdict(lane_id2, &dp2_fork).unwrap();
+        let (verdict, _) = ctx.mempool.get_verdict(&lane_id2, &dp2_fork).unwrap();
         assert_eq!(verdict, DataProposalVerdict::Refuse);
     }
 
@@ -508,17 +524,19 @@ pub mod test {
         );
         let size = LaneBytesSize(data_proposal.estimate_size() as u64);
         let hash = data_proposal.hashed();
+        let lane_id = LaneId::new(ctx.mempool.crypto.validator_pubkey().clone());
 
         let signed_msg =
             ctx.mempool
                 .crypto
                 .sign_msg_with_header(MempoolNetMessage::DataProposal(
+                    lane_id,
                     hash.clone(),
                     data_proposal.clone(),
                 ))?;
 
         ctx.mempool
-            .handle_net_message(signed_msg, &ctx.mempool_sync_request_sender)
+            .handle_net_message(signed_msg)
             .await
             .expect("should handle net message");
 
@@ -530,10 +548,13 @@ pub mod test {
             .await
             .msg
         {
-            MempoolNetMessage::DataVote(SignedByValidator {
-                msg: (data_vote, voted_size),
-                ..
-            }) => {
+            MempoolNetMessage::DataVote(
+                _,
+                SignedByValidator {
+                    msg: (data_vote, voted_size),
+                    ..
+                },
+            ) => {
                 assert_eq!(data_vote, hash);
                 assert_eq!(size, voted_size);
             }

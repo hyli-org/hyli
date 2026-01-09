@@ -129,6 +129,7 @@ mod e2e_hyllar {
             .balances
             .get(node.pubkey.as_ref().unwrap())
             .expect("balance");
+        let initial_cumul_size: u64 = initial_balance.cumul_sizes.values().map(|v| v.0).sum();
 
         let ctx = scenario_hyllar(ctx).await?;
 
@@ -138,7 +139,8 @@ mod e2e_hyllar {
             .balances
             .get(node.pubkey.as_ref().unwrap())
             .expect("balance");
-        assert!(balance.cumul_size.0 > initial_balance.cumul_size.0);
+        let cumul_size: u64 = balance.cumul_sizes.values().map(|v| v.0).sum();
+        assert!(cumul_size > initial_cumul_size);
         assert!(balance.balance < initial_balance.balance);
 
         Ok(())

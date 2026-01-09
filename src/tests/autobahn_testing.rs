@@ -61,24 +61,33 @@ macro_rules! send {
     ) => {
         // Distribute the message to the target node from all specified nodes
         ($({
-            let answer = $node.assert_send(
-                &$to.validator_pubkey(),
-                format!("[send from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            ).await;
+            let answer = loop {
+                let candidate = $node
+                    .assert_send(
+                        &$to.validator_pubkey(),
+                        format!(
+                            "[send from: {} to: {}] {}",
+                            stringify!($node),
+                            stringify!($to),
+                            $description
+                        )
+                        .as_str(),
+                    )
+                    .await;
 
-            // If `message_matches` is provided, perform the pattern match
-            if let $pattern = &answer.msg {
-                // Execute optional assertions if provided
-            } else {
-                let msg_variant_name: &'static str = answer.msg.clone().into();
-                panic!(
-                    "[send from: {}] {}: Message {} did not match {}",
-                    stringify!($node),
-                    $description,
-                    msg_variant_name,
-                    stringify!($pattern)
-                );
-            }
+                if let $pattern = &candidate.msg {
+                    break candidate;
+                } else {
+                    let msg_variant_name: &'static str = candidate.msg.clone().into();
+                    info!(
+                        "[send from: {}] {}: skipping {} while waiting for {}",
+                        stringify!($node),
+                        $description,
+                        msg_variant_name,
+                        stringify!($pattern)
+                    );
+                }
+            };
 
             // Handle the message
             $to.handle_msg(
@@ -96,25 +105,34 @@ macro_rules! send {
     ) => {
         // Distribute the message to the target node from all specified nodes
         ($({
-            let answer = $node.assert_send(
-                &$to.validator_pubkey(),
-                format!("[send from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            ).await;
+            let answer = loop {
+                let candidate = $node
+                    .assert_send(
+                        &$to.validator_pubkey(),
+                        format!(
+                            "[send from: {} to: {}] {}",
+                            stringify!($node),
+                            stringify!($to),
+                            $description
+                        )
+                        .as_str(),
+                    )
+                    .await;
 
-            // If `message_matches` is provided, perform the pattern match
-            if let $pattern = &answer.msg {
-                // Execute optional assertions if provided
-                $($asserts)?
-            } else {
-                let msg_variant_name: &'static str = answer.msg.clone().into();
-                panic!(
-                    "[send from: {}] {}: Message {} did not match {}",
-                    stringify!($node),
-                    $description,
-                    msg_variant_name,
-                    stringify!($pattern)
-                );
-            }
+                if let $pattern = &candidate.msg {
+                    $($asserts)?
+                    break candidate;
+                } else {
+                    let msg_variant_name: &'static str = candidate.msg.clone().into();
+                    info!(
+                        "[send from: {}] {}: skipping {} while waiting for {}",
+                        stringify!($node),
+                        $description,
+                        msg_variant_name,
+                        stringify!($pattern)
+                    );
+                }
+            };
 
             // Handle the message
             $to.handle_msg(
@@ -172,17 +190,20 @@ macro_rules! simple_commit_round {
 macro_rules! disseminate {
     (txs: [$($txs:expr),+], owner: $owner:expr, voters: [$($voter:expr),+]) => {{
 
-        let lane_id = LaneId($owner.validator_pubkey().clone());
+        let lane_id = LaneId::new($owner.validator_pubkey().clone());
         let dp = $owner.create_data_proposal_on_top(lane_id, &[$($txs),+]);
         $owner
             .process_new_data_proposal(dp.clone())
             .unwrap();
-        $owner.timer_tick().await.unwrap();
+        $owner
+            .process_dissemination_events()
+            .await
+            .expect("process dissemination events");
 
         let dp_msg = broadcast! {
             description: "Disseminate DataProposal",
             from: $owner, to: [$($voter),+],
-            message_matches: MempoolNetMessage::DataProposal(_, _)
+            message_matches: MempoolNetMessage::DataProposal(_, _, _)
         };
 
         join_all(
@@ -198,10 +219,17 @@ macro_rules! disseminate {
             message_matches: MempoolNetMessage::DataVote(..)
         };
 
+        $owner
+            .process_dissemination_events()
+            .await
+            .expect("process dissemination events");
+
+        let voter_count = 0 $(+ { let _ = &$voter; 1 })+;
+
         let poda = broadcast! {
             description: "Disseminate Poda 1",
             from: $owner, to: [$($voter),+],
-            message_matches: MempoolNetMessage::PoDAUpdate(hash, _signatures) => {
+            message_matches: MempoolNetMessage::PoDAUpdate(_, hash, _signatures) => {
                 assert_eq!(hash, &dp.hashed());
             }
         };
@@ -209,17 +237,21 @@ macro_rules! disseminate {
         let poda2 = broadcast! {
             description: "Disseminate Poda 2",
             from: $owner, to: [$($voter),+],
-            message_matches: MempoolNetMessage::PoDAUpdate(hash, _signatures) => {
+            message_matches: MempoolNetMessage::PoDAUpdate(_, hash, _signatures) => {
                 assert_eq!(hash, &dp.hashed());
             }
         };
 
-        let poda3 = broadcast! {
-            description: "Disseminate Poda 3",
-            from: $owner, to: [$($voter),+],
-            message_matches: MempoolNetMessage::PoDAUpdate(hash, _signatures) => {
-                assert_eq!(hash, &dp.hashed());
-            }
+        let poda3 = if voter_count >= 3 {
+            Some(broadcast! {
+                description: "Disseminate Poda 3",
+                from: $owner, to: [$($voter),+],
+                message_matches: MempoolNetMessage::PoDAUpdate(_, hash, _signatures) => {
+                    assert_eq!(hash, &dp.hashed());
+                }
+            })
+        } else {
+            None
         };
 
         (dp, dp_msg, poda, poda2, poda3)
@@ -263,7 +295,7 @@ macro_rules! build_nodes {
                     AutobahnTestCtx::new(format!("node-{i}").as_ref(), crypto).await;
 
                 autobahn_node.consensus_ctx.setup_node(i, &cryptos);
-                autobahn_node.mempool_ctx.setup_node(&cryptos);
+                autobahn_node.mempool_ctx.setup_node(&cryptos).await;
                 nodes.push(autobahn_node);
             }
 
@@ -309,14 +341,8 @@ impl AutobahnTestCtx {
         let event_receiver = get_receiver::<ConsensusEvent>(&shared_bus).await;
         let p2p_receiver = get_receiver::<P2PCommand>(&shared_bus).await;
         let consensus_out_receiver = get_receiver::<OutboundMessage>(&shared_bus).await;
-        let mempool_out_receiver = get_receiver::<OutboundMessage>(&shared_bus).await;
-        let mempool_event_receiver = get_receiver::<MempoolBlockEvent>(&shared_bus).await;
-        let mempool_status_event_receiver = get_receiver::<MempoolStatusEvent>(&shared_bus).await;
-
         let consensus = ConsensusTestCtx::build_consensus(&shared_bus, crypto.clone()).await;
-        let mempool = MempoolTestCtx::build_mempool(&shared_bus, crypto).await;
-
-        let mempool_sync_request_sender = mempool.start_mempool_sync();
+        let mempool_ctx = MempoolTestCtx::new_with_shared_bus(name, &shared_bus, crypto).await;
 
         AutobahnTestCtx {
             shared_bus,
@@ -327,14 +353,7 @@ impl AutobahnTestCtx {
                 consensus,
                 name: name.to_string(),
             },
-            mempool_ctx: MempoolTestCtx {
-                name: name.to_string(),
-                out_receiver: mempool_out_receiver,
-                mempool_event_receiver,
-                mempool_status_event_receiver,
-                mempool,
-                mempool_sync_request_sender,
-            },
+            mempool_ctx,
         }
     }
 
@@ -414,12 +433,22 @@ async fn autobahn_basic_flow() {
         .mempool_ctx
         .process_new_data_proposal(dp.clone())
         .unwrap();
+    node1
+        .mempool_ctx
+        .process_dissemination_events()
+        .await
+        .expect("process dissemination events");
     node1.mempool_ctx.timer_tick().await.unwrap();
+    node1
+        .mempool_ctx
+        .process_dissemination_events()
+        .await
+        .expect("process dissemination events");
 
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, data) => {
+        message_matches: MempoolNetMessage::DataProposal(_, _, data) => {
             assert_eq!(data.txs.len(), 2);
         }
     };
@@ -555,7 +584,7 @@ async fn mempool_broadcast_multiple_data_proposals() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: MempoolNetMessage::DataProposal(_, _, _)
     };
 
     join_all(
@@ -574,6 +603,12 @@ async fn mempool_broadcast_multiple_data_proposals() {
         from: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx], to: node1.mempool_ctx,
         message_matches: MempoolNetMessage::DataVote(..)
     };
+
+    node1
+        .mempool_ctx
+        .process_dissemination_events()
+        .await
+        .expect("process dissemination events");
 
     node1.mempool_ctx.assert_broadcast("poda update f+1").await;
     node1.mempool_ctx.assert_broadcast("poda update 2f+1").await;
@@ -596,7 +631,7 @@ async fn mempool_broadcast_multiple_data_proposals() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: MempoolNetMessage::DataProposal(_, _, _)
     };
 
     join_all(
@@ -625,49 +660,11 @@ async fn mempool_podaupdate_too_early() {
 
     let register_tx = make_register_contract_tx(ContractName::new("test1"));
 
-    let dp = node1.mempool_ctx.create_data_proposal(None, &[register_tx]);
-    let lane_id = LaneId(node1.mempool_ctx.validator_pubkey().clone());
-    node1
-        .mempool_ctx
-        .process_new_data_proposal(dp.clone())
-        .unwrap();
-    node1.mempool_ctx.timer_tick().await.unwrap();
-
-    let dp_msg = broadcast! {
-        description: "Disseminate Tx",
-        from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
-    };
-
-    join_all(
-        [&mut node2.mempool_ctx, &mut node3.mempool_ctx]
-            .iter_mut()
-            .map(|ctx| ctx.handle_processed_data_proposals()),
-    )
-    .await;
-
-    send! {
-        description: "Disseminated Tx Vote",
-        from: [node2.mempool_ctx, node3.mempool_ctx], to: node1.mempool_ctx,
-        message_matches: MempoolNetMessage::DataVote(..)
-    };
-
-    let poda = broadcast! {
-        description: "Disseminate Tx",
-        from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx],
-        message_matches: MempoolNetMessage::PoDAUpdate(hash, signatures) => {
-            assert_eq!(hash, &dp.hashed());
-            assert_eq!(2, signatures.len());
-        }
-    };
-
-    let poda2 = broadcast! {
-        description: "Disseminate Tx",
-        from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx],
-        message_matches: MempoolNetMessage::PoDAUpdate(hash, signatures) => {
-            assert_eq!(hash, &dp.hashed());
-            assert_eq!(3, signatures.len());
-        }
+    let lane_id = LaneId::new(node1.mempool_ctx.validator_pubkey().clone());
+    let (dp, dp_msg, poda, poda2, _poda3) = disseminate! {
+        txs: [register_tx],
+        owner: node1.mempool_ctx,
+        voters: [node2.mempool_ctx, node3.mempool_ctx]
     };
 
     let assert_nb_signatures = |node: &AutobahnTestCtx, n: usize| {
@@ -710,11 +707,16 @@ async fn mempool_podaupdate_too_early() {
         from: [node4.mempool_ctx], to: node1.mempool_ctx,
         message_matches: MempoolNetMessage::DataVote(..)
     };
+    node1
+        .mempool_ctx
+        .process_dissemination_events()
+        .await
+        .expect("process dissemination events");
 
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::PoDAUpdate(hash, signatures) => {
+        message_matches: MempoolNetMessage::PoDAUpdate(_, hash, signatures) => {
             assert_eq!(hash, &dp.hashed());
             assert_eq!(4, signatures.len());
         }
@@ -905,7 +907,7 @@ async fn mempool_fail_to_vote_on_fork() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, data) => {
+        message_matches: MempoolNetMessage::DataProposal(_, _, data) => {
             dp1_check = data.clone();
         }
     };
@@ -929,6 +931,12 @@ async fn mempool_fail_to_vote_on_fork() {
         message_matches: MempoolNetMessage::DataVote(..)
     };
 
+    node1
+        .mempool_ctx
+        .process_dissemination_events()
+        .await
+        .expect("process dissemination events");
+
     node1.mempool_ctx.assert_broadcast("poda update f+1").await;
     node1.mempool_ctx.assert_broadcast("poda update 2f+1").await;
     node1.mempool_ctx.assert_broadcast("poda update 3f+1").await;
@@ -950,7 +958,7 @@ async fn mempool_fail_to_vote_on_fork() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx, node3.mempool_ctx, node4.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: MempoolNetMessage::DataProposal(_, _, _)
     };
 
     join_all(
@@ -979,6 +987,7 @@ async fn mempool_fail_to_vote_on_fork() {
     let data_proposal_fork_3 = node1
         .mempool_ctx
         .create_net_message(MempoolNetMessage::DataProposal(
+            node1.mempool_ctx.own_lane(),
             dp_fork_3.hashed(),
             dp_fork_3.clone(),
         ))
@@ -2163,6 +2172,85 @@ async fn autobahn_got_timed_out_during_sync() {
 }
 
 #[test_log::test(tokio::test)]
+async fn autobahn_timeout_split_views_no_tc() {
+    let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
+
+    ConsensusTestCtx::setup_for_round(
+        &mut [
+            &mut node0.consensus_ctx,
+            &mut node1.consensus_ctx,
+            &mut node2.consensus_ctx,
+            &mut node3.consensus_ctx,
+        ],
+        5,
+        0,
+    );
+
+    ConsensusTestCtx::timeout(&mut [
+        &mut node0.consensus_ctx,
+        &mut node1.consensus_ctx,
+        &mut node2.consensus_ctx,
+        &mut node3.consensus_ctx,
+    ])
+    .await;
+
+    broadcast! {
+        description: "Timeout v0 -> node2/node3",
+        from: node0.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Timeout v0 -> node2/node3",
+        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Timeout v0 -> dropped",
+        from: node2.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Timeout v0 -> dropped",
+        from: node3.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+
+    broadcast! {
+        description: "Timeout Certificate node2",
+        from: node2.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::TimeoutCertificate(..)
+    };
+    broadcast! {
+        description: "Timeout Certificate node3",
+        from: node3.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::TimeoutCertificate(..)
+    };
+
+    node0.consensus_ctx.assert_no_broadcast("No TC from node0");
+    node1.consensus_ctx.assert_no_broadcast("No TC from node1");
+
+    ConsensusTestCtx::timeout(&mut [&mut node0.consensus_ctx]).await;
+
+    broadcast! {
+        description: "Timeout v0 to node2",
+        from: node0.consensus_ctx, to: [node2.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout((signed_slot_view, _)) => {
+            assert_eq!(signed_slot_view.msg.1, 0);
+        }
+    };
+
+    send! {
+        description: "TimeoutCertificate reply to old view",
+        from: [
+            node2.consensus_ctx; ConsensusNetMessage::TimeoutCertificate(_, _, slot, view) => {
+                assert_eq!(*slot, 5);
+                assert_eq!(*view, 0);
+            }
+        ], to: node0.consensus_ctx
+    };
+}
+
+#[test_log::test(tokio::test)]
 async fn autobahn_commit_different_views_for_f() {
     let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
 
@@ -2645,7 +2733,7 @@ async fn follower_commits_cut_then_mempool_sends_stale_lane() {
     broadcast! {
         description: "Disseminate Tx",
         from: node1.mempool_ctx, to: [node2.mempool_ctx],
-        message_matches: MempoolNetMessage::DataProposal(_, _)
+        message_matches: MempoolNetMessage::DataProposal(_, _, _)
     };
     node2.mempool_ctx.handle_processed_data_proposals().await;
     send! {
@@ -2687,10 +2775,10 @@ async fn follower_commits_cut_then_mempool_sends_stale_lane() {
         CutDisplay(&cp.cut).to_string(),
         format!(
             "{}:{}({} B), {}:{}({} B),",
-            LaneId(node1.consensus_ctx.validator_pubkey()),
+            LaneId::new(node1.consensus_ctx.validator_pubkey()),
             dp1b.hashed(),
             dp.estimate_size() + dp1b.estimate_size(),
-            LaneId(node2.consensus_ctx.validator_pubkey()),
+            LaneId::new(node2.consensus_ctx.validator_pubkey()),
             dp2.hashed(),
             dp2.estimate_size(),
         )

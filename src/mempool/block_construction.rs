@@ -276,7 +276,7 @@ pub mod test {
         let dp_hash = dp_orig.hashed();
 
         let key = ctx.validator_pubkey().clone();
-        ctx.add_trusted_validator(&key);
+        ctx.add_trusted_validator(&key).await;
 
         let cut = ctx
             .process_cut_with_dp(&key, &dp_hash, cumul_size, 1)
@@ -295,7 +295,7 @@ pub mod test {
                 assert_eq!(sb.consensus_proposal.cut, cut);
                 assert_eq!(
                     sb.data_proposals,
-                    vec![(LaneId(key.clone()), vec![dp_orig])]
+                    vec![(LaneId::new(key.clone()), vec![dp_orig])]
                 );
             }
         );
@@ -341,7 +341,7 @@ pub mod test {
         // Store it locally; this strips proofs into side-store
         ctx.process_new_data_proposal(dp.clone())?;
 
-        let lane_id = LaneId(ctx.validator_pubkey().clone());
+        let lane_id = LaneId::new(ctx.validator_pubkey().clone());
         // Ensure proofs exist before commit
         let proofs_before = ctx
             .mempool
@@ -352,7 +352,7 @@ pub mod test {
 
         // Process a cut committing this DP
         let key = ctx.validator_pubkey().clone();
-        ctx.add_trusted_validator(&key);
+        ctx.add_trusted_validator(&key).await;
         let cut = ctx
             .process_cut_with_dp(&key, &dp_hash, cumul_size, 1)
             .await?;
@@ -405,7 +405,7 @@ pub mod test {
         let dp_hash3 = dp_orig3.hashed();
 
         let key = ctx.validator_pubkey().clone();
-        ctx.add_trusted_validator(&key);
+        ctx.add_trusted_validator(&key).await;
 
         let cut = ctx
             .process_cut_with_dp(&key, &dp_hash3, cumul_size, 1)
@@ -424,7 +424,7 @@ pub mod test {
                 assert_eq!(sb.consensus_proposal.cut, cut);
                 assert_eq!(
                     sb.data_proposals,
-                    vec![(LaneId(key.clone()), vec![dp_orig, dp_orig2, dp_orig3])]
+                    vec![(LaneId::new(key.clone()), vec![dp_orig, dp_orig2, dp_orig3])]
                 );
             }
         );
@@ -493,6 +493,7 @@ pub mod test {
 
         let lane_id1 = ctx.mempool.own_lane_id().clone();
         let lane_id2 = ctx2.mempool.own_lane_id().clone();
+        ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
 
         // Create a chain of 2 DataProposals in lane 1
         let dp1 = DataProposal::new(None, vec![]);
@@ -556,6 +557,8 @@ pub mod test {
         let result = ctx.mempool.build_signed_block_and_emit(&buc).await;
         assert!(result.is_err());
 
+        ctx.process_sync().await?;
+
         assert!(
             ctx.mempool_event_receiver.try_recv().is_err(),
             "Should not have started building blocks yet"
@@ -570,7 +573,8 @@ pub mod test {
             .await
             .msg
         {
-            MempoolNetMessage::SyncRequest(from, to) => {
+            MempoolNetMessage::SyncRequest(lane_id, from, to) => {
+                assert_eq!(lane_id, lane_id2);
                 assert_eq!(from, None);
                 assert_eq!(to, Some(dp4_hash.clone()));
             }
@@ -596,11 +600,11 @@ pub mod test {
                 assert_eq!(signed_block.data_proposals.len(), 2);
                 assert_eq!(
                     signed_block.data_proposals[0],
-                    (LaneId(crypto1.validator_pubkey().clone()), vec![dp1, dp2])
+                    (LaneId::new(crypto1.validator_pubkey().clone()), vec![dp1, dp2])
                 );
                 assert_eq!(
                     signed_block.data_proposals[1],
-                    (LaneId(crypto2.validator_pubkey().clone()), vec![dp3, dp4])
+                    (LaneId::new(crypto2.validator_pubkey().clone()), vec![dp3, dp4])
                 );
             }
         );
@@ -614,6 +618,7 @@ pub mod test {
         let ctx_owner = MempoolTestCtx::new("mempool_owner").await;
         let lane_id = ctx_owner.mempool.own_lane_id().clone();
         let crypto = ctx_owner.mempool.crypto.clone();
+        ctx.add_trusted_validator(crypto.validator_pubkey()).await;
 
         // Create a chain of 3 DataProposals
         let dp1 = DataProposal::new(None, vec![]);
@@ -665,6 +670,8 @@ pub mod test {
         let result = ctx.mempool.build_signed_block_and_emit(&buc).await;
         assert!(result.is_err());
 
+        ctx.process_sync().await?;
+
         match ctx
             .assert_send(
                 &ctx_owner.mempool.crypto.validator_pubkey().clone(),
@@ -673,7 +680,8 @@ pub mod test {
             .await
             .msg
         {
-            MempoolNetMessage::SyncRequest(from, to) => {
+            MempoolNetMessage::SyncRequest(req_lane_id, from, to) => {
+                assert_eq!(req_lane_id, lane_id);
                 assert_eq!(from, None);
                 assert_eq!(to, Some(dp2_hash.clone()));
             }

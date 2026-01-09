@@ -76,6 +76,8 @@ timestamp_checks = "Monotonic"
 solo = true
 # Timestamp of the genesis block in seconds since epoch.
 genesis_timestamp = 1735689600 # Default to 2025-01-01T00:00:00Z
+# Number of recent timeout certificates to keep for timeout recovery.
+timeout_certificate_cache_size = 100
 
 [genesis]
 # Stakers and their inigial stake.
@@ -98,6 +100,11 @@ events = ["node_state", "new_block", "new_tx"]
 [indexer]
 query_buffer_size = 10000
 persist_proofs = true
+
+[own_lanes]
+suffixes = ["default"]
+default_blob_suffix = "default"
+default_proof_suffix = "default"
 
 [gcs]
 # GCS bucket info

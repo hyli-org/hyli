@@ -9,9 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RISC0_EXECUTOR: ipc
-  CARGO_TARGET_DIR: ${{ github.workspace }}/.cache/target
-  CARGO_HOME: ${{ github.workspace }}/.cache/cargo-home
-  SHARED_CACHE_DIR: /home/runner/.cache/node-cache/rust
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -31,15 +28,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Copy cache from shared storage
-        run: .github/scripts/copy-cache.sh "hyli-tests"
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
-
-      # For keyring dependencies
-      - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config wget build-essential libssl-dev
 
       - name: Cache Docker layers
         id: image-cache
@@ -57,17 +48,10 @@ jobs:
       - if: steps.image-cache.outputs.cache-hit == 'true'
         run: docker load -i ~/image-cache/postgres.tar
 
-      - uses: taiki-e/install-action@nextest
       # - uses: Swatinem/rust-cache@v2
       #   with:
       #     shared-key: linux-stable
       #     save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Install r0vm
-        run: |
-          wget https://github.com/risc0/risc0/releases/download/v3.0.3/cargo-risczero-x86_64-unknown-linux-gnu.tgz
-          tar xzvf cargo-risczero-x86_64-unknown-linux-gnu.tgz
-          echo "$PWD" >> $GITHUB_PATH
       - run: cargo nextest run --profile ci --cargo-profile ci --workspace --tests
       - run: cargo test --doc --workspace --profile ci
       - name: Upload test results to Codecov
@@ -76,10 +60,6 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: target/nextest/ci/junit.xml
-
-      - name: Save cache to shared storage
-        if: always() && github.ref == 'refs/heads/main'
-        run: .github/scripts/save-cache.sh "hyli-tests"
 
   coverage:
     name: Unit tests coverage
@@ -94,26 +74,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Copy cache from shared storage
-        run: .github/scripts/copy-cache.sh "hyli-tests-cov"
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
       # - uses: Swatinem/rust-cache@v2
       #   with:
       #     shared-key: linux-stable
       #     save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      # For keyring dependencies
-      - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config wget build-essential libssl-dev
-      - name: Install r0vm
-        run: |
-          wget https://github.com/risc0/risc0/releases/download/v3.0.3/cargo-risczero-x86_64-unknown-linux-gnu.tgz
-          tar xzvf cargo-risczero-x86_64-unknown-linux-gnu.tgz
-          echo "$PWD" >> $GITHUB_PATH
       - name: Generate code coverage
         run: cargo llvm-cov --workspace --lib --lcov --output-path lcov.info -- --test-threads=1
       - name: Upload coverage to Codecov
@@ -122,10 +89,6 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
           fail_ci_if_error: true
-
-      - name: Save cache to shared storage
-        if: always() && github.ref == 'refs/heads/main'
-        run: .github/scripts/save-cache.sh "hyli-tests-cov"
 
   features_flags:
     name: Build with different feature flags
@@ -140,24 +103,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Copy cache from shared storage
-        run: .github/scripts/copy-cache.sh "hyli-tests-flags"
-
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.toolchain }}
-      # For keyring dependencies
-      - run: sudo apt update && sudo apt install -y libdbus-1-dev pkg-config build-essential libssl-dev
       - name: Build model
         run: cargo build -p hyli-model --no-default-features
       - name: Build
         run: cargo build --no-default-features
       - name: Build with sp1
         run: cargo build --no-default-features -F sp1
-
-      - name: Save cache to shared storage
-        if: always() && github.ref == 'refs/heads/main'
-        run: .github/scripts/save-cache.sh "hyli-tests-flags"
 
   unused_dependencies:
     name: Check unused dependencies
@@ -170,8 +124,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-
-      - run: sudo apt update && sudo apt install -y build-essential libssl-dev
-
       - name: Machete
         uses: bnjbvr/cargo-machete@v0.7.1
