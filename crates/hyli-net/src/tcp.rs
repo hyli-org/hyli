@@ -1,3 +1,5 @@
+#[cfg(feature = "turmoil")]
+pub mod intercept;
 pub mod p2p_server;
 pub mod tcp_client;
 pub mod tcp_server;
@@ -11,10 +13,24 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
 use sdk::hyli_model_utils::TimestampMs;
 use tokio::task::JoinHandle;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use anyhow::Result;
 
+use crate::net::TcpStream;
+
 pub type TcpHeaders = Vec<(String, String)>;
+
+pub(crate) type FramedStream = Framed<TcpStream, LengthDelimitedCodec>;
+
+pub(crate) fn framed_stream(stream: TcpStream, max_frame_length: Option<usize>) -> FramedStream {
+    let mut codec = LengthDelimitedCodec::new();
+    if let Some(len) = max_frame_length {
+        codec.set_max_frame_length(len);
+    }
+
+    Framed::new(stream, codec)
+}
 
 pub fn headers_from_span() -> TcpHeaders {
     #[cfg(feature = "instrumentation")]
