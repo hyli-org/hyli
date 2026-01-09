@@ -556,6 +556,11 @@ where
                     if *contract_name != self.ctx.contract_name {
                         continue;
                     }
+                    if contract.program_id == self.current_program_id {
+                        // We handled this upgrade while we proved it as it has an
+                        // OnchainEffect::UpdateContractProgramId
+                        continue;
+                    }
                     self.ensure_prover_available(
                         &contract.program_id,
                         &format!(
