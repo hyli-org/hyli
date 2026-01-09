@@ -5888,9 +5888,9 @@ dependencies = [
 
 [[package]]
 name = "hyli-registry"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fde484407d61d411bff045ae032805638f80954a5297be103e6f2fb9823affc"
+checksum = "d8e43a83cdc4241a80c7278451d32c70de53bc0b0ac090fea3be299ac62352e5"
 dependencies = [
  "anyhow",
  "clap",
