@@ -917,10 +917,10 @@ where
         Ok(())
     }
 
-    async fn prove_supported_blob<'a>(
-        &'a mut self,
+    async fn prove_supported_blob(
+        &mut self,
         mut blobs: Vec<(TxId, Vec<BlobIndex>, BlobTransaction, Arc<TxContext>)>,
-        join_handles: &'a mut Vec<JoinHandle<()>>,
+        join_handles: &mut Vec<JoinHandle<()>>,
     ) -> Result<()> {
         let remaining_blobs = if blobs.len() > self.ctx.max_txs_per_proof {
             let remaining_blobs = blobs.split_off(self.ctx.max_txs_per_proof);
