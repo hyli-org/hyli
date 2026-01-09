@@ -124,11 +124,17 @@ mod e2e_amm {
         // Replace prover binaries for non-reproducible mode.
         .with_prover(
             "hydentity".into(),
-            Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+            Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
         )
-        .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
-        .with_prover("hyllar2".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
-        .with_prover("amm".into(), Risc0Prover::new(AMM_ELF, AMM_ID))
+        .with_prover(
+            "hyllar".into(),
+            Risc0Prover::new(HYLLAR_ELF.to_vec(), HYLLAR_ID),
+        )
+        .with_prover(
+            "hyllar2".into(),
+            Risc0Prover::new(HYLLAR_ELF.to_vec(), HYLLAR_ID),
+        )
+        .with_prover("amm".into(), Risc0Prover::new(AMM_ELF.to_vec(), AMM_ID))
         .build();
 
         let hyllar_initial_total_amount: u128 = executor

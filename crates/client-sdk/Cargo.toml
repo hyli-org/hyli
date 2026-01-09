@@ -13,9 +13,11 @@ hyli-model = { workspace = true }
 sdk = { workspace = true, default-features = false, features = ["full-model"] }
 bonsai-runner = { workspace = true, optional = true }
 hyli-net = { workspace = true }
+hyli-registry = { workspace = true }
 
 anyhow = { workspace = true }
 borsh = { workspace = true }
+hex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

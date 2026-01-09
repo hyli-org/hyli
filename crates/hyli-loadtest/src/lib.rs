@@ -471,11 +471,11 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
         tx_ctx = tx_ctx
             .with_prover(
                 random_hydentity_contract.clone(),
-                Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+                Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
             )
             .with_prover(
                 random_hyllar_contract.clone(),
-                Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID),
+                Risc0Prover::new(HYLLAR_ELF.to_vec(), HYLLAR_ID),
             );
     }
     let mut tx_ctx = tx_ctx.build();

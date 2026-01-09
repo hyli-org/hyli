@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 use std::time::Duration;
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
@@ -13,11 +13,12 @@ use axum::Router;
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::rest_client::NodeApiClient;
 use client_sdk::{helpers::ClientSdkProver, transaction_builder::TxExecutorHandler};
+use futures::future::BoxFuture;
 use hyli_net::logged_task::logged_task;
 use indexmap::IndexMap;
 use sdk::{
     BlobIndex, BlobTransaction, BlockHeight, Calldata, ContractName, Hashed, NodeStateEvent,
-    ProofTransaction, StateCommitment, StatefulEvent, StatefulEvents, TxContext, TxId,
+    ProgramId, ProofTransaction, StateCommitment, StatefulEvent, StatefulEvents, TxContext, TxId,
 };
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
@@ -33,11 +34,16 @@ use super::prover_metrics::AutoProverMetrics;
 /// multiple blocks.
 /// This module requires the ELF to support multiproof. i.e. it requires the ELF to read
 /// a `Vec<Calldata>` as input.
-pub struct AutoProver<Contract: Send + Sync + Clone + 'static> {
+pub struct AutoProver<
+    Contract: Send + Sync + Clone + 'static,
+    Prover: ClientSdkProver<Vec<Calldata>> + Send + Sync,
+> {
     bus: AutoProverBusClient<Contract>,
-    ctx: Arc<AutoProverCtx<Contract>>,
+    ctx: Arc<AutoProverCtx<Contract, Prover>>,
+    provers: HashMap<ProgramId, Arc<Prover>>,
     store: AutoProverStore<Contract>,
     metrics: AutoProverMetrics,
+    current_program_id: ProgramId,
     // If Some, the block to catch up to
     catching_up: Option<BlockHeight>,
     catching_up_state: StateCommitment,
@@ -75,9 +81,9 @@ pub struct AutoProverBusClient<Contract: Send + Sync + Clone + 'static> {
 }
 }
 
-pub struct AutoProverCtx<Contract> {
+pub struct AutoProverCtx<Contract, Prover: ClientSdkProver<Vec<Calldata>> + Send + Sync> {
     pub data_directory: PathBuf,
-    pub prover: Arc<dyn ClientSdkProver<Vec<Calldata>> + Send + Sync>,
+    pub prover: Arc<Prover>,
     pub contract_name: ContractName,
     pub node: Arc<dyn NodeApiClient + Send + Sync>,
     // Optional API for readiness information
@@ -103,7 +109,7 @@ impl<Contract> BusMessage for AutoProverEvent<Contract> {
     const CAPACITY: usize = crate::bus::LOW_CAPACITY;
 }
 
-impl<Contract> Module for AutoProver<Contract>
+impl<Contract, Prover> Module for AutoProver<Contract, Prover>
 where
     Contract: TxExecutorHandler
         + BorshSerialize
@@ -113,8 +119,9 @@ where
         + Sync
         + Clone
         + 'static,
+    Prover: ClientSdkProver<Vec<Calldata>> + Send + Sync + 'static,
 {
-    type Context = Arc<AutoProverCtx<Contract>>;
+    type Context = Arc<AutoProverCtx<Contract, Prover>>;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus = AutoProverBusClient::<Contract>::new_from_bus(bus.new_handle()).await;
@@ -141,6 +148,8 @@ where
         };
 
         let infos = ctx.prover.info();
+        let mut provers = HashMap::new();
+        provers.insert(ctx.prover.program_id(), ctx.prover.clone());
 
         let metrics = AutoProverMetrics::global(ctx.contract_name.to_string(), infos);
 
@@ -162,6 +171,15 @@ where
         }
 
         let contract_state = ctx.node.get_contract(ctx.contract_name.clone()).await?;
+        let current_program_id = contract_state.program_id.clone();
+        if !provers.contains_key(&current_program_id) {
+            let prover = Arc::new(
+                Prover::new_from_registry(&ctx.contract_name, current_program_id.clone())
+                    .await
+                    .context("Creating prover for current program ID")?,
+            );
+            provers.insert(current_program_id.clone(), prover);
+        }
         let catching_up_state = contract_state.state_commitment;
         let catching_up = match contract_state.state_block_height.0 > 0 {
             true => Some(contract_state.state_block_height),
@@ -208,7 +226,9 @@ where
             bus,
             store,
             ctx,
+            provers,
             metrics,
+            current_program_id,
             catching_up,
             catching_up_state,
             catching_success_txs: vec![],
@@ -260,9 +280,10 @@ pub async fn is_ready(
     }
 }
 
-impl<Contract> AutoProver<Contract>
+impl<Contract, Prover> AutoProver<Contract, Prover>
 where
     Contract: TxExecutorHandler + Debug + Clone + Send + Sync + 'static,
+    Prover: ClientSdkProver<Vec<Calldata>> + Send + Sync + 'static,
 {
     async fn handle_block(
         &mut self,
@@ -535,7 +556,32 @@ where
                     if *contract_name != self.ctx.contract_name {
                         continue;
                     }
+                    if contract.program_id == self.current_program_id {
+                        // We handled this upgrade while we proved it as it has an
+                        // OnchainEffect::UpdateContractProgramId
+                        continue;
+                    }
+                    self.ensure_prover_available(
+                        &contract.program_id,
+                        &format!(
+                            "Program ID changed for contract {} at block {}",
+                            contract_name, block_height
+                        ),
+                    )
+                    .await?;
                     last_contract_state = Some(&contract.state);
+
+                    // TODO: at this block we get the proof of a tx in the past that changed the program ID
+                    // All txs after that tx need to be replayed with the new program ID
+                    // For now we just warn out if that happens
+                    // If we upgrade a contract with no activity, the prover will be able to pick up the new program id
+                    // without needing to replay anything
+                    warn!(
+                        cn =% self.ctx.contract_name,
+                        block_height =% block_height,
+                        "Program ID changed for contract {} at block {}, but replaying past TXs with new program ID is not yet supported.",
+                        contract_name, block_height
+                    );
                 }
             }
         }
@@ -586,7 +632,8 @@ where
                 })
                 .collect::<Vec<_>>();
             let mut join_handles = Vec::new();
-            self.prove_supported_blob(post_failure_blobs, &mut join_handles)?;
+            self.prove_supported_blob(post_failure_blobs, &mut join_handles)
+                .await?;
             // Don't wait, we'll want to prove the other successful proofs.
         }
 
@@ -627,7 +674,8 @@ where
 
         if let Some(buffered) = buffered {
             let mut join_handles = Vec::new();
-            self.prove_supported_blob(buffered, &mut join_handles)?;
+            self.prove_supported_blob(buffered, &mut join_handles)
+                .await?;
             // Wait for all join handles, but with a 30 second timeout for the whole batch,
             // after which we'll move on.
             let join_handles_fut = async {
@@ -869,7 +917,7 @@ where
         Ok(())
     }
 
-    fn prove_supported_blob(
+    async fn prove_supported_blob(
         &mut self,
         mut blobs: Vec<(TxId, Vec<BlobIndex>, BlobTransaction, Arc<TxContext>)>,
         join_handles: &mut Vec<JoinHandle<()>>,
@@ -893,22 +941,16 @@ where
         if blobs.is_empty() {
             return Ok(());
         }
-        let batch_id = self.store.batch_id;
-        self.store.batch_id += 1;
-        info!(
-            cn =% self.ctx.contract_name,
-            "Handling {} txs. Batch ID: {batch_id}",
-            blobs.len()
-        );
+        let mut current_program_id = self.current_program_id.clone();
         let mut calldatas = vec![];
         let mut initial_commitment_metadata = None;
-        let len = blobs.len();
         for (tx_id, blob_indexes, tx, tx_ctx) in blobs {
             let mut contract = self
                 .get_state_of_prev_tx(&tx_id)
                 .ok_or_else(|| anyhow!("Failed to get state of previous tx {}", tx_id))?;
             //let initial_contract = contract.clone();
             let mut error: Option<String> = None;
+            let mut updated_program_id = None;
 
             for blob_index in blob_indexes {
                 let blob = tx.blobs.get(blob_index.0).ok_or_else(|| {
@@ -987,6 +1029,31 @@ where
                             ));
                             // don't break here, we want this calldata to be stored
                         }
+                        let detected_program_id =
+                            hyli_output.onchain_effects.iter().find_map(|eff| {
+                                if let sdk::OnchainEffect::UpdateContractProgramId(
+                                    _contract_name,
+                                    program_id,
+                                ) = eff
+                                {
+                                    Some(program_id.clone())
+                                } else {
+                                    None
+                                }
+                            });
+                        if let Some(updated_program_id) = &detected_program_id {
+                            log_error!(
+                                self.ensure_prover_available(
+                                    updated_program_id,
+                                    &format!("Program ID updated for tx {}", tx_id),
+                                )
+                                .await,
+                                "Adding new prover after program ID update"
+                            )?;
+                        }
+                        if detected_program_id.is_some() {
+                            updated_program_id = detected_program_id;
+                        }
                     }
                 }
 
@@ -1023,27 +1090,127 @@ where
                 ))?;*/
                 self.store.state_history.insert(tx_id, (contract, true));
             }
+
+            if let Some(next_program_id) = updated_program_id {
+                if let Some(commitment_metadata) = initial_commitment_metadata.take() {
+                    if !calldatas.is_empty() {
+                        let batch_id = self.store.batch_id;
+                        self.store.batch_id += 1;
+                        self.spawn_proof_for_batch(
+                            &current_program_id,
+                            commitment_metadata,
+                            std::mem::take(&mut calldatas),
+                            batch_id,
+                            join_handles,
+                        )?;
+                    }
+                }
+                current_program_id = next_program_id;
+            }
         }
+
+        self.current_program_id = current_program_id;
 
         if calldatas.is_empty() {
             if !remaining_blobs.is_empty() {
-                self.prove_supported_blob(remaining_blobs, join_handles)?;
+                self.prove_supported_blob_boxed(remaining_blobs, join_handles)
+                    .await?;
             }
             return Ok(());
         }
 
         let Some(commitment_metadata) = initial_commitment_metadata else {
             if !remaining_blobs.is_empty() {
-                self.prove_supported_blob(remaining_blobs, join_handles)?;
+                self.prove_supported_blob_boxed(remaining_blobs, join_handles)
+                    .await?;
             }
             return Ok(());
         };
+        let batch_id = self.store.batch_id;
+        self.store.batch_id += 1;
+        self.spawn_proof_for_batch(
+            &self.current_program_id,
+            commitment_metadata,
+            calldatas,
+            batch_id,
+            join_handles,
+        )?;
+        if !remaining_blobs.is_empty() {
+            self.prove_supported_blob_boxed(remaining_blobs, join_handles)
+                .await?;
+        }
+        Ok(())
+    }
 
+    fn prove_supported_blob_boxed<'a>(
+        &'a mut self,
+        blobs: Vec<(TxId, Vec<BlobIndex>, BlobTransaction, Arc<TxContext>)>,
+        join_handles: &'a mut Vec<JoinHandle<()>>,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(self.prove_supported_blob(blobs, join_handles))
+    }
+
+    async fn add_prover(&mut self, program_id: &ProgramId) -> Result<()> {
+        let prover = Arc::new(
+            Prover::new_from_registry(&self.ctx.contract_name, program_id.clone())
+                .await
+                .context("Creating new prover with updated ELF")?,
+        );
+
+        self.provers.insert(program_id.clone(), prover);
+
+        info!(
+            cn =% self.ctx.contract_name,
+            "Prover ELF downloaded for program ID: {}",
+            program_id
+        );
+        Ok(())
+    }
+
+    /// Ensures a prover is available for the given program ID.
+    /// If not present, downloads the prover from the registry.
+    async fn ensure_prover_available(
+        &mut self,
+        program_id: &ProgramId,
+        context_info: &str,
+    ) -> Result<()> {
+        if !self.provers.contains_key(program_id) {
+            info!(
+                cn =% self.ctx.contract_name,
+                "{}, Trying to download prover for {}",
+                context_info,
+                program_id
+            );
+
+            self.add_prover(program_id).await?;
+        }
+        Ok(())
+    }
+
+    fn spawn_proof_for_batch(
+        &self,
+        program_id: &ProgramId,
+        commitment_metadata: Vec<u8>,
+        calldatas: Vec<Calldata>,
+        batch_id: u64,
+        join_handles: &mut Vec<JoinHandle<()>>,
+    ) -> Result<()> {
         let node_client = self.ctx.node.clone();
-        let prover = self.ctx.prover.clone();
+        let prover = self
+            .provers
+            .get(program_id)
+            .ok_or_else(|| anyhow!("No prover found for program ID: {}", program_id))?
+            .clone();
         let contract_name = self.ctx.contract_name.clone();
-
         let metrics = self.metrics.clone();
+        let len = calldatas.len();
+
+        info!(
+            cn =% contract_name,
+            "Handling {} txs. Batch ID: {batch_id}",
+            len
+        );
+
         let handle = logged_task(async move {
             let mut retries = 0;
             const MAX_RETRIES: u32 = 30;
@@ -1052,7 +1219,7 @@ where
                 info!(
                     cn =% contract_name,
                     "Proving {} txs. Batch id: {batch_id}, Retries: {retries}",
-                    calldatas.len(),
+                    len,
                 );
                 let start = std::time::Instant::now();
                 metrics.record_proof_requested();
@@ -1114,9 +1281,6 @@ where
             }
         });
         join_handles.push(handle);
-        if !remaining_blobs.is_empty() {
-            self.prove_supported_blob(remaining_blobs, join_handles)?;
-        }
         Ok(())
     }
 }
