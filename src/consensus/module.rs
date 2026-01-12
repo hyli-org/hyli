@@ -49,24 +49,27 @@ impl Module for Consensus {
 
     async fn persist(&mut self) -> Result<()> {
         if let Some(file) = &self.file {
-            let sync_prepares_backup =
-                self.store.bft_round_state.follower.sync_prepares.clone();
             // Persist only a small sync cache to reduce serialization cost.
             let serialize_limit = self
                 .config
                 .consensus
                 .sync_prepares_max_serialized
                 .min(self.config.consensus.sync_prepares_max_in_memory);
-            self.store
+            let removed = self
+                .store
                 .bft_round_state
                 .follower
                 .sync_prepares
-                .trim_to_limit(serialize_limit);
+                .drain_oldest_excess(serialize_limit);
             _ = log_error!(
                 Self::save_on_disk(file.as_path(), &self.store),
                 "Persisting consensus state"
             );
-            self.store.bft_round_state.follower.sync_prepares = sync_prepares_backup;
+            self.store
+                .bft_round_state
+                .follower
+                .sync_prepares
+                .restore_oldest(removed);
         }
 
         Ok(())

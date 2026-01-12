@@ -1064,19 +1064,44 @@ impl SyncPrepares {
     }
 
     pub(super) fn trim_to_limit(&mut self, max: usize) {
-        self.enforce_limit(max);
+        _ = self.drain_oldest_excess(max);
     }
 
-    fn enforce_limit(&mut self, max: usize) {
-        // Keep bounded memory usage for sync replies.
+    pub(super) fn drain_oldest_excess(&mut self, max: usize) -> Vec<Prepare> {
+        let mut removed = Vec::new();
         while self.order.len() > max {
             if let Some(oldest) = self.order.first().cloned() {
                 self.order.remove(0);
-                self.prepares.remove(&oldest);
+                if let Some(prepare) = self.prepares.remove(&oldest) {
+                    removed.push(prepare);
+                }
             } else {
                 break;
             }
         }
+        removed
+    }
+
+    pub(super) fn restore_oldest(&mut self, removed: Vec<Prepare>) {
+        // Restores in original eviction order so future drains remain deterministic.
+        if removed.is_empty() {
+            return;
+        }
+        let mut restored_hashes = Vec::with_capacity(removed.len());
+        for prepare in &removed {
+            restored_hashes.push(prepare.1.hashed());
+        }
+        let mut new_order = Vec::with_capacity(restored_hashes.len() + self.order.len());
+        new_order.extend(restored_hashes.iter().cloned());
+        new_order.extend(self.order.drain(..));
+        self.order = new_order;
+        for (hash, prepare) in restored_hashes.into_iter().zip(removed.into_iter()) {
+            self.prepares.insert(hash, prepare);
+        }
+    }
+
+    fn enforce_limit(&mut self, max: usize) {
+        _ = self.drain_oldest_excess(max);
     }
 }
 
@@ -1269,6 +1294,83 @@ mod tests {
         sync_prepares.push_with_limit(msg(p3.clone()), limit);
 
         assert!(sync_prepares.get(&p1.hashed()).is_none());
+        assert!(sync_prepares.get(&p2.hashed()).is_some());
+        assert!(sync_prepares.get(&p3.hashed()).is_some());
+    }
+
+    #[test]
+    fn test_sync_prepares_restore_oldest_keeps_order() {
+        let mut sync_prepares = SyncPrepares::default();
+        let limit = 1;
+
+        let p1 = ConsensusProposal {
+            parent_hash: ConsensusProposalHash("restore-p1".into()),
+            ..ConsensusProposal::default()
+        };
+        let p2 = ConsensusProposal {
+            parent_hash: ConsensusProposalHash("restore-p2".into()),
+            ..ConsensusProposal::default()
+        };
+
+        let msg = |proposal: ConsensusProposal| {
+            (
+                ValidatorPublicKey::default(),
+                proposal,
+                Ticket::Genesis,
+                0,
+            )
+        };
+
+        sync_prepares.push_with_limit(msg(p1.clone()), limit);
+        sync_prepares.push_with_limit(msg(p2.clone()), limit);
+        assert!(sync_prepares.get(&p1.hashed()).is_none());
+        assert!(sync_prepares.get(&p2.hashed()).is_some());
+
+        let removed = vec![msg(p1.clone())];
+        sync_prepares.restore_oldest(removed);
+        let removed_again = sync_prepares.drain_oldest_excess(limit);
+        assert_eq!(removed_again.len(), 1);
+        assert_eq!(removed_again[0].1, p1);
+    }
+
+    #[test]
+    fn test_sync_prepares_drain_and_restore_roundtrip() {
+        let mut sync_prepares = SyncPrepares::default();
+
+        let p1 = ConsensusProposal {
+            parent_hash: ConsensusProposalHash("roundtrip-p1".into()),
+            ..ConsensusProposal::default()
+        };
+        let p2 = ConsensusProposal {
+            parent_hash: ConsensusProposalHash("roundtrip-p2".into()),
+            ..ConsensusProposal::default()
+        };
+        let p3 = ConsensusProposal {
+            parent_hash: ConsensusProposalHash("roundtrip-p3".into()),
+            ..ConsensusProposal::default()
+        };
+
+        let msg = |proposal: ConsensusProposal| {
+            (
+                ValidatorPublicKey::default(),
+                proposal,
+                Ticket::Genesis,
+                0,
+            )
+        };
+
+        sync_prepares.push_with_limit(msg(p1.clone()), 10);
+        sync_prepares.push_with_limit(msg(p2.clone()), 10);
+        sync_prepares.push_with_limit(msg(p3.clone()), 10);
+
+        let removed = sync_prepares.drain_oldest_excess(1);
+        assert_eq!(removed.len(), 2);
+        assert!(sync_prepares.get(&p1.hashed()).is_none());
+        assert!(sync_prepares.get(&p2.hashed()).is_none());
+        assert!(sync_prepares.get(&p3.hashed()).is_some());
+
+        sync_prepares.restore_oldest(removed);
+        assert!(sync_prepares.get(&p1.hashed()).is_some());
         assert!(sync_prepares.get(&p2.hashed()).is_some());
         assert!(sync_prepares.get(&p3.hashed()).is_some());
     }
