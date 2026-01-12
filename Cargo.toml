@@ -62,7 +62,7 @@ hyli-contracts = { version = "0.14.0", default-features = false, path = "crates/
 hyli-modules = { version = "0.14.0", default-features = false, path = "crates/hyli-modules", package = "hyli-modules" }
 
 # Common external dependencies
-alloy-consensus = { version = "1.1.0", default-features = false }
+alloy-consensus = { version = "1.4.0", default-features = false }
 alloy-eips = { version = "1.1.0", default-features = false }
 alloy-genesis = { version = "1.1.0", default-features = false }
 alloy-primitives = { version = "1.4.1", default-features = false }
