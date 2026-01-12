@@ -40,15 +40,6 @@ pub(super) enum TicketVerifyAndProcess {
     Processed,
 }
 
-const LOCAL_BUFFERED_PREPARES_MAX_DEPTH: usize = 8;
-
-impl FollowerState {
-    pub(super) fn prune_after_commit(&mut self, parent_hash: &ConsensusProposalHash) {
-        self.buffered_prepares
-            .prune_to_chain(parent_hash, LOCAL_BUFFERED_PREPARES_MAX_DEPTH);
-    }
-}
-
 impl Consensus {
     pub(super) fn record_prepare_cache_sizes(&self) {
         self.metrics.record_prepare_cache_sizes(
@@ -88,12 +79,10 @@ impl Consensus {
                 );
                 self.set_state_tag(StateTag::Follower);
             } else {
-                follower_state!(self).buffered_prepares.push((
-                    sender.clone(),
-                    consensus_proposal,
-                    ticket,
-                    view,
-                ));
+                follower_state!(self).buffered_prepares.push_with_limit(
+                    (sender.clone(), consensus_proposal, ticket, view),
+                    self.config.consensus.sync_prepares_max_in_memory,
+                );
                 self.record_prepare_cache_sizes();
                 return Ok(());
             }
@@ -192,12 +181,10 @@ impl Consensus {
         self.bft_round_state.current_proposal = Some(consensus_proposal.clone());
         let cp_hash = consensus_proposal.hashed();
 
-        follower_state!(self).buffered_prepares.push((
-            sender.clone(),
-            consensus_proposal,
-            ticket,
-            view,
-        ));
+        follower_state!(self).buffered_prepares.push_with_limit(
+            (sender.clone(), consensus_proposal, ticket, view),
+            self.config.consensus.sync_prepares_max_in_memory,
+        );
         self.record_prepare_cache_sizes();
 
         // If we already have the next Prepare, fast-forward
@@ -779,9 +766,10 @@ impl Consensus {
             .contains(&consensus_proposal.hashed())
         {
             let prepare_message = (sender.clone(), consensus_proposal, ticket, view);
-            follower_state!(self)
-                .buffered_prepares
-                .push(prepare_message);
+            follower_state!(self).buffered_prepares.push_with_limit(
+                prepare_message,
+                self.config.consensus.sync_prepares_max_in_memory,
+            );
             self.record_prepare_cache_sizes();
         }
 
@@ -946,34 +934,13 @@ impl Consensus {
 
 pub type Prepare = (ValidatorPublicKey, ConsensusProposal, Ticket, View);
 
-#[derive(BorshSerialize, BorshDeserialize, Debug)]
+#[derive(BorshSerialize, BorshDeserialize, Default, Debug)]
 pub(super) struct BufferedPrepares {
     prepares: BorshableIndexMap<ConsensusProposalHash, Prepare>,
     children: BTreeMap<ConsensusProposalHash, ConsensusProposalHash>,
-    #[borsh_skip]
-    max_in_memory: usize,
-    #[borsh_skip]
-    max_serialized: usize,
-}
-
-impl Default for BufferedPrepares {
-    fn default() -> Self {
-        Self {
-            prepares: BorshableIndexMap::default(),
-            children: BTreeMap::new(),
-            max_in_memory: usize::MAX,
-            max_serialized: usize::MAX,
-        }
-    }
 }
 
 impl BufferedPrepares {
-    pub(super) fn configure_limits(&mut self, max_in_memory: usize, max_serialized: usize) {
-        self.max_in_memory = max_in_memory;
-        self.max_serialized = max_serialized;
-        self.trim_to_in_memory();
-    }
-
     fn contains(&self, proposal_hash: &ConsensusProposalHash) -> bool {
         self.prepares.contains_key(proposal_hash)
     }
@@ -999,7 +966,11 @@ impl BufferedPrepares {
             })
             .or_insert(proposal_hash.clone());
         self.prepares.insert(proposal_hash, prepare_message);
-        self.enforce_limit();
+    }
+
+    pub(super) fn push_with_limit(&mut self, prepare_message: Prepare, max: usize) {
+        self.push(prepare_message);
+        _ = self.drain_oldest_excess(max);
     }
 
     pub(super) fn get(&self, proposal_hash: &ConsensusProposalHash) -> Option<&Prepare> {
@@ -1012,40 +983,8 @@ impl BufferedPrepares {
             .and_then(|children| self.prepares.get(children).cloned())
     }
 
-    fn prune_to_chain(&mut self, root: &ConsensusProposalHash, max_depth: usize) {
-        if !self.children.contains_key(root) {
-            return;
-        }
-        let mut new_prepares = BorshableIndexMap::default();
-        let mut current = root.clone();
-        for _ in 0..max_depth {
-            let Some(child_hash) = self.children.get(&current).cloned() else {
-                break;
-            };
-            if let Some(prepare) = self.prepares.get(&child_hash).cloned() {
-                current = child_hash;
-                new_prepares.insert(current.clone(), prepare);
-            } else {
-                break;
-            }
-        }
-        let mut new_children = BTreeMap::new();
-        for prepare in new_prepares.values() {
-            let proposal_hash = prepare.1.hashed();
-            let parent_hash = prepare.1.parent_hash.clone();
-            new_children.insert(parent_hash, proposal_hash);
-        }
-        self.prepares = new_prepares;
-        self.children = new_children;
-    }
-
-    pub(super) fn trim_to_in_memory(&mut self) {
-        _ = self.drain_oldest_excess(self.max_in_memory);
-    }
-
-    pub(super) fn drain_oldest_excess_for_serialize(&mut self) -> Vec<Prepare> {
-        let max = self.max_serialized.min(self.max_in_memory);
-        self.drain_oldest_excess(max)
+    pub(super) fn trim_to_limit(&mut self, max: usize) {
+        _ = self.drain_oldest_excess(max);
     }
 
     pub(super) fn drain_oldest_excess(&mut self, max: usize) -> Vec<Prepare> {
@@ -1078,10 +1017,6 @@ impl BufferedPrepares {
             new_prepares.insert(hash, prepare);
         }
         self.prepares = new_prepares;
-    }
-
-    fn enforce_limit(&mut self) {
-        _ = self.drain_oldest_excess(self.max_in_memory);
     }
 }
 
@@ -1246,8 +1181,6 @@ mod tests {
     fn test_buffered_prepares_trim_limit() {
         let mut buffered_prepares = BufferedPrepares::default();
         let limit = 2;
-        buffered_prepares.configure_limits(limit, limit);
-
         let p1 = ConsensusProposal {
             parent_hash: ConsensusProposalHash("p1-parent".into()),
             ..ConsensusProposal::default()
@@ -1265,9 +1198,9 @@ mod tests {
             (ValidatorPublicKey::default(), proposal, Ticket::Genesis, 0)
         };
 
-        buffered_prepares.push(msg(p1.clone()));
-        buffered_prepares.push(msg(p2.clone()));
-        buffered_prepares.push(msg(p3.clone()));
+        buffered_prepares.push_with_limit(msg(p1.clone()), limit);
+        buffered_prepares.push_with_limit(msg(p2.clone()), limit);
+        buffered_prepares.push_with_limit(msg(p3.clone()), limit);
 
         assert!(buffered_prepares.get(&p1.hashed()).is_none());
         assert!(buffered_prepares.get(&p2.hashed()).is_some());
@@ -1278,8 +1211,6 @@ mod tests {
     fn test_buffered_prepares_restore_oldest_keeps_order() {
         let mut buffered_prepares = BufferedPrepares::default();
         let limit = 1;
-        buffered_prepares.configure_limits(limit, limit);
-
         let p1 = ConsensusProposal {
             parent_hash: ConsensusProposalHash("restore-p1".into()),
             ..ConsensusProposal::default()
@@ -1293,8 +1224,8 @@ mod tests {
             (ValidatorPublicKey::default(), proposal, Ticket::Genesis, 0)
         };
 
-        buffered_prepares.push(msg(p1.clone()));
-        buffered_prepares.push(msg(p2.clone()));
+        buffered_prepares.push_with_limit(msg(p1.clone()), limit);
+        buffered_prepares.push_with_limit(msg(p2.clone()), limit);
         assert!(buffered_prepares.get(&p1.hashed()).is_none());
         assert!(buffered_prepares.get(&p2.hashed()).is_some());
 
