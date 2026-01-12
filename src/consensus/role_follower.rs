@@ -1015,6 +1015,9 @@ impl BufferedPrepares {
     }
 
     fn prune_to_chain(&mut self, root: &ConsensusProposalHash, max_depth: usize) {
+        if !self.children.contains_key(root) {
+            return;
+        }
         let mut new_prepares = BTreeMap::new();
         let mut current = root.clone();
         for _ in 0..max_depth {
