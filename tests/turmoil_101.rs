@@ -171,6 +171,8 @@ turmoil_simple!(
     simulation_drop_data_proposals,
     submit_10_contracts
 );
+turmoil_simple!(681..=690, simulation_drop_data_votes, submit_10_contracts);
+turmoil_simple!(691..=700, simulation_drop_all_messages, submit_10_contracts);
 
 /// **Simulation**
 ///
@@ -526,6 +528,77 @@ pub fn simulation_drop_data_proposals(
 
         let mut rng = rng.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         rng.gen_bool(0.80)
+    });
+
+    let result = loop {
+        match sim.step() {
+            Ok(true) => {
+                tracing::info!("Time spent {}", sim.elapsed().as_millis());
+                break Ok(());
+            }
+            Ok(false) => {}
+            Err(e) => break Err(anyhow::anyhow!(e.to_string())),
+        }
+    };
+
+    result
+}
+
+/// **Simulation**
+///
+/// Drop a handful of data vote messages and ensure the network still converges.
+pub fn simulation_drop_data_votes(_ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::Result<()> {
+    let seed = std::env::var("HYLI_TURMOIL_SEED")
+        .ok()
+        .and_then(|seed| seed.parse::<u64>().ok())
+        .unwrap_or(0);
+    let rng = std::sync::Arc::new(std::sync::Mutex::new(StdRng::seed_from_u64(seed)));
+
+    let _dropper = install_net_message_dropper(move |message| {
+        let is_data_vote = matches!(
+            message,
+            hyli::p2p::network::NetMessage::MempoolMessage(msg)
+                if matches!(msg.msg, MempoolNetMessage::DataVote(..))
+        );
+
+        if !is_data_vote {
+            return false;
+        }
+
+        let mut rng = rng.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        rng.gen_bool(0.9)
+    });
+
+    let result = loop {
+        match sim.step() {
+            Ok(true) => {
+                tracing::info!("Time spent {}", sim.elapsed().as_millis());
+                break Ok(());
+            }
+            Ok(false) => {}
+            Err(e) => break Err(anyhow::anyhow!(e.to_string())),
+        }
+    };
+
+    result
+}
+
+/// **Simulation**
+///
+/// Drop any message at a high rate and ensure the network still converges.
+pub fn simulation_drop_all_messages(
+    _ctx: &mut TurmoilCtx,
+    sim: &mut Sim<'_>,
+) -> anyhow::Result<()> {
+    let seed = std::env::var("HYLI_TURMOIL_SEED")
+        .ok()
+        .and_then(|seed| seed.parse::<u64>().ok())
+        .unwrap_or(0);
+    let rng = std::sync::Arc::new(std::sync::Mutex::new(StdRng::seed_from_u64(seed)));
+
+    let _dropper = install_net_message_dropper(move |_message| {
+        let mut rng = rng.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        rng.gen_bool(0.10)
     });
 
     let result = loop {
