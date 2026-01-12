@@ -25,7 +25,7 @@ use hyli_model::{
 pub(super) struct FollowerState {
     pub(super) buffered_quorum_certificate: Option<CommitQC>, // if we receive a commit before the next prepare
     pub(super) buffered_prepares: BufferedPrepares, // History of seen prepares & buffer of future prepares
-    pub(super) sync_prepares: SyncPrepares, // Bounded cache of prepares for sync replies
+    pub(super) sync_prepares: SyncPrepares,         // Bounded cache of prepares for sync replies
 }
 
 macro_rules! follower_state {
@@ -1281,12 +1281,7 @@ mod tests {
         };
 
         let msg = |proposal: ConsensusProposal| {
-            (
-                ValidatorPublicKey::default(),
-                proposal,
-                Ticket::Genesis,
-                0,
-            )
+            (ValidatorPublicKey::default(), proposal, Ticket::Genesis, 0)
         };
 
         sync_prepares.push_with_limit(msg(p1.clone()), limit);
@@ -1313,12 +1308,7 @@ mod tests {
         };
 
         let msg = |proposal: ConsensusProposal| {
-            (
-                ValidatorPublicKey::default(),
-                proposal,
-                Ticket::Genesis,
-                0,
-            )
+            (ValidatorPublicKey::default(), proposal, Ticket::Genesis, 0)
         };
 
         sync_prepares.push_with_limit(msg(p1.clone()), limit);
@@ -1351,12 +1341,7 @@ mod tests {
         };
 
         let msg = |proposal: ConsensusProposal| {
-            (
-                ValidatorPublicKey::default(),
-                proposal,
-                Ticket::Genesis,
-                0,
-            )
+            (ValidatorPublicKey::default(), proposal, Ticket::Genesis, 0)
         };
 
         sync_prepares.push_with_limit(msg(p1.clone()), 10);

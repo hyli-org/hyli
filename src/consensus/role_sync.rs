@@ -25,9 +25,7 @@ impl Consensus {
                 "Sending prepare to {}", sender);
             let prepare = prepare.clone();
             self.send_net_message(sender, ConsensusNetMessage::SyncReply(prepare))?;
-        } else if let Some(prepare) =
-            follower_state!(self).buffered_prepares.get(&proposal_hash)
-        {
+        } else if let Some(prepare) = follower_state!(self).buffered_prepares.get(&proposal_hash) {
             debug!(
                 proposal_hash = %proposal_hash,
                 "Sending prepare to {} (buffer fallback)", sender
