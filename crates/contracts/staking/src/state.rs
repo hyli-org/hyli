@@ -38,8 +38,10 @@ impl Staking {
         }
     }
 
-    pub fn is_known(&self, key: &ValidatorPublicKey) -> bool {
-        self.delegations.keys().any(|v| v == key)
+    /// Returns true if the lane's operator is a known validator.
+    /// Note: this does not validate the lane suffix.
+    pub fn is_valid_lane_operator(&self, lane_id: &LaneId) -> bool {
+        self.delegations.keys().any(|v| v == lane_id.operator())
     }
 
     pub fn bonded(&self) -> &Vec<ValidatorPublicKey> {
@@ -155,8 +157,7 @@ impl Staking {
         lane_id: LaneId,
         cumul_size: LaneBytesSize,
     ) -> Result<(), String> {
-        // TODO: allow more complex mechanisms - for now 1-1 mapping between a validator and a lane
-        self.fees.pay_for_dadi(lane_id.0, cumul_size)?;
+        self.fees.pay_for_dadi(lane_id, cumul_size)?;
         Ok(())
     }
 

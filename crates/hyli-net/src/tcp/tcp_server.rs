@@ -10,26 +10,28 @@ use std::{
 use anyhow::Context;
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
-use futures::{
-    stream::{SplitSink, SplitStream},
-    FutureExt, SinkExt, StreamExt,
-};
+use futures::stream::{SplitSink, SplitStream};
+use futures::{FutureExt, SinkExt, StreamExt};
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
+#[cfg(feature = "turmoil")]
+use crate::tcp::intercept;
 use crate::{
     clock::TimestampMsClock,
     logged_task::logged_task,
     metrics::TcpServerMetrics,
-    net::{TcpListener, TcpStream},
+    net::TcpListener,
     tcp::{
-        decode_tcp_payload, to_tcp_message, to_tcp_message_with_headers, TcpData, TcpHeaders,
-        TcpMessage, TcpMessageLabel, TcpOutboundMessage,
+        decode_tcp_payload, framed_stream, to_tcp_message, to_tcp_message_with_headers,
+        FramedStream, TcpData, TcpHeaders, TcpMessage, TcpMessageLabel, TcpOutboundMessage,
     },
 };
 use tracing::{debug, error, trace, warn};
 
 use super::{tcp_client::TcpClient, SocketStream, TcpEvent};
+
+type TcpSender = SplitSink<FramedStream, Bytes>;
+type TcpReceiver = SplitStream<FramedStream>;
 
 fn peer_label_or_addr(peer_label: &RwLock<String>, socket_addr: &str) -> String {
     match peer_label.read() {
@@ -130,13 +132,10 @@ where
         loop {
             tokio::select! {
                 Ok((stream, socket_addr)) = self.tcp_listener.accept() => {
-                    let mut codec = LengthDelimitedCodec::new();
                     if let Some(len) = self.max_frame_length {
                         debug!("Setting max frame length to {}", len);
-                        codec.set_max_frame_length(len);
                     }
-
-                    let (sender, receiver) = Framed::new(stream, codec).split();
+                    let (sender, receiver) = framed_stream(stream, self.max_frame_length).split();
                     self.setup_stream(sender, receiver, &socket_addr.to_string());
                 }
 
@@ -342,8 +341,8 @@ where
     /// Setup stream in the managed list for a new client
     fn setup_stream(
         &mut self,
-        mut sender: SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>,
-        mut receiver: SplitStream<Framed<TcpStream, LengthDelimitedCodec>>,
+        mut sender: TcpSender,
+        mut receiver: TcpReceiver,
         socket_addr: &String,
     ) {
         let send_timeout = self.send_timeout;
@@ -511,7 +510,9 @@ where
             async move {
                 while let Some(outbound) = sender_recv.recv().await {
                     let message_label = outbound.message_label;
-                    let Ok(msg_bytes) = outbound.message.try_into() else {
+                    #[cfg(feature = "turmoil")]
+                    let should_check_drop = matches!(&outbound.message, TcpMessage::Data(_));
+                    let Ok(msg_bytes) = Bytes::try_from(outbound.message) else {
                         let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
                         error!(
                             pool = %pool,
@@ -521,8 +522,19 @@ where
                         metrics.message_send_error();
                         break;
                     };
+                    #[cfg(feature = "turmoil")]
+                    if should_check_drop && intercept::should_drop(&msg_bytes) {
+                        let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
+                        trace!(
+                            pool = %pool,
+                            "Dropping outbound TCP frame for peer {} (socket_addr={})",
+                            label,
+                            cloned_socket_addr
+                        );
+                        continue;
+                    }
                     let start = std::time::Instant::now();
-                    let nb_bytes: usize = (&msg_bytes as &Bytes).len();
+                    let nb_bytes: usize = msg_bytes.len();
                     match tokio::time::timeout(send_timeout, sender.send(msg_bytes)).await {
                         Err(e) => {
                             let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
@@ -616,11 +628,10 @@ where
 pub mod tests {
     use std::time::Duration;
 
+    use super::TcpServer;
     use crate::tcp::{
         tcp_client::TcpClient, tcp_server::peer_label_or_addr, to_tcp_message, TcpEvent, TcpMessage,
     };
-
-    use super::TcpServer;
     use anyhow::Result;
     use bytes::Bytes;
     use futures::{SinkExt, TryStreamExt};

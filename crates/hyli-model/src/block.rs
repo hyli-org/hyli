@@ -1,85 +1,8 @@
-use std::{cmp::Ordering, collections::BTreeMap};
-
-use anyhow::Context;
-use anyhow::Result;
+use crate::*;
 use borsh::{BorshDeserialize, BorshSerialize};
 use derive_more::derive::Display;
 use serde::{Deserialize, Serialize};
-use utils::TimestampMs;
-
-use crate::*;
-
-#[derive(
-    Debug, Default, Clone, Serialize, Deserialize, BorshSerialize, BorshDeserialize, Eq, PartialEq,
-)]
-pub struct Block {
-    pub parent_hash: ConsensusProposalHash,
-    pub hash: ConsensusProposalHash,
-    pub block_height: BlockHeight,
-    pub block_timestamp: TimestampMs,
-    pub txs: Vec<(TxId, Transaction)>,
-    pub dp_parent_hashes: BTreeMap<TxHash, DataProposalHash>,
-    pub lane_ids: BTreeMap<TxHash, LaneId>,
-    pub successful_txs: Vec<TxHash>,
-    pub failed_txs: Vec<TxHash>,
-    pub timed_out_txs: Vec<TxHash>,
-    pub dropped_duplicate_txs: Vec<TxId>,
-    pub blob_proof_outputs: Vec<HandledBlobProofOutput>,
-    pub verified_blobs: Vec<(TxHash, BlobIndex, Option<usize>)>,
-    pub registered_contracts:
-        BTreeMap<ContractName, (TxHash, RegisterContractEffect, Option<Vec<u8>>)>,
-    pub deleted_contracts: BTreeMap<ContractName, TxHash>,
-    pub updated_states: BTreeMap<ContractName, StateCommitment>,
-    pub updated_program_ids: BTreeMap<ContractName, ProgramId>,
-    pub updated_timeout_windows: BTreeMap<ContractName, TimeoutWindow>,
-    pub transactions_events: BTreeMap<TxHash, Vec<TransactionStateEvent>>,
-}
-
-impl Block {
-    pub fn total_txs(&self) -> usize {
-        self.txs.len()
-    }
-
-    pub fn resolve_parent_dp_hash(&self, tx_hash: &TxHash) -> Result<DataProposalHash> {
-        Ok(self
-            .dp_parent_hashes
-            .get(tx_hash)
-            .context(format!("No parent dp hash found for tx {tx_hash}"))?
-            .clone())
-    }
-
-    pub fn resolve_lane_id(&self, tx_hash: &TxHash) -> Result<LaneId> {
-        Ok(self
-            .lane_ids
-            .get(tx_hash)
-            .context(format!("No lane id found for tx {tx_hash}"))?
-            .clone())
-    }
-
-    pub fn build_tx_ctx(&self, tx_hash: &TxHash) -> Result<TxContext> {
-        let lane_id = self.resolve_lane_id(tx_hash)?;
-
-        Ok(TxContext {
-            lane_id,
-            block_hash: self.hash.clone(),
-            block_height: self.block_height,
-            timestamp: self.block_timestamp.clone(),
-            chain_id: HYLI_TESTNET_CHAIN_ID, // TODO: make it configurable
-        })
-    }
-}
-
-impl Ord for Block {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.block_height.0.cmp(&other.block_height.0)
-    }
-}
-
-impl PartialOrd for Block {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
+use std::cmp::Ordering;
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, Display)]
 #[display("")]
@@ -123,7 +46,7 @@ impl SignedBlock {
                     dp.parent_data_proposal_hash
                         .clone()
                         // This is weird but has to match the workaround in own_lane.rs
-                        .unwrap_or(DataProposalHash(lane_id.0.to_string())),
+                        .unwrap_or(DataProposalHash(lane_id.to_string())),
                     &dp.txs,
                 )
             })

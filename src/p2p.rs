@@ -128,8 +128,9 @@ impl P2P {
         module_handle_messages! {
             on_self self,
             listen<NodeStateEvent> NodeStateEvent::NewBlock(b) => {
-                if b.parsed_block.block_height.0 > p2p_server.current_height {
-                    p2p_server.current_height = b.parsed_block.block_height.0;
+                let height = b.signed_block.height().0;
+                if height > p2p_server.current_height {
+                    p2p_server.current_height = height;
                 }
             }
             listen<P2PCommand> cmd => {
@@ -284,7 +285,7 @@ mod tests {
     #[tokio::test]
     async fn test_invalid_net_messages() -> Result<()> {
         let crypto2 = BlstCrypto::new("2").unwrap();
-        let lane_id = LaneId(crypto2.validator_pubkey().clone());
+        let lane_id = LaneId::new(crypto2.validator_pubkey().clone());
 
         // Test message with timestamp too far in future
         let mut bad_time_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(

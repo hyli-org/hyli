@@ -99,8 +99,8 @@ impl Module for Mempool {
             // own_lane.rs code below
             Some(Ok(tx)) = self.inner.processing_txs.join_next() => {
                 match tx {
-                    Ok(tx) => {
-                        let _ = log_error!(self.on_new_tx(tx), "Handling tx in Mempool");
+                    Ok((tx, lane_suffix)) => {
+                        let _ = log_error!(self.on_new_tx(tx, &lane_suffix), "Handling tx in Mempool");
                     }
                     Err(e) => {
                         warn!("Error processing tx: {:?}", e);
@@ -108,10 +108,10 @@ impl Module for Mempool {
                 }
             }
             Some(own_dp) = self.inner.own_data_proposal_in_preparation.join_next() => {
-                // Fatal here, if we loose the dp in the join next error, it's lost
-                if let Ok((_own_dp_hash, own_dp)) = log_error!(own_dp, "Getting result for data proposal preparation from joinset"){
-                    _ = log_error!(self.resume_new_data_proposal(own_dp).await, "Resuming own data proposal creation");
-                }
+                _ = log_error!(
+                    self.handle_own_data_proposal_preparation(own_dp).await,
+                    "Handling data proposal preparation result"
+                );
             }
             _ = new_dp_timer.tick() => {
                 _  = log_error!(self.prepare_new_data_proposal(), "Try preparing a new data proposal on tick");

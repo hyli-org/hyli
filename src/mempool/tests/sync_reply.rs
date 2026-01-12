@@ -13,7 +13,7 @@ async fn throttles_outbound_sync_requests_during_backoff() -> Result<()> {
     let crypto2 = BlstCrypto::new("2")?;
     ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
 
-    let lane_id = LaneId(crypto2.validator_pubkey().clone());
+    let lane_id = LaneId::new(crypto2.validator_pubkey().clone());
     let dp_hash = DataProposalHash("missing_dp".to_string());
     ctx.dissemination_manager.set_request_backoff_for_test(
         lane_id.clone(),
@@ -40,7 +40,7 @@ async fn sends_request_after_backoff_window_expires() -> Result<()> {
     let crypto2 = BlstCrypto::new("2")?;
     ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
 
-    let lane_id = LaneId(crypto2.validator_pubkey().clone());
+    let lane_id = LaneId::new(crypto2.validator_pubkey().clone());
     let dp_hash = DataProposalHash("missing_dp".to_string());
     ctx.dissemination_manager.set_request_backoff_for_test(
         lane_id.clone(),
@@ -92,7 +92,7 @@ async fn prefers_ccp_signers_for_sync_requests() -> Result<()> {
     let strong_peer = peers[1].clone();
     assert_ne!(peers[0], strong_peer);
 
-    let lane_id = LaneId(peers[0].clone());
+    let lane_id = LaneId::new(peers[0].clone());
     let dp_hash = DataProposalHash("missing_dp".to_string());
     ctx.dissemination_manager.set_request_backoff_for_test(
         lane_id.clone(),

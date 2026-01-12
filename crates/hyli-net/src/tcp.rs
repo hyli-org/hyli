@@ -1,3 +1,5 @@
+#[cfg(feature = "turmoil")]
+pub mod intercept;
 pub mod p2p_server;
 pub mod tcp_client;
 pub mod tcp_server;
@@ -12,8 +14,11 @@ use bytes::Bytes;
 use sdk::{hyli_model_utils::TimestampMs, DataAvailabilityEvent, DataAvailabilityRequest};
 use strum_macros::IntoStaticStr;
 use tokio::task::JoinHandle;
+use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use anyhow::Result;
+
+use crate::net::TcpStream;
 
 pub type TcpHeaders = Vec<(String, String)>;
 
@@ -32,6 +37,17 @@ macro_rules! impl_tcp_message_label_with_prefix {
 
 pub trait TcpMessageLabel {
     fn message_label(&self) -> &'static str;
+}
+
+pub(crate) type FramedStream = Framed<TcpStream, LengthDelimitedCodec>;
+
+pub(crate) fn framed_stream(stream: TcpStream, max_frame_length: Option<usize>) -> FramedStream {
+    let mut codec = LengthDelimitedCodec::new();
+    if let Some(len) = max_frame_length {
+        codec.set_max_frame_length(len);
+    }
+
+    Framed::new(stream, codec)
 }
 
 pub fn headers_from_span() -> TcpHeaders {
