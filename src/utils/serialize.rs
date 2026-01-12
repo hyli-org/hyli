@@ -56,7 +56,7 @@ pub mod arc_rwlock_borsh {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct BorshableIndexMap<K, V>(pub IndexMap<K, V>);
 
 impl<K, V> DerefMut for BorshableIndexMap<K, V> {

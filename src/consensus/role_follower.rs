@@ -11,7 +11,7 @@ use crate::{
     consensus::StateTag,
     model::{Hashed, Signed, ValidatorPublicKey},
     p2p::P2PCommand,
-    utils::conf::TimestampCheck,
+    utils::{conf::TimestampCheck, serialize::BorshableIndexMap},
 };
 
 use hyli_crypto::BlstCrypto;
@@ -25,7 +25,6 @@ use hyli_model::{
 pub(super) struct FollowerState {
     pub(super) buffered_quorum_certificate: Option<CommitQC>, // if we receive a commit before the next prepare
     pub(super) buffered_prepares: BufferedPrepares, // History of seen prepares & buffer of future prepares
-    pub(super) sync_prepares: SyncPrepares,         // Bounded cache of prepares for sync replies
 }
 
 macro_rules! follower_state {
@@ -54,7 +53,6 @@ impl Consensus {
     pub(super) fn record_prepare_cache_sizes(&self) {
         self.metrics.record_prepare_cache_sizes(
             self.bft_round_state.follower.buffered_prepares.len(),
-            self.bft_round_state.follower.sync_prepares.len(),
         );
     }
 
@@ -90,15 +88,6 @@ impl Consensus {
                 );
                 self.set_state_tag(StateTag::Follower);
             } else {
-                follower_state!(self).sync_prepares.push_with_limit(
-                    (
-                        sender.clone(),
-                        consensus_proposal.clone(),
-                        ticket.clone(),
-                        view,
-                    ),
-                    self.config.consensus.sync_prepares_max_in_memory,
-                );
                 follower_state!(self).buffered_prepares.push((
                     sender.clone(),
                     consensus_proposal,
@@ -203,15 +192,6 @@ impl Consensus {
         self.bft_round_state.current_proposal = Some(consensus_proposal.clone());
         let cp_hash = consensus_proposal.hashed();
 
-        follower_state!(self).sync_prepares.push_with_limit(
-            (
-                sender.clone(),
-                consensus_proposal.clone(),
-                ticket.clone(),
-                view,
-            ),
-            self.config.consensus.sync_prepares_max_in_memory,
-        );
         follower_state!(self).buffered_prepares.push((
             sender.clone(),
             consensus_proposal,
@@ -799,10 +779,6 @@ impl Consensus {
             .contains(&consensus_proposal.hashed())
         {
             let prepare_message = (sender.clone(), consensus_proposal, ticket, view);
-            follower_state!(self).sync_prepares.push_with_limit(
-                prepare_message.clone(),
-                self.config.consensus.sync_prepares_max_in_memory,
-            );
             follower_state!(self)
                 .buffered_prepares
                 .push(prepare_message);
@@ -970,13 +946,34 @@ impl Consensus {
 
 pub type Prepare = (ValidatorPublicKey, ConsensusProposal, Ticket, View);
 
-#[derive(BorshSerialize, BorshDeserialize, Default, Debug)]
+#[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub(super) struct BufferedPrepares {
-    prepares: BTreeMap<ConsensusProposalHash, Prepare>,
+    prepares: BorshableIndexMap<ConsensusProposalHash, Prepare>,
     children: BTreeMap<ConsensusProposalHash, ConsensusProposalHash>,
+    #[borsh_skip]
+    max_in_memory: usize,
+    #[borsh_skip]
+    max_serialized: usize,
+}
+
+impl Default for BufferedPrepares {
+    fn default() -> Self {
+        Self {
+            prepares: BorshableIndexMap::default(),
+            children: BTreeMap::new(),
+            max_in_memory: usize::MAX,
+            max_serialized: usize::MAX,
+        }
+    }
 }
 
 impl BufferedPrepares {
+    pub(super) fn configure_limits(&mut self, max_in_memory: usize, max_serialized: usize) {
+        self.max_in_memory = max_in_memory;
+        self.max_serialized = max_serialized;
+        self.trim_to_in_memory();
+    }
+
     fn contains(&self, proposal_hash: &ConsensusProposalHash) -> bool {
         self.prepares.contains_key(proposal_hash)
     }
@@ -1002,6 +999,7 @@ impl BufferedPrepares {
             })
             .or_insert(proposal_hash.clone());
         self.prepares.insert(proposal_hash, prepare_message);
+        self.enforce_limit();
     }
 
     pub(super) fn get(&self, proposal_hash: &ConsensusProposalHash) -> Option<&Prepare> {
@@ -1018,7 +1016,7 @@ impl BufferedPrepares {
         if !self.children.contains_key(root) {
             return;
         }
-        let mut new_prepares = BTreeMap::new();
+        let mut new_prepares = BorshableIndexMap::default();
         let mut current = root.clone();
         for _ in 0..max_depth {
             let Some(child_hash) = self.children.get(&current).cloned() else {
@@ -1040,44 +1038,24 @@ impl BufferedPrepares {
         self.prepares = new_prepares;
         self.children = new_children;
     }
-}
 
-#[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone)]
-pub(super) struct SyncPrepares {
-    prepares: BTreeMap<ConsensusProposalHash, Prepare>,
-    order: Vec<ConsensusProposalHash>,
-}
-
-impl SyncPrepares {
-    pub(super) fn push_with_limit(&mut self, prepare_message: Prepare, max: usize) {
-        let proposal_hash = prepare_message.1.hashed();
-        if !self.prepares.contains_key(&proposal_hash) {
-            self.order.push(proposal_hash.clone());
-        }
-        self.prepares.insert(proposal_hash.clone(), prepare_message);
-        self.enforce_limit(max);
+    pub(super) fn trim_to_in_memory(&mut self) {
+        _ = self.drain_oldest_excess(self.max_in_memory);
     }
 
-    pub(super) fn get(&self, proposal_hash: &ConsensusProposalHash) -> Option<&Prepare> {
-        self.prepares.get(proposal_hash)
-    }
-
-    pub(super) fn len(&self) -> usize {
-        self.prepares.len()
-    }
-
-    pub(super) fn trim_to_limit(&mut self, max: usize) {
-        _ = self.drain_oldest_excess(max);
+    pub(super) fn drain_oldest_excess_for_serialize(&mut self) -> Vec<Prepare> {
+        let max = self.max_serialized.min(self.max_in_memory);
+        self.drain_oldest_excess(max)
     }
 
     pub(super) fn drain_oldest_excess(&mut self, max: usize) -> Vec<Prepare> {
         let mut removed = Vec::new();
-        while self.order.len() > max {
-            if let Some(oldest) = self.order.first().cloned() {
-                self.order.remove(0);
-                if let Some(prepare) = self.prepares.remove(&oldest) {
-                    removed.push(prepare);
-                }
+        while self.prepares.len() > max {
+            if let Some((_, prepare)) = self.prepares.shift_remove_index(0) {
+                let removed_hash = prepare.1.hashed();
+                self.children
+                    .retain(|_, child_hash| child_hash != &removed_hash);
+                removed.push(prepare);
             } else {
                 break;
             }
@@ -1090,21 +1068,20 @@ impl SyncPrepares {
         if removed.is_empty() {
             return;
         }
-        let mut restored_hashes = Vec::with_capacity(removed.len());
-        for prepare in &removed {
-            restored_hashes.push(prepare.1.hashed());
+        let existing = std::mem::take(&mut self.prepares).0;
+        let mut new_prepares = BorshableIndexMap::default();
+        for prepare in removed {
+            let hash = prepare.1.hashed();
+            new_prepares.insert(hash, prepare);
         }
-        let mut new_order = Vec::with_capacity(restored_hashes.len() + self.order.len());
-        new_order.extend(restored_hashes.iter().cloned());
-        new_order.append(&mut self.order);
-        self.order = new_order;
-        for (hash, prepare) in restored_hashes.into_iter().zip(removed.into_iter()) {
-            self.prepares.insert(hash, prepare);
+        for (hash, prepare) in existing {
+            new_prepares.insert(hash, prepare);
         }
+        self.prepares = new_prepares;
     }
 
-    fn enforce_limit(&mut self, max: usize) {
-        _ = self.drain_oldest_excess(max);
+    fn enforce_limit(&mut self) {
+        _ = self.drain_oldest_excess(self.max_in_memory);
     }
 }
 
@@ -1266,9 +1243,10 @@ mod tests {
     }
 
     #[test]
-    fn test_sync_prepares_trim_limit() {
-        let mut sync_prepares = SyncPrepares::default();
+    fn test_buffered_prepares_trim_limit() {
+        let mut buffered_prepares = BufferedPrepares::default();
         let limit = 2;
+        buffered_prepares.configure_limits(limit, limit);
 
         let p1 = ConsensusProposal {
             parent_hash: ConsensusProposalHash("p1-parent".into()),
@@ -1287,19 +1265,20 @@ mod tests {
             (ValidatorPublicKey::default(), proposal, Ticket::Genesis, 0)
         };
 
-        sync_prepares.push_with_limit(msg(p1.clone()), limit);
-        sync_prepares.push_with_limit(msg(p2.clone()), limit);
-        sync_prepares.push_with_limit(msg(p3.clone()), limit);
+        buffered_prepares.push(msg(p1.clone()));
+        buffered_prepares.push(msg(p2.clone()));
+        buffered_prepares.push(msg(p3.clone()));
 
-        assert!(sync_prepares.get(&p1.hashed()).is_none());
-        assert!(sync_prepares.get(&p2.hashed()).is_some());
-        assert!(sync_prepares.get(&p3.hashed()).is_some());
+        assert!(buffered_prepares.get(&p1.hashed()).is_none());
+        assert!(buffered_prepares.get(&p2.hashed()).is_some());
+        assert!(buffered_prepares.get(&p3.hashed()).is_some());
     }
 
     #[test]
-    fn test_sync_prepares_restore_oldest_keeps_order() {
-        let mut sync_prepares = SyncPrepares::default();
+    fn test_buffered_prepares_restore_oldest_keeps_order() {
+        let mut buffered_prepares = BufferedPrepares::default();
         let limit = 1;
+        buffered_prepares.configure_limits(limit, limit);
 
         let p1 = ConsensusProposal {
             parent_hash: ConsensusProposalHash("restore-p1".into()),
@@ -1314,21 +1293,21 @@ mod tests {
             (ValidatorPublicKey::default(), proposal, Ticket::Genesis, 0)
         };
 
-        sync_prepares.push_with_limit(msg(p1.clone()), limit);
-        sync_prepares.push_with_limit(msg(p2.clone()), limit);
-        assert!(sync_prepares.get(&p1.hashed()).is_none());
-        assert!(sync_prepares.get(&p2.hashed()).is_some());
+        buffered_prepares.push(msg(p1.clone()));
+        buffered_prepares.push(msg(p2.clone()));
+        assert!(buffered_prepares.get(&p1.hashed()).is_none());
+        assert!(buffered_prepares.get(&p2.hashed()).is_some());
 
         let removed = vec![msg(p1.clone())];
-        sync_prepares.restore_oldest(removed);
-        let removed_again = sync_prepares.drain_oldest_excess(limit);
+        buffered_prepares.restore_oldest(removed);
+        let removed_again = buffered_prepares.drain_oldest_excess(limit);
         assert_eq!(removed_again.len(), 1);
         assert_eq!(removed_again[0].1, p1);
     }
 
     #[test]
-    fn test_sync_prepares_drain_and_restore_roundtrip() {
-        let mut sync_prepares = SyncPrepares::default();
+    fn test_buffered_prepares_drain_and_restore_roundtrip() {
+        let mut buffered_prepares = BufferedPrepares::default();
 
         let p1 = ConsensusProposal {
             parent_hash: ConsensusProposalHash("roundtrip-p1".into()),
@@ -1347,19 +1326,19 @@ mod tests {
             (ValidatorPublicKey::default(), proposal, Ticket::Genesis, 0)
         };
 
-        sync_prepares.push_with_limit(msg(p1.clone()), 10);
-        sync_prepares.push_with_limit(msg(p2.clone()), 10);
-        sync_prepares.push_with_limit(msg(p3.clone()), 10);
+        buffered_prepares.push(msg(p1.clone()));
+        buffered_prepares.push(msg(p2.clone()));
+        buffered_prepares.push(msg(p3.clone()));
 
-        let removed = sync_prepares.drain_oldest_excess(1);
+        let removed = buffered_prepares.drain_oldest_excess(1);
         assert_eq!(removed.len(), 2);
-        assert!(sync_prepares.get(&p1.hashed()).is_none());
-        assert!(sync_prepares.get(&p2.hashed()).is_none());
-        assert!(sync_prepares.get(&p3.hashed()).is_some());
+        assert!(buffered_prepares.get(&p1.hashed()).is_none());
+        assert!(buffered_prepares.get(&p2.hashed()).is_none());
+        assert!(buffered_prepares.get(&p3.hashed()).is_some());
 
-        sync_prepares.restore_oldest(removed);
-        assert!(sync_prepares.get(&p1.hashed()).is_some());
-        assert!(sync_prepares.get(&p2.hashed()).is_some());
-        assert!(sync_prepares.get(&p3.hashed()).is_some());
+        buffered_prepares.restore_oldest(removed);
+        assert!(buffered_prepares.get(&p1.hashed()).is_some());
+        assert!(buffered_prepares.get(&p2.hashed()).is_some());
+        assert!(buffered_prepares.get(&p3.hashed()).is_some());
     }
 }
