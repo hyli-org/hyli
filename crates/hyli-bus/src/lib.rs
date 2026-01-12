@@ -10,7 +10,10 @@ pub mod modules;
 pub mod utils;
 
 // Re-export commonly used types and functions
-pub use bus::{BusClientReceiver, BusClientSender, BusEnvelope, BusMessage, BusReceiver, BusSender, SharedMessageBus, DEFAULT_CAPACITY, LOW_CAPACITY};
+pub use bus::{
+    BusClientReceiver, BusClientSender, BusEnvelope, BusMessage, BusReceiver, BusSender,
+    SharedMessageBus, DEFAULT_CAPACITY, LOW_CAPACITY,
+};
 pub use modules::{Module, ModulesHandler, ShutdownClient};
 
 // Macros are automatically exported at crate root via #[macro_export]
