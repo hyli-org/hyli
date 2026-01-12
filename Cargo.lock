@@ -5925,7 +5925,7 @@ dependencies = [
  "hyli-model",
  "keyring",
  "rand 0.9.2",
- "whoami",
+ "whoami 2.0.2",
 ]
 
 [[package]]
@@ -12190,7 +12190,7 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.17",
  "tracing",
- "whoami",
+ "whoami 1.6.1",
 ]
 
 [[package]]
@@ -12228,7 +12228,7 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.17",
  "tracing",
- "whoami",
+ "whoami 1.6.1",
 ]
 
 [[package]]
@@ -13982,6 +13982,15 @@ checksum = "5d4a4db5077702ca3015d3d02d74974948aba2ad9e12ab7df718ee64ccd7e97d"
 dependencies = [
  "libredox",
  "wasite",
+]
+
+[[package]]
+name = "whoami"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ace4d5c7b5ab3d99629156d4e0997edbe98a4beb6d5ba99e2cae830207a81983"
+dependencies = [
+ "libredox",
 ]
 
 [[package]]
