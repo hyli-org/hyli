@@ -725,7 +725,7 @@ async fn test_hyli_sub_delete() {
         matches!(event, StatefulEvent::ContractDelete(cn) if cn == &ContractName::new("sub.c2.hyli"))
     }));
     assert_eq!(
-        state.contracts.keys().collect::<Vec<_>>(),
+        state.contracts.keys().collect::<Vec<_>>().sort(),
         [&"hyli".into(), &"wallet".into()]
     );
 }
