@@ -407,14 +407,13 @@ impl NodeIntegrationCtx {
         loop {
             let event: NodeStateEvent = self.bus_client.recv().await?;
             let NodeStateEvent::NewBlock(block) = event;
-            if block
-                .stateful_events
-                .events
-                .iter()
-                .any(|(TxId(_, tx_hash), ev)| {
-                    tx_hash == &tx && matches!(ev, StatefulEvent::SettledTx(..))
-                })
-            {
+            if block.stateful_events.events.iter().any(|(_, event)| {
+                matches!(
+                    event,
+                    StatefulEvent::SettledTx(unsettled_tx)
+                        if unsettled_tx.tx_id.1 == tx
+                )
+            }) {
                 break;
             }
         }
