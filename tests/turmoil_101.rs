@@ -6,6 +6,7 @@ mod fixtures;
 
 use std::time::Duration;
 
+use anyhow::ensure;
 use client_sdk::rest_client::NodeApiClient;
 use fixtures::turmoil::TurmoilHost;
 use hyli_model::{
@@ -155,6 +156,11 @@ turmoil_simple!(621..=630, simulation_partition, submit_10_contracts);
 turmoil_simple_flaky!(631..=640, simulation_drop_storm, submit_10_contracts);
 turmoil_simple!(641..=650, simulation_restart_node, submit_10_contracts);
 turmoil_simple!(651..=660, simulation_realistic_network, submit_10_contracts);
+turmoil_simple!(
+    661..=670,
+    simulation_timeout_split_view,
+    timeout_split_view_recovery
+);
 
 /// **Simulation**
 ///
@@ -392,6 +398,52 @@ pub fn simulation_drop_storm(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow:
 
 /// **Simulation**
 ///
+/// Create a view split by holding messages from two nodes to the other two,
+/// then heal the links so the cluster can continue.
+pub fn simulation_timeout_split_view(
+    ctx: &mut TurmoilCtx,
+    sim: &mut Sim<'_>,
+) -> anyhow::Result<()> {
+    let nodes = ctx.nodes.clone();
+    let tc_nodes = nodes[..2].to_vec();
+    let non_tc_nodes = nodes[2..].to_vec();
+
+    let warmup = Duration::from_secs(5);
+    let split_duration = Duration::from_secs(12);
+    let mut split = false;
+    let mut healed = false;
+
+    loop {
+        let finished = sim.step().map_err(|s| anyhow::anyhow!(s.to_string()))?;
+        let now = sim.elapsed();
+
+        if !split && now > warmup {
+            split = true;
+            for from in tc_nodes.iter() {
+                for to in non_tc_nodes.iter() {
+                    sim.hold(from.conf.id.clone(), to.conf.id.clone());
+                }
+            }
+        }
+
+        if split && !healed && now > warmup + split_duration {
+            healed = true;
+            for from in tc_nodes.iter() {
+                for to in non_tc_nodes.iter() {
+                    sim.release(from.conf.id.clone(), to.conf.id.clone());
+                }
+            }
+        }
+
+        if finished {
+            tracing::info!("Time spent {}", sim.elapsed().as_millis());
+            return Ok(());
+        }
+    }
+}
+
+/// **Simulation**
+///
 /// Periodically bounce a node to force reconnect/sync while the workload runs.
 pub fn simulation_restart_node(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::Result<()> {
     let warmup = Duration::from_secs(5);
@@ -561,6 +613,39 @@ pub async fn submit_10_contracts(node: TurmoilHost) -> anyhow::Result<()> {
             }
         }
     }
+
+    Ok(())
+}
+
+/// **Test**
+///
+/// Ensure a timeout view split stalls the network, then recovery resumes after healing.
+pub async fn timeout_split_view_recovery(node: TurmoilHost) -> anyhow::Result<()> {
+    let client_with_retries = node.client.retry_15times_1000ms();
+
+    _ = wait_height(&client_with_retries, 1).await;
+
+    if node.conf.id != "node-1" {
+        tokio::time::sleep(Duration::from_secs(35)).await;
+        return Ok(());
+    }
+
+    tokio::time::sleep(Duration::from_secs(8)).await;
+    let before = client_with_retries.get_block_height().await?.0;
+    tracing::info!("Timeout split view: height before stall check: {}", before);
+
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    let during = client_with_retries.get_block_height().await?.0;
+    tracing::info!("Timeout split view: height during stall check: {}", during);
+    ensure!(
+        during == before,
+        "expected a stalled height during view split"
+    );
+
+    tokio::time::sleep(Duration::from_secs(15)).await;
+    let after = client_with_retries.get_block_height().await?.0;
+    tracing::info!("Timeout split view: height after healing: {}", after);
+    ensure!(after > during, "expected height to advance after healing");
 
     Ok(())
 }

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use crate::mempool::dissemination::DisseminationManager;
 use crate::{
     bus::{bus_client, metrics::BusMetrics, BusClientReceiver, SharedMessageBus},
     consensus::Consensus,
@@ -24,8 +25,8 @@ use anyhow::{bail, Context, Result};
 use axum::Router;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli_crypto::BlstCrypto;
-use hyli_model::NodeStateEvent;
 use hyli_model::{api::NodeInfo, TxHash};
+use hyli_model::{NodeStateEvent, StatefulEvent, TxId};
 use hyli_modules::node_state::module::NodeStateModule;
 use hyli_modules::{
     module_bus_client, module_handle_messages,
@@ -98,19 +99,20 @@ impl NodeIntegrationCtxBuilder {
     pub async fn new() -> Self {
         let tmpdir = tempfile::tempdir().unwrap();
         let bus = SharedMessageBus::new(BusMetrics::global("default".to_string()));
-        let crypto = BlstCrypto::new("test").unwrap();
         let mut conf = Conf::new(
             vec![],
             tmpdir.path().to_str().map(|s| s.to_owned()),
             Some(false),
         )
         .expect("conf ok");
+        conf.websocket.enabled = false;
         conf.p2p.server_port = find_available_port().await;
         conf.da_server_port = find_available_port().await;
         conf.tcp_server_port = find_available_port().await;
         conf.rest_server_port = find_available_port().await;
         conf.p2p.public_address = format!("127.0.0.1:{}", conf.p2p.server_port);
         conf.da_public_address = format!("127.0.0.1:{}", conf.da_server_port);
+        let crypto = BlstCrypto::new(&conf.da_public_address).unwrap();
 
         Self {
             tmpdir,
@@ -268,6 +270,8 @@ impl NodeIntegrationCtx {
         let mut handler = ModulesHandler::new(&bus).await;
 
         Self::build_module::<Mempool>(&mut handler, &ctx, ctx.clone(), &mut mocks).await?;
+        Self::build_module::<DisseminationManager>(&mut handler, &ctx, ctx.clone(), &mut mocks)
+            .await?;
 
         Self::build_module::<Genesis>(&mut handler, &ctx, ctx.clone(), &mut mocks).await?;
 
@@ -382,16 +386,34 @@ impl NodeIntegrationCtx {
         }
         Ok(())
     }
-    pub async fn wait_for_settled_tx(&mut self, tx: TxHash) -> Result<()> {
+    pub async fn wait_for_sequenced_tx(&mut self, tx: TxHash) -> Result<()> {
         loop {
             let event: NodeStateEvent = self.bus_client.recv().await?;
             let NodeStateEvent::NewBlock(block) = event;
             if block
-                .parsed_block
-                .successful_txs
+                .stateful_events
+                .events
                 .iter()
-                .any(|tx_hash| tx_hash == &tx)
+                .any(|(TxId(_, tx_hash), ev)| {
+                    tx_hash == &tx && matches!(ev, StatefulEvent::SequencedTx(..))
+                })
             {
+                break;
+            }
+        }
+        Ok(())
+    }
+    pub async fn wait_for_settled_tx(&mut self, tx: TxHash) -> Result<()> {
+        loop {
+            let event: NodeStateEvent = self.bus_client.recv().await?;
+            let NodeStateEvent::NewBlock(block) = event;
+            if block.stateful_events.events.iter().any(|(_, event)| {
+                matches!(
+                    event,
+                    StatefulEvent::SettledTx(unsettled_tx)
+                        if unsettled_tx.tx_id.1 == tx
+                )
+            }) {
                 break;
             }
         }

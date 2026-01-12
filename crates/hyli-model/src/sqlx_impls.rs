@@ -95,7 +95,7 @@ impl sqlx::Encode<'_, sqlx::Postgres> for LaneId {
         sqlx::encode::IsNull,
         std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&hex::encode(&self.0 .0), buf)
+        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.to_string(), buf)
     }
 }
 impl<'r> sqlx::Decode<'r, sqlx::Postgres> for LaneId {
@@ -105,10 +105,8 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for LaneId {
         LaneId,
         std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
-        use crate::ValidatorPublicKey;
-
         let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(LaneId(ValidatorPublicKey(hex::decode(inner)?)))
+        LaneId::parse(&inner).map_err(std::boxed::Box::<dyn std::error::Error + Send + Sync>::from)
     }
 }
 

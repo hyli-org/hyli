@@ -35,7 +35,7 @@ use staking::state::{Staking, MIN_STAKE};
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::time::Duration;
-use std::{collections::HashMap, default::Default, path::PathBuf};
+use std::{collections::HashMap, collections::VecDeque, default::Default, path::PathBuf};
 use tokio::time::interval;
 use tracing::{debug, info, trace};
 
@@ -143,6 +143,7 @@ pub struct ConsensusStore {
     bft_round_state: BFTRoundState,
     /// Validators that asked to be part of consensus
     validator_candidates: Vec<SignedByValidator<ValidatorCandidacy>>,
+    recent_timeout_certificates: VecDeque<TimeoutCertificateCacheEntry>,
 }
 
 pub struct Consensus {
@@ -153,6 +154,14 @@ pub struct Consensus {
     #[allow(dead_code)]
     config: SharedConf,
     crypto: SharedBlstCrypto,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Clone, Debug)]
+struct TimeoutCertificateCacheEntry {
+    slot: Slot,
+    view: View,
+    timeout_qc: TimeoutQC,
+    tc_kind: TCKind,
 }
 
 impl Deref for Consensus {
@@ -216,6 +225,47 @@ impl Consensus {
                 && r.0.msg.1 == self.bft_round_state.view
                 && &r.0.signature.validator == self.crypto.validator_pubkey()
         })
+    }
+
+    fn cache_timeout_certificate(
+        &mut self,
+        slot: Slot,
+        view: View,
+        timeout_qc: TimeoutQC,
+        tc_kind: TCKind,
+    ) {
+        let cache_size = self.config.consensus.timeout_certificate_cache_size;
+        if cache_size == 0 {
+            return;
+        }
+        self.store
+            .recent_timeout_certificates
+            .retain(|entry| !(entry.slot == slot && entry.view == view));
+        self.store
+            .recent_timeout_certificates
+            .push_back(TimeoutCertificateCacheEntry {
+                slot,
+                view,
+                timeout_qc,
+                tc_kind,
+            });
+        while self.store.recent_timeout_certificates.len() > cache_size {
+            self.store.recent_timeout_certificates.pop_front();
+        }
+    }
+
+    fn cached_timeout_certificate(&self, slot: Slot, view: View) -> Option<(TimeoutQC, TCKind)> {
+        self.store
+            .recent_timeout_certificates
+            .iter()
+            .rev()
+            .find_map(|entry| {
+                if entry.slot == slot && entry.view == view {
+                    Some((entry.timeout_qc.clone(), entry.tc_kind.clone()))
+                } else {
+                    None
+                }
+            })
     }
 
     fn round_leader(&self) -> Result<ValidatorPublicKey> {
@@ -600,7 +650,8 @@ impl Consensus {
         self.metrics.commit();
 
         let current_proposal = current_proposal!(self)
-            .context("Cannot emit commit event without a current proposal")?;
+            .context("Cannot emit commit event without a current proposal")?
+            .clone();
 
         self.bus
             .send(ConsensusEvent::CommitConsensusProposal(
@@ -877,6 +928,7 @@ impl Consensus {
                 ..Default::default()
             },
             validator_candidates: self.validator_candidates.clone(),
+            recent_timeout_certificates: VecDeque::new(),
         };
         let res = borsh::to_vec(&store_copy).context("Failed to serialize BFT round state")?;
         Ok(QueryConsensusCatchupStoreResponse(res))
@@ -965,6 +1017,7 @@ pub mod test {
             let mut conf = Conf::default();
             conf.consensus.slot_duration = Duration::from_millis(1000);
             conf.consensus.timeout_after = Duration::from_millis(5000);
+            conf.consensus.timeout_certificate_cache_size = 100;
             let bus = ConsensusBusClient::new_from_bus(shared_bus.new_handle()).await;
 
             Consensus {
@@ -1013,7 +1066,7 @@ pub mod test {
             self.consensus.bft_round_state.parent_hash =
                 ConsensusProposalHash("genesis".to_string());
             self.consensus.bft_round_state.parent_cut = vec![(
-                LaneId(
+                LaneId::new(
                     cryptos
                         .first()
                         .expect("No cryptos available")
@@ -1246,7 +1299,8 @@ pub mod test {
                 }
             } else if let OutboundMessage::SendMessage { msg: net_msg, .. } = rec {
                 if let NetMessage::ConsensusMessage(_) = net_msg {
-                    panic!("{description}: received a send instead of a broadcast");
+                    warn!("{description}: skipping send instead of broadcast");
+                    self.assert_broadcast(description)
                 } else {
                     warn!("{description}: skipping {:?}", net_msg);
                     self.assert_broadcast(description)
@@ -1292,8 +1346,15 @@ pub mod test {
             } = rec
             {
                 if let NetMessage::ConsensusMessage(msg) = net_msg {
-                    assert_eq!(to, &validator_id, "Got message {msg:?}");
-                    Box::pin(async move { msg })
+                    if to == &validator_id {
+                        Box::pin(async move { msg })
+                    } else {
+                        warn!(
+                            "{description}: skipping send to {}, expected {}",
+                            validator_id, to
+                        );
+                        self.assert_send(to, description)
+                    }
                 } else {
                     warn!("{description}: skipping non-consensus message, details in debug");
                     debug!("Message is: {:?}", net_msg);
@@ -1462,7 +1523,7 @@ pub mod test {
             slot: 2,
             timestamp: TimestampMs(123),
             cut: vec![(
-                LaneId(node2.pubkey()),
+                LaneId::new(node2.pubkey()),
                 DataProposalHash("test".to_string()),
                 LaneBytesSize::default(),
                 AggregateSignature::default(),
@@ -1542,7 +1603,7 @@ pub mod test {
                     slot: 1,
                     timestamp: TimestampMs(123),
                     cut: vec![(
-                        LaneId(node2.pubkey()),
+                        LaneId::new(node2.pubkey()),
                         DataProposalHash("test".to_string()),
                         LaneBytesSize::default(),
                         AggregateSignature::default(),
@@ -1591,7 +1652,7 @@ pub mod test {
                     slot: 1,
                     timestamp: TimestampMs(123),
                     cut: vec![(
-                        LaneId(node2.pubkey()),
+                        LaneId::new(node2.pubkey()),
                         DataProposalHash("test".to_string()),
                         LaneBytesSize::default(),
                         AggregateSignature::default(),

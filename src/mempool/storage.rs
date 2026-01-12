@@ -41,6 +41,7 @@ pub struct LaneEntryMetadata {
     pub parent_data_proposal_hash: Option<DataProposalHash>,
     pub cumul_size: LaneBytesSize,
     pub signatures: Vec<ValidatorDAG>,
+    pub cached_poda: Option<PoDA>,
 }
 
 pub trait Storage {
@@ -79,6 +80,12 @@ pub trait Storage {
         dp_hash: &DataProposalHash,
         vote_msgs: T,
     ) -> Result<Vec<ValidatorDAG>>;
+    fn set_cached_poda(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+        poda: PoDA,
+    ) -> Result<()>;
 
     fn get_lane_ids(&self) -> Vec<LaneId>;
     fn get_lane_hash_tip(&self, lane_id: &LaneId) -> Option<DataProposalHash>;
@@ -123,6 +130,16 @@ pub trait Storage {
                 return Ok(None);
             };
 
+            let f = staking.compute_f();
+
+            if let Some(cached_poda) = &le.cached_poda {
+                let cached_voting_power =
+                    staking.compute_voting_power(cached_poda.validators.as_slice());
+                if cached_voting_power > f {
+                    return Ok(Some((current, le.cumul_size, cached_poda.clone())));
+                }
+            }
+
             let filtered: Vec<&SignedByValidator<(DataProposalHash, LaneBytesSize)>> = le
                 .signatures
                 .iter()
@@ -137,7 +154,6 @@ pub trait Storage {
 
             // TODO: take by reference to avoid cloning above
             let voting_power = staking.compute_voting_power(&filtered_validators);
-            let f = staking.compute_f();
 
             trace!("Checking for sufficient voting power: {voting_power} > {f} ?");
 
@@ -217,6 +233,7 @@ pub trait Storage {
                                 .clone(),
                             cumul_size,
                             signatures,
+                            cached_poda: None,
                         },
                         data_proposal,
                     ),
@@ -241,6 +258,7 @@ pub trait Storage {
                                 .clone(),
                             cumul_size,
                             signatures,
+                            cached_poda: None,
                         },
                         data_proposal,
                     ),
@@ -436,7 +454,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_put_contains_get() {
         let crypto = BlstCrypto::new("1").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
 
         let data_proposal = DataProposal::new(None, vec![]);
@@ -446,6 +464,7 @@ mod tests {
             parent_data_proposal_hash: None,
             cumul_size,
             signatures: vec![],
+            cached_poda: None,
         };
         let dp_hash = data_proposal.hashed();
         storage
@@ -468,7 +487,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_store_proofs_separately_and_hydrate() {
         let crypto = BlstCrypto::new("proofs").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
 
         // Build a DataProposal with a VerifiedProof tx that includes an inlined proof
@@ -499,6 +518,7 @@ mod tests {
             parent_data_proposal_hash: None,
             cumul_size,
             signatures: vec![],
+            cached_poda: None,
         };
         let dp_hash = dp.hashed();
 
@@ -541,7 +561,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_update() {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
         let data_proposal = DataProposal::new(None, vec![]);
         let cumul_size: LaneBytesSize = LaneBytesSize(data_proposal.estimate_size() as u64);
@@ -549,6 +569,7 @@ mod tests {
             parent_data_proposal_hash: None,
             cumul_size,
             signatures: vec![],
+            cached_poda: None,
         };
         let dp_hash = data_proposal.hashed();
         storage
@@ -574,7 +595,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_on_data_vote() {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
 
         let crypto2: BlstCrypto = BlstCrypto::new("2").unwrap();
@@ -607,7 +628,7 @@ mod tests {
         let mut storage = setup_storage();
 
         let crypto2: BlstCrypto = BlstCrypto::new("2").unwrap();
-        let lane_id2 = &LaneId(crypto2.validator_pubkey().clone());
+        let lane_id2 = &LaneId::new(crypto2.validator_pubkey().clone());
         let crypto3: BlstCrypto = BlstCrypto::new("3").unwrap();
 
         let dp = DataProposal::new(None, vec![]);
@@ -647,7 +668,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_get_lane_entries_between_hashes() {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
         let dp1 = DataProposal::new(None, vec![]);
         let dp2 = DataProposal::new(Some(dp1.hashed()), vec![]);
@@ -740,7 +761,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_get_oldest_pending_entry() {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
 
         let dp1 = DataProposal::new(None, vec![]);
@@ -770,7 +791,7 @@ mod tests {
     #[test_log::test]
     fn test_lane_size() {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
 
         let dp1 = DataProposal::new(None, vec![Transaction::default()]);
@@ -801,7 +822,7 @@ mod tests {
     #[test_log::test(tokio::test)]
     async fn test_get_lane_pending_entries() {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
-        let lane_id = &LaneId(crypto.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
         let data_proposal = DataProposal::new(None, vec![]);
         let cumul_size: LaneBytesSize = LaneBytesSize(data_proposal.estimate_size() as u64);
@@ -809,6 +830,7 @@ mod tests {
             parent_data_proposal_hash: None,
             cumul_size,
             signatures: vec![],
+            cached_poda: None,
         };
         storage
             .put_no_verification(lane_id.clone(), (entry, data_proposal.clone()))
@@ -858,7 +880,7 @@ mod tests {
             1000,
             vec![Identity::new("jane.doe")],
         );
-        let lane_id = &LaneId(crypto1.validator_pubkey().clone());
+        let lane_id = &LaneId::new(crypto1.validator_pubkey().clone());
 
         // Helper lambdas so the repeated examples below are shorter.
         let add_signatures = |storage: &mut LanesStorage,

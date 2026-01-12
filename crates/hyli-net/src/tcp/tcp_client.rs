@@ -2,21 +2,20 @@ use std::{net::SocketAddr, time::Duration};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
-use futures::{
-    stream::{SplitSink, SplitStream},
-    SinkExt, StreamExt,
-};
+use futures::stream::{SplitSink, SplitStream};
+use futures::{SinkExt, StreamExt};
 use sdk::hyli_model_utils::TimestampMs;
-use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use crate::{clock::TimestampMsClock, metrics::TcpClientMetrics, net::TcpStream};
 use anyhow::{bail, Result};
 use tracing::{debug, info, trace, warn};
 
-use super::{decode_tcp_payload, to_tcp_message, TcpMessage};
+#[cfg(feature = "turmoil")]
+use super::intercept;
+use super::{decode_tcp_payload, framed_stream, to_tcp_message, FramedStream, TcpMessage};
 
-type TcpSender = SplitSink<Framed<TcpStream, LengthDelimitedCodec>, Bytes>;
-type TcpReceiver = SplitStream<Framed<TcpStream, LengthDelimitedCodec>>;
+type TcpSender = SplitSink<FramedStream, Bytes>;
+type TcpReceiver = SplitStream<FramedStream>;
 
 #[derive(Debug)]
 pub struct TcpClient<Req, Res>
@@ -98,12 +97,7 @@ where
         let addr = tcp_stream.peer_addr()?;
         info!("TcpClient {} - Connected to data stream on {}.", id, addr);
 
-        let mut codec = LengthDelimitedCodec::new();
-        if let Some(mfl) = max_frame_length {
-            codec.set_max_frame_length(mfl);
-        }
-
-        let (sender, receiver) = Framed::new(tcp_stream, codec).split();
+        let (sender, receiver) = framed_stream(tcp_stream, max_frame_length).split();
 
         Ok(TcpClient::<Req, Res> {
             id: id.clone(),
@@ -118,6 +112,11 @@ where
 
     pub async fn send(&mut self, msg: Req) -> Result<()> {
         let msg_bytes: Bytes = to_tcp_message(&msg)?.try_into()?;
+        #[cfg(feature = "turmoil")]
+        if intercept::should_drop(&msg_bytes) {
+            trace!("Dropping outbound TCP frame for client {}", self.id);
+            return Ok(());
+        }
         let nb_bytes: usize = (&msg_bytes as &Bytes).len();
         let start = std::time::Instant::now();
         let res = self.sender.send(msg_bytes).await;

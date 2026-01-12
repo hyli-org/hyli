@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use axum::{
-    extract::{Multipart, State},
+    extract::{Multipart, Path, State},
     http::StatusCode,
     response::IntoResponse,
     Json, Router,
@@ -23,13 +23,16 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::{
     bus::{bus_client, metrics::BusMetrics, BusClientSender},
-    model::{BlobTransaction, Hashed, ProofTransaction, Transaction, TransactionData},
+    model::{BlobTransaction, Hashed, LaneSuffix, ProofTransaction, Transaction, TransactionData},
     rest::AppError,
 };
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
 pub enum RestApiMessage {
-    NewTx(Transaction),
+    NewTx {
+        tx: Transaction,
+        lane_suffix: Option<LaneSuffix>,
+    },
 }
 
 impl BusMessage for RestApiMessage {}
@@ -55,8 +58,11 @@ pub async fn api(bus: &SharedMessageBus, ctx: &SharedBuildApiCtx) -> Router<()> 
     let (router, api) = OpenApiRouter::with_openapi(MempoolAPI::openapi())
         .routes(routes!(register_contract))
         .routes(routes!(send_blob_transaction))
+        .routes(routes!(send_blob_transaction_with_suffix))
         .routes(routes!(send_proof_transaction))
+        .routes(routes!(send_proof_transaction_with_suffix))
         .routes(routes!(send_proof_transaction_multipart))
+        .routes(routes!(send_proof_transaction_multipart_with_suffix))
         .split_for_parts();
 
     if let Ok(mut o) = ctx.openapi.lock() {
@@ -68,12 +74,13 @@ pub async fn api(bus: &SharedMessageBus, ctx: &SharedBuildApiCtx) -> Router<()> 
 async fn handle_send(
     mut state: RouterState,
     payload: TransactionData,
+    lane_suffix: Option<LaneSuffix>,
 ) -> Result<Json<TxHash>, AppError> {
     let tx: Transaction = payload.into();
     let tx_hash = tx.hashed();
     state
         .bus
-        .send(RestApiMessage::NewTx(tx))
+        .send(RestApiMessage::NewTx { tx, lane_suffix })
         .map(|_| tx_hash)
         .map(Json)
         .map_err(|err| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow!(err)))
@@ -87,9 +94,36 @@ async fn handle_send(
         (status = OK, description = "Send blob transaction", body = TxHash)
     )
 )]
-pub async fn send_blob_transaction(
+async fn send_blob_transaction(
     State(state): State<RouterState>,
     Json(payload): Json<BlobTransaction>,
+) -> Result<impl IntoResponse, AppError> {
+    send_blob_transaction_inner(state, payload, None).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/tx/send/blob/{lane_suffix}",
+    tag = "Mempool",
+    params(
+        ("lane_suffix" = String, Path, description = "Lane suffix to target")
+    ),
+    responses(
+        (status = OK, description = "Send blob transaction (targeted lane)", body = TxHash)
+    )
+)]
+async fn send_blob_transaction_with_suffix(
+    State(state): State<RouterState>,
+    Path(lane_suffix): Path<LaneSuffix>,
+    Json(payload): Json<BlobTransaction>,
+) -> Result<impl IntoResponse, AppError> {
+    send_blob_transaction_inner(state, payload, Some(lane_suffix)).await
+}
+
+async fn send_blob_transaction_inner(
+    state: RouterState,
+    payload: BlobTransaction,
+    lane_suffix: Option<LaneSuffix>,
 ) -> Result<impl IntoResponse, AppError> {
     info!(
         tx_hash = %payload.hashed().0,
@@ -155,7 +189,7 @@ pub async fn send_blob_transaction(
             anyhow!("Too many blobs in transaction"),
         ));
     }
-    handle_send(state, TransactionData::Blob(payload))
+    handle_send(state, TransactionData::Blob(payload), lane_suffix)
         .await
         .inspect(|payload_hash| {
             debug!(
@@ -173,12 +207,39 @@ pub async fn send_blob_transaction(
         (status = OK, description = "Send proof transaction", body = TxHash)
     )
 )]
-pub async fn send_proof_transaction(
+async fn send_proof_transaction(
     State(state): State<RouterState>,
     Json(payload): Json<ProofTransaction>,
 ) -> Result<impl IntoResponse, AppError> {
+    send_proof_transaction_inner(state, payload, None).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/tx/send/proof/{lane_suffix}",
+    tag = "Mempool",
+    params(
+        ("lane_suffix" = String, Path, description = "Lane suffix to target")
+    ),
+    responses(
+        (status = OK, description = "Send proof transaction (targeted lane)", body = TxHash)
+    )
+)]
+async fn send_proof_transaction_with_suffix(
+    State(state): State<RouterState>,
+    Path(lane_suffix): Path<LaneSuffix>,
+    Json(payload): Json<ProofTransaction>,
+) -> Result<impl IntoResponse, AppError> {
+    send_proof_transaction_inner(state, payload, Some(lane_suffix)).await
+}
+
+async fn send_proof_transaction_inner(
+    state: RouterState,
+    payload: ProofTransaction,
+    lane_suffix: Option<LaneSuffix>,
+) -> Result<impl IntoResponse, AppError> {
     info!("Got proof transaction {}", payload.hashed());
-    handle_send(state, TransactionData::Proof(payload)).await
+    handle_send(state, TransactionData::Proof(payload), lane_suffix).await
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -202,10 +263,47 @@ struct ProofTxMetaJson {
 /// - "proof": Raw proof bytes
 /// Both parts are required.
 /// Implemented because some clients take too long to send compressed data on the regular endpoint.
-pub async fn send_proof_transaction_multipart(
+async fn send_proof_transaction_multipart(
     State(state): State<RouterState>,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, AppError> {
+    send_proof_transaction_multipart_inner(state, &mut multipart, None).await
+}
+
+#[utoipa::path(
+    post,
+    path = "/tx/send/proof/multipart/{lane_suffix}",
+    tag = "Mempool",
+    params(
+        ("lane_suffix" = String, Path, description = "Lane suffix to target")
+    ),
+    responses(
+        (status = OK, description = "Send proof transaction via multipart (targeted lane)", body = TxHash),
+        (status = BAD_REQUEST, description = "Invalid multipart payload"),
+    )
+)]
+async fn send_proof_transaction_multipart_with_suffix(
+    State(state): State<RouterState>,
+    Path(lane_suffix): Path<LaneSuffix>,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse, AppError> {
+    send_proof_transaction_multipart_inner(state, &mut multipart, Some(lane_suffix)).await
+}
+
+async fn send_proof_transaction_multipart_inner(
+    state: RouterState,
+    multipart: &mut Multipart,
+    lane_suffix: Option<LaneSuffix>,
+) -> Result<impl IntoResponse, AppError> {
+    let payload = parse_proof_transaction_multipart(multipart).await?;
+
+    info!("Got proof transaction {} (multipart)", payload.hashed());
+    handle_send(state, TransactionData::Proof(payload), lane_suffix).await
+}
+
+async fn parse_proof_transaction_multipart(
+    multipart: &mut Multipart,
+) -> Result<ProofTransaction, AppError> {
     use hyli_model::ProofData;
 
     let mut meta: Option<ProofTxMetaJson> = None;
@@ -250,15 +348,12 @@ pub async fn send_proof_transaction_multipart(
         ));
     };
 
-    let payload = ProofTransaction {
+    Ok(ProofTransaction {
         contract_name: meta.contract_name,
         program_id: meta.program_id,
         verifier: meta.verifier,
         proof,
-    };
-
-    info!("Got proof transaction {} (multipart)", payload.hashed());
-    handle_send(state, TransactionData::Proof(payload)).await
+    })
 }
 
 #[utoipa::path(
@@ -288,7 +383,7 @@ pub async fn register_contract(
 
     let tx = BlobTransaction::from(payload);
 
-    handle_send(state, TransactionData::Blob(tx)).await
+    handle_send(state, TransactionData::Blob(tx), None).await
 }
 
 impl Clone for RouterState {
