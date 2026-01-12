@@ -23,6 +23,10 @@ pub struct Consensus {
     pub genesis_timestamp: u64,
     /// Number of recent timeout certificates to keep for timeout recovery.
     pub timeout_certificate_cache_size: usize,
+    /// Max number of prepares kept in memory for sync replies.
+    pub sync_prepares_max_in_memory: usize,
+    /// Max number of prepares serialized to disk for sync replies.
+    pub sync_prepares_max_serialized: usize,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, IntoStaticStr)]

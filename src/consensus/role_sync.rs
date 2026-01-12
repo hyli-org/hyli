@@ -19,10 +19,19 @@ impl Consensus {
         debug!(
             proposal_hash = %proposal_hash,
             "Got sync request from {}", sender);
-        if let Some(prepare) = follower_state!(self).buffered_prepares.get(&proposal_hash) {
+        if let Some(prepare) = follower_state!(self).sync_prepares.get(&proposal_hash) {
             debug!(
                 proposal_hash = %proposal_hash,
                 "Sending prepare to {}", sender);
+            let prepare = prepare.clone();
+            self.send_net_message(sender, ConsensusNetMessage::SyncReply(prepare))?;
+        } else if let Some(prepare) =
+            follower_state!(self).buffered_prepares.get(&proposal_hash)
+        {
+            debug!(
+                proposal_hash = %proposal_hash,
+                "Sending prepare to {} (buffer fallback)", sender
+            );
             let prepare = prepare.clone();
             self.send_net_message(sender, ConsensusNetMessage::SyncReply(prepare))?;
         };

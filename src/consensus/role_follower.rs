@@ -25,6 +25,7 @@ use hyli_model::{
 pub(super) struct FollowerState {
     pub(super) buffered_quorum_certificate: Option<CommitQC>, // if we receive a commit before the next prepare
     pub(super) buffered_prepares: BufferedPrepares, // History of seen prepares & buffer of future prepares
+    pub(super) sync_prepares: SyncPrepares, // Bounded cache of prepares for sync replies
 }
 
 macro_rules! follower_state {
@@ -40,7 +41,23 @@ pub(super) enum TicketVerifyAndProcess {
     Processed,
 }
 
+const LOCAL_BUFFERED_PREPARES_MAX_DEPTH: usize = 8;
+
+impl FollowerState {
+    pub(super) fn prune_after_commit(&mut self, parent_hash: &ConsensusProposalHash) {
+        self.buffered_prepares
+            .prune_to_chain(parent_hash, LOCAL_BUFFERED_PREPARES_MAX_DEPTH);
+    }
+}
+
 impl Consensus {
+    fn record_prepare_cache_sizes(&self) {
+        self.metrics.record_prepare_cache_sizes(
+            self.bft_round_state.follower.buffered_prepares.len(),
+            self.bft_round_state.follower.sync_prepares.len(),
+        );
+    }
+
     #[tracing::instrument(skip(self, consensus_proposal, ticket))]
     pub(super) fn on_prepare(
         &mut self,
@@ -73,12 +90,22 @@ impl Consensus {
                 );
                 self.set_state_tag(StateTag::Follower);
             } else {
+                follower_state!(self).sync_prepares.push_with_limit(
+                    (
+                        sender.clone(),
+                        consensus_proposal.clone(),
+                        ticket.clone(),
+                        view,
+                    ),
+                    self.config.consensus.sync_prepares_max_in_memory,
+                );
                 follower_state!(self).buffered_prepares.push((
                     sender.clone(),
                     consensus_proposal,
                     ticket,
                     view,
                 ));
+                self.record_prepare_cache_sizes();
                 return Ok(());
             }
         }
@@ -176,12 +203,22 @@ impl Consensus {
         self.bft_round_state.current_proposal = Some(consensus_proposal.clone());
         let cp_hash = consensus_proposal.hashed();
 
+        follower_state!(self).sync_prepares.push_with_limit(
+            (
+                sender.clone(),
+                consensus_proposal.clone(),
+                ticket.clone(),
+                view,
+            ),
+            self.config.consensus.sync_prepares_max_in_memory,
+        );
         follower_state!(self).buffered_prepares.push((
             sender.clone(),
             consensus_proposal,
             ticket,
             view,
         ));
+        self.record_prepare_cache_sizes();
 
         // If we already have the next Prepare, fast-forward
         if let Some(prepare) = follower_state!(self)
@@ -762,9 +799,14 @@ impl Consensus {
             .contains(&consensus_proposal.hashed())
         {
             let prepare_message = (sender.clone(), consensus_proposal, ticket, view);
+            follower_state!(self).sync_prepares.push_with_limit(
+                prepare_message.clone(),
+                self.config.consensus.sync_prepares_max_in_memory,
+            );
             follower_state!(self)
                 .buffered_prepares
                 .push(prepare_message);
+            self.record_prepare_cache_sizes();
         }
 
         // Check if we have a missing DP up to our current known DP (this assumes we're not on a fork)
@@ -939,6 +981,10 @@ impl BufferedPrepares {
         self.prepares.contains_key(proposal_hash)
     }
 
+    pub(super) fn len(&self) -> usize {
+        self.prepares.len()
+    }
+
     pub(super) fn push(&mut self, prepare_message: Prepare) {
         trace!(
             proposal_hash = %prepare_message.1.hashed(),
@@ -966,6 +1012,71 @@ impl BufferedPrepares {
         self.children
             .get(&proposal_hash)
             .and_then(|children| self.prepares.get(children).cloned())
+    }
+
+    fn prune_to_chain(&mut self, root: &ConsensusProposalHash, max_depth: usize) {
+        let mut new_prepares = BTreeMap::new();
+        let mut current = root.clone();
+        for _ in 0..max_depth {
+            let Some(child_hash) = self.children.get(&current).cloned() else {
+                break;
+            };
+            if let Some(prepare) = self.prepares.get(&child_hash).cloned() {
+                current = child_hash;
+                new_prepares.insert(current.clone(), prepare);
+            } else {
+                break;
+            }
+        }
+        let mut new_children = BTreeMap::new();
+        for prepare in new_prepares.values() {
+            let proposal_hash = prepare.1.hashed();
+            let parent_hash = prepare.1.parent_hash.clone();
+            new_children.insert(parent_hash, proposal_hash);
+        }
+        self.prepares = new_prepares;
+        self.children = new_children;
+    }
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone)]
+pub(super) struct SyncPrepares {
+    prepares: BTreeMap<ConsensusProposalHash, Prepare>,
+    order: Vec<ConsensusProposalHash>,
+}
+
+impl SyncPrepares {
+    pub(super) fn push_with_limit(&mut self, prepare_message: Prepare, max: usize) {
+        let proposal_hash = prepare_message.1.hashed();
+        if !self.prepares.contains_key(&proposal_hash) {
+            self.order.push(proposal_hash.clone());
+        }
+        self.prepares.insert(proposal_hash.clone(), prepare_message);
+        self.enforce_limit(max);
+    }
+
+    pub(super) fn get(&self, proposal_hash: &ConsensusProposalHash) -> Option<&Prepare> {
+        self.prepares.get(proposal_hash)
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.prepares.len()
+    }
+
+    pub(super) fn trim_to_limit(&mut self, max: usize) {
+        self.enforce_limit(max);
+    }
+
+    fn enforce_limit(&mut self, max: usize) {
+        // Keep bounded memory usage for sync replies.
+        while self.order.len() > max {
+            if let Some(oldest) = self.order.first().cloned() {
+                self.order.remove(0);
+                self.prepares.remove(&oldest);
+            } else {
+                break;
+            }
+        }
     }
 }
 
@@ -1124,5 +1235,41 @@ mod tests {
             }
             _ => panic!("Expected SyncRequest for missing_prepare1"),
         }
+    }
+
+    #[test]
+    fn test_sync_prepares_trim_limit() {
+        let mut sync_prepares = SyncPrepares::default();
+        let limit = 2;
+
+        let p1 = ConsensusProposal {
+            parent_hash: ConsensusProposalHash("p1-parent".into()),
+            ..ConsensusProposal::default()
+        };
+        let p2 = ConsensusProposal {
+            parent_hash: ConsensusProposalHash("p2-parent".into()),
+            ..ConsensusProposal::default()
+        };
+        let p3 = ConsensusProposal {
+            parent_hash: ConsensusProposalHash("p3-parent".into()),
+            ..ConsensusProposal::default()
+        };
+
+        let msg = |proposal: ConsensusProposal| {
+            (
+                ValidatorPublicKey::default(),
+                proposal,
+                Ticket::Genesis,
+                0,
+            )
+        };
+
+        sync_prepares.push_with_limit(msg(p1.clone()), limit);
+        sync_prepares.push_with_limit(msg(p2.clone()), limit);
+        sync_prepares.push_with_limit(msg(p3.clone()), limit);
+
+        assert!(sync_prepares.get(&p1.hashed()).is_none());
+        assert!(sync_prepares.get(&p2.hashed()).is_some());
+        assert!(sync_prepares.get(&p3.hashed()).is_some());
     }
 }

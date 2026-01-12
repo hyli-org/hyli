@@ -16,7 +16,13 @@ impl Module for Consensus {
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let file = ctx.config.data_directory.join(CONSENSUS_BIN);
-        let store: ConsensusStore = Self::load_from_disk_or_default(file.as_path());
+        let mut store: ConsensusStore = Self::load_from_disk_or_default(file.as_path());
+        // Cap in-memory sync cache on startup to avoid loading oversized state.
+        store
+            .bft_round_state
+            .follower
+            .sync_prepares
+            .trim_to_limit(ctx.config.consensus.sync_prepares_max_in_memory);
         let metrics = ConsensusMetrics::global(ctx.config.id.clone());
 
         let api = api::api(&bus, &ctx).await;
@@ -43,10 +49,24 @@ impl Module for Consensus {
 
     async fn persist(&mut self) -> Result<()> {
         if let Some(file) = &self.file {
+            let sync_prepares_backup =
+                self.store.bft_round_state.follower.sync_prepares.clone();
+            // Persist only a small sync cache to reduce serialization cost.
+            let serialize_limit = self
+                .config
+                .consensus
+                .sync_prepares_max_serialized
+                .min(self.config.consensus.sync_prepares_max_in_memory);
+            self.store
+                .bft_round_state
+                .follower
+                .sync_prepares
+                .trim_to_limit(serialize_limit);
             _ = log_error!(
                 Self::save_on_disk(file.as_path(), &self.store),
                 "Persisting consensus state"
             );
+            self.store.bft_round_state.follower.sync_prepares = sync_prepares_backup;
         }
 
         Ok(())
