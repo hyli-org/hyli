@@ -29,3 +29,7 @@ pub use staking::*;
 pub const HASH_DISPLAY_SIZE: usize = 3;
 
 pub const HYLI_TESTNET_CHAIN_ID: u128 = 0x68796C655F746573746E6574;
+
+// BusMessage implementations for use with hyli-bus
+#[cfg(feature = "bus")]
+mod bus_impls;

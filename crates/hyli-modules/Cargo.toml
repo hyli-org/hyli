@@ -11,7 +11,9 @@ rust-version = { workspace = true }
 [dependencies]
 sdk = { workspace = true, features = ["full-model"] }
 client-sdk = { workspace = true, features = ["rest", "indexer"] }
-hyli-net = { workspace = true }
+hyli-net = { workspace = true, features = ["bus"] }
+hyli-bus = { workspace = true }
+hyli-model = { workspace = true, features = ["bus"] }
 
 config = { workspace = true, default-features = false, features = ["toml"] }
 sha3 = { workspace = true }
@@ -22,9 +24,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 assertables = { workspace = true }
-anymap = { workspace = true }
-syn = { workspace = true }
-quote = { workspace = true }
 rand = { workspace = true }
 futures = { workspace = true }
 tracing-subscriber = { workspace = true, features = [
@@ -65,7 +64,6 @@ indexmap = { workspace = true }
 # Native verifiers
 hyli-crypto = { workspace = true }
 secp256k1 = { workspace = true, features = ["rand"] }
-hyli-model = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -79,12 +77,11 @@ testcontainers-modules = { workspace = true, features = ["postgres"] }
 [features]
 risc0 = ["client-sdk/risc0"]
 sp1 = ["client-sdk/sp1"]
-turmoil = []
+turmoil = ["hyli-bus/turmoil"]
 test = ["dep:test-log"]
 instrumentation = [
-  "dep:opentelemetry-otlp",
   "dep:tracing-opentelemetry",
-  "dep:opentelemetry_sdk",
   "dep:opentelemetry-http",
+  "hyli-bus/instrumentation",
 ]
 db = ["dep:sqlx", "hyli-model/sqlx"]
