@@ -221,7 +221,6 @@ impl Display for MempoolNetMessage {
 hyli_net::impl_tcp_message_label_with_prefix!(MempoolNetMessage, "MempoolNetMessage", {
     DataProposal,
     DataVote,
-    PoDAUpdate,
     SyncRequest,
     SyncReply,
 });
