@@ -51,7 +51,7 @@ impl FollowerState {
 }
 
 impl Consensus {
-    fn record_prepare_cache_sizes(&self) {
+    pub(super) fn record_prepare_cache_sizes(&self) {
         self.metrics.record_prepare_cache_sizes(
             self.bft_round_state.follower.buffered_prepares.len(),
             self.bft_round_state.follower.sync_prepares.len(),
@@ -1093,7 +1093,7 @@ impl SyncPrepares {
         }
         let mut new_order = Vec::with_capacity(restored_hashes.len() + self.order.len());
         new_order.extend(restored_hashes.iter().cloned());
-        new_order.extend(self.order.drain(..));
+        new_order.append(&mut self.order);
         self.order = new_order;
         for (hash, prepare) in restored_hashes.into_iter().zip(removed.into_iter()) {
             self.prepares.insert(hash, prepare);

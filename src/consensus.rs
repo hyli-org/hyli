@@ -317,11 +317,12 @@ impl Consensus {
                     _ => unreachable!(),
                 };
                 self.bft_round_state.parent_hash = committed_proposal.hashed();
+                let parent_hash = self.bft_round_state.parent_hash.clone();
                 self.bft_round_state.parent_timestamp = committed_proposal.timestamp.clone();
                 self.bft_round_state.parent_cut = committed_proposal.cut.clone();
                 self.bft_round_state
                     .follower
-                    .prune_after_commit(&self.bft_round_state.parent_hash);
+                    .prune_after_commit(&parent_hash);
                 self.record_prepare_cache_sizes();
 
                 // Store the last commited QC to avoid issues when parsing Commit messages before Prepare
