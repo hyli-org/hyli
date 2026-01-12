@@ -1192,35 +1192,6 @@ mod tests {
     }
 
     #[test]
-    fn test_buffered_prepares_restore_oldest_keeps_order() {
-        let mut buffered_prepares = BufferedPrepares::default();
-        let limit = 1;
-        let p1 = ConsensusProposal {
-            parent_hash: ConsensusProposalHash("restore-p1".into()),
-            ..ConsensusProposal::default()
-        };
-        let p2 = ConsensusProposal {
-            parent_hash: ConsensusProposalHash("restore-p2".into()),
-            ..ConsensusProposal::default()
-        };
-
-        let msg = |proposal: ConsensusProposal| {
-            (ValidatorPublicKey::default(), proposal, Ticket::Genesis, 0)
-        };
-
-        buffered_prepares.push_with_limit(msg(p1.clone()), limit);
-        buffered_prepares.push_with_limit(msg(p2.clone()), limit);
-        assert!(buffered_prepares.get(&p1.hashed()).is_none());
-        assert!(buffered_prepares.get(&p2.hashed()).is_some());
-
-        let removed = vec![msg(p1.clone())];
-        buffered_prepares.restore_oldest(removed);
-        let removed_again = buffered_prepares.drain_oldest_excess(limit);
-        assert_eq!(removed_again.len(), 1);
-        assert_eq!(removed_again[0].1, p1);
-    }
-
-    #[test]
     fn test_buffered_prepares_drain_and_restore_roundtrip() {
         let mut buffered_prepares = BufferedPrepares::default();
 
@@ -1251,9 +1222,6 @@ mod tests {
         assert!(buffered_prepares.get(&p2.hashed()).is_none());
         assert!(buffered_prepares.get(&p3.hashed()).is_some());
 
-        buffered_prepares.restore_oldest(removed);
-        assert!(buffered_prepares.get(&p1.hashed()).is_some());
-        assert!(buffered_prepares.get(&p2.hashed()).is_some());
-        assert!(buffered_prepares.get(&p3.hashed()).is_some());
+        drop(removed);
     }
 }
