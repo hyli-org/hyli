@@ -525,11 +525,7 @@ pub fn simulation_drop_data_proposals(
         }
 
         let mut rng = rng.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-<<<<<<< Updated upstream
-        rng.gen_bool(0.95)
-=======
-        rng.gen_bool(0.5)
->>>>>>> Stashed changes
+        rng.gen_bool(0.80)
     });
 
     let result = loop {
