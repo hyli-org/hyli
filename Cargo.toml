@@ -106,7 +106,7 @@ k256 = { version = "0.13", default-features = false, features = [
   "ecdsa",
   "arithmetic",
 ] }
-mockall = { version = "0.13.0", default-features = false }
+mockall = { version = "0.14.0", default-features = false }
 once_cell = { version = "1.19.0", default-features = false }
 opentelemetry = { version = "0.28.0" }
 opentelemetry-prometheus = { version = "0.28.0" }
