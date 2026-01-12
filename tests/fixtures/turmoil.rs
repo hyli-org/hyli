@@ -10,6 +10,8 @@ use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli::{entrypoint::main_process, utils::conf::Conf};
 use hyli_crypto::BlstCrypto;
 use hyli_net::net::Sim;
+use hyli_net::tcp::intercept::{clear_message_intercept, set_message_intercept};
+use hyli_net::tcp::{decode_tcp_payload, P2PTcpMessage};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tempfile::TempDir;
 use tokio::sync::Mutex;
@@ -18,6 +20,36 @@ use tracing::info;
 use anyhow::Result;
 
 use crate::fixtures::test_helpers::ConfMaker;
+use hyli::p2p::network::NetMessage;
+
+pub struct NetMessageDropper {
+    _private: (),
+}
+
+impl Drop for NetMessageDropper {
+    fn drop(&mut self) {
+        clear_message_intercept();
+    }
+}
+
+pub fn install_net_message_dropper<F>(mut should_drop: F) -> NetMessageDropper
+where
+    F: FnMut(&NetMessage) -> bool + Send + 'static,
+{
+    set_message_intercept(move |bytes| {
+        let (_, message) = match decode_tcp_payload::<P2PTcpMessage<NetMessage>>(bytes) {
+            Ok(message) => message,
+            Err(_) => return false,
+        };
+
+        match message {
+            P2PTcpMessage::Data(net_msg) => should_drop(&net_msg),
+            P2PTcpMessage::Handshake(_) => false,
+        }
+    });
+
+    NetMessageDropper { _private: () }
+}
 #[derive(Clone)]
 pub struct TurmoilHost {
     pub conf: Conf,
