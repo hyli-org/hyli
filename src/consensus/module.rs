@@ -54,8 +54,7 @@ impl Module for Consensus {
                 .consensus
                 .sync_prepares_max_serialized
                 .min(self.config.consensus.sync_prepares_max_in_memory);
-            let removed = self
-                .store
+            self.store
                 .bft_round_state
                 .follower
                 .buffered_prepares
@@ -64,11 +63,6 @@ impl Module for Consensus {
                 Self::save_on_disk(file.as_path(), &self.store),
                 "Persisting consensus state"
             );
-            self.store
-                .bft_round_state
-                .follower
-                .buffered_prepares
-                .restore_oldest(removed);
         }
 
         Ok(())
