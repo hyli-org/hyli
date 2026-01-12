@@ -11,7 +11,9 @@ use std::{
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
-use sdk::{hyli_model_utils::TimestampMs, DataAvailabilityEvent, DataAvailabilityRequest};
+use sdk::{
+    hyli_model_utils::TimestampMs, DataAvailabilityEvent, DataAvailabilityRequest, DataProposal,
+};
 use strum_macros::IntoStaticStr;
 use tokio::task::JoinHandle;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
@@ -267,6 +269,12 @@ impl TcpMessageLabel for DataAvailabilityEvent {
                 "DataAvailabilityEvent::MempoolStatusEvent"
             }
         }
+    }
+}
+
+impl TcpMessageLabel for DataProposal {
+    fn message_label(&self) -> &'static str {
+        "DataProposal"
     }
 }
 
