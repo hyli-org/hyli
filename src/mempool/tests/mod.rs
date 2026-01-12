@@ -233,6 +233,7 @@ impl MempoolTestCtx {
             .expect("No event received");
         self.mempool
             .handle_internal_event(event)
+            .await
             .expect("fail to handle event");
     }
 
