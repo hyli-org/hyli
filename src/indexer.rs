@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use hyli_model::api::{TransactionStatusDb, TransactionTypeDb};
 use hyli_model::utils::TimestampMs;
 use hyli_modules::{
-    bus::BusClientSender, modules::indexer::MIGRATOR, node_state::BlockNodeStateCallback,
+    bus::BusClientSender, modules::indexer::MIGRATOR, node_state::NodeStateEventCallback,
 };
 use hyli_modules::{
     bus::SharedMessageBus,
@@ -172,7 +172,7 @@ pub(crate) struct IndexerHandlerStore {
     last_update: TimestampMs,
 
     // Intended to be temporary, for CSI & co.
-    block_callback: BlockNodeStateCallback,
+    block_callback: NodeStateEventCallback,
 
     blocks: Vec<BlockStore>,
     txs: VecDeque<TxStore>,
@@ -267,16 +267,15 @@ impl Indexer {
                 total_txs: block.count_txs() as i64,
             });
 
+            self.handler_store.block_callback = NodeStateEventCallback::from_signed(&block);
             self.node_state
                 .process_signed_block(&block, &mut self.handler_store)?;
 
             // We use the indexer as node-state-processor for CSI
             // TODO: refactor this away it conflicts with running the indexer in the full node as we send all events twice.
-            let (parsed_block, staking_data, stateful_events) =
-                self.handler_store.block_callback.take();
+            let (staking_data, stateful_events) = self.handler_store.block_callback.take();
             self.bus.send(NodeStateEvent::NewBlock(NodeStateBlock {
                 signed_block: block.into(),
-                parsed_block: parsed_block.into(),
                 staking_data: staking_data.into(),
                 stateful_events: stateful_events.into(),
             }))?;

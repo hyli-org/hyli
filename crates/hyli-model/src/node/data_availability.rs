@@ -185,7 +185,6 @@ pub enum StatefulEvent {
 #[derive(Default, Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
 pub struct NodeStateBlock {
     pub signed_block: std::sync::Arc<SignedBlock>,
-    pub parsed_block: std::sync::Arc<Block>,
     pub staking_data: std::sync::Arc<BlockStakingData>,
     pub stateful_events: std::sync::Arc<StatefulEvents>,
 }
