@@ -218,6 +218,13 @@ impl Display for MempoolNetMessage {
     }
 }
 
+hyli_net::impl_tcp_message_label_with_prefix!(MempoolNetMessage, "MempoolNetMessage", {
+    DataProposal,
+    DataVote,
+    SyncRequest,
+    SyncReply,
+});
+
 impl IntoHeaderSignableData for MempoolNetMessage {
     fn to_header_signable_data(&self) -> HeaderSignableData {
         match self {

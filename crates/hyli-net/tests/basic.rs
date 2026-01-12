@@ -7,12 +7,18 @@ use std::{collections::HashSet, error::Error, time::Duration};
 use hyli_crypto::BlstCrypto;
 use hyli_net::{
     net::Sim,
-    tcp::{p2p_server::P2PServer, p2p_server::P2PTimeouts, Canal, P2PTcpMessage},
+    tcp::{p2p_server::P2PServer, p2p_server::P2PTimeouts, Canal, P2PTcpMessage, TcpMessageLabel},
 };
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 #[derive(Clone, Debug, borsh::BorshDeserialize, borsh::BorshSerialize)]
 pub struct Msg(usize);
+
+impl TcpMessageLabel for Msg {
+    fn message_label(&self) -> &'static str {
+        "Msg"
+    }
+}
 
 impl Into<P2PTcpMessage<Msg>> for Msg {
     fn into(self) -> P2PTcpMessage<Msg> {
