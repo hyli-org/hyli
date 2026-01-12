@@ -1002,22 +1002,6 @@ impl BufferedPrepares {
         removed
     }
 
-    pub(super) fn restore_oldest(&mut self, removed: Vec<Prepare>) {
-        // Restores in original eviction order so future drains remain deterministic.
-        if removed.is_empty() {
-            return;
-        }
-        let existing = std::mem::take(&mut self.prepares).0;
-        let mut new_prepares = BorshableIndexMap::default();
-        for prepare in removed {
-            let hash = prepare.1.hashed();
-            new_prepares.insert(hash, prepare);
-        }
-        for (hash, prepare) in existing {
-            new_prepares.insert(hash, prepare);
-        }
-        self.prepares = new_prepares;
-    }
 }
 
 #[cfg(test)]
