@@ -242,16 +242,19 @@ where
             let mut tasks = vec![];
             for socket_addr in socket_addrs.iter() {
                 if let Some(socket) = self.sockets.get_mut(socket_addr) {
+                    let sender = socket.sender.clone();
+                    let socket_addr = socket_addr.clone();
+                    let message = message.clone();
                     debug!(" - to {}", socket_addr);
-                    tasks.push(
-                        socket
-                            .sender
+                    tasks.push(async move {
+                        let res = sender
                             .send(TcpOutboundMessage {
                                 message: message.clone(),
                                 message_label,
                             })
-                            .map(|res| (socket_addr.clone(), res)),
-                    );
+                            .await;
+                        (socket_addr, res)
+                    });
                 }
             }
             futures::future::join_all(tasks).await
