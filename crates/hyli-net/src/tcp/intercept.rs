@@ -9,17 +9,10 @@
 //! ```
 
 use std::cell::RefCell;
-use std::sync::{Mutex, OnceLock};
 
 type MessageHook = Box<dyn FnMut(&[u8]) -> bool + Send>;
-
-static MESSAGE_HOOK: OnceLock<Mutex<Option<MessageHook>>> = OnceLock::new();
 thread_local! {
     static LOCAL_MESSAGE_HOOK: RefCell<Option<MessageHook>> = const { RefCell::new(None) };
-}
-
-fn hook_slot() -> &'static Mutex<Option<MessageHook>> {
-    MESSAGE_HOOK.get_or_init(|| Mutex::new(None))
 }
 
 /// Install a hook used by tests to drop application-level frames.
@@ -27,18 +20,16 @@ pub fn set_message_intercept<F>(hook: F)
 where
     F: FnMut(&[u8]) -> bool + Send + 'static,
 {
-    let mut guard = hook_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *guard = Some(Box::new(hook));
+    LOCAL_MESSAGE_HOOK.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
 }
 
 /// Clear the previously installed hook.
 pub fn clear_message_intercept() {
-    let mut guard = hook_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    *guard = None;
+    LOCAL_MESSAGE_HOOK.with(|slot| {
+        *slot.borrow_mut() = None;
+    });
 }
 
 /// Install a hook scoped to the current thread, cleared on drop.
@@ -70,18 +61,8 @@ impl Drop for MessageInterceptGuard {
 }
 
 pub(crate) fn should_drop(bytes: &[u8]) -> bool {
-    if let Some(result) = LOCAL_MESSAGE_HOOK.with(|slot| {
+    LOCAL_MESSAGE_HOOK.with(|slot| {
         let mut guard = slot.borrow_mut();
-        guard.as_mut().map(|hook| hook(bytes))
-    }) {
-        return result;
-    }
-
-    let mut guard = hook_slot()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    match guard.as_mut() {
-        Some(hook) => hook(bytes),
-        None => false,
-    }
+        guard.as_mut().map(|hook| hook(bytes)).unwrap_or(false)
+    })
 }

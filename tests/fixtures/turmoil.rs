@@ -7,11 +7,12 @@ use std::time::Duration;
 
 use anyhow::Context;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
-use hyli::{entrypoint::main_process, utils::conf::Conf};
+use hyli::{entrypoint::main_loop, utils::conf::Conf};
 use hyli_crypto::BlstCrypto;
 use hyli_net::net::Sim;
 use hyli_net::tcp::intercept::set_message_intercept_scoped;
 use hyli_net::tcp::{decode_tcp_payload, P2PTcpMessage};
+use hyli_modules::utils::deterministic_rng::set_deterministic_seed;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tempfile::TempDir;
 use tokio::sync::Mutex;
@@ -54,7 +55,7 @@ impl TurmoilHost {
     pub async fn start(&self) -> anyhow::Result<()> {
         let crypto = Arc::new(BlstCrypto::new(&self.conf.id).context("Creating crypto")?);
 
-        main_process(self.conf.clone(), Some(crypto)).await?;
+        main_loop(self.conf.clone(), Some(crypto)).await?;
 
         Ok(())
     }
@@ -77,6 +78,7 @@ pub struct TurmoilCtx {
     slot_duration: Duration,
     seed: u64,
     pub rng: StdRng,
+    _seed_guard: hyli_modules::utils::deterministic_rng::DeterministicSeedGuard,
 }
 
 impl TurmoilCtx {
@@ -133,8 +135,8 @@ impl TurmoilCtx {
         sim: &mut Sim<'_>,
     ) -> Result<TurmoilCtx> {
         std::env::set_var("RISC0_DEV_MODE", "1");
-        std::env::set_var("HYLI_TURMOIL_SEED", seed.to_string());
 
+        let seed_guard = set_deterministic_seed(seed);
         let rng = StdRng::seed_from_u64(seed);
 
         let slot_duration = Duration::from_millis(slot_duration_ms);
@@ -151,6 +153,7 @@ impl TurmoilCtx {
             slot_duration: Duration::from_millis(slot_duration_ms),
             seed,
             rng,
+            _seed_guard: seed_guard,
         })
     }
 
@@ -217,6 +220,10 @@ impl TurmoilCtx {
 
     pub fn client(&self) -> NodeApiHttpClient {
         self.nodes.first().unwrap().client.clone()
+    }
+
+    pub fn seed(&self) -> u64 {
+        self.seed
     }
 
     pub fn conf(&self, n: u64) -> Conf {
