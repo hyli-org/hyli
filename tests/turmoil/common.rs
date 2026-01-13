@@ -54,6 +54,32 @@ pub fn assert_converged(
     Ok(())
 }
 
+/// Assert that all nodes converge to at least `min_height` within 1 block.
+pub fn assert_converged_with_one_block_height_tolerance(
+    ctx: &TurmoilCtx,
+    sim: &mut Sim<'_>,
+    min_height: u64,
+) -> anyhow::Result<()> {
+    let ctx_clone = ctx.clone();
+
+    sim.client("convergence", async move {
+        ctx_clone
+            .assert_cluster_converged_with_max_delta(min_height, 1)
+            .await
+            .expect("cluster converged with 1-block tolerance");
+        Ok(())
+    });
+
+    loop {
+        let finished = sim.step().map_err(|s| anyhow::anyhow!(s.to_string()))?;
+        if finished {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
 /// Configuration for holding messages between two nodes.
 pub struct HoldConfiguration {
     pub from: String,

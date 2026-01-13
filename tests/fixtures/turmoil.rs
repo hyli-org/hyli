@@ -276,6 +276,16 @@ impl TurmoilCtx {
 
     /// Check that all nodes converge to the same height and commit root.
     pub async fn assert_cluster_converged(&self, min_height: u64) -> anyhow::Result<()> {
+        self.assert_cluster_converged_with_max_delta(min_height, 0)
+            .await
+    }
+
+    /// Check that all nodes converge to at least `min_height` within `max_delta` blocks.
+    pub async fn assert_cluster_converged_with_max_delta(
+        &self,
+        min_height: u64,
+        max_delta: u64,
+    ) -> anyhow::Result<()> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
 
         loop {
@@ -288,16 +298,17 @@ impl TurmoilCtx {
             let min = heights.iter().map(|(_, h)| *h).min().unwrap();
             let max = heights.iter().map(|(_, h)| *h).max().unwrap();
 
-            if min >= min_height && min == max {
+            if min >= min_height && max.saturating_sub(min) <= max_delta {
                 return Ok(());
             }
 
             if tokio::time::Instant::now() >= deadline {
                 anyhow::bail!(
-                    "Cluster did not converge: min height {}, max height {}, expected >= {} ({:?})",
+                    "Cluster did not converge: min height {}, max height {}, expected >= {} with max delta {} ({:?})",
                     min,
                     max,
                     min_height,
+                    max_delta,
                     heights
                 );
             }

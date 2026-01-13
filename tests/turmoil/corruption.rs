@@ -26,8 +26,8 @@ pub fn simulation_corrupt_random_messages(
     let _corrupter = install_net_message_corrupter(move |_message, bytes| {
         let mut rng = rng.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
 
-        // Corrupt 1% of messages
-        if !rng.random_bool(0.1) {
+        // Corrupt 7% of messages
+        if !rng.random_bool(0.07) {
             return None;
         }
 
