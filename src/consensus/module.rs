@@ -22,7 +22,7 @@ impl Module for Consensus {
             .bft_round_state
             .follower
             .buffered_prepares
-            .trim_to_limit(ctx.config.consensus.sync_prepares_max_in_memory);
+            .set_max_size(Some(ctx.config.consensus.sync_prepares_max_in_memory));
         let metrics = ConsensusMetrics::global(ctx.config.id.clone());
 
         let api = api::api(&bus, &ctx).await;
@@ -58,7 +58,7 @@ impl Module for Consensus {
                 .bft_round_state
                 .follower
                 .buffered_prepares
-                .drain_oldest_excess(serialize_limit);
+                .set_max_size(Some(serialize_limit));
             _ = log_error!(
                 Self::save_on_disk(file.as_path(), &self.store),
                 "Persisting consensus state"

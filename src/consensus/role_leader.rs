@@ -227,10 +227,7 @@ impl Consensus {
             ticket.clone(),
             self.bft_round_state.view,
         );
-        follower_state!(self).buffered_prepares.push_with_limit(
-            prepare,
-            self.config.consensus.sync_prepares_max_in_memory,
-        );
+        follower_state!(self).buffered_prepares.push(prepare);
         self.record_prepare_cache_sizes();
 
         self.metrics.start_new_round(self.bft_round_state.slot);

@@ -11,10 +11,11 @@ use crate::{
     consensus::StateTag,
     model::{Hashed, Signed, ValidatorPublicKey},
     p2p::P2PCommand,
-    utils::{conf::TimestampCheck, serialize::BorshableIndexMap},
+    utils::conf::TimestampCheck,
 };
 
 use hyli_crypto::BlstCrypto;
+use hyli_modules::utils::ring_buffer_map::RingBufferMap;
 use hyli_model::{
     utils::TimestampMs, AggregateSignature, ConsensusProposal, ConsensusProposalHash,
     ConsensusStakingAction, Cut, LaneBytesSize, LaneId, SignedByValidator, ValidatorCandidacy,
@@ -79,10 +80,9 @@ impl Consensus {
                 );
                 self.set_state_tag(StateTag::Follower);
             } else {
-                follower_state!(self).buffered_prepares.push_with_limit(
-                    (sender.clone(), consensus_proposal, ticket, view),
-                    self.config.consensus.sync_prepares_max_in_memory,
-                );
+                follower_state!(self)
+                    .buffered_prepares
+                    .push((sender.clone(), consensus_proposal, ticket, view));
                 self.record_prepare_cache_sizes();
                 return Ok(());
             }
@@ -181,10 +181,9 @@ impl Consensus {
         self.bft_round_state.current_proposal = Some(consensus_proposal.clone());
         let cp_hash = consensus_proposal.hashed();
 
-        follower_state!(self).buffered_prepares.push_with_limit(
-            (sender.clone(), consensus_proposal, ticket, view),
-            self.config.consensus.sync_prepares_max_in_memory,
-        );
+        follower_state!(self)
+            .buffered_prepares
+            .push((sender.clone(), consensus_proposal, ticket, view));
         self.record_prepare_cache_sizes();
 
         // If we already have the next Prepare, fast-forward
@@ -766,10 +765,7 @@ impl Consensus {
             .contains(&consensus_proposal.hashed())
         {
             let prepare_message = (sender.clone(), consensus_proposal, ticket, view);
-            follower_state!(self).buffered_prepares.push_with_limit(
-                prepare_message,
-                self.config.consensus.sync_prepares_max_in_memory,
-            );
+            follower_state!(self).buffered_prepares.push(prepare_message);
             self.record_prepare_cache_sizes();
         }
 
@@ -934,10 +930,19 @@ impl Consensus {
 
 pub type Prepare = (ValidatorPublicKey, ConsensusProposal, Ticket, View);
 
-#[derive(BorshSerialize, BorshDeserialize, Default, Debug)]
+#[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub(super) struct BufferedPrepares {
-    prepares: BorshableIndexMap<ConsensusProposalHash, Prepare>,
+    prepares: RingBufferMap<ConsensusProposalHash, Prepare>,
     children: BTreeMap<ConsensusProposalHash, ConsensusProposalHash>,
+}
+
+impl Default for BufferedPrepares {
+    fn default() -> Self {
+        Self {
+            prepares: RingBufferMap::default(),
+            children: BTreeMap::new(),
+        }
+    }
 }
 
 impl BufferedPrepares {
@@ -947,6 +952,10 @@ impl BufferedPrepares {
 
     pub(super) fn len(&self) -> usize {
         self.prepares.len()
+    }
+
+    pub(super) fn set_max_size(&mut self, max: Option<usize>) {
+        self.prepares.set_max_size(max);
     }
 
     pub(super) fn push(&mut self, prepare_message: Prepare) {
@@ -968,11 +977,6 @@ impl BufferedPrepares {
         self.prepares.insert(proposal_hash, prepare_message);
     }
 
-    pub(super) fn push_with_limit(&mut self, prepare_message: Prepare, max: usize) {
-        self.push(prepare_message);
-        _ = self.drain_oldest_excess(max);
-    }
-
     pub(super) fn get(&self, proposal_hash: &ConsensusProposalHash) -> Option<&Prepare> {
         self.prepares.get(proposal_hash)
     }
@@ -981,25 +985,6 @@ impl BufferedPrepares {
         self.children
             .get(&proposal_hash)
             .and_then(|children| self.prepares.get(children).cloned())
-    }
-
-    pub(super) fn trim_to_limit(&mut self, max: usize) {
-        _ = self.drain_oldest_excess(max);
-    }
-
-    pub(super) fn drain_oldest_excess(&mut self, max: usize) -> Vec<Prepare> {
-        let mut removed = Vec::new();
-        while self.prepares.len() > max {
-            if let Some((_, prepare)) = self.prepares.shift_remove_index(0) {
-                let removed_hash = prepare.1.hashed();
-                self.children
-                    .retain(|_, child_hash| child_hash != &removed_hash);
-                removed.push(prepare);
-            } else {
-                break;
-            }
-        }
-        removed
     }
 
 }
@@ -1182,9 +1167,10 @@ mod tests {
             (ValidatorPublicKey::default(), proposal, Ticket::Genesis, 0)
         };
 
-        buffered_prepares.push_with_limit(msg(p1.clone()), limit);
-        buffered_prepares.push_with_limit(msg(p2.clone()), limit);
-        buffered_prepares.push_with_limit(msg(p3.clone()), limit);
+        buffered_prepares.set_max_size(Some(limit));
+        buffered_prepares.push(msg(p1.clone()));
+        buffered_prepares.push(msg(p2.clone()));
+        buffered_prepares.push(msg(p3.clone()));
 
         assert!(buffered_prepares.get(&p1.hashed()).is_none());
         assert!(buffered_prepares.get(&p2.hashed()).is_some());
@@ -1192,8 +1178,9 @@ mod tests {
     }
 
     #[test]
-    fn test_buffered_prepares_drain_and_restore_roundtrip() {
+    fn test_buffered_prepares_limit_eviction() {
         let mut buffered_prepares = BufferedPrepares::default();
+        buffered_prepares.set_max_size(Some(1));
 
         let p1 = ConsensusProposal {
             parent_hash: ConsensusProposalHash("roundtrip-p1".into()),
@@ -1216,12 +1203,8 @@ mod tests {
         buffered_prepares.push(msg(p2.clone()));
         buffered_prepares.push(msg(p3.clone()));
 
-        let removed = buffered_prepares.drain_oldest_excess(1);
-        assert_eq!(removed.len(), 2);
         assert!(buffered_prepares.get(&p1.hashed()).is_none());
         assert!(buffered_prepares.get(&p2.hashed()).is_none());
         assert!(buffered_prepares.get(&p3.hashed()).is_some());
-
-        drop(removed);
     }
 }
