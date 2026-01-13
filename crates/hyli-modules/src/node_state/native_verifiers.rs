@@ -65,7 +65,8 @@ pub fn verify_native_impl(
                     validator: ValidatorPublicKey(blst_blob.public_key),
                 },
             };
-            Ok((blst_blob.identity, BlstCrypto::verify(&msg)?))
+            BlstCrypto::verify(&msg)?;
+            Ok((blst_blob.identity, true))
         }
         NativeVerifiers::Sha3_256 => {
             let sha3_256_blob = borsh::from_slice::<ShaBlob>(&blob.data.0)?;

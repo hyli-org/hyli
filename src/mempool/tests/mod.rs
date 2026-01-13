@@ -810,6 +810,28 @@ async fn test_sync_reply_buffered_without_buc() -> Result<()> {
 }
 
 #[test_log::test(tokio::test)]
+async fn test_data_vote_invalid_signature_rejected() -> Result<()> {
+    let mut ctx = MempoolTestCtx::new("mempool").await;
+
+    let crypto2 = BlstCrypto::new("2").unwrap();
+    let lane_id = ctx.mempool.own_lane_id().clone();
+    let valid = crypto2.sign((
+        DataProposalHash("hash-a".to_string()),
+        LaneBytesSize(1),
+    ))?;
+    let invalid = SignedByValidator {
+        msg: (DataProposalHash("hash-b".to_string()), LaneBytesSize(1)),
+        signature: valid.signature,
+    };
+
+    let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::DataVote(lane_id, invalid))?;
+    let handle = ctx.mempool.handle_net_message(signed_msg).await;
+    assert!(handle.is_err(), "Expected invalid signature to be rejected");
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
 async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -> Result<()> {
     let mut ctx = MempoolTestCtx::new("mempool").await;
 
