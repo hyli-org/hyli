@@ -573,7 +573,7 @@ where
                             metrics.message_emitted_bytes(nb_bytes as u64, message_label);
                         }
                     }
-                    metrics.message_send_time(start.elapsed().as_secs_f64());
+                    metrics.message_send_time(start.elapsed().as_secs_f64(), message_label);
                 }
             }
         });

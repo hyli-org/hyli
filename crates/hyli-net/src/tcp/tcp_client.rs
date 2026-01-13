@@ -12,7 +12,9 @@ use tracing::{debug, info, trace, warn};
 
 #[cfg(feature = "turmoil")]
 use super::intercept;
-use super::{decode_tcp_payload, framed_stream, to_tcp_message, FramedStream, TcpMessage};
+use super::{
+    decode_tcp_payload, framed_stream, to_tcp_message, FramedStream, TcpMessage, TcpMessageLabel,
+};
 
 type TcpSender = SplitSink<FramedStream, Bytes>;
 type TcpReceiver = SplitStream<FramedStream>;
@@ -110,7 +112,11 @@ where
         })
     }
 
-    pub async fn send(&mut self, msg: Req) -> Result<()> {
+    pub async fn send(&mut self, msg: Req) -> Result<()>
+    where
+        Req: TcpMessageLabel,
+    {
+        let message_label = msg.message_label();
         let msg_bytes: Bytes = to_tcp_message(&msg)?.try_into()?;
         #[cfg(feature = "turmoil")]
         if intercept::should_drop(&msg_bytes) {
@@ -121,7 +127,7 @@ where
         let start = std::time::Instant::now();
         let res = self.sender.send(msg_bytes).await;
         self.metrics
-            .message_send_time(start.elapsed().as_secs_f64());
+            .message_send_time(start.elapsed().as_secs_f64(), message_label);
         match res {
             Ok(()) => {
                 self.metrics.message_emitted();
