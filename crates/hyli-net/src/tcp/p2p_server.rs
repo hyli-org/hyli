@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{bail, Context};
 use borsh::{BorshDeserialize, BorshSerialize};
-use hyli_crypto::BlstCrypto;
+use hyli_crypto::{deterministic_rng::deterministic_rng, BlstCrypto};
 use sdk::{hyli_model_utils::TimestampMs, SignedByValidator, ValidatorPublicKey};
 use tokio::{
     task::{AbortHandle, JoinSet},
@@ -22,6 +22,7 @@ use crate::{
     ordered_join_set::OrderedJoinSet,
     tcp::{tcp_client::TcpClient, Handshake, TcpHeaders, TcpMessageLabel},
 };
+use rand::seq::SliceRandom;
 
 use super::{
     tcp_server::{TcpServer, TcpServerOptions},
@@ -1127,26 +1128,28 @@ where
         msg: Vec<u8>,
         headers: TcpHeaders,
     ) -> HashMap<ValidatorPublicKey, anyhow::Error> {
-        let peer_addr_to_pubkey: HashMap<String, ValidatorPublicKey> = self
-            .peers
-            .iter()
-            .filter_map(|(pubkey, peer)| {
-                if only_for.contains(pubkey) {
-                    peer.canals.get(canal).and_then(|socket| {
-                        socket
-                            .poisoned_at
-                            .is_none()
-                            .then_some((socket.socket_addr.clone(), pubkey.clone()))
-                    })
-                } else {
-                    None
+        let mut peer_addr_to_pubkey = Vec::new();
+        let mut peers: Vec<_> = self.peers.iter().collect();
+        peers.sort_by_key(|(pubkey, _)| (*pubkey).clone());
+
+        for (pubkey, peer) in peers {
+            if !only_for.contains(pubkey) {
+                continue;
+            }
+            if let Some(socket) = peer.canals.get(canal) {
+                if socket.poisoned_at.is_none() {
+                    peer_addr_to_pubkey.push((socket.socket_addr.clone(), pubkey.clone()));
                 }
-            })
-            .collect();
+            }
+        }
+
+        let mut ordered_addrs: Vec<String> =
+            peer_addr_to_pubkey.iter().map(|(addr, _)| addr.clone()).collect();
+        ordered_addrs.shuffle(&mut deterministic_rng());
 
         let res = self
             .tcp_server
-            .raw_send_parallel(peer_addr_to_pubkey.keys().cloned().collect(), msg, headers)
+            .raw_send_parallel(ordered_addrs, msg, headers)
             .await;
         self.metrics
             .broadcast_targets(canal.clone(), peer_addr_to_pubkey.len() as u64);
@@ -1166,26 +1169,29 @@ where
         }
 
         HashMap::from_iter(res.into_iter().filter_map(|(k, v)| {
-            peer_addr_to_pubkey.get(&k).map(|pubkey| {
-                let peer_p2p_addr = self
-                    .peers
-                    .get(pubkey)
-                    .map(|peer| peer.node_connection_data.p2p_public_address.clone())
-                    .unwrap_or_else(|| k.clone());
-                self.metrics
-                    .message_send_error(peer_p2p_addr.clone(), canal.clone());
-                self.metrics.reconnect_attempt(
-                    peer_p2p_addr.clone(),
-                    canal.clone(),
-                    "broadcast_send_error",
-                );
-                error!("Error sending message to {} during broadcast: {}", k, v);
-                self.mark_socket_poisoned(&k);
-                if let Err(e) = self.try_start_connection_for_peer(pubkey, canal.clone()) {
-                    warn!("Problem when triggering re-handshake after message sending error with peer {}/{}: {}", pubkey, canal, e);
-                }
-                (pubkey.clone(), v)
-            })
+            peer_addr_to_pubkey
+                .iter()
+                .find(|(addr, _)| addr == &k)
+                .map(|(_, pubkey)| {
+                    let peer_p2p_addr = self
+                        .peers
+                        .get(pubkey)
+                        .map(|peer| peer.node_connection_data.p2p_public_address.clone())
+                        .unwrap_or_else(|| k.clone());
+                    self.metrics
+                        .message_send_error(peer_p2p_addr.clone(), canal.clone());
+                    self.metrics.reconnect_attempt(
+                        peer_p2p_addr.clone(),
+                        canal.clone(),
+                        "broadcast_send_error",
+                    );
+                    error!("Error sending message to {} during broadcast: {}", k, v);
+                    self.mark_socket_poisoned(&k);
+                    if let Err(e) = self.try_start_connection_for_peer(pubkey, canal.clone()) {
+                        warn!("Problem when triggering re-handshake after message sending error with peer {}/{}: {}", pubkey, canal, e);
+                    }
+                    (pubkey.clone(), v)
+                })
         }))
     }
 }

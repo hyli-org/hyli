@@ -234,27 +234,25 @@ where
             res
         };
 
-        // Send the message to all targets concurrently and wait for them to finish
+        // Send the message to all targets concurrently and wait for them to finish.
         let all_sent = {
             let message = TcpMessage::Data(TcpData::with_headers(msg, headers));
             debug!("Broadcasting msg {:?} to all", message);
             let message_label = "raw";
             let mut tasks = vec![];
-            for (name, socket) in self
-                .sockets
-                .iter_mut()
-                .filter(|s| socket_addrs.contains(s.0))
-            {
-                debug!(" - to {}", name);
-                tasks.push(
-                    socket
-                        .sender
-                        .send(TcpOutboundMessage {
-                            message: message.clone(),
-                            message_label,
-                        })
-                        .map(|res| (name.clone(), res)),
-                );
+            for socket_addr in socket_addrs.iter() {
+                if let Some(socket) = self.sockets.get_mut(socket_addr) {
+                    debug!(" - to {}", socket_addr);
+                    tasks.push(
+                        socket
+                            .sender
+                            .send(TcpOutboundMessage {
+                                message: message.clone(),
+                                message_label,
+                            })
+                            .map(|res| (socket_addr.clone(), res)),
+                    );
+                }
             }
             futures::future::join_all(tasks).await
         };

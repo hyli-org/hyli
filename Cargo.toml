@@ -308,7 +308,12 @@ signal-child = "1.0.6"
 [features]
 default = ["risc0", "instrumentation"]
 
-turmoil = ["hyli-net/turmoil", "client-sdk/turmoil", "hyli-modules/turmoil"]
+turmoil = [
+  "hyli-net/turmoil",
+  "client-sdk/turmoil",
+  "hyli-modules/turmoil",
+  "hyli-crypto/turmoil",
+]
 
 cairo-m = ["hyli-verifiers/cairo-m"]
 risc0 = ["hyli-verifiers/risc0", "client-sdk/risc0"]

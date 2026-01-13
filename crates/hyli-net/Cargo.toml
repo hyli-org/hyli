@@ -27,6 +27,7 @@ hex = { workspace = true }
 paste = { workspace = true }
 serde_json = { workspace = true }
 http-body-util = { workspace = true }
+rand = { workspace = true }
 
 hyper = { workspace = true, features = ["client", "http1"] }
 hyper-util = { workspace = true }
@@ -44,5 +45,5 @@ opentelemetry_sdk = { workspace = true }
 
 [features]
 # default = ["turmoil"]
-turmoil = ["dep:turmoil"]
+turmoil = ["dep:turmoil", "hyli-crypto/turmoil"]
 instrumentation = ["tracing/attributes", "dep:tracing-opentelemetry"]
