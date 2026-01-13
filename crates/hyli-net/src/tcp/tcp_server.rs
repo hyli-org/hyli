@@ -533,6 +533,23 @@ where
                         );
                         continue;
                     }
+                    #[cfg(feature = "turmoil")]
+                    let msg_bytes = if should_check_drop {
+                        if let Some(corrupted) = intercept::maybe_corrupt(&msg_bytes) {
+                            let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
+                            trace!(
+                                pool = %pool,
+                                "Corrupting outbound TCP frame for peer {} (socket_addr={})",
+                                label,
+                                cloned_socket_addr
+                            );
+                            corrupted
+                        } else {
+                            msg_bytes
+                        }
+                    } else {
+                        msg_bytes
+                    };
                     let start = std::time::Instant::now();
                     let nb_bytes: usize = msg_bytes.len();
                     match tokio::time::timeout(send_timeout, sender.send(msg_bytes)).await {

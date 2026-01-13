@@ -6,11 +6,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use bytes::Bytes;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli::{entrypoint::main_process, utils::conf::Conf};
 use hyli_crypto::BlstCrypto;
 use hyli_net::net::Sim;
-use hyli_net::tcp::intercept::set_message_intercept_scoped;
+use hyli_net::tcp::intercept::{set_message_corrupt_scoped, set_message_intercept_scoped};
 use hyli_net::tcp::{decode_tcp_payload, P2PTcpMessage};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tempfile::TempDir;
@@ -43,6 +44,32 @@ where
     });
 
     NetMessageDropper { _guard: guard }
+}
+
+pub struct NetMessageCorrupter {
+    _guard: hyli_net::tcp::intercept::MessageCorruptGuard,
+}
+
+/// Install a message corrupter that can modify messages before they are sent.
+/// The callback receives the decoded NetMessage and original bytes, and returns
+/// `Some(corrupted_bytes)` to corrupt the message or `None` to leave it unchanged.
+pub fn install_net_message_corrupter<F>(mut corrupt: F) -> NetMessageCorrupter
+where
+    F: FnMut(&NetMessage, &[u8]) -> Option<Bytes> + Send + 'static,
+{
+    let guard = set_message_corrupt_scoped(move |bytes| {
+        let (_, message) = match decode_tcp_payload::<P2PTcpMessage<NetMessage>>(bytes) {
+            Ok(message) => message,
+            Err(_) => return None,
+        };
+
+        match message {
+            P2PTcpMessage::Data(net_msg) => corrupt(&net_msg, bytes),
+            P2PTcpMessage::Handshake(_) => None,
+        }
+    });
+
+    NetMessageCorrupter { _guard: guard }
 }
 #[derive(Clone)]
 pub struct TurmoilHost {
