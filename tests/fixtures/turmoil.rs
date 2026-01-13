@@ -21,7 +21,9 @@ use tracing::info;
 use anyhow::Result;
 
 use crate::fixtures::test_helpers::ConfMaker;
-use hyli::p2p::network::NetMessage;
+use hyli::consensus::ConsensusNetMessage;
+use hyli::mempool::MempoolNetMessage;
+use hyli::p2p::network::{MsgWithHeader, NetMessage};
 
 pub struct NetMessageDropper {
     _guard: hyli_net::tcp::intercept::MessageInterceptGuard,
@@ -70,6 +72,28 @@ where
     });
 
     NetMessageCorrupter { _guard: guard }
+}
+
+/// Install a message corrupter that only targets consensus messages.
+pub fn install_consensus_message_corrupter<F>(mut corrupt: F) -> NetMessageCorrupter
+where
+    F: FnMut(&MsgWithHeader<ConsensusNetMessage>, &[u8]) -> Option<Bytes> + Send + 'static,
+{
+    install_net_message_corrupter(move |message, bytes| match message {
+        NetMessage::ConsensusMessage(consensus_msg) => corrupt(consensus_msg, bytes),
+        NetMessage::MempoolMessage(_) => None,
+    })
+}
+
+/// Install a message corrupter that only targets mempool messages.
+pub fn install_mempool_message_corrupter<F>(mut corrupt: F) -> NetMessageCorrupter
+where
+    F: FnMut(&MsgWithHeader<MempoolNetMessage>, &[u8]) -> Option<Bytes> + Send + 'static,
+{
+    install_net_message_corrupter(move |message, bytes| match message {
+        NetMessage::MempoolMessage(mempool_msg) => corrupt(mempool_msg, bytes),
+        NetMessage::ConsensusMessage(_) => None,
+    })
 }
 #[derive(Clone)]
 pub struct TurmoilHost {
