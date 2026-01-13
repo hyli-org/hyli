@@ -22,7 +22,7 @@ impl Module for Consensus {
             .bft_round_state
             .follower
             .buffered_prepares
-            .set_max_size(Some(ctx.config.consensus.sync_prepares_max_in_memory));
+            .set_max_size(Some(ctx.config.consensus.buffered_prepares_max_in_memory));
         let metrics = ConsensusMetrics::global(ctx.config.id.clone());
 
         let api = api::api(&bus, &ctx).await;
@@ -52,8 +52,8 @@ impl Module for Consensus {
             let serialize_limit = self
                 .config
                 .consensus
-                .sync_prepares_max_serialized
-                .min(self.config.consensus.sync_prepares_max_in_memory);
+                .buffered_prepares_max_serialized
+                .min(self.config.consensus.buffered_prepares_max_in_memory);
             self.store
                 .bft_round_state
                 .follower
