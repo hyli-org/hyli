@@ -274,6 +274,7 @@ macro_rules! handle_messages {
                 break;
             }
             tokio::select! {
+                biased;
                 $($bind = $fut $(, if $cond)? => $handle,)*
             }
         }

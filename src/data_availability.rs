@@ -402,6 +402,7 @@ impl DaCatchupper {
                 tokio::pin!(sleep);
 
                 tokio::select! {
+                    biased;
                     _ = &mut sleep => {
                         warn!("Timeout expired while waiting for block.");
                         metrics.timeout(&peer);

@@ -156,6 +156,7 @@ impl NodeIntegrationCtxBuilder {
         let node_task = Some(tokio::spawn(async move {
             node_modules.start_modules().await?;
             tokio::select! {
+                biased;
                 res = node_modules.shutdown_loop() => {
                     res
                 }

@@ -205,6 +205,7 @@ where
 
         loop {
             tokio::select! {
+                biased;
                 Some(tcp_event) = self.tcp_server.listen_next() => {
                     return P2PTcpEvent::TcpEvent(tcp_event);
                 },

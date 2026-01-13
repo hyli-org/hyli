@@ -178,6 +178,7 @@ pub mod signal {
     {
         let mut dummy = false;
         tokio::select! {
+            biased;
             _ = async_receive_shutdown::<M>(
                 &mut dummy,
                 receiver.get_mut(),
@@ -201,6 +202,7 @@ pub mod signal {
     {
         let mut dummy = false;
         tokio::select! {
+            biased;
             _ = tokio::time::sleep(duration) => {
                 anyhow::bail!("Timeout reached");
             }
@@ -380,6 +382,7 @@ impl ModulesHandler {
                 });
 
                 let res = tokio::select! {
+                    biased;
                     res = module_task => {
                         res
                     },
@@ -491,6 +494,7 @@ impl ModulesHandler {
             let mut interrupt = unix::signal(unix::SignalKind::interrupt())?;
             let mut terminate = unix::signal(unix::SignalKind::terminate())?;
             tokio::select! {
+                biased;
                 res = self.shutdown_loop() => {
                     _ = log_error!(res, "Shutdown Loop triggered");
                 }
@@ -506,6 +510,7 @@ impl ModulesHandler {
         #[cfg(not(unix))]
         {
             tokio::select! {
+                biased;
                 res = self.shutdown_loop() => {
                     _ = log_error!(res, "Shutdown Loop triggered");
                 }

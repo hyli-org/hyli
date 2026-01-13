@@ -102,6 +102,7 @@ async fn setup_basic_host(
 
     loop {
         tokio::select! {
+            biased;
             _ = interval.tick() => {
                 let peer_names = HashSet::from_iter(p2p.peers.iter().map(|(_, v)| v.node_connection_data.name.clone()));
 
@@ -198,6 +199,7 @@ async fn setup_drop_host(
     interval_start_shutdown.tick().await;
     loop {
         tokio::select! {
+            biased;
             _ = interval_start_shutdown.tick() => {
                 if turmoil::elapsed() > Duration::from_millis(duration) {
                     tracing::error!("Current peers {:?}", p2p.peers.keys());
@@ -251,6 +253,7 @@ async fn setup_drop_client(
     interval_start_shutdown.tick().await;
     loop {
         tokio::select! {
+            biased;
             _ = interval_start_shutdown.tick() => {
 
                 if turmoil::elapsed() > Duration::from_millis(duration) {
@@ -397,6 +400,7 @@ async fn setup_decode_error_host(peer: String, peers: Vec<String>) -> Result<(),
 
     loop {
         tokio::select! {
+            biased;
             _ = interval.tick() => {
                 if !armed && start.elapsed() > Duration::from_secs(1) && p2p.peers.len() == all_other_peers.len() {
                     armed = true;
@@ -506,6 +510,7 @@ async fn setup_poisoned_socket_host(
 
     loop {
         tokio::select! {
+            biased;
             _ = interval.tick() => {
                 if !sent_error
                     && peer == "peer-1"
