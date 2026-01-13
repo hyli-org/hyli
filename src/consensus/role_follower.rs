@@ -15,12 +15,12 @@ use crate::{
 };
 
 use hyli_crypto::BlstCrypto;
-use hyli_modules::utils::ring_buffer_map::RingBufferMap;
 use hyli_model::{
     utils::TimestampMs, AggregateSignature, ConsensusProposal, ConsensusProposalHash,
     ConsensusStakingAction, Cut, LaneBytesSize, LaneId, SignedByValidator, ValidatorCandidacy,
     View,
 };
+use hyli_modules::utils::ring_buffer_map::RingBufferMap;
 
 #[derive(BorshSerialize, BorshDeserialize, Default)]
 pub(super) struct FollowerState {
@@ -43,9 +43,8 @@ pub(super) enum TicketVerifyAndProcess {
 
 impl Consensus {
     pub(super) fn record_prepare_cache_sizes(&self) {
-        self.metrics.record_prepare_cache_sizes(
-            self.bft_round_state.follower.buffered_prepares.len(),
-        );
+        self.metrics
+            .record_prepare_cache_sizes(self.bft_round_state.follower.buffered_prepares.len());
     }
 
     #[tracing::instrument(skip(self, consensus_proposal, ticket))]
@@ -80,9 +79,12 @@ impl Consensus {
                 );
                 self.set_state_tag(StateTag::Follower);
             } else {
-                follower_state!(self)
-                    .buffered_prepares
-                    .push((sender.clone(), consensus_proposal, ticket, view));
+                follower_state!(self).buffered_prepares.push((
+                    sender.clone(),
+                    consensus_proposal,
+                    ticket,
+                    view,
+                ));
                 self.record_prepare_cache_sizes();
                 return Ok(());
             }
@@ -181,9 +183,12 @@ impl Consensus {
         self.bft_round_state.current_proposal = Some(consensus_proposal.clone());
         let cp_hash = consensus_proposal.hashed();
 
-        follower_state!(self)
-            .buffered_prepares
-            .push((sender.clone(), consensus_proposal, ticket, view));
+        follower_state!(self).buffered_prepares.push((
+            sender.clone(),
+            consensus_proposal,
+            ticket,
+            view,
+        ));
         self.record_prepare_cache_sizes();
 
         // If we already have the next Prepare, fast-forward
@@ -765,7 +770,9 @@ impl Consensus {
             .contains(&consensus_proposal.hashed())
         {
             let prepare_message = (sender.clone(), consensus_proposal, ticket, view);
-            follower_state!(self).buffered_prepares.push(prepare_message);
+            follower_state!(self)
+                .buffered_prepares
+                .push(prepare_message);
             self.record_prepare_cache_sizes();
         }
 
@@ -977,7 +984,6 @@ impl BufferedPrepares {
             .get(&proposal_hash)
             .and_then(|children| self.prepares.get(children).cloned())
     }
-
 }
 
 #[cfg(test)]
