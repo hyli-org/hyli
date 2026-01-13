@@ -464,9 +464,9 @@ impl TcpServerMetrics {
         self.message_send_error.add(1, &self.server_name_label);
     }
 
-    pub fn message_send_time(&self, duration: f64) {
-        self.message_send_time
-            .record(duration, &self.server_name_label);
+    pub fn message_send_time(&self, duration: f64, message_type: &str) {
+        let labels = self.labels_with_message_type(message_type);
+        self.message_send_time.record(duration, &labels);
     }
 
     pub(crate) fn message_received_bytes(&self, len: u64, message_type: &str) {
@@ -537,9 +537,15 @@ impl TcpClientMetrics {
         self.message_send_error.add(1, &self.client_name_label);
     }
 
-    pub fn message_send_time(&self, duration: f64) {
-        self.message_send_time
-            .record(duration, &self.client_name_label);
+    fn labels_with_message_type(&self, message_type: &str) -> Vec<KeyValue> {
+        let mut labels = self.client_name_label.clone();
+        labels.push(KeyValue::new("message_type", message_type.to_string()));
+        labels
+    }
+
+    pub fn message_send_time(&self, duration: f64, message_type: &str) {
+        let labels = self.labels_with_message_type(message_type);
+        self.message_send_time.record(duration, &labels);
     }
 
     pub(crate) fn message_received_bytes(&self, len: u64) {
