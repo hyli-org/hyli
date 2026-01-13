@@ -930,19 +930,10 @@ impl Consensus {
 
 pub type Prepare = (ValidatorPublicKey, ConsensusProposal, Ticket, View);
 
-#[derive(BorshSerialize, BorshDeserialize, Debug)]
+#[derive(BorshSerialize, BorshDeserialize, Default, Debug)]
 pub(super) struct BufferedPrepares {
     prepares: RingBufferMap<ConsensusProposalHash, Prepare>,
     children: BTreeMap<ConsensusProposalHash, ConsensusProposalHash>,
-}
-
-impl Default for BufferedPrepares {
-    fn default() -> Self {
-        Self {
-            prepares: RingBufferMap::default(),
-            children: BTreeMap::new(),
-        }
-    }
 }
 
 impl BufferedPrepares {

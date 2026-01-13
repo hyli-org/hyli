@@ -57,13 +57,19 @@ where
     }
 
     pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        if self.map.contains_key(&key) {
-            return self.map.insert(key, value);
+        let entry = self.map.entry(key);
+        match entry {
+            std::collections::hash_map::Entry::Occupied(mut existing) => {
+                Some(existing.insert(value))
+            }
+            std::collections::hash_map::Entry::Vacant(vacant) => {
+                let key = vacant.key().clone();
+                self.order.push_back(key);
+                vacant.insert(value);
+                self.enforce_limit();
+                None
+            }
         }
-        self.order.push_back(key.clone());
-        let prev = self.map.insert(key, value);
-        self.enforce_limit();
-        prev
     }
 
     pub fn pop_front(&mut self) -> Option<(K, V)> {
@@ -113,12 +119,16 @@ where
         let mut map = HashMap::with_capacity(vec.len());
         let mut order = VecDeque::with_capacity(vec.len());
         for (key, value) in vec {
-            if map.contains_key(&key) {
-                map.insert(key, value);
-                continue;
+            match map.entry(key) {
+                std::collections::hash_map::Entry::Occupied(mut existing) => {
+                    existing.insert(value);
+                }
+                std::collections::hash_map::Entry::Vacant(vacant) => {
+                    let key = vacant.key().clone();
+                    order.push_back(key);
+                    vacant.insert(value);
+                }
             }
-            order.push_back(key.clone());
-            map.insert(key, value);
         }
         Ok(Self {
             map,
