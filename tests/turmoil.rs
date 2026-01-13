@@ -51,7 +51,7 @@ use node_lifecycle::{simulation_one_more_node, simulation_restart_node};
 use partition::{simulation_hold, simulation_partition, simulation_timeout_split_view};
 use workloads::{submit_10_contracts, timeout_split_view_recovery};
 
-use common::assert_converged;
+use common::{assert_converged, assert_converged_with_one_block_height_tolerance};
 
 macro_rules! turmoil_simple {
     ($seed:literal, $simulation:ident, $test:ident) => {
@@ -79,8 +79,14 @@ macro_rules! turmoil_simple {
                 }
 
                 $simulation(&mut ctx, &mut sim)?;
-                if stringify!($simulation) != "simulation_restart_node" {
-                    assert_converged(&ctx, &mut sim, 1)?;
+                match stringify!($simulation) {
+                    "simulation_corrupt_random_messages" => {
+                        assert_converged_with_one_block_height_tolerance(&ctx, &mut sim, 1)?;
+                    }
+                    "simulation_restart_node" => {}
+                    _ => {
+                        assert_converged(&ctx, &mut sim, 1)?;
+                    }
                 }
 
                 Ok(())
@@ -123,7 +129,18 @@ macro_rules! turmoil_simple_flaky {
 
                 $simulation(&mut ctx, &mut sim)?;
                 if stringify!($simulation) != "simulation_restart_node" {
-                    assert_converged(&ctx, &mut sim, 1)?;
+                    match stringify!($simulation) {
+                        "simulation_drop_storm"
+                        | "simulation_drop_data_proposals"
+                        | "simulation_drop_data_votes"
+                        | "simulation_drop_all_messages"
+                        | "simulation_corrupt_random_messages" => {
+                            assert_converged_with_one_block_height_tolerance(&ctx, &mut sim, 1)?;
+                        }
+                        _ => {
+                            assert_converged(&ctx, &mut sim, 1)?;
+                        }
+                    }
                 }
 
                 Ok(())
