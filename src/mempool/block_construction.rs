@@ -887,6 +887,9 @@ pub mod test {
             .lanes
             .store_data_proposal(&crypto2, &lane_id2, dp4.clone())?;
 
+        // Simulate hole being filled (normally done by sync replies).
+        buc.holes_tops.clear();
+
         // Try to build a signed block again
         let result = ctx.mempool.build_signed_block_and_emit(&mut buc).await;
         assert!(result.is_ok());

@@ -13,6 +13,7 @@ use super::*;
 use crate::bus::metrics::BusMetrics;
 use crate::bus::SharedMessageBus;
 use crate::mempool::dissemination::DisseminationManager;
+use crate::mempool::storage::LaneEntryMetadata;
 use crate::model;
 use crate::p2p::network::NetMessage;
 use crate::utils::conf::Conf;
@@ -569,6 +570,7 @@ async fn test_sending_sync_request() -> Result<()> {
     ctx.add_trusted_validator(pubkey2).await;
 
     ctx.handle_consensus_event(ConsensusProposal {
+        slot: 1,
         cut: vec![(
             lane_id.clone(),
             DataProposalHash("dp_hash_in_cut".to_owned()),
@@ -650,7 +652,7 @@ async fn test_receiving_sync_request() -> Result<()> {
                 assert_eq!(&validator_id, crypto2.validator_pubkey());
                 match msg {
                     NetMessage::MempoolMessage(msg) => match msg.msg {
-                        MempoolNetMessage::SyncReply(_, _metadata, dp) => replies.push(dp),
+                        MempoolNetMessage::SyncReply(_, _signatures, dp) => replies.push(dp),
                         other => panic!("Expected SyncReply message, got {other:?}"),
                     },
                     other => panic!("Expected mempool message, got {other:?}"),
@@ -750,7 +752,7 @@ async fn test_receiving_sync_requests_multiple_dps() -> Result<()> {
                 assert_eq!(&validator_id, crypto2.validator_pubkey());
                 match msg {
                     NetMessage::MempoolMessage(msg) => match msg.msg {
-                        MempoolNetMessage::SyncReply(_, _metadata, dp) => {
+                        MempoolNetMessage::SyncReply(_, _signatures, dp) => {
                             replies.insert(dp.hashed());
                         }
                         other => panic!("Expected SyncReply message, got {other:?}"),
@@ -771,140 +773,229 @@ async fn test_receiving_sync_requests_multiple_dps() -> Result<()> {
 }
 
 #[test_log::test(tokio::test)]
-async fn test_receiving_sync_reply() -> Result<()> {
+async fn test_sync_reply_buffered_without_buc() -> Result<()> {
     let mut ctx = MempoolTestCtx::new("mempool").await;
 
-    // Create a DP and simulate we requested it.
     let register_tx = make_register_contract_tx(ContractName::new("test1"));
-    let data_proposal = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
-    let cumul_size = LaneBytesSize(data_proposal.estimate_size() as u64);
+    let dp1 = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
+    let cumul_size1 = LaneBytesSize(dp1.estimate_size() as u64);
     let lane_id = ctx.mempool.own_lane_id();
 
     // Add new validator
     let crypto2 = BlstCrypto::new("2").unwrap();
-    let crypto3 = BlstCrypto::new("3").unwrap();
-
     ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
 
-    // First: the message is from crypto2, but the DP is not signed correctly
+    // Sync reply arrives before BUC exists -> buffer it.
     let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
         lane_id.clone(),
-        LaneEntryMetadata {
-            parent_data_proposal_hash: None,
-            cumul_size,
-            signatures: vec![crypto3
-                .sign((data_proposal.hashed(), cumul_size))
-                .expect("should sign")],
-            cached_poda: None,
-        },
-        data_proposal.clone(),
+        vec![ctx
+            .mempool
+            .crypto
+            .sign((dp1.hashed(), cumul_size1))
+            .expect("should sign")],
+        dp1.clone(),
     ))?;
-
-    let handle = ctx.mempool.handle_net_message(signed_msg.clone()).await;
-    assert_eq!(
-        handle.expect_err("should fail").to_string(),
-        format!(
-            "At least one lane entry is missing signature from {}",
-            ctx.validator_pubkey()
-        )
-    );
-
-    // Second: the message is NOT from crypto2, but the DP is signed by crypto2
-    let signed_msg = crypto3.sign_msg_with_header(MempoolNetMessage::SyncReply(
-        lane_id.clone(),
-        LaneEntryMetadata {
-            parent_data_proposal_hash: None,
-            cumul_size,
-            signatures: vec![crypto2
-                .sign((data_proposal.hashed(), cumul_size))
-                .expect("should sign")],
-            cached_poda: None,
-        },
-        data_proposal.clone(),
-    ))?;
-
-    // This actually fails - we don't know how to handle it
-    let handle = ctx.mempool.handle_net_message(signed_msg.clone()).await;
-    assert_eq!(
-        handle.expect_err("should fail").to_string(),
-        format!(
-            "At least one lane entry is missing signature from {}",
-            ctx.validator_pubkey()
-        )
-    );
-
-    // Third: the message is from crypto2, the signature is from crypto2, but the message is wrong
-    let signed_msg = crypto3.sign_msg_with_header(MempoolNetMessage::SyncReply(
-        lane_id.clone(),
-        LaneEntryMetadata {
-            parent_data_proposal_hash: None,
-            cumul_size,
-            signatures: vec![crypto2
-                .sign((DataProposalHash("non_existent".to_owned()), cumul_size))
-                .expect("should sign")],
-            cached_poda: None,
-        },
-        data_proposal.clone(),
-    ))?;
-
-    // This actually fails - we don't know how to handle it
-    let handle = ctx.mempool.handle_net_message(signed_msg.clone()).await;
-    assert_eq!(
-        handle.expect_err("should fail").to_string(),
-        format!(
-            "At least one lane entry is missing signature from {}",
-            ctx.validator_pubkey()
-        )
-    );
-
-    // Fourth: the message is from crypto2, the signature is from crypto2, but the size is wrong
-    let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
-        lane_id.clone(),
-        LaneEntryMetadata {
-            parent_data_proposal_hash: None,
-            cumul_size: LaneBytesSize(0),
-            signatures: vec![crypto2
-                .sign((data_proposal.hashed(), cumul_size))
-                .expect("should sign")],
-            cached_poda: None,
-        },
-        data_proposal.clone(),
-    ))?;
-
-    // This actually fails - we don't know how to handle it
-    let handle = ctx.mempool.handle_net_message(signed_msg.clone()).await;
-    assert_eq!(
-        handle.expect_err("should fail").to_string(),
-        format!(
-            "At least one lane entry is missing signature from {}",
-            ctx.validator_pubkey()
-        )
-    );
-
-    // Final case: message is correct
-    let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
-        lane_id.clone(),
-        LaneEntryMetadata {
-            parent_data_proposal_hash: None,
-            cumul_size,
-            signatures: vec![ctx
-                .mempool
-                .crypto
-                .sign((data_proposal.hashed(), cumul_size))
-                .expect("should sign")],
-            cached_poda: None,
-        },
-        data_proposal.clone(),
-    ))?;
-
-    let handle = ctx.mempool.handle_net_message(signed_msg.clone()).await;
+    let handle = ctx.mempool.handle_net_message(signed_msg).await;
     assert_ok!(handle, "Should handle net message");
-
-    // Assert that the lane entry was added
     assert!(ctx
         .mempool
+        .inner
+        .buffered_entries
+        .get(&lane_id)
+        .and_then(|m| m.get(&dp1.hashed()))
+        .is_some());
+    assert!(!ctx.mempool.lanes.contains(&lane_id, &dp1.hashed()));
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -> Result<()> {
+    let mut ctx = MempoolTestCtx::new("mempool").await;
+
+    let register_tx = make_register_contract_tx(ContractName::new("test1"));
+    let dp1 = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
+    let dp2 = ctx.create_data_proposal(Some(dp1.hashed()), std::slice::from_ref(&register_tx));
+    let dp3 = ctx.create_data_proposal(Some(dp2.hashed()), std::slice::from_ref(&register_tx));
+    let register_tx2 = make_register_contract_tx(ContractName::new("test2"));
+    let dp_other = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx2));
+
+    let dp1_size = LaneBytesSize(dp1.estimate_size() as u64);
+    let dp2_size = LaneBytesSize(dp2.estimate_size() as u64);
+    let dp3_size = LaneBytesSize(dp3.estimate_size() as u64);
+    let cumul_size1 = dp1_size;
+    let cumul_size2 = LaneBytesSize(dp1_size.0 + dp2_size.0);
+    let cumul_size3 = LaneBytesSize(dp1_size.0 + dp2_size.0 + dp3_size.0);
+    let lane_id = ctx.mempool.own_lane_id();
+
+    // Add new validator
+    let crypto2 = BlstCrypto::new("2").unwrap();
+    ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
+
+    // Buffer dp1 and dp2 (no BUC yet).
+    for (dp, size) in [(dp1.clone(), cumul_size1), (dp2.clone(), cumul_size2)] {
+        let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
+            lane_id.clone(),
+            vec![ctx
+                .mempool
+                .crypto
+                .sign((dp.hashed(), size))
+                .expect("should sign")],
+            dp,
+        ))?;
+        let handle = ctx.mempool.handle_net_message(signed_msg).await;
+        assert_ok!(handle, "Should handle net message");
+    }
+
+    // Buffer unrelated entry that should remain.
+    let other_size = LaneBytesSize(dp_other.estimate_size() as u64);
+    let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
+        lane_id.clone(),
+        vec![ctx
+            .mempool
+            .crypto
+            .sign((dp_other.hashed(), other_size))
+            .expect("should sign")],
+        dp_other.clone(),
+    ))?;
+    let handle = ctx.mempool.handle_net_message(signed_msg).await;
+    assert_ok!(handle, "Should handle net message");
+
+    let mut holes_tops = std::collections::HashMap::new();
+    holes_tops.insert(lane_id.clone(), (dp3.hashed(), cumul_size3));
+    ctx.mempool.inner.blocks_under_contruction.push_back(
+        crate::mempool::block_construction::BlockUnderConstruction {
+            from: None,
+            ccp: CommittedConsensusProposal {
+                consensus_proposal: ConsensusProposal {
+                    cut: vec![(lane_id.clone(), dp3.hashed(), cumul_size3, PoDA::default())],
+                    ..ConsensusProposal::default()
+                },
+                staking: Staking::default(),
+                certificate: AggregateSignature::default(),
+            },
+            holes_tops,
+            holes_materialized: true,
+        },
+    );
+
+    // Reply for dp3 should fill dp3 -> dp2 -> dp1 from buffer.
+    let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
+        lane_id.clone(),
+        vec![ctx
+            .mempool
+            .crypto
+            .sign((dp3.hashed(), cumul_size3))
+            .expect("should sign")],
+        dp3.clone(),
+    ))?;
+    let handle = ctx.mempool.handle_net_message(signed_msg).await;
+    assert_ok!(handle, "Should handle net message");
+
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp1.hashed()));
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp2.hashed()));
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp3.hashed()));
+
+    let metadata = ctx
+        .mempool
         .lanes
-        .contains(&lane_id, &data_proposal.hashed()));
+        .get_metadata_by_hash(&lane_id, &dp1.hashed())?
+        .expect("Expected stored metadata");
+    assert_eq!(metadata.parent_data_proposal_hash, None);
+    assert_eq!(metadata.cumul_size, cumul_size1);
+
+    let metadata = ctx
+        .mempool
+        .lanes
+        .get_metadata_by_hash(&lane_id, &dp2.hashed())?
+        .expect("Expected stored metadata");
+    assert_eq!(metadata.parent_data_proposal_hash, Some(dp1.hashed()));
+    assert_eq!(metadata.cumul_size, cumul_size2);
+
+    let metadata = ctx
+        .mempool
+        .lanes
+        .get_metadata_by_hash(&lane_id, &dp3.hashed())?
+        .expect("Expected stored metadata");
+    assert_eq!(metadata.parent_data_proposal_hash, Some(dp2.hashed()));
+    assert_eq!(metadata.cumul_size, cumul_size3);
+
+    // Unrelated buffered entry remains.
+    assert!(ctx
+        .mempool
+        .inner
+        .buffered_entries
+        .get(&lane_id)
+        .and_then(|m| m.get(&dp_other.hashed()))
+        .is_some());
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_sync_reply_materialize_holes_consumes_buffered_latest_cut() -> Result<()> {
+    let mut ctx = MempoolTestCtx::new("mempool").await;
+
+    let register_tx = make_register_contract_tx(ContractName::new("test1"));
+    let dp1 = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
+    let dp2 = ctx.create_data_proposal(Some(dp1.hashed()), std::slice::from_ref(&register_tx));
+    let dp3 = ctx.create_data_proposal(Some(dp2.hashed()), std::slice::from_ref(&register_tx));
+
+    let dp1_size = LaneBytesSize(dp1.estimate_size() as u64);
+    let dp2_size = LaneBytesSize(dp2.estimate_size() as u64);
+    let dp3_size = LaneBytesSize(dp3.estimate_size() as u64);
+    let cumul_size1 = dp1_size;
+    let cumul_size2 = LaneBytesSize(dp1_size.0 + dp2_size.0);
+    let cumul_size3 = LaneBytesSize(dp1_size.0 + dp2_size.0 + dp3_size.0);
+    let lane_id = ctx.mempool.own_lane_id();
+
+    // Add new validator
+    let crypto2 = BlstCrypto::new("2").unwrap();
+    ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
+
+    // Buffer all entries before any cut/BUC.
+    for (dp, size) in [
+        (dp1.clone(), cumul_size1),
+        (dp2.clone(), cumul_size2),
+        (dp3.clone(), cumul_size3),
+    ] {
+        let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
+            lane_id.clone(),
+            vec![ctx
+                .mempool
+                .crypto
+                .sign((dp.hashed(), size))
+                .expect("should sign")],
+            dp,
+        ))?;
+        let handle = ctx.mempool.handle_net_message(signed_msg).await;
+        assert_ok!(handle, "Should handle net message");
+    }
+
+    let mut buc = crate::mempool::block_construction::BlockUnderConstruction {
+        from: None,
+        ccp: CommittedConsensusProposal {
+            consensus_proposal: ConsensusProposal {
+                cut: vec![(lane_id.clone(), dp3.hashed(), cumul_size3, PoDA::default())],
+                slot: 1,
+                ..ConsensusProposal::default()
+            },
+            staking: Staking::default(),
+            certificate: AggregateSignature::default(),
+        },
+        holes_tops: std::collections::HashMap::new(),
+        holes_materialized: false,
+    };
+
+    let result = ctx.mempool.build_signed_block_and_emit(&mut buc).await;
+    assert_ok!(
+        result,
+        "Should build signed block after consuming buffered entries"
+    );
+
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp1.hashed()));
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp2.hashed()));
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp3.hashed()));
 
     Ok(())
 }
@@ -955,12 +1046,12 @@ async fn test_sync_request_single_dp() -> Result<()> {
         .await
         .msg
     {
-        MempoolNetMessage::SyncReply(reply_lane_id, metadata, dp) => {
+        MempoolNetMessage::SyncReply(reply_lane_id, signatures, dp) => {
             assert_eq!(reply_lane_id, lane_id);
             assert_eq!(dp, dp2);
-            assert_eq!(metadata.parent_data_proposal_hash, Some(dp1_hash));
-            assert_eq!(metadata.cumul_size, dp2_size);
-            assert_eq!(metadata.signatures.len(), 1);
+            assert_eq!(signatures.len(), 1);
+            assert_eq!(signatures[0].msg.0, dp2_hash);
+            assert_eq!(signatures[0].msg.1, dp2_size);
         }
         _ => panic!("Expected SyncReply message"),
     }
