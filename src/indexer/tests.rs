@@ -274,13 +274,13 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
 
     // Handling a block containing txs
 
-    let parent_data_proposal = DataProposal::new(None, txs);
+    let lane_id = LaneId::new(ValidatorPublicKey("ttt".into()));
+    let parent_data_proposal = DataProposal::new_root(lane_id.clone(), txs);
     let mut signed_block = SignedBlock::default();
     signed_block.consensus_proposal.slot = 1;
-    signed_block.data_proposals.push((
-        LaneId::new(ValidatorPublicKey("ttt".into())),
-        vec![parent_data_proposal.clone()],
-    ));
+    signed_block
+        .data_proposals
+        .push((lane_id, vec![parent_data_proposal.clone()]));
 
     indexer
         .handle_signed_block(signed_block)
@@ -366,7 +366,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     let parent_data_proposal_hash = parent_data_proposal.hashed();
 
     let data_proposal = DataProposal::new(
-        Some(parent_data_proposal_hash.clone()),
+        parent_data_proposal_hash.clone(),
         vec![register_tx_1_wd.clone(), register_tx_2_wd.clone()],
     );
 
@@ -427,7 +427,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
 
     // We skip blob_transaction_wd
     let data_proposal_2 = DataProposal::new(
-        Some(data_proposal.hashed()),
+        data_proposal.hashed(),
         vec![
             blob_transaction_wd.clone(),
             blob_transaction_wd.clone(),
@@ -671,13 +671,14 @@ async fn test_contract_notifications_sent() -> Result<()> {
         ContractName::new("other"),
     );
 
-    let parent_data_proposal = DataProposal::new(None, vec![register_tx, blob_transaction]);
+    let lane_id = LaneId::new(ValidatorPublicKey("ttt".into()));
+    let parent_data_proposal =
+        DataProposal::new_root(lane_id.clone(), vec![register_tx, blob_transaction]);
     let mut signed_block = SignedBlock::default();
     signed_block.consensus_proposal.slot = 1;
-    signed_block.data_proposals.push((
-        LaneId::new(ValidatorPublicKey("ttt".into())),
-        vec![parent_data_proposal],
-    ));
+    signed_block
+        .data_proposals
+        .push((lane_id, vec![parent_data_proposal]));
     let expected_block = signed_block.clone();
 
     indexer
@@ -839,7 +840,7 @@ async fn scenario_contracts() -> Result<(
         DataProposalHash("test".to_string()),
     );
     // Reconstruct A in a separate DP
-    let parent = Some(b5.data_proposals[0].1[0].hashed());
+    let parent = b5.data_proposals[0].1[0].hashed();
     b5.data_proposals[0].1.push(DataProposal::new(
         parent,
         vec![new_register_tx(ContractName::new("a"), StateCommitment(vec![])).into()],
@@ -1250,7 +1251,7 @@ async fn test_data_proposal_created_does_not_downgrade_success() -> Result<()> {
         version: 1,
         transaction_data: TransactionData::Blob(register_tx.clone()),
     };
-    let parent_dp = DataProposal::new(None, vec![transaction.clone()]);
+    let parent_dp = DataProposal::new_root(LaneId::default(), vec![transaction.clone()]);
     let parent_dp_hash = parent_dp.hashed();
     let tx_metadata = transaction.metadata(parent_dp_hash.clone());
 
@@ -1278,11 +1279,8 @@ async fn test_data_proposal_created_does_not_downgrade_success() -> Result<()> {
 
     let dpc_event = MempoolStatusEvent::DataProposalCreated {
         parent_data_proposal_hash: parent_dp_hash.clone(),
-        data_proposal_hash: DataProposal::new(
-            Some(parent_dp_hash.clone()),
-            vec![transaction.clone()],
-        )
-        .hashed(),
+        data_proposal_hash: DataProposal::new(parent_dp_hash.clone(), vec![transaction.clone()])
+            .hashed(),
         txs_metadatas: vec![tx_metadata.clone()],
     };
     indexer

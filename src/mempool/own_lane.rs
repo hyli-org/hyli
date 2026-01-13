@@ -228,9 +228,11 @@ impl super::Mempool {
     fn init_dp_preparation_if_pending(&mut self, lane_id: &LaneId) -> Result<Option<DataProposal>> {
         self.metrics.snapshot_pending_tx(self.pending_txs_total());
         let parent_hash = self.get_last_data_prop_hash_in_own_lane(lane_id);
-        let parent_hash_for_status = parent_hash
-            .clone()
-            .unwrap_or(DataProposalHash(lane_id.to_string()));
+        let parent = match parent_hash {
+            Some(hash) => DataProposalParent::DP(hash),
+            None => DataProposalParent::LaneRoot(lane_id.clone()),
+        };
+        let parent_hash_for_status = parent.as_tx_parent_hash();
 
         let (collected_txs, cumulative_size, remaining_len) = {
             let Some(waiting) = self.waiting_dissemination_txs.get_mut(lane_id) else {
@@ -274,7 +276,10 @@ impl super::Mempool {
         );
 
         // Create new data proposal
-        let data_proposal = DataProposal::new(parent_hash, collected_txs);
+        let data_proposal = match parent {
+            DataProposalParent::LaneRoot(lane_id) => DataProposal::new_root(lane_id, collected_txs),
+            DataProposalParent::DP(parent_hash) => DataProposal::new(parent_hash, collected_txs),
+        };
 
         Ok(Some(data_proposal))
     }
@@ -294,10 +299,7 @@ impl super::Mempool {
         );
 
         // TODO: handle this differently
-        let parent_data_proposal_hash = data_proposal
-            .parent_data_proposal_hash
-            .clone()
-            .unwrap_or(DataProposalHash(lane_id.to_string()));
+        let parent_data_proposal_hash = data_proposal.parent_data_proposal_hash.as_tx_parent_hash();
 
         let txs_metadatas = data_proposal
             .txs
@@ -897,7 +899,7 @@ pub mod test {
         // TODO: implement this as more of an integration test?
         let (oldest_hash, _) = dps
             .iter()
-            .find(|(_, dp)| dp.parent_data_proposal_hash.is_none())
+            .find(|(_, dp)| dp.parent_data_proposal_hash.is_lane_root())
             .expect("oldest dp should exist");
         ctx1.maybe_disseminate_dp(&ctx1.own_lane(), oldest_hash)
             .expect("disseminate");
