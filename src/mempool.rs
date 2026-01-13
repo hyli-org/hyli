@@ -57,27 +57,43 @@ pub mod tests;
 
 pub use dissemination::DisseminationEvent;
 
-pub struct LongTasksRuntime(std::mem::ManuallyDrop<tokio::runtime::Runtime>);
+enum LongTasksRuntimeInner {
+    Dedicated(std::mem::ManuallyDrop<tokio::runtime::Runtime>),
+    Current(tokio::runtime::Handle),
+}
+
+pub struct LongTasksRuntime(LongTasksRuntimeInner);
 impl Default for LongTasksRuntime {
     fn default() -> Self {
-        Self(std::mem::ManuallyDrop::new(
-            #[allow(clippy::expect_used, reason = "Fails at startup, is OK")]
-            tokio::runtime::Builder::new_multi_thread()
-                // Limit the number of threads arbitrarily to lower the maximal impact on the whole node
-                .worker_threads(3)
-                .thread_name("mempool-hashing")
-                .build()
-                .expect("Failed to create hashing runtime"),
-        ))
+        #[cfg(feature = "turmoil")]
+        {
+            return Self(LongTasksRuntimeInner::Current(tokio::runtime::Handle::current()));
+        }
+
+        #[cfg(not(feature = "turmoil"))]
+        {
+            return Self(LongTasksRuntimeInner::Dedicated(std::mem::ManuallyDrop::new(
+                #[allow(clippy::expect_used, reason = "Fails at startup, is OK")]
+                tokio::runtime::Builder::new_multi_thread()
+                    // Limit the number of threads arbitrarily to lower the maximal impact on the whole node
+                    .worker_threads(3)
+                    .thread_name("mempool-hashing")
+                    .build()
+                    .expect("Failed to create hashing runtime"),
+            )));
+        }
     }
 }
 
 impl Drop for LongTasksRuntime {
     fn drop(&mut self) {
+        let LongTasksRuntimeInner::Dedicated(runtime) = &mut self.0 else {
+            return;
+        };
         // Shut down the hashing runtime.
         // TODO: serialize?
         // Safety: We'll manually drop the runtime below and it won't be double-dropped as we use ManuallyDrop.
-        let rt = unsafe { std::mem::ManuallyDrop::take(&mut self.0) };
+        let rt = unsafe { std::mem::ManuallyDrop::take(runtime) };
         // This has to be done outside the current runtime.
         tokio::task::spawn_blocking(move || {
             #[cfg(test)]
@@ -88,17 +104,12 @@ impl Drop for LongTasksRuntime {
     }
 }
 
-impl Deref for LongTasksRuntime {
-    type Target = tokio::runtime::Runtime;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for LongTasksRuntime {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+impl LongTasksRuntime {
+    pub fn handle(&self) -> tokio::runtime::Handle {
+        match &self.0 {
+            LongTasksRuntimeInner::Dedicated(runtime) => runtime.handle().clone(),
+            LongTasksRuntimeInner::Current(handle) => handle.clone(),
+        }
     }
 }
 

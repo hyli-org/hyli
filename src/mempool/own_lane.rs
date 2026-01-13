@@ -176,7 +176,7 @@ impl super::Mempool {
             let handle = self.inner.long_tasks_runtime.handle();
             self.inner
                 .own_data_proposal_in_preparation
-                .spawn_on(lane_id.clone(), dp, handle);
+                .spawn_on(lane_id.clone(), dp, &handle);
             started = true;
         }
 
@@ -377,13 +377,16 @@ impl super::Mempool {
         #[cfg(test)]
         self.on_new_tx(tx.clone(), &lane_suffix)?;
         #[cfg(not(test))]
-        self.inner.processing_txs.spawn_on(
+        {
+            let handle = self.inner.long_tasks_runtime.handle();
+            self.inner.processing_txs.spawn_on(
             async move {
                 tx.hashed();
                 Ok((tx, lane_suffix))
             },
-            self.inner.long_tasks_runtime.handle(),
-        );
+            &handle,
+            );
+        }
         Ok(())
     }
 
@@ -420,13 +423,14 @@ impl super::Mempool {
                     proof_tx.contract_name
                 );
                 let lane_suffix_owned = lane_suffix_owned.clone();
+                let handle = self.inner.long_tasks_runtime.handle();
                 self.inner.processing_txs.spawn_on(
                     async move {
                         let tx =
                             Self::process_proof_tx(tx).context("Processing proof tx in blocker")?;
                         Ok((tx, lane_suffix_owned))
                     },
-                    self.inner.long_tasks_runtime.handle(),
+                    &handle,
                 );
 
                 return Ok(());
