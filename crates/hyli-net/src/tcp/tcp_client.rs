@@ -120,9 +120,16 @@ where
         let msg_bytes: Bytes = to_tcp_message(&msg)?.try_into()?;
         #[cfg(feature = "turmoil")]
         if intercept::should_drop(&msg_bytes) {
-            trace!("Dropping outbound TCP frame for client {}", self.id);
+            debug!("Dropping outbound TCP frame for client {}", self.id);
             return Ok(());
         }
+        #[cfg(feature = "turmoil")]
+        let msg_bytes = if let Some(corrupted) = intercept::maybe_corrupt(&msg_bytes) {
+            debug!("Corrupting outbound TCP frame for client {}", self.id);
+            corrupted
+        } else {
+            msg_bytes
+        };
         let nb_bytes: usize = (&msg_bytes as &Bytes).len();
         let start = std::time::Instant::now();
         let res = self.sender.send(msg_bytes).await;

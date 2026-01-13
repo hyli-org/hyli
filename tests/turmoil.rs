@@ -8,6 +8,7 @@
 //! - **latency**: Tests for various network latency conditions
 //! - **partition**: Tests for network partitions and message holds
 //! - **message_drop**: Tests for dropped messages (targeted and random)
+//! - **corruption**: Tests for corrupted messages (bit flips, payload modification)
 //! - **node_lifecycle**: Tests for node restarts and dynamic membership
 //! - **workloads**: Test workloads that run during simulations
 
@@ -19,6 +20,8 @@ mod fixtures;
 
 #[path = "turmoil/common.rs"]
 mod common;
+#[path = "turmoil/corruption.rs"]
+mod corruption;
 #[path = "turmoil/latency.rs"]
 mod latency;
 #[path = "turmoil/message_drop.rs"]
@@ -35,6 +38,7 @@ use std::time::Duration;
 use crate::fixtures::turmoil::TurmoilCtx;
 
 // Re-export simulations for use in test macros
+use corruption::simulation_corrupt_random_messages;
 use latency::{
     simulation_basic, simulation_realistic_network, simulation_slow_network, simulation_slow_node,
     simulation_two_slow_nodes,
@@ -175,3 +179,13 @@ turmoil_simple!(691..=700, simulation_drop_all_messages, submit_10_contracts);
 
 turmoil_simple!(611..=620, simulation_one_more_node, submit_10_contracts);
 turmoil_simple!(641..=650, simulation_restart_node, submit_10_contracts);
+
+// =============================================================================
+// Message Corruption Tests
+// =============================================================================
+
+turmoil_simple!(
+    701..=710,
+    simulation_corrupt_random_messages,
+    submit_10_contracts
+);
