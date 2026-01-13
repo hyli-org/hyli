@@ -38,7 +38,10 @@ use std::time::Duration;
 use crate::fixtures::turmoil::TurmoilCtx;
 
 // Re-export simulations for use in test macros
-use corruption::simulation_corrupt_random_messages;
+use corruption::{
+    simulation_corrupt_consensus_messages, simulation_corrupt_mempool_messages,
+    simulation_corrupt_random_messages,
+};
 use latency::{
     simulation_basic, simulation_realistic_network, simulation_slow_network, simulation_slow_node,
     simulation_two_slow_nodes,
@@ -204,5 +207,15 @@ turmoil_simple!(641..=650, simulation_restart_node, submit_10_contracts);
 turmoil_simple!(
     701..=710,
     simulation_corrupt_random_messages,
+    submit_10_contracts
+);
+turmoil_simple!(
+    711..=720,
+    simulation_corrupt_consensus_messages,
+    submit_10_contracts
+);
+turmoil_simple!(
+    721..=730,
+    simulation_corrupt_mempool_messages,
     submit_10_contracts
 );
