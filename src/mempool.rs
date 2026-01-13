@@ -18,7 +18,6 @@ use client_sdk::tcp_client::TcpServerMessage;
 use hyli_crypto::SharedBlstCrypto;
 use hyli_modules::{bus::BusMessage, module_bus_client};
 use hyli_net::ordered_join_set::OrderedJoinSet;
-use indexmap::IndexSet;
 use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
@@ -29,7 +28,7 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
-use storage::{LaneEntryMetadata, Storage};
+use storage::Storage;
 use verify_tx::DataProposalVerdict;
 // Pick one of the two implementations
 // use storage_memory::LanesStorage;
@@ -107,6 +106,7 @@ impl DerefMut for LongTasksRuntime {
 /// It acts as proof the validator committed to making this DP available.
 /// We don't actually sign the Lane ID itself, assuming DPs are unique enough across lanes, as BLS signatures are slow.
 pub type ValidatorDAG = SignedByValidator<(DataProposalHash, LaneBytesSize)>;
+pub type BufferedEntry = (Vec<ValidatorDAG>, DataProposal);
 
 #[derive(Default, BorshSerialize, BorshDeserialize)]
 pub struct MempoolStore {
@@ -120,14 +120,10 @@ pub struct MempoolStore {
     own_data_proposal_in_preparation: own_lane::OwnDataProposalPreparation,
     // Skipped to clear on reset
     #[borsh(skip)]
-    buffered_proposals: BTreeMap<LaneId, IndexSet<DataProposal>>, // This is an indexSet just so we can pop by idx.
+    buffered_entries: BTreeMap<LaneId, HashMap<DataProposalHash, BufferedEntry>>,
     // Skipped to clear on reset
     #[borsh(skip)]
     buffered_votes: BTreeMap<LaneId, BTreeMap<DataProposalHash, Vec<ValidatorDAG>>>,
-    #[borsh(skip)]
-    buffered_sync_replies:
-        BTreeMap<LaneId, HashMap<DataProposalHash, (LaneEntryMetadata, DataProposal)>>,
-
     // verify_tx.rs
     #[borsh(skip)]
     processing_dps: OrderedJoinSet<Result<ProcessedDPEvent>>,
@@ -209,7 +205,7 @@ pub enum MempoolNetMessage {
     DataProposal(LaneId, DataProposalHash, DataProposal, ValidatorDAG),
     DataVote(LaneId, ValidatorDAG),
     SyncRequest(LaneId, Option<DataProposalHash>, Option<DataProposalHash>),
-    SyncReply(LaneId, LaneEntryMetadata, DataProposal),
+    SyncReply(LaneId, Vec<ValidatorDAG>, DataProposal),
 }
 
 impl BusMessage for MempoolNetMessage {}
@@ -251,9 +247,9 @@ impl IntoHeaderSignableData for MempoolNetMessage {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ProcessedDPEvent {
-    OnHashedDataProposal((LaneId, DataProposal)),
-    OnHashedSyncReply((LaneId, LaneEntryMetadata, DataProposal, DataProposalHash)),
+    OnHashedDataProposal((LaneId, DataProposal, ValidatorDAG)),
     OnProcessedDataProposal((LaneId, DataProposalVerdict, DataProposal)),
+    OnHashedSyncReply((LaneId, Vec<ValidatorDAG>, DataProposal, DataProposalHash)),
 }
 
 impl Mempool {
@@ -391,11 +387,11 @@ impl Mempool {
 
     async fn handle_internal_event(&mut self, event: ProcessedDPEvent) -> Result<()> {
         match event {
-            ProcessedDPEvent::OnHashedDataProposal((lane_id, data_proposal)) => self
-                .on_hashed_data_proposal(&lane_id, data_proposal)
+            ProcessedDPEvent::OnHashedDataProposal((lane_id, data_proposal, vote)) => self
+                .on_hashed_data_proposal(&lane_id, data_proposal, vote)
                 .context("Hashing data proposal"),
-            ProcessedDPEvent::OnHashedSyncReply((lane_id, metadata, data_proposal, dp_hash)) => {
-                self.on_hashed_sync_reply(lane_id, metadata, data_proposal, dp_hash)
+            ProcessedDPEvent::OnHashedSyncReply((lane_id, signatures, data_proposal, dp_hash)) => {
+                self.on_hashed_sync_reply(lane_id, signatures, data_proposal, dp_hash)
                     .await
                     .context("Handling sync reply data proposal")
             }
@@ -456,7 +452,7 @@ impl Mempool {
                         validator
                     );
                 }
-                self.on_data_proposal(&lane_id, data_proposal_hash, data_proposal)?;
+                self.on_data_proposal(&lane_id, data_proposal_hash, data_proposal, vdag.clone())?;
                 self.on_data_vote(lane_id, vdag)?;
             }
             MempoolNetMessage::DataVote(lane_id, vdag) => {
@@ -475,8 +471,8 @@ impl Mempool {
                 )
                 .await?;
             }
-            MempoolNetMessage::SyncReply(lane_id, metadata, data_proposal) => {
-                self.on_sync_reply(&lane_id, validator, metadata, data_proposal)
+            MempoolNetMessage::SyncReply(lane_id, sigs, data_proposal) => {
+                self.on_sync_reply(&lane_id, validator, sigs, data_proposal)
                     .await?;
             }
         }

@@ -555,7 +555,7 @@ impl DisseminationManager {
                     .crypto
                     .sign_msg_with_header(MempoolNetMessage::SyncReply(
                         lane_id.clone(),
-                        metadata.clone(),
+                        metadata.signatures.clone(),
                         data_proposal,
                     ));
 

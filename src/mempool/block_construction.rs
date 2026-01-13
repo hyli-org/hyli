@@ -9,7 +9,7 @@ use hyli_modules::{log_error, log_warn};
 
 use super::{
     storage::{LaneEntryMetadata, MetadataOrMissingHash, Storage},
-    DisseminationEvent,
+    DisseminationEvent, ValidatorDAG,
 };
 use anyhow::{bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -19,7 +19,7 @@ use tracing::{debug, error, trace, warn};
 pub struct BlockUnderConstruction {
     pub from: Option<Cut>,
     pub ccp: CommittedConsensusProposal,
-    pub holes_tops: HashMap<LaneId, DataProposalHash>,
+    pub holes_tops: HashMap<LaneId, (DataProposalHash, LaneBytesSize)>,
     pub holes_materialized: bool,
 }
 
@@ -28,19 +28,10 @@ impl super::Mempool {
         &mut self,
         lane_id: &LaneId,
         sender_validator: &ValidatorPublicKey,
-        metadata: LaneEntryMetadata,
+        signatures: Vec<ValidatorDAG>,
         data_proposal: DataProposal,
     ) -> Result<()> {
         debug!("SyncReply from validator {sender_validator}");
-
-        if metadata.parent_data_proposal_hash != data_proposal.parent_data_proposal_hash {
-            bail!(
-                "SyncReply parent hash mismatch for lane {}: metadata {:?} vs data proposal {:?}",
-                lane_id,
-                metadata.parent_data_proposal_hash,
-                data_proposal.parent_data_proposal_hash
-            );
-        }
 
         self.metrics
             .sync_reply_receive(lane_id, self.crypto.validator_pubkey());
@@ -48,7 +39,7 @@ impl super::Mempool {
         #[cfg(test)]
         {
             let dp_hash = data_proposal.hashed();
-            self.on_hashed_sync_reply(lane_id.clone(), metadata, data_proposal, dp_hash)
+            self.on_hashed_sync_reply(lane_id.clone(), signatures, data_proposal, dp_hash)
                 .await?;
         }
         #[cfg(not(test))]
@@ -59,7 +50,7 @@ impl super::Mempool {
                     let dp_hash = data_proposal.hashed();
                     Ok(crate::mempool::ProcessedDPEvent::OnHashedSyncReply((
                         lane_id_clone,
-                        metadata,
+                        signatures,
                         data_proposal,
                         dp_hash,
                     )))
@@ -74,35 +65,16 @@ impl super::Mempool {
     pub(super) async fn on_hashed_sync_reply(
         &mut self,
         lane_id: LaneId,
-        metadata: LaneEntryMetadata,
+        signatures: Vec<ValidatorDAG>,
         data_proposal: DataProposal,
         dp_hash: DataProposalHash,
     ) -> Result<()> {
         // We don't check if we already have stored the DP just in case
         // we processed it async between hole materialization and now.
 
-        // We checked metadata parent / dp parent hash consistency earlier so skip this now.
-
-        // Check that the lane operator signed these entries
-        // TODO: this feels technically un-necessary as we have committed them already?
-
-        let lane_operator = self.get_lane_operator(&lane_id);
-        let expected_message = (dp_hash.clone(), metadata.cumul_size);
-        let missing_entry_not_present = !metadata
-            .signatures
-            .iter()
-            .any(|s| &s.signature.validator == lane_operator && s.msg == expected_message);
-
-        if missing_entry_not_present {
-            bail!(
-                "At least one lane entry is missing signature from {}",
-                lane_operator
-            );
-        }
-
         trace!(
             "Filling hole with 1 entry (parent dp hash: {:?}) for {lane_id}",
-            metadata.parent_data_proposal_hash
+            data_proposal.parent_data_proposal_hash
         );
 
         // Check if we can find the BUC this belongs to.
@@ -110,14 +82,17 @@ impl super::Mempool {
         // to do this loop pop / push.
         for _ in 0..self.blocks_under_contruction.len() {
             if let Some(mut buc) = self.blocks_under_contruction.pop_front() {
-                let hole_top = buc.holes_tops.get(&lane_id);
-                if hole_top == Some(&dp_hash) {
+                let Some((hole_top, ..)) = buc.holes_tops.get(&lane_id) else {
+                    self.blocks_under_contruction.push_back(buc);
+                    continue;
+                };
+                if hole_top == &dp_hash {
                     // This uses a non-recursive loop to avoid stack overflow,
                     // unfortunately results in rather cumbersome code to write.
                     self.try_to_fill_hole_in_lane(
                         &mut buc,
                         &lane_id,
-                        metadata,
+                        signatures,
                         data_proposal,
                         dp_hash.clone(),
                     )
@@ -144,10 +119,10 @@ impl super::Mempool {
             "Buffering SyncReply entry for lane {} with hash {}",
             lane_id, dp_hash
         );
-        self.buffered_sync_replies
+        self.buffered_entries
             .entry(lane_id.clone())
             .or_default()
-            .insert(dp_hash.clone(), (metadata, data_proposal));
+            .insert(dp_hash.clone(), (signatures, data_proposal));
 
         Ok(())
     }
@@ -156,14 +131,18 @@ impl super::Mempool {
         &mut self,
         buc: &mut BlockUnderConstruction,
         lane_id: &LaneId,
-        mut metadata: LaneEntryMetadata,
+        mut signatures: Vec<ValidatorDAG>,
         mut data_proposal: DataProposal,
         mut dp_hash: DataProposalHash,
     ) -> Result<()> {
-        let mut hole_top = buc.holes_tops.get(lane_id);
-        while Some(&dp_hash) == hole_top {
+        let (mut hole_top, Some(mut lane_size)) =
+            buc.holes_tops.get(lane_id).map(|v| (&v.0, v.1)).unzip()
+        else {
+            return Ok(());
+        };
+        while hole_top == Some(&dp_hash) {
             // Move the hole top down
-            if let Some(ref parent_hash) = metadata.parent_data_proposal_hash {
+            if let Some(ref parent_hash) = data_proposal.parent_data_proposal_hash {
                 // If we reached the 'from' cut, remove the hole
                 if buc.from.as_ref().is_some_and(|from_cut| {
                     from_cut.iter().any(|(from_lane_id, from_dp_hash, _, _)| {
@@ -174,14 +153,35 @@ impl super::Mempool {
                     hole_top = None;
                 } else {
                     let r = buc.holes_tops.entry(lane_id.clone()).or_default();
-                    *r = parent_hash.clone();
-                    hole_top = Some(r);
+                    r.0 = parent_hash.clone();
+                    hole_top = Some(&r.0);
                 }
             } else {
                 buc.holes_tops.remove(lane_id); // Just remove otherwise
                 hole_top = None;
             }
-            let cumul_size = metadata.cumul_size;
+
+            // We have found a hole matching this DP - we don't really need to validate signatures to handle it,
+            // as it was part of the cut, but as a warn if signatures don't match
+            let lane_operator = self.get_lane_operator(lane_id);
+            let found_operator_signature = signatures.iter().any(|s| {
+                &s.signature.validator == lane_operator
+                    && s.msg.0 == dp_hash
+                    && s.msg.1 == lane_size
+            });
+            if !found_operator_signature {
+                warn!(
+                    "Operator signature missing from sync reply entry {lane_operator} for DP {dp_hash}"
+                );
+            }
+
+            let dp_size = data_proposal.estimate_size() as u64;
+            let metadata = LaneEntryMetadata {
+                parent_data_proposal_hash: data_proposal.parent_data_proposal_hash.clone(),
+                cumul_size: lane_size,
+                signatures,
+                cached_poda: None,
+            };
             self.lanes
                 .put_no_verification(lane_id.clone(), (metadata, data_proposal))?;
             Self::send_dissemination_event_over(
@@ -189,7 +189,7 @@ impl super::Mempool {
                 DisseminationEvent::DpStored {
                     lane_id: lane_id.clone(),
                     data_proposal_hash: dp_hash.clone(),
-                    cumul_size,
+                    cumul_size: lane_size,
                 },
             )?;
             Self::send_dissemination_event_over(
@@ -209,14 +209,22 @@ impl super::Mempool {
             let Some(ht) = hole_top else {
                 break;
             };
-            let Some(buffered) = self.inner.buffered_sync_replies.get_mut(lane_id) else {
+            let Some(buffered) = self.inner.buffered_entries.get_mut(lane_id) else {
                 break;
             };
-            let Some((m, dp)) = buffered.remove(ht) else {
+            let Some((sigs, dp)) = buffered.remove(ht) else {
                 break;
             };
+            let Some(new_lane_size) = lane_size.0.checked_sub(dp_size) else {
+                bail!(
+                    "Lane size underflow while filling hole for lane {lane_id}: current {:?}, dp_size {}",
+                    lane_size,
+                    dp_size
+                );
+            };
+            lane_size = LaneBytesSize(new_lane_size);
             dp_hash = ht.clone();
-            metadata = m;
+            signatures = sigs;
             data_proposal = dp;
         }
         Ok(())
@@ -261,7 +269,7 @@ impl super::Mempool {
 
         let mut any_missing = false;
 
-        for (lane_id, to_hash, _, _) in buc.ccp.consensus_proposal.cut.iter() {
+        for (lane_id, to_hash, cumul_size, _) in buc.ccp.consensus_proposal.cut.iter() {
             trace!("Processing lane {} with to_hash {}", lane_id, to_hash);
             let from_hash = buc
                 .from
@@ -289,7 +297,7 @@ impl super::Mempool {
                             hash, lane_id
                         );
                         // Record missing hash as hole top
-                        buc.holes_tops.insert(lane_id.clone(), hash);
+                        buc.holes_tops.insert(lane_id.clone(), (hash, *cumul_size));
                         any_missing = true;
                         break;
                     }
@@ -299,7 +307,8 @@ impl super::Mempool {
                             from_hash, to_hash
                         );
                         // Record the to_hash as hole top
-                        buc.holes_tops.insert(lane_id.clone(), to_hash.clone());
+                        buc.holes_tops
+                            .insert(lane_id.clone(), (to_hash.clone(), *cumul_size));
                         any_missing = true;
                         break;
                     }
@@ -370,22 +379,22 @@ impl super::Mempool {
         if !buc.holes_materialized && self.materialize_holes_for_signed_block(buc).await? {
             // Borrowing makes this unworkable without the vec workaround.
             let mut fill_from = vec![];
-            for (lane_id, to_hash) in &buc.holes_tops {
-                if let Some((metadata, data_proposal)) = self
-                    .buffered_sync_replies
+            for (lane_id, (to_hash, _)) in &buc.holes_tops {
+                if let Some((signatures, data_proposal)) = self
+                    .buffered_entries
                     .get_mut(lane_id)
                     .and_then(|m| m.remove(to_hash))
                 {
-                    fill_from.push((lane_id.clone(), metadata, data_proposal, to_hash.clone()));
+                    fill_from.push((lane_id.clone(), signatures, data_proposal, to_hash.clone()));
                 }
             }
-            for (lane_id, metadata, data_proposal, to_hash) in fill_from {
-                self.try_to_fill_hole_in_lane(buc, &lane_id, metadata, data_proposal, to_hash)
+            for (lane_id, signatures, data_proposal, to_hash) in fill_from {
+                self.try_to_fill_hole_in_lane(buc, &lane_id, signatures, data_proposal, to_hash)
                     .await?;
             }
             // Now send sync requests for remaining holes.
             // For simplicity I'll just re-loop here.
-            for (lane_id, to_hash) in &buc.holes_tops {
+            for (lane_id, (to_hash, _)) in &buc.holes_tops {
                 debug!(
                     "Still have hole for lane {} at top {} in BUC(slot: {})",
                     lane_id, to_hash, buc.ccp.consensus_proposal.slot
