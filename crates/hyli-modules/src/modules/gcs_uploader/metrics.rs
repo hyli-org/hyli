@@ -12,11 +12,14 @@ pub struct GcsUploaderMetrics {
     proofs_failed: Counter<u64>,
     bytes_uploaded: Counter<u64>,
     retries: Counter<u64>,
+    holes_detected: Counter<u64>,
 
     // Gauges
     queue_size: Gauge<u64>,
     retry_queue_size: Gauge<u64>,
     last_uploaded_height: Gauge<u64>,
+    missing_blocks: Gauge<u64>,
+    missing_ranges: Gauge<u64>,
 
     // Histograms
     upload_latency_seconds: Histogram<f64>,
@@ -35,9 +38,12 @@ impl GcsUploaderMetrics {
             proofs_failed: meter.u64_counter("gcs_proofs_failed").build(),
             bytes_uploaded: meter.u64_counter("gcs_bytes_uploaded").build(),
             retries: meter.u64_counter("gcs_retries").build(),
+            holes_detected: meter.u64_counter("gcs_holes_detected").build(),
             queue_size: meter.u64_gauge("gcs_queue_size").build(),
             retry_queue_size: meter.u64_gauge("gcs_retry_queue_size").build(),
             last_uploaded_height: meter.u64_gauge("gcs_last_uploaded_height").build(),
+            missing_blocks: meter.u64_gauge("gcs_missing_blocks").build(),
+            missing_ranges: meter.u64_gauge("gcs_missing_ranges").build(),
             upload_latency_seconds: meter.f64_histogram("gcs_upload_latency_seconds").build(),
             upload_size_bytes: meter.u64_histogram("gcs_upload_size_bytes").build(),
         }
@@ -75,5 +81,18 @@ impl GcsUploaderMetrics {
 
     pub fn record_last_uploaded_height(&self, height: u64) {
         self.last_uploaded_height.record(height, &[]);
+    }
+
+    pub fn record_hole_detected(&self, blocks_count: u64) {
+        self.holes_detected.add(1, &[]);
+        self.missing_blocks.record(blocks_count, &[]);
+    }
+
+    pub fn record_missing_ranges(&self, count: u64) {
+        self.missing_ranges.record(count, &[]);
+    }
+
+    pub fn record_missing_blocks(&self, count: u64) {
+        self.missing_blocks.record(count, &[]);
     }
 }

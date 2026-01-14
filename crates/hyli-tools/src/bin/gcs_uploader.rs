@@ -9,7 +9,10 @@ use hyli_modules::{
         ModulesHandler,
         da_listener::DAListenerConf,
         da_listener::SignedDAListener,
-        gcs_uploader::{GCSConf, GcsUploader, GcsUploaderCtx},
+        gcs_uploader::{
+            GCSConf, GcsStorageBackend, GcsUploader, GcsUploaderCtx, LocalStorageBackend,
+            StorageBackend,
+        },
     },
     utils::logger::setup_otlp,
 };
@@ -23,6 +26,10 @@ pub struct Args {
 
     #[arg(long, default_value = "false")]
     pub tracing: bool,
+
+    /// Run audit mode to check for missing blocks in storage
+    #[arg(long, default_value = "false")]
+    pub audit: bool,
 }
 
 pub type SharedConf = Arc<GcsUploaderCtx>;
@@ -37,6 +44,12 @@ async fn main() -> Result<()> {
         "gcs block uploader".to_string(),
         args.tracing,
     )?;
+
+    // Run audit mode if requested
+    if args.audit {
+        tracing::info!("Running storage audit");
+        return run_audit(&config).await;
+    }
 
     tracing::info!("Starting GCS block uploader");
 
@@ -71,6 +84,51 @@ async fn main() -> Result<()> {
     // Run forever
     handler.start_modules().await?;
     handler.exit_process().await?;
+
+    Ok(())
+}
+
+async fn run_audit(config: &Conf) -> Result<()> {
+    tracing::info!("Creating storage backend for audit");
+
+    // Create storage backend based on config
+    let storage: Box<dyn StorageBackend> = match config.gcs.storage_backend.as_str() {
+        "local" => {
+            tracing::info!("Using local storage backend");
+            Box::new(LocalStorageBackend::new(
+                config.data_directory.join("gcs_storage"),
+            )?)
+        }
+        "gcs" => {
+            tracing::info!("Using GCS storage backend");
+            Box::new(
+                GcsStorageBackend::new(
+                    config.gcs.gcs_bucket.clone(),
+                    config.gcs.gcs_prefix.clone(),
+                )
+                .await?,
+            )
+        }
+        _ => {
+            return Err(anyhow::anyhow!(
+                "Unknown storage backend: {}",
+                config.gcs.storage_backend
+            ));
+        }
+    };
+
+    tracing::info!(
+        "Running audit on storage with prefix: {}",
+        config.gcs.gcs_prefix
+    );
+
+    // Run audit
+    let result = storage.audit_storage(&config.gcs.gcs_prefix).await?;
+
+    // Print report
+    result.print_report();
+
+    tracing::info!("Audit complete");
 
     Ok(())
 }

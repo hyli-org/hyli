@@ -99,11 +99,15 @@ impl Module for GcsUploader {
         // Initialize metrics with current state
         metrics.record_last_uploaded_height(store.last_uploaded_height.0);
         metrics.record_retry_queue_size(store.retry_queue.len() as u64);
+        metrics.record_missing_blocks(store.missing_blocks_count());
+        metrics.record_missing_ranges(store.missing_ranges.len() as u64);
 
         tracing::info!(
-            "GCS Uploader initialized - last uploaded height: {}, retry queue size: {}",
+            "GCS Uploader initialized - last uploaded height: {}, retry queue size: {}, missing blocks: {}, missing ranges: {}",
             store.last_uploaded_height.0,
-            store.retry_queue.len()
+            store.retry_queue.len(),
+            store.missing_blocks_count(),
+            store.missing_ranges.len()
         );
 
         Ok(GcsUploader {
@@ -219,6 +223,43 @@ impl GcsUploader {
         if block_height <= self.store.last_uploaded_height {
             debug!("Skipping already uploaded block {}", block_height);
             return Ok(());
+        }
+
+        // Detect holes - check if this block creates a gap
+        let expected_next_height = BlockHeight(self.store.last_uploaded_height.0 + 1);
+        if block_height > expected_next_height {
+            let hole_start = expected_next_height;
+            let hole_end = BlockHeight(block_height.0 - 1);
+            let hole_size = hole_end.0 - hole_start.0 + 1;
+
+            tracing::warn!(
+                "Detected hole in block sequence: missing blocks {}-{} ({} blocks)",
+                hole_start.0,
+                hole_end.0,
+                hole_size
+            );
+
+            // Add missing range to store
+            self.store.add_missing_range(hole_start, hole_end);
+
+            // Update metrics
+            self.metrics.record_hole_detected(hole_size);
+            self.metrics
+                .record_missing_blocks(self.store.missing_blocks_count());
+            self.metrics
+                .record_missing_ranges(self.store.missing_ranges.len() as u64);
+        }
+
+        // Check if this block fills a hole
+        if self.store.is_missing(block_height) {
+            tracing::info!("Block {} fills a hole in the sequence", block_height.0);
+            self.store.remove_block_from_missing(block_height);
+
+            // Update metrics
+            self.metrics
+                .record_missing_blocks(self.store.missing_blocks_count());
+            self.metrics
+                .record_missing_ranges(self.store.missing_ranges.len() as u64);
         }
 
         // Add to buffer
