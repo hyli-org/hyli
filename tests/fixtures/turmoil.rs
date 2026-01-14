@@ -11,7 +11,7 @@ use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli::{entrypoint::main_process, utils::conf::Conf};
 use hyli_crypto::BlstCrypto;
 use hyli_net::net::Sim;
-use hyli_net::tcp::intercept::{set_message_corrupt_scoped, set_message_intercept_scoped};
+use hyli_net::tcp::intercept::{set_message_hook_scoped, MessageAction};
 use hyli_net::tcp::{decode_tcp_payload, P2PTcpMessage};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tempfile::TempDir;
@@ -25,57 +25,62 @@ use hyli::consensus::ConsensusNetMessage;
 use hyli::mempool::MempoolNetMessage;
 use hyli::p2p::network::{MsgWithHeader, NetMessage};
 
-pub struct NetMessageDropper {
-    _guard: hyli_net::tcp::intercept::MessageInterceptGuard,
+pub struct NetMessageInterceptor {
+    _guard: hyli_net::tcp::intercept::MessageHookGuard,
 }
 
-pub fn install_net_message_dropper<F>(mut should_drop: F) -> NetMessageDropper
+pub fn install_net_message_dropper<F>(mut should_drop: F) -> NetMessageInterceptor
 where
     F: FnMut(&NetMessage) -> bool + Send + 'static,
 {
-    let guard = set_message_intercept_scoped(move |bytes| {
+    let guard = set_message_hook_scoped(move |bytes| {
         let (_, message) = match decode_tcp_payload::<P2PTcpMessage<NetMessage>>(bytes) {
             Ok(message) => message,
-            Err(_) => return false,
+            Err(_) => return MessageAction::Pass,
         };
 
         match message {
-            P2PTcpMessage::Data(net_msg) => should_drop(&net_msg),
-            P2PTcpMessage::Handshake(_) => false,
+            P2PTcpMessage::Data(net_msg) => {
+                if should_drop(&net_msg) {
+                    MessageAction::Drop
+                } else {
+                    MessageAction::Pass
+                }
+            }
+            P2PTcpMessage::Handshake(_) => MessageAction::Pass,
         }
     });
 
-    NetMessageDropper { _guard: guard }
-}
-
-pub struct NetMessageCorrupter {
-    _guard: hyli_net::tcp::intercept::MessageCorruptGuard,
+    NetMessageInterceptor { _guard: guard }
 }
 
 /// Install a message corrupter that can modify messages before they are sent.
 /// The callback receives the decoded NetMessage and original bytes, and returns
 /// `Some(corrupted_bytes)` to corrupt the message or `None` to leave it unchanged.
-pub fn install_net_message_corrupter<F>(mut corrupt: F) -> NetMessageCorrupter
+pub fn install_net_message_corrupter<F>(mut corrupt: F) -> NetMessageInterceptor
 where
     F: FnMut(&NetMessage, &[u8]) -> Option<Bytes> + Send + 'static,
 {
-    let guard = set_message_corrupt_scoped(move |bytes| {
+    let guard = set_message_hook_scoped(move |bytes| {
         let (_, message) = match decode_tcp_payload::<P2PTcpMessage<NetMessage>>(bytes) {
             Ok(message) => message,
-            Err(_) => return None,
+            Err(_) => return MessageAction::Pass,
         };
 
         match message {
-            P2PTcpMessage::Data(net_msg) => corrupt(&net_msg, bytes),
-            P2PTcpMessage::Handshake(_) => None,
+            P2PTcpMessage::Data(net_msg) => match corrupt(&net_msg, bytes) {
+                Some(corrupted) => MessageAction::Replace(corrupted),
+                None => MessageAction::Pass,
+            },
+            P2PTcpMessage::Handshake(_) => MessageAction::Pass,
         }
     });
 
-    NetMessageCorrupter { _guard: guard }
+    NetMessageInterceptor { _guard: guard }
 }
 
 /// Install a message corrupter that only targets consensus messages.
-pub fn install_consensus_message_corrupter<F>(mut corrupt: F) -> NetMessageCorrupter
+pub fn install_consensus_message_corrupter<F>(mut corrupt: F) -> NetMessageInterceptor
 where
     F: FnMut(&MsgWithHeader<ConsensusNetMessage>, &[u8]) -> Option<Bytes> + Send + 'static,
 {
@@ -86,7 +91,7 @@ where
 }
 
 /// Install a message corrupter that only targets mempool messages.
-pub fn install_mempool_message_corrupter<F>(mut corrupt: F) -> NetMessageCorrupter
+pub fn install_mempool_message_corrupter<F>(mut corrupt: F) -> NetMessageInterceptor
 where
     F: FnMut(&MsgWithHeader<MempoolNetMessage>, &[u8]) -> Option<Bytes> + Send + 'static,
 {

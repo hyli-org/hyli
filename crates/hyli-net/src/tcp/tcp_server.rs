@@ -523,29 +523,29 @@ where
                         break;
                     };
                     #[cfg(feature = "turmoil")]
-                    if should_check_drop && intercept::should_drop(&msg_bytes) {
-                        let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
-                        trace!(
-                            pool = %pool,
-                            "Dropping outbound TCP frame for peer {} (socket_addr={})",
-                            label,
-                            cloned_socket_addr
-                        );
-                        continue;
-                    }
-                    #[cfg(feature = "turmoil")]
                     let msg_bytes = if should_check_drop {
-                        if let Some(corrupted) = intercept::maybe_corrupt(&msg_bytes) {
-                            let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
-                            trace!(
-                                pool = %pool,
-                                "Corrupting outbound TCP frame for peer {} (socket_addr={})",
-                                label,
-                                cloned_socket_addr
-                            );
-                            corrupted
-                        } else {
-                            msg_bytes
+                        match intercept::intercept_message(&msg_bytes) {
+                            intercept::MessageAction::Pass => msg_bytes,
+                            intercept::MessageAction::Drop => {
+                                let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
+                                trace!(
+                                    pool = %pool,
+                                    "Dropping outbound TCP frame for peer {} (socket_addr={})",
+                                    label,
+                                    cloned_socket_addr
+                                );
+                                continue;
+                            }
+                            intercept::MessageAction::Replace(corrupted) => {
+                                let label = peer_label_or_addr(&peer_label, &cloned_socket_addr);
+                                trace!(
+                                    pool = %pool,
+                                    "Corrupting outbound TCP frame for peer {} (socket_addr={})",
+                                    label,
+                                    cloned_socket_addr
+                                );
+                                corrupted
+                            }
                         }
                     } else {
                         msg_bytes
