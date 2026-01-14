@@ -823,6 +823,12 @@ impl Consensus {
                             );
                         }
 
+                        // Schedule timeout for both leader and follower to ensure recovery from stuck states
+                        self.store.bft_round_state.timeout.state.schedule_next(
+                            TimestampMsClock::now(),
+                            self.config.consensus.timeout_after,
+                        );
+
                         // Send a CommitConsensusProposal for the genesis block
                         _ = log_error!(self
                             .bus
