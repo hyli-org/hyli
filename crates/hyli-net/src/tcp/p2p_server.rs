@@ -1143,6 +1143,7 @@ where
 
         let mut ordered_addrs: Vec<String> =
             peer_addr_to_pubkey.iter().map(|(addr, _)| addr.clone()).collect();
+        #[cfg(feature = "turmoil")]
         ordered_addrs.shuffle(&mut deterministic_rng());
 
         let res = self
