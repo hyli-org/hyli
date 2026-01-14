@@ -6,11 +6,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context;
+use bytes::Bytes;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli::{entrypoint::main_process, utils::conf::Conf};
 use hyli_crypto::BlstCrypto;
 use hyli_net::net::Sim;
-use hyli_net::tcp::intercept::set_message_intercept_scoped;
+use hyli_net::tcp::intercept::{set_message_hook_scoped, MessageAction};
 use hyli_net::tcp::{decode_tcp_payload, P2PTcpMessage};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tempfile::TempDir;
@@ -20,29 +21,84 @@ use tracing::info;
 use anyhow::Result;
 
 use crate::fixtures::test_helpers::ConfMaker;
-use hyli::p2p::network::NetMessage;
+use hyli::consensus::ConsensusNetMessage;
+use hyli::mempool::MempoolNetMessage;
+use hyli::p2p::network::{MsgWithHeader, NetMessage};
 
-pub struct NetMessageDropper {
-    _guard: hyli_net::tcp::intercept::MessageInterceptGuard,
+pub struct NetMessageInterceptor {
+    _guard: hyli_net::tcp::intercept::MessageHookGuard,
 }
 
-pub fn install_net_message_dropper<F>(mut should_drop: F) -> NetMessageDropper
+pub fn install_net_message_dropper<F>(mut should_drop: F) -> NetMessageInterceptor
 where
     F: FnMut(&NetMessage) -> bool + Send + 'static,
 {
-    let guard = set_message_intercept_scoped(move |bytes| {
+    let guard = set_message_hook_scoped(move |bytes| {
         let (_, message) = match decode_tcp_payload::<P2PTcpMessage<NetMessage>>(bytes) {
             Ok(message) => message,
-            Err(_) => return false,
+            Err(_) => return MessageAction::Pass,
         };
 
         match message {
-            P2PTcpMessage::Data(net_msg) => should_drop(&net_msg),
-            P2PTcpMessage::Handshake(_) => false,
+            P2PTcpMessage::Data(net_msg) => {
+                if should_drop(&net_msg) {
+                    MessageAction::Drop
+                } else {
+                    MessageAction::Pass
+                }
+            }
+            P2PTcpMessage::Handshake(_) => MessageAction::Pass,
         }
     });
 
-    NetMessageDropper { _guard: guard }
+    NetMessageInterceptor { _guard: guard }
+}
+
+/// Install a message corrupter that can modify messages before they are sent.
+/// The callback receives the decoded NetMessage and original bytes, and returns
+/// `Some(corrupted_bytes)` to corrupt the message or `None` to leave it unchanged.
+pub fn install_net_message_corrupter<F>(mut corrupt: F) -> NetMessageInterceptor
+where
+    F: FnMut(&NetMessage, &[u8]) -> Option<Bytes> + Send + 'static,
+{
+    let guard = set_message_hook_scoped(move |bytes| {
+        let (_, message) = match decode_tcp_payload::<P2PTcpMessage<NetMessage>>(bytes) {
+            Ok(message) => message,
+            Err(_) => return MessageAction::Pass,
+        };
+
+        match message {
+            P2PTcpMessage::Data(net_msg) => match corrupt(&net_msg, bytes) {
+                Some(corrupted) => MessageAction::Replace(corrupted),
+                None => MessageAction::Pass,
+            },
+            P2PTcpMessage::Handshake(_) => MessageAction::Pass,
+        }
+    });
+
+    NetMessageInterceptor { _guard: guard }
+}
+
+/// Install a message corrupter that only targets consensus messages.
+pub fn install_consensus_message_corrupter<F>(mut corrupt: F) -> NetMessageInterceptor
+where
+    F: FnMut(&MsgWithHeader<ConsensusNetMessage>, &[u8]) -> Option<Bytes> + Send + 'static,
+{
+    install_net_message_corrupter(move |message, bytes| match message {
+        NetMessage::ConsensusMessage(consensus_msg) => corrupt(consensus_msg, bytes),
+        NetMessage::MempoolMessage(_) => None,
+    })
+}
+
+/// Install a message corrupter that only targets mempool messages.
+pub fn install_mempool_message_corrupter<F>(mut corrupt: F) -> NetMessageInterceptor
+where
+    F: FnMut(&MsgWithHeader<MempoolNetMessage>, &[u8]) -> Option<Bytes> + Send + 'static,
+{
+    install_net_message_corrupter(move |message, bytes| match message {
+        NetMessage::MempoolMessage(mempool_msg) => corrupt(mempool_msg, bytes),
+        NetMessage::ConsensusMessage(_) => None,
+    })
 }
 #[derive(Clone)]
 pub struct TurmoilHost {
@@ -249,6 +305,16 @@ impl TurmoilCtx {
 
     /// Check that all nodes converge to the same height and commit root.
     pub async fn assert_cluster_converged(&self, min_height: u64) -> anyhow::Result<()> {
+        self.assert_cluster_converged_with_max_delta(min_height, 0)
+            .await
+    }
+
+    /// Check that all nodes converge to at least `min_height` within `max_delta` blocks.
+    pub async fn assert_cluster_converged_with_max_delta(
+        &self,
+        min_height: u64,
+        max_delta: u64,
+    ) -> anyhow::Result<()> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
 
         loop {
@@ -261,16 +327,17 @@ impl TurmoilCtx {
             let min = heights.iter().map(|(_, h)| *h).min().unwrap();
             let max = heights.iter().map(|(_, h)| *h).max().unwrap();
 
-            if min >= min_height && min == max {
+            if min >= min_height && max.saturating_sub(min) <= max_delta {
                 return Ok(());
             }
 
             if tokio::time::Instant::now() >= deadline {
                 anyhow::bail!(
-                    "Cluster did not converge: min height {}, max height {}, expected >= {} ({:?})",
+                    "Cluster did not converge: min height {}, max height {}, expected >= {} with max delta {} ({:?})",
                     min,
                     max,
                     min_height,
+                    max_delta,
                     heights
                 );
             }

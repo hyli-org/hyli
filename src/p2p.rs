@@ -195,10 +195,7 @@ impl P2P {
         if msg.header.msg.timestamp.abs_diff(TimestampMsClock::now().0) > 3_600_000 {
             bail!("Message timestamp too far from current time");
         }
-        let result = BlstCrypto::verify(&msg.header)?;
-        if !result {
-            bail!("Invalid header signature for message {:?}", msg);
-        }
+        BlstCrypto::verify(&msg.header)?;
         // Verify the message matches the signed data
         if msg.header.msg.hash != msg.msg.to_header_signable_data() {
             bail!("Invalid signed hash for message {:?}", msg);
