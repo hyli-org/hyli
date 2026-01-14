@@ -16,14 +16,14 @@ use block_construction::BlockUnderConstruction;
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
 use hyli_crypto::SharedBlstCrypto;
-use hyli_crypto::collections::DeterministicMap;
+use hyli_deterministic::collections::DeterministicMap;
 use hyli_modules::{bus::BusMessage, module_bus_client};
 use hyli_net::ordered_join_set::OrderedJoinSet;
 use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     fmt::Display,
     ops::{Deref, DerefMut},
     path::PathBuf,

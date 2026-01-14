@@ -38,9 +38,7 @@ use blst::min_pk::{
 pub use hyli_model::{
     AggregateSignature, Signed, SignedByValidator, ValidatorPublicKey, ValidatorSignature,
 };
-pub mod deterministic_rng;
-pub mod collections;
-pub mod tokio_select;
+// deterministic utilities moved to hyli-deterministic
 
 #[derive(Clone)]
 pub struct BlstCrypto {

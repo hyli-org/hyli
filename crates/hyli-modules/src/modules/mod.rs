@@ -18,7 +18,7 @@ use rand::{distr::Alphanumeric, Rng};
 use tokio::task::JoinHandle;
 use tracing::{debug, info};
 
-use hyli_crypto::deterministic_rng::deterministic_rng;
+use hyli_deterministic::deterministic_rng::deterministic_rng;
 
 const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -177,7 +177,7 @@ pub mod signal {
         F: std::future::IntoFuture,
     {
         let mut dummy = false;
-        hyli_crypto::tokio_select_biased! {
+        hyli_deterministic::tokio_select_biased! {
             _ = async_receive_shutdown::<M>(
                 &mut dummy,
                 receiver.get_mut(),
@@ -200,7 +200,7 @@ pub mod signal {
         F: std::future::IntoFuture,
     {
         let mut dummy = false;
-        hyli_crypto::tokio_select_biased! {
+        hyli_deterministic::tokio_select_biased! {
             _ = tokio::time::sleep(duration) => {
                 anyhow::bail!("Timeout reached");
             }
@@ -379,7 +379,7 @@ impl ModulesHandler {
                     }
                 });
 
-                let res = hyli_crypto::tokio_select_biased! {
+                let res = hyli_deterministic::tokio_select_biased! {
                     res = module_task => {
                         res
                     },
@@ -490,7 +490,7 @@ impl ModulesHandler {
             use tokio::signal::unix;
             let mut interrupt = unix::signal(unix::SignalKind::interrupt())?;
             let mut terminate = unix::signal(unix::SignalKind::terminate())?;
-            hyli_crypto::tokio_select_biased! {
+            hyli_deterministic::tokio_select_biased! {
                 res = self.shutdown_loop() => {
                     _ = log_error!(res, "Shutdown Loop triggered");
                 }
@@ -505,7 +505,7 @@ impl ModulesHandler {
         }
         #[cfg(not(unix))]
         {
-            hyli_crypto::tokio_select_biased! {
+            hyli_deterministic::tokio_select_biased! {
                 res = self.shutdown_loop() => {
                     _ = log_error!(res, "Shutdown Loop triggered");
                 }

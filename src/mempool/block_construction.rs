@@ -45,6 +45,7 @@ impl super::Mempool {
         #[cfg(not(test))]
         {
             let lane_id_clone = lane_id.clone();
+            let handle = self.inner.long_tasks_runtime.handle();
             self.inner.processing_dps.spawn_on(
                 async move {
                     let dp_hash = data_proposal.hashed();
@@ -55,7 +56,7 @@ impl super::Mempool {
                         dp_hash,
                     )))
                 },
-                self.inner.long_tasks_runtime.handle(),
+                &handle,
             );
         }
 

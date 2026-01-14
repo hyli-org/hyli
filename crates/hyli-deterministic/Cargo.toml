@@ -1,0 +1,17 @@
+[package]
+name = "hyli-deterministic"
+description = "Deterministic utilities for Hyli tests"
+license = "MIT"
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
+
+[dependencies]
+rand = { workspace = true }
+sdk = { workspace = true }
+turmoil = { workspace = true, optional = true }
+
+[features]
+turmoil = ["dep:turmoil"]

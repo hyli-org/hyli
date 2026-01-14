@@ -8,7 +8,8 @@ use std::{
 
 use anyhow::{bail, Context};
 use borsh::{BorshDeserialize, BorshSerialize};
-use hyli_crypto::{deterministic_rng::deterministic_rng, BlstCrypto};
+use hyli_crypto::BlstCrypto;
+use hyli_deterministic::deterministic_rng::deterministic_rng;
 use sdk::{hyli_model_utils::TimestampMs, SignedByValidator, ValidatorPublicKey};
 use tokio::{
     task::{AbortHandle, JoinSet},
@@ -22,7 +23,7 @@ use crate::{
     ordered_join_set::OrderedJoinSet,
     tcp::{tcp_client::TcpClient, Handshake, TcpHeaders, TcpMessageLabel},
 };
-use hyli_crypto::collections::DeterministicMap;
+use hyli_deterministic::collections::DeterministicMap;
 use rand::seq::SliceRandom;
 
 use super::{
@@ -206,7 +207,7 @@ where
         // Await either of the joinsets in the self.canal_jobs hashmap
 
         loop {
-            hyli_crypto::tokio_select_biased! {
+            hyli_deterministic::tokio_select_biased! {
                 Some(tcp_event) = self.tcp_server.listen_next() => {
                     return P2PTcpEvent::TcpEvent(tcp_event);
                 },

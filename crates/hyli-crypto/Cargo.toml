@@ -29,4 +29,3 @@ default = []
 
 # Disable dependency keyring by default, as it requires libdbus
 keyring = ["dep:keyring", "dep:whoami"]
-turmoil = []

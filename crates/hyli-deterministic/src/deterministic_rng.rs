@@ -88,7 +88,7 @@ mod turmoil_seed {
 }
 
 #[cfg(feature = "turmoil")]
-pub use turmoil_seed::{DeterministicSeedGuard, set_deterministic_seed};
+pub use turmoil_seed::{set_deterministic_seed, DeterministicSeedGuard};
 
 /// Returns a reproducible RNG when `HYLI_TURMOIL_SEED` is set, otherwise a fresh RNG.
 pub fn deterministic_rng() -> StdRng {
