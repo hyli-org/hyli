@@ -368,3 +368,364 @@ impl StorageBackend for LocalStorageBackend {
         Ok(result)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn create_test_block(height: u64) -> SignedBlock {
+        use sdk::hyli_model_utils::TimestampMs;
+        use sdk::{AggregateSignature, ConsensusProposal, ConsensusProposalHash, Cut};
+        SignedBlock {
+            data_proposals: vec![],
+            consensus_proposal: ConsensusProposal {
+                slot: height,
+                parent_hash: ConsensusProposalHash(String::new()),
+                cut: Cut::default(),
+                staking_actions: vec![],
+                timestamp: TimestampMs(0),
+            },
+            certificate: AggregateSignature::default(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_local_storage_backend_new() {
+        let temp_dir = TempDir::new().unwrap();
+        let backend = LocalStorageBackend::new(temp_dir.path().to_path_buf());
+
+        assert!(backend.is_ok());
+
+        // Verify directories were created
+        assert!(temp_dir.path().join("batches").exists());
+        assert!(temp_dir.path().join("proofs").exists());
+    }
+
+    #[tokio::test]
+    async fn test_local_upload_block_batch_empty() {
+        let temp_dir = TempDir::new().unwrap();
+        let backend = LocalStorageBackend::new(temp_dir.path().to_path_buf()).unwrap();
+
+        let result = backend.upload_block_batch(BlockHeight(0), vec![]).await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_local_upload_block_batch_single() {
+        let temp_dir = TempDir::new().unwrap();
+        let backend = LocalStorageBackend::new(temp_dir.path().to_path_buf()).unwrap();
+
+        let block = create_test_block(100);
+        let result = backend
+            .upload_block_batch(BlockHeight(100), vec![block.clone()])
+            .await;
+
+        assert!(result.is_ok());
+
+        // Verify file was created
+        let file_path = temp_dir.path().join("batches").join("block_100-100.bin");
+        assert!(file_path.exists());
+
+        // Verify content
+        let data = std::fs::read(&file_path).unwrap();
+        let deserialized: Vec<SignedBlock> = borsh::from_slice(&data).unwrap();
+        assert_eq!(deserialized.len(), 1);
+        assert_eq!(deserialized[0].height(), BlockHeight(100));
+    }
+
+    #[tokio::test]
+    async fn test_local_upload_block_batch_multiple() {
+        let temp_dir = TempDir::new().unwrap();
+        let backend = LocalStorageBackend::new(temp_dir.path().to_path_buf()).unwrap();
+
+        let blocks: Vec<SignedBlock> = (1000..1010).map(create_test_block).collect();
+
+        let result = backend
+            .upload_block_batch(BlockHeight(1000), blocks.clone())
+            .await;
+
+        assert!(result.is_ok());
+        let bytes_written = result.unwrap();
+        assert!(bytes_written > 0);
+
+        // Verify file naming
+        let file_path = temp_dir.path().join("batches").join("block_1000-1009.bin");
+        assert!(file_path.exists());
+
+        // Verify content
+        let data = std::fs::read(&file_path).unwrap();
+        let deserialized: Vec<SignedBlock> = borsh::from_slice(&data).unwrap();
+        assert_eq!(deserialized.len(), 10);
+
+        // Verify block heights
+        for (i, block) in deserialized.iter().enumerate() {
+            assert_eq!(block.height(), BlockHeight(1000 + i as u64));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_local_upload_proof() {
+        let temp_dir = TempDir::new().unwrap();
+        let backend = LocalStorageBackend::new(temp_dir.path().to_path_buf()).unwrap();
+
+        let tx_hash = TxHash("test_tx_hash".to_string());
+        let parent_hash = DataProposalHash("parent_hash".to_string());
+        let proof = vec![1, 2, 3, 4, 5];
+
+        let result = backend
+            .upload_proof(tx_hash.clone(), parent_hash.clone(), proof.clone())
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 5);
+
+        // Verify file was created in correct directory structure
+        let file_path = temp_dir
+            .path()
+            .join("proofs")
+            .join(&parent_hash.0)
+            .join(format!("{}.bin", tx_hash.0));
+        assert!(file_path.exists());
+
+        // Verify content
+        let data = std::fs::read(&file_path).unwrap();
+        assert_eq!(data, proof);
+    }
+
+    #[tokio::test]
+    async fn test_local_audit_storage_empty() {
+        let temp_dir = TempDir::new().unwrap();
+        let backend = LocalStorageBackend::new(temp_dir.path().to_path_buf()).unwrap();
+
+        let result = backend.audit_storage("test_prefix").await;
+
+        assert!(result.is_ok());
+        let audit = result.unwrap();
+        assert_eq!(audit.covered_ranges.len(), 0);
+        assert_eq!(audit.missing_ranges.len(), 0);
+        assert_eq!(audit.total_blocks_covered, 0);
+        assert_eq!(audit.total_blocks_missing, 0);
+        assert!(audit.min_height.is_none());
+        assert!(audit.max_height.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_local_audit_storage_single_batch() {
+        let temp_dir = TempDir::new().unwrap();
+        let backend = LocalStorageBackend::new(temp_dir.path().to_path_buf()).unwrap();
+
+        // Upload a batch
+        let blocks: Vec<SignedBlock> = (100..110).map(create_test_block).collect();
+        backend
+            .upload_block_batch(BlockHeight(100), blocks)
+            .await
+            .unwrap();
+
+        // Run audit
+        let result = backend.audit_storage("test_prefix").await;
+
+        assert!(result.is_ok());
+        let audit = result.unwrap();
+        assert_eq!(audit.covered_ranges.len(), 1);
+        assert_eq!(
+            audit.covered_ranges[0],
+            (BlockHeight(100), BlockHeight(109))
+        );
+        assert_eq!(audit.total_blocks_covered, 10);
+        assert_eq!(audit.missing_ranges.len(), 0);
+        assert_eq!(audit.min_height, Some(BlockHeight(100)));
+        assert_eq!(audit.max_height, Some(BlockHeight(109)));
+    }
+
+    #[tokio::test]
+    async fn test_local_audit_storage_multiple_batches_continuous() {
+        let temp_dir = TempDir::new().unwrap();
+        let backend = LocalStorageBackend::new(temp_dir.path().to_path_buf()).unwrap();
+
+        // Upload multiple continuous batches
+        for start in [0, 100, 200] {
+            let blocks: Vec<SignedBlock> = (start..start + 100).map(create_test_block).collect();
+            backend
+                .upload_block_batch(BlockHeight(start), blocks)
+                .await
+                .unwrap();
+        }
+
+        // Run audit
+        let result = backend.audit_storage("test_prefix").await;
+
+        assert!(result.is_ok());
+        let audit = result.unwrap();
+        assert_eq!(audit.covered_ranges.len(), 3);
+        assert_eq!(audit.total_blocks_covered, 300);
+        assert_eq!(audit.missing_ranges.len(), 0); // No gaps - batches are continuous
+        assert_eq!(audit.min_height, Some(BlockHeight(0)));
+        assert_eq!(audit.max_height, Some(BlockHeight(299)));
+    }
+
+    #[tokio::test]
+    async fn test_local_audit_storage_with_gaps() {
+        let temp_dir = TempDir::new().unwrap();
+        let backend = LocalStorageBackend::new(temp_dir.path().to_path_buf()).unwrap();
+
+        // Upload batches with intentional gaps
+        let blocks1: Vec<SignedBlock> = (0..50).map(create_test_block).collect();
+        backend
+            .upload_block_batch(BlockHeight(0), blocks1)
+            .await
+            .unwrap();
+
+        // Gap: 50-99 missing
+
+        let blocks2: Vec<SignedBlock> = (100..200).map(create_test_block).collect();
+        backend
+            .upload_block_batch(BlockHeight(100), blocks2)
+            .await
+            .unwrap();
+
+        // Gap: 200-299 missing
+
+        let blocks3: Vec<SignedBlock> = (300..350).map(create_test_block).collect();
+        backend
+            .upload_block_batch(BlockHeight(300), blocks3)
+            .await
+            .unwrap();
+
+        // Run audit
+        let result = backend.audit_storage("test_prefix").await;
+
+        assert!(result.is_ok());
+        let audit = result.unwrap();
+
+        // Verify covered ranges
+        assert_eq!(audit.covered_ranges.len(), 3);
+        assert_eq!(audit.total_blocks_covered, 200); // 50 + 100 + 50
+
+        // Verify missing ranges
+        assert_eq!(audit.missing_ranges.len(), 2);
+        assert_eq!(audit.missing_ranges[0], (BlockHeight(50), BlockHeight(99)));
+        assert_eq!(
+            audit.missing_ranges[1],
+            (BlockHeight(200), BlockHeight(299))
+        );
+        assert_eq!(audit.total_blocks_missing, 150); // 50 + 100
+    }
+
+    #[test]
+    fn test_audit_result_compute_missing_ranges_empty() {
+        let mut result = AuditResult::new();
+        result.compute_missing_ranges();
+
+        assert_eq!(result.missing_ranges.len(), 0);
+        assert_eq!(result.total_blocks_missing, 0);
+    }
+
+    #[test]
+    fn test_audit_result_compute_missing_ranges_no_gaps() {
+        let mut result = AuditResult::new();
+        result.covered_ranges = vec![
+            (BlockHeight(0), BlockHeight(99)),
+            (BlockHeight(100), BlockHeight(199)),
+            (BlockHeight(200), BlockHeight(299)),
+        ];
+
+        result.compute_missing_ranges();
+
+        assert_eq!(result.missing_ranges.len(), 0);
+        assert_eq!(result.total_blocks_missing, 0);
+    }
+
+    #[test]
+    fn test_audit_result_compute_missing_ranges_with_gaps() {
+        let mut result = AuditResult::new();
+        result.covered_ranges = vec![
+            (BlockHeight(0), BlockHeight(49)),
+            (BlockHeight(100), BlockHeight(149)),
+            (BlockHeight(200), BlockHeight(249)),
+        ];
+
+        result.compute_missing_ranges();
+
+        assert_eq!(result.missing_ranges.len(), 2);
+        assert_eq!(result.missing_ranges[0], (BlockHeight(50), BlockHeight(99)));
+        assert_eq!(
+            result.missing_ranges[1],
+            (BlockHeight(150), BlockHeight(199))
+        );
+        assert_eq!(result.total_blocks_missing, 100); // 50 + 50
+    }
+
+    #[test]
+    fn test_audit_result_compute_missing_ranges_unsorted() {
+        let mut result = AuditResult::new();
+        // Add ranges out of order
+        result.covered_ranges = vec![
+            (BlockHeight(200), BlockHeight(249)),
+            (BlockHeight(0), BlockHeight(49)),
+            (BlockHeight(100), BlockHeight(149)),
+        ];
+
+        result.compute_missing_ranges();
+
+        // Should sort first, then compute
+        assert_eq!(result.missing_ranges.len(), 2);
+        assert_eq!(result.missing_ranges[0], (BlockHeight(50), BlockHeight(99)));
+        assert_eq!(
+            result.missing_ranges[1],
+            (BlockHeight(150), BlockHeight(199))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_local_upload_multiple_proofs_same_parent() {
+        let temp_dir = TempDir::new().unwrap();
+        let backend = LocalStorageBackend::new(temp_dir.path().to_path_buf()).unwrap();
+
+        let parent_hash = DataProposalHash("parent_hash".to_string());
+
+        // Upload multiple proofs for the same parent
+        for i in 0..5 {
+            let tx_hash = TxHash(format!("tx_{}", i));
+            let proof = vec![i as u8; 10];
+
+            backend
+                .upload_proof(tx_hash.clone(), parent_hash.clone(), proof.clone())
+                .await
+                .unwrap();
+        }
+
+        // Verify all proofs exist
+        let parent_dir = temp_dir.path().join("proofs").join(&parent_hash.0);
+        assert!(parent_dir.exists());
+
+        for i in 0..5 {
+            let file_path = parent_dir.join(format!("tx_{}.bin", i));
+            assert!(file_path.exists());
+
+            let data = std::fs::read(&file_path).unwrap();
+            assert_eq!(data, vec![i as u8; 10]);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_local_overwrite_protection() {
+        let temp_dir = TempDir::new().unwrap();
+        let backend = LocalStorageBackend::new(temp_dir.path().to_path_buf()).unwrap();
+
+        let blocks1: Vec<SignedBlock> = (100..110).map(create_test_block).collect();
+        backend
+            .upload_block_batch(BlockHeight(100), blocks1)
+            .await
+            .unwrap();
+
+        // Try to upload again (would overwrite)
+        let blocks2: Vec<SignedBlock> = (100..110).map(create_test_block).collect();
+        let result = backend.upload_block_batch(BlockHeight(100), blocks2).await;
+
+        // Should succeed (overwrites in local mode, but GCS would reject with if_generation_match)
+        assert!(result.is_ok());
+    }
+}
