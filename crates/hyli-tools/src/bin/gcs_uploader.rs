@@ -47,6 +47,7 @@ async fn main() -> Result<()> {
             da_read_from: config.da_read_from.clone(),
             start_block: Some(BlockHeight(config.gcs.start_block)),
             timeout_client_secs: 10,
+            da_fallback_addresses: vec![],
         })
         .await?;
 

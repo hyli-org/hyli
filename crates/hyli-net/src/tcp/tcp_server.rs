@@ -667,7 +667,9 @@ pub mod tests {
         client.ping().await?;
 
         // Send data to server
-        client.send(DataAvailabilityRequest(BlockHeight(2))).await?;
+        client
+            .send(DataAvailabilityRequest::StreamFromHeight(BlockHeight(2)))
+            .await?;
 
         tokio::time::sleep(Duration::from_secs(1)).await;
 
@@ -676,7 +678,7 @@ pub mod tests {
             _ => panic!("Expected a Message event"),
         };
 
-        assert_eq!(DataAvailabilityRequest(BlockHeight(2)), d);
+        assert_eq!(DataAvailabilityRequest::StreamFromHeight(BlockHeight(2)), d);
         assert!(server.pool_receiver.try_recv().is_err());
 
         // From server to client
@@ -929,7 +931,7 @@ pub mod tests {
         let _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
 
         client.sender.send(Bytes::from_static(&[0u8; 4])).await?;
-        let valid = borsh::to_vec(&DataAvailabilityRequest(BlockHeight(1)))?;
+        let valid = borsh::to_vec(&DataAvailabilityRequest::StreamFromHeight(BlockHeight(1)))?;
         client.sender.send(Bytes::from(valid)).await?;
 
         let evt = tokio::time::timeout(Duration::from_millis(200), server.listen_next())

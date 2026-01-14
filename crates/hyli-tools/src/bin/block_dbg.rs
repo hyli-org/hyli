@@ -174,6 +174,7 @@ async fn main() -> Result<()> {
                 da_read_from: "localhost:4141".to_string(),
                 start_block: Some(BlockHeight(0)),
                 timeout_client_secs: 10,
+                da_fallback_addresses: vec![],
             })
             .await?;
     } else {

@@ -197,10 +197,17 @@ pub enum NodeStateEvent {
 // Da Listener
 //
 #[derive(BorshDeserialize, BorshSerialize, Clone, Debug, PartialEq, Eq)]
-pub struct DataAvailabilityRequest(pub BlockHeight);
+pub enum DataAvailabilityRequest {
+    /// Start streaming blocks from a given height
+    StreamFromHeight(BlockHeight),
+    /// Request a specific block by height (prioritized)
+    BlockRequest(BlockHeight),
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub enum DataAvailabilityEvent {
     SignedBlock(SignedBlock),
     MempoolStatusEvent(MempoolStatusEvent),
+    /// Block not found at the requested height
+    BlockNotFound(BlockHeight),
 }

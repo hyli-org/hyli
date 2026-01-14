@@ -440,6 +440,7 @@ async fn common_main(
                 da_read_from: config.da_read_from.clone(),
                 start_block: None,
                 timeout_client_secs: config.da_timeout_client_secs,
+                da_fallback_addresses: config.da_fallback_addresses.clone(),
             })
             .await?;
     }

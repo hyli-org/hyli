@@ -29,7 +29,7 @@ use tokio::{
     task::JoinSet,
     time::{sleep_until, Instant},
 };
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::model::SharedRunContext;
 
@@ -388,7 +388,9 @@ impl DaCatchupper {
                 "Error occurred setting up the DA listener"
             )?;
 
-            client.send(DataAvailabilityRequest(start_height)).await?;
+            client
+                .send(DataAvailabilityRequest::StreamFromHeight(start_height))
+                .await?;
 
             let timeout_duration = std::env::var("HYLI_DA_SLEEP_TIMEOUT")
                 .ok()
@@ -548,7 +550,20 @@ impl DataAvailability {
 
             Some(tcp_event) = server.listen_next() => {
                 if let TcpEvent::Message { socket_addr, data, .. } = tcp_event {
-                    _ = log_error!(self.start_streaming_to_peer(data.0, &mut catchup_joinset, &socket_addr).await, "Starting streaming to peer");
+                    match data {
+                        DataAvailabilityRequest::StreamFromHeight(start_height) => {
+                            _ = log_error!(
+                                self.start_streaming_to_peer(start_height, &mut catchup_joinset, &socket_addr).await,
+                                "Starting streaming to peer"
+                            );
+                        }
+                        DataAvailabilityRequest::BlockRequest(block_height) => {
+                            _ = log_error!(
+                                self.handle_block_request(block_height, &socket_addr, &mut server).await,
+                                "Handling block request"
+                            );
+                        }
+                    }
                 }
             }
 
@@ -616,6 +631,65 @@ impl DataAvailability {
                 }
             }
         }
+        Ok(())
+    }
+
+    async fn handle_block_request(
+        &mut self,
+        block_height: BlockHeight,
+        socket_addr: &str,
+        server: &mut DataAvailabilityServer,
+    ) -> Result<()> {
+        debug!(
+            "📦 Received block request for height {} from {}",
+            block_height, socket_addr
+        );
+
+        // Check if block exists in storage
+        match self.blocks.get_by_height(block_height) {
+            Ok(Some(block)) => {
+                debug!(
+                    "📦 Found block at height {}, sending to {}",
+                    block_height, socket_addr
+                );
+                // Send immediately - this is inserted next in the send queue
+                server
+                    .send(
+                        socket_addr.to_string(),
+                        DataAvailabilityEvent::SignedBlock(block),
+                        vec![],
+                    )
+                    .await?;
+            }
+            Ok(None) => {
+                // Block not in storage - this is a gap
+                error!(
+                    "📦 Block at height {} not found in storage, sending BlockNotFound to {}",
+                    block_height, socket_addr
+                );
+                server
+                    .send(
+                        socket_addr.to_string(),
+                        DataAvailabilityEvent::BlockNotFound(block_height),
+                        vec![],
+                    )
+                    .await?;
+            }
+            Err(e) => {
+                error!(
+                    "📦 Error retrieving block at height {}: {:#}",
+                    block_height, e
+                );
+                server
+                    .send(
+                        socket_addr.to_string(),
+                        DataAvailabilityEvent::BlockNotFound(block_height),
+                        vec![],
+                    )
+                    .await?;
+            }
+        }
+
         Ok(())
     }
 
@@ -1039,7 +1113,7 @@ pub mod tests {
                 .unwrap();
 
         client
-            .send(DataAvailabilityRequest(BlockHeight(0)))
+            .send(DataAvailabilityRequest::StreamFromHeight(BlockHeight(0)))
             .await
             .unwrap();
 
@@ -1096,7 +1170,7 @@ pub mod tests {
                 .unwrap();
 
         client
-            .send(DataAvailabilityRequest(BlockHeight(0)))
+            .send(DataAvailabilityRequest::StreamFromHeight(BlockHeight(0)))
             .await
             .unwrap();
 
@@ -1381,5 +1455,153 @@ pub mod tests {
         for i in 5..8 {
             assert!(received_blocks.iter().any(|b| b.height().0 == i));
         }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_block_request_while_streaming() {
+        // Create DA server with blocks 0-9 already stored
+        let tmpdir = tempfile::tempdir().unwrap().keep();
+        let mut blocks_storage = Blocks::new(&tmpdir).unwrap();
+
+        let global_bus = crate::bus::SharedMessageBus::new(
+            crate::bus::metrics::BusMetrics::global("global".to_string()),
+        );
+        let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
+
+        let mut config: Conf = Conf::new(vec![], None, None).unwrap();
+        config.da_server_port = find_available_port().await;
+        config.da_public_address = format!("127.0.0.1:{}", config.da_server_port);
+
+        // Create and store blocks 0-9
+        let mut block = SignedBlock::default();
+        blocks_storage.put(block.clone()).unwrap();
+        for i in 1..10 {
+            block.consensus_proposal.parent_hash = block.hashed();
+            block.consensus_proposal.slot = i;
+            blocks_storage.put(block.clone()).unwrap();
+        }
+
+        let mut da = super::DataAvailability {
+            config: config.clone().into(),
+            bus,
+            blocks: blocks_storage,
+            buffered_signed_blocks: Default::default(),
+            catchupper: Default::default(),
+        };
+
+        // Start DA server
+        tokio::spawn(async move {
+            da.start().await.unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let mut client =
+            DataAvailabilityClient::connect("client_id", config.da_public_address.clone())
+                .await
+                .unwrap();
+
+        // Start streaming from block 0
+        client
+            .send(DataAvailabilityRequest::StreamFromHeight(BlockHeight(0)))
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Request specific block 7 while streaming
+        client
+            .send(DataAvailabilityRequest::BlockRequest(BlockHeight(7)))
+            .await
+            .unwrap();
+
+        // Request a non-existent block to test BlockNotFound
+        client
+            .send(DataAvailabilityRequest::BlockRequest(BlockHeight(100)))
+            .await
+            .unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Collect responses (use a set to track unique blocks received)
+        let mut received_block_heights = std::collections::HashSet::new();
+        let mut received_block_7_from_request = false;
+        let mut received_block_not_found = false;
+        let mut event_count = 0;
+        let start_time = tokio::time::Instant::now();
+
+        while let Some(event) = client.recv().await {
+            event_count += 1;
+            match event {
+                DataAvailabilityEvent::SignedBlock(block) => {
+                    let height = block.height().0;
+                    tracing::info!("Received block {} (event #{})", height, event_count);
+
+                    // Track if block 7 arrives early (from request, not just stream)
+                    if height == 7 && received_block_heights.len() < 5 {
+                        received_block_7_from_request = true;
+                    }
+
+                    received_block_heights.insert(height);
+                }
+                DataAvailabilityEvent::BlockNotFound(height) => {
+                    tracing::info!("Received BlockNotFound for height {}", height);
+                    assert_eq!(height.0, 100, "Should be BlockNotFound for block 100");
+                    received_block_not_found = true;
+                }
+                DataAvailabilityEvent::MempoolStatusEvent(_) => {}
+            }
+
+            // Stop after receiving enough events (at least 8 blocks and BlockNotFound)
+            if received_block_heights.len() >= 8 && received_block_not_found {
+                break;
+            }
+
+            // Safety timeout (2 seconds)
+            if start_time.elapsed() > tokio::time::Duration::from_secs(2) {
+                tracing::warn!("Test timeout after 2 seconds");
+                break;
+            }
+        }
+
+        // Verify results
+        assert!(
+            received_block_7_from_request,
+            "Block 7 should have arrived early (from BlockRequest, not just stream)"
+        );
+        assert!(
+            received_block_not_found,
+            "Should have received BlockNotFound for block 100"
+        );
+        assert!(
+            received_block_heights.len() >= 8,
+            "Should have received at least 8 different blocks, got {}",
+            received_block_heights.len()
+        );
+
+        // Verify we got essential blocks including block 7
+        assert!(
+            received_block_heights.contains(&0),
+            "Should have received block 0"
+        );
+        assert!(
+            received_block_heights.contains(&7),
+            "Should have received block 7 (from request)"
+        );
+
+        tracing::info!("✅ Test passed: BlockRequest works while streaming");
+        tracing::info!(
+            "   - Received {} unique blocks",
+            received_block_heights.len()
+        );
+        tracing::info!("   - Block 7 arrived early via BlockRequest (not just stream)");
+        tracing::info!("   - Got BlockNotFound for non-existent block 100");
+        tracing::info!("   - Blocks received: {:?}", {
+            let mut v: Vec<_> = received_block_heights.iter().collect();
+            v.sort();
+            v
+        });
+
+        client.close().await.unwrap();
     }
 }

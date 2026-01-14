@@ -136,6 +136,20 @@ impl Blocks {
         item.map(Self::decode_block).transpose()
     }
 
+    pub fn get_by_height(&self, height: BlockHeight) -> Result<Option<SignedBlock>> {
+        // First get the hash from by_height index
+        let key = FjallHeightKey::new(height);
+        let Some(hash_value) = self.by_height.get(key)? else {
+            return Ok(None);
+        };
+
+        // Decode the hash
+        let block_hash = Self::decode_block_hash(hash_value)?;
+
+        // Get the actual block
+        self.get(&block_hash)
+    }
+
     pub fn contains(&self, block: &ConsensusProposalHash) -> bool {
         self.by_hash
             .contains_key(FjallHashKey(block.clone()))
