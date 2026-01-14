@@ -12,17 +12,17 @@ use sdk::{BlockHeight, DataProposalHash, SignedBlock, TxHash};
 
 #[async_trait]
 pub trait StorageBackend: Send + Sync {
-    /// Upload un batch de blocs séquentiels
-    /// start_height: hauteur du premier bloc
-    /// blocks: liste de blocs à uploader
-    /// Retourne le nombre de bytes uploadés
+    /// Upload a batch of sequential blocks
+    /// start_height: height of the first block
+    /// blocks: list of blocks to upload
+    /// Returns the number of bytes uploaded
     async fn upload_block_batch(
         &self,
         start_height: BlockHeight,
         blocks: Vec<SignedBlock>,
     ) -> Result<usize>;
 
-    /// Upload un proof individuel
+    /// Upload an individual proof
     async fn upload_proof(
         &self,
         tx_hash: TxHash,
@@ -78,7 +78,7 @@ impl StorageBackend for GcsStorageBackend {
             self.prefix, start_height.0, end_height
         );
 
-        // Sérialiser le batch entier
+        // Serialize the entire batch
         let data = borsh::to_vec(&blocks)?;
         let data_len = data.len();
 
@@ -144,7 +144,7 @@ pub struct LocalStorageBackend {
 
 impl LocalStorageBackend {
     pub fn new(base_path: PathBuf) -> Result<Self> {
-        // Créer les répertoires si nécessaire
+        // Create directories if necessary
         std::fs::create_dir_all(&base_path)?;
         std::fs::create_dir_all(base_path.join("batches"))?;
         std::fs::create_dir_all(base_path.join("proofs"))?;

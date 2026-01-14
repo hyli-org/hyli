@@ -63,7 +63,7 @@ impl Module for GcsUploader {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus = GcsUploaderBusClient::new_from_bus(bus.new_handle()).await;
 
-        // Créer le storage backend selon la config
+        // Create storage backend based on config
         let storage: Box<dyn StorageBackend> = match ctx.gcs_config.storage_backend.as_str() {
             "local" => {
                 tracing::info!("Using local storage backend for testing");
@@ -89,14 +89,14 @@ impl Module for GcsUploader {
             }
         };
 
-        // Charger le store depuis le disque
+        // Load store from disk
         let store = Self::load_from_disk_or_default::<GcsUploaderStore>(
             ctx.data_directory.join("gcs_uploader_store.bin").as_path(),
         );
 
         let metrics = GcsUploaderMetrics::global("gcs_uploader".to_string());
 
-        // Initialiser les métriques avec l'état actuel
+        // Initialize metrics with current state
         metrics.record_last_uploaded_height(store.last_uploaded_height.0);
         metrics.record_retry_queue_size(store.retry_queue.len() as u64);
 
@@ -123,7 +123,7 @@ impl Module for GcsUploader {
     }
 
     async fn persist(&mut self) -> Result<()> {
-        // Flusher le batch en attente
+        // Flush pending batch
         if !self.buffered_blocks.is_empty() {
             tracing::info!(
                 "Flushing {} buffered blocks before shutdown",
@@ -132,7 +132,7 @@ impl Module for GcsUploader {
             _ = log_error!(self.upload_batch().await, "Flushing pending batch");
         }
 
-        // Sauvegarder le store
+        // Save store
         log_error!(
             Self::save_on_disk::<GcsUploaderStore>(
                 self.ctx
@@ -156,7 +156,7 @@ impl GcsUploader {
     }
 
     pub async fn start(&mut self) -> Result<()> {
-        // Traiter la retry queue au démarrage
+        // Process retry queue on startup
         log_error!(
             self.process_retry_queue().await,
             "Processing retry queue on startup"
@@ -171,7 +171,7 @@ impl GcsUploader {
                 }
                 self.handle_data_availability_event(event).await?;
 
-                // Vérifier le trigger temporel
+                // Check time trigger
                 if self.last_batch_time.elapsed()
                     >= std::time::Duration::from_secs(self.ctx.gcs_config.batch_timeout_secs)
                     && !self.buffered_blocks.is_empty()
@@ -204,7 +204,7 @@ impl GcsUploader {
                 }
             },
             _ = tokio::time::sleep(std::time::Duration::from_secs(300)) => {
-                // Toutes les 5 minutes, traiter la retry queue
+                // Every 5 minutes, process the retry queue
                 log_error!(self.process_retry_queue().await, "Periodic retry queue processing")?;
             }
         };
@@ -215,18 +215,18 @@ impl GcsUploader {
         let DataEvent::OrderedSignedBlock(block) = event;
         let block_height = block.height();
 
-        // Skip si déjà uploadé
+        // Skip if already uploaded
         if block_height <= self.store.last_uploaded_height {
             debug!("Skipping already uploaded block {}", block_height);
             return Ok(());
         }
 
-        // Ajouter au buffer
+        // Add to buffer
         self.buffered_blocks.push((block_height, block));
         self.metrics
             .record_queue_size(self.buffered_blocks.len() as u64);
 
-        // Vérifier les triggers de batch
+        // Check batch triggers
         let count_trigger = self.buffered_blocks.len() >= self.ctx.gcs_config.batch_size;
         let time_trigger = self.last_batch_time.elapsed()
             >= std::time::Duration::from_secs(self.ctx.gcs_config.batch_timeout_secs);
@@ -255,10 +255,10 @@ impl GcsUploader {
             end_height
         );
 
-        // Extraire juste les SignedBlocks
+        // Extract just the SignedBlocks
         let signed_blocks: Vec<SignedBlock> = blocks.iter().map(|(_, b)| b.clone()).collect();
 
-        // Upload avec retry
+        // Upload with retry
         let start_time = Instant::now();
         match self
             .upload_batch_with_retry(start_height, signed_blocks.clone())
@@ -275,15 +275,15 @@ impl GcsUploader {
                     latency
                 );
 
-                // Métriques
+                // Metrics
                 self.metrics
                     .record_block_uploaded("block_batch", bytes_uploaded as u64, latency);
 
-                // Mettre à jour le checkpoint
+                // Update checkpoint
                 self.store.last_uploaded_height = end_height;
                 self.metrics.record_last_uploaded_height(end_height.0);
 
-                // Sauvegarder le checkpoint
+                // Save checkpoint
                 log_error!(
                     Self::save_on_disk::<GcsUploaderStore>(
                         self.ctx
@@ -299,14 +299,14 @@ impl GcsUploader {
                 tracing::error!("Batch upload failed after all retries: {}", e);
                 self.metrics.record_block_failed("block_batch");
 
-                // Ajouter tous les blocs à la retry queue
+                // Add all blocks to retry queue
                 for (height, block) in blocks {
                     self.store.retry_queue.insert(height, (block, 0));
                 }
                 self.metrics
                     .record_retry_queue_size(self.store.retry_queue.len() as u64);
 
-                // Sauvegarder la retry queue
+                // Save retry queue
                 log_error!(
                     Self::save_on_disk::<GcsUploaderStore>(
                         self.ctx
@@ -374,20 +374,20 @@ impl GcsUploader {
             self.store.retry_queue.len()
         );
 
-        // Regrouper les blocs consécutifs pour batch upload
+        // Group consecutive blocks for batch upload
         let mut current_batch = Vec::new();
         let mut current_start_height: Option<BlockHeight> = None;
         let mut to_remove = Vec::new();
 
         for (&height, (block, _retry_count)) in self.store.retry_queue.iter() {
-            // Si le bloc est consécutif au dernier, l'ajouter au batch
+            // If block is consecutive to the last one, add it to batch
             if let Some(start) = current_start_height {
                 let expected_next = BlockHeight(start.0 + current_batch.len() as u64);
                 if height == expected_next && current_batch.len() < self.ctx.gcs_config.batch_size {
                     current_batch.push((height, block.clone()));
                     continue;
                 } else {
-                    // Batch terminé, uploader
+                    // Batch complete, upload
                     if !current_batch.is_empty() {
                         let start = current_batch.first().unwrap().0;
                         let blocks: Vec<_> = current_batch.iter().map(|(_, b)| b.clone()).collect();
@@ -411,12 +411,12 @@ impl GcsUploader {
                 }
             }
 
-            // Commencer nouveau batch
+            // Start new batch
             current_start_height = Some(height);
             current_batch.push((height, block.clone()));
         }
 
-        // Uploader le dernier batch
+        // Upload last batch
         if !current_batch.is_empty() {
             let start = current_batch.first().unwrap().0;
             let blocks: Vec<_> = current_batch.iter().map(|(_, b)| b.clone()).collect();
@@ -433,7 +433,7 @@ impl GcsUploader {
             }
         }
 
-        // Retirer les blocs uploadés avec succès
+        // Remove successfully uploaded blocks
         for height in to_remove {
             self.store.retry_queue.remove(&height);
         }
@@ -441,7 +441,7 @@ impl GcsUploader {
         self.metrics
             .record_retry_queue_size(self.store.retry_queue.len() as u64);
 
-        // Sauvegarder la queue mise à jour
+        // Save updated queue
         log_error!(
             Self::save_on_disk::<GcsUploaderStore>(
                 self.ctx

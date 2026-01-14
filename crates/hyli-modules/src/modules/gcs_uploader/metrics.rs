@@ -43,7 +43,7 @@ impl GcsUploaderMetrics {
         }
     }
 
-    // Méthodes pour enregistrer les événements
+    // Methods to record events
     pub fn record_block_uploaded(&self, upload_type: &str, bytes: u64, latency_secs: f64) {
         let labels = [KeyValue::new("upload_type", upload_type.to_string())];
         self.blocks_uploaded.add(1, &labels);
