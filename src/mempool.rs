@@ -452,10 +452,12 @@ impl Mempool {
                         validator
                     );
                 }
+                BlstCrypto::verify(&vdag).context("Invalid DataProposal vote signature")?;
                 self.on_data_proposal(&lane_id, data_proposal_hash, data_proposal, vdag.clone())?;
                 self.on_data_vote(lane_id, vdag)?;
             }
             MempoolNetMessage::DataVote(lane_id, vdag) => {
+                BlstCrypto::verify(&vdag).context("Invalid DataVote signature")?;
                 self.on_data_vote(lane_id, vdag)?;
             }
             MempoolNetMessage::SyncRequest(
@@ -472,6 +474,7 @@ impl Mempool {
                 .await?;
             }
             MempoolNetMessage::SyncReply(lane_id, sigs, data_proposal) => {
+                // Don't bother checking the signatures for sync replies, we trust our internal bookkeeping.
                 self.on_sync_reply(&lane_id, validator, sigs, data_proposal)
                     .await?;
             }
