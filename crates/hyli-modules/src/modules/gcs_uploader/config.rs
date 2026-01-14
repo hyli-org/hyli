@@ -11,8 +11,6 @@ pub struct GCSConf {
     pub save_proofs: bool,
     pub save_blocks: bool,
 
-    pub start_block: u64,
-
     // New batching configuration
     #[serde(default = "default_batch_size")]
     pub batch_size: usize,
@@ -50,7 +48,6 @@ impl Default for GCSConf {
             gcs_prefix: String::new(),
             save_proofs: true,
             save_blocks: true,
-            start_block: 0,
             batch_size: default_batch_size(),
             batch_timeout_secs: default_batch_timeout_secs(),
             retry_attempts: default_retry_attempts(),

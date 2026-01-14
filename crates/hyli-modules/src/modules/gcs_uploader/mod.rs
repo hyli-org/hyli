@@ -7,6 +7,7 @@ pub use config::{GCSConf, GcsUploaderCtx};
 pub use metrics::GcsUploaderMetrics;
 pub use storage::{GcsStorageBackend, LocalStorageBackend, StorageBackend};
 
+use std::path::Path;
 use std::time::Instant;
 
 use anyhow::Result;
@@ -146,6 +147,14 @@ impl Module for GcsUploader {
 }
 
 impl GcsUploader {
+    pub fn read_last_uploaded_height(data_directory: &Path) -> BlockHeight {
+        let store = Self::load_from_disk_or_default::<GcsUploaderStore>(
+            data_directory.join("gcs_uploader_store.bin").as_path(),
+        );
+
+        store.last_uploaded_height
+    }
+
     pub async fn start(&mut self) -> Result<()> {
         // Traiter la retry queue au démarrage
         log_error!(
@@ -167,6 +176,7 @@ impl GcsUploader {
                     >= std::time::Duration::from_secs(self.ctx.gcs_config.batch_timeout_secs)
                     && !self.buffered_blocks.is_empty()
                 {
+                    debug!("Time trigger reached, uploading batch");
                     log_error!(self.upload_batch().await, "Time-triggered batch upload")?;
                 }
             },
@@ -228,6 +238,7 @@ impl GcsUploader {
         Ok(())
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     async fn upload_batch(&mut self) -> Result<()> {
         if self.buffered_blocks.is_empty() {
             return Ok(());
@@ -313,6 +324,7 @@ impl GcsUploader {
         Ok(())
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, blocks)))]
     async fn upload_batch_with_retry(
         &self,
         start_height: BlockHeight,
@@ -351,6 +363,7 @@ impl GcsUploader {
         }
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     async fn process_retry_queue(&mut self) -> Result<()> {
         if self.store.retry_queue.is_empty() {
             return Ok(());

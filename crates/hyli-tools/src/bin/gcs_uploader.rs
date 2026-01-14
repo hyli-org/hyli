@@ -3,7 +3,6 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{Context, Result};
 use clap::Parser;
 
-use hyli_contract_sdk::BlockHeight;
 use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
@@ -12,7 +11,7 @@ use hyli_modules::{
         da_listener::SignedDAListener,
         gcs_uploader::{GCSConf, GcsUploader, GcsUploaderCtx},
     },
-    utils::logger::setup_tracing,
+    utils::logger::setup_otlp,
 };
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +20,9 @@ use serde::{Deserialize, Serialize};
 pub struct Args {
     #[arg(long, default_value = "config.toml")]
     pub config_file: Vec<String>,
+
+    #[arg(long, default_value = "false")]
+    pub tracing: bool,
 }
 
 pub type SharedConf = Arc<GcsUploaderCtx>;
@@ -30,7 +32,11 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let config = Conf::new(args.config_file).context("reading config file")?;
 
-    setup_tracing(&config.log_format, "gcs block uploader".to_string())?;
+    setup_otlp(
+        &config.log_format,
+        "gcs block uploader".to_string(),
+        args.tracing,
+    )?;
 
     tracing::info!("Starting GCS block uploader");
 
@@ -41,11 +47,13 @@ async fn main() -> Result<()> {
     // Initialize modules
     let mut handler = ModulesHandler::new(&bus).await;
 
+    let start_block = GcsUploader::read_last_uploaded_height(&config.data_directory);
+
     handler
         .build_module::<SignedDAListener>(DAListenerConf {
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
-            start_block: Some(BlockHeight(config.gcs.start_block)),
+            start_block: Some(start_block),
             timeout_client_secs: 10,
             da_fallback_addresses: vec![],
         })

@@ -16,10 +16,8 @@ gcs_prefix = "local"
 save_proofs = true
 save_blocks = true
 
-start_block = 0
-
 # Batching configuration
 batch_size = 1000
-batch_timeout_secs = 60
+batch_timeout_secs = 1500
 retry_attempts = 5
 storage_backend = "local"

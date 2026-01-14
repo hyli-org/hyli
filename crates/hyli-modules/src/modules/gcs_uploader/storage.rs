@@ -62,6 +62,7 @@ impl GcsStorageBackend {
 
 #[async_trait]
 impl StorageBackend for GcsStorageBackend {
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, blocks)))]
     async fn upload_block_batch(
         &self,
         start_height: BlockHeight,
@@ -101,6 +102,7 @@ impl StorageBackend for GcsStorageBackend {
         Ok(data_len)
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, proof)))]
     async fn upload_proof(
         &self,
         tx_hash: TxHash,
@@ -152,6 +154,7 @@ impl LocalStorageBackend {
 
 #[async_trait]
 impl StorageBackend for LocalStorageBackend {
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, blocks)))]
     async fn upload_block_batch(
         &self,
         start_height: BlockHeight,
@@ -182,6 +185,7 @@ impl StorageBackend for LocalStorageBackend {
         Ok(data_len)
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, proof)))]
     async fn upload_proof(
         &self,
         tx_hash: TxHash,
