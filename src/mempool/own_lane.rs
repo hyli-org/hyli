@@ -574,6 +574,7 @@ pub mod test {
     #[test_log::test(tokio::test)]
     async fn test_single_mempool_receiving_new_txs() -> Result<()> {
         let mut ctx = MempoolTestCtx::new("mempool").await;
+        ctx.seed_last_ccp(1); // We want to process txs right away
 
         // Sending transaction to mempool as RestApiMessage
         let register_tx = make_register_contract_tx(ContractName::new("test1"));
@@ -878,6 +879,8 @@ pub mod test {
         let mut ctx3 = MempoolTestCtx::new("node3").await;
         let mut ctx4 = MempoolTestCtx::new("node4").await;
 
+        ctx1.seed_last_ccp(1); // We want to process txs right away
+
         // Ajoute chaque nœud comme validateur des autres
         let all_pubkeys = vec![
             ctx1.validator_pubkey().clone(),
@@ -896,10 +899,8 @@ pub mod test {
         let tx2 = make_register_contract_tx(ContractName::new("test2"));
         ctx1.submit_tx(&tx1);
         ctx1.timer_tick().await?;
-        // ctx1.handle_processed_data_proposals().await;
         ctx1.submit_tx(&tx2);
         ctx1.timer_tick().await?;
-        // ctx1.handle_processed_data_proposals().await;
 
         let mut dps = vec![];
         for _ in 0..2 {

@@ -1,7 +1,9 @@
 use hyli_modules::{log_error, module_handle_messages};
 use std::{sync::Arc, time::Duration};
 
-use crate::{consensus::ConsensusEvent, model::*, p2p::network::MsgWithHeader, utils::conf::P2pMode};
+use crate::{
+    consensus::ConsensusEvent, model::*, p2p::network::MsgWithHeader, utils::conf::P2pMode,
+};
 
 use client_sdk::tcp_client::TcpServerMessage;
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
