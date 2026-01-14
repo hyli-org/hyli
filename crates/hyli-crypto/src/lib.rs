@@ -39,6 +39,7 @@ pub use hyli_model::{
     AggregateSignature, Signed, SignedByValidator, ValidatorPublicKey, ValidatorSignature,
 };
 pub mod deterministic_rng;
+pub mod collections;
 
 #[derive(Clone)]
 pub struct BlstCrypto {

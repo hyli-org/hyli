@@ -26,6 +26,7 @@ use crate::{
     p2p::network::{HeaderSigner, OutboundMessage},
     utils::conf::{P2pMode, SharedConf},
 };
+use hyli_crypto::collections::DeterministicMap;
 
 use super::{
     metrics::MempoolMetrics,
@@ -94,8 +95,8 @@ pub struct PeerState {
 
 #[derive(Debug, Default)]
 struct PeerKnowledge {
-    by_peer: HashMap<ValidatorPublicKey, PeerState>,
-    by_dp: HashMap<(LaneId, DataProposalHash, ValidatorPublicKey), EvidenceState>,
+    by_peer: DeterministicMap<ValidatorPublicKey, PeerState>,
+    by_dp: DeterministicMap<(LaneId, DataProposalHash, ValidatorPublicKey), EvidenceState>,
 }
 
 #[derive(Clone, Debug)]
@@ -117,7 +118,7 @@ impl PendingSyncRequest {
     fn select_peer(
         &self,
         peers: &[ValidatorPublicKey],
-        knowledge: &HashMap<(LaneId, DataProposalHash, ValidatorPublicKey), EvidenceState>,
+        knowledge: &DeterministicMap<(LaneId, DataProposalHash, ValidatorPublicKey), EvidenceState>,
     ) -> Option<ValidatorPublicKey> {
         if peers.is_empty() {
             return None;
@@ -179,8 +180,8 @@ pub struct DisseminationManager {
     metrics: MempoolMetrics,
     lanes: LanesStorage,
     knowledge: PeerKnowledge,
-    pending_sync_requests: HashMap<(LaneId, DataProposalHash), PendingSyncRequest>,
-    dp_first_seen_slot: HashMap<(LaneId, DataProposalHash), u64>,
+    pending_sync_requests: DeterministicMap<(LaneId, DataProposalHash), PendingSyncRequest>,
+    dp_first_seen_slot: DeterministicMap<(LaneId, DataProposalHash), u64>,
     owned_lanes: HashSet<LaneId>,
     last_cut: Option<Cut>,
     staking: Staking,
@@ -211,8 +212,8 @@ impl Module for DisseminationManager {
             metrics: MempoolMetrics::global(ctx.config.id.clone()),
             lanes,
             knowledge: PeerKnowledge::default(),
-            pending_sync_requests: HashMap::new(),
-            dp_first_seen_slot: HashMap::new(),
+            pending_sync_requests: DeterministicMap::new(),
+            dp_first_seen_slot: DeterministicMap::new(),
             owned_lanes: HashSet::new(),
             last_cut: None,
             staking: Staking::default(),
@@ -392,7 +393,14 @@ impl DisseminationManager {
         let mut completed = Vec::new();
         let mut to_send = Vec::new();
 
-        for (key, request) in self.pending_sync_requests.iter_mut() {
+        let mut pending_keys: Vec<_> = self.pending_sync_requests.keys().cloned().collect();
+        #[cfg(feature = "turmoil")]
+        pending_keys.sort(); // Deterministic request ordering for simulation.
+
+        for key in pending_keys {
+            let Some(request) = self.pending_sync_requests.get_mut(&key) else {
+                continue;
+            };
             if self.lanes.contains(&request.lane_id, &request.to) {
                 completed.push(key.clone());
                 continue;
@@ -505,6 +513,9 @@ impl DisseminationManager {
                 pending.push((lane_id.clone(), dp_hash.clone(), peer.clone()));
             }
         }
+
+        #[cfg(feature = "turmoil")]
+        pending.sort(); // Deterministic reply ordering for simulation.
 
         for (lane_id, dp_hash, validator) in pending {
             if self.should_debounce_sync_reply(&lane_id, &dp_hash, &validator, now.clone()) {
@@ -639,7 +650,11 @@ impl DisseminationManager {
     }
 
     pub(super) async fn redisseminate_owned_lanes(&mut self) -> Result<()> {
-        for lane_id in self.owned_lanes.clone().into_iter() {
+        let mut lane_ids: Vec<_> = self.owned_lanes.iter().cloned().collect();
+        #[cfg(feature = "turmoil")]
+        lane_ids.sort(); // Deterministic lane ordering for simulation.
+
+        for lane_id in lane_ids {
             let pending_entries = {
                 let mut stream = Box::pin(
                     self.lanes
@@ -751,7 +766,11 @@ impl DisseminationManager {
             self.send_net_message_only_for(filtered_targets.clone(), net_message)?;
         }
 
-        for peer in filtered_targets {
+        let mut ordered_targets: Vec<_> = filtered_targets.iter().cloned().collect();
+        #[cfg(feature = "turmoil")]
+        ordered_targets.sort(); // Deterministic target ordering for simulation.
+
+        for peer in ordered_targets {
             self.record_dp_sent(lane_id, dp_hash, &peer);
             self.mark_weak_has(lane_id, dp_hash, &peer);
         }

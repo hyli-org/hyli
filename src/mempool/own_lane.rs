@@ -4,6 +4,7 @@ use crate::{bus::BusClientSender, model::*, utils::serialize::BorshableIndexMap}
 
 use anyhow::{bail, Context, Result};
 use client_sdk::tcp_client::TcpServerMessage;
+use hyli_crypto::collections::DeterministicMap;
 use tracing::{debug, info, trace};
 
 use super::verifiers::{verify_proof, verify_recursive_proof};
@@ -25,7 +26,7 @@ const MAX_DP_SIZE: usize = 40_000_000; // About 40 MB
 pub(super) struct OwnDataProposalPreparation {
     tasks: JoinSet<(LaneId, DataProposalHash)>,
     lanes: HashSet<LaneId>,
-    prepared: HashMap<LaneId, Arc<DataProposal>>,
+    prepared: DeterministicMap<LaneId, Arc<DataProposal>>,
     task_ids: HashMap<TaskId, LaneId>,
 }
 
@@ -159,7 +160,10 @@ impl super::Mempool {
     pub(super) fn prepare_new_data_proposal(&mut self) -> Result<bool> {
         trace!("🐣 Prepare new owned data proposal");
         let mut started = false;
-        let lane_ids: Vec<LaneId> = self.waiting_dissemination_txs.keys().cloned().collect();
+        let mut lane_ids: Vec<LaneId> =
+            self.waiting_dissemination_txs.keys().cloned().collect();
+        #[cfg(feature = "turmoil")]
+        lane_ids.sort(); // Deterministic lane ordering for simulation.
 
         for lane_id in lane_ids {
             if self

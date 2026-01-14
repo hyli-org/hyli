@@ -16,6 +16,7 @@ use block_construction::BlockUnderConstruction;
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
 use hyli_crypto::SharedBlstCrypto;
+use hyli_crypto::collections::DeterministicMap;
 use hyli_modules::{bus::BusMessage, module_bus_client};
 use hyli_net::ordered_join_set::OrderedJoinSet;
 use indexmap::IndexSet;
@@ -23,7 +24,7 @@ use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, VecDeque},
     fmt::Display,
     ops::{Deref, DerefMut},
     path::PathBuf,
@@ -122,7 +123,7 @@ pub type ValidatorDAG = SignedByValidator<(DataProposalHash, LaneBytesSize)>;
 #[derive(Default, BorshSerialize, BorshDeserialize)]
 pub struct MempoolStore {
     // own_lane.rs
-    waiting_dissemination_txs: HashMap<LaneId, BorshableIndexMap<TxHash, Transaction>>,
+    waiting_dissemination_txs: DeterministicMap<LaneId, BorshableIndexMap<TxHash, Transaction>>,
     // TODO: implement serialization, probably with a custom future that yields the unmodified Tx
     // on cancellation
     #[borsh(skip)]
@@ -140,7 +141,7 @@ pub struct MempoolStore {
     #[borsh(skip)]
     processing_dps: OrderedJoinSet<Result<ProcessedDPEvent>>,
     #[borsh(skip)]
-    cached_dp_votes: HashMap<(LaneId, DataProposalHash), DataProposalVerdict>,
+    cached_dp_votes: DeterministicMap<(LaneId, DataProposalHash), DataProposalVerdict>,
 
     // Dedicated thread pool for data proposal and tx hashing
     #[borsh(skip)]
