@@ -206,8 +206,7 @@ where
         // Await either of the joinsets in the self.canal_jobs hashmap
 
         loop {
-            tokio::select! {
-                biased;
+            hyli_crypto::tokio_select_biased! {
                 Some(tcp_event) = self.tcp_server.listen_next() => {
                     return P2PTcpEvent::TcpEvent(tcp_event);
                 },

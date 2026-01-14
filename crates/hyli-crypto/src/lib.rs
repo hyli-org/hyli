@@ -40,6 +40,7 @@ pub use hyli_model::{
 };
 pub mod deterministic_rng;
 pub mod collections;
+pub mod tokio_select;
 
 #[derive(Clone)]
 pub struct BlstCrypto {

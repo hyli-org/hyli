@@ -2117,8 +2117,7 @@ pub mod test {
 
         // Check that we haven't started the consensus yet
         // (this is awkward to do for now so assume that not receiving an answer is OK)
-        tokio::select! {
-            biased;
+        hyli_crypto::tokio_select_biased! {
             _ = tokio::time::sleep(Duration::from_secs(1)) => {}
             _ = bc.request(QueryConsensusInfo {}) => {
                 panic!("Consensus should not have started yet");
@@ -2127,8 +2126,7 @@ pub mod test {
 
         bc.send(NodeStateEvent::NewBlock(block)).unwrap();
 
-        tokio::select! {
-            biased;
+        hyli_crypto::tokio_select_biased! {
             _ = tokio::time::sleep(Duration::from_secs(1)) => {
                 panic!("Consensus should have started");
             }

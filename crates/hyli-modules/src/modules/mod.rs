@@ -177,8 +177,7 @@ pub mod signal {
         F: std::future::IntoFuture,
     {
         let mut dummy = false;
-        tokio::select! {
-            biased;
+        hyli_crypto::tokio_select_biased! {
             _ = async_receive_shutdown::<M>(
                 &mut dummy,
                 receiver.get_mut(),
@@ -201,8 +200,7 @@ pub mod signal {
         F: std::future::IntoFuture,
     {
         let mut dummy = false;
-        tokio::select! {
-            biased;
+        hyli_crypto::tokio_select_biased! {
             _ = tokio::time::sleep(duration) => {
                 anyhow::bail!("Timeout reached");
             }
@@ -381,8 +379,7 @@ impl ModulesHandler {
                     }
                 });
 
-                let res = tokio::select! {
-                    biased;
+                let res = hyli_crypto::tokio_select_biased! {
                     res = module_task => {
                         res
                     },
@@ -493,8 +490,7 @@ impl ModulesHandler {
             use tokio::signal::unix;
             let mut interrupt = unix::signal(unix::SignalKind::interrupt())?;
             let mut terminate = unix::signal(unix::SignalKind::terminate())?;
-            tokio::select! {
-                biased;
+            hyli_crypto::tokio_select_biased! {
                 res = self.shutdown_loop() => {
                     _ = log_error!(res, "Shutdown Loop triggered");
                 }
@@ -509,8 +505,7 @@ impl ModulesHandler {
         }
         #[cfg(not(unix))]
         {
-            tokio::select! {
-                biased;
+            hyli_crypto::tokio_select_biased! {
                 res = self.shutdown_loop() => {
                     _ = log_error!(res, "Shutdown Loop triggered");
                 }

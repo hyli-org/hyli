@@ -155,8 +155,7 @@ impl NodeIntegrationCtxBuilder {
 
         let node_task = Some(tokio::spawn(async move {
             node_modules.start_modules().await?;
-            tokio::select! {
-                biased;
+            hyli_crypto::tokio_select_biased! {
                 res = node_modules.shutdown_loop() => {
                     res
                 }

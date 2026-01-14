@@ -401,8 +401,7 @@ impl DaCatchupper {
                 let sleep = sleep_until(deadline);
                 tokio::pin!(sleep);
 
-                tokio::select! {
-                    biased;
+                hyli_crypto::tokio_select_biased! {
                     _ = &mut sleep => {
                         warn!("Timeout expired while waiting for block.");
                         metrics.timeout(&peer);

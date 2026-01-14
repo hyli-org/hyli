@@ -273,8 +273,7 @@ macro_rules! handle_messages {
             if false {
                 break;
             }
-            tokio::select! {
-                biased;
+            hyli_crypto::tokio_select_biased! {
                 $($bind = $fut $(, if $cond)? => $handle,)*
             }
         }

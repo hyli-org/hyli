@@ -131,8 +131,7 @@ where
 
     pub async fn listen_next(&mut self) -> Option<TcpEvent<Req>> {
         loop {
-            tokio::select! {
-                biased;
+            hyli_crypto::tokio_select_biased! {
                 Ok((stream, socket_addr)) = self.tcp_listener.accept() => {
                     if let Some(len) = self.max_frame_length {
                         debug!("Setting max frame length to {}", len);
