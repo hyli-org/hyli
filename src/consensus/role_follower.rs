@@ -20,6 +20,7 @@ use hyli_model::{
     ConsensusStakingAction, Cut, LaneBytesSize, LaneId, SignedByValidator, ValidatorCandidacy,
     View,
 };
+use hyli_modules::utils::ring_buffer_map::RingBufferMap;
 
 #[derive(BorshSerialize, BorshDeserialize, Default)]
 pub(super) struct FollowerState {
@@ -41,6 +42,11 @@ pub(super) enum TicketVerifyAndProcess {
 }
 
 impl Consensus {
+    pub(super) fn record_prepare_cache_sizes(&self) {
+        self.metrics
+            .record_prepare_cache_sizes(self.bft_round_state.follower.buffered_prepares.len());
+    }
+
     #[tracing::instrument(skip(self, consensus_proposal, ticket))]
     pub(super) fn on_prepare(
         &mut self,
@@ -79,6 +85,7 @@ impl Consensus {
                     ticket,
                     view,
                 ));
+                self.record_prepare_cache_sizes();
                 return Ok(());
             }
         }
@@ -182,6 +189,7 @@ impl Consensus {
             ticket,
             view,
         ));
+        self.record_prepare_cache_sizes();
 
         // If we already have the next Prepare, fast-forward
         if let Some(prepare) = follower_state!(self)
@@ -757,6 +765,7 @@ impl Consensus {
             follower_state!(self)
                 .buffered_prepares
                 .push(prepare_message);
+            self.record_prepare_cache_sizes();
         }
 
         // Check if we have a missing DP up to our current known DP (this assumes we're not on a fork)
@@ -921,13 +930,21 @@ pub type Prepare = (ValidatorPublicKey, ConsensusProposal, Ticket, View);
 
 #[derive(BorshSerialize, BorshDeserialize, Default, Debug)]
 pub(super) struct BufferedPrepares {
-    prepares: BTreeMap<ConsensusProposalHash, Prepare>,
+    prepares: RingBufferMap<ConsensusProposalHash, Prepare>,
     children: BTreeMap<ConsensusProposalHash, ConsensusProposalHash>,
 }
 
 impl BufferedPrepares {
     fn contains(&self, proposal_hash: &ConsensusProposalHash) -> bool {
         self.prepares.contains_key(proposal_hash)
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.prepares.len()
+    }
+
+    pub(super) fn set_max_size(&mut self, max: Option<usize>) {
+        self.prepares.set_max_size(max);
     }
 
     pub(super) fn push(&mut self, prepare_message: Prepare) {
@@ -1115,5 +1132,67 @@ mod tests {
             }
             _ => panic!("Expected SyncRequest for missing_prepare1"),
         }
+    }
+
+    #[test]
+    fn test_buffered_prepares_trim_limit() {
+        let mut buffered_prepares = BufferedPrepares::default();
+        let limit = 2;
+        let p1 = ConsensusProposal {
+            parent_hash: ConsensusProposalHash("p1-parent".into()),
+            ..ConsensusProposal::default()
+        };
+        let p2 = ConsensusProposal {
+            parent_hash: ConsensusProposalHash("p2-parent".into()),
+            ..ConsensusProposal::default()
+        };
+        let p3 = ConsensusProposal {
+            parent_hash: ConsensusProposalHash("p3-parent".into()),
+            ..ConsensusProposal::default()
+        };
+
+        let msg = |proposal: ConsensusProposal| {
+            (ValidatorPublicKey::default(), proposal, Ticket::Genesis, 0)
+        };
+
+        buffered_prepares.set_max_size(Some(limit));
+        buffered_prepares.push(msg(p1.clone()));
+        buffered_prepares.push(msg(p2.clone()));
+        buffered_prepares.push(msg(p3.clone()));
+
+        assert!(buffered_prepares.get(&p1.hashed()).is_none());
+        assert!(buffered_prepares.get(&p2.hashed()).is_some());
+        assert!(buffered_prepares.get(&p3.hashed()).is_some());
+    }
+
+    #[test]
+    fn test_buffered_prepares_limit_eviction() {
+        let mut buffered_prepares = BufferedPrepares::default();
+        buffered_prepares.set_max_size(Some(1));
+
+        let p1 = ConsensusProposal {
+            parent_hash: ConsensusProposalHash("roundtrip-p1".into()),
+            ..ConsensusProposal::default()
+        };
+        let p2 = ConsensusProposal {
+            parent_hash: ConsensusProposalHash("roundtrip-p2".into()),
+            ..ConsensusProposal::default()
+        };
+        let p3 = ConsensusProposal {
+            parent_hash: ConsensusProposalHash("roundtrip-p3".into()),
+            ..ConsensusProposal::default()
+        };
+
+        let msg = |proposal: ConsensusProposal| {
+            (ValidatorPublicKey::default(), proposal, Ticket::Genesis, 0)
+        };
+
+        buffered_prepares.push(msg(p1.clone()));
+        buffered_prepares.push(msg(p2.clone()));
+        buffered_prepares.push(msg(p3.clone()));
+
+        assert!(buffered_prepares.get(&p1.hashed()).is_none());
+        assert!(buffered_prepares.get(&p2.hashed()).is_none());
+        assert!(buffered_prepares.get(&p3.hashed()).is_some());
     }
 }
