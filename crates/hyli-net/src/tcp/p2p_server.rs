@@ -1130,10 +1130,7 @@ where
         headers: TcpHeaders,
     ) -> HashMap<ValidatorPublicKey, anyhow::Error> {
         let mut peer_addr_to_pubkey = Vec::new();
-        let mut peers: Vec<_> = self.peers.iter().collect();
-        peers.sort_by_key(|(pubkey, _)| (*pubkey).clone());
-
-        for (pubkey, peer) in peers {
+        for (pubkey, peer) in self.peers.iter() {
             if !only_for.contains(pubkey) {
                 continue;
             }

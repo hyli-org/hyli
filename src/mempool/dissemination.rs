@@ -416,9 +416,7 @@ impl DisseminationManager {
         let mut completed = Vec::new();
         let mut to_send = Vec::new();
 
-        let mut pending_keys: Vec<_> = self.pending_sync_requests.keys().cloned().collect();
-        #[cfg(feature = "turmoil")]
-        pending_keys.sort(); // Deterministic request ordering for simulation.
+        let pending_keys: Vec<_> = self.pending_sync_requests.keys().cloned().collect();
 
         for key in pending_keys {
             let Some(request) = self.pending_sync_requests.get_mut(&key) else {
@@ -536,9 +534,6 @@ impl DisseminationManager {
                 pending.push((lane_id.clone(), dp_hash.clone(), peer.clone()));
             }
         }
-
-        #[cfg(feature = "turmoil")]
-        pending.sort(); // Deterministic reply ordering for simulation.
 
         for (lane_id, dp_hash, validator) in pending {
             if self.should_debounce_sync_reply(&lane_id, &dp_hash, &validator, now.clone()) {
@@ -673,9 +668,7 @@ impl DisseminationManager {
     }
 
     pub(super) async fn redisseminate_owned_lanes(&mut self) -> Result<()> {
-        let mut lane_ids: Vec<_> = self.owned_lanes.iter().cloned().collect();
-        #[cfg(feature = "turmoil")]
-        lane_ids.sort(); // Deterministic lane ordering for simulation.
+        let lane_ids: Vec<_> = self.owned_lanes.iter().cloned().collect();
 
         for lane_id in lane_ids {
             let pending_entries = {
@@ -789,9 +782,7 @@ impl DisseminationManager {
             self.send_net_message_only_for(filtered_targets.clone(), net_message)?;
         }
 
-        let mut ordered_targets: Vec<_> = filtered_targets.iter().cloned().collect();
-        #[cfg(feature = "turmoil")]
-        ordered_targets.sort(); // Deterministic target ordering for simulation.
+        let ordered_targets: Vec<_> = filtered_targets.iter().cloned().collect();
 
         for peer in ordered_targets {
             self.record_dp_sent(lane_id, dp_hash, &peer);

@@ -160,10 +160,7 @@ impl super::Mempool {
     pub(super) fn prepare_new_data_proposal(&mut self) -> Result<bool> {
         trace!("🐣 Prepare new owned data proposal");
         let mut started = false;
-        let mut lane_ids: Vec<LaneId> =
-            self.waiting_dissemination_txs.keys().cloned().collect();
-        #[cfg(feature = "turmoil")]
-        lane_ids.sort(); // Deterministic lane ordering for simulation.
+        let lane_ids: Vec<LaneId> = self.waiting_dissemination_txs.keys().cloned().collect();
 
         for lane_id in lane_ids {
             if self
