@@ -6044,6 +6044,7 @@ version = "0.14.0"
 dependencies = [
  "anyhow",
  "assertables",
+ "async-trait",
  "axum 0.8.8",
  "borsh",
  "bytes",

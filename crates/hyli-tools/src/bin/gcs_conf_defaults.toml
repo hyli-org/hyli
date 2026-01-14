@@ -5,7 +5,7 @@ log_format = "full"
 data_directory = "data"
 
 # URL to connect to
-da_read_from = "http://localhost:4141"
+da_read_from = "localhost:4141"
 
 [gcs]
 # GCS bucket info
@@ -17,3 +17,9 @@ save_proofs = true
 save_blocks = true
 
 start_block = 0
+
+# Batching configuration
+batch_size = 1000
+batch_timeout_secs = 60
+retry_attempts = 5
+storage_backend = "local"

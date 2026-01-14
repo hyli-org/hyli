@@ -40,6 +40,7 @@ sqlx = { workspace = true, optional = true, features = ["chrono"] }
 
 # GCS
 google-cloud-storage = { workspace = true }
+async-trait = "0.1"
 
 tokio = { workspace = true, features = ["full", "tracing"] }
 tokio-util = { workspace = true }
