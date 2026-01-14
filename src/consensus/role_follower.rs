@@ -433,19 +433,11 @@ impl Consensus {
 
             // Verify that PoDA signature is valid
             let msg = (data_proposal_hash.clone(), *lane_size);
-            match BlstCrypto::verify_aggregate(&Signed {
+            BlstCrypto::verify_aggregate(&Signed {
                 msg,
                 signature: poda_sig.clone(),
-            }) {
-                Ok(valid) => {
-                    if !valid {
-                        bail!(
-                            "Failed to aggregate signatures into valid one. Messages might be different."
-                        );
-                    }
-                }
-                Err(err) => bail!("Failed to verify PoDA: {}", err),
-            };
+            })
+            .context("Failed to verify PoDA")?;
         }
         Ok(())
     }
@@ -913,9 +905,8 @@ impl Consensus {
             bail!("New bonded validator has no stake");
         }
         // Verify that the new validator has a valid signature
-        if !BlstCrypto::verify(new_validator)? {
-            bail!("New bonded validator has an invalid signature");
-        }
+        BlstCrypto::verify(new_validator)
+            .context("New bonded validator has an invalid signature")?;
         // This validator is being bonded, so we can drop it from our own list of candidates.
         self.validator_candidates
             .retain(|v| v.signature.validator != new_validator.signature.validator);

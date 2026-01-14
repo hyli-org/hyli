@@ -30,7 +30,7 @@
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Error, Result};
+use anyhow::{anyhow, bail, Context, Error, Result};
 use blst::min_pk::{
     AggregatePublicKey, AggregateSignature as BlstAggregateSignature, PublicKey, SecretKey,
     Signature as BlstSignature,
@@ -181,7 +181,7 @@ impl BlstCrypto {
         })
     }
 
-    pub fn verify<T>(msg: &SignedByValidator<T>) -> Result<bool, Error>
+    pub fn verify<T>(msg: &SignedByValidator<T>) -> Result<(), Error>
     where
         T: borsh::BorshSerialize,
     {
@@ -190,10 +190,14 @@ impl BlstCrypto {
         let sig = BlstSignature::uncompress(&msg.signature.signature.0)
             .map_err(|e| anyhow!("Could not parse Signature: {:?}", e))?;
         let encoded = borsh::to_vec(&msg.msg)?;
-        Ok(BlstCrypto::verify_bytes(encoded.as_slice(), &sig, &pk))
+        if BlstCrypto::verify_bytes(encoded.as_slice(), &sig, &pk) {
+            Ok(())
+        } else {
+            bail!("Invalid signature")
+        }
     }
 
-    pub fn verify_aggregate<T>(msg: &Signed<T, AggregateSignature>) -> Result<bool, Error>
+    pub fn verify_aggregate<T>(msg: &Signed<T, AggregateSignature>) -> Result<(), Error>
     where
         T: borsh::BorshSerialize,
     {
@@ -201,7 +205,11 @@ impl BlstCrypto {
         let sig = BlstSignature::uncompress(&msg.signature.signature.0)
             .map_err(|e| anyhow!("Could not parse Signature: {:?}", e))?;
         let encoded = borsh::to_vec(&msg.msg)?;
-        Ok(BlstCrypto::verify_bytes(encoded.as_slice(), &sig, &pk))
+        if BlstCrypto::verify_bytes(encoded.as_slice(), &sig, &pk) {
+            Ok(())
+        } else {
+            bail!("Invalid aggregate signature")
+        }
     }
 
     pub fn sign_aggregate<T>(
@@ -245,20 +253,16 @@ impl BlstCrypto {
                 let aggregated_sig = BlstAggregateSignature::aggregate(&sigs_refs, true)
                     .map_err(|e| anyhow!("could not aggregate signatures: {:?}", e))?;
 
-                let valid = Self::verify_aggregate(&Signed {
+                Self::verify_aggregate(&Signed {
                     msg: msg.clone(),
                     signature: AggregateSignature {
                         signature: aggregated_sig.to_signature().into(),
                         validators: vec![as_validator_pubkey(aggregated_pk.to_public_key())],
                     },
                 })
-                .map_err(|e| anyhow!("Failed for verify new aggregated signature! Reason: {e}"))?;
-
-                if !valid {
-                    return Err(anyhow!(
-                        "Failed to aggregate signatures into valid one. Messages might be different."
-                    ));
-                }
+                .context(
+                    "Failed to aggregate signatures into valid one. Messages might be different",
+                )?;
 
                 Ok(Signed {
                     msg,
@@ -356,8 +360,7 @@ mod tests {
         let pub_key = ValidatorPublicKey(crypto.sk.sk_to_pk().to_bytes().as_slice().to_vec());
         let msg = Data::default();
         let signed = crypto.sign(&msg).unwrap();
-        let valid = BlstCrypto::verify(&signed).unwrap();
-        assert!(valid);
+        BlstCrypto::verify(&signed).unwrap();
     }
 
     fn new_signed<T: borsh::BorshSerialize + Clone>(
@@ -390,7 +393,7 @@ mod tests {
                 crypto.validator_pubkey.clone(),
             ]
         );
-        assert!(BlstCrypto::verify_aggregate(&signed).unwrap());
+        BlstCrypto::verify_aggregate(&signed).unwrap();
 
         // ordering should not matter
         signed.signature.validators = vec![
@@ -399,7 +402,7 @@ mod tests {
             pk3.clone(),
             crypto.validator_pubkey.clone(),
         ];
-        assert!(BlstCrypto::verify_aggregate(&signed).unwrap());
+        BlstCrypto::verify_aggregate(&signed).unwrap();
 
         // Wrong validators
         signed.signature.validators = vec![
@@ -408,7 +411,7 @@ mod tests {
             pk4.clone(),
             crypto.validator_pubkey.clone(),
         ];
-        assert!(!BlstCrypto::verify_aggregate(&signed).unwrap());
+        assert!(BlstCrypto::verify_aggregate(&signed).is_err());
 
         // Wrong duplicated validators
         signed.signature.validators = vec![
@@ -418,7 +421,7 @@ mod tests {
             pk4.clone(),
             crypto.validator_pubkey.clone(),
         ];
-        assert!(!BlstCrypto::verify_aggregate(&signed).unwrap());
+        assert!(BlstCrypto::verify_aggregate(&signed).is_err());
     }
 
     #[test]
@@ -449,7 +452,7 @@ mod tests {
         let signed = crypto
             .sign_aggregate(Data::default(), aggregates.as_slice())
             .unwrap();
-        assert!(BlstCrypto::verify_aggregate(&signed).unwrap());
+        BlstCrypto::verify_aggregate(&signed).unwrap();
 
         assert_eq!(
             signed.signature.validators,

@@ -29,6 +29,7 @@ impl super::Mempool {
         lane_id: &LaneId,
         received_hash: DataProposalHash,
         data_proposal: DataProposal,
+        vote: super::ValidatorDAG,
     ) -> Result<()> {
         debug!(
             "Received DataProposal {:?} (unchecked) on lane {} ({} txs)",
@@ -84,7 +85,7 @@ impl super::Mempool {
                     data_proposal.hashed()
                 );
             }
-            self.on_hashed_data_proposal(lane_id, data_proposal.clone())?;
+            self.on_hashed_data_proposal(lane_id, data_proposal.clone(), vote)?;
         }
         #[cfg(not(test))]
         {
@@ -103,6 +104,7 @@ impl super::Mempool {
                     Ok(ProcessedDPEvent::OnHashedDataProposal((
                         lane_id_clone,
                         data_proposal,
+                        vote,
                     )))
                 },
                 &handle,
@@ -115,6 +117,7 @@ impl super::Mempool {
         &mut self,
         lane_id: &LaneId,
         mut data_proposal: DataProposal,
+        vote: super::ValidatorDAG,
     ) -> Result<()> {
         debug!(
             "Hashing done for DataProposal {:?} on lane {} ({} txs, {})",
@@ -163,10 +166,10 @@ impl super::Mempool {
             DataProposalVerdict::Wait => {
                 debug!("Buffering DataProposal {}", data_proposal_hash);
                 // Push the data proposal in the waiting list
-                self.buffered_proposals
+                self.buffered_entries
                     .entry(lane_id.clone())
                     .or_default()
-                    .insert(data_proposal);
+                    .insert(data_proposal_hash.clone(), (vec![vote], data_proposal));
             }
             DataProposalVerdict::Refuse => {
                 debug!("Refuse vote for DataProposal {}", data_proposal.hashed());
@@ -230,31 +233,34 @@ impl super::Mempool {
                 }
 
                 // Check if we maybe buffered a descendant of this DP.
-                let mut dp = None;
-                if let Some(buffered_proposals) = self.buffered_proposals.get_mut(&lane_id) {
+                let mut entry = None;
+                if let Some(buffered_entries) = self.buffered_entries.get_mut(&lane_id) {
                     // Check if we have a buffered proposal that is a child of this DP
-                    let child_idx = buffered_proposals.iter().position(|dp| {
-                        if let Some(parent_hash) = &dp.parent_data_proposal_hash {
-                            parent_hash == &hash
-                        } else {
-                            false
-                        }
+                    let mut extracted = buffered_entries.extract_if(|_, (_, dp)| {
+                        dp.parent_data_proposal_hash
+                            .as_ref()
+                            .is_some_and(|parent| parent == &hash)
                     });
-                    if let Some(child_idx) = child_idx {
-                        // We have a buffered proposal that is a child of this DP, process it.
-                        // (I _would_ use a HashSet, but this requires https://github.com/rust-lang/rust/issues/59618
-                        // which is coming in 1.88)
-                        dp = buffered_proposals.swap_remove_index(child_idx);
+                    if let Some((_, child_entry)) = extracted.next() {
+                        entry = Some(child_entry);
                     }
                 }
-                if let Some(dp) = dp {
-                    // We can process this DP
-                    debug!(
-                        "Processing buffered DataProposal {:?} on lane {}",
-                        dp.hashed(),
-                        lane_id
-                    );
-                    self.on_hashed_data_proposal(&lane_id, dp)?;
+                if let Some(mut entry) = entry {
+                    // Shouldn't really happen but let's handle it
+                    if let Some(vote) = entry.0.pop() {
+                        // We can process this DP
+                        debug!(
+                            "Processing buffered DataProposal {:?} on lane {}",
+                            entry.1.hashed(),
+                            lane_id
+                        );
+                        self.on_hashed_data_proposal(&lane_id, entry.1, vote)?;
+                    } else {
+                        warn!(
+                            "No lane operator vote stored for buffered proposal {:?}",
+                            entry.1.hashed()
+                        );
+                    }
                 }
             }
             DataProposalVerdict::Refuse => {

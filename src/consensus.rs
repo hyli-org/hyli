@@ -461,14 +461,11 @@ impl Consensus {
             BlstCrypto::verify_aggregate(&expected_signed_message),
             self.verify_quorum_signers_part_of_consensus(quorum_certificate),
         ) {
-            (Ok(res), true) if !res => {
-                bail!("Quorum Certificate received is invalid")
-            }
+            (Ok(()), true) => {}
             (Err(err), _) => bail!("Quorum Certificate verification failed: {}", err),
             (_, false) => {
                 bail!("Quorum Certificate received contains non-consensus validators")
             }
-            _ => {}
         };
 
         // This helpfully ignores any signatures that would not be actually part of the consensus
@@ -538,6 +535,7 @@ impl Consensus {
                 )
             }
             ConsensusNetMessage::PrepareVote(prepare_vote) => {
+                BlstCrypto::verify(&prepare_vote).context("Invalid PrepareVote signature")?;
                 with_metric!(
                     self.metrics,
                     "on_prepare_vote",
@@ -552,6 +550,7 @@ impl Consensus {
                 )
             }
             ConsensusNetMessage::ConfirmAck(confirm_ack) => {
+                BlstCrypto::verify(&confirm_ack).context("Invalid ConfirmAck signature")?;
                 with_metric!(
                     self.metrics,
                     "on_confirm_ack",
@@ -562,6 +561,10 @@ impl Consensus {
                 self.on_commit(sender, commit_quorum_certificate, proposal_hash_hint)
             }
             ConsensusNetMessage::Timeout((timeout, tk)) => {
+                BlstCrypto::verify(&timeout).context("Invalid Timeout signature")?;
+                if let TimeoutKind::NilProposal(nil) = &tk {
+                    BlstCrypto::verify(nil).context("Invalid NilProposal timeout signature")?;
+                }
                 with_metric!(self.metrics, "on_timeout", self.on_timeout(timeout, tk))
             }
             ConsensusNetMessage::TimeoutCertificate(
@@ -580,6 +583,7 @@ impl Consensus {
                 )
             ),
             ConsensusNetMessage::ValidatorCandidacy(candidacy) => {
+                BlstCrypto::verify(&candidacy).context("Invalid ValidatorCandidacy signature")?;
                 self.on_validator_candidacy(candidacy)
             }
             ConsensusNetMessage::SyncRequest(proposal_hash) => {
@@ -821,6 +825,12 @@ impl Consensus {
                                 round_leader
                             );
                         }
+
+                        // Schedule timeout for both leader and follower to ensure recovery from stuck states
+                        self.store.bft_round_state.timeout.state.schedule_next(
+                            TimestampMsClock::now(),
+                            self.config.consensus.timeout_after,
+                        );
 
                         // Send a CommitConsensusProposal for the genesis block
                         _ = log_error!(self
@@ -1447,6 +1457,39 @@ pub mod test {
         assert_eq!(cp3.slot, 3);
         assert_eq!(view3, 0);
         assert!(matches!(ticket3, Ticket::CommitQC(_)));
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_prepare_vote_invalid_signature_rejected() {
+        let (mut node1, node2): (ConsensusTestCtx, ConsensusTestCtx) = build_nodes!(2).await;
+
+        let signed_vote = node2
+            .consensus
+            .crypto
+            .sign((
+                ConsensusProposalHash("hash-a".to_string()),
+                PrepareVoteMarker,
+            ))
+            .unwrap();
+        let invalid_vote = Signed {
+            msg: (
+                ConsensusProposalHash("hash-b".to_string()),
+                PrepareVoteMarker,
+            ),
+            signature: signed_vote.signature,
+        };
+
+        let net_msg = node2
+            .consensus
+            .crypto
+            .sign_msg_with_header(ConsensusNetMessage::PrepareVote(invalid_vote))
+            .unwrap();
+
+        let err = node1.handle_msg_err(&net_msg).await;
+        assert!(
+            format!("{err:#}").contains("Invalid PrepareVote signature"),
+            "unexpected error: {err:#}"
+        );
     }
 
     #[test_log::test(tokio::test)]

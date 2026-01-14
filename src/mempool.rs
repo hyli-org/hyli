@@ -19,7 +19,6 @@ use hyli_crypto::SharedBlstCrypto;
 use hyli_crypto::collections::DeterministicMap;
 use hyli_modules::{bus::BusMessage, module_bus_client};
 use hyli_net::ordered_join_set::OrderedJoinSet;
-use indexmap::IndexSet;
 use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
@@ -30,7 +29,7 @@ use std::{
     path::PathBuf,
     time::Duration,
 };
-use storage::{LaneEntryMetadata, Storage};
+use storage::Storage;
 use verify_tx::DataProposalVerdict;
 // Pick one of the two implementations
 // use storage_memory::LanesStorage;
@@ -39,7 +38,7 @@ use verify_tx::DataProposalVerdict;
 use hyli_crypto::BlstCrypto;
 pub use storage_fjall::{shared_lanes_storage, LanesStorage};
 use strum_macros::IntoStaticStr;
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
 
 pub mod api;
 pub mod block_construction;
@@ -119,6 +118,7 @@ impl LongTasksRuntime {
 /// It acts as proof the validator committed to making this DP available.
 /// We don't actually sign the Lane ID itself, assuming DPs are unique enough across lanes, as BLS signatures are slow.
 pub type ValidatorDAG = SignedByValidator<(DataProposalHash, LaneBytesSize)>;
+pub type BufferedEntry = (Vec<ValidatorDAG>, DataProposal);
 
 #[derive(Default, BorshSerialize, BorshDeserialize)]
 pub struct MempoolStore {
@@ -132,11 +132,10 @@ pub struct MempoolStore {
     own_data_proposal_in_preparation: own_lane::OwnDataProposalPreparation,
     // Skipped to clear on reset
     #[borsh(skip)]
-    buffered_proposals: BTreeMap<LaneId, IndexSet<DataProposal>>, // This is an indexSet just so we can pop by idx.
+    buffered_entries: BTreeMap<LaneId, HashMap<DataProposalHash, BufferedEntry>>,
     // Skipped to clear on reset
     #[borsh(skip)]
     buffered_votes: BTreeMap<LaneId, BTreeMap<DataProposalHash, Vec<ValidatorDAG>>>,
-
     // verify_tx.rs
     #[borsh(skip)]
     processing_dps: OrderedJoinSet<Result<ProcessedDPEvent>>,
@@ -218,7 +217,7 @@ pub enum MempoolNetMessage {
     DataProposal(LaneId, DataProposalHash, DataProposal, ValidatorDAG),
     DataVote(LaneId, ValidatorDAG),
     SyncRequest(LaneId, Option<DataProposalHash>, Option<DataProposalHash>),
-    SyncReply(LaneId, LaneEntryMetadata, DataProposal),
+    SyncReply(LaneId, Vec<ValidatorDAG>, DataProposal),
 }
 
 impl BusMessage for MempoolNetMessage {}
@@ -260,8 +259,9 @@ impl IntoHeaderSignableData for MempoolNetMessage {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ProcessedDPEvent {
-    OnHashedDataProposal((LaneId, DataProposal)),
+    OnHashedDataProposal((LaneId, DataProposal, ValidatorDAG)),
     OnProcessedDataProposal((LaneId, DataProposalVerdict, DataProposal)),
+    OnHashedSyncReply((LaneId, Vec<ValidatorDAG>, DataProposal, DataProposalHash)),
 }
 
 impl Mempool {
@@ -397,11 +397,16 @@ impl Mempool {
         Ok(cut)
     }
 
-    fn handle_internal_event(&mut self, event: ProcessedDPEvent) -> Result<()> {
+    async fn handle_internal_event(&mut self, event: ProcessedDPEvent) -> Result<()> {
         match event {
-            ProcessedDPEvent::OnHashedDataProposal((lane_id, data_proposal)) => self
-                .on_hashed_data_proposal(&lane_id, data_proposal)
+            ProcessedDPEvent::OnHashedDataProposal((lane_id, data_proposal, vote)) => self
+                .on_hashed_data_proposal(&lane_id, data_proposal, vote)
                 .context("Hashing data proposal"),
+            ProcessedDPEvent::OnHashedSyncReply((lane_id, signatures, data_proposal, dp_hash)) => {
+                self.on_hashed_sync_reply(lane_id, signatures, data_proposal, dp_hash)
+                    .await
+                    .context("Handling sync reply data proposal")
+            }
             ProcessedDPEvent::OnProcessedDataProposal((lane_id, verdict, data_proposal)) => self
                 .on_processed_data_proposal(lane_id, verdict, data_proposal)
                 .context("Processing data proposal"),
@@ -459,10 +464,12 @@ impl Mempool {
                         validator
                     );
                 }
-                self.on_data_proposal(&lane_id, data_proposal_hash, data_proposal)?;
+                BlstCrypto::verify(&vdag).context("Invalid DataProposal vote signature")?;
+                self.on_data_proposal(&lane_id, data_proposal_hash, data_proposal, vdag.clone())?;
                 self.on_data_vote(lane_id, vdag)?;
             }
             MempoolNetMessage::DataVote(lane_id, vdag) => {
+                BlstCrypto::verify(&vdag).context("Invalid DataVote signature")?;
                 self.on_data_vote(lane_id, vdag)?;
             }
             MempoolNetMessage::SyncRequest(
@@ -478,8 +485,9 @@ impl Mempool {
                 )
                 .await?;
             }
-            MempoolNetMessage::SyncReply(lane_id, metadata, data_proposal) => {
-                self.on_sync_reply(&lane_id, validator, metadata, data_proposal)
+            MempoolNetMessage::SyncReply(lane_id, sigs, data_proposal) => {
+                // Don't bother checking the signatures for sync replies, we trust our internal bookkeeping.
+                self.on_sync_reply(&lane_id, validator, sigs, data_proposal)
                     .await?;
             }
         }
@@ -509,79 +517,6 @@ impl Mempool {
             to: Some(to.clone()),
             requester: validator.clone(),
         })?;
-
-        Ok(())
-    }
-
-    async fn on_sync_reply(
-        &mut self,
-        lane_id: &LaneId,
-        sender_validator: &ValidatorPublicKey,
-        metadata: LaneEntryMetadata,
-        data_proposal: DataProposal,
-    ) -> Result<()> {
-        debug!("SyncReply from validator {sender_validator}");
-
-        self.metrics
-            .sync_reply_receive(lane_id, self.crypto.validator_pubkey());
-
-        let lane_operator = self.get_lane_operator(lane_id);
-
-        let missing_entry_not_present = {
-            let expected_message = (data_proposal.hashed(), metadata.cumul_size);
-
-            !metadata
-                .signatures
-                .iter()
-                .any(|s| &s.signature.validator == lane_operator && s.msg == expected_message)
-        };
-
-        // Ensure all lane entries are signed by the operator.
-        if missing_entry_not_present {
-            bail!(
-                "At least one lane entry is missing signature from {}",
-                lane_operator
-            );
-        }
-
-        // Store the missing entry in the target lane.
-        trace!(
-            "Filling hole with 1 entry (parent dp hash: {:?}) for {lane_id}",
-            metadata.parent_data_proposal_hash
-        );
-
-        let dp_hash = data_proposal.hashed();
-        let cumul_size = metadata.cumul_size;
-
-        // SyncReply only comes for missing data proposals. We should NEVER update the lane tip
-        self.lanes
-            .put_no_verification(lane_id.clone(), (metadata, data_proposal))?;
-
-        self.send_dissemination_event(DisseminationEvent::DpStored {
-            lane_id: lane_id.clone(),
-            data_proposal_hash: dp_hash,
-            cumul_size,
-        })?;
-
-        // Retry all buffered proposals in this lane.
-        // We'll re-buffer them in the on_data_proposal logic if they fail to be processed.
-        let waiting_proposals = match self.buffered_proposals.get_mut(lane_id) {
-            Some(waiting_proposals) => std::mem::take(waiting_proposals),
-            None => Default::default(),
-        };
-
-        // TODO: retry remaining wp when one succeeds to be processed
-        for wp in waiting_proposals.into_iter() {
-            if self.lanes.contains(lane_id, &wp.hashed()) {
-                continue;
-            }
-            self.on_data_proposal(lane_id, wp.hashed(), wp)
-                .context("Consuming waiting data proposal")?;
-        }
-
-        self.try_to_send_full_signed_blocks()
-            .await
-            .context("Try process queued CCP")?;
 
         Ok(())
     }
@@ -619,9 +554,18 @@ impl Mempool {
 
     #[inline(always)]
     fn send_dissemination_event(&mut self, event: DisseminationEvent) -> Result<()> {
+        Self::send_dissemination_event_over(&mut self.bus, event)
+    }
+
+    // Variant for one function from block_construction.rs
+    #[inline(always)]
+    fn send_dissemination_event_over(
+        bus: &mut MempoolBusClient,
+        event: DisseminationEvent,
+    ) -> Result<()> {
         let enum_variant_name: &'static str = (&event).into();
         let error_msg = format!("Sending DisseminationEvent::{enum_variant_name} msg on the bus");
-        self.bus.send(event).context(error_msg)?;
+        bus.send(event).context(error_msg)?;
         Ok(())
     }
 }
