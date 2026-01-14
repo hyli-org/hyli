@@ -140,6 +140,7 @@ pub struct MempoolStore {
     buc_build_start_height: Option<u64>,
 
     // Common
+    #[borsh(skip)]
     last_ccp: Option<CommittedConsensusProposal>,
     staking: Staking,
 }

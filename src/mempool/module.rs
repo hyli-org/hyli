@@ -1,9 +1,7 @@
 use hyli_modules::{log_error, module_handle_messages};
 use std::{sync::Arc, time::Duration};
 
-use crate::{
-    consensus::ConsensusEvent, model::*, p2p::network::MsgWithHeader, utils::conf::P2pMode,
-};
+use crate::{consensus::ConsensusEvent, model::*, p2p::network::MsgWithHeader, utils::conf::P2pMode};
 
 use client_sdk::tcp_client::TcpServerMessage;
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
@@ -83,6 +81,10 @@ impl Module for Mempool {
                     if let Err(e) = self.staking.process_block(&block.staking_data) {
                         tracing::error!("Error processing block in mempool: {:?}", e);
                     }
+                    let _ = log_error!(
+                        self.on_lane_manager_new_block(&block),
+                        "Updating mempool after DA NewBlock"
+                    );
                 }
             }
             command_response<QueryNewCut, Cut> staking => {

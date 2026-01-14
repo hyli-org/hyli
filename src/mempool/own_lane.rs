@@ -1,6 +1,9 @@
 //! Logic for processing the API inbound TXs in the mempool.
 
-use crate::{bus::BusClientSender, model::*, utils::serialize::BorshableIndexMap};
+use crate::{
+    bus::BusClientSender, consensus::CommittedConsensusProposal, model::*,
+    utils::serialize::BorshableIndexMap,
+};
 
 use anyhow::{bail, Context, Result};
 use client_sdk::tcp_client::TcpServerMessage;
@@ -157,6 +160,10 @@ impl super::Mempool {
     }
 
     pub(super) fn prepare_new_data_proposal(&mut self) -> Result<bool> {
+        if self.last_ccp.is_none() {
+            trace!("Skipping own-lane DP creation until first CCP is received");
+            return Ok(false);
+        }
         trace!("🐣 Prepare new owned data proposal");
         let mut started = false;
         let lane_ids: Vec<LaneId> = self.waiting_dissemination_txs.keys().cloned().collect();
@@ -181,6 +188,25 @@ impl super::Mempool {
         }
 
         Ok(started)
+    }
+
+    /// In LaneManager mode we don't receive CCP events, so reconcile mempool state from
+    /// NodeState-delivered blocks instead. On the first block after startup, we reconcile lane
+    /// tips with the block's cut to avoid building own-lane DPs on stale tips, then store a
+    /// synthetic CCP in `last_ccp` to unlock own-lane DP creation.
+    pub(super) fn on_lane_manager_new_block(&mut self, block: &NodeStateBlock) -> Result<()> {
+        if self.last_ccp.is_none() {
+            let cut = block.signed_block.consensus_proposal.cut.clone();
+            self.clean_and_update_lanes(&cut, &None)?;
+        }
+
+        self.last_ccp = Some(CommittedConsensusProposal {
+            staking: self.staking.clone(),
+            consensus_proposal: block.signed_block.consensus_proposal.clone(),
+            certificate: block.signed_block.certificate.clone(),
+        });
+
+        Ok(())
     }
 
     pub(super) async fn handle_own_data_proposal_preparation(
