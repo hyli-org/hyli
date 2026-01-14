@@ -535,8 +535,7 @@ impl Consensus {
                 )
             }
             ConsensusNetMessage::PrepareVote(prepare_vote) => {
-                BlstCrypto::verify(&prepare_vote)
-                    .context("Invalid PrepareVote signature")?;
+                BlstCrypto::verify(&prepare_vote).context("Invalid PrepareVote signature")?;
                 with_metric!(
                     self.metrics,
                     "on_prepare_vote",
@@ -551,8 +550,7 @@ impl Consensus {
                 )
             }
             ConsensusNetMessage::ConfirmAck(confirm_ack) => {
-                BlstCrypto::verify(&confirm_ack)
-                    .context("Invalid ConfirmAck signature")?;
+                BlstCrypto::verify(&confirm_ack).context("Invalid ConfirmAck signature")?;
                 with_metric!(
                     self.metrics,
                     "on_confirm_ack",
@@ -565,8 +563,7 @@ impl Consensus {
             ConsensusNetMessage::Timeout((timeout, tk)) => {
                 BlstCrypto::verify(&timeout).context("Invalid Timeout signature")?;
                 if let TimeoutKind::NilProposal(nil) = &tk {
-                    BlstCrypto::verify(nil)
-                        .context("Invalid NilProposal timeout signature")?;
+                    BlstCrypto::verify(nil).context("Invalid NilProposal timeout signature")?;
                 }
                 with_metric!(self.metrics, "on_timeout", self.on_timeout(timeout, tk))
             }
@@ -586,8 +583,7 @@ impl Consensus {
                 )
             ),
             ConsensusNetMessage::ValidatorCandidacy(candidacy) => {
-                BlstCrypto::verify(&candidacy)
-                    .context("Invalid ValidatorCandidacy signature")?;
+                BlstCrypto::verify(&candidacy).context("Invalid ValidatorCandidacy signature")?;
                 self.on_validator_candidacy(candidacy)
             }
             ConsensusNetMessage::SyncRequest(proposal_hash) => {
@@ -602,7 +598,6 @@ impl Consensus {
             }
         }
     }
-
 
     /// Apply ticket locally, and start new round with it
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, ticket)))]
@@ -1466,15 +1461,21 @@ pub mod test {
 
     #[test_log::test(tokio::test)]
     async fn test_prepare_vote_invalid_signature_rejected() {
-        let (mut node1, mut node2): (ConsensusTestCtx, ConsensusTestCtx) = build_nodes!(2).await;
+        let (mut node1, node2): (ConsensusTestCtx, ConsensusTestCtx) = build_nodes!(2).await;
 
         let signed_vote = node2
             .consensus
             .crypto
-            .sign((ConsensusProposalHash("hash-a".to_string()), PrepareVoteMarker))
+            .sign((
+                ConsensusProposalHash("hash-a".to_string()),
+                PrepareVoteMarker,
+            ))
             .unwrap();
         let invalid_vote = Signed {
-            msg: (ConsensusProposalHash("hash-b".to_string()), PrepareVoteMarker),
+            msg: (
+                ConsensusProposalHash("hash-b".to_string()),
+                PrepareVoteMarker,
+            ),
             signature: signed_vote.signature,
         };
 
