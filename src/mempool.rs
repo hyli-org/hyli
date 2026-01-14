@@ -25,8 +25,11 @@ use staking::state::Staking;
 use std::{
     collections::{BTreeMap, VecDeque},
     fmt::Display,
+    io::{Read, Write},
     ops::{Deref, DerefMut},
     path::PathBuf,
+    sync::Arc,
+    time::Duration,
 };
 use storage::Storage;
 use verify_tx::DataProposalVerdict;
@@ -56,6 +59,90 @@ pub mod tests;
 
 pub use dissemination::DisseminationEvent;
 
+#[derive(Clone, Debug)]
+pub(super) struct ArcBorsh<T>(Arc<T>);
+
+impl<T> ArcBorsh<T> {
+    pub(super) fn new(value: Arc<T>) -> Self {
+        Self(value)
+    }
+
+    pub(super) fn arc(&self) -> Arc<T> {
+        Arc::clone(&self.0)
+    }
+}
+
+impl<T: BorshSerialize> BorshSerialize for ArcBorsh<T> {
+    fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        self.0.serialize(writer)
+    }
+}
+
+impl<T: BorshDeserialize> BorshDeserialize for ArcBorsh<T> {
+    fn deserialize_reader<R: Read>(reader: &mut R) -> std::io::Result<Self> {
+        let value = T::deserialize_reader(reader)?;
+        Ok(Self(Arc::new(value)))
+    }
+}
+
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+enum PendingTxStage {
+    Hash,
+    Proof,
+}
+
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+struct PendingTx {
+    tx: ArcBorsh<Transaction>,
+    lane_suffix: LaneSuffix,
+    stage: PendingTxStage,
+}
+
+pub struct LongTasksRuntime(std::mem::ManuallyDrop<tokio::runtime::Runtime>);
+impl Default for LongTasksRuntime {
+    fn default() -> Self {
+        Self(std::mem::ManuallyDrop::new(
+            #[allow(clippy::expect_used, reason = "Fails at startup, is OK")]
+            tokio::runtime::Builder::new_multi_thread()
+                // Limit the number of threads arbitrarily to lower the maximal impact on the whole node
+                .worker_threads(3)
+                .thread_name("mempool-hashing")
+                .build()
+                .expect("Failed to create hashing runtime"),
+        ))
+    }
+}
+
+impl Drop for LongTasksRuntime {
+    fn drop(&mut self) {
+        // Shut down the hashing runtime.
+        // TODO: serialize?
+        // Safety: We'll manually drop the runtime below and it won't be double-dropped as we use ManuallyDrop.
+        let rt = unsafe { std::mem::ManuallyDrop::take(&mut self.0) };
+        // This has to be done outside the current runtime.
+        tokio::task::spawn_blocking(move || {
+            #[cfg(test)]
+            rt.shutdown_timeout(Duration::from_millis(10));
+            #[cfg(not(test))]
+            rt.shutdown_timeout(Duration::from_secs(10));
+        });
+    }
+}
+
+impl Deref for LongTasksRuntime {
+    type Target = tokio::runtime::Runtime;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for LongTasksRuntime {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 /// Validator Data Availability Guarantee
 /// This is a signed message that contains the hash of the data proposal and the size of the lane (DP included)
 /// It acts as proof the validator committed to making this DP available.
@@ -73,7 +160,7 @@ pub struct MempoolStore {
     // on cancellation
     #[borsh(skip)]
     processing_txs: OrderedJoinSet<Result<(Transaction, LaneSuffix)>>,
-    #[borsh(skip)]
+    processing_txs_pending: VecDeque<PendingTx>,
     own_data_proposal_in_preparation: own_lane::OwnDataProposalPreparation,
     // Skipped to clear on reset
     #[borsh(skip)]
@@ -210,6 +297,40 @@ pub enum ProcessedDPEvent {
 }
 
 impl Mempool {
+    pub(super) fn restore_inflight_work(&mut self) {
+        let handle = self.inner.long_tasks_runtime.handle();
+
+        for pending in self.inner.processing_txs_pending.iter().cloned() {
+            let arc_tx = pending.tx.arc();
+            let lane_suffix = pending.lane_suffix.clone();
+            match pending.stage {
+                PendingTxStage::Hash => {
+                    self.inner.processing_txs.spawn_on(
+                        async move {
+                            arc_tx.hashed();
+                            Ok(((*arc_tx).clone(), lane_suffix))
+                        },
+                        handle,
+                    );
+                }
+                PendingTxStage::Proof => {
+                    self.inner.processing_txs.spawn_on(
+                        async move {
+                            let tx = Self::process_proof_tx((*arc_tx).clone())
+                                .context("Processing proof tx in blocker")?;
+                            Ok((tx, lane_suffix))
+                        },
+                        handle,
+                    );
+                }
+            }
+        }
+
+        self.inner
+            .own_data_proposal_in_preparation
+            .restore_tasks(handle);
+    }
+
     pub(super) fn on_data_vote(&mut self, lane_id: LaneId, vdag: ValidatorDAG) -> Result<()> {
         self.metrics.on_data_vote.add(1, &[]);
 
