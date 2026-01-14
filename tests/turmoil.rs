@@ -39,8 +39,9 @@ use crate::fixtures::turmoil::TurmoilCtx;
 
 // Re-export simulations for use in test macros
 use corruption::{
-    simulation_corrupt_consensus_messages, simulation_corrupt_mempool_messages,
-    simulation_corrupt_random_messages,
+    simulation_corrupt_commit_messages, simulation_corrupt_consensus_messages,
+    simulation_corrupt_mempool_messages, simulation_corrupt_prepare_votes,
+    simulation_corrupt_random_messages, simulation_corrupt_timeout_messages,
 };
 use latency::{
     simulation_basic, simulation_realistic_network, simulation_slow_network, simulation_slow_node,
@@ -83,7 +84,11 @@ macro_rules! turmoil_simple {
 
                 $simulation(&mut ctx, &mut sim)?;
                 match stringify!($simulation) {
-                    "simulation_corrupt_random_messages" => {
+                    "simulation_corrupt_random_messages"
+                    | "simulation_corrupt_commit_messages"
+                    | "simulation_corrupt_prepare_votes"
+                    | "simulation_corrupt_timeout_messages"
+                    | "simulation_corrupt_consensus_messages" => {
                         assert_converged_with_one_block_height_tolerance(&ctx, &mut sim, 1)?;
                     }
                     "simulation_restart_node" => {}
@@ -137,7 +142,11 @@ macro_rules! turmoil_simple_flaky {
                         | "simulation_drop_data_proposals"
                         | "simulation_drop_data_votes"
                         | "simulation_drop_all_messages"
-                        | "simulation_corrupt_random_messages" => {
+                        | "simulation_corrupt_random_messages"
+                        | "simulation_corrupt_commit_messages"
+                        | "simulation_corrupt_prepare_votes"
+                        | "simulation_corrupt_timeout_messages"
+                        | "simulation_corrupt_consensus_messages" => {
                             assert_converged_with_one_block_height_tolerance(&ctx, &mut sim, 1)?;
                         }
                         _ => {
@@ -217,5 +226,20 @@ turmoil_simple!(
 turmoil_simple!(
     721..=730,
     simulation_corrupt_mempool_messages,
+    submit_10_contracts
+);
+turmoil_simple!(
+    731..=740,
+    simulation_corrupt_commit_messages,
+    submit_10_contracts
+);
+turmoil_simple!(
+    741..=750,
+    simulation_corrupt_prepare_votes,
+    submit_10_contracts
+);
+turmoil_simple!(
+    751..=760,
+    simulation_corrupt_timeout_messages,
     submit_10_contracts
 );
