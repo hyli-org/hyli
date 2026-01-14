@@ -416,12 +416,7 @@ impl DisseminationManager {
         let mut completed = Vec::new();
         let mut to_send = Vec::new();
 
-        let pending_keys: Vec<_> = self.pending_sync_requests.keys().cloned().collect();
-
-        for key in pending_keys {
-            let Some(request) = self.pending_sync_requests.get_mut(&key) else {
-                continue;
-            };
+        for (key, request) in self.pending_sync_requests.iter_mut() {
             if self.lanes.contains(&request.lane_id, &request.to) {
                 completed.push(key.clone());
                 continue;
