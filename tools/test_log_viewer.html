@@ -131,12 +131,22 @@
     <div id="log-line"></div>
 
     <script>
+        // Strip ANSI escape codes from a string
+        function stripAnsi(str) {
+            // Matches ANSI escape sequences: ESC[ followed by any number of params and a letter
+            // Also matches the literal bracket format [Xm where X is digits
+            return str.replace(/\x1b\[[0-9;]*m|\[([0-9;]*)m/g, '');
+        }
+
         function parseLogs(log) {
             const lines = log.trim().split("\n");
             const nodeLogs = {};
             const timestamps = new Set();
 
-            const parseLine = (line) => {
+            const parseLine = (rawLine) => {
+                // Strip ANSI codes first
+                const line = stripAnsi(rawLine);
+
                 // Extract line format matches `node-2(pubId) 2024-12-03T17:05:25.324793Z  INFO ...`
                 const reg = line.match(/([a-zA-Z0-9-_]+\([a-zA-Z0-9]+\)) +(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{2,8}Z) +(INFO|ERROR|WARN|DEBUG|TRACE) (.*)/);
                 try {
@@ -146,8 +156,9 @@
                 } catch (e) {
                     //console.error("Error parsing line", line, e);
                 }
-                // Turmoil logs:
+                // Turmoil logs with ANSI codes stripped:
                 // Format: 2025-05-02T07:47:54.704769Z  INFO node{name="node-3"}: ...
+                // After stripping: 2026-01-13T12:51:33.639218Z  INFO node{name="node-1"}: hyli::entrypoint: ...
                 const reg_turmoil = line.match(/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{2,8}Z) +(INFO|ERROR|WARN|DEBUG|TRACE) +node\{name="([^"]+)"\}: *(.*)/);
                 try {
                     const [all, timestamp, level, node, ...rest] = reg_turmoil || [];
