@@ -141,8 +141,37 @@ impl super::Mempool {
             return Ok(());
         };
         while hole_top == Some(&dp_hash) {
-            // Move the hole top down
-            if let Some(ref parent_hash) = data_proposal.parent_data_proposal_hash {
+            // We have found a hole matching this DP - we don't really need to validate signatures to handle it,
+            // as it was part of the cut, but as a warn if signatures don't match
+            let lane_operator = self.get_lane_operator(lane_id);
+            let found_operator_signature = signatures.iter().any(|s| {
+                &s.signature.validator == lane_operator
+                    && s.msg.0 == dp_hash
+                    && s.msg.1 == lane_size
+            });
+            if !found_operator_signature {
+                warn!(
+                    "Operator signature missing from sync reply entry {lane_operator} for DP {dp_hash}"
+                );
+            }
+
+            let dp_size = data_proposal.estimate_size() as u64;
+            let dp_parent_hash = data_proposal.parent_data_proposal_hash.clone();
+            let metadata = LaneEntryMetadata {
+                parent_data_proposal_hash: data_proposal.parent_data_proposal_hash.clone(),
+                cumul_size: lane_size,
+                signatures,
+                cached_poda: None,
+            };
+            self.lanes
+                .put_no_verification(lane_id.clone(), (metadata, data_proposal))?;
+            debug!(
+                "Filled hole for lane {} in BUC(slot: {})",
+                lane_id, buc.ccp.consensus_proposal.slot
+            );
+
+            // Now that we stored the DP, move the hole top down
+            if let Some(ref parent_hash) = dp_parent_hash {
                 // If we reached the 'from' cut, remove the hole
                 if buc.from.as_ref().is_some_and(|from_cut| {
                     from_cut.iter().any(|(from_lane_id, from_dp_hash, _, _)| {
@@ -161,29 +190,7 @@ impl super::Mempool {
                 hole_top = None;
             }
 
-            // We have found a hole matching this DP - we don't really need to validate signatures to handle it,
-            // as it was part of the cut, but as a warn if signatures don't match
-            let lane_operator = self.get_lane_operator(lane_id);
-            let found_operator_signature = signatures.iter().any(|s| {
-                &s.signature.validator == lane_operator
-                    && s.msg.0 == dp_hash
-                    && s.msg.1 == lane_size
-            });
-            if !found_operator_signature {
-                warn!(
-                    "Operator signature missing from sync reply entry {lane_operator} for DP {dp_hash}"
-                );
-            }
-
-            let dp_size = data_proposal.estimate_size() as u64;
-            let metadata = LaneEntryMetadata {
-                parent_data_proposal_hash: data_proposal.parent_data_proposal_hash.clone(),
-                cumul_size: lane_size,
-                signatures,
-                cached_poda: None,
-            };
-            self.lanes
-                .put_no_verification(lane_id.clone(), (metadata, data_proposal))?;
+            // Inform dissemination we can stop requesting this DP.
             Self::send_dissemination_event_over(
                 &mut self.bus,
                 DisseminationEvent::DpStored {
@@ -200,10 +207,6 @@ impl super::Mempool {
                     new_to: hole_top.cloned(),
                 },
             )?;
-            debug!(
-                "Filled hole for lane {} in BUC(slot: {})",
-                lane_id, buc.ccp.consensus_proposal.slot
-            );
 
             // Try to fill further holes
             let Some(ht) = hole_top else {
