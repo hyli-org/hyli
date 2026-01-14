@@ -815,10 +815,7 @@ async fn test_data_vote_invalid_signature_rejected() -> Result<()> {
 
     let crypto2 = BlstCrypto::new("2").unwrap();
     let lane_id = ctx.mempool.own_lane_id().clone();
-    let valid = crypto2.sign((
-        DataProposalHash("hash-a".to_string()),
-        LaneBytesSize(1),
-    ))?;
+    let valid = crypto2.sign((DataProposalHash("hash-a".to_string()), LaneBytesSize(1)))?;
     let invalid = SignedByValidator {
         msg: (DataProposalHash("hash-b".to_string()), LaneBytesSize(1)),
         signature: valid.signature,
