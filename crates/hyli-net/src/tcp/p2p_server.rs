@@ -9,7 +9,8 @@ use std::{
 use anyhow::{bail, Context};
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_crypto::BlstCrypto;
-use hyli_deterministic::deterministic_rng::deterministic_rng;
+#[cfg(feature = "turmoil")]
+use hyli_turmoil_shims::deterministic_rng::deterministic_rng;
 use sdk::{hyli_model_utils::TimestampMs, SignedByValidator, ValidatorPublicKey};
 use tokio::{
     task::{AbortHandle, JoinSet},
@@ -23,7 +24,8 @@ use crate::{
     ordered_join_set::OrderedJoinSet,
     tcp::{tcp_client::TcpClient, Handshake, TcpHeaders, TcpMessageLabel},
 };
-use hyli_deterministic::collections::DeterministicMap;
+use hyli_turmoil_shims::collections::DeterministicMap;
+#[cfg(feature = "turmoil")]
 use rand::seq::SliceRandom;
 
 use super::{
@@ -207,7 +209,7 @@ where
         // Await either of the joinsets in the self.canal_jobs hashmap
 
         loop {
-            hyli_deterministic::tokio_select_biased! {
+            hyli_turmoil_shims::tokio_select_biased! {
                 Some(tcp_event) = self.tcp_server.listen_next() => {
                     return P2PTcpEvent::TcpEvent(tcp_event);
                 },
@@ -1141,8 +1143,10 @@ where
             }
         }
 
-        let mut ordered_addrs: Vec<String> =
+        let ordered_addrs: Vec<String> =
             peer_addr_to_pubkey.iter().map(|(addr, _)| addr.clone()).collect();
+        #[cfg(feature = "turmoil")]
+        let mut ordered_addrs = ordered_addrs;
         #[cfg(feature = "turmoil")]
         ordered_addrs.shuffle(&mut deterministic_rng());
 

@@ -1,1 +1,1 @@
-pub use hyli_deterministic::clock::TimestampMsClock;
+pub use hyli_turmoil_shims::clock::TimestampMsClock;

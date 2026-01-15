@@ -16,7 +16,7 @@ use block_construction::BlockUnderConstruction;
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
 use hyli_crypto::SharedBlstCrypto;
-use hyli_deterministic::collections::DeterministicMap;
+use hyli_turmoil_shims::collections::DeterministicMap;
 use hyli_modules::{bus::BusMessage, module_bus_client};
 use hyli_net::ordered_join_set::OrderedJoinSet;
 use metrics::MempoolMetrics;
@@ -59,6 +59,7 @@ pub use dissemination::DisseminationEvent;
 
 enum LongTasksRuntimeInner {
     Dedicated(std::mem::ManuallyDrop<tokio::runtime::Runtime>),
+    #[cfg(feature = "turmoil")]
     Current(tokio::runtime::Handle),
 }
 
@@ -108,6 +109,7 @@ impl LongTasksRuntime {
     pub fn handle(&self) -> tokio::runtime::Handle {
         match &self.0 {
             LongTasksRuntimeInner::Dedicated(runtime) => runtime.handle().clone(),
+            #[cfg(feature = "turmoil")]
             LongTasksRuntimeInner::Current(handle) => handle.clone(),
         }
     }

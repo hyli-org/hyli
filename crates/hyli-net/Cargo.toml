@@ -11,7 +11,7 @@ rust-version = { workspace = true }
 [dependencies]
 sdk = { workspace = true, features = ["full-model"] }
 hyli-crypto = { workspace = true }
-hyli-deterministic = { workspace = true }
+hyli-turmoil-shims = { workspace = true }
 
 anyhow = { workspace = true }
 borsh = { workspace = true }
@@ -46,5 +46,5 @@ opentelemetry_sdk = { workspace = true }
 
 [features]
 # default = ["turmoil"]
-turmoil = ["dep:turmoil", "hyli-deterministic/turmoil"]
+turmoil = ["dep:turmoil", "hyli-turmoil-shims/turmoil"]
 instrumentation = ["tracing/attributes", "dep:tracing-opentelemetry"]

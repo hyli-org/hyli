@@ -26,7 +26,7 @@ use crate::{
     p2p::network::{HeaderSigner, OutboundMessage},
     utils::conf::{P2pMode, SharedConf},
 };
-use hyli_deterministic::collections::DeterministicMap;
+use hyli_turmoil_shims::collections::DeterministicMap;
 
 use super::{
     metrics::MempoolMetrics,

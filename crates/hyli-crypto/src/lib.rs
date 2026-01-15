@@ -38,7 +38,7 @@ use blst::min_pk::{
 pub use hyli_model::{
     AggregateSignature, Signed, SignedByValidator, ValidatorPublicKey, ValidatorSignature,
 };
-// deterministic utilities moved to hyli-deterministic
+// deterministic utilities moved to hyli-turmoil-shims
 
 #[derive(Clone)]
 pub struct BlstCrypto {

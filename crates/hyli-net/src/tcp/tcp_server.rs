@@ -26,7 +26,7 @@ use crate::{
         FramedStream, TcpData, TcpHeaders, TcpMessage, TcpMessageLabel, TcpOutboundMessage,
     },
 };
-use hyli_deterministic::collections::DeterministicMap;
+use hyli_turmoil_shims::collections::DeterministicMap;
 use tracing::{debug, error, trace, warn};
 
 use super::{tcp_client::TcpClient, SocketStream, TcpEvent};
@@ -131,7 +131,7 @@ where
 
     pub async fn listen_next(&mut self) -> Option<TcpEvent<Req>> {
         loop {
-            hyli_deterministic::tokio_select_biased! {
+            hyli_turmoil_shims::tokio_select_biased! {
                 Ok((stream, socket_addr)) = self.tcp_listener.accept() => {
                     if let Some(len) = self.max_frame_length {
                         debug!("Setting max frame length to {}", len);
