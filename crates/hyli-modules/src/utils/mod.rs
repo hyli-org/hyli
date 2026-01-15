@@ -5,5 +5,6 @@ pub mod deterministic_rng;
 pub mod logger;
 pub mod native_verifier_handler;
 pub mod profiling;
+pub mod ring_buffer_map;
 pub mod static_type_map;
 pub mod tracing;

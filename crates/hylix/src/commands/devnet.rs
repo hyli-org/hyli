@@ -70,12 +70,14 @@ impl From<HylixConfig> for DevnetContext {
     }
 }
 
-const CONTAINERS: [&str; 5] = [
+const CONTAINERS: [&str; 7] = [
     "hyli-devnet-node",
     "hyli-devnet-postgres",
     "hyli-devnet-indexer",
     "hyli-devnet-wallet",
     "hyli-devnet-wallet-ui",
+    "hyli-devnet-registry",
+    "hyli-devnet-registry-ui",
 ];
 
 impl DevnetContext {
@@ -237,6 +239,14 @@ async fn check_devnet_status(context: &DevnetContext) -> HylixResult<()> {
             context.config.devnet.indexer_port
         ));
         log_info(&format!(
+            "  Registry API: http://localhost:{}/swagger-ui",
+            context.config.devnet.registry_server_port
+        ));
+        log_info(&format!(
+            "  Registry UI: http://localhost:{}",
+            context.config.devnet.registry_ui_port
+        ));
+        log_info(&format!(
             "  Wallet API: http://localhost:{}/swagger-ui",
             context.config.devnet.wallet_api_port
         ));
@@ -344,19 +354,23 @@ async fn start_devnet(reset: bool, bake: bool, context: &DevnetContext) -> Hylix
     }
 
     create_docker_network(&mpb).await?;
-    log_success("[1/4] Docker network created");
+    log_success("[1/5] Docker network created");
 
     // Start the local node
     start_local_node(&mpb, context).await?;
-    log_success("[2/4] Local node started");
+    log_success("[2/5] Local node started");
 
     // Start indexer
     start_indexer(&mpb, context).await?;
-    log_success("[3/4] Indexer started");
+    log_success("[3/5] Indexer started");
+
+    // Start registry
+    start_registry(&mpb, context).await?;
+    log_success("[4/5] Registry started");
 
     // Setup wallet app
     start_wallet_app(&mpb, context).await?;
-    log_success("[4/4] Wallet app started");
+    log_success("[5/5] Wallet app started");
 
     check_devnet_status(context).await?;
 
@@ -416,6 +430,10 @@ async fn stop_devnet(_context: &DevnetContext) -> HylixResult<()> {
     // Stop wallet app
     pb.set_message("Stopping wallet app...");
     stop_wallet_app(&pb).await?;
+
+    // Stop registry
+    pb.set_message("Stopping registry...");
+    stop_registry(&pb).await?;
 
     // Stop indexer
     pb.set_message("Stopping indexer...");
@@ -610,6 +628,13 @@ async fn start_wallet_app(
         "HYLI_INDEXER_URL=http://hyli-devnet-indexer:4321",
         "-e",
         "HYLI_DA_READ_FROM=hyli-devnet-node:4141",
+        "-e",
+        &format!(
+            "HYLI_REGISTRY_URL=http://hyli-devnet-registry:{}",
+            context.config.devnet.registry_server_port
+        ),
+        "-e",
+        "HYLI_REGISTRY_API_KEY=dev",
     ]
     .into_iter()
     .map(String::from)
@@ -713,6 +738,112 @@ async fn start_wallet_ui(
         ));
     } else {
         pb.set_message("Hyli wallet UI started successfully");
+    }
+
+    mpb.clear()
+        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
+
+    Ok(())
+}
+
+/// Start the registry app
+async fn start_registry(
+    mpb: &indicatif::MultiProgress,
+    context: &DevnetContext,
+) -> HylixResult<()> {
+    use tokio::process::Command;
+
+    let image = &context.config.devnet.registry_server_image;
+
+    if context.pull {
+        pull_docker_image(mpb, image).await?;
+    }
+
+    let pb = mpb.add(create_progress_bar());
+    pb.set_message("Starting registry server...");
+
+    let mut args: Vec<String> = [
+        "run",
+        "-d",
+        "--network=hyli-devnet",
+        "--name",
+        "hyli-devnet-registry",
+        "-p",
+        &format!("{}:9003", context.config.devnet.registry_server_port),
+        "-e",
+        "HYLI_REGISTRY_API_KEY=dev",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+
+    args.extend(build_env_args(
+        &context.config.devnet.container_env.registry_server,
+    ));
+
+    args.extend(vec![image.to_string(), "/app/server".to_string()]);
+
+    let output = Command::new("docker")
+        .args(&args)
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {e}")))?;
+
+    if !output.status.success() {
+        log_warning(&format!(
+            "Error: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    } else {
+        pb.set_message("Hyli registry server started successfully");
+    }
+
+    start_registry_ui(mpb, context).await
+}
+
+async fn start_registry_ui(
+    mpb: &indicatif::MultiProgress,
+    context: &DevnetContext,
+) -> HylixResult<()> {
+    use tokio::process::Command;
+
+    let image = &context.config.devnet.registry_ui_image;
+
+    let pb = mpb.add(create_progress_bar());
+    pb.set_message("Starting registry UI...");
+
+    let args: Vec<String> = [
+        "run",
+        "-d",
+        "--network=hyli-devnet",
+        "--name",
+        "hyli-devnet-registry-ui",
+        "-e",
+        &format!(
+            "REGISTRY_SERVER_BASE_URL=http://localhost:{}",
+            context.config.devnet.registry_server_port
+        ),
+        "-p",
+        &format!("{}:80", context.config.devnet.registry_ui_port),
+        image,
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+
+    let output = Command::new("docker")
+        .args(&args)
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {e}")))?;
+
+    if !output.status.success() {
+        log_warning(&format!(
+            "Error: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    } else {
+        pb.set_message("Hyli registry UI started successfully");
     }
 
     mpb.clear()
@@ -842,6 +973,17 @@ async fn stop_wallet_app(pb: &indicatif::ProgressBar) -> HylixResult<()> {
 
     // Stop and remove wallet UI
     stop_and_remove_container(pb, "hyli-devnet-wallet-ui", "Hyli wallet UI").await?;
+
+    Ok(())
+}
+
+/// Stop the registry
+async fn stop_registry(pb: &indicatif::ProgressBar) -> HylixResult<()> {
+    // Stop and remove registry server
+    stop_and_remove_container(pb, "hyli-devnet-registry", "Hyli registry server").await?;
+
+    // Stop and remove registry UI
+    stop_and_remove_container(pb, "hyli-devnet-registry-ui", "Hyli registry UI").await?;
 
     Ok(())
 }
@@ -1085,6 +1227,17 @@ fn print_devnet_env_vars(config: &HylixConfig) -> HylixResult<()> {
     println!(
         "export HYLI_INDEXER_URL=\"http://localhost:{}\"",
         devnet.indexer_port
+    );
+
+    // Registry endpoints
+    println!(
+        "export HYLI_REGISTRY_URL=\"http://localhost:{}\"",
+        devnet.registry_server_port
+    );
+    println!("export HYLI_REGISTRY_API_KEY=\"dev\"");
+    println!(
+        "export HYLI_REGISTRY_UI_URL=\"http://localhost:{}\"",
+        devnet.registry_ui_port
     );
 
     // Wallet endpoints

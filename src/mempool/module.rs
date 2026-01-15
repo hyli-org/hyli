@@ -91,7 +91,7 @@ impl Module for Mempool {
             Some(event) = self.inner.processing_dps.join_next() => {
                 if let Ok(event) = log_error!(event, "Processing DPs from JoinSet") {
                     if let Ok(event) = log_error!(event, "Error in running task") {
-                        let _ = log_error!(self.handle_internal_event(event),
+                        let _ = log_error!(self.handle_internal_event(event).await,
                             "Handling InternalMempoolEvent in Mempool");
                     }
                 }
