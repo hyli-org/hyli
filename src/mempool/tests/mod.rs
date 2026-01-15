@@ -132,17 +132,8 @@ impl MempoolTestCtx {
         self.mempool.crypto.validator_pubkey()
     }
 
-    // own_lane waits for the first CCP to make sure we are building on correct data,
-    // this can be used to account for that.
-    pub fn seed_last_ccp(&mut self, slot: Slot) {
-        self.mempool.last_ccp = Some(CommittedConsensusProposal {
-            staking: self.mempool.staking.clone(),
-            consensus_proposal: ConsensusProposal {
-                slot,
-                ..ConsensusProposal::default()
-            },
-            certificate: AggregateSignature::default(),
-        });
+    pub fn set_ready_to_create_dps(&mut self) {
+        self.mempool.ready_to_create_dps = true;
     }
 
     pub async fn add_trusted_validator(&mut self, pubkey: &ValidatorPublicKey) {
