@@ -2,13 +2,11 @@ use std::{
     any::type_name,
     fs,
     future::Future,
-    io::{BufWriter, Write},
+    io::{BufWriter, Read, Write},
     path::{Path, PathBuf},
     pin::Pin,
     time::Duration,
 };
-
-use sha3::{Digest, Sha3_256};
 
 use crate::{
     bus::{BusClientReceiver, BusClientSender, SharedMessageBus},
@@ -46,10 +44,12 @@ pub mod websocket;
 pub enum PersistenceError {
     /// File not found (not an error, use default)
     NotFound,
-    /// Hash verification failed (data corruption)
-    HashMismatch { expected: String, actual: String },
-    /// Hash file missing
-    MissingHashFile,
+    /// Checksum verification failed (data corruption)
+    ChecksumMismatch { expected: String, actual: String },
+    /// Checksum file missing
+    MissingChecksumFile,
+    /// Checksum file format invalid
+    ChecksumParseFailed(String),
     /// Deserialization failed
     DeserializationFailed(String),
     /// IO error during read/write
@@ -60,14 +60,17 @@ impl std::fmt::Display for PersistenceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotFound => write!(f, "File not found"),
-            Self::HashMismatch { expected, actual } => {
+            Self::ChecksumMismatch { expected, actual } => {
                 write!(
                     f,
-                    "Data corruption detected: hash mismatch (expected {}, got {})",
+                    "Data corruption detected: checksum mismatch (expected {}, got {})",
                     expected, actual
                 )
             }
-            Self::MissingHashFile => write!(f, "Hash file missing"),
+            Self::MissingChecksumFile => write!(f, "Checksum file missing"),
+            Self::ChecksumParseFailed(msg) => {
+                write!(f, "Invalid checksum file contents: {}", msg)
+            }
             Self::DeserializationFailed(msg) => write!(f, "Failed to deserialize data: {}", msg),
             Self::IoError(e) => write!(f, "IO error: {}", e),
         }
@@ -102,21 +105,21 @@ where
     ) -> impl futures::Future<Output = Result<Self>> + Send;
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send;
 
-    /// Load data from disk with hash verification.
+    /// Load data from disk with checksum verification.
     ///
     /// Returns:
-    /// - `Ok(Some(data))` if file exists and hash verifies
+    /// - `Ok(Some(data))` if file exists and checksum verifies
     /// - `Ok(None)` if file doesn't exist
-    /// - `Err(PersistenceError::MissingHashFile)` if hash file is missing
-    /// - `Err(PersistenceError::HashMismatch)` if hash verification fails
+    /// - `Err(PersistenceError::MissingChecksumFile)` if checksum file is missing
+    /// - `Err(PersistenceError::ChecksumMismatch)` if checksum verification fails
     /// - `Err(PersistenceError::DeserializationFailed)` if data is corrupted
     fn load_from_disk<S>(file: &Path) -> Result<Option<S>, PersistenceError>
     where
         S: borsh::BorshDeserialize,
     {
-        // Read the data file
-        let data = match fs::read(file) {
-            Ok(data) => data,
+        // Read and deserialize while computing checksum
+        let data_file = match fs::File::open(file) {
+            Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 info!(
                     "File {} not found for module {} (using default)",
@@ -128,26 +131,32 @@ where
             Err(e) => return Err(PersistenceError::IoError(e)),
         };
 
-        // Check for hash file and verify
-        let expected_hash = read_hash_file(file)?;
-        let actual_hash = compute_hash(&data);
-        if expected_hash != actual_hash {
+        let mut checksum_reader = ChecksumReader::new(data_file);
+        let deserialized: S = borsh::from_reader(&mut checksum_reader)
+            .map_err(|e| PersistenceError::DeserializationFailed(e.to_string()))?;
+        checksum_reader
+            .drain_to_end()
+            .map_err(PersistenceError::IoError)?;
+
+        // Check for checksum file and verify
+        let expected_checksum = read_checksum_file(file)?;
+        let actual_checksum = checksum_reader.checksum;
+        if expected_checksum != actual_checksum {
             tracing::error!(
-                "Hash mismatch for {}: expected {}, got {}",
+                "Checksum mismatch for {}: expected {}, got {}",
                 file.to_string_lossy(),
-                expected_hash,
-                actual_hash
+                format_checksum(expected_checksum),
+                format_checksum(actual_checksum)
             );
-            return Err(PersistenceError::HashMismatch {
-                expected: expected_hash,
-                actual: actual_hash,
+            return Err(PersistenceError::ChecksumMismatch {
+                expected: format_checksum(expected_checksum),
+                actual: format_checksum(actual_checksum),
             });
         }
-        debug!("Hash verification passed for {}", file.to_string_lossy());
-
-        // Deserialize the data
-        let deserialized: S = borsh::from_slice(&data)
-            .map_err(|e| PersistenceError::DeserializationFailed(e.to_string()))?;
+        debug!(
+            "Checksum verification passed for {}",
+            file.to_string_lossy()
+        );
 
         info!("Loaded data from disk {}", file.to_string_lossy());
         Ok(Some(deserialized))
@@ -181,74 +190,142 @@ where
         // rename data.state2.tmp into store (atomic override)
         // rename data.state1.tmp into
 
-        // Serialize to bytes first so we can compute hash
-        let serialized = borsh::to_vec(store)
-            .map_err(|e| anyhow::anyhow!("Serializing {}: {}", type_name::<S>(), e))?;
-
-        // Compute hash of serialized data
-        let hash = compute_hash(&serialized);
-
         let salt: String = deterministic_rng()
             .sample_iter(&Alphanumeric)
             .take(8)
             .map(char::from)
             .collect();
 
-        // Temp file paths for data and hash
+        // Temp file paths for data and checksum
         let tmp_data = file.with_extension(format!("{salt}.tmp"));
-        let hash_path = hash_file_path(file);
-        let tmp_hash = hash_path.with_extension(format!("sha3.{salt}.tmp"));
+        let checksum_path = checksum_file_path(file);
+        let tmp_checksum = checksum_path.with_extension(format!("checksum.{salt}.tmp"));
 
         debug!("Saving on disk in a tmp file {:?}", tmp_data.clone());
 
         // Write data to temp file
-        let mut buf_writer = BufWriter::new(log_error!(
+        let buf_writer = BufWriter::new(log_error!(
             fs::File::create(tmp_data.as_path()),
             "Create data file"
         )?);
+        let mut checksum_writer = ChecksumWriter::new(buf_writer);
         log_error!(
-            buf_writer.write_all(&serialized),
-            "Writing serialized data for {}",
+            borsh::to_writer(&mut checksum_writer, store),
+            "Serializing {}",
             type_name::<S>()
         )?;
         log_error!(
-            buf_writer.flush(),
+            checksum_writer.flush(),
             "Flushing Buffer writer for store {}",
             type_name::<S>()
         )?;
 
-        // Write hash to temp file
-        log_error!(fs::write(tmp_hash.as_path(), &hash), "Writing hash file")?;
+        let checksum = checksum_writer.checksum();
+
+        // Write checksum to temp file
+        log_error!(
+            fs::write(tmp_checksum.as_path(), format_checksum(checksum)),
+            "Writing checksum file"
+        )?;
 
         // Atomically rename both files
         debug!("Renaming {:?} to {:?}", &tmp_data, &file);
         log_error!(fs::rename(&tmp_data, file), "Rename data file")?;
-        log_error!(fs::rename(&tmp_hash, &hash_path), "Rename hash file")?;
+        log_error!(
+            fs::rename(&tmp_checksum, &checksum_path),
+            "Rename checksum file"
+        )?;
 
         Ok(())
     }
 }
 
-/// Compute SHA3-256 hash of data and return as hex string
-fn compute_hash(data: &[u8]) -> String {
-    let mut hasher = Sha3_256::new();
-    hasher.update(data);
-    hex::encode(hasher.finalize())
+struct ChecksumWriter<W> {
+    inner: W,
+    checksum: u64,
 }
 
-/// Get the path for the hash file given a data file path
-fn hash_file_path(file: &Path) -> PathBuf {
+impl<W: Write> ChecksumWriter<W> {
+    fn new(inner: W) -> Self {
+        Self { inner, checksum: 0 }
+    }
+
+    fn checksum(&self) -> u64 {
+        self.checksum
+    }
+}
+
+impl<W: Write> Write for ChecksumWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let bytes_written = self.inner.write(buf)?;
+        self.checksum = self
+            .checksum
+            .wrapping_add(checksum_bytes(&buf[..bytes_written]));
+        Ok(bytes_written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+struct ChecksumReader<R> {
+    inner: R,
+    checksum: u64,
+}
+
+impl<R: Read> ChecksumReader<R> {
+    fn new(inner: R) -> Self {
+        Self { inner, checksum: 0 }
+    }
+
+    fn drain_to_end(&mut self) -> std::io::Result<()> {
+        let mut buf = [0u8; 4096];
+        loop {
+            let bytes_read = self.read(&mut buf)?;
+            if bytes_read == 0 {
+                return Ok(());
+            }
+        }
+    }
+}
+
+impl<R: Read> Read for ChecksumReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let bytes_read = self.inner.read(buf)?;
+        self.checksum = self
+            .checksum
+            .wrapping_add(checksum_bytes(&buf[..bytes_read]));
+        Ok(bytes_read)
+    }
+}
+
+fn checksum_bytes(data: &[u8]) -> u64 {
+    data.iter()
+        .fold(0u64, |acc, byte| acc.wrapping_add(u64::from(*byte)))
+}
+
+fn format_checksum(checksum: u64) -> String {
+    format!("{:016x}", checksum)
+}
+
+/// Get the path for the checksum file given a data file path
+fn checksum_file_path(file: &Path) -> PathBuf {
     let mut path = file.as_os_str().to_owned();
-    path.push(".sha3");
+    path.push(".checksum");
     PathBuf::from(path)
 }
 
-/// Read hash from hash file, returns error if file doesn't exist
-fn read_hash_file(file: &Path) -> Result<String, PersistenceError> {
-    match fs::read_to_string(hash_file_path(file)) {
-        Ok(contents) => Ok(contents.trim().to_string()),
+/// Read checksum from checksum file, returns error if file doesn't exist
+fn read_checksum_file(file: &Path) -> Result<u64, PersistenceError> {
+    match fs::read_to_string(checksum_file_path(file)) {
+        Ok(contents) => {
+            let trimmed = contents.trim();
+            u64::from_str_radix(trimmed, 16)
+                .map_err(|_| PersistenceError::ChecksumParseFailed(trimmed.to_string()))
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Err(PersistenceError::MissingHashFile)
+            Err(PersistenceError::MissingChecksumFile)
         }
         Err(e) => Err(PersistenceError::IoError(e)),
     }
@@ -773,7 +850,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_file");
 
-        // Write a valid TestStruct to the file (with hash)
+        // Write a valid TestStruct to the file (with checksum)
         let test_struct = TestStruct { value: 42 };
         TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
 
@@ -784,17 +861,21 @@ mod tests {
     }
 
     #[test]
-    fn test_load_from_disk_or_default_missing_hash_file() {
+    fn test_load_from_disk_or_default_missing_checksum_file() {
         let dir = tempdir().unwrap();
         let test_struct = TestStruct { value: 42 };
 
-        // Missing hash file should return default
-        let non_existant_hash_file = dir.path().join("non_existant_hash_file");
-        let mut legacy_file = File::create(&non_existant_hash_file).unwrap();
+        // Missing checksum file should return an error
+        let non_existant_checksum_file = dir.path().join("non_existant_checksum_file");
+        let mut legacy_file = File::create(&non_existant_checksum_file).unwrap();
         borsh::to_writer(&mut legacy_file, &test_struct).unwrap();
-        let result =
-            TestModule::<usize>::load_from_disk_or_default::<TestStruct>(&non_existant_hash_file);
-        assert!(result.is_err(), "Expected error due to missing hash file");
+        let result = TestModule::<usize>::load_from_disk_or_default::<TestStruct>(
+            &non_existant_checksum_file,
+        );
+        assert!(
+            result.is_err(),
+            "Expected error due to missing checksum file"
+        );
     }
 
     #[test]
@@ -808,53 +889,52 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_save_creates_hash_file() {
+    fn test_save_creates_checksum_file() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_file.data");
 
         let test_struct = TestStruct { value: 42 };
         TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
 
-        // Verify hash file was created
-        let hash_path = super::hash_file_path(&file_path);
-        assert!(hash_path.exists(), "Hash file should be created");
+        // Verify checksum file was created
+        let checksum_path = super::checksum_file_path(&file_path);
+        assert!(checksum_path.exists(), "Checksum file should be created");
 
-        // Verify hash file content is a valid hex string
-        let hash_content = std::fs::read_to_string(&hash_path).unwrap();
+        // Verify checksum file content is a valid hex string
+        let checksum_content = std::fs::read_to_string(&checksum_path).unwrap();
         assert_eq!(
-            hash_content.len(),
-            64,
-            "SHA3-256 hash should be 64 hex chars"
+            checksum_content.len(),
+            16,
+            "Checksum should be 16 hex chars"
         );
         assert!(
-            hash_content.chars().all(|c| c.is_ascii_hexdigit()),
-            "Hash should be valid hex"
+            checksum_content.chars().all(|c| c.is_ascii_hexdigit()),
+            "Checksum should be valid hex"
         );
     }
 
     #[test_log::test]
-    fn test_hash_mismatch_detection() {
+    fn test_checksum_mismatch_detection() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_file.data");
 
         let test_struct = TestStruct { value: 42 };
         TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
 
-        // Corrupt the hash file
-        let hash_path = super::hash_file_path(&file_path);
-        std::fs::write(
-            &hash_path,
-            "invalid_hash_0000000000000000000000000000000000000000000000000000",
-        )
-        .unwrap();
+        // Corrupt the checksum file
+        let checksum_path = super::checksum_file_path(&file_path);
+        std::fs::write(&checksum_path, "0000000000000001").unwrap();
 
-        // Load should fail with hash mismatch
+        // Load should fail with checksum mismatch
         let result: Result<Option<TestStruct>, super::PersistenceError> =
             TestModule::<usize>::load_from_disk(&file_path);
 
         assert!(
-            matches!(result, Err(super::PersistenceError::HashMismatch { .. })),
-            "Should detect hash mismatch"
+            matches!(
+                result,
+                Err(super::PersistenceError::ChecksumMismatch { .. })
+            ),
+            "Should detect checksum mismatch"
         );
     }
 
@@ -866,44 +946,47 @@ mod tests {
         let test_struct = TestStruct { value: 42 };
         TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
 
-        // Corrupt the data file (but leave hash intact)
+        // Corrupt the data file (but leave checksum intact)
         let mut data = std::fs::read(&file_path).unwrap();
         data[0] ^= 0xFF; // Flip some bits
         std::fs::write(&file_path, &data).unwrap();
 
-        // Load should fail with hash mismatch
+        // Load should fail with checksum mismatch
         let result: Result<Option<TestStruct>, super::PersistenceError> =
             TestModule::<usize>::load_from_disk(&file_path);
 
         assert!(
-            matches!(result, Err(super::PersistenceError::HashMismatch { .. })),
-            "Should detect corrupted data via hash mismatch"
+            matches!(
+                result,
+                Err(super::PersistenceError::ChecksumMismatch { .. })
+            ),
+            "Should detect corrupted data via checksum mismatch"
         );
     }
 
     #[test_log::test]
-    fn test_missing_hash_file() {
+    fn test_missing_checksum_file() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_file");
 
-        // Write file directly without hash (simulating legacy)
+        // Write file directly without checksum (simulating legacy)
         let mut file = File::create(&file_path).unwrap();
         let test_struct = TestStruct { value: 42 };
         borsh::to_writer(&mut file, &test_struct).unwrap();
 
-        // Verify no hash file exists
-        let hash_path = super::hash_file_path(&file_path);
+        // Verify no checksum file exists
+        let checksum_path = super::checksum_file_path(&file_path);
         assert!(
-            !hash_path.exists(),
-            "Hash file should not exist for legacy file"
+            !checksum_path.exists(),
+            "Checksum file should not exist for legacy file"
         );
 
-        // Load should fail due to missing hash file
+        // Load should fail due to missing checksum file
         let result: Result<Option<TestStruct>, super::PersistenceError> =
             TestModule::<usize>::load_from_disk(&file_path);
         assert!(
-            matches!(result, Err(super::PersistenceError::MissingHashFile)),
-            "Should error on missing hash file"
+            matches!(result, Err(super::PersistenceError::MissingChecksumFile)),
+            "Should error on missing checksum file"
         );
     }
 
