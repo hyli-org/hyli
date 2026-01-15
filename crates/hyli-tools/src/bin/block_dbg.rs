@@ -13,8 +13,8 @@ use hyli_contract_sdk::{NodeStateEvent, TransactionData, TxId, api::NodeInfo};
 use hyli_model::{DataEvent, StatefulEvent, StatefulEvents};
 use hyli_modules::modules::{
     da_listener::DAListenerConf,
+    da_listener::SignedDAListener,
     prover::{AutoProver, AutoProverCtx},
-    signed_da_listener::SignedDAListener,
 };
 use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},

@@ -37,7 +37,6 @@ pub mod node_state_processor;
 pub mod prover;
 pub mod prover_metrics;
 pub mod rest;
-pub mod signed_da_listener;
 pub mod websocket;
 
 #[derive(Default)]

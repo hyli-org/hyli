@@ -44,7 +44,10 @@ impl Module for NodeStateProcessor {
 
         let node_state = NodeState {
             store: node_state_store,
-            metrics: NodeStateMetrics::global("node_state_processor".to_string(), "node_state_processor"),
+            metrics: NodeStateMetrics::global(
+                "node_state_processor".to_string(),
+                "node_state_processor",
+            ),
         };
 
         let bus = NodeStateProcessorBusClient::new_from_bus(bus.new_handle()).await;
