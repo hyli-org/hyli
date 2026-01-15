@@ -233,22 +233,21 @@ where
             debug!("Broadcasting msg {:?} to all", message);
             let message_label = "raw";
             let mut tasks = vec![];
-            for socket_addr in socket_addrs.iter() {
-                if let Some(socket) = self.sockets.get_mut(socket_addr) {
-                    let sender = socket.sender.clone();
-                    let socket_addr = socket_addr.clone();
-                    let message = message.clone();
-                    debug!(" - to {}", socket_addr);
-                    tasks.push(async move {
-                        let res = sender
-                            .send(TcpOutboundMessage {
-                                message: message.clone(),
-                                message_label,
-                            })
-                            .await;
-                        (socket_addr, res)
-                    });
-                }
+            for (name, socket) in self
+                .sockets
+                .iter_mut()
+                .filter(|socket| socket_addrs.contains(socket.0))
+            {
+                debug!(" - to {}", name);
+                tasks.push(
+                    socket
+                        .sender
+                        .send(TcpOutboundMessage {
+                            message: message.clone(),
+                            message_label,
+                        })
+                        .map(|res| (name.clone(), res)),
+                );
             }
             futures::future::join_all(tasks).await
         };
