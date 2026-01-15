@@ -4,7 +4,7 @@ use crate::{bus::BusClientSender, model::*, utils::serialize::BorshableIndexMap}
 
 use anyhow::{bail, Context, Result};
 use client_sdk::tcp_client::TcpServerMessage;
-use hyli_turmoil_shims::collections::DeterministicMap;
+use hyli_turmoil_shims::collections::StableMap;
 use tracing::{debug, info, trace};
 
 use super::verifiers::{verify_proof, verify_recursive_proof};
@@ -26,7 +26,7 @@ const MAX_DP_SIZE: usize = 40_000_000; // About 40 MB
 pub(super) struct OwnDataProposalPreparation {
     tasks: JoinSet<(LaneId, DataProposalHash)>,
     lanes: HashSet<LaneId>,
-    prepared: DeterministicMap<LaneId, Arc<DataProposal>>,
+    prepared: StableMap<LaneId, Arc<DataProposal>>,
     task_ids: HashMap<TaskId, LaneId>,
 }
 

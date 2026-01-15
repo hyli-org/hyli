@@ -6194,6 +6194,7 @@ version = "0.14.0"
 dependencies = [
  "hyli-contract-sdk",
  "rand 0.9.2",
+ "tokio",
  "turmoil",
 ]
 

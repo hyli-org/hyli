@@ -11,6 +11,7 @@ rust-version = { workspace = true }
 [dependencies]
 rand = { workspace = true }
 sdk = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 turmoil = { workspace = true, optional = true }
 
 [features]

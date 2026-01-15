@@ -26,7 +26,7 @@ use crate::{
         FramedStream, TcpData, TcpHeaders, TcpMessage, TcpMessageLabel, TcpOutboundMessage,
     },
 };
-use hyli_turmoil_shims::collections::DeterministicMap;
+use hyli_turmoil_shims::collections::StableMap;
 use tracing::{debug, error, trace, warn};
 
 use super::{tcp_client::TcpClient, SocketStream, TcpEvent};
@@ -72,7 +72,7 @@ where
     pool_receiver: Receiver<Box<TcpEvent<Req>>>,
     ping_sender: Sender<String>,
     ping_receiver: Receiver<String>,
-    sockets: DeterministicMap<String, SocketStream>,
+    sockets: StableMap<String, SocketStream>,
     metrics: TcpServerMetrics,
     _marker: PhantomData<(Req, Res)>,
 }
@@ -116,7 +116,7 @@ where
         );
         Ok(TcpServer {
             pool_name: pool_name.to_string(),
-            sockets: DeterministicMap::new(),
+            sockets: StableMap::new(),
             max_frame_length: options.max_frame_length,
             send_timeout: options.send_timeout,
             tcp_listener,

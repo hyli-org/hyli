@@ -26,7 +26,7 @@ use crate::{
     p2p::network::{HeaderSigner, OutboundMessage},
     utils::conf::{P2pMode, SharedConf},
 };
-use hyli_turmoil_shims::collections::DeterministicMap;
+use hyli_turmoil_shims::collections::StableMap;
 
 use super::{
     metrics::MempoolMetrics,
@@ -100,8 +100,8 @@ pub struct PeerState {
 
 #[derive(Debug, Default)]
 struct PeerKnowledge {
-    by_peer: DeterministicMap<ValidatorPublicKey, PeerState>,
-    by_dp: DeterministicMap<(LaneId, DataProposalHash, ValidatorPublicKey), EvidenceState>,
+    by_peer: StableMap<ValidatorPublicKey, PeerState>,
+    by_dp: StableMap<(LaneId, DataProposalHash, ValidatorPublicKey), EvidenceState>,
 }
 
 #[derive(Clone, Debug)]
@@ -123,7 +123,7 @@ impl PendingSyncRequest {
     fn select_peer(
         &self,
         peers: &[ValidatorPublicKey],
-        knowledge: &DeterministicMap<(LaneId, DataProposalHash, ValidatorPublicKey), EvidenceState>,
+        knowledge: &StableMap<(LaneId, DataProposalHash, ValidatorPublicKey), EvidenceState>,
     ) -> Option<ValidatorPublicKey> {
         if peers.is_empty() {
             return None;
@@ -185,8 +185,8 @@ pub struct DisseminationManager {
     metrics: MempoolMetrics,
     lanes: LanesStorage,
     knowledge: PeerKnowledge,
-    pending_sync_requests: DeterministicMap<(LaneId, DataProposalHash), PendingSyncRequest>,
-    dp_first_seen_slot: DeterministicMap<(LaneId, DataProposalHash), u64>,
+    pending_sync_requests: StableMap<(LaneId, DataProposalHash), PendingSyncRequest>,
+    dp_first_seen_slot: StableMap<(LaneId, DataProposalHash), u64>,
     owned_lanes: HashSet<LaneId>,
     last_cut: Option<Cut>,
     staking: Staking,
@@ -217,8 +217,8 @@ impl Module for DisseminationManager {
             metrics: MempoolMetrics::global(ctx.config.id.clone()),
             lanes,
             knowledge: PeerKnowledge::default(),
-            pending_sync_requests: DeterministicMap::new(),
-            dp_first_seen_slot: DeterministicMap::new(),
+            pending_sync_requests: StableMap::new(),
+            dp_first_seen_slot: StableMap::new(),
             owned_lanes: HashSet::new(),
             last_cut: None,
             staking: Staking::default(),

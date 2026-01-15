@@ -24,7 +24,7 @@ use crate::{
     ordered_join_set::OrderedJoinSet,
     tcp::{tcp_client::TcpClient, Handshake, TcpHeaders, TcpMessageLabel},
 };
-use hyli_turmoil_shims::collections::DeterministicMap;
+use hyli_turmoil_shims::collections::StableMap;
 #[cfg(feature = "turmoil")]
 use rand::seq::SliceRandom;
 
@@ -89,7 +89,7 @@ pub struct PeerSocket {
 #[derive(Clone, Debug)]
 pub struct PeerInfo {
     // Hashmap containing a sockets for all canals of this peer
-    pub canals: DeterministicMap<Canal, PeerSocket>,
+    pub canals: StableMap<Canal, PeerSocket>,
     // The address that will be used to reconnect to that peer
     #[allow(dead_code)]
     pub node_connection_data: NodeConnectionData,
@@ -126,17 +126,17 @@ where
     node_id: String,
     metrics: P2PMetrics,
     // Hashmap containing the last attempts to connect
-    pub connecting: DeterministicMap<(String, Canal), HandshakeOngoing>,
+    pub connecting: StableMap<(String, Canal), HandshakeOngoing>,
     node_p2p_public_address: String,
     node_da_public_address: String,
     pub current_height: u64,
     max_frame_length: Option<usize>,
     pub tcp_server: TcpServer<P2PTcpMessage<Msg>, P2PTcpMessage<Msg>>,
-    pub peers: DeterministicMap<ValidatorPublicKey, PeerInfo>,
+    pub peers: StableMap<ValidatorPublicKey, PeerInfo>,
     handshake_clients_tasks: HandShakeJoinSet<P2PTcpMessage<Msg>>,
     peers_ping_ticker: Interval,
     // Serialization of messages can take time so we offload them.
-    canal_jobs: DeterministicMap<Canal, OrderedJoinSet<CanalJob>>,
+    canal_jobs: StableMap<Canal, OrderedJoinSet<CanalJob>>,
     timeouts: P2PTimeouts,
     _phantom: std::marker::PhantomData<Msg>,
 }
@@ -160,7 +160,7 @@ where
             crypto,
             node_id: node_id.clone(),
             metrics: P2PMetrics::global(node_id.clone()),
-            connecting: DeterministicMap::default(),
+            connecting: StableMap::default(),
             max_frame_length,
             node_p2p_public_address,
             node_da_public_address,
@@ -174,20 +174,20 @@ where
                 },
             )
             .await?,
-            peers: DeterministicMap::new(),
+            peers: StableMap::new(),
             handshake_clients_tasks: JoinSet::new(),
             peers_ping_ticker: tokio::time::interval(std::time::Duration::from_secs(2)),
             canal_jobs: canals
                 .into_iter()
                 .map(|canal| (canal, OrderedJoinSet::new()))
-                .collect::<DeterministicMap<_, _>>(),
+                .collect::<StableMap<_, _>>(),
             timeouts,
             _phantom: std::marker::PhantomData,
         })
     }
 
     fn poll_hashmap(
-        jobs: &mut DeterministicMap<Canal, OrderedJoinSet<CanalJob>>,
+        jobs: &mut StableMap<Canal, OrderedJoinSet<CanalJob>>,
         cx: &mut std::task::Context,
     ) -> Poll<CanalJobResult> {
         for (canal, jobs) in jobs.iter_mut() {
@@ -722,7 +722,7 @@ where
             .peers
             .entry(peer_pubkey.clone())
             .or_insert_with(|| PeerInfo {
-                canals: DeterministicMap::new(),
+                canals: StableMap::new(),
                 node_connection_data: v.msg.clone(),
             });
 

@@ -16,7 +16,7 @@ use block_construction::BlockUnderConstruction;
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
 use hyli_crypto::SharedBlstCrypto;
-use hyli_turmoil_shims::collections::DeterministicMap;
+use hyli_turmoil_shims::{collections::StableMap, runtime::LongTasksRuntime};
 use hyli_modules::{bus::BusMessage, module_bus_client};
 use hyli_net::ordered_join_set::OrderedJoinSet;
 use metrics::MempoolMetrics;
@@ -27,7 +27,6 @@ use std::{
     fmt::Display,
     ops::{Deref, DerefMut},
     path::PathBuf,
-    time::Duration,
 };
 use storage::Storage;
 use verify_tx::DataProposalVerdict;
@@ -57,64 +56,6 @@ pub mod tests;
 
 pub use dissemination::DisseminationEvent;
 
-enum LongTasksRuntimeInner {
-    Dedicated(std::mem::ManuallyDrop<tokio::runtime::Runtime>),
-    #[cfg(feature = "turmoil")]
-    Current(tokio::runtime::Handle),
-}
-
-pub struct LongTasksRuntime(LongTasksRuntimeInner);
-impl Default for LongTasksRuntime {
-    fn default() -> Self {
-        #[cfg(feature = "turmoil")]
-        {
-            return Self(LongTasksRuntimeInner::Current(tokio::runtime::Handle::current()));
-        }
-
-        #[cfg(not(feature = "turmoil"))]
-        {
-            return Self(LongTasksRuntimeInner::Dedicated(std::mem::ManuallyDrop::new(
-                #[allow(clippy::expect_used, reason = "Fails at startup, is OK")]
-                tokio::runtime::Builder::new_multi_thread()
-                    // Limit the number of threads arbitrarily to lower the maximal impact on the whole node
-                    .worker_threads(3)
-                    .thread_name("mempool-hashing")
-                    .build()
-                    .expect("Failed to create hashing runtime"),
-            )));
-        }
-    }
-}
-
-impl Drop for LongTasksRuntime {
-    fn drop(&mut self) {
-        let LongTasksRuntimeInner::Dedicated(runtime) = &mut self.0 else {
-            return;
-        };
-        // Shut down the hashing runtime.
-        // TODO: serialize?
-        // Safety: We'll manually drop the runtime below and it won't be double-dropped as we use ManuallyDrop.
-        let rt = unsafe { std::mem::ManuallyDrop::take(runtime) };
-        // This has to be done outside the current runtime.
-        tokio::task::spawn_blocking(move || {
-            #[cfg(test)]
-            rt.shutdown_timeout(Duration::from_millis(10));
-            #[cfg(not(test))]
-            rt.shutdown_timeout(Duration::from_secs(10));
-        });
-    }
-}
-
-impl LongTasksRuntime {
-    pub fn handle(&self) -> tokio::runtime::Handle {
-        match &self.0 {
-            LongTasksRuntimeInner::Dedicated(runtime) => runtime.handle().clone(),
-            #[cfg(feature = "turmoil")]
-            LongTasksRuntimeInner::Current(handle) => handle.clone(),
-        }
-    }
-}
-
 /// Validator Data Availability Guarantee
 /// This is a signed message that contains the hash of the data proposal and the size of the lane (DP included)
 /// It acts as proof the validator committed to making this DP available.
@@ -125,7 +66,7 @@ pub type BufferedEntry = (Vec<ValidatorDAG>, DataProposal);
 #[derive(Default, BorshSerialize, BorshDeserialize)]
 pub struct MempoolStore {
     // own_lane.rs
-    waiting_dissemination_txs: DeterministicMap<LaneId, BorshableIndexMap<TxHash, Transaction>>,
+    waiting_dissemination_txs: StableMap<LaneId, BorshableIndexMap<TxHash, Transaction>>,
     // TODO: implement serialization, probably with a custom future that yields the unmodified Tx
     // on cancellation
     #[borsh(skip)]
@@ -142,7 +83,7 @@ pub struct MempoolStore {
     #[borsh(skip)]
     processing_dps: OrderedJoinSet<Result<ProcessedDPEvent>>,
     #[borsh(skip)]
-    cached_dp_votes: DeterministicMap<(LaneId, DataProposalHash), DataProposalVerdict>,
+    cached_dp_votes: StableMap<(LaneId, DataProposalHash), DataProposalVerdict>,
 
     // Dedicated thread pool for data proposal and tx hashing
     #[borsh(skip)]
