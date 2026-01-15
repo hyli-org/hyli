@@ -49,11 +49,12 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
 
     let contract_name = ContractName::new("test1");
 
+    let lane_id = LaneId::new(node_modules.crypto.validator_pubkey().clone());
     node_client.send(GenesisEvent::GenesisBlock(SignedBlock {
         data_proposals: vec![(
-            LaneId::new(node_modules.crypto.validator_pubkey().clone()),
-            vec![DataProposal::new(
-                None,
+            lane_id.clone(),
+            vec![DataProposal::new_root(
+                lane_id,
                 vec![BlobTransaction::new(
                     "test@hyli",
                     vec![RegisterContractAction {
@@ -211,7 +212,7 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
             .into(),
         );
     }
-    let data_proposal = DataProposal::new(Some(data_prop_hash), txs);
+    let data_proposal = DataProposal::new(data_prop_hash, txs);
 
     // Test setup 2: count the number of commits during the slow proof verification
     // if we're blocking the consensus, this will be lower than expected.

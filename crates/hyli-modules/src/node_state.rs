@@ -2086,7 +2086,7 @@ pub mod test {
             data_proposals: vec![(
                 LaneId::default(),
                 vec![DataProposal::new(
-                    Some(DataProposalHash(format!("{height}"))),
+                    DataProposalHash(format!("{height}")),
                     txs,
                 )],
             )],
@@ -2106,7 +2106,7 @@ pub mod test {
             },
             data_proposals: vec![(
                 LaneId::default(),
-                vec![DataProposal::new(Some(parent_dp_hash), txs)],
+                vec![DataProposal::new(parent_dp_hash, txs)],
             )],
         }
     }
