@@ -132,6 +132,10 @@ impl MempoolTestCtx {
         self.mempool.crypto.validator_pubkey()
     }
 
+    pub fn set_ready_to_create_dps(&mut self) {
+        self.mempool.ready_to_create_dps = true;
+    }
+
     pub async fn add_trusted_validator(&mut self, pubkey: &ValidatorPublicKey) {
         self.mempool
             .staking

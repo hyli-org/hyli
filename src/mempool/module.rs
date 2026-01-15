@@ -83,6 +83,10 @@ impl Module for Mempool {
                     if let Err(e) = self.staking.process_block(&block.staking_data) {
                         tracing::error!("Error processing block in mempool: {:?}", e);
                     }
+                    let _ = log_error!(
+                        self.on_lane_manager_new_block(&block),
+                        "Updating mempool after DA NewBlock"
+                    );
                 }
             }
             command_response<QueryNewCut, Cut> staking => {
