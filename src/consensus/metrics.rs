@@ -22,6 +22,7 @@ pub struct ConsensusMetrics {
     last_started_round: Gauge<u64>,
 
     commit: Counter<u64>,
+    buffered_prepares: Gauge<u64>,
 
     pub on_prepare_ok: Counter<u64>,
     pub on_prepare_err: Counter<u64>,
@@ -58,6 +59,7 @@ impl ConsensusMetrics {
             state: build!(my_meter, gauge, "state"),
             last_started_round: build!(my_meter, gauge, "last_started_round"),
             commit: build!(my_meter, counter, "commit"),
+            buffered_prepares: build!(my_meter, gauge, "buffered_prepares"),
             on_prepare_ok: build!(my_meter, counter, "on_prepare_ok"),
             on_prepare_err: build!(my_meter, counter, "on_prepare_err"),
             on_prepare_vote_ok: build!(my_meter, counter, "on_prepare_vote_ok"),
@@ -92,5 +94,9 @@ impl ConsensusMetrics {
 
     pub fn start_new_round(&self, slot: u64) {
         self.last_started_round.record(slot, &[]);
+    }
+
+    pub fn record_prepare_cache_sizes(&self, buffered_prepares: usize) {
+        self.buffered_prepares.record(buffered_prepares as u64, &[]);
     }
 }
