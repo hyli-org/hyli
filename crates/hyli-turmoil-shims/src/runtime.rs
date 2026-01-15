@@ -19,7 +19,7 @@ impl Default for LongTasksRuntime {
 
         #[cfg(not(feature = "turmoil"))]
         {
-            return Self::build_dedicated(DEFAULT_THREADS, DEFAULT_THREAD_NAME);
+            Self::build_dedicated(DEFAULT_THREADS, DEFAULT_THREAD_NAME)
         }
     }
 }
@@ -57,7 +57,7 @@ impl LongTasksRuntime {
         #[cfg(not(feature = "turmoil"))]
         {
             let thread_name = thread_name.into();
-            return Self::build_dedicated(threads, &thread_name);
+            Self::build_dedicated(threads, &thread_name)
         }
     }
 

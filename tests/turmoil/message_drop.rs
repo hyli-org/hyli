@@ -166,10 +166,7 @@ pub fn simulation_drop_data_votes(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> an
 /// **Simulation**
 ///
 /// Drop any message at a high rate and ensure the network still converges.
-pub fn simulation_drop_all_messages(
-    ctx: &mut TurmoilCtx,
-    sim: &mut Sim<'_>,
-) -> anyhow::Result<()> {
+pub fn simulation_drop_all_messages(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::Result<()> {
     let seed = ctx.seed();
     let rng = std::sync::Arc::new(std::sync::Mutex::new(StdRng::seed_from_u64(seed)));
 

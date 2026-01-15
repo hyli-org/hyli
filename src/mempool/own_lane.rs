@@ -378,11 +378,11 @@ impl super::Mempool {
         {
             let handle = self.inner.long_tasks_runtime.handle();
             self.inner.processing_txs.spawn_on(
-            async move {
-                tx.hashed();
-                Ok((tx, lane_suffix))
-            },
-            &handle,
+                async move {
+                    tx.hashed();
+                    Ok((tx, lane_suffix))
+                },
+                &handle,
             );
         }
         Ok(())

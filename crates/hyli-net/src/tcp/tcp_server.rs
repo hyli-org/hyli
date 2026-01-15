@@ -1,4 +1,10 @@
-use std::{io::ErrorKind, marker::PhantomData, net::Ipv4Addr, sync::{Arc, RwLock}, time::Duration};
+use std::{
+    io::ErrorKind,
+    marker::PhantomData,
+    net::Ipv4Addr,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 
 use anyhow::Context;
 use borsh::{BorshDeserialize, BorshSerialize};
