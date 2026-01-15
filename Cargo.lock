@@ -6215,6 +6215,7 @@ dependencies = [
 name = "hyli-turmoil-shims"
 version = "0.14.0"
 dependencies = [
+ "borsh",
  "hyli-contract-sdk",
  "rand 0.9.2",
  "tokio",

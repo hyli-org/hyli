@@ -13,6 +13,7 @@ rand = { workspace = true }
 sdk = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 turmoil = { workspace = true, optional = true }
+borsh = { workspace = true }
 
 [features]
 turmoil = ["dep:turmoil"]
