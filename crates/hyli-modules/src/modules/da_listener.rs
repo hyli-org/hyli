@@ -45,7 +45,6 @@ struct SignedDAListenerBusClient {
 /// Track state of pending block requests with retry logic
 #[derive(Debug, Clone)]
 struct BlockRequestState {
-    height: BlockHeight,
     request_time: Instant,
     retry_count: usize,
     current_da_index: usize,
@@ -227,7 +226,6 @@ impl SignedDAListener {
         debug!("📦 Requesting specific block at height {}", height);
 
         let state = BlockRequestState {
-            height,
             request_time: Instant::now(),
             retry_count: 0,
             current_da_index: self.current_da_index,
