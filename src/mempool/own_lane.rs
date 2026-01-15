@@ -157,6 +157,10 @@ impl super::Mempool {
     }
 
     pub(super) fn prepare_new_data_proposal(&mut self) -> Result<bool> {
+        if !self.ready_to_create_dps {
+            trace!("Skipping own-lane DP creation until first CCP is received");
+            return Ok(false);
+        }
         trace!("🐣 Prepare new owned data proposal");
         let mut started = false;
         let lane_ids: Vec<LaneId> = self.waiting_dissemination_txs.keys().cloned().collect();
@@ -181,6 +185,18 @@ impl super::Mempool {
         }
 
         Ok(started)
+    }
+
+    /// In LaneManager mode we don't receive CCP events, so reconcile mempool state from
+    /// NodeState-delivered blocks instead. On the first block after startup, we reconcile lane
+    /// tips with the block's cut to avoid building own-lane DPs on stale tips.
+    pub(super) fn on_lane_manager_new_block(&mut self, block: &NodeStateBlock) -> Result<()> {
+        if !self.ready_to_create_dps {
+            let cut = block.signed_block.consensus_proposal.cut.clone();
+            self.clean_and_update_lanes(&cut, &None)?;
+            self.ready_to_create_dps = true;
+        }
+        Ok(())
     }
 
     pub(super) async fn handle_own_data_proposal_preparation(
@@ -228,9 +244,11 @@ impl super::Mempool {
     fn init_dp_preparation_if_pending(&mut self, lane_id: &LaneId) -> Result<Option<DataProposal>> {
         self.metrics.snapshot_pending_tx(self.pending_txs_total());
         let parent_hash = self.get_last_data_prop_hash_in_own_lane(lane_id);
-        let parent_hash_for_status = parent_hash
-            .clone()
-            .unwrap_or(DataProposalHash(lane_id.to_string()));
+        let parent = match parent_hash {
+            Some(hash) => DataProposalParent::DP(hash),
+            None => DataProposalParent::LaneRoot(lane_id.clone()),
+        };
+        let parent_hash_for_status = parent.as_tx_parent_hash();
 
         let (collected_txs, cumulative_size, remaining_len) = {
             let Some(waiting) = self.waiting_dissemination_txs.get_mut(lane_id) else {
@@ -274,7 +292,10 @@ impl super::Mempool {
         );
 
         // Create new data proposal
-        let data_proposal = DataProposal::new(parent_hash, collected_txs);
+        let data_proposal = match parent {
+            DataProposalParent::LaneRoot(lane_id) => DataProposal::new_root(lane_id, collected_txs),
+            DataProposalParent::DP(parent_hash) => DataProposal::new(parent_hash, collected_txs),
+        };
 
         Ok(Some(data_proposal))
     }
@@ -294,10 +315,7 @@ impl super::Mempool {
         );
 
         // TODO: handle this differently
-        let parent_data_proposal_hash = data_proposal
-            .parent_data_proposal_hash
-            .clone()
-            .unwrap_or(DataProposalHash(lane_id.to_string()));
+        let parent_data_proposal_hash = data_proposal.parent_data_proposal_hash.as_tx_parent_hash();
 
         let txs_metadatas = data_proposal
             .txs
@@ -552,6 +570,7 @@ pub mod test {
     #[test_log::test(tokio::test)]
     async fn test_single_mempool_receiving_new_txs() -> Result<()> {
         let mut ctx = MempoolTestCtx::new("mempool").await;
+        ctx.set_ready_to_create_dps(); // We want to process txs right away
 
         // Sending transaction to mempool as RestApiMessage
         let register_tx = make_register_contract_tx(ContractName::new("test1"));
@@ -856,6 +875,8 @@ pub mod test {
         let mut ctx3 = MempoolTestCtx::new("node3").await;
         let mut ctx4 = MempoolTestCtx::new("node4").await;
 
+        ctx1.set_ready_to_create_dps(); // We want to process txs right away
+
         // Ajoute chaque nœud comme validateur des autres
         let all_pubkeys = vec![
             ctx1.validator_pubkey().clone(),
@@ -874,10 +895,8 @@ pub mod test {
         let tx2 = make_register_contract_tx(ContractName::new("test2"));
         ctx1.submit_tx(&tx1);
         ctx1.timer_tick().await?;
-        // ctx1.handle_processed_data_proposals().await;
         ctx1.submit_tx(&tx2);
         ctx1.timer_tick().await?;
-        // ctx1.handle_processed_data_proposals().await;
 
         let mut dps = vec![];
         for _ in 0..2 {
@@ -901,7 +920,7 @@ pub mod test {
         // TODO: implement this as more of an integration test?
         let (oldest_hash, _) = dps
             .iter()
-            .find(|(_, dp)| dp.parent_data_proposal_hash.is_none())
+            .find(|(_, dp)| dp.parent_data_proposal_hash.is_lane_root())
             .expect("oldest dp should exist");
         ctx1.maybe_disseminate_dp(&ctx1.own_lane(), oldest_hash)
             .expect("disseminate");
