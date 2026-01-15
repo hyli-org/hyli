@@ -1,10 +1,7 @@
 //! Dissemination manager: routes data proposals, tracks peer knowledge, and schedules sync/reply.
 //! It consumes events from mempool/consensus and emits outbound network messages.
 
-use std::{
-    collections::{HashMap, HashSet},
-    time::Duration,
-};
+use std::{collections::HashSet, time::Duration};
 
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
@@ -26,7 +23,7 @@ use crate::{
     p2p::network::{HeaderSigner, OutboundMessage},
     utils::conf::{P2pMode, SharedConf},
 };
-use hyli_turmoil_shims::collections::StableMap;
+use hyli_turmoil_shims::collections::HashMap;
 
 use super::{
     metrics::MempoolMetrics,
@@ -100,8 +97,8 @@ pub struct PeerState {
 
 #[derive(Debug, Default)]
 struct PeerKnowledge {
-    by_peer: StableMap<ValidatorPublicKey, PeerState>,
-    by_dp: StableMap<(LaneId, DataProposalHash, ValidatorPublicKey), EvidenceState>,
+    by_peer: HashMap<ValidatorPublicKey, PeerState>,
+    by_dp: HashMap<(LaneId, DataProposalHash, ValidatorPublicKey), EvidenceState>,
 }
 
 #[derive(Clone, Debug)]
@@ -123,7 +120,7 @@ impl PendingSyncRequest {
     fn select_peer(
         &self,
         peers: &[ValidatorPublicKey],
-        knowledge: &StableMap<(LaneId, DataProposalHash, ValidatorPublicKey), EvidenceState>,
+        knowledge: &HashMap<(LaneId, DataProposalHash, ValidatorPublicKey), EvidenceState>,
     ) -> Option<ValidatorPublicKey> {
         if peers.is_empty() {
             return None;
@@ -185,8 +182,8 @@ pub struct DisseminationManager {
     metrics: MempoolMetrics,
     lanes: LanesStorage,
     knowledge: PeerKnowledge,
-    pending_sync_requests: StableMap<(LaneId, DataProposalHash), PendingSyncRequest>,
-    dp_first_seen_slot: StableMap<(LaneId, DataProposalHash), u64>,
+    pending_sync_requests: HashMap<(LaneId, DataProposalHash), PendingSyncRequest>,
+    dp_first_seen_slot: HashMap<(LaneId, DataProposalHash), u64>,
     owned_lanes: HashSet<LaneId>,
     last_cut: Option<Cut>,
     staking: Staking,
@@ -217,8 +214,8 @@ impl Module for DisseminationManager {
             metrics: MempoolMetrics::global(ctx.config.id.clone()),
             lanes,
             knowledge: PeerKnowledge::default(),
-            pending_sync_requests: StableMap::new(),
-            dp_first_seen_slot: StableMap::new(),
+            pending_sync_requests: HashMap::new(),
+            dp_first_seen_slot: HashMap::new(),
             owned_lanes: HashSet::new(),
             last_cut: None,
             staking: Staking::default(),

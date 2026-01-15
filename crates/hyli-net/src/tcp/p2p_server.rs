@@ -1,10 +1,4 @@
-use std::{
-    cmp::Ordering,
-    collections::{HashMap, HashSet},
-    sync::Arc,
-    task::Poll,
-    time::Duration,
-};
+use std::{cmp::Ordering, collections::HashSet, sync::Arc, task::Poll, time::Duration};
 
 use anyhow::{bail, Context};
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -24,7 +18,7 @@ use crate::{
     ordered_join_set::OrderedJoinSet,
     tcp::{tcp_client::TcpClient, Handshake, TcpHeaders, TcpMessageLabel},
 };
-use hyli_turmoil_shims::collections::StableMap;
+use hyli_turmoil_shims::collections::HashMap;
 #[cfg(feature = "turmoil")]
 use rand::seq::SliceRandom;
 
@@ -89,7 +83,7 @@ pub struct PeerSocket {
 #[derive(Clone, Debug)]
 pub struct PeerInfo {
     // Hashmap containing a sockets for all canals of this peer
-    pub canals: StableMap<Canal, PeerSocket>,
+    pub canals: HashMap<Canal, PeerSocket>,
     // The address that will be used to reconnect to that peer
     #[allow(dead_code)]
     pub node_connection_data: NodeConnectionData,
@@ -126,17 +120,17 @@ where
     node_id: String,
     metrics: P2PMetrics,
     // Hashmap containing the last attempts to connect
-    pub connecting: StableMap<(String, Canal), HandshakeOngoing>,
+    pub connecting: HashMap<(String, Canal), HandshakeOngoing>,
     node_p2p_public_address: String,
     node_da_public_address: String,
     pub current_height: u64,
     max_frame_length: Option<usize>,
     pub tcp_server: TcpServer<P2PTcpMessage<Msg>, P2PTcpMessage<Msg>>,
-    pub peers: StableMap<ValidatorPublicKey, PeerInfo>,
+    pub peers: HashMap<ValidatorPublicKey, PeerInfo>,
     handshake_clients_tasks: HandShakeJoinSet<P2PTcpMessage<Msg>>,
     peers_ping_ticker: Interval,
     // Serialization of messages can take time so we offload them.
-    canal_jobs: StableMap<Canal, OrderedJoinSet<CanalJob>>,
+    canal_jobs: HashMap<Canal, OrderedJoinSet<CanalJob>>,
     timeouts: P2PTimeouts,
     _phantom: std::marker::PhantomData<Msg>,
 }
@@ -160,7 +154,7 @@ where
             crypto,
             node_id: node_id.clone(),
             metrics: P2PMetrics::global(node_id.clone()),
-            connecting: StableMap::default(),
+            connecting: HashMap::default(),
             max_frame_length,
             node_p2p_public_address,
             node_da_public_address,
@@ -174,20 +168,20 @@ where
                 },
             )
             .await?,
-            peers: StableMap::new(),
+            peers: HashMap::new(),
             handshake_clients_tasks: JoinSet::new(),
             peers_ping_ticker: tokio::time::interval(std::time::Duration::from_secs(2)),
             canal_jobs: canals
                 .into_iter()
                 .map(|canal| (canal, OrderedJoinSet::new()))
-                .collect::<StableMap<_, _>>(),
+                .collect::<HashMap<_, _>>(),
             timeouts,
             _phantom: std::marker::PhantomData,
         })
     }
 
     fn poll_hashmap(
-        jobs: &mut StableMap<Canal, OrderedJoinSet<CanalJob>>,
+        jobs: &mut HashMap<Canal, OrderedJoinSet<CanalJob>>,
         cx: &mut std::task::Context,
     ) -> Poll<CanalJobResult> {
         for (canal, jobs) in jobs.iter_mut() {
@@ -722,7 +716,7 @@ where
             .peers
             .entry(peer_pubkey.clone())
             .or_insert_with(|| PeerInfo {
-                canals: StableMap::new(),
+                canals: HashMap::new(),
                 node_connection_data: v.msg.clone(),
             });
 

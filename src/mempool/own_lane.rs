@@ -4,7 +4,7 @@ use crate::{bus::BusClientSender, model::*, utils::serialize::BorshableIndexMap}
 
 use anyhow::{bail, Context, Result};
 use client_sdk::tcp_client::TcpServerMessage;
-use hyli_turmoil_shims::collections::StableMap;
+use hyli_turmoil_shims::collections::HashMap;
 use tracing::{debug, info, trace};
 
 use super::verifiers::{verify_proof, verify_recursive_proof};
@@ -13,10 +13,7 @@ use super::DisseminationEvent;
 use super::MempoolNetMessage;
 use super::{api::RestApiMessage, storage::Storage};
 use indexmap::IndexMap;
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashSet, sync::Arc};
 use tokio::task::Id as TaskId;
 use tokio::task::JoinSet;
 
@@ -26,7 +23,7 @@ const MAX_DP_SIZE: usize = 40_000_000; // About 40 MB
 pub(super) struct OwnDataProposalPreparation {
     tasks: JoinSet<(LaneId, DataProposalHash)>,
     lanes: HashSet<LaneId>,
-    prepared: StableMap<LaneId, Arc<DataProposal>>,
+    prepared: HashMap<LaneId, Arc<DataProposal>>,
     task_ids: HashMap<TaskId, LaneId>,
 }
 
