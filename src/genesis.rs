@@ -651,16 +651,16 @@ impl Genesis {
         genesis_txs: Vec<Transaction>,
         initial_validators: Vec<ValidatorPublicKey>,
     ) -> SignedBlock {
-        let dp = DataProposal::new(None, genesis_txs);
-
         // TODO: do something better?
         let round_leader = initial_validators
             .first()
             .expect("must have round leader")
             .clone();
+        let lane_id = LaneId::new(round_leader.clone());
+        let dp = DataProposal::new_root(lane_id.clone(), genesis_txs);
 
         SignedBlock {
-            data_proposals: vec![(LaneId::new(round_leader.clone()), vec![dp.clone()])],
+            data_proposals: vec![(lane_id, vec![dp.clone()])],
             certificate: AggregateSignature {
                 signature: Signature("fake".into()),
                 validators: initial_validators.clone(),

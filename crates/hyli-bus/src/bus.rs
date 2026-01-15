@@ -20,30 +20,6 @@ pub trait BusMessage {
 }
 impl BusMessage for () {}
 
-// Implement this for a couple types from the model as it's not available there.
-impl BusMessage for sdk::NodeStateEvent {
-    const CAPACITY: usize = LOW_CAPACITY; // Lowered, large data type
-}
-impl BusMessage for sdk::DataEvent {
-    const CAPACITY: usize = LOW_CAPACITY; // Lowered, large data type
-}
-impl BusMessage for sdk::MempoolBlockEvent {
-    const CAPACITY: usize = LOW_CAPACITY; // Lowered, large data type
-}
-impl BusMessage for sdk::MempoolStatusEvent {
-    const CAPACITY: usize = LOW_CAPACITY; // Lowered, large data type
-}
-impl BusMessage for client_sdk::tcp_client::TcpServerMessage {}
-
-#[test]
-fn test_bus_channel_capacity() {
-    // Check rust does what we think.
-    assert_eq!(
-        <sdk::MempoolStatusEvent as BusMessage>::CAPACITY_IF_WAITING,
-        LOW_CAPACITY - 10
-    );
-}
-
 #[cfg(test)]
 impl BusMessage for usize {}
 
@@ -271,6 +247,7 @@ where
         Ok(())
     }
 
+    #[allow(unused_variables)]
     fn send_with_context(
         &mut self,
         message: Msg,
