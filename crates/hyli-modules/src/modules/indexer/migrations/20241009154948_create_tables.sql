@@ -147,4 +147,4 @@ ON contract_history(contract_name, block_height DESC, tx_index DESC);
 
 -- Index for filtering by change type (useful for explorer)
 CREATE INDEX idx_contract_history_change_type
-ON contract_history USING GIN (change_type);
+ON contract_history USING GIN (contract_name, change_type);
