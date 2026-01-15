@@ -4,7 +4,7 @@ use anyhow::{bail, Context};
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_crypto::BlstCrypto;
 #[cfg(feature = "turmoil")]
-use hyli_turmoil_shims::deterministic_rng::deterministic_rng;
+use hyli_turmoil_shims::rng::deterministic_rng;
 use sdk::{hyli_model_utils::TimestampMs, SignedByValidator, ValidatorPublicKey};
 use tokio::{
     task::{AbortHandle, JoinSet},

@@ -19,7 +19,7 @@ use crate::{
     genesis::GenesisEvent,
     model::*,
     p2p::network::{OutboundMessage, PeerEvent},
-    utils::{conf::SharedConf, deterministic_rng::deterministic_rng},
+    utils::{conf::SharedConf, rng::deterministic_rng},
 };
 use anyhow::{Context, Result};
 use core::str;

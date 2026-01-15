@@ -18,7 +18,7 @@ use rand::{distr::Alphanumeric, Rng};
 use tokio::task::JoinHandle;
 use tracing::{debug, info};
 
-use hyli_turmoil_shims::deterministic_rng::deterministic_rng;
+use hyli_turmoil_shims::rng::deterministic_rng;
 
 const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 

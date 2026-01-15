@@ -13,7 +13,7 @@ use hyli_crypto::BlstCrypto;
 use hyli_net::net::Sim;
 use hyli_net::tcp::intercept::{set_message_hook_scoped, MessageAction};
 use hyli_net::tcp::{decode_tcp_payload, P2PTcpMessage};
-use hyli_turmoil_shims::deterministic_rng::set_deterministic_seed;
+use hyli_turmoil_shims::rng::set_deterministic_seed;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tempfile::TempDir;
 use tokio::sync::Mutex;
@@ -134,7 +134,7 @@ pub struct TurmoilCtx {
     slot_duration: Duration,
     seed: u64,
     pub rng: StdRng,
-    _seed_guard: hyli_turmoil_shims::deterministic_rng::DeterministicSeedGuard,
+    _seed_guard: hyli_turmoil_shims::rng::DeterministicSeedGuard,
 }
 
 impl TurmoilCtx {

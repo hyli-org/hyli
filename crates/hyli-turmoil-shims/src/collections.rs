@@ -18,7 +18,7 @@ impl Default for DeterministicBuildHasher {
     fn default() -> Self {
         use rand::RngCore;
 
-        let mut rng = crate::deterministic_rng::deterministic_rng();
+        let mut rng = crate::rng::deterministic_rng();
         Self {
             seed: rng.next_u64(),
         }
