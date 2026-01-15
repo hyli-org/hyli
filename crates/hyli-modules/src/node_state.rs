@@ -1149,7 +1149,8 @@ impl<'any> NodeStateProcessing<'any> {
                 }
                 ContractStatus::Updated(contract) => {
                     // Otherwise, apply any side effect and potentially note it in the map of registered contracts.
-                    if !self.contracts.contains_key(&contract_name) {
+                    let is_new_contract = !self.contracts.contains_key(&contract_name);
+                    if is_new_contract {
                         info!("📝 Registering contract {}", contract_name);
 
                         // Let's find the metadata - for now it's unsupported to register the same contract twice in a single TX.
@@ -1178,47 +1179,50 @@ impl<'any> NodeStateProcessing<'any> {
                     self.contracts
                         .insert(contract.name.clone(), contract.clone());
 
-                    if modified_fields.state {
-                        debug!(
-                            "✍️  Modify '{}' state to {}",
-                            &contract_name,
-                            hex::encode(&contract.state.0)
-                        );
+                    // Only fire update events if the contract was already registered
+                    if !is_new_contract {
+                        if modified_fields.state {
+                            debug!(
+                                "✍️  Modify '{}' state to {}",
+                                &contract_name,
+                                hex::encode(&contract.state.0)
+                            );
 
-                        self.callback.on_event(&TxEvent::ContractStateUpdated(
-                            &settled_tx.tx_id,
-                            &contract_name,
-                            &contract,
-                            &contract.state,
-                        ));
-                    }
-                    if modified_fields.program_id {
-                        info!(
-                            "✍️  Modify '{}' program_id to {}",
-                            &contract_name,
-                            hex::encode(&contract.program_id.0)
-                        );
-
-                        self.callback.on_event(&TxEvent::ContractProgramIdUpdated(
-                            &settled_tx.tx_id,
-                            &contract_name,
-                            &contract,
-                            &contract.program_id,
-                        ));
-                    }
-                    if modified_fields.timeout_window {
-                        info!(
-                            "✍️  Modify '{}' timeout window to {}",
-                            &contract_name, &contract.timeout_window
-                        );
-
-                        self.callback
-                            .on_event(&TxEvent::ContractTimeoutWindowUpdated(
+                            self.callback.on_event(&TxEvent::ContractStateUpdated(
                                 &settled_tx.tx_id,
                                 &contract_name,
                                 &contract,
-                                &contract.timeout_window,
+                                &contract.state,
                             ));
+                        }
+                        if modified_fields.program_id {
+                            info!(
+                                "✍️  Modify '{}' program_id to {}",
+                                &contract_name,
+                                hex::encode(&contract.program_id.0)
+                            );
+
+                            self.callback.on_event(&TxEvent::ContractProgramIdUpdated(
+                                &settled_tx.tx_id,
+                                &contract_name,
+                                &contract,
+                                &contract.program_id,
+                            ));
+                        }
+                        if modified_fields.timeout_window {
+                            info!(
+                                "✍️  Modify '{}' timeout window to {}",
+                                &contract_name, &contract.timeout_window
+                            );
+
+                            self.callback
+                                .on_event(&TxEvent::ContractTimeoutWindowUpdated(
+                                    &settled_tx.tx_id,
+                                    &contract_name,
+                                    &contract,
+                                    &contract.timeout_window,
+                                ));
+                        }
                     }
                 }
             }
