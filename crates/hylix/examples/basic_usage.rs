@@ -27,6 +27,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             postgres_port: 5432,
             auto_start: true,
             container_env: ContainerEnvConfig::default(),
+            registry_server_image: "ghcr.io/hyli-org/hyli-registry/zkvm-registry-server:main"
+                .to_string(),
+            registry_ui_image: "ghcr.io/hyli-org/hyli-registry/zkvm-registry-ui:main".to_string(),
+            registry_server_port: 9003,
+            registry_ui_port: 8005,
         },
         ..Default::default()
     };
