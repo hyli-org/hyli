@@ -12,9 +12,11 @@ use hyli_modules::{
     modules::{
         BuildApiContextInner, ModulesHandler,
         admin::{AdminApi, AdminApiRunContext},
-        da_listener::{DAListener, DAListenerConf},
+        da_listener::DAListenerConf,
+        node_state_processor::{NodeStateProcessor, NodeStateProcessorCtx},
         prover::{AutoProver, AutoProverCtx},
         rest::{ApiDoc, RestApi, RestApiRunContext, Router},
+        signed_da_listener::SignedDAListener,
     },
     utils::logger::setup_tracing,
 };
@@ -86,11 +88,17 @@ async fn main() -> Result<()> {
         .await?;
 
     handler
-        .build_module::<DAListener>(DAListenerConf {
+        .build_module::<SignedDAListener>(DAListenerConf {
             start_block: None,
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
             timeout_client_secs: 10,
+        })
+        .await?;
+
+    handler
+        .build_module::<NodeStateProcessor>(NodeStateProcessorCtx {
+            data_directory: config.data_directory.clone(),
         })
         .await?;
 
