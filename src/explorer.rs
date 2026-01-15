@@ -236,6 +236,7 @@ impl Explorer {
             // contract
             .routes(routes!(api::list_contracts))
             .routes(routes!(api::get_contract))
+            .routes(routes!(api::get_contract_history))
             .split_for_parts();
 
         if let Some(ctx) = ctx {

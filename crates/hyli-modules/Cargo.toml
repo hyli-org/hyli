@@ -37,7 +37,7 @@ hex = { workspace = true }
 fjall = { workspace = true }
 
 # For DB utils
-sqlx = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true, features = ["chrono"] }
 
 # GCS
 google-cloud-storage = { workspace = true }
@@ -75,6 +75,7 @@ secp256k1 = { workspace = true, features = ["rand", "global-context"] }
 test-log = { workspace = true, features = ["color", "trace"] }
 hydentity = { workspace = true, features = ["client"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
+sqlx = { workspace = true, features = ["runtime-tokio", "chrono"] }
 
 [features]
 risc0 = ["client-sdk/risc0"]

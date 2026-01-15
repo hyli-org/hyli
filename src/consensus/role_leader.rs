@@ -228,6 +228,7 @@ impl Consensus {
             self.bft_round_state.view,
         );
         follower_state!(self).buffered_prepares.push(prepare);
+        self.record_prepare_cache_sizes();
 
         self.metrics.start_new_round(self.bft_round_state.slot);
 

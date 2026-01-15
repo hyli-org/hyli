@@ -4,7 +4,7 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
-use hyli_net::tcp::intercept::set_message_intercept_scoped;
+use hyli_net::tcp::intercept::{set_message_hook_scoped, MessageAction};
 use hyli_net::tcp::{decode_tcp_payload, tcp_client::TcpClient, tcp_server::TcpServer, TcpEvent};
 use sdk::{DataProposal, DataProposalHash, Transaction};
 
@@ -19,14 +19,14 @@ fn turmoil_drop_mempool_data_proposals() -> anyhow::Result<()> {
     let (result_tx, result_rx) = mpsc::channel();
 
     let mut drops_left = 2usize;
-    let _intercept = set_message_intercept_scoped(move |bytes| {
+    let _intercept = set_message_hook_scoped(move |bytes| {
         if decode_tcp_payload::<DataProposal>(bytes).is_ok() {
             if drops_left > 0 {
                 drops_left -= 1;
-                return true;
+                return MessageAction::Drop;
             }
         }
-        false
+        MessageAction::Pass
     });
 
     let proposal1 = DataProposal::new(

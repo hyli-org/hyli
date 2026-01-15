@@ -113,7 +113,7 @@ pub fn simulation_drop_data_proposals(
         }
 
         let mut rng = rng.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        rng.gen_bool(0.80)
+        rng.random_bool(0.80)
     });
 
     let result = loop {
@@ -152,7 +152,7 @@ pub fn simulation_drop_data_votes(_ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> a
         }
 
         let mut rng = rng.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        rng.gen_bool(0.9)
+        rng.random_bool(0.9)
     });
 
     let result = loop {
@@ -184,7 +184,7 @@ pub fn simulation_drop_all_messages(
 
     let _dropper = install_net_message_dropper(move |_message| {
         let mut rng = rng.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        rng.gen_bool(0.10)
+        rng.random_bool(0.10)
     });
 
     let result = loop {

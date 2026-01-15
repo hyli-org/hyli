@@ -475,6 +475,12 @@ pub struct Verifier(pub String);
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct ProgramId(pub Vec<u8>);
 
+impl std::fmt::Display for ProgramId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
+    }
+}
+
 #[derive(Debug, Default, PartialEq, Eq, Clone, BorshSerialize, BorshDeserialize)]
 #[cfg_attr(feature = "full", derive(Serialize, utoipa::ToSchema))]
 pub struct ProofData(#[cfg_attr(feature = "full", serde(with = "base64_field"))] pub Vec<u8>);
