@@ -78,6 +78,10 @@ solo = true
 genesis_timestamp = 1735689600 # Default to 2025-01-01T00:00:00Z
 # Number of recent timeout certificates to keep for timeout recovery.
 timeout_certificate_cache_size = 100
+# Max number of prepares kept in memory for sync replies.
+buffered_prepares_max_in_memory = 100
+# Max number of prepares serialized to disk for sync replies.
+buffered_prepares_max_serialized = 20
 
 [genesis]
 # Stakers and their inigial stake.

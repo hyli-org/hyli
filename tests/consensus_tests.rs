@@ -97,10 +97,16 @@ mod e2e_consensus {
             // Replace prover binaries for non-reproducible mode.
             .with_prover(
                 "hydentity".into(),
-                Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+                Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
             )
-            .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
-            .with_prover("staking".into(), Risc0Prover::new(STAKING_ELF, STAKING_ID))
+            .with_prover(
+                "hyllar".into(),
+                Risc0Prover::new(HYLLAR_ELF.to_vec(), HYLLAR_ID),
+            )
+            .with_prover(
+                "staking".into(),
+                Risc0Prover::new(STAKING_ELF.to_vec(), STAKING_ID),
+            )
             .build();
 
         let node_identity = Identity(format!("{}@hydentity", node_info.id));
@@ -289,9 +295,12 @@ mod e2e_consensus {
             // Replace prover binaries for non-reproducible mode.
             .with_prover(
                 "hydentity".into(),
-                Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+                Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
             )
-            .with_prover("hyllar".into(), Risc0Prover::new(HYLLAR_ELF, HYLLAR_ID))
+            .with_prover(
+                "hyllar".into(),
+                Risc0Prover::new(HYLLAR_ELF.to_vec(), HYLLAR_ID),
+            )
             .build()
     }
 

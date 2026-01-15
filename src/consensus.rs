@@ -319,6 +319,7 @@ impl Consensus {
                 self.bft_round_state.parent_hash = committed_proposal.hashed();
                 self.bft_round_state.parent_timestamp = committed_proposal.timestamp.clone();
                 self.bft_round_state.parent_cut = committed_proposal.cut.clone();
+                self.record_prepare_cache_sizes();
 
                 // Store the last commited QC to avoid issues when parsing Commit messages before Prepare
                 self.bft_round_state.follower.buffered_quorum_certificate = match ticket {
@@ -1023,11 +1024,18 @@ pub mod test {
             shared_bus: &SharedMessageBus,
             crypto: BlstCrypto,
         ) -> Consensus {
-            let store = ConsensusStore::default();
+            let mut store = ConsensusStore::default();
             let mut conf = Conf::default();
             conf.consensus.slot_duration = Duration::from_millis(1000);
             conf.consensus.timeout_after = Duration::from_millis(5000);
             conf.consensus.timeout_certificate_cache_size = 100;
+            conf.consensus.buffered_prepares_max_in_memory = 100;
+            conf.consensus.buffered_prepares_max_serialized = 20;
+            store
+                .bft_round_state
+                .follower
+                .buffered_prepares
+                .set_max_size(Some(conf.consensus.buffered_prepares_max_in_memory));
             let bus = ConsensusBusClient::new_from_bus(shared_bus.new_handle()).await;
 
             Consensus {

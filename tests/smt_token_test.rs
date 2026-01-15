@@ -48,11 +48,11 @@ mod e2e_smt_token {
             // Replace prover binaries for non-reproducible mode.
             .with_prover(
                 "hydentity".into(),
-                Risc0Prover::new(HYDENTITY_ELF, HYDENTITY_ID),
+                Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
             )
             .with_prover(
                 "oranj".into(),
-                Risc0Prover::new(SMT_TOKEN_ELF, SMT_TOKEN_ID),
+                Risc0Prover::new(SMT_TOKEN_ELF.to_vec(), SMT_TOKEN_ID),
             )
             .build();
 

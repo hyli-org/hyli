@@ -64,6 +64,8 @@ uuid-tld = { version = "0.14.0", default-features = false, path = "crates/contra
 hyli-contracts = { version = "0.14.0", default-features = false, path = "crates/contracts", package = "hyli-contracts" }
 hyli-modules = { version = "0.14.0", default-features = false, path = "crates/hyli-modules", package = "hyli-modules" }
 
+hyli-registry = { version = "0.4.0" }
+
 # Common external dependencies
 alloy-consensus = { version = "1.1.0", default-features = false }
 alloy-eips = { version = "1.1.0", default-features = false }
