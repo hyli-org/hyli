@@ -37,7 +37,7 @@ hex = { workspace = true }
 fjall = { workspace = true }
 
 # For DB utils
-sqlx = { workspace = true, optional = true }
+sqlx = { workspace = true, optional = true, features = ["chrono"] }
 
 # GCS
 google-cloud-storage = { workspace = true }

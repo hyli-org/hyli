@@ -12,6 +12,7 @@ CREATE TABLE blocks (
 
 CREATE TYPE transaction_type AS ENUM ('blob_transaction', 'proof_transaction', 'stake');
 CREATE TYPE transaction_status AS ENUM ('data_proposal_created','waiting_dissemination','success', 'failure', 'sequenced', 'timed_out');
+CREATE TYPE contract_change_type AS ENUM ('registered', 'program_id_updated', 'state_updated', 'timeout_updated', 'deleted');
 
 CREATE TABLE transactions (
     parent_dp_hash TEXT NOT NULL,                           -- Data Proposal hash
@@ -118,3 +119,32 @@ create table txs_contracts (
     PRIMARY KEY (parent_dp_hash, tx_hash, contract_name)
 );
 create index idx_txs_contracts_name on txs_contracts(contract_name);
+
+-- Contract history table to track all contract changes over time
+CREATE TABLE contract_history (
+    contract_name TEXT NOT NULL,
+    block_height BIGINT NOT NULL,
+    tx_index INT NOT NULL,
+    change_type contract_change_type[] NOT NULL,
+    verifier TEXT NOT NULL,
+    program_id BYTEA NOT NULL,
+    state_commitment BYTEA NOT NULL,
+    soft_timeout BIGINT,
+    hard_timeout BIGINT,
+    deleted_at_height INT,
+    parent_dp_hash TEXT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    PRIMARY KEY (contract_name, block_height, tx_index),
+    FOREIGN KEY (parent_dp_hash, tx_hash)
+        REFERENCES transactions(parent_dp_hash, tx_hash) ON DELETE CASCADE,
+    CHECK (block_height >= 0),
+    CHECK (tx_index >= 0)
+);
+
+-- Index for efficient lookups of contract state at a given point in time
+CREATE INDEX idx_contract_history_lookup
+ON contract_history(contract_name, block_height DESC, tx_index DESC);
+
+-- Index for filtering by change type (useful for explorer)
+CREATE INDEX idx_contract_history_change_type
+ON contract_history USING GIN (change_type);
