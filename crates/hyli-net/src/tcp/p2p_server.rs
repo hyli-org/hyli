@@ -170,7 +170,7 @@ where
             canal_jobs: canals
                 .into_iter()
                 .map(|canal| (canal, OrderedJoinSet::new()))
-                .collect::<HashMap<_, _>>(),
+                .collect(),
             timeouts,
             _phantom: std::marker::PhantomData,
         })
@@ -1138,11 +1138,9 @@ where
             })
             .collect();
 
-        let ordered_addrs: Vec<String> = peer_addr_to_pubkey.keys().cloned().collect();
-
         let res = self
             .tcp_server
-            .raw_send_parallel(ordered_addrs, msg, headers)
+            .raw_send_parallel(peer_addr_to_pubkey.keys().cloned().collect(), msg, headers)
             .await;
         self.metrics
             .broadcast_targets(canal.clone(), peer_addr_to_pubkey.len() as u64);

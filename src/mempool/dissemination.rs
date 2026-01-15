@@ -774,9 +774,7 @@ impl DisseminationManager {
             self.send_net_message_only_for(filtered_targets.clone(), net_message)?;
         }
 
-        let ordered_targets: Vec<_> = filtered_targets.iter().cloned().collect();
-
-        for peer in ordered_targets {
+        for peer in filtered_targets {
             self.record_dp_sent(lane_id, dp_hash, &peer);
             self.mark_weak_has(lane_id, dp_hash, &peer);
         }
