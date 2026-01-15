@@ -6,4 +6,5 @@ pub mod da_codec;
 #[cfg(feature = "db")]
 pub mod db;
 pub mod native_verifier_handler;
+pub mod ring_buffer_map;
 pub mod tracing;

@@ -7,7 +7,7 @@ use hyli_crypto::BlstCrypto;
 use hyli_model::{BlockHeight, SignedByValidator};
 use hyli_modules::bus::BusMessage;
 use hyli_net::clock::TimestampMsClock;
-use hyli_net::tcp::P2PTcpMessage;
+use hyli_net::tcp::{P2PTcpMessage, TcpMessageLabel};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::fmt::{self, Display};
@@ -85,6 +85,15 @@ impl Display for NetMessage {
 pub enum NetMessage {
     MempoolMessage(MsgWithHeader<MempoolNetMessage>),
     ConsensusMessage(MsgWithHeader<ConsensusNetMessage>),
+}
+
+impl TcpMessageLabel for NetMessage {
+    fn message_label(&self) -> &'static str {
+        match self {
+            NetMessage::MempoolMessage(msg) => msg.msg.message_label(),
+            NetMessage::ConsensusMessage(msg) => msg.msg.message_label(),
+        }
+    }
 }
 
 impl From<NetMessage> for P2PTcpMessage<NetMessage> {

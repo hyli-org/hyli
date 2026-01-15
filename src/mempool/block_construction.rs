@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     bus::BusClientSender, consensus::CommittedConsensusProposal,
     mempool::storage::EntryOrMissingHash, model::*,
@@ -5,7 +7,10 @@ use crate::{
 use futures::StreamExt;
 use hyli_modules::{log_error, log_warn};
 
-use super::storage::Storage;
+use super::{
+    storage::{LaneEntryMetadata, MetadataOrMissingHash, Storage},
+    DisseminationEvent, ValidatorDAG,
+};
 use anyhow::{bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use tracing::{debug, error, trace, warn};
@@ -14,15 +19,226 @@ use tracing::{debug, error, trace, warn};
 pub struct BlockUnderConstruction {
     pub from: Option<Cut>,
     pub ccp: CommittedConsensusProposal,
+    pub holes_tops: HashMap<LaneId, (DataProposalHash, LaneBytesSize)>,
+    pub holes_materialized: bool,
 }
 
 impl super::Mempool {
+    pub(super) async fn on_sync_reply(
+        &mut self,
+        lane_id: &LaneId,
+        sender_validator: &ValidatorPublicKey,
+        signatures: Vec<ValidatorDAG>,
+        data_proposal: DataProposal,
+    ) -> Result<()> {
+        debug!("SyncReply from validator {sender_validator}");
+
+        self.metrics
+            .sync_reply_receive(lane_id, self.crypto.validator_pubkey());
+
+        #[cfg(test)]
+        {
+            let dp_hash = data_proposal.hashed();
+            self.on_hashed_sync_reply(lane_id.clone(), signatures, data_proposal, dp_hash)
+                .await?;
+        }
+        #[cfg(not(test))]
+        {
+            let lane_id_clone = lane_id.clone();
+            self.inner.processing_dps.spawn_on(
+                async move {
+                    let dp_hash = data_proposal.hashed();
+                    Ok(crate::mempool::ProcessedDPEvent::OnHashedSyncReply((
+                        lane_id_clone,
+                        signatures,
+                        data_proposal,
+                        dp_hash,
+                    )))
+                },
+                self.inner.long_tasks_runtime.handle(),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub(super) async fn on_hashed_sync_reply(
+        &mut self,
+        lane_id: LaneId,
+        signatures: Vec<ValidatorDAG>,
+        data_proposal: DataProposal,
+        dp_hash: DataProposalHash,
+    ) -> Result<()> {
+        // We don't check if we already have stored the DP just in case
+        // we processed it async between hole materialization and now.
+
+        trace!(
+            "Filling hole with 1 entry (parent dp hash: {:?}) for {lane_id}",
+            data_proposal.parent_data_proposal_hash
+        );
+
+        // Check if we can find the BUC this belongs to.
+        // For borrowing + practicality reasons, it's easier
+        // to do this loop pop / push.
+        for _ in 0..self.blocks_under_contruction.len() {
+            if let Some(mut buc) = self.blocks_under_contruction.pop_front() {
+                let Some((hole_top, ..)) = buc.holes_tops.get(&lane_id) else {
+                    self.blocks_under_contruction.push_back(buc);
+                    continue;
+                };
+                if hole_top == &dp_hash {
+                    // This uses a non-recursive loop to avoid stack overflow,
+                    // unfortunately results in rather cumbersome code to write.
+                    self.try_to_fill_hole_in_lane(
+                        &mut buc,
+                        &lane_id,
+                        signatures,
+                        data_proposal,
+                        dp_hash.clone(),
+                    )
+                    .await?;
+
+                    let can_send = buc.holes_tops.is_empty();
+                    self.blocks_under_contruction.push_back(buc);
+
+                    // If we no longer have holes, try to send the built block
+                    if can_send {
+                        self.try_to_send_full_signed_blocks()
+                            .await
+                            .context("Try process queued CCP")?;
+                    }
+                    return Ok(());
+                } else {
+                    self.blocks_under_contruction.push_back(buc);
+                }
+            }
+        }
+
+        // If we're here, we didn't find the BUC, so buffer.
+        debug!(
+            "Buffering SyncReply entry for lane {} with hash {}",
+            lane_id, dp_hash
+        );
+        self.buffered_entries
+            .entry(lane_id.clone())
+            .or_default()
+            .insert(dp_hash.clone(), (signatures, data_proposal));
+
+        Ok(())
+    }
+
+    async fn try_to_fill_hole_in_lane(
+        &mut self,
+        buc: &mut BlockUnderConstruction,
+        lane_id: &LaneId,
+        mut signatures: Vec<ValidatorDAG>,
+        mut data_proposal: DataProposal,
+        mut dp_hash: DataProposalHash,
+    ) -> Result<()> {
+        let (mut hole_top, Some(mut lane_size)) =
+            buc.holes_tops.get(lane_id).map(|v| (&v.0, v.1)).unzip()
+        else {
+            return Ok(());
+        };
+        while hole_top == Some(&dp_hash) {
+            // We have found a hole matching this DP - we don't really need to validate signatures to handle it,
+            // as it was part of the cut, but as a warn if signatures don't match
+            let lane_operator = self.get_lane_operator(lane_id);
+            let found_operator_signature = signatures.iter().any(|s| {
+                &s.signature.validator == lane_operator
+                    && s.msg.0 == dp_hash
+                    && s.msg.1 == lane_size
+            });
+            if !found_operator_signature {
+                warn!(
+                    "Operator signature missing from sync reply entry {lane_operator} for DP {dp_hash}"
+                );
+            }
+
+            let dp_size = data_proposal.estimate_size() as u64;
+            let dp_parent_hash = data_proposal.parent_data_proposal_hash.clone();
+            let metadata = LaneEntryMetadata {
+                parent_data_proposal_hash: data_proposal.parent_data_proposal_hash.clone(),
+                cumul_size: lane_size,
+                signatures,
+                cached_poda: None,
+            };
+            self.lanes
+                .put_no_verification(lane_id.clone(), (metadata, data_proposal))?;
+            debug!(
+                "Filled hole for lane {} in BUC(slot: {})",
+                lane_id, buc.ccp.consensus_proposal.slot
+            );
+
+            // Now that we stored the DP, move the hole top down
+            if let Some(ref parent_hash) = dp_parent_hash {
+                // If we reached the 'from' cut, remove the hole
+                if buc.from.as_ref().is_some_and(|from_cut| {
+                    from_cut.iter().any(|(from_lane_id, from_dp_hash, _, _)| {
+                        from_lane_id == lane_id && from_dp_hash == parent_hash
+                    })
+                }) {
+                    buc.holes_tops.remove(lane_id);
+                    hole_top = None;
+                } else {
+                    let r = buc.holes_tops.entry(lane_id.clone()).or_default();
+                    r.0 = parent_hash.clone();
+                    hole_top = Some(&r.0);
+                }
+            } else {
+                buc.holes_tops.remove(lane_id); // Just remove otherwise
+                hole_top = None;
+            }
+
+            // Inform dissemination we can stop requesting this DP.
+            Self::send_dissemination_event_over(
+                &mut self.bus,
+                DisseminationEvent::DpStored {
+                    lane_id: lane_id.clone(),
+                    data_proposal_hash: dp_hash.clone(),
+                    cumul_size: lane_size,
+                },
+            )?;
+            Self::send_dissemination_event_over(
+                &mut self.bus,
+                DisseminationEvent::SyncRequestProgress {
+                    lane_id: lane_id.clone(),
+                    old_to: dp_hash.clone(),
+                    new_to: hole_top.cloned(),
+                },
+            )?;
+
+            // Try to fill further holes
+            let Some(ht) = hole_top else {
+                break;
+            };
+            let Some(buffered) = self.inner.buffered_entries.get_mut(lane_id) else {
+                break;
+            };
+            let Some((sigs, dp)) = buffered.remove(ht) else {
+                break;
+            };
+            let Some(new_lane_size) = lane_size.0.checked_sub(dp_size) else {
+                bail!(
+                    "Lane size underflow while filling hole for lane {lane_id}: current {:?}, dp_size {}",
+                    lane_size,
+                    dp_size
+                );
+            };
+            lane_size = LaneBytesSize(new_lane_size);
+            dp_hash = ht.clone();
+            signatures = sigs;
+            data_proposal = dp;
+        }
+        Ok(())
+    }
+
     pub(super) async fn try_to_send_full_signed_blocks(&mut self) -> Result<()> {
         let length = self.blocks_under_contruction.len();
         for _ in 0..length {
-            if let Some(block_under_contruction) = self.blocks_under_contruction.pop_front() {
+            if let Some(mut block_under_contruction) = self.blocks_under_contruction.pop_front() {
                 if log_warn!(
-                    self.build_signed_block_and_emit(&block_under_contruction)
+                    self.build_signed_block_and_emit(&mut block_under_contruction)
                         .await,
                     "Processing queued committedConsensusProposal"
                 )
@@ -38,21 +254,25 @@ impl super::Mempool {
         Ok(())
     }
 
-    /// Retrieves data proposals matching the Block under construction.
-    /// If data is not available locally, fails and do nothing
-    async fn try_get_full_data_for_signed_block(
+    /// Materializes holes for the Block under construction.
+    /// If data is not available locally, records pending holes.
+    /// Returns true if any hole was recorded.
+    async fn materialize_holes_for_signed_block(
         &mut self,
-        buc: &BlockUnderConstruction,
-    ) -> Result<Vec<(LaneId, Vec<DataProposal>)>> {
-        trace!("Handling Block Under Construction {:?}", buc.clone());
+        buc: &mut BlockUnderConstruction,
+    ) -> Result<bool> {
+        trace!(
+            "Materializing holes for Block Under Construction {:?}",
+            buc.clone()
+        );
         debug!(
-            "Handling Block Under Construction {} from parent hash {}",
+            "Materializing holes for Block Under Construction {} from parent hash {}",
             buc.ccp.consensus_proposal.slot, buc.ccp.consensus_proposal.parent_hash
         );
 
-        let mut result = vec![];
+        let mut any_missing = false;
 
-        for (lane_id, to_hash, _, _) in buc.ccp.consensus_proposal.cut.iter() {
+        for (lane_id, to_hash, cumul_size, _) in buc.ccp.consensus_proposal.cut.iter() {
             trace!("Processing lane {} with to_hash {}", lane_id, to_hash);
             let from_hash = buc
                 .from
@@ -61,53 +281,91 @@ impl super::Mempool {
                 .map(|el| &el.1);
 
             // iterate over the lane entries between from_hash and to_hash of the lane
-            let (dps, missing_hash) = {
-                trace!("Fetching data proposals for lane {}", lane_id);
-                let mut missing_hash = None;
-                let mut dps = vec![];
+            trace!("Fetching data proposals for lane {}", lane_id);
 
-                let mut entries = Box::pin(self.lanes.get_entries_between_hashes(
-                    lane_id,
-                    from_hash.cloned(),
-                    Some(to_hash.clone()),
-                ));
-
-                while let Some(entry) = entries.next().await {
-                    trace!("Processing lane entry {:?}", entry);
-                    let entry_or_missing = entry.context(format!(
-                        "Lane entries from {:?} to {:?} not available locally",
-                        buc.from, buc.ccp.consensus_proposal.cut
-                    ))?;
-
-                    match entry_or_missing {
-                        EntryOrMissingHash::Entry(_, mut dp) => {
-                            dp.remove_proofs();
-                            dps.push(dp);
-                        }
-                        EntryOrMissingHash::MissingHash(hash) => {
-                            debug!(
-                                "Data proposal {} not available locally for lane {}",
-                                hash, lane_id
-                            );
-                            missing_hash = Some(hash.clone());
-                            break;
-                        }
+            // TODO: explicit "get top" function?
+            // Because we pass an explicit to_hash, this will always return at least one entry.
+            let mut entries = Box::pin(self.lanes.get_entries_metadata_between_hashes(
+                lane_id,
+                from_hash.cloned(),
+                Some(to_hash.clone()),
+            ));
+            while let Some(entry) = entries.next().await {
+                trace!("Processing lane entry {:?}", entry);
+                match entry {
+                    Ok(MetadataOrMissingHash::Metadata(_, _)) => {}
+                    Ok(MetadataOrMissingHash::MissingHash(hash)) => {
+                        debug!(
+                            "Data proposal {} not available locally for lane {}",
+                            hash, lane_id
+                        );
+                        // Record missing hash as hole top
+                        buc.holes_tops.insert(lane_id.clone(), (hash, *cumul_size));
+                        any_missing = true;
+                        break;
+                    }
+                    Err(_) => {
+                        debug!(
+                            "Lane {lane_id} missing data between {:?} and {:?}",
+                            from_hash, to_hash
+                        );
+                        // Record the to_hash as hole top
+                        buc.holes_tops
+                            .insert(lane_id.clone(), (to_hash.clone(), *cumul_size));
+                        any_missing = true;
+                        break;
                     }
                 }
-                // Reverse to maintain the correct order (most recent first)
-                dps.reverse();
-
-                (dps, missing_hash)
-            };
-
-            if let Some(missing_hash) = missing_hash {
-                self.send_sync_request(lane_id, from_hash, Some(&missing_hash))?;
-                bail!(
-                    "Data proposal {} not available locally for lane {}",
-                    missing_hash,
-                    lane_id
-                );
             }
+        }
+        buc.holes_materialized = true;
+        Ok(any_missing)
+    }
+
+    /// Retrieves data proposals matching the Block under construction.
+    /// Assumes that holes have been materialized and filled.
+    async fn get_full_data_for_signed_block(
+        &mut self,
+        buc: &BlockUnderConstruction,
+    ) -> Result<Vec<(LaneId, Vec<DataProposal>)>> {
+        let mut result = vec![];
+
+        for (lane_id, to_hash, _, _) in buc.ccp.consensus_proposal.cut.iter() {
+            let from_hash = buc
+                .from
+                .as_ref()
+                .and_then(|f| f.iter().find(|el| &el.0 == lane_id))
+                .map(|el| &el.1);
+
+            let mut dps = vec![];
+
+            // Because we pass an explicit to_hash, this will always return at least one entry.
+            let mut entries = Box::pin(self.lanes.get_entries_between_hashes(
+                lane_id,
+                from_hash.cloned(),
+                Some(to_hash.clone()),
+            ));
+
+            while let Some(entry) = entries.next().await {
+                match entry {
+                    Ok(EntryOrMissingHash::Entry(_, mut dp)) => {
+                        dp.remove_proofs();
+                        dps.push(dp);
+                    }
+                    Ok(EntryOrMissingHash::MissingHash(hash)) => {
+                        bail!("Unexpected missing data proposal {hash} for lane {lane_id}");
+                    }
+                    Err(e) => {
+                        bail!(
+                            "Lane entries from {:?} to {:?} not available locally: {e}",
+                            buc.from,
+                            buc.ccp.consensus_proposal.cut,
+                        );
+                    }
+                }
+            }
+            // Reverse to maintain the correct order (most recent first)
+            dps.reverse();
 
             result.push((lane_id.clone(), dps));
         }
@@ -117,10 +375,52 @@ impl super::Mempool {
 
     pub async fn build_signed_block_and_emit(
         &mut self,
-        buc: &BlockUnderConstruction,
+        buc: &mut BlockUnderConstruction,
     ) -> Result<()> {
+        // First time, materialize holes (this is done somewhat async as it can be slow,
+        // but we might want to refactor this in the future.)
+        if !buc.holes_materialized && self.materialize_holes_for_signed_block(buc).await? {
+            // Borrowing makes this unworkable without the vec workaround.
+            let mut fill_from = vec![];
+            for (lane_id, (to_hash, _)) in &buc.holes_tops {
+                if let Some((signatures, data_proposal)) = self
+                    .buffered_entries
+                    .get_mut(lane_id)
+                    .and_then(|m| m.remove(to_hash))
+                {
+                    fill_from.push((lane_id.clone(), signatures, data_proposal, to_hash.clone()));
+                }
+            }
+            for (lane_id, signatures, data_proposal, to_hash) in fill_from {
+                self.try_to_fill_hole_in_lane(buc, &lane_id, signatures, data_proposal, to_hash)
+                    .await?;
+            }
+            // Now send sync requests for remaining holes.
+            // For simplicity I'll just re-loop here.
+            for (lane_id, (to_hash, _)) in &buc.holes_tops {
+                debug!(
+                    "Still have hole for lane {} at top {} in BUC(slot: {})",
+                    lane_id, to_hash, buc.ccp.consensus_proposal.slot
+                );
+                self.send_sync_request(
+                    lane_id,
+                    buc.from.as_ref().and_then(|from_cut| {
+                        from_cut
+                            .iter()
+                            .find(|(from_lane_id, ..)| from_lane_id == lane_id)
+                            .map(|(_, from_dp_hash, ..)| from_dp_hash)
+                    }),
+                    Some(to_hash),
+                )?;
+            }
+        }
+
+        if !buc.holes_tops.is_empty() {
+            bail!("Block under construction has pending holes");
+        }
+
         let mut block_data = self
-            .try_get_full_data_for_signed_block(buc)
+            .get_full_data_for_signed_block(buc)
             .await
             .context("Processing queued committedConsensusProposal")?;
 
@@ -190,6 +490,8 @@ impl super::Mempool {
                     .push_back(BlockUnderConstruction {
                         from: Some(last_buc.consensus_proposal.cut.clone()),
                         ccp: ccp.clone(),
+                        holes_tops: HashMap::new(),
+                        holes_materialized: false,
                     });
             } else {
                 // CCP slot received is way higher, then just store it
@@ -205,7 +507,12 @@ impl super::Mempool {
                 self.set_ccp_build_start_height(ccp.consensus_proposal.slot);
                 // If no last cut, make sure the slot is 1
                 self.blocks_under_contruction
-                    .push_back(BlockUnderConstruction { from: None, ccp });
+                    .push_back(BlockUnderConstruction {
+                        from: None,
+                        ccp,
+                        holes_tops: HashMap::new(),
+                        holes_materialized: false,
+                    });
             } else {
                 debug!(
                     "Could not create an interval with CCP(slot: {})",
@@ -239,14 +546,6 @@ impl super::Mempool {
                     data_proposal_hash,
                     cumul_size,
                 )?;
-
-                // Send SyncRequest for all data proposals between previous cut and new one
-                self.send_sync_request(
-                    lane_id,
-                    previous_committed_dp_hash,
-                    Some(data_proposal_hash),
-                )
-                .context("Fetching unknown data")?;
             }
         }
         Ok(())
@@ -544,17 +843,19 @@ pub mod test {
         };
 
         // Add the block to mempool 1
-        let buc = BlockUnderConstruction {
+        let mut buc = BlockUnderConstruction {
             from: None,
             ccp: CommittedConsensusProposal {
                 consensus_proposal: ccp,
                 staking: Staking::default(),
                 certificate: AggregateSignature::default(),
             },
+            holes_tops: HashMap::new(),
+            holes_materialized: false,
         };
 
         // Try to build a signed block in mempool 1
-        let result = ctx.mempool.build_signed_block_and_emit(&buc).await;
+        let result = ctx.mempool.build_signed_block_and_emit(&mut buc).await;
         assert!(result.is_err());
 
         ctx.process_sync().await?;
@@ -589,8 +890,11 @@ pub mod test {
             .lanes
             .store_data_proposal(&crypto2, &lane_id2, dp4.clone())?;
 
+        // Simulate hole being filled (normally done by sync replies).
+        buc.holes_tops.clear();
+
         // Try to build a signed block again
-        let result = ctx.mempool.build_signed_block_and_emit(&buc).await;
+        let result = ctx.mempool.build_signed_block_and_emit(&mut buc).await;
         assert!(result.is_ok());
 
         // We've received consecutive blocks so start building
@@ -657,17 +961,19 @@ pub mod test {
         };
 
         // Add the block to the mempool
-        let buc = BlockUnderConstruction {
+        let mut buc = BlockUnderConstruction {
             from: None,
             ccp: CommittedConsensusProposal {
                 consensus_proposal: ccp,
                 staking: Staking::default(),
                 certificate: AggregateSignature::default(),
             },
+            holes_tops: HashMap::new(),
+            holes_materialized: false,
         };
 
         // Try to build a signed block
-        let result = ctx.mempool.build_signed_block_and_emit(&buc).await;
+        let result = ctx.mempool.build_signed_block_and_emit(&mut buc).await;
         assert!(result.is_err());
 
         ctx.process_sync().await?;

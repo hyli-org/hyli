@@ -21,7 +21,7 @@ impl UuidTld {
     ) {
         builder.init_with(
             contract_name,
-            Risc0Prover::new(metadata::UUID_TLD_ELF, PROGRAM_ID),
+            Risc0Prover::new(metadata::UUID_TLD_ELF.to_vec(), PROGRAM_ID),
         );
     }
 }

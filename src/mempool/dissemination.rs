@@ -61,6 +61,11 @@ pub enum DisseminationEvent {
         from: Option<DataProposalHash>,
         to: Option<DataProposalHash>,
     },
+    SyncRequestProgress {
+        lane_id: LaneId,
+        old_to: DataProposalHash,
+        new_to: Option<DataProposalHash>,
+    },
     SyncRequestIn {
         lane_id: LaneId,
         from: Option<DataProposalHash>,
@@ -291,6 +296,24 @@ impl DisseminationManager {
                         next_peer_idx: 0,
                     });
             }
+            DisseminationEvent::SyncRequestProgress {
+                lane_id,
+                old_to,
+                new_to,
+            } => match new_to {
+                None => {
+                    self.pending_sync_requests.remove(&(lane_id, old_to));
+                }
+                Some(new_to) => {
+                    if let Some((mut key, mut request)) =
+                        self.pending_sync_requests.remove_entry(&(lane_id, old_to))
+                    {
+                        key.1 = new_to.clone();
+                        request.to = new_to;
+                        self.pending_sync_requests.insert(key, request);
+                    }
+                }
+            },
             DisseminationEvent::VoteReceived {
                 lane_id,
                 data_proposal_hash,
@@ -532,7 +555,7 @@ impl DisseminationManager {
                     .crypto
                     .sign_msg_with_header(MempoolNetMessage::SyncReply(
                         lane_id.clone(),
-                        metadata.clone(),
+                        metadata.signatures.clone(),
                         data_proposal,
                     ));
 

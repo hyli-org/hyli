@@ -63,6 +63,8 @@ uuid-tld = { version = "0.14.0", default-features = false, path = "crates/contra
 hyli-contracts = { version = "0.14.0", default-features = false, path = "crates/contracts", package = "hyli-contracts" }
 hyli-modules = { version = "0.14.0", default-features = false, path = "crates/hyli-modules", package = "hyli-modules" }
 
+hyli-registry = { version = "0.4.0" }
+
 # Common external dependencies
 alloy-consensus = { version = "1.1.0", default-features = false }
 alloy-eips = { version = "1.1.0", default-features = false }
@@ -108,7 +110,7 @@ k256 = { version = "0.13", default-features = false, features = [
   "ecdsa",
   "arithmetic",
 ] }
-mockall = { version = "0.13.0", default-features = false }
+mockall = { version = "0.14.0", default-features = false }
 once_cell = { version = "1.19.0", default-features = false }
 opentelemetry = { version = "0.28.0" }
 opentelemetry-prometheus = { version = "0.28.0" }
@@ -145,7 +147,7 @@ testcontainers-modules = { version = "0.14.0", default-features = false }
 tracing-opentelemetry = "0.29.0"
 tokio = { version = "1.47.1" }
 tokio-util = { version = "0.7.16" }
-toml = { version = "0.9.5", default-features = false }
+toml = { version = "0.9.11", default-features = false }
 tower-http = { version = "0.6.5", default-features = false, features = [
   "decompression-gzip",
 ] }
@@ -159,7 +161,7 @@ utoipa = { version = "5.4.0" }
 utoipa-axum = { version = "0.2.0" }
 utoipa-swagger-ui = { version = "9.0.2" }
 uuid = { version = "1.18.0", default-features = false }
-whoami = { version = "1.6.1", default-features = false }
+whoami = { version = "2.0.2", default-features = false }
 
 # Reth dependencies
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", default-features = false }
