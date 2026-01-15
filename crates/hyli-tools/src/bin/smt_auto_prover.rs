@@ -13,10 +13,10 @@ use hyli_modules::{
         BuildApiContextInner, ModulesHandler,
         admin::{AdminApi, AdminApiRunContext},
         da_listener::DAListenerConf,
+        da_listener::SignedDAListener,
         node_state_processor::{NodeStateProcessor, NodeStateProcessorCtx},
         prover::{AutoProver, AutoProverCtx},
         rest::{ApiDoc, RestApi, RestApiRunContext, Router},
-        signed_da_listener::SignedDAListener,
     },
     utils::logger::setup_tracing,
 };
