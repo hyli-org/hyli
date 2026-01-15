@@ -97,7 +97,7 @@ impl Module for ContractListener {
         );
 
         let state_path = ctx.data_directory.join(CONTRACT_LISTENER_STATE_FILE);
-        let store = Self::load_from_disk_or_default::<ContractListenerStore>(state_path.as_path());
+        let store = Self::load_from_disk_or_default::<ContractListenerStore>(state_path.as_path())?;
 
         Ok(Self {
             bus,

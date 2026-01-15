@@ -69,7 +69,7 @@ impl Module for SingleNodeConsensus {
             .clone()
             .join("consensus_single_node.bin");
 
-        let store: SingleNodeConsensusStore = Self::load_from_disk_or_default(file.as_path());
+        let store: SingleNodeConsensusStore = Self::load_from_disk_or_default(file.as_path())?;
 
         let api = super::consensus::api::api(&bus, &ctx).await;
         if let Ok(mut guard) = ctx.api.router.lock() {

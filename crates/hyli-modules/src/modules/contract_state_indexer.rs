@@ -67,7 +67,7 @@ where
             .join(format!("state_indexer_{}.bin", ctx.contract_name).as_str());
 
         let mut store =
-            Self::load_from_disk_or_default::<ContractStateStore<State>>(file.as_path());
+            Self::load_from_disk_or_default::<ContractStateStore<State>>(file.as_path())?;
         store.contract_name = ctx.contract_name.clone();
         let store = Arc::new(RwLock::new(store));
 

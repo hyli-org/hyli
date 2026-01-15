@@ -3,10 +3,12 @@ use std::{
     fs,
     future::Future,
     io::{BufWriter, Write},
-    path::Path,
+    path::{Path, PathBuf},
     pin::Pin,
     time::Duration,
 };
+
+use sha3::{Digest, Sha3_256};
 
 use crate::{
     bus::{BusClientReceiver, BusClientSender, SharedMessageBus},
@@ -39,6 +41,47 @@ pub mod rest;
 pub mod signed_da_listener;
 pub mod websocket;
 
+/// Error type for persistence operations
+#[derive(Debug)]
+pub enum PersistenceError {
+    /// File not found (not an error, use default)
+    NotFound,
+    /// Hash verification failed (data corruption)
+    HashMismatch { expected: String, actual: String },
+    /// Hash file missing
+    MissingHashFile,
+    /// Deserialization failed
+    DeserializationFailed(String),
+    /// IO error during read/write
+    IoError(std::io::Error),
+}
+
+impl std::fmt::Display for PersistenceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound => write!(f, "File not found"),
+            Self::HashMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "Data corruption detected: hash mismatch (expected {}, got {})",
+                    expected, actual
+                )
+            }
+            Self::MissingHashFile => write!(f, "Hash file missing"),
+            Self::DeserializationFailed(msg) => write!(f, "Failed to deserialize data: {}", msg),
+            Self::IoError(e) => write!(f, "IO error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for PersistenceError {}
+
+impl From<std::io::Error> for PersistenceError {
+    fn from(e: std::io::Error) -> Self {
+        Self::IoError(e)
+    }
+}
+
 #[derive(Default)]
 pub struct BuildApiContextInner {
     pub router: std::sync::Mutex<Option<Router>>,
@@ -59,29 +102,55 @@ where
     ) -> impl futures::Future<Output = Result<Self>> + Send;
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send;
 
-    fn load_from_disk<S>(file: &Path) -> Option<S>
+    /// Load data from disk with hash verification.
+    ///
+    /// Returns:
+    /// - `Ok(Some(data))` if file exists and hash verifies
+    /// - `Ok(None)` if file doesn't exist
+    /// - `Err(PersistenceError::MissingHashFile)` if hash file is missing
+    /// - `Err(PersistenceError::HashMismatch)` if hash verification fails
+    /// - `Err(PersistenceError::DeserializationFailed)` if data is corrupted
+    fn load_from_disk<S>(file: &Path) -> Result<Option<S>, PersistenceError>
     where
         S: borsh::BorshDeserialize,
     {
-        match fs::File::open(file) {
-            Ok(mut reader) => {
-                info!("Loaded data from disk {}", file.to_string_lossy());
-                log_error!(
-                    borsh::from_reader(&mut reader),
-                    "Loading and decoding {}",
-                    file.to_string_lossy()
-                )
-                .ok()
-            }
-            Err(_) => {
+        // Read the data file
+        let data = match fs::read(file) {
+            Ok(data) => data,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 info!(
                     "File {} not found for module {} (using default)",
                     file.to_string_lossy(),
                     type_name::<S>(),
                 );
-                None
+                return Ok(None);
             }
+            Err(e) => return Err(PersistenceError::IoError(e)),
+        };
+
+        // Check for hash file and verify
+        let expected_hash = read_hash_file(file)?;
+        let actual_hash = compute_hash(&data);
+        if expected_hash != actual_hash {
+            tracing::error!(
+                "Hash mismatch for {}: expected {}, got {}",
+                file.to_string_lossy(),
+                expected_hash,
+                actual_hash
+            );
+            return Err(PersistenceError::HashMismatch {
+                expected: expected_hash,
+                actual: actual_hash,
+            });
         }
+        debug!("Hash verification passed for {}", file.to_string_lossy());
+
+        // Deserialize the data
+        let deserialized: S = borsh::from_slice(&data)
+            .map_err(|e| PersistenceError::DeserializationFailed(e.to_string()))?;
+
+        info!("Loaded data from disk {}", file.to_string_lossy());
+        Ok(Some(deserialized))
     }
 
     fn persist(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
@@ -94,11 +163,11 @@ where
         }
     }
 
-    fn load_from_disk_or_default<S>(file: &Path) -> S
+    fn load_from_disk_or_default<S>(file: &Path) -> Result<S, PersistenceError>
     where
         S: borsh::BorshDeserialize + Default,
     {
-        Self::load_from_disk(file).unwrap_or(S::default())
+        Ok(Self::load_from_disk(file)?.unwrap_or(S::default()))
     }
 
     fn save_on_disk<S>(file: &Path, store: &S) -> Result<()>
@@ -111,28 +180,77 @@ where
         // State 2 starts creating a tmp file data.state2.tmp
         // rename data.state2.tmp into store (atomic override)
         // rename data.state1.tmp into
+
+        // Serialize to bytes first so we can compute hash
+        let serialized = borsh::to_vec(store)
+            .map_err(|e| anyhow::anyhow!("Serializing {}: {}", type_name::<S>(), e))?;
+
+        // Compute hash of serialized data
+        let hash = compute_hash(&serialized);
+
         let salt: String = deterministic_rng()
             .sample_iter(&Alphanumeric)
             .take(8)
             .map(char::from)
             .collect();
-        let tmp = file.with_extension(format!("{salt}.tmp"));
-        debug!("Saving on disk in a tmp file {:?}", tmp.clone());
-        let mut buf_writer =
-            BufWriter::new(log_error!(fs::File::create(tmp.as_path()), "Create file")?);
-        log_error!(
-            borsh::to_writer(&mut buf_writer, store),
-            "Serializing Ctx chain"
-        )?;
 
+        // Temp file paths for data and hash
+        let tmp_data = file.with_extension(format!("{salt}.tmp"));
+        let hash_path = hash_file_path(file);
+        let tmp_hash = hash_path.with_extension(format!("sha3.{salt}.tmp"));
+
+        debug!("Saving on disk in a tmp file {:?}", tmp_data.clone());
+
+        // Write data to temp file
+        let mut buf_writer = BufWriter::new(log_error!(
+            fs::File::create(tmp_data.as_path()),
+            "Create data file"
+        )?);
+        log_error!(
+            buf_writer.write_all(&serialized),
+            "Writing serialized data for {}",
+            type_name::<S>()
+        )?;
         log_error!(
             buf_writer.flush(),
             "Flushing Buffer writer for store {}",
             type_name::<S>()
         )?;
-        debug!("Renaming {:?} to {:?}", &tmp, &file);
-        log_error!(fs::rename(tmp, file), "Rename file")?;
+
+        // Write hash to temp file
+        log_error!(fs::write(tmp_hash.as_path(), &hash), "Writing hash file")?;
+
+        // Atomically rename both files
+        debug!("Renaming {:?} to {:?}", &tmp_data, &file);
+        log_error!(fs::rename(&tmp_data, file), "Rename data file")?;
+        log_error!(fs::rename(&tmp_hash, &hash_path), "Rename hash file")?;
+
         Ok(())
+    }
+}
+
+/// Compute SHA3-256 hash of data and return as hex string
+fn compute_hash(data: &[u8]) -> String {
+    let mut hasher = Sha3_256::new();
+    hasher.update(data);
+    hex::encode(hasher.finalize())
+}
+
+/// Get the path for the hash file given a data file path
+fn hash_file_path(file: &Path) -> PathBuf {
+    let mut path = file.as_os_str().to_owned();
+    path.push(".sha3");
+    PathBuf::from(path)
+}
+
+/// Read hash from hash file, returns error if file doesn't exist
+fn read_hash_file(file: &Path) -> Result<String, PersistenceError> {
+    match fs::read_to_string(hash_file_path(file)) {
+        Ok(contents) => Ok(contents.trim().to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(PersistenceError::MissingHashFile)
+        }
+        Err(e) => Err(PersistenceError::IoError(e)),
     }
 }
 
@@ -651,37 +769,142 @@ mod tests {
     }
 
     #[test]
-    fn test_load_from_disk_or_default() {
+    fn test_load_from_disk_or_default_valid_file() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_file");
 
-        // Write a valid TestStruct to the file
-        let mut file = File::create(&file_path).unwrap();
+        // Write a valid TestStruct to the file (with hash)
         let test_struct = TestStruct { value: 42 };
-        borsh::to_writer(&mut file, &test_struct).unwrap();
+        TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
 
         // Load the struct from the file
-        let loaded_struct: TestStruct = TestModule::<usize>::load_from_disk_or_default(&file_path);
+        let loaded_struct: TestStruct =
+            TestModule::<usize>::load_from_disk_or_default(&file_path).unwrap();
         assert_eq!(loaded_struct.value, 42);
+    }
 
+    #[test]
+    fn test_load_from_disk_or_default_missing_hash_file() {
+        let dir = tempdir().unwrap();
+        let test_struct = TestStruct { value: 42 };
+
+        // Missing hash file should return default
+        let non_existant_hash_file = dir.path().join("non_existant_hash_file");
+        let mut legacy_file = File::create(&non_existant_hash_file).unwrap();
+        borsh::to_writer(&mut legacy_file, &test_struct).unwrap();
+        let result =
+            TestModule::<usize>::load_from_disk_or_default::<TestStruct>(&non_existant_hash_file);
+        assert!(result.is_err(), "Expected error due to missing hash file");
+    }
+
+    #[test]
+    fn test_load_from_disk_or_default_non_existent_file() {
+        let dir = tempdir().unwrap();
         // Load from a non-existent file
         let non_existent_path = dir.path().join("non_existent_file");
         let default_struct: TestStruct =
-            TestModule::<usize>::load_from_disk_or_default(&non_existent_path);
+            TestModule::<usize>::load_from_disk_or_default(&non_existent_path).unwrap();
         assert_eq!(default_struct.value, 0);
     }
 
     #[test_log::test]
-    fn test_save_on_disk() {
+    fn test_save_creates_hash_file() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_file.data");
 
         let test_struct = TestStruct { value: 42 };
         TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
 
-        // Load the struct from the file to verify it was saved correctly
-        let loaded_struct: TestStruct = TestModule::<usize>::load_from_disk_or_default(&file_path);
-        assert_eq!(loaded_struct.value, 42);
+        // Verify hash file was created
+        let hash_path = super::hash_file_path(&file_path);
+        assert!(hash_path.exists(), "Hash file should be created");
+
+        // Verify hash file content is a valid hex string
+        let hash_content = std::fs::read_to_string(&hash_path).unwrap();
+        assert_eq!(
+            hash_content.len(),
+            64,
+            "SHA3-256 hash should be 64 hex chars"
+        );
+        assert!(
+            hash_content.chars().all(|c| c.is_ascii_hexdigit()),
+            "Hash should be valid hex"
+        );
+    }
+
+    #[test_log::test]
+    fn test_hash_mismatch_detection() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test_file.data");
+
+        let test_struct = TestStruct { value: 42 };
+        TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
+
+        // Corrupt the hash file
+        let hash_path = super::hash_file_path(&file_path);
+        std::fs::write(
+            &hash_path,
+            "invalid_hash_0000000000000000000000000000000000000000000000000000",
+        )
+        .unwrap();
+
+        // Load should fail with hash mismatch
+        let result: Result<Option<TestStruct>, super::PersistenceError> =
+            TestModule::<usize>::load_from_disk(&file_path);
+
+        assert!(
+            matches!(result, Err(super::PersistenceError::HashMismatch { .. })),
+            "Should detect hash mismatch"
+        );
+    }
+
+    #[test_log::test]
+    fn test_corrupted_data_detection() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test_file.data");
+
+        let test_struct = TestStruct { value: 42 };
+        TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
+
+        // Corrupt the data file (but leave hash intact)
+        let mut data = std::fs::read(&file_path).unwrap();
+        data[0] ^= 0xFF; // Flip some bits
+        std::fs::write(&file_path, &data).unwrap();
+
+        // Load should fail with hash mismatch
+        let result: Result<Option<TestStruct>, super::PersistenceError> =
+            TestModule::<usize>::load_from_disk(&file_path);
+
+        assert!(
+            matches!(result, Err(super::PersistenceError::HashMismatch { .. })),
+            "Should detect corrupted data via hash mismatch"
+        );
+    }
+
+    #[test_log::test]
+    fn test_missing_hash_file() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test_file");
+
+        // Write file directly without hash (simulating legacy)
+        let mut file = File::create(&file_path).unwrap();
+        let test_struct = TestStruct { value: 42 };
+        borsh::to_writer(&mut file, &test_struct).unwrap();
+
+        // Verify no hash file exists
+        let hash_path = super::hash_file_path(&file_path);
+        assert!(
+            !hash_path.exists(),
+            "Hash file should not exist for legacy file"
+        );
+
+        // Load should fail due to missing hash file
+        let result: Result<Option<TestStruct>, super::PersistenceError> =
+            TestModule::<usize>::load_from_disk(&file_path);
+        assert!(
+            matches!(result, Err(super::PersistenceError::MissingHashFile)),
+            "Should error on missing hash file"
+        );
     }
 
     #[tokio::test]

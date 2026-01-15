@@ -68,7 +68,7 @@ impl Module for Indexer {
         // Load node state from node_state.bin if it exists or create a new default
         let node_state_path = ctx.0.data_directory.join("indexer_node_state.bin");
         let node_state_store =
-            NodeStateModule::load_from_disk_or_default::<NodeStateStore>(&node_state_path);
+            NodeStateModule::load_from_disk_or_default::<NodeStateStore>(&node_state_path)?;
 
         let mut node_state = NodeState::create(ctx.0.id.clone(), "indexer");
         node_state.store = node_state_store;

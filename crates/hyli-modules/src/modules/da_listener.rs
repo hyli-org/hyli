@@ -54,7 +54,7 @@ impl Module for DAListener {
             ctx.data_directory
                 .join("da_listener_node_state.bin")
                 .as_path(),
-        );
+        )?;
 
         let node_state = NodeState {
             store: node_state_store,

@@ -33,10 +33,9 @@ impl Module for Mempool {
         }
         let bus = MempoolBusClient::new_from_bus(bus.new_handle()).await;
 
-        let attributes = Self::load_from_disk::<MempoolStore>(
+        let inner = Self::load_from_disk_or_default::<MempoolStore>(
             ctx.config.data_directory.join("mempool.bin").as_path(),
-        )
-        .unwrap_or_default();
+        )?;
 
         Ok(Mempool {
             bus,
@@ -45,7 +44,7 @@ impl Module for Mempool {
             crypto: Arc::clone(&ctx.crypto),
             metrics,
             lanes: shared_lanes_storage(&ctx.config.data_directory)?,
-            inner: attributes,
+            inner,
         })
     }
 

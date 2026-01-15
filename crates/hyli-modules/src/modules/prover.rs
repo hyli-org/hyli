@@ -130,7 +130,7 @@ where
             .data_directory
             .join(format!("autoprover_{}.bin", ctx.contract_name).as_str());
 
-        let mut store = match Self::load_from_disk::<AutoProverStore<Contract>>(file.as_path()) {
+        let mut store = match Self::load_from_disk::<AutoProverStore<Contract>>(file.as_path())? {
             Some(store) => store,
             None => AutoProverStore::<Contract> {
                 unsettled_txs: vec![],

@@ -16,7 +16,7 @@ impl Module for Consensus {
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let file = ctx.config.data_directory.join(CONSENSUS_BIN);
-        let mut store: ConsensusStore = Self::load_from_disk_or_default(file.as_path());
+        let mut store: ConsensusStore = Self::load_from_disk_or_default(file.as_path())?;
         // Cap in-memory prepare cache on startup to avoid loading oversized state.
         store
             .bft_round_state

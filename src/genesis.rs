@@ -93,7 +93,7 @@ contract_states!(
 impl Genesis {
     pub async fn start(&mut self) -> Result<(), Error> {
         let file = self.config.data_directory.clone().join("genesis.bin");
-        let already_handled_genesis: bool = Self::load_from_disk_or_default(&file);
+        let already_handled_genesis: bool = Self::load_from_disk_or_default(&file)?;
         if already_handled_genesis {
             debug!("🌿 Genesis block already handled, skipping");
             // TODO: do we need a different message?

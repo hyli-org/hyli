@@ -1104,6 +1104,7 @@ async fn test_serialization_deserialization() -> Result<()> {
     assert!(Mempool::load_from_disk::<MempoolStore>(
         ctx.mempool.file.unwrap().join("test-mempool.bin").as_path(),
     )
+    .unwrap()
     .is_some());
 
     std::fs::remove_file("./test-mempool.bin").expect("Failed to delete test-mempool.bin");

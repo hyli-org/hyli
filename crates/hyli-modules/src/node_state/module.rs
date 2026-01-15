@@ -72,7 +72,7 @@ impl Module for NodeStateModule {
 
         let store = Self::load_from_disk_or_default::<NodeStateStore>(
             ctx.data_directory.join(NODE_STATE_BIN).as_path(),
-        );
+        )?;
 
         for name in store.contracts.keys() {
             info!("📝 Loaded contract state for {}", name);
