@@ -85,19 +85,6 @@ impl<T: BorshDeserialize> BorshDeserialize for ArcBorsh<T> {
     }
 }
 
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
-enum PendingTxStage {
-    Hash,
-    Proof,
-}
-
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
-struct PendingTx {
-    tx: ArcBorsh<Transaction>,
-    lane_suffix: LaneSuffix,
-    stage: PendingTxStage,
-}
-
 pub struct LongTasksRuntime(std::mem::ManuallyDrop<tokio::runtime::Runtime>);
 impl Default for LongTasksRuntime {
     fn default() -> Self {
@@ -159,8 +146,8 @@ pub struct MempoolStore {
     // TODO: implement serialization, probably with a custom future that yields the unmodified Tx
     // on cancellation
     #[borsh(skip)]
-    processing_txs: OrderedJoinSet<Result<(Transaction, LaneSuffix)>>,
-    processing_txs_pending: VecDeque<PendingTx>,
+    processing_txs: OrderedJoinSet<Result<Transaction>>,
+    processing_txs_pending: VecDeque<(ArcBorsh<Transaction>, LaneId)>,
     own_data_proposal_in_preparation: own_lane::OwnDataProposalPreparation,
     // Skipped to clear on reset
     #[borsh(skip)]
@@ -298,34 +285,22 @@ pub enum ProcessedDPEvent {
 
 impl Mempool {
     pub(super) fn restore_inflight_work(&mut self) {
-        let handle = self.inner.long_tasks_runtime.handle();
-
-        for pending in self.inner.processing_txs_pending.iter().cloned() {
-            let arc_tx = pending.tx.arc();
-            let lane_suffix = pending.lane_suffix.clone();
-            match pending.stage {
-                PendingTxStage::Hash => {
-                    self.inner.processing_txs.spawn_on(
-                        async move {
-                            arc_tx.hashed();
-                            Ok(((*arc_tx).clone(), lane_suffix))
-                        },
-                        handle,
-                    );
-                }
-                PendingTxStage::Proof => {
-                    self.inner.processing_txs.spawn_on(
-                        async move {
-                            let tx = Self::process_proof_tx((*arc_tx).clone())
-                                .context("Processing proof tx in blocker")?;
-                            Ok((tx, lane_suffix))
-                        },
-                        handle,
-                    );
-                }
+        let txs_to_restore = self
+            .inner
+            .processing_txs_pending
+            .iter()
+            .map(|(tx, _)| tx.arc().clone())
+            .collect::<Vec<_>>();
+        for arc_tx in txs_to_restore {
+            let is_proof = matches!(arc_tx.transaction_data, TransactionData::Proof(_));
+            if is_proof {
+                self.enqueue_processing_tx_hash(arc_tx);
+            } else {
+                self.enqueue_processing_tx_proof(arc_tx);
             }
         }
 
+        let handle = self.inner.long_tasks_runtime.handle();
         self.inner
             .own_data_proposal_in_preparation
             .restore_tasks(handle);

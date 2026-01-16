@@ -409,22 +409,8 @@ impl super::Mempool {
         lane_suffix: Option<LaneSuffix>,
     ) -> Result<()> {
         let lane_suffix = self.resolve_lane_suffix_for_tx(&tx, lane_suffix.as_ref());
-        // This is annoying to run in tests because we don't have the event loop setup, so go synchronous.
-        #[cfg(test)]
-        self.on_new_tx(tx.clone(), &lane_suffix)?;
-        #[cfg(not(test))]
-        self.enqueue_processing_tx_hash(tx, lane_suffix);
-        Ok(())
-    }
 
-    pub(super) fn on_new_tx(&mut self, tx: Transaction, lane_suffix: &LaneSuffix) -> Result<()> {
-        // TODO: Verify fees ?
-
-        let tx_type: &'static str = (&tx.transaction_data).into();
-        trace!("Tx {} received in mempool", tx_type);
-        let lane_suffix_owned = lane_suffix.clone();
-
-        let Some(lane_id) = self.lane_id_for_tx(&tx, lane_suffix) else {
+        let Some(lane_id) = self.lane_id_for_tx(&tx, &lane_suffix) else {
             info!(
                 "Dropping tx {} for unknown lane suffix {:?}",
                 tx.hashed(),
@@ -433,8 +419,34 @@ impl super::Mempool {
             return Ok(());
         };
 
-        match tx.transaction_data {
-            TransactionData::Blob(ref blob_tx) => {
+        match &tx.transaction_data {
+            // This is annoying to run in tests because we don't have the event loop setup, so go synchronous.
+            #[cfg(test)]
+            TransactionData::Blob(_) => self.on_new_tx(tx, lane_id)?,
+            #[cfg(not(test))]
+            TransactionData::Blob(_) => {
+                let arc_tx = self.track_processing_tx(tx, lane_id);
+                self.enqueue_processing_tx_hash(arc_tx)
+            }
+            TransactionData::Proof(_) => {
+                let arc_tx = self.track_processing_tx(tx, lane_id);
+                self.enqueue_processing_tx_proof(arc_tx)
+            }
+            TransactionData::VerifiedProof(_) => {
+                bail!("VerifiedProofs cannot be sent over the API.")
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn on_new_tx(&mut self, tx: Transaction, lane_id: LaneId) -> Result<()> {
+        // TODO: Verify fees ?
+
+        let tx_type: &'static str = (&tx.transaction_data).into();
+        trace!("Tx {} received in mempool", tx_type);
+
+        match &tx.transaction_data {
+            TransactionData::Blob(blob_tx) => {
                 debug!("Got new blob tx {}", tx.hashed());
                 if blob_tx.blobs.len() > 20 {
                     bail!(
@@ -443,21 +455,14 @@ impl super::Mempool {
                     );
                 }
             }
-            TransactionData::Proof(ref proof_tx) => {
-                debug!(
-                    "Got new proof tx {} for {}",
-                    tx.hashed(),
-                    proof_tx.contract_name
-                );
-                self.enqueue_processing_tx_proof(tx, lane_suffix_owned);
-
-                return Ok(());
+            TransactionData::Proof(_) => {
+                unreachable!("Proof TXs are converted to VerifiedProof in on_new_api_tx");
             }
-            TransactionData::VerifiedProof(ref proof_tx) => {
+            TransactionData::VerifiedProof(proof_tx) => {
                 debug!(
                     "Got verified proof tx {} for {}",
                     tx.hashed(),
-                    proof_tx.contract_name.clone()
+                    proof_tx.contract_name
                 );
             }
         }
@@ -481,47 +486,35 @@ impl super::Mempool {
         Ok(())
     }
 
-    #[allow(dead_code, reason = "not called in tests")]
-    fn enqueue_processing_tx_hash(&mut self, tx: Transaction, lane_suffix: LaneSuffix) {
-        let arc_tx = self.track_processing_tx(tx, lane_suffix.clone(), super::PendingTxStage::Hash);
+    pub(super) fn enqueue_processing_tx_hash(&mut self, arc_tx: Arc<Transaction>) {
         let handle = self.inner.long_tasks_runtime.handle();
         self.inner.processing_txs.spawn_on(
             async move {
                 arc_tx.hashed();
-                Ok(((*arc_tx).clone(), lane_suffix))
+                Ok((*arc_tx).clone())
             },
             handle,
         );
     }
 
-    fn enqueue_processing_tx_proof(&mut self, tx: Transaction, lane_suffix: LaneSuffix) {
-        let arc_tx =
-            self.track_processing_tx(tx, lane_suffix.clone(), super::PendingTxStage::Proof);
+    pub(super) fn enqueue_processing_tx_proof(&mut self, arc_tx: Arc<Transaction>) {
         let handle = self.inner.long_tasks_runtime.handle();
         self.inner.processing_txs.spawn_on(
             async move {
+                arc_tx.hashed();
                 let tx = Self::process_proof_tx((*arc_tx).clone())
                     .context("Processing proof tx in blocker")?;
-                Ok((tx, lane_suffix))
+                Ok(tx)
             },
             handle,
         );
     }
 
-    fn track_processing_tx(
-        &mut self,
-        tx: Transaction,
-        lane_suffix: LaneSuffix,
-        stage: super::PendingTxStage,
-    ) -> Arc<Transaction> {
+    fn track_processing_tx(&mut self, tx: Transaction, lane_id: LaneId) -> Arc<Transaction> {
         let arc_tx = Arc::new(tx);
         self.inner
             .processing_txs_pending
-            .push_back(super::PendingTx {
-                tx: super::ArcBorsh::new(Arc::clone(&arc_tx)),
-                lane_suffix,
-                stage,
-            });
+            .push_back((super::ArcBorsh::new(Arc::clone(&arc_tx)), lane_id));
         arc_tx
     }
 

@@ -100,10 +100,13 @@ impl Module for Mempool {
             }
             // own_lane.rs code below
             Some(result) = self.inner.processing_txs.join_next() => {
-                let _pending = self.inner.processing_txs_pending.pop_front();
+                let Some((_, lane_id)) = self.inner.processing_txs_pending.pop_front() else {
+                    warn!("Could not find pending TX for task");
+                    continue;
+                };
                 match result {
-                    Ok(Ok((tx, lane_suffix))) => {
-                        let _ = log_error!(self.on_new_tx(tx, &lane_suffix), "Handling tx in Mempool");
+                    Ok(Ok(tx)) => {
+                        let _ = log_error!(self.on_new_tx(tx, lane_id), "Handling tx in Mempool");
                     }
                     Ok(Err(e)) => {
                         warn!("Error processing tx: {:?}", e);
