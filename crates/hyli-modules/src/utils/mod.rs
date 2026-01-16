@@ -1,5 +1,9 @@
-// Re-export utilities from hyli-bus
-pub use hyli_bus::utils::{deterministic_rng, logger, profiling, static_type_map, Pick};
+// Shared utilities.
+pub use hyli_bus::utils::static_type_map;
+pub use hyli_bus::utils::Pick;
+
+pub mod logger;
+pub mod profiling;
 
 // Domain-specific utilities
 pub mod da_codec;
