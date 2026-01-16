@@ -29,7 +29,6 @@ use std::{
     ops::{Deref, DerefMut},
     path::PathBuf,
     sync::Arc,
-    time::Duration,
 };
 use storage::Storage;
 use verify_tx::DataProposalVerdict;
@@ -82,51 +81,6 @@ impl<T: BorshDeserialize> BorshDeserialize for ArcBorsh<T> {
     fn deserialize_reader<R: Read>(reader: &mut R) -> std::io::Result<Self> {
         let value = T::deserialize_reader(reader)?;
         Ok(Self(Arc::new(value)))
-    }
-}
-
-pub struct LongTasksRuntime(std::mem::ManuallyDrop<tokio::runtime::Runtime>);
-impl Default for LongTasksRuntime {
-    fn default() -> Self {
-        Self(std::mem::ManuallyDrop::new(
-            #[allow(clippy::expect_used, reason = "Fails at startup, is OK")]
-            tokio::runtime::Builder::new_multi_thread()
-                // Limit the number of threads arbitrarily to lower the maximal impact on the whole node
-                .worker_threads(3)
-                .thread_name("mempool-hashing")
-                .build()
-                .expect("Failed to create hashing runtime"),
-        ))
-    }
-}
-
-impl Drop for LongTasksRuntime {
-    fn drop(&mut self) {
-        // Shut down the hashing runtime.
-        // TODO: serialize?
-        // Safety: We'll manually drop the runtime below and it won't be double-dropped as we use ManuallyDrop.
-        let rt = unsafe { std::mem::ManuallyDrop::take(&mut self.0) };
-        // This has to be done outside the current runtime.
-        tokio::task::spawn_blocking(move || {
-            #[cfg(test)]
-            rt.shutdown_timeout(Duration::from_millis(10));
-            #[cfg(not(test))]
-            rt.shutdown_timeout(Duration::from_secs(10));
-        });
-    }
-}
-
-impl Deref for LongTasksRuntime {
-    type Target = tokio::runtime::Runtime;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for LongTasksRuntime {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
     }
 }
 
@@ -303,7 +257,7 @@ impl Mempool {
         let handle = self.inner.long_tasks_runtime.handle();
         self.inner
             .own_data_proposal_in_preparation
-            .restore_tasks(handle);
+            .restore_tasks(&handle);
     }
 
     pub(super) fn on_data_vote(&mut self, lane_id: LaneId, vdag: ValidatorDAG) -> Result<()> {

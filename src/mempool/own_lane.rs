@@ -197,7 +197,7 @@ impl super::Mempool {
             self.inner.own_data_proposal_in_preparation.spawn_on(
                 lane_id.clone(),
                 data_proposal,
-                handle,
+                &handle,
             );
             started = true;
         }
@@ -493,7 +493,7 @@ impl super::Mempool {
                 arc_tx.hashed();
                 Ok((*arc_tx).clone())
             },
-            handle,
+            &handle,
         );
     }
 
@@ -506,7 +506,7 @@ impl super::Mempool {
                     .context("Processing proof tx in blocker")?;
                 Ok(tx)
             },
-            handle,
+            &handle,
         );
     }
 
