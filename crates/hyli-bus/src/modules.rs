@@ -12,7 +12,7 @@ use crate::{
     bus::{BusClientReceiver, BusClientSender, SharedMessageBus},
     bus_client, handle_messages, log_error,
 };
-use anyhow::{bail, Error, Result};
+use anyhow::{bail, Context, Error, Result};
 use rand::{distr::Alphanumeric, Rng};
 use tokio::task::JoinHandle;
 use tracing::{debug, info};
@@ -85,10 +85,10 @@ where
     /// Returns:
     /// - `Ok(Some(data))` if file exists and checksum verifies
     /// - `Ok(None)` if file doesn't exist
-    /// - `Err(PersistenceError::MissingChecksumFile)` if checksum file is missing
-    /// - `Err(PersistenceError::ChecksumMismatch)` if checksum verification fails
-    /// - `Err(PersistenceError::DeserializationFailed)` if data is corrupted
-    fn load_from_disk<S>(file: &Path) -> Result<Option<S>, PersistenceError>
+    /// - `Err` with `PersistenceError::MissingChecksumFile` if checksum file is missing
+    /// - `Err` with `PersistenceError::ChecksumMismatch` if checksum verification fails
+    /// - `Err` with `PersistenceError::DeserializationFailed` if data is corrupted
+    fn load_from_disk<S>(file: &Path) -> Result<Option<S>>
     where
         S: borsh::BorshDeserialize,
     {
@@ -103,19 +103,23 @@ where
                 );
                 return Ok(None);
             }
-            Err(e) => return Err(PersistenceError::IoError(e)),
+            Err(e) => {
+                return Err(PersistenceError::IoError(e))
+                    .with_context(|| format!("Module {}", type_name::<S>()))
+            }
         };
 
         let mut checksum_reader = ChecksumReader::new(data_file);
         let deserialized: S = borsh::from_reader(&mut checksum_reader)
-            .map_err(|e| PersistenceError::DeserializationFailed(e.to_string()))?;
+            .with_context(|| format!("Deserializing module {}", type_name::<S>()))?;
         checksum_reader
             .drain_to_end()
-            .map_err(PersistenceError::IoError)?;
+            .with_context(|| format!("Module {}", type_name::<S>()))?;
 
         // Check for checksum file and verify
-        let expected_checksum = read_checksum_file(file)?;
-        let actual_checksum = checksum_reader.checksum;
+        let expected_checksum =
+            read_checksum_file(file).with_context(|| format!("Module {}", type_name::<S>()))?;
+        let actual_checksum = checksum_reader.checksum();
         if expected_checksum != actual_checksum {
             tracing::error!(
                 "Checksum mismatch for {}: expected {}, got {}",
@@ -126,7 +130,8 @@ where
             return Err(PersistenceError::ChecksumMismatch {
                 expected: format_checksum(expected_checksum),
                 actual: format_checksum(actual_checksum),
-            });
+            })
+            .with_context(|| format!("Module {}", type_name::<S>()));
         }
         debug!(
             "Checksum verification passed for {}",
@@ -147,11 +152,11 @@ where
         }
     }
 
-    fn load_from_disk_or_default<S>(file: &Path) -> Result<S, PersistenceError>
+    fn load_from_disk_or_default<S>(file: &Path) -> Result<S>
     where
         S: borsh::BorshDeserialize + Default,
     {
-        Ok(Self::load_from_disk(file)?.unwrap_or(S::default()))
+        Ok(Self::load_from_disk(file)?.unwrap_or_default())
     }
 
     fn save_on_disk<S>(file: &Path, store: &S) -> Result<()>
@@ -217,25 +222,26 @@ where
 
 struct ChecksumWriter<W> {
     inner: W,
-    checksum: u64,
+    hasher: crc32fast::Hasher,
 }
 
 impl<W: Write> ChecksumWriter<W> {
     fn new(inner: W) -> Self {
-        Self { inner, checksum: 0 }
+        Self {
+            inner,
+            hasher: crc32fast::Hasher::new(),
+        }
     }
 
-    fn checksum(&self) -> u64 {
-        self.checksum
+    fn checksum(&self) -> u32 {
+        self.hasher.clone().finalize()
     }
 }
 
 impl<W: Write> Write for ChecksumWriter<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let bytes_written = self.inner.write(buf)?;
-        self.checksum = self
-            .checksum
-            .wrapping_add(checksum_bytes(&buf[..bytes_written]));
+        self.hasher.update(&buf[..bytes_written]);
         Ok(bytes_written)
     }
 
@@ -246,12 +252,19 @@ impl<W: Write> Write for ChecksumWriter<W> {
 
 struct ChecksumReader<R> {
     inner: R,
-    checksum: u64,
+    hasher: crc32fast::Hasher,
 }
 
 impl<R: Read> ChecksumReader<R> {
     fn new(inner: R) -> Self {
-        Self { inner, checksum: 0 }
+        Self {
+            inner,
+            hasher: crc32fast::Hasher::new(),
+        }
+    }
+
+    fn checksum(&self) -> u32 {
+        self.hasher.clone().finalize()
     }
 
     fn drain_to_end(&mut self) -> std::io::Result<()> {
@@ -268,20 +281,13 @@ impl<R: Read> ChecksumReader<R> {
 impl<R: Read> Read for ChecksumReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let bytes_read = self.inner.read(buf)?;
-        self.checksum = self
-            .checksum
-            .wrapping_add(checksum_bytes(&buf[..bytes_read]));
+        self.hasher.update(&buf[..bytes_read]);
         Ok(bytes_read)
     }
 }
 
-fn checksum_bytes(data: &[u8]) -> u64 {
-    data.iter()
-        .fold(0u64, |acc, byte| acc.wrapping_add(u64::from(*byte)))
-}
-
-fn format_checksum(checksum: u64) -> String {
-    format!("{:016x}", checksum)
+fn format_checksum(checksum: u32) -> String {
+    format!("{:08x}", checksum)
 }
 
 /// Get the path for the checksum file given a data file path
@@ -292,11 +298,11 @@ fn checksum_file_path(file: &Path) -> PathBuf {
 }
 
 /// Read checksum from checksum file, returns error if file doesn't exist
-fn read_checksum_file(file: &Path) -> Result<u64, PersistenceError> {
+fn read_checksum_file(file: &Path) -> Result<u32, PersistenceError> {
     match fs::read_to_string(checksum_file_path(file)) {
         Ok(contents) => {
             let trimmed = contents.trim();
-            u64::from_str_radix(trimmed, 16)
+            u32::from_str_radix(trimmed, 16)
                 .map_err(|_| PersistenceError::ChecksumParseFailed(trimmed.to_string()))
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -730,7 +736,7 @@ mod tests {
     use tempfile::tempdir;
     use tokio::sync::Mutex;
 
-    #[derive(Default, borsh::BorshSerialize, borsh::BorshDeserialize)]
+    #[derive(Debug, Default, borsh::BorshSerialize, borsh::BorshDeserialize)]
     struct TestStruct {
         value: u32,
     }
@@ -879,8 +885,8 @@ mod tests {
         let checksum_content = std::fs::read_to_string(&checksum_path).unwrap();
         assert_eq!(
             checksum_content.len(),
-            16,
-            "Checksum should be 16 hex chars"
+            8,
+            "Checksum should be 8 hex chars (CRC32)"
         );
         assert!(
             checksum_content.chars().all(|c| c.is_ascii_hexdigit()),
@@ -898,17 +904,15 @@ mod tests {
 
         // Corrupt the checksum file
         let checksum_path = super::checksum_file_path(&file_path);
-        std::fs::write(&checksum_path, "0000000000000001").unwrap();
+        std::fs::write(&checksum_path, "00000001").unwrap();
 
         // Load should fail with checksum mismatch
-        let result: Result<Option<TestStruct>, super::PersistenceError> =
-            TestModule::<usize>::load_from_disk(&file_path);
+        let result: Result<Option<TestStruct>> = TestModule::<usize>::load_from_disk(&file_path);
 
+        let err = result.unwrap_err();
         assert!(
-            matches!(
-                result,
-                Err(super::PersistenceError::ChecksumMismatch { .. })
-            ),
+            err.downcast_ref::<super::PersistenceError>()
+                .is_some_and(|e| matches!(e, super::PersistenceError::ChecksumMismatch { .. })),
             "Should detect checksum mismatch"
         );
     }
@@ -927,14 +931,12 @@ mod tests {
         std::fs::write(&file_path, &data).unwrap();
 
         // Load should fail with checksum mismatch
-        let result: Result<Option<TestStruct>, super::PersistenceError> =
-            TestModule::<usize>::load_from_disk(&file_path);
+        let result: Result<Option<TestStruct>> = TestModule::<usize>::load_from_disk(&file_path);
 
+        let err = result.unwrap_err();
         assert!(
-            matches!(
-                result,
-                Err(super::PersistenceError::ChecksumMismatch { .. })
-            ),
+            err.downcast_ref::<super::PersistenceError>()
+                .is_some_and(|e| matches!(e, super::PersistenceError::ChecksumMismatch { .. })),
             "Should detect corrupted data via checksum mismatch"
         );
     }
@@ -957,10 +959,11 @@ mod tests {
         );
 
         // Load should fail due to missing checksum file
-        let result: Result<Option<TestStruct>, super::PersistenceError> =
-            TestModule::<usize>::load_from_disk(&file_path);
+        let result: Result<Option<TestStruct>> = TestModule::<usize>::load_from_disk(&file_path);
+        let err = result.unwrap_err();
         assert!(
-            matches!(result, Err(super::PersistenceError::MissingChecksumFile)),
+            err.downcast_ref::<super::PersistenceError>()
+                .is_some_and(|e| matches!(e, super::PersistenceError::MissingChecksumFile)),
             "Should error on missing checksum file"
         );
     }
