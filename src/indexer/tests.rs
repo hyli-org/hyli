@@ -15,7 +15,8 @@ use client_sdk::transaction_builder::ProvableBlobTx;
 use hydentity::{client::tx_executor_handler::register_identity, HydentityAction};
 use hyli_contract_sdk::{BlobIndex, HyliOutput, Identity, ProgramId, StateCommitment, TxHash};
 use hyli_model::api::{
-    APIBlob, APIBlock, APIContract, APITransaction, APITransactionEvents, TransactionStatusDb,
+    APIBlob, APIBlock, APIContract, APIContractHistory, APITransaction, APITransactionEvents,
+    TransactionStatusDb,
 };
 use hyli_modules::node_state::test::{craft_signed_block, craft_signed_block_with_parent_dp_hash};
 use serde_json::json;
@@ -274,13 +275,13 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
 
     // Handling a block containing txs
 
-    let parent_data_proposal = DataProposal::new(None, txs);
+    let lane_id = LaneId::new(ValidatorPublicKey("ttt".into()));
+    let parent_data_proposal = DataProposal::new_root(lane_id.clone(), txs);
     let mut signed_block = SignedBlock::default();
     signed_block.consensus_proposal.slot = 1;
-    signed_block.data_proposals.push((
-        LaneId::new(ValidatorPublicKey("ttt".into())),
-        vec![parent_data_proposal.clone()],
-    ));
+    signed_block
+        .data_proposals
+        .push((lane_id, vec![parent_data_proposal.clone()]));
 
     indexer
         .handle_signed_block(signed_block)
@@ -366,7 +367,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
     let parent_data_proposal_hash = parent_data_proposal.hashed();
 
     let data_proposal = DataProposal::new(
-        Some(parent_data_proposal_hash.clone()),
+        parent_data_proposal_hash.clone(),
         vec![register_tx_1_wd.clone(), register_tx_2_wd.clone()],
     );
 
@@ -427,7 +428,7 @@ async fn test_indexer_handle_block_flow() -> Result<()> {
 
     // We skip blob_transaction_wd
     let data_proposal_2 = DataProposal::new(
-        Some(data_proposal.hashed()),
+        data_proposal.hashed(),
         vec![
             blob_transaction_wd.clone(),
             blob_transaction_wd.clone(),
@@ -671,13 +672,14 @@ async fn test_contract_notifications_sent() -> Result<()> {
         ContractName::new("other"),
     );
 
-    let parent_data_proposal = DataProposal::new(None, vec![register_tx, blob_transaction]);
+    let lane_id = LaneId::new(ValidatorPublicKey("ttt".into()));
+    let parent_data_proposal =
+        DataProposal::new_root(lane_id.clone(), vec![register_tx, blob_transaction]);
     let mut signed_block = SignedBlock::default();
     signed_block.consensus_proposal.slot = 1;
-    signed_block.data_proposals.push((
-        LaneId::new(ValidatorPublicKey("ttt".into())),
-        vec![parent_data_proposal],
-    ));
+    signed_block
+        .data_proposals
+        .push((lane_id, vec![parent_data_proposal]));
     let expected_block = signed_block.clone();
 
     indexer
@@ -839,7 +841,7 @@ async fn scenario_contracts() -> Result<(
         DataProposalHash("test".to_string()),
     );
     // Reconstruct A in a separate DP
-    let parent = Some(b5.data_proposals[0].1[0].hashed());
+    let parent = b5.data_proposals[0].1[0].hashed();
     b5.data_proposals[0].1.push(DataProposal::new(
         parent,
         vec![new_register_tx(ContractName::new("a"), StateCommitment(vec![])).into()],
@@ -1250,7 +1252,7 @@ async fn test_data_proposal_created_does_not_downgrade_success() -> Result<()> {
         version: 1,
         transaction_data: TransactionData::Blob(register_tx.clone()),
     };
-    let parent_dp = DataProposal::new(None, vec![transaction.clone()]);
+    let parent_dp = DataProposal::new_root(LaneId::default(), vec![transaction.clone()]);
     let parent_dp_hash = parent_dp.hashed();
     let tx_metadata = transaction.metadata(parent_dp_hash.clone());
 
@@ -1278,11 +1280,8 @@ async fn test_data_proposal_created_does_not_downgrade_success() -> Result<()> {
 
     let dpc_event = MempoolStatusEvent::DataProposalCreated {
         parent_data_proposal_hash: parent_dp_hash.clone(),
-        data_proposal_hash: DataProposal::new(
-            Some(parent_dp_hash.clone()),
-            vec![transaction.clone()],
-        )
-        .hashed(),
+        data_proposal_hash: DataProposal::new(parent_dp_hash.clone(), vec![transaction.clone()])
+            .hashed(),
         txs_metadatas: vec![tx_metadata.clone()],
     };
     indexer
@@ -1292,6 +1291,143 @@ async fn test_data_proposal_created_does_not_downgrade_success() -> Result<()> {
     indexer.dump_store_to_db().await.expect("Dump to db");
 
     assert_tx_status(&server, tx_metadata.id.1, TransactionStatusDb::Success).await;
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_contract_history_tracking() -> Result<()> {
+    let container = Postgres::default()
+        .with_tag("17-alpine")
+        .with_cmd(["postgres", "-c", "log_statement=all"])
+        .start()
+        .await
+        .unwrap();
+    let db = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&format!(
+            "postgresql://postgres:postgres@localhost:{}/postgres",
+            container.get_host_port_ipv4(5432).await.unwrap()
+        ))
+        .await
+        .unwrap();
+    MIGRATOR.run(&db).await.unwrap();
+
+    let (mut indexer, explorer) = new_indexer(db.clone()).await;
+    let server = setup_test_server(&explorer).await?;
+
+    let contract_name = ContractName::new("evolving");
+
+    // Block 1: Register contract with initial state
+    let initial_state = StateCommitment(vec![1, 2, 3]);
+    let register_tx = new_register_tx(contract_name.clone(), initial_state.clone());
+
+    let block1 = craft_signed_block(1, vec![register_tx.into()]);
+    indexer.force_handle_signed_block(block1).await.unwrap();
+    indexer.dump_store_to_db().await.unwrap();
+
+    // Verify contract_history has the registration entry
+    let rows = sqlx::query(
+        "SELECT block_height, tx_index, change_type::text[] as change_type, program_id, state_commitment FROM contract_history WHERE contract_name = $1 ORDER BY block_height, tx_index"
+    )
+    .bind(contract_name.0.clone())
+    .fetch_all(&db)
+    .await
+    .context("fetch contract_history")?;
+
+    assert_eq!(
+        rows.len(),
+        1,
+        "Should have 1 history entry after registration"
+    );
+    assert_eq!(rows[0].get::<i64, _>("block_height"), 1);
+    assert_eq!(rows[0].get::<i32, _>("tx_index"), 0);
+    assert_eq!(
+        rows[0].get::<Vec<String>, _>("change_type"),
+        vec!["registered".to_string()]
+    );
+    assert_eq!(rows[0].get::<Vec<u8>, _>("program_id"), vec![3, 2, 1]);
+    assert_eq!(
+        rows[0].get::<Vec<u8>, _>("state_commitment"),
+        initial_state.0
+    );
+
+    // Register a second contract to have more data
+    let contract_name_2 = ContractName::new("another");
+    let register_tx_2 = new_register_tx(contract_name_2.clone(), StateCommitment(vec![7, 8, 9]));
+    let block2 = craft_signed_block(2, vec![register_tx_2.into()]);
+    indexer.force_handle_signed_block(block2).await.unwrap();
+    indexer.dump_store_to_db().await.unwrap();
+
+    // Verify both contracts have history entries
+    let all_history = sqlx::query(
+        "SELECT contract_name, block_height, tx_index, change_type::text[] as change_type FROM contract_history ORDER BY block_height, tx_index"
+    )
+    .fetch_all(&db)
+    .await
+    .context("fetch all contract_history")?;
+
+    assert_eq!(all_history.len(), 2, "Should have 2 history entries total");
+    assert_eq!(
+        all_history[0].get::<String, _>("contract_name"),
+        contract_name.0
+    );
+    assert_eq!(
+        all_history[0].get::<Vec<String>, _>("change_type"),
+        vec!["registered".to_string()]
+    );
+    assert_eq!(
+        all_history[1].get::<String, _>("contract_name"),
+        contract_name_2.0
+    );
+    assert_eq!(
+        all_history[1].get::<Vec<String>, _>("change_type"),
+        vec!["registered".to_string()]
+    );
+
+    // Test the API endpoint
+    let history_response = server
+        .get(&format!("/contract/{}/history", contract_name.0))
+        .await;
+    history_response.assert_status_ok();
+    let history = history_response.json::<Vec<APIContractHistory>>();
+
+    assert_eq!(history.len(), 1, "API should return 1 history entry");
+    assert_eq!(history[0].contract_name, contract_name.0);
+    assert_eq!(history[0].block_height, 1);
+    assert_eq!(history[0].tx_index, 0);
+    assert_eq!(
+        history[0].change_type,
+        vec![hyli_model::api::ContractChangeType::Registered]
+    );
+
+    // Test API with change_type filter
+    let filtered_response = server
+        .get(&format!(
+            "/contract/{}/history?change_type=registered",
+            contract_name.0
+        ))
+        .await;
+    filtered_response.assert_status_ok();
+    let filtered_history = filtered_response.json::<Vec<APIContractHistory>>();
+
+    assert_eq!(filtered_history.len(), 1, "Should have 1 registered entry");
+    assert!(filtered_history
+        .iter()
+        .all(|h| h.change_type == vec![hyli_model::api::ContractChangeType::Registered]));
+
+    // Test API with block height range filter
+    let range_response = server
+        .get(&format!(
+            "/contract/{}/history?from_height=1&to_height=1",
+            contract_name.0
+        ))
+        .await;
+    range_response.assert_status_ok();
+    let range_history = range_response.json::<Vec<APIContractHistory>>();
+
+    assert_eq!(range_history.len(), 1, "Should have 1 entry in block 1");
+    assert!(range_history.iter().all(|h| h.block_height == 1));
 
     Ok(())
 }

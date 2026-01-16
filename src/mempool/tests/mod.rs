@@ -15,6 +15,7 @@ use crate::bus::SharedMessageBus;
 use crate::mempool::dissemination::DisseminationManager;
 use crate::mempool::storage::LaneEntryMetadata;
 use crate::model;
+use crate::model::DataProposalParent;
 use crate::p2p::network::NetMessage;
 use crate::utils::conf::Conf;
 use crate::{
@@ -130,6 +131,10 @@ impl MempoolTestCtx {
 
     pub fn validator_pubkey(&self) -> &ValidatorPublicKey {
         self.mempool.crypto.validator_pubkey()
+    }
+
+    pub fn set_ready_to_create_dps(&mut self) {
+        self.mempool.ready_to_create_dps = true;
     }
 
     pub async fn add_trusted_validator(&mut self, pubkey: &ValidatorPublicKey) {
@@ -446,7 +451,11 @@ impl MempoolTestCtx {
         parent_hash: Option<DataProposalHash>,
         txs: &[Transaction],
     ) -> DataProposal {
-        DataProposal::new(parent_hash, txs.to_vec())
+        let lane_id = LaneId::new(self.validator_pubkey().clone());
+        match parent_hash {
+            Some(hash) => DataProposal::new(hash, txs.to_vec()),
+            None => DataProposal::new_root(lane_id, txs.to_vec()),
+        }
     }
 
     pub fn create_data_proposal_on_top(
@@ -454,7 +463,10 @@ impl MempoolTestCtx {
         lane_id: LaneId,
         txs: &[Transaction],
     ) -> DataProposal {
-        DataProposal::new(self.current_hash(&lane_id), txs.to_vec())
+        match self.current_hash(&lane_id) {
+            Some(hash) => DataProposal::new(hash, txs.to_vec()),
+            None => DataProposal::new_root(lane_id, txs.to_vec()),
+        }
     }
 
     pub fn process_new_data_proposal(&mut self, dp: DataProposal) -> Result<()> {
@@ -920,7 +932,10 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
         .lanes
         .get_metadata_by_hash(&lane_id, &dp1.hashed())?
         .expect("Expected stored metadata");
-    assert_eq!(metadata.parent_data_proposal_hash, None);
+    assert_eq!(
+        metadata.parent_data_proposal_hash,
+        DataProposalParent::LaneRoot(lane_id.clone())
+    );
     assert_eq!(metadata.cumul_size, cumul_size1);
 
     let metadata = ctx
@@ -928,7 +943,10 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
         .lanes
         .get_metadata_by_hash(&lane_id, &dp2.hashed())?
         .expect("Expected stored metadata");
-    assert_eq!(metadata.parent_data_proposal_hash, Some(dp1.hashed()));
+    assert_eq!(
+        metadata.parent_data_proposal_hash,
+        DataProposalParent::DP(dp1.hashed())
+    );
     assert_eq!(metadata.cumul_size, cumul_size2);
 
     let metadata = ctx
@@ -936,7 +954,10 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
         .lanes
         .get_metadata_by_hash(&lane_id, &dp3.hashed())?
         .expect("Expected stored metadata");
-    assert_eq!(metadata.parent_data_proposal_hash, Some(dp2.hashed()));
+    assert_eq!(
+        metadata.parent_data_proposal_hash,
+        DataProposalParent::DP(dp2.hashed())
+    );
     assert_eq!(metadata.cumul_size, cumul_size3);
 
     // Unrelated buffered entry remains.
@@ -1026,21 +1047,21 @@ async fn test_sync_request_single_dp() -> Result<()> {
     let crypto = ctx.mempool.crypto.clone();
 
     // Create a chain of 3 DataProposals
-    let dp1 = DataProposal::new(None, vec![]);
+    let dp1 = DataProposal::new_root(lane_id.clone(), vec![]);
     let _dp1_size = LaneBytesSize(dp1.estimate_size() as u64);
     let dp1_hash = dp1.hashed();
     ctx.mempool
         .lanes
         .store_data_proposal(&crypto, &lane_id, dp1.clone())?;
 
-    let dp2 = DataProposal::new(Some(dp1_hash.clone()), vec![]);
+    let dp2 = DataProposal::new(dp1_hash.clone(), vec![]);
     let dp2_size = LaneBytesSize(dp2.estimate_size() as u64);
     let dp2_hash = dp2.hashed();
     ctx.mempool
         .lanes
         .store_data_proposal(&crypto, &lane_id, dp2.clone())?;
 
-    let dp3 = DataProposal::new(Some(dp2_hash.clone()), vec![]);
+    let dp3 = DataProposal::new(dp2_hash.clone(), vec![]);
     let _dp3_size = LaneBytesSize(dp3.estimate_size() as u64);
     let _dp3_hash = dp3.hashed();
     ctx.mempool

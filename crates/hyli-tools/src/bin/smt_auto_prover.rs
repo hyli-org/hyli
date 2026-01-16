@@ -70,11 +70,20 @@ async fn main() -> Result<()> {
     // Initialize modules
     let mut handler = ModulesHandler::new(&bus).await;
 
+    hyli_registry::upload_elf(
+        smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF,
+        &hex::encode(smt_token::client::tx_executor_handler::metadata::PROGRAM_ID),
+        &config.contract_name,
+        "risc0",
+        None,
+    )
+    .await?;
+
     handler
-        .build_module::<AutoProver<SmtTokenProvableState>>(Arc::new(AutoProverCtx {
+        .build_module::<AutoProver<SmtTokenProvableState, Risc0Prover>>(Arc::new(AutoProverCtx {
             data_directory: config.data_directory.clone(),
             prover: Arc::new(Risc0Prover::new(
-                smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF,
+                smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF.to_vec(),
                 smt_token::client::tx_executor_handler::metadata::PROGRAM_ID,
             )),
             contract_name: config.contract_name.clone().into(),

@@ -232,7 +232,7 @@ impl SmtTokenProvableState {
 
         builder.init_with(
             contract_name,
-            client_sdk::helpers::risc0::Risc0Prover::new(SMT_TOKEN_ELF, PROGRAM_ID),
+            client_sdk::helpers::risc0::Risc0Prover::new(SMT_TOKEN_ELF.to_vec(), PROGRAM_ID),
         );
     }
 

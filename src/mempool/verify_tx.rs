@@ -236,7 +236,7 @@ impl super::Mempool {
                     // Check if we have a buffered proposal that is a child of this DP
                     let mut extracted = buffered_entries.extract_if(|_, (_, dp)| {
                         dp.parent_data_proposal_hash
-                            .as_ref()
+                            .dp_hash()
                             .is_some_and(|parent| parent == &hash)
                     });
                     if let Some((_, child_entry)) = extracted.next() {
@@ -293,7 +293,7 @@ impl super::Mempool {
         match self.lanes.can_be_put_on_top(
             lane_id,
             &dp_hash,
-            data_proposal.parent_data_proposal_hash.as_ref(),
+            &data_proposal.parent_data_proposal_hash,
         ) {
             // PARENT UNKNOWN
             CanBePutOnTop::No => {
@@ -450,19 +450,17 @@ pub mod test {
         let crypto2: BlstCrypto = BlstCrypto::new("2").unwrap();
         let lane_id2 = LaneId::new(crypto2.validator_pubkey().clone());
 
-        let dp = DataProposal::new(None, vec![]);
+        let dp = DataProposal::new_root(lane_id2.clone(), vec![]);
         // 2 send a DP to 1
         let (verdict, _) = ctx.mempool.get_verdict(&lane_id2, &dp).unwrap();
         assert_eq!(verdict, DataProposalVerdict::Empty);
 
-        let dp = DataProposal::new(None, vec![Transaction::default()]);
+        let dp = DataProposal::new_root(lane_id2.clone(), vec![Transaction::default()]);
         let (verdict, _) = ctx.mempool.get_verdict(&lane_id2, &dp).unwrap();
         assert_eq!(verdict, DataProposalVerdict::Process);
 
-        let dp_unknown_parent = DataProposal::new(
-            Some(DataProposalHash::default()),
-            vec![Transaction::default()],
-        );
+        let dp_unknown_parent =
+            DataProposal::new(DataProposalHash::default(), vec![Transaction::default()]);
         let (verdict, _) = ctx
             .mempool
             .get_verdict(&lane_id2, &dp_unknown_parent)
@@ -476,8 +474,8 @@ pub mod test {
         let crypto2: BlstCrypto = BlstCrypto::new("2").unwrap();
         let lane_id2 = LaneId::new(crypto2.validator_pubkey().clone());
 
-        let dp = DataProposal::new(None, vec![Transaction::default()]);
-        let dp2 = DataProposal::new(Some(dp.hashed()), vec![Transaction::default()]);
+        let dp = DataProposal::new_root(lane_id2.clone(), vec![Transaction::default()]);
+        let dp2 = DataProposal::new(dp.hashed(), vec![Transaction::default()]);
 
         ctx.mempool
             .lanes
@@ -495,7 +493,7 @@ pub mod test {
             .is_err());
 
         let dp2_fork = DataProposal::new(
-            Some(dp.hashed()),
+            dp.hashed(),
             vec![Transaction::default(), Transaction::default()],
         );
 

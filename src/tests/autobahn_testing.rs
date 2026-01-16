@@ -991,7 +991,7 @@ async fn mempool_fail_to_vote_on_fork() {
     // dp1 <- dp2
     //     <- dp3
 
-    let dp_fork_3 = DataProposal::new(Some(dp1.hashed()), vec![Transaction::default()]);
+    let dp_fork_3 = DataProposal::new(dp1.hashed(), vec![Transaction::default()]);
     let cumul_size = node1
         .mempool_ctx
         .current_size_of(&node1.mempool_ctx.own_lane())
