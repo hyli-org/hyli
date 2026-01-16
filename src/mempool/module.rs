@@ -124,21 +124,21 @@ impl Module for Mempool {
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<()> {
+    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
         if let Some(file) = &self.file {
-            _ = log_error!(
-                Self::save_on_disk(file.join("mempool.bin").as_path(), &self.inner),
-                "Persisting Mempool storage"
-            );
-            _ = log_error!(
-                Self::save_on_disk(
-                    file.join("mempool_lanes_tip.bin").as_path(),
-                    &self.lanes.lane_tips_snapshot()
-                ),
-                "Persisting Mempool lanes tip"
-            );
+            let mempool_file = file.join("mempool.bin");
+            let checksum = Self::save_on_disk(mempool_file.as_path(), &self.inner)?;
+
+            let lanes_tip_file = file.join("mempool_lanes_tip.bin");
+            let lanes_tip_checksum =
+                Self::save_on_disk(lanes_tip_file.as_path(), &self.lanes.lane_tips_snapshot())?;
+
+            return Ok(Some(vec![
+                (mempool_file, checksum),
+                (lanes_tip_file, lanes_tip_checksum),
+            ]));
         }
 
-        Ok(())
+        Ok(None)
     }
 }

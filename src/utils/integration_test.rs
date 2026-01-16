@@ -267,7 +267,7 @@ impl NodeIntegrationCtx {
             start_height: None,
         };
 
-        let mut handler = ModulesHandler::new(&bus).await;
+        let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
         Self::build_module::<Mempool>(&mut handler, &ctx, ctx.clone(), &mut mocks).await?;
         Self::build_module::<DisseminationManager>(&mut handler, &ctx, ctx.clone(), &mut mocks)

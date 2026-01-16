@@ -19,7 +19,7 @@ use hyli_contract_sdk::{
 use hyli_crypto::SharedBlstCrypto;
 use hyli_modules::{
     bus::{BusClientSender, BusMessage, SharedMessageBus},
-    bus_client, handle_messages, log_error,
+    bus_client, handle_messages,
     modules::Module,
 };
 use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
@@ -73,10 +73,11 @@ impl Module for Genesis {
         self.start().await
     }
 
-    async fn persist(&mut self) -> Result<()> {
+    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
         // TODO: ideally we'd wait until everyone has processed it, as there's technically a data race.
         let file = self.config.data_directory.clone().join("genesis.bin");
-        log_error!(Self::save_on_disk(&file, &true), "Persisting genesis state")
+        let checksum = Self::save_on_disk(&file, &true)?;
+        Ok(Some(vec![(file, checksum)]))
     }
 }
 

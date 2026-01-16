@@ -90,25 +90,26 @@ impl Module for Indexer {
         self.start()
     }
 
-    async fn persist(&mut self) -> Result<()> {
-        NodeStateModule::save_on_disk(
-            &self.conf.data_directory.join("indexer_node_state.bin"),
-            &self.node_state.store,
-        )
-        .context("Failed to save node state to disk")?;
-        let persisted_da_start_height = BlockHeight(self.node_state.current_height.0 + 1);
+    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
+        let node_state_file = self.conf.data_directory.join("indexer_node_state.bin");
+        let checksum = NodeStateModule::save_on_disk(&node_state_file, &self.node_state.store)
+            .context("Failed to save node state to disk")?;
 
+        let persisted_da_start_height = BlockHeight(self.node_state.current_height.0 + 1);
         tracing::debug!(
             "Indexer saving DA start height: {}",
             &persisted_da_start_height
         );
 
-        NodeStateModule::save_on_disk(
-            &self.conf.data_directory.join("da_start_height.bin"),
-            &persisted_da_start_height,
-        )
-        .context("Failed to save DA start height to disk")?;
-        Ok(())
+        let da_start_file = self.conf.data_directory.join("da_start_height.bin");
+        let da_start_checksum =
+            NodeStateModule::save_on_disk(&da_start_file, &persisted_da_start_height)
+                .context("Failed to save DA start height to disk")?;
+
+        Ok(Some(vec![
+            (node_state_file, checksum),
+            (da_start_file, da_start_checksum),
+        ]))
     }
 }
 

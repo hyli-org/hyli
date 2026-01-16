@@ -322,7 +322,7 @@ async fn common_main(
         }
     }
 
-    let mut handler = ModulesHandler::new(&bus).await;
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
     if config.run_indexer {
         if config.gcs.save_proofs || config.gcs.save_blocks {

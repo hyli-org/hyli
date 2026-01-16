@@ -68,7 +68,7 @@ async fn main() -> Result<()> {
     });
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus).await;
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
     hyli_registry::upload_elf(
         smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF,

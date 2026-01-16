@@ -255,17 +255,14 @@ where
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<()> {
-        log_error!(
-            Self::save_on_disk::<AutoProverStore<Contract>>(
-                self.ctx
-                    .data_directory
-                    .join(format!("autoprover_{}.bin", self.ctx.contract_name))
-                    .as_path(),
-                &self.store,
-            ),
-            "Saving prover"
-        )
+    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
+        let file = self
+            .ctx
+            .data_directory
+            .join(format!("autoprover_{}.bin", self.ctx.contract_name));
+        let checksum =
+            Self::save_on_disk::<AutoProverStore<Contract>>(file.as_path(), &self.store)?;
+        Ok(Some(vec![(file, checksum)]))
     }
 }
 

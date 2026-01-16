@@ -84,6 +84,9 @@ async fn main() -> Result<()> {
     let log_buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
     let log_buffer_clone = log_buffer.clone();
 
+    let data_dir = dump_folder.join("data");
+    fs::create_dir_all(&data_dir).context("Failed to create data directory")?;
+
     // Open log file, truncate it if it exists
     use std::fs::OpenOptions;
     let log_file = OpenOptions::new()
@@ -165,12 +168,12 @@ async fn main() -> Result<()> {
         .unwrap_or(false);
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus).await;
+    let mut handler = ModulesHandler::new(&bus, data_dir.clone()).await;
 
     if !has_blocks {
         handler
             .build_module::<SignedDAListener>(DAListenerConf {
-                data_directory: PathBuf::from("data"),
+                data_directory: data_dir.clone(),
                 da_read_from: "localhost:4141".to_string(),
                 start_block: Some(BlockHeight(0)),
                 timeout_client_secs: 10,
@@ -192,7 +195,7 @@ async fn main() -> Result<()> {
         node_client.set_block_height(BlockHeight(4000));
         handler
             .build_module::<AutoProver<SmtTokenProvableState, TxExecutorTestProver<SmtTokenContract>>>(Arc::new(AutoProverCtx {
-                data_directory: PathBuf::from("data"),
+                data_directory: data_dir.clone(),
                 prover: Arc::new(prover),
                 contract_name: "oranj".into(),
                 node: Arc::new(node_client),
@@ -212,7 +215,7 @@ async fn main() -> Result<()> {
         handler
             .build_module::<ContractStateIndexer<AccountSMT>>(ContractStateIndexerCtx {
                 contract_name: "oranj".into(),
-                data_directory: dump_folder.clone(),
+                data_directory: data_dir.clone(),
                 api: build_api_ctx.clone(),
             })
             .await?;

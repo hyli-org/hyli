@@ -120,15 +120,12 @@ where
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<()> {
-        if let Err(e) = Self::save_on_disk::<ContractStateStore<State>>(
+    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
+        let checksum = Self::save_on_disk::<ContractStateStore<State>>(
             self.file.as_path(),
             self.store.read().await.deref(),
-        ) {
-            tracing::warn!(cn = %self.contract_name, "Failed to save contract state indexer on disk: {}", e);
-        }
-
-        Ok(())
+        )?;
+        Ok(Some(vec![(self.file.clone(), checksum)]))
     }
 }
 

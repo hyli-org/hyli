@@ -28,8 +28,8 @@ pub enum PersistenceError {
     NotFound,
     /// Checksum verification failed (data corruption)
     ChecksumMismatch { expected: String, actual: String },
-    /// Checksum file missing
-    MissingChecksumFile,
+    /// File exists but is not listed in the manifest (wasn't in successful shutdown)
+    FileNotInManifest(PathBuf),
     /// Checksum file format invalid
     ChecksumParseFailed(String),
     /// Deserialization failed
@@ -49,9 +49,15 @@ impl std::fmt::Display for PersistenceError {
                     expected, actual
                 )
             }
-            Self::MissingChecksumFile => write!(f, "Checksum file missing"),
+            Self::FileNotInManifest(path) => {
+                write!(
+                    f,
+                    "File {} exists but is not in manifest (not from successful shutdown)",
+                    path.display()
+                )
+            }
             Self::ChecksumParseFailed(msg) => {
-                write!(f, "Invalid checksum file contents: {}", msg)
+                write!(f, "Invalid checksum/manifest contents: {}", msg)
             }
             Self::DeserializationFailed(msg) => write!(f, "Failed to deserialize data: {}", msg),
             Self::IoError(e) => write!(f, "IO error: {}", e),
@@ -80,12 +86,12 @@ where
     ) -> impl futures::Future<Output = Result<Self>> + Send;
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send;
 
-    /// Load data from disk with checksum verification.
+    /// Load data from disk with checksum verification from manifest.
     ///
     /// Returns:
-    /// - `Ok(Some(data))` if file exists and checksum verifies
+    /// - `Ok(Some(data))` if file exists and checksum verifies (or no manifest for backwards compat)
     /// - `Ok(None)` if file doesn't exist
-    /// - `Err` with `PersistenceError::MissingChecksumFile` if checksum file is missing
+    /// - `Err` with `PersistenceError::FileNotInManifest` if file exists but isn't in manifest
     /// - `Err` with `PersistenceError::ChecksumMismatch` if checksum verification fails
     /// - `Err` with `PersistenceError::DeserializationFailed` if data is corrupted
     fn load_from_disk<S>(file: &Path) -> Result<Option<S>>
@@ -116,39 +122,56 @@ where
             .drain_to_end()
             .with_context(|| format!("Module {}", type_name::<S>()))?;
 
-        // Check for checksum file and verify
-        let expected_checksum =
-            read_checksum_file(file).with_context(|| format!("Module {}", type_name::<S>()))?;
         let actual_checksum = checksum_reader.checksum();
-        if expected_checksum != actual_checksum {
-            tracing::error!(
-                "Checksum mismatch for {}: expected {}, got {}",
-                file.to_string_lossy(),
-                format_checksum(expected_checksum),
-                format_checksum(actual_checksum)
-            );
-            return Err(PersistenceError::ChecksumMismatch {
-                expected: format_checksum(expected_checksum),
-                actual: format_checksum(actual_checksum),
-            })
-            .with_context(|| format!("Module {}", type_name::<S>()));
+
+        // Check manifest for expected checksum
+        match read_checksum_from_manifest(file) {
+            Ok(Some(expected_checksum)) => {
+                if expected_checksum != actual_checksum {
+                    tracing::error!(
+                        "Checksum mismatch for {}: expected {}, got {}",
+                        file.to_string_lossy(),
+                        format_checksum(expected_checksum),
+                        format_checksum(actual_checksum)
+                    );
+                    return Err(PersistenceError::ChecksumMismatch {
+                        expected: format_checksum(expected_checksum),
+                        actual: format_checksum(actual_checksum),
+                    })
+                    .with_context(|| format!("Module {}", type_name::<S>()));
+                }
+                debug!(
+                    "Checksum verification passed for {}",
+                    file.to_string_lossy()
+                );
+            }
+            Ok(None) => {
+                // No manifest - backwards compat, proceed without verification
+                debug!(
+                    "No manifest found, loading {} without checksum verification",
+                    file.to_string_lossy()
+                );
+            }
+            Err(e) => {
+                return Err(e).with_context(|| format!("Module {}", type_name::<S>()));
+            }
         }
-        debug!(
-            "Checksum verification passed for {}",
-            file.to_string_lossy()
-        );
 
         info!("Loaded data from disk {}", file.to_string_lossy());
         Ok(Some(deserialized))
     }
 
-    fn persist(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
+    /// Persist module state to disk.
+    /// Returns `Some(vec)` if data was saved, `None` if module doesn't persist.
+    fn persist(
+        &mut self,
+    ) -> impl futures::Future<Output = Result<Option<Vec<(PathBuf, u32)>>>> + Send {
         async {
             info!(
                 "Persistence is not implemented for module {}",
                 type_name::<Self>()
             );
-            Ok(())
+            Ok(None)
         }
     }
 
@@ -159,7 +182,9 @@ where
         Ok(Self::load_from_disk(file)?.unwrap_or_default())
     }
 
-    fn save_on_disk<S>(file: &Path, store: &S) -> Result<()>
+    /// Save data to disk and return the CRC32 checksum.
+    /// The checksum should be collected by ModulesHandler and written to a manifest file.
+    fn save_on_disk<S>(file: &Path, store: &S) -> Result<u32>
     where
         S: borsh::BorshSerialize,
     {
@@ -176,10 +201,7 @@ where
             .map(char::from)
             .collect();
 
-        // Temp file paths for data and checksum
         let tmp_data = file.with_extension(format!("{salt}.tmp"));
-        let checksum_path = checksum_file_path(file);
-        let tmp_checksum = checksum_path.with_extension(format!("checksum.{salt}.tmp"));
 
         debug!("Saving on disk in a tmp file {:?}", tmp_data.clone());
 
@@ -202,21 +224,11 @@ where
 
         let checksum = checksum_writer.checksum();
 
-        // Write checksum to temp file
-        log_error!(
-            fs::write(tmp_checksum.as_path(), format_checksum(checksum)),
-            "Writing checksum file"
-        )?;
-
-        // Atomically rename both files
+        // Atomically rename data file
         debug!("Renaming {:?} to {:?}", &tmp_data, &file);
         log_error!(fs::rename(&tmp_data, file), "Rename data file")?;
-        log_error!(
-            fs::rename(&tmp_checksum, &checksum_path),
-            "Rename checksum file"
-        )?;
 
-        Ok(())
+        Ok(checksum)
     }
 }
 
@@ -290,26 +302,114 @@ fn format_checksum(checksum: u32) -> String {
     format!("{:08x}", checksum)
 }
 
-/// Get the path for the checksum file given a data file path
-fn checksum_file_path(file: &Path) -> PathBuf {
-    let mut path = file.as_os_str().to_owned();
-    path.push(".checksum");
-    PathBuf::from(path)
+/// Name of the manifest file in the data directory
+pub const CHECKSUMS_MANIFEST: &str = "checksums.manifest";
+
+/// Get the manifest file path for a data directory
+pub fn manifest_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(CHECKSUMS_MANIFEST)
 }
 
-/// Read checksum from checksum file, returns error if file doesn't exist
-fn read_checksum_file(file: &Path) -> Result<u32, PersistenceError> {
-    match fs::read_to_string(checksum_file_path(file)) {
-        Ok(contents) => {
-            let trimmed = contents.trim();
-            u32::from_str_radix(trimmed, 16)
-                .map_err(|_| PersistenceError::ChecksumParseFailed(trimmed.to_string()))
+/// Read checksum from manifest file for a specific data file
+/// Returns:
+/// - Ok(Some(checksum)) if manifest exists and file is listed
+/// - Ok(None) if manifest doesn't exist (backwards compat - use default)
+/// - Err(FileNotInManifest) if manifest exists but file is not listed
+/// - Err(ChecksumParseFailed) if manifest format is invalid
+fn read_checksum_from_manifest(file: &Path) -> Result<Option<u32>, PersistenceError> {
+    let mut found_manifest: Option<(PathBuf, String)> = None;
+    let mut current_dir = file.parent();
+
+    while let Some(dir) = current_dir {
+        let manifest = manifest_path(dir);
+        match fs::read_to_string(&manifest) {
+            Ok(contents) => {
+                found_manifest = Some((dir.to_path_buf(), contents));
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                current_dir = dir.parent();
+                continue;
+            }
+            Err(e) => return Err(PersistenceError::IoError(e)),
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Err(PersistenceError::MissingChecksumFile)
-        }
-        Err(e) => Err(PersistenceError::IoError(e)),
     }
+
+    let (data_dir, contents) = match found_manifest {
+        Some(found) => found,
+        None => {
+            tracing::warn!(
+                "No manifest file found for {}, loading from default",
+                file.display()
+            );
+            return Ok(None);
+        }
+    };
+
+    // Get relative path for lookup
+    let relative_path = file.strip_prefix(&data_dir).map_err(|_| {
+        PersistenceError::IoError(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "File is not under manifest directory",
+        ))
+    })?;
+    let relative_path = relative_path.to_string_lossy();
+
+    // Parse manifest: each line is "checksum filename"
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.splitn(2, ' ').collect();
+        if parts.len() != 2 {
+            return Err(PersistenceError::ChecksumParseFailed(format!(
+                "Invalid manifest line: {}",
+                line
+            )));
+        }
+        if parts[1] == relative_path {
+            let checksum = u32::from_str_radix(parts[0], 16).map_err(|_| {
+                PersistenceError::ChecksumParseFailed(format!("Invalid checksum: {}", parts[0]))
+            })?;
+            return Ok(Some(checksum));
+        }
+    }
+
+    // File not in manifest - this means file exists but wasn't in a successful shutdown
+    Err(PersistenceError::FileNotInManifest(file.to_path_buf()))
+}
+
+/// Write manifest file with all checksums atomically
+pub fn write_manifest(data_dir: &Path, checksums: &[(PathBuf, u32)]) -> Result<()> {
+    use rand::Rng;
+
+    let manifest = manifest_path(data_dir);
+    let salt: String = deterministic_rng()
+        .sample_iter(&Alphanumeric)
+        .take(8)
+        .map(char::from)
+        .collect();
+    let tmp_manifest = manifest.with_extension(format!("{salt}.tmp"));
+
+    let mut content = String::new();
+    for (path, checksum) in checksums {
+        let relative_path = path
+            .strip_prefix(data_dir)
+            .with_context(|| format!("Persisted file is not under {}", data_dir.display()))?
+            .to_string_lossy();
+        content.push_str(&format!(
+            "{} {}\n",
+            format_checksum(*checksum),
+            relative_path
+        ));
+    }
+
+    fs::write(&tmp_manifest, &content).context("Writing manifest temp file")?;
+    fs::rename(&tmp_manifest, &manifest).context("Renaming manifest file")?;
+
+    info!("Wrote checksum manifest with {} entries", checksums.len());
+    Ok(())
 }
 
 pub mod files {
@@ -317,9 +417,12 @@ pub mod files {
     pub const CONSENSUS_BIN: &str = "consensus.bin";
 }
 
+type ModuleStarterFuture =
+    Pin<Box<dyn Future<Output = Result<Option<Vec<(PathBuf, u32)>>, Error>> + Send + 'static>>;
+
 struct ModuleStarter {
     pub name: &'static str,
-    starter: Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'static>>,
+    starter: ModuleStarterFuture,
 }
 
 pub mod signal {
@@ -338,6 +441,8 @@ pub mod signal {
     #[derive(Clone, Debug)]
     pub struct ShutdownCompleted {
         pub module: String,
+        pub persisted_entries: Vec<(std::path::PathBuf, u32)>,
+        pub timed_out: bool,
     }
 
     impl BusMessage for PersistModule {}
@@ -507,10 +612,16 @@ pub struct ModulesHandler {
     started_modules: Vec<&'static str>,
     running_modules: Vec<JoinHandle<()>>,
     shut_modules: Vec<String>,
+    /// Data directory for manifest file
+    data_dir: PathBuf,
+    /// Collected checksums from successfully persisted modules
+    persisted_checksums: Vec<(PathBuf, u32)>,
+    /// Track if any module timed out during shutdown
+    any_timeout: bool,
 }
 
 impl ModulesHandler {
-    pub async fn new(shared_bus: &SharedMessageBus) -> ModulesHandler {
+    pub async fn new(shared_bus: &SharedMessageBus, data_dir: PathBuf) -> ModulesHandler {
         let shared_message_bus = shared_bus.new_handle();
 
         ModulesHandler {
@@ -519,6 +630,9 @@ impl ModulesHandler {
             started_modules: vec![],
             running_modules: vec![],
             shut_modules: vec![],
+            data_dir,
+            persisted_checksums: vec![],
+            any_timeout: false,
         }
     }
 
@@ -555,17 +669,28 @@ impl ModulesHandler {
                     }
                 });
 
-                let res = tokio::select! {
+                let (res, timed_out) = tokio::select! {
                     res = module_task => {
-                        res
+                        (res, false)
                     },
                     _ = timeout_task => {
-                        Ok(Err(anyhow::anyhow!("Shutdown timeout reached")))
+                        (Ok(Err(anyhow::anyhow!("Shutdown timeout reached"))), true)
                     }
                 };
+
+                let mut persisted_entries = Vec::new();
                 match res {
-                    Ok(Ok(())) => {
-                        tracing::warn!(module =% module.name, "Module {} exited with no error.", module.name);
+                    Ok(Ok(Some(entries))) => {
+                        tracing::info!(
+                            module =% module.name,
+                            "Module {} exited and persisted {} file(s)",
+                            module.name,
+                            entries.len()
+                        );
+                        persisted_entries = entries;
+                    }
+                    Ok(Ok(None)) => {
+                        tracing::info!(module =% module.name, "Module {} exited with no persistence.", module.name);
                     }
                     Ok(Err(e)) => {
                         tracing::error!(module =% module.name, "Module {} exited with error: {:?}", module.name, e);
@@ -578,6 +703,8 @@ impl ModulesHandler {
                 _ = log_error!(
                     shutdown_client.send(signal::ShutdownCompleted {
                         module: module.name.to_string(),
+                        persisted_entries,
+                        timed_out,
                     }),
                     "Sending ShutdownCompleted message"
                 );
@@ -603,6 +730,22 @@ impl ModulesHandler {
         handle_messages! {
             on_bus shutdown_client,
             listen<signal::ShutdownCompleted> msg => {
+                if msg.timed_out {
+                    tracing::warn!(
+                        "Module {} timed out during shutdown, manifest will not be written",
+                        msg.module
+                    );
+                    self.any_timeout = true;
+                }
+                for (path, checksum) in msg.persisted_entries {
+                    debug!(
+                        "Received persisted entries for {}: {} -> {}",
+                        msg.module,
+                        path.display(),
+                        format_checksum(checksum)
+                    );
+                    self.persisted_checksums.push((path, checksum));
+                }
                 if Self::long_running_module(msg.module.as_str()) && !self.shut_modules.contains(&msg.module)  {
                     self.started_modules.retain(|module| *module != msg.module.clone());
                     self.shut_modules.push(msg.module.clone());
@@ -622,13 +765,26 @@ impl ModulesHandler {
             }
         }
 
+        info!("All modules have been shut down");
+        // Write manifest if no timeouts occurred
+        if !self.any_timeout && !self.persisted_checksums.is_empty() {
+            _ = log_error!(
+                write_manifest(&self.data_dir, &self.persisted_checksums),
+                "Writing checksum manifest"
+            );
+        } else if self.any_timeout {
+            tracing::warn!("Skipping manifest write due to module timeout");
+        }
+
         Ok(())
     }
 
     /// Shutdown modules in reverse order (start A, B, C, shutdown C, B, A)
+    /// Note:modules are removed from started_modules
+    /// when ShutdownCompleted is received, not when shutdown is initiated.
     async fn shutdown_next_module(&mut self) -> Result<()> {
         let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
-        if let Some(module_name) = self.started_modules.pop() {
+        if let Some(&module_name) = self.started_modules.last() {
             // May be the shutdown message was skipped because the module failed somehow
             if !self.shut_modules.contains(&module_name.to_string()) {
                 _ = log_error!(
@@ -694,7 +850,7 @@ impl ModulesHandler {
         Ok(())
     }
 
-    async fn run_module<M>(mut module: M) -> Result<()>
+    async fn run_module<M>(mut module: M) -> Result<Option<Vec<(PathBuf, u32)>>>
     where
         M: Module,
     {
@@ -732,7 +888,11 @@ mod tests {
     use super::*;
     use crate::bus::SharedMessageBus;
     use signal::{ShutdownCompleted, ShutdownModule};
-    use std::{fs::File, sync::Arc};
+    use std::{
+        fs::File,
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
     use tempfile::tempdir;
     use tokio::sync::Mutex;
 
@@ -744,6 +904,16 @@ mod tests {
     struct TestModule<T> {
         bus: TestBusClient,
         _field: T,
+    }
+
+    #[derive(Clone)]
+    struct MultiPersistCtx {
+        data_dir: PathBuf,
+    }
+
+    struct MultiPersistModule {
+        bus: TestBusClient,
+        ctx: MultiPersistCtx,
     }
 
     module_bus_client! {
@@ -826,43 +996,63 @@ mod tests {
         }
     }
 
+    fn multi_persist_paths(data_dir: &Path) -> (PathBuf, PathBuf) {
+        (data_dir.join("one.data"), data_dir.join("two.data"))
+    }
+
+    impl Module for MultiPersistModule {
+        type Context = MultiPersistCtx;
+
+        async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
+            Ok(MultiPersistModule {
+                bus: TestBusClient::new_from_bus(bus).await,
+                ctx,
+            })
+        }
+
+        async fn run(&mut self) -> Result<()> {
+            module_handle_messages! {
+                on_self self,
+            };
+            Ok(())
+        }
+
+        async fn persist(&mut self) -> Result<Option<Vec<(PathBuf, u32)>>> {
+            let (first_path, second_path) = multi_persist_paths(&self.ctx.data_dir);
+            if let Some(parent) = first_path.parent() {
+                std::fs::create_dir_all(parent).context("Creating first persist directory")?;
+            }
+            if let Some(parent) = second_path.parent() {
+                std::fs::create_dir_all(parent).context("Creating second persist directory")?;
+            }
+
+            let first_data = TestStruct { value: 1 };
+            let second_data = TestStruct { value: 2 };
+            let first_checksum = Self::save_on_disk(&first_path, &first_data)?;
+            let second_checksum = Self::save_on_disk(&second_path, &second_data)?;
+            Ok(Some(vec![
+                (first_path, first_checksum),
+                (second_path, second_checksum),
+            ]))
+        }
+    }
+
     #[test]
-    fn test_load_from_disk_or_default_valid_file() {
+    fn test_save_returns_checksum() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_file");
 
-        // Write a valid TestStruct to the file (with checksum)
         let test_struct = TestStruct { value: 42 };
-        TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
+        let checksum = TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
 
-        // Load the struct from the file
-        let loaded_struct: TestStruct =
-            TestModule::<usize>::load_from_disk_or_default(&file_path).unwrap();
-        assert_eq!(loaded_struct.value, 42);
+        // Verify checksum is a valid u32 (non-zero for this data)
+        assert!(checksum != 0, "Checksum should be non-zero for test data");
     }
 
     #[test]
-    fn test_load_from_disk_or_default_missing_checksum_file() {
+    fn test_load_without_manifest_uses_default() {
         let dir = tempdir().unwrap();
-        let test_struct = TestStruct { value: 42 };
-
-        // Missing checksum file should return an error
-        let non_existant_checksum_file = dir.path().join("non_existant_checksum_file");
-        let mut legacy_file = File::create(&non_existant_checksum_file).unwrap();
-        borsh::to_writer(&mut legacy_file, &test_struct).unwrap();
-        let result = TestModule::<usize>::load_from_disk_or_default::<TestStruct>(
-            &non_existant_checksum_file,
-        );
-        assert!(
-            result.is_err(),
-            "Expected error due to missing checksum file"
-        );
-    }
-
-    #[test]
-    fn test_load_from_disk_or_default_non_existent_file() {
-        let dir = tempdir().unwrap();
-        // Load from a non-existent file
+        // No manifest file = backwards compat, load from default
         let non_existent_path = dir.path().join("non_existent_file");
         let default_struct: TestStruct =
             TestModule::<usize>::load_from_disk_or_default(&non_existent_path).unwrap();
@@ -870,28 +1060,23 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_save_creates_checksum_file() {
+    fn test_load_with_manifest_verifies_checksum() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_file.data");
 
+        // Save file and get checksum
         let test_struct = TestStruct { value: 42 };
-        TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
+        let checksum = TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
 
-        // Verify checksum file was created
-        let checksum_path = super::checksum_file_path(&file_path);
-        assert!(checksum_path.exists(), "Checksum file should be created");
+        // Write manifest with correct checksum
+        let manifest_path = super::manifest_path(dir.path());
+        let manifest_content = format!("{} test_file.data\n", super::format_checksum(checksum));
+        std::fs::write(&manifest_path, &manifest_content).unwrap();
 
-        // Verify checksum file content is a valid hex string
-        let checksum_content = std::fs::read_to_string(&checksum_path).unwrap();
-        assert_eq!(
-            checksum_content.len(),
-            8,
-            "Checksum should be 8 hex chars (CRC32)"
-        );
-        assert!(
-            checksum_content.chars().all(|c| c.is_ascii_hexdigit()),
-            "Checksum should be valid hex"
-        );
+        // Load should succeed
+        let loaded: TestStruct =
+            TestModule::<usize>::load_from_disk_or_default(&file_path).unwrap();
+        assert_eq!(loaded.value, 42);
     }
 
     #[test_log::test]
@@ -900,11 +1085,11 @@ mod tests {
         let file_path = dir.path().join("test_file.data");
 
         let test_struct = TestStruct { value: 42 };
-        TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
+        let _checksum = TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
 
-        // Corrupt the checksum file
-        let checksum_path = super::checksum_file_path(&file_path);
-        std::fs::write(&checksum_path, "00000001").unwrap();
+        // Write manifest with wrong checksum
+        let manifest_path = super::manifest_path(dir.path());
+        std::fs::write(&manifest_path, "00000001 test_file.data\n").unwrap();
 
         // Load should fail with checksum mismatch
         let result: Result<Option<TestStruct>> = TestModule::<usize>::load_from_disk(&file_path);
@@ -923,9 +1108,14 @@ mod tests {
         let file_path = dir.path().join("test_file.data");
 
         let test_struct = TestStruct { value: 42 };
-        TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
+        let checksum = TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
 
-        // Corrupt the data file (but leave checksum intact)
+        // Write manifest with original checksum
+        let manifest_path = super::manifest_path(dir.path());
+        let manifest_content = format!("{} test_file.data\n", super::format_checksum(checksum));
+        std::fs::write(&manifest_path, &manifest_content).unwrap();
+
+        // Corrupt the data file
         let mut data = std::fs::read(&file_path).unwrap();
         data[0] ^= 0xFF; // Flip some bits
         std::fs::write(&file_path, &data).unwrap();
@@ -942,44 +1132,157 @@ mod tests {
     }
 
     #[test_log::test]
-    fn test_missing_checksum_file() {
+    fn test_file_not_in_manifest_fails() {
         let dir = tempdir().unwrap();
-        let file_path = dir.path().join("test_file");
+        let file_path = dir.path().join("test_file.data");
 
-        // Write file directly without checksum (simulating legacy)
-        let mut file = File::create(&file_path).unwrap();
+        // Save file
         let test_struct = TestStruct { value: 42 };
-        borsh::to_writer(&mut file, &test_struct).unwrap();
+        let _checksum = TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
 
-        // Verify no checksum file exists
-        let checksum_path = super::checksum_file_path(&file_path);
-        assert!(
-            !checksum_path.exists(),
-            "Checksum file should not exist for legacy file"
-        );
+        // Write manifest without this file
+        let manifest_path = super::manifest_path(dir.path());
+        std::fs::write(&manifest_path, "00000001 other_file.data\n").unwrap();
 
-        // Load should fail due to missing checksum file
+        // Load should fail because file is not in manifest
         let result: Result<Option<TestStruct>> = TestModule::<usize>::load_from_disk(&file_path);
         let err = result.unwrap_err();
         assert!(
             err.downcast_ref::<super::PersistenceError>()
-                .is_some_and(|e| matches!(e, super::PersistenceError::MissingChecksumFile)),
-            "Should error on missing checksum file"
+                .is_some_and(|e| matches!(e, super::PersistenceError::FileNotInManifest(_))),
+            "Should error when file is not in manifest"
+        );
+    }
+
+    #[test_log::test]
+    fn test_no_manifest_loads_without_verification() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("test_file");
+
+        // Write file directly without manifest (simulating no previous clean shutdown)
+        let mut file = File::create(&file_path).unwrap();
+        let test_struct = TestStruct { value: 42 };
+        borsh::to_writer(&mut file, &test_struct).unwrap();
+
+        // No manifest file should load successfully (backwards compat)
+        let loaded: Option<TestStruct> = TestModule::<usize>::load_from_disk(&file_path).unwrap();
+        assert!(loaded.is_some());
+        assert_eq!(loaded.unwrap().value, 42);
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_timeout_skips_manifest_and_loads_without_verification() {
+        let dir = tempdir().unwrap();
+        let data_dir = dir.path().to_path_buf();
+        let file_path = data_dir.join("timeout.data");
+        let file_path_for_signal = file_path.clone();
+
+        let test_struct = TestStruct { value: 99 };
+        let checksum = TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
+
+        let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
+        let mut handler = ModulesHandler::new(&shared_bus, data_dir.clone()).await;
+        handler.build_module::<TestModule<usize>>(()).await.unwrap();
+
+        handler.start_modules().await.unwrap();
+
+        let mut shutdown_client = ShutdownClient::new_from_bus(shared_bus.new_handle()).await;
+        let module_name = std::any::type_name::<TestModule<usize>>().to_string();
+        let send_task = tokio::spawn(async move {
+            _ = shutdown_client.send(signal::ShutdownCompleted {
+                module: module_name.clone(),
+                persisted_entries: vec![(file_path_for_signal, checksum)],
+                timed_out: true,
+            });
+            _ = shutdown_client.send(signal::ShutdownModule {
+                module: module_name,
+            });
+        });
+
+        handler.shutdown_loop().await.unwrap();
+        send_task.await.unwrap();
+
+        let manifest = super::manifest_path(&data_dir);
+        assert!(
+            !manifest.exists(),
+            "Manifest should not be written when shutdown times out"
+        );
+
+        let loaded: Option<TestStruct> = TestModule::<usize>::load_from_disk(&file_path).unwrap();
+        assert_eq!(loaded.unwrap().value, 99);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_multi_file_persist_writes_manifest_and_loads_files() {
+        let dir = tempdir().unwrap();
+        let data_dir = dir.path().to_path_buf();
+        let (first_path, second_path) = multi_persist_paths(&data_dir);
+
+        let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
+        let mut handler = ModulesHandler::new(&shared_bus, data_dir.clone()).await;
+        handler
+            .build_module::<MultiPersistModule>(MultiPersistCtx {
+                data_dir: data_dir.clone(),
+            })
+            .await
+            .unwrap();
+
+        handler.start_modules().await.unwrap();
+        handler.shutdown_modules().await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // Log the contents of the data_dir for debugging
+        let entries = std::fs::read_dir(&data_dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect::<Vec<_>>();
+        info!("data_dir entries: {:?}", entries);
+
+        // Log the first_path for debugging
+        info!("first_path: {:?}", first_path);
+
+        let manifest_path = super::manifest_path(&data_dir);
+        let manifest_content = std::fs::read_to_string(&manifest_path).unwrap();
+        assert!(manifest_content.contains("one.data"));
+        assert!(manifest_content.contains("two.data"));
+
+        let loaded_first: Option<TestStruct> =
+            MultiPersistModule::load_from_disk(&first_path).unwrap();
+        assert_eq!(loaded_first.unwrap().value, 1);
+        let loaded_second: Option<TestStruct> =
+            MultiPersistModule::load_from_disk(&second_path).unwrap();
+        assert_eq!(loaded_second.unwrap().value, 2);
+
+        let first_line = manifest_content
+            .lines()
+            .find(|line| line.ends_with("one.data"))
+            .unwrap();
+        std::fs::write(&manifest_path, format!("{first_line}\n")).unwrap();
+
+        let missing: Result<Option<TestStruct>> = MultiPersistModule::load_from_disk(&second_path);
+        let err = missing.unwrap_err();
+        assert!(
+            err.downcast_ref::<super::PersistenceError>()
+                .is_some_and(|e| matches!(e, super::PersistenceError::FileNotInManifest(_))),
+            "Should error when second file is missing from manifest"
         );
     }
 
     #[tokio::test]
     async fn test_build_module() {
+        let dir = tempdir().unwrap();
         let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
-        let mut handler = ModulesHandler::new(&shared_bus).await;
+        let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
         handler.build_module::<TestModule<usize>>(()).await.unwrap();
         assert_eq!(handler.modules.len(), 1);
     }
 
     #[tokio::test]
     async fn test_add_module() {
+        let dir = tempdir().unwrap();
         let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
-        let mut handler = ModulesHandler::new(&shared_bus).await;
+        let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
         let module = TestModule {
             bus: TestBusClient::new_from_bus(shared_bus.new_handle()).await,
             _field: 2_usize,
@@ -991,10 +1294,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_modules() {
+        let dir = tempdir().unwrap();
         let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
         let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
         let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-        let mut handler = ModulesHandler::new(&shared_bus).await;
+        let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
         handler.build_module::<TestModule<usize>>(()).await.unwrap();
 
         _ = handler.start_modules().await;
@@ -1014,10 +1318,11 @@ mod tests {
     // When modules are started in the following order A, B, C, they should be closed in the reverse order C, B, A
     #[tokio::test]
     async fn test_start_stop_modules_in_order() {
+        let dir = tempdir().unwrap();
         let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
         let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
         let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-        let mut handler = ModulesHandler::new(&shared_bus).await;
+        let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
 
         handler.build_module::<TestModule<usize>>(()).await.unwrap();
         handler
@@ -1052,10 +1357,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_shutdown_modules_exactly_once() {
+        let dir = tempdir().unwrap();
         let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
         let mut cancellation_counter_receiver = get_receiver::<usize>(&shared_bus).await;
         let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-        let mut handler = ModulesHandler::new(&shared_bus).await;
+        let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
 
         handler.build_module::<TestModule<usize>>(()).await.unwrap();
         handler
@@ -1113,9 +1419,10 @@ mod tests {
     // All other modules are shut in the right order
     #[tokio::test]
     async fn test_shutdown_all_modules_if_one_fails() {
+        let dir = tempdir().unwrap();
         let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
         let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-        let mut handler = ModulesHandler::new(&shared_bus).await;
+        let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
 
         handler.build_module::<TestModule<usize>>(()).await.unwrap();
         handler
@@ -1131,8 +1438,7 @@ mod tests {
 
         _ = handler.shutdown_loop().await;
 
-        // u64 module fails first, emits two events, one because it is the first task to end,
-        // and the other because it finished to shutdown correctly
+        // u64 module fails first and emits shutdown completion
         assert_eq!(
             shutdown_completed_receiver.recv().await.unwrap().module,
             std::any::type_name::<TestModule<u64>>().to_string()
@@ -1162,9 +1468,10 @@ mod tests {
     // the other modules will shut in the right order
     #[tokio::test]
     async fn test_shutdown_all_modules_if_one_module_panics() {
+        let dir = tempdir().unwrap();
         let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
         let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-        let mut handler = ModulesHandler::new(&shared_bus).await;
+        let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
 
         handler.build_module::<TestModule<usize>>(()).await.unwrap();
         handler

@@ -15,12 +15,12 @@ use hyli_crypto::SharedBlstCrypto;
 use hyli_model::utils::TimestampMs;
 use hyli_modules::bus::command_response::Query;
 use hyli_modules::bus::SharedMessageBus;
+use hyli_modules::module_handle_messages;
 use hyli_modules::modules::admin::{
     QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse,
 };
 use hyli_modules::modules::module_bus_client;
 use hyli_modules::modules::Module;
-use hyli_modules::{log_error, module_handle_messages};
 use hyli_net::clock::TimestampMsClock;
 use staking::state::Staking;
 use tracing::{debug, warn};
@@ -93,15 +93,13 @@ impl Module for SingleNodeConsensus {
         self.start()
     }
 
-    async fn persist(&mut self) -> Result<()> {
+    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
         if let Some(file) = &self.file {
-            _ = log_error!(
-                Self::save_on_disk(file.as_path(), &self.store),
-                "Persisting single node consensus state"
-            );
+            let checksum = Self::save_on_disk(file.as_path(), &self.store)?;
+            return Ok(Some(vec![(file.clone(), checksum)]));
         }
 
-        Ok(())
+        Ok(None)
     }
 }
 
