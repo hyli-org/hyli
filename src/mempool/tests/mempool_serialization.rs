@@ -7,8 +7,8 @@ use super::*;
 use crate::mempool::ArcBorsh;
 use anyhow::Result;
 use hyli_model::{
-    BlobProofOutput, ContractName, HyliOutput, ProofData, ProofDataHash, ProofTransaction,
-    ProgramId, Transaction, TransactionData, VerifiedProofTransaction, Verifier,
+    BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, ProofDataHash,
+    ProofTransaction, Transaction, TransactionData, VerifiedProofTransaction, Verifier,
 };
 use std::sync::Arc;
 
@@ -122,14 +122,14 @@ async fn test_mempool_serialization_with_processing_txs_pending() -> Result<()> 
 
     let lane_id = ctx.own_lane();
 
-    ctx.mempool.inner.processing_txs_pending.push_back((
-        ArcBorsh::new(Arc::new(blob_tx.clone())),
-        lane_id.clone(),
-    ));
-    ctx.mempool.inner.processing_txs_pending.push_back((
-        ArcBorsh::new(Arc::new(proof_tx.clone())),
-        lane_id.clone(),
-    ));
+    ctx.mempool
+        .inner
+        .processing_txs_pending
+        .push_back((ArcBorsh::new(Arc::new(blob_tx.clone())), lane_id.clone()));
+    ctx.mempool
+        .inner
+        .processing_txs_pending
+        .push_back((ArcBorsh::new(Arc::new(proof_tx.clone())), lane_id.clone()));
 
     assert_eq!(
         ctx.mempool.inner.processing_txs_pending.len(),
@@ -173,14 +173,14 @@ async fn test_mempool_restore_inflight_work_enqueues_correct_tasks() -> Result<(
     let lane_id = ctx.own_lane();
 
     // Add a blob transaction and a proof transaction
-    ctx.mempool.inner.processing_txs_pending.push_back((
-        ArcBorsh::new(Arc::new(blob_tx.clone())),
-        lane_id.clone(),
-    ));
-    ctx.mempool.inner.processing_txs_pending.push_back((
-        ArcBorsh::new(Arc::new(proof_tx.clone())),
-        lane_id.clone(),
-    ));
+    ctx.mempool
+        .inner
+        .processing_txs_pending
+        .push_back((ArcBorsh::new(Arc::new(blob_tx.clone())), lane_id.clone()));
+    ctx.mempool
+        .inner
+        .processing_txs_pending
+        .push_back((ArcBorsh::new(Arc::new(proof_tx.clone())), lane_id.clone()));
 
     // Note: The JoinSet (processing_txs) is skipped during serialization,
     // so it will be empty after deserialization. restore_inflight_work
@@ -224,17 +224,20 @@ async fn test_mempool_full_persistence_cycle() -> Result<()> {
     // Add some transactions to processing_txs_pending
     let pending_tx = make_test_blob_tx("pending-test");
     let lane_id = ctx.own_lane();
-    ctx.mempool.inner.processing_txs_pending.push_back((
-        ArcBorsh::new(Arc::new(pending_tx.clone())),
-        lane_id.clone(),
-    ));
+    ctx.mempool
+        .inner
+        .processing_txs_pending
+        .push_back((ArcBorsh::new(Arc::new(pending_tx.clone())), lane_id.clone()));
 
     // Save to disk
     Mempool::save_on_disk(mempool_file.as_path(), &ctx.mempool.inner)?;
 
     // Load from disk
     let loaded = Mempool::load_from_disk::<MempoolStore>(mempool_file.as_path());
-    assert!(loaded.is_some(), "Should successfully load mempool from disk");
+    assert!(
+        loaded.is_some(),
+        "Should successfully load mempool from disk"
+    );
 
     let loaded = loaded.unwrap();
 
@@ -310,10 +313,10 @@ async fn test_mempool_mixed_tx_types_serialization() -> Result<()> {
 
     // Add them all
     for tx in [&blob_tx1, &blob_tx2, &proof_tx1, &proof_tx2, &verified_tx] {
-        ctx.mempool.inner.processing_txs_pending.push_back((
-            ArcBorsh::new(Arc::new(tx.clone())),
-            lane_id.clone(),
-        ));
+        ctx.mempool
+            .inner
+            .processing_txs_pending
+            .push_back((ArcBorsh::new(Arc::new(tx.clone())), lane_id.clone()));
     }
 
     assert_eq!(ctx.mempool.inner.processing_txs_pending.len(), 5);
