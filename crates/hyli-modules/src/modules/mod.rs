@@ -16,7 +16,10 @@ use rand::{distr::Alphanumeric, Rng};
 use tokio::task::JoinHandle;
 use tracing::{debug, info};
 
-use crate::{bus::SharedMessageBus, bus_client, handle_messages, log_error};
+use crate::{
+    bus::{BusClientReceiver, BusClientSender, SharedMessageBus},
+    bus_client, handle_messages, log_error,
+};
 use hyli_turmoil_shims::rng::deterministic_rng;
 
 const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -150,35 +153,20 @@ struct ModuleStarter {
 pub mod signal {
     use std::any::TypeId;
 
-    use crate::{bus::BusMessage, utils::static_type_map::Pick};
+    pub use hyli_bus::modules::signal::{PersistModule, ShutdownCompleted, ShutdownModule};
 
-    #[derive(Clone, Debug)]
-    pub struct PersistModule {}
-
-    #[derive(Clone, Debug)]
-    pub struct ShutdownModule {
-        pub module: String,
-    }
-
-    #[derive(Clone, Debug)]
-    pub struct ShutdownCompleted {
-        pub module: String,
-    }
-
-    impl BusMessage for PersistModule {}
-    impl BusMessage for ShutdownModule {}
-    impl BusMessage for ShutdownCompleted {}
+    use crate::utils::static_type_map::Pick;
 
     /// Execute a future, cancelling it if a shutdown signal is received.
     pub async fn shutdown_aware<M: 'static, F>(
-        receiver: &mut impl Pick<crate::bus::BusReceiver<crate::modules::signal::ShutdownModule>>,
+        receiver: &mut impl Pick<crate::bus::BusReceiver<ShutdownModule>>,
         f: F,
     ) -> anyhow::Result<F::Output>
     where
         F: std::future::IntoFuture,
     {
         let mut dummy = false;
-        hyli_turmoil_shims::tokio_select_biased! {
+        crate::tokio_select_biased! {
             _ = async_receive_shutdown::<M>(
                 &mut dummy,
                 receiver.get_mut(),
@@ -193,7 +181,7 @@ pub mod signal {
 
     /// Execute a future, cancelling it if a shutdown signal is received or a timeout is reached.
     pub async fn shutdown_aware_timeout<M: 'static, F>(
-        receiver: &mut impl Pick<crate::bus::BusReceiver<crate::modules::signal::ShutdownModule>>,
+        receiver: &mut impl Pick<crate::bus::BusReceiver<ShutdownModule>>,
         duration: std::time::Duration,
         f: F,
     ) -> anyhow::Result<F::Output>
@@ -201,7 +189,7 @@ pub mod signal {
         F: std::future::IntoFuture,
     {
         let mut dummy = false;
-        hyli_turmoil_shims::tokio_select_biased! {
+        crate::tokio_select_biased! {
             _ = tokio::time::sleep(duration) => {
                 anyhow::bail!("Timeout reached");
             }
@@ -219,7 +207,7 @@ pub mod signal {
 
     pub async fn async_receive_shutdown<T: 'static>(
         should_shutdown: &mut bool,
-        shutdown_receiver: &mut crate::bus::BusReceiver<crate::modules::signal::ShutdownModule>,
+        shutdown_receiver: &mut crate::bus::BusReceiver<ShutdownModule>,
     ) -> anyhow::Result<()> {
         if *should_shutdown {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -552,7 +540,7 @@ impl ModulesHandler {
 
 #[cfg(test)]
 mod tests {
-    use crate::bus::{dont_use_this::get_receiver, metrics::BusMetrics};
+    use crate::bus::{dont_use_this::get_receiver, metrics::BusMetrics, BusClientSender};
 
     use super::*;
     use crate::bus::SharedMessageBus;
@@ -566,13 +554,18 @@ mod tests {
         value: u32,
     }
 
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    struct CancellationCount(usize);
+
+    impl crate::bus::BusMessage for CancellationCount {}
+
     struct TestModule<T> {
         bus: TestBusClient,
         _field: T,
     }
 
     module_bus_client! {
-        struct TestBusClient { sender(usize), }
+        struct TestBusClient { sender(CancellationCount), }
     }
 
     macro_rules! test_module {
@@ -598,7 +591,9 @@ mod tests {
                         } => { }
                     };
 
-                    self.bus.send(*cloned.lock().await).expect(
+                    self.bus
+                        .send(CancellationCount(*cloned.lock().await))
+                        .expect(
                         "Error while sending the number of loop cancellations while shutting down",
                     );
 
@@ -770,7 +765,8 @@ mod tests {
     #[tokio::test]
     async fn test_shutdown_modules_exactly_once() {
         let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
-        let mut cancellation_counter_receiver = get_receiver::<usize>(&shared_bus).await;
+        let mut cancellation_counter_receiver =
+            get_receiver::<CancellationCount>(&shared_bus).await;
         let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
         let mut handler = ModulesHandler::new(&shared_bus).await;
 
@@ -808,21 +804,21 @@ mod tests {
                 .try_recv()
                 .expect("1")
                 .into_message(),
-            1
+            CancellationCount(1)
         );
         assert_eq!(
             cancellation_counter_receiver
                 .try_recv()
                 .expect("1")
                 .into_message(),
-            1
+            CancellationCount(1)
         );
         assert_eq!(
             cancellation_counter_receiver
                 .try_recv()
                 .expect("1")
                 .into_message(),
-            1
+            CancellationCount(1)
         );
     }
 

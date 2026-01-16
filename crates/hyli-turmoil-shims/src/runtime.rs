@@ -1,8 +1,12 @@
+#[cfg(not(feature = "turmoil"))]
 use std::{mem::ManuallyDrop, time::Duration};
 
-use tokio::runtime::{Handle, Runtime};
+use tokio::runtime::Handle;
+#[cfg(not(feature = "turmoil"))]
+use tokio::runtime::Runtime;
 
 enum LongTasksRuntimeInner {
+    #[cfg(not(feature = "turmoil"))]
     Dedicated(ManuallyDrop<Runtime>),
     #[cfg(feature = "turmoil")]
     Current(Handle),
@@ -27,6 +31,7 @@ impl Default for LongTasksRuntime {
 impl Drop for LongTasksRuntime {
     fn drop(&mut self) {
         match &mut self.0 {
+            #[cfg(not(feature = "turmoil"))]
             LongTasksRuntimeInner::Dedicated(runtime) => {
                 // Shut down the hashing runtime.
                 // TODO: serialize?
@@ -63,6 +68,7 @@ impl LongTasksRuntime {
 
     pub fn handle(&self) -> Handle {
         match &self.0 {
+            #[cfg(not(feature = "turmoil"))]
             LongTasksRuntimeInner::Dedicated(runtime) => runtime.handle().clone(),
             #[cfg(feature = "turmoil")]
             LongTasksRuntimeInner::Current(handle) => handle.clone(),
@@ -82,5 +88,7 @@ impl LongTasksRuntime {
         )))
     }
 }
+#[cfg(not(feature = "turmoil"))]
 const DEFAULT_THREADS: usize = 3;
+#[cfg(not(feature = "turmoil"))]
 const DEFAULT_THREAD_NAME: &str = "mempool-hashing";

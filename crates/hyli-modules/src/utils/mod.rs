@@ -1,9 +1,9 @@
 // Shared utilities.
-pub use static_type_map::Pick;
+pub use hyli_bus::utils::static_type_map;
+pub use hyli_bus::utils::Pick;
 
 pub mod logger;
 pub mod profiling;
-pub mod static_type_map;
 
 // Domain-specific utilities
 pub mod da_codec;

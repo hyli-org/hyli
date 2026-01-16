@@ -25,6 +25,7 @@ tracing-subscriber = { workspace = true, features = [
 ] }
 
 tokio = { workspace = true, features = ["full", "tracing"] }
+hyli-turmoil-shims = { workspace = true }
 
 opentelemetry = { workspace = true }
 opentelemetry-otlp = { workspace = true, optional = true }
@@ -41,4 +42,4 @@ instrumentation = [
   "dep:tracing-opentelemetry",
   "dep:opentelemetry_sdk",
 ]
-turmoil = []
+turmoil = ["hyli-turmoil-shims/turmoil"]

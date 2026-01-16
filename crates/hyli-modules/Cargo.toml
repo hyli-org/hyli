@@ -83,6 +83,8 @@ turmoil = ["hyli-bus/turmoil", "hyli-turmoil-shims/turmoil"]
 test = ["dep:test-log"]
 instrumentation = [
   "dep:tracing-opentelemetry",
+  "dep:opentelemetry-otlp",
+  "dep:opentelemetry_sdk",
   "dep:opentelemetry-http",
   "hyli-bus/instrumentation",
 ]
