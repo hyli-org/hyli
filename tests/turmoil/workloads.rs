@@ -54,9 +54,6 @@ pub async fn submit_10_contracts(node: TurmoilHost) -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     attempts += 1;
-                    if attempts > 20 {
-                        return Err(e);
-                    }
                     warn!("Retrying get_contract {} attempt {}: {}", name, attempts, e);
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }
