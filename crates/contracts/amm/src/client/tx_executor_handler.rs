@@ -54,7 +54,10 @@ impl Amm {
         contract_name: ContractName,
         builder: &mut TxExecutorBuilder<S>,
     ) {
-        builder.init_with(contract_name, Risc0Prover::new(AMM_ELF, PROGRAM_ID));
+        builder.init_with(
+            contract_name,
+            Risc0Prover::new(AMM_ELF.to_vec(), PROGRAM_ID),
+        );
     }
 }
 

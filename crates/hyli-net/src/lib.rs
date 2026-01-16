@@ -8,3 +8,7 @@ pub mod ordered_join_set;
 pub mod tcp;
 #[cfg(feature = "turmoil")]
 pub use turmoil;
+
+// BusMessage implementations for use with hyli-bus
+#[cfg(feature = "bus")]
+mod bus_impls;

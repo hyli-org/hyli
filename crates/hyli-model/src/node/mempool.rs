@@ -24,10 +24,56 @@ pub enum MempoolBlockEvent {
     StartedBuildingBlocks(BlockHeight),
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    BorshSerialize,
+    BorshDeserialize,
+    PartialEq,
+    Eq,
+    Hash,
+    Ord,
+    PartialOrd,
+)]
+#[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
+pub enum DataProposalParent {
+    LaneRoot(LaneId),
+    DP(DataProposalHash),
+}
+
+impl DataProposalParent {
+    pub fn dp_hash(&self) -> Option<&DataProposalHash> {
+        match self {
+            DataProposalParent::DP(hash) => Some(hash),
+            DataProposalParent::LaneRoot(_) => None,
+        }
+    }
+
+    pub fn lane_id(&self) -> Option<&LaneId> {
+        match self {
+            DataProposalParent::LaneRoot(lane_id) => Some(lane_id),
+            DataProposalParent::DP(_) => None,
+        }
+    }
+
+    pub fn is_lane_root(&self) -> bool {
+        matches!(self, DataProposalParent::LaneRoot(_))
+    }
+
+    pub fn as_tx_parent_hash(&self) -> DataProposalHash {
+        match self {
+            DataProposalParent::LaneRoot(lane_id) => DataProposalHash(lane_id.to_string()),
+            DataProposalParent::DP(hash) => hash.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
 #[readonly::make]
 pub struct DataProposal {
-    pub parent_data_proposal_hash: Option<DataProposalHash>,
+    pub parent_data_proposal_hash: DataProposalParent,
     pub txs: Vec<Transaction>,
     /// Internal cache of the hash of the transaction
     #[borsh(skip)]
@@ -35,9 +81,17 @@ pub struct DataProposal {
 }
 
 impl DataProposal {
-    pub fn new(parent_data_proposal_hash: Option<DataProposalHash>, txs: Vec<Transaction>) -> Self {
+    pub fn new(parent_data_proposal_hash: DataProposalHash, txs: Vec<Transaction>) -> Self {
         Self {
-            parent_data_proposal_hash,
+            parent_data_proposal_hash: DataProposalParent::DP(parent_data_proposal_hash),
+            txs,
+            hash_cache: RwLock::new(None),
+        }
+    }
+
+    pub fn new_root(lane_id: LaneId, txs: Vec<Transaction>) -> Self {
+        Self {
+            parent_data_proposal_hash: DataProposalParent::LaneRoot(lane_id),
             txs,
             hash_cache: RwLock::new(None),
         }
@@ -102,11 +156,11 @@ impl DataProposal {
 
 impl Clone for DataProposal {
     fn clone(&self) -> Self {
-        let mut new = Self::default();
-        new.parent_data_proposal_hash = self.parent_data_proposal_hash.clone();
-        new.txs = self.txs.clone();
-        new.hash_cache = RwLock::new(self.hash_cache.read().unwrap().clone());
-        new
+        DataProposal {
+            parent_data_proposal_hash: self.parent_data_proposal_hash.clone(),
+            txs: self.txs.clone(),
+            hash_cache: RwLock::new(self.hash_cache.read().unwrap().clone()),
+        }
     }
 }
 
@@ -164,8 +218,13 @@ impl Hashed<DataProposalHash> for DataProposal {
             return hash.clone();
         }
         let mut hasher = Sha3_256::new();
-        if let Some(ref parent_data_proposal_hash) = self.parent_data_proposal_hash {
-            hasher.update(parent_data_proposal_hash.0.as_bytes());
+        match &self.parent_data_proposal_hash {
+            DataProposalParent::LaneRoot(lane_id) => {
+                hasher.update(lane_id.to_string().as_bytes());
+            }
+            DataProposalParent::DP(parent_data_proposal_hash) => {
+                hasher.update(parent_data_proposal_hash.0.as_bytes());
+            }
         }
         for tx in self.txs.iter() {
             hasher.update(tx.hashed().0.as_bytes());

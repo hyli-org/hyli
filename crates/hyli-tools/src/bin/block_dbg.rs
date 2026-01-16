@@ -192,7 +192,7 @@ async fn main() -> Result<()> {
         let node_client = NodeApiMockClient::new();
         node_client.set_block_height(BlockHeight(4000));
         handler
-            .build_module::<AutoProver<SmtTokenProvableState>>(Arc::new(AutoProverCtx {
+            .build_module::<AutoProver<SmtTokenProvableState, TxExecutorTestProver<SmtTokenContract>>>(Arc::new(AutoProverCtx {
                 data_directory: PathBuf::from("data"),
                 prover: Arc::new(prover),
                 contract_name: "oranj".into(),
