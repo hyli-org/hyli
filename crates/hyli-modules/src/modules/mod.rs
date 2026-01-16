@@ -18,10 +18,10 @@ pub mod data_availability;
 pub mod gcs_uploader;
 #[cfg(feature = "db")]
 pub mod indexer;
+pub mod node_state_processor;
 pub mod prover;
 pub mod prover_metrics;
 pub mod rest;
-pub mod signed_da_listener;
 pub mod websocket;
 
 /// API context for building REST APIs across modules
