@@ -11,7 +11,7 @@ use hyli_modules::module_handle_messages;
 use hyli_modules::modules::{Module, module_bus_client};
 use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
-    modules::{ModulesHandler, da_listener::DAListenerConf, signed_da_listener::SignedDAListener},
+    modules::{ModulesHandler, da_listener::DAListenerConf, da_listener::SignedDAListener},
     node_state::NodeState,
     utils::logger::setup_tracing,
 };
