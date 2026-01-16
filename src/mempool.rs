@@ -18,15 +18,15 @@ use client_sdk::tcp_client::TcpServerMessage;
 use hyli_crypto::SharedBlstCrypto;
 use hyli_modules::{bus::BusMessage, module_bus_client};
 use hyli_net::ordered_join_set::OrderedJoinSet;
+use hyli_turmoil_shims::{collections::HashMap, runtime::LongTasksRuntime};
 use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
 use std::{
-    collections::{BTreeMap, HashMap, VecDeque},
+    collections::{BTreeMap, VecDeque},
     fmt::Display,
     ops::{Deref, DerefMut},
     path::PathBuf,
-    time::Duration,
 };
 use storage::Storage;
 use verify_tx::DataProposalVerdict;
@@ -55,51 +55,6 @@ pub mod verify_tx;
 pub mod tests;
 
 pub use dissemination::DisseminationEvent;
-
-pub struct LongTasksRuntime(std::mem::ManuallyDrop<tokio::runtime::Runtime>);
-impl Default for LongTasksRuntime {
-    fn default() -> Self {
-        Self(std::mem::ManuallyDrop::new(
-            #[allow(clippy::expect_used, reason = "Fails at startup, is OK")]
-            tokio::runtime::Builder::new_multi_thread()
-                // Limit the number of threads arbitrarily to lower the maximal impact on the whole node
-                .worker_threads(3)
-                .thread_name("mempool-hashing")
-                .build()
-                .expect("Failed to create hashing runtime"),
-        ))
-    }
-}
-
-impl Drop for LongTasksRuntime {
-    fn drop(&mut self) {
-        // Shut down the hashing runtime.
-        // TODO: serialize?
-        // Safety: We'll manually drop the runtime below and it won't be double-dropped as we use ManuallyDrop.
-        let rt = unsafe { std::mem::ManuallyDrop::take(&mut self.0) };
-        // This has to be done outside the current runtime.
-        tokio::task::spawn_blocking(move || {
-            #[cfg(test)]
-            rt.shutdown_timeout(Duration::from_millis(10));
-            #[cfg(not(test))]
-            rt.shutdown_timeout(Duration::from_secs(10));
-        });
-    }
-}
-
-impl Deref for LongTasksRuntime {
-    type Target = tokio::runtime::Runtime;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for LongTasksRuntime {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
 
 /// Validator Data Availability Guarantee
 /// This is a signed message that contains the hash of the data proposal and the size of the lane (DP included)

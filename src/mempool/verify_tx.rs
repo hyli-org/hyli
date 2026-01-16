@@ -90,6 +90,7 @@ impl super::Mempool {
         #[cfg(not(test))]
         {
             let lane_id_clone = lane_id.clone();
+            let handle = self.inner.long_tasks_runtime.handle();
             self.inner.processing_dps.spawn_on(
                 async move {
                     // We must verify the hash
@@ -106,7 +107,7 @@ impl super::Mempool {
                         vote,
                     )))
                 },
-                self.inner.long_tasks_runtime.handle(),
+                &handle,
             );
         }
         Ok(())
@@ -149,6 +150,7 @@ impl super::Mempool {
             DataProposalVerdict::Process => {
                 trace!("Further processing for DataProposal");
                 let lane_id = lane_id.clone();
+                let handle = self.inner.long_tasks_runtime.handle();
                 self.inner.processing_dps.spawn_on(
                     async move {
                         let decision = Self::process_data_proposal(&mut data_proposal);
@@ -158,7 +160,7 @@ impl super::Mempool {
                             data_proposal,
                         )))
                     },
-                    self.inner.long_tasks_runtime.handle(),
+                    &handle,
                 );
             }
             DataProposalVerdict::Wait => {
