@@ -43,10 +43,7 @@ impl SignedBlock {
             .map(|(lane_id, dp)| {
                 (
                     lane_id.clone(),
-                    dp.parent_data_proposal_hash
-                        .clone()
-                        // This is weird but has to match the workaround in own_lane.rs
-                        .unwrap_or(DataProposalHash(lane_id.to_string())),
+                    dp.parent_data_proposal_hash.as_tx_parent_hash(),
                     &dp.txs,
                 )
             })

@@ -10,7 +10,8 @@ use std::{collections::HashMap, future::Future, vec};
 use tracing::{error, trace};
 
 use crate::model::{
-    Cut, DataProposal, DataProposalHash, Hashed, PoDA, SignedByValidator, ValidatorPublicKey,
+    Cut, DataProposal, DataProposalHash, DataProposalParent, Hashed, PoDA, SignedByValidator,
+    ValidatorPublicKey,
 };
 
 use super::ValidatorDAG;
@@ -25,6 +26,7 @@ pub enum CanBePutOnTop {
 }
 
 #[derive(Debug)]
+#[expect(clippy::large_enum_variant)]
 pub enum EntryOrMissingHash {
     Entry(LaneEntryMetadata, DataProposal),
     MissingHash(DataProposalHash),
@@ -38,7 +40,7 @@ pub enum MetadataOrMissingHash {
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneEntryMetadata {
-    pub parent_data_proposal_hash: Option<DataProposalHash>,
+    pub parent_data_proposal_hash: DataProposalParent,
     pub cumul_size: LaneBytesSize,
     pub signatures: Vec<ValidatorDAG>,
     pub cached_poda: Option<PoDA>,
@@ -173,10 +175,13 @@ pub trait Storage {
             trace!("Not enough votes: moving to parent DP if available");
 
             // Not enough votes: move on to the parent if any, otherwise no CAR.
-            if let Some(parent) = le.parent_data_proposal_hash {
-                current = parent.clone();
-            } else {
-                return Ok(None);
+            match le.parent_data_proposal_hash {
+                DataProposalParent::DP(parent) => {
+                    current = parent.clone();
+                }
+                DataProposalParent::LaneRoot(_) => {
+                    return Ok(None);
+                }
             }
         }
     }
@@ -198,7 +203,7 @@ pub trait Storage {
         let verdict = self.can_be_put_on_top(
             lane_id,
             &data_proposal_hash,
-            data_proposal.parent_data_proposal_hash.as_ref(),
+            &data_proposal.parent_data_proposal_hash,
         );
 
         let cumul_size = match verdict {
@@ -295,10 +300,13 @@ pub trait Storage {
                     match lane_entry {
                         Some(lane_entry) => {
                             yield MetadataOrMissingHash::Metadata(lane_entry.clone(), some_dp_hash);
-                            if let Some(parent_dp_hash) = lane_entry.parent_data_proposal_hash.clone() {
-                                some_dp_hash = parent_dp_hash;
-                            } else {
-                                break;
+                            match lane_entry.parent_data_proposal_hash.clone() {
+                                DataProposalParent::DP(parent_dp_hash) => {
+                                    some_dp_hash = parent_dp_hash;
+                                }
+                                DataProposalParent::LaneRoot(_) => {
+                                    break;
+                                }
                             }
                         }
                         None => {
@@ -403,34 +411,39 @@ pub trait Storage {
     }
 
     /// Returns CanBePutOnTop::Yes if the DataProposal can be put in the lane
-    /// Returns CanBePutOnTop::False if the DataProposal can't be put in the lane because the parent is unknown
-    /// Returns CanBePutOnTop::Fork if the DataProposal creates a fork
+    /// Returns CanBePutOnTop::No if the DataProposal can't be put in the lane because the parent is unknown
+    /// Returns CanBePutOnTop::Fork if the DataProposal creates an identified fork
     /// Returns CanBePutOnTop::AlreadyOnTop if the DataProposal is already on top of the lane
     fn can_be_put_on_top(
         &mut self,
         lane_id: &LaneId,
         data_proposal_hash: &DataProposalHash,
-        parent_data_proposal_hash: Option<&DataProposalHash>,
+        parent_data_proposal_hash: &DataProposalParent,
     ) -> CanBePutOnTop {
+        let lane_tip = self.get_lane_hash_tip(lane_id);
         // Data proposal parent hash needs to match the lane tip of that validator
-        if parent_data_proposal_hash == self.get_lane_hash_tip(lane_id).as_ref() {
-            // LEGIT DATAPROPOSAL
-            return CanBePutOnTop::Yes;
-        }
-
-        if self.get_lane_hash_tip(lane_id).as_ref() == Some(data_proposal_hash) {
-            return CanBePutOnTop::AlreadyOnTop;
-        }
-
-        if let Some(dp_parent_hash) = parent_data_proposal_hash {
-            if !self.contains(lane_id, dp_parent_hash) {
-                // UNKNOWN PARENT
-                return CanBePutOnTop::No;
+        match (parent_data_proposal_hash, &lane_tip) {
+            (DataProposalParent::DP(a), Some(b)) if a == b => {
+                // LEGIT DATAPROPOSAL
+                CanBePutOnTop::Yes
+            }
+            (DataProposalParent::LaneRoot(a), None) if a == lane_id => {
+                // Legit new lane
+                CanBePutOnTop::Yes
+            }
+            (_, Some(b)) if b == data_proposal_hash => {
+                // DP is the same as our current known lane tip
+                CanBePutOnTop::AlreadyOnTop
+            }
+            (DataProposalParent::DP(a), _) if !self.contains(lane_id, a) => {
+                // Unknown parent
+                CanBePutOnTop::No
+            }
+            _ => {
+                // NEITHER LEGIT NOR CORRECT PARENT --> FORK
+                CanBePutOnTop::Fork
             }
         }
-
-        // NEITHER LEGIT NOR CORRECT PARENT --> FORK
-        CanBePutOnTop::Fork
     }
 }
 
@@ -457,11 +470,11 @@ mod tests {
         let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
 
-        let data_proposal = DataProposal::new(None, vec![]);
+        let data_proposal = DataProposal::new_root(lane_id.clone(), vec![]);
         let cumul_size: LaneBytesSize = LaneBytesSize(data_proposal.estimate_size() as u64);
 
         let entry = LaneEntryMetadata {
-            parent_data_proposal_hash: None,
+            parent_data_proposal_hash: DataProposalParent::LaneRoot(lane_id.clone()),
             cumul_size,
             signatures: vec![],
             cached_poda: None,
@@ -512,10 +525,10 @@ mod tests {
         let tx = Transaction::from(TransactionData::VerifiedProof(vpt.clone()));
         let tx_hash = tx.hashed();
 
-        let dp = DataProposal::new(None, vec![tx]);
+        let dp = DataProposal::new_root(lane_id.clone(), vec![tx]);
         let cumul_size: LaneBytesSize = LaneBytesSize(dp.estimate_size() as u64);
         let entry = LaneEntryMetadata {
-            parent_data_proposal_hash: None,
+            parent_data_proposal_hash: DataProposalParent::LaneRoot(lane_id.clone()),
             cumul_size,
             signatures: vec![],
             cached_poda: None,
@@ -563,10 +576,10 @@ mod tests {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
         let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
-        let data_proposal = DataProposal::new(None, vec![]);
+        let data_proposal = DataProposal::new_root(lane_id.clone(), vec![]);
         let cumul_size: LaneBytesSize = LaneBytesSize(data_proposal.estimate_size() as u64);
         let mut entry = LaneEntryMetadata {
-            parent_data_proposal_hash: None,
+            parent_data_proposal_hash: DataProposalParent::LaneRoot(lane_id.clone()),
             cumul_size,
             signatures: vec![],
             cached_poda: None,
@@ -600,7 +613,7 @@ mod tests {
 
         let crypto2: BlstCrypto = BlstCrypto::new("2").unwrap();
 
-        let data_proposal = DataProposal::new(None, vec![]);
+        let data_proposal = DataProposal::new_root(lane_id.clone(), vec![]);
         // 1 creates a DP
         let (dp_hash, cumul_size) = storage
             .store_data_proposal(&crypto, lane_id, data_proposal)
@@ -631,7 +644,7 @@ mod tests {
         let lane_id2 = &LaneId::new(crypto2.validator_pubkey().clone());
         let crypto3: BlstCrypto = BlstCrypto::new("3").unwrap();
 
-        let dp = DataProposal::new(None, vec![]);
+        let dp = DataProposal::new_root(lane_id2.clone(), vec![]);
 
         // 1 stores DP in 2's lane
         let (dp_hash, cumul_size) = storage.store_data_proposal(&crypto, lane_id2, dp).unwrap();
@@ -670,9 +683,9 @@ mod tests {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
         let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
-        let dp1 = DataProposal::new(None, vec![]);
-        let dp2 = DataProposal::new(Some(dp1.hashed()), vec![]);
-        let dp3 = DataProposal::new(Some(dp2.hashed()), vec![]);
+        let dp1 = DataProposal::new_root(lane_id.clone(), vec![]);
+        let dp2 = DataProposal::new(dp1.hashed(), vec![]);
+        let dp3 = DataProposal::new(dp2.hashed(), vec![]);
 
         storage
             .store_data_proposal(&crypto, lane_id, dp1.clone())
@@ -764,9 +777,9 @@ mod tests {
         let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
 
-        let dp1 = DataProposal::new(None, vec![]);
-        let dp2 = DataProposal::new(Some(dp1.hashed()), vec![]);
-        let dp3 = DataProposal::new(Some(dp2.hashed()), vec![]);
+        let dp1 = DataProposal::new_root(lane_id.clone(), vec![]);
+        let dp2 = DataProposal::new(dp1.hashed(), vec![]);
+        let dp3 = DataProposal::new(dp2.hashed(), vec![]);
 
         storage
             .store_data_proposal(&crypto, lane_id, dp1.clone())
@@ -794,7 +807,7 @@ mod tests {
         let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
 
-        let dp1 = DataProposal::new(None, vec![Transaction::default()]);
+        let dp1 = DataProposal::new_root(lane_id.clone(), vec![Transaction::default()]);
 
         let (_dp_hash, size) = storage
             .store_data_proposal(&crypto, lane_id, dp1.clone())
@@ -807,7 +820,7 @@ mod tests {
         assert_eq!(size.0, dp1.estimate_size() as u64);
 
         // Adding a new DP
-        let dp2 = DataProposal::new(Some(dp1.hashed()), vec![Transaction::default()]);
+        let dp2 = DataProposal::new(dp1.hashed(), vec![Transaction::default()]);
         let (_hash, size) = storage
             .store_data_proposal(&crypto, lane_id, dp2.clone())
             .unwrap();
@@ -824,10 +837,10 @@ mod tests {
         let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
         let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
         let mut storage = setup_storage();
-        let data_proposal = DataProposal::new(None, vec![]);
+        let data_proposal = DataProposal::new_root(lane_id.clone(), vec![]);
         let cumul_size: LaneBytesSize = LaneBytesSize(data_proposal.estimate_size() as u64);
         let entry = LaneEntryMetadata {
-            parent_data_proposal_hash: None,
+            parent_data_proposal_hash: DataProposalParent::LaneRoot(lane_id.clone()),
             cumul_size,
             signatures: vec![],
             cached_poda: None,
@@ -919,7 +932,7 @@ mod tests {
 
         ////////////////////////////
         // Case 1: No CAR (no votes)
-        let dp1 = DataProposal::new(None, vec![]);
+        let dp1 = DataProposal::new_root(lane_id.clone(), vec![]);
         storage
             .store_data_proposal(&crypto1, lane_id, dp1.clone()) // signs it too.
             .unwrap();
@@ -933,13 +946,13 @@ mod tests {
 
         ////////////////////////////
         // Case 3: no CAR, parent is CAR
-        let dp2 = DataProposal::new(Some(dp1.hashed()), vec![]);
+        let dp2 = DataProposal::new(dp1.hashed(), vec![]);
         storage
             .store_data_proposal(&crypto1, lane_id, dp2.clone()) // signs it too.
             .unwrap();
         // Car is still dp1
         assert_latest_car_eq(&mut storage, lane_id, &staking, None, &dp1);
-        let dp3 = DataProposal::new(Some(dp2.hashed()), vec![]);
+        let dp3 = DataProposal::new(dp2.hashed(), vec![]);
         storage
             .store_data_proposal(&crypto1, lane_id, dp3.clone()) // signs it too.
             .unwrap();

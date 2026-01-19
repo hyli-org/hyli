@@ -9,8 +9,8 @@ use hyli_modules::{
     modules::{
         ModulesHandler,
         da_listener::DAListenerConf,
+        da_listener::SignedDAListener,
         gcs_uploader::{GCSConf, GcsUploader, GcsUploaderCtx},
-        signed_da_listener::SignedDAListener,
     },
     utils::logger::setup_tracing,
 };

@@ -171,24 +171,27 @@ impl super::Mempool {
                 lane_id, buc.ccp.consensus_proposal.slot
             );
 
-            // Now that we stored the DP, move the hole top down
-            if let Some(ref parent_hash) = dp_parent_hash {
-                // If we reached the 'from' cut, remove the hole
-                if buc.from.as_ref().is_some_and(|from_cut| {
-                    from_cut.iter().any(|(from_lane_id, from_dp_hash, _, _)| {
-                        from_lane_id == lane_id && from_dp_hash == parent_hash
-                    })
-                }) {
-                    buc.holes_tops.remove(lane_id);
-                    hole_top = None;
-                } else {
-                    let r = buc.holes_tops.entry(lane_id.clone()).or_default();
-                    r.0 = parent_hash.clone();
-                    hole_top = Some(&r.0);
+            // Move the hole top down
+            match &dp_parent_hash {
+                DataProposalParent::DP(parent_hash) => {
+                    // If we reached the 'from' cut, remove the hole
+                    if buc.from.as_ref().is_some_and(|from_cut| {
+                        from_cut.iter().any(|(from_lane_id, from_dp_hash, _, _)| {
+                            from_lane_id == lane_id && from_dp_hash == parent_hash
+                        })
+                    }) {
+                        buc.holes_tops.remove(lane_id);
+                        hole_top = None;
+                    } else {
+                        let r = buc.holes_tops.entry(lane_id.clone()).or_default();
+                        r.0 = parent_hash.clone();
+                        hole_top = Some(&r.0);
+                    }
                 }
-            } else {
-                buc.holes_tops.remove(lane_id); // Just remove otherwise
-                hole_top = None;
+                DataProposalParent::LaneRoot(_) => {
+                    buc.holes_tops.remove(lane_id); // Just remove otherwise
+                    hole_top = None;
+                }
             }
 
             // Inform dissemination we can stop requesting this DP.
@@ -796,26 +799,26 @@ pub mod test {
         ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
 
         // Create a chain of 2 DataProposals in lane 1
-        let dp1 = DataProposal::new(None, vec![]);
+        let dp1 = DataProposal::new_root(lane_id1.clone(), vec![]);
         let dp1_hash = dp1.hashed();
         ctx.mempool
             .lanes
             .store_data_proposal(&crypto1, &lane_id1, dp1.clone())?;
 
-        let dp2 = DataProposal::new(Some(dp1_hash.clone()), vec![]);
+        let dp2 = DataProposal::new(dp1_hash.clone(), vec![]);
         let dp2_hash = dp2.hashed();
         ctx.mempool
             .lanes
             .store_data_proposal(&crypto1, &lane_id1, dp2.clone())?;
 
         // Create a chain of 2 DataProposals in lane 2
-        let dp3 = DataProposal::new(None, vec![]);
+        let dp3 = DataProposal::new_root(lane_id2.clone(), vec![]);
         let dp3_hash = dp3.hashed();
         ctx2.mempool
             .lanes
             .store_data_proposal(&crypto2, &lane_id2, dp3.clone())?;
 
-        let dp4 = DataProposal::new(Some(dp3_hash.clone()), vec![]);
+        let dp4 = DataProposal::new(dp3_hash.clone(), vec![]);
         let dp4_hash = dp4.hashed();
         ctx2.mempool
             .lanes
@@ -926,19 +929,19 @@ pub mod test {
         ctx.add_trusted_validator(crypto.validator_pubkey()).await;
 
         // Create a chain of 3 DataProposals
-        let dp1 = DataProposal::new(None, vec![]);
+        let dp1 = DataProposal::new_root(lane_id.clone(), vec![]);
         let dp1_hash = dp1.hashed();
         ctx.mempool
             .lanes
             .store_data_proposal(&crypto, &lane_id, dp1)?;
 
-        let dp2 = DataProposal::new(Some(dp1_hash.clone()), vec![]);
+        let dp2 = DataProposal::new(dp1_hash.clone(), vec![]);
         let dp2_hash = dp2.hashed();
         ctx.mempool
             .lanes
             .store_data_proposal(&crypto, &lane_id, dp2)?;
 
-        let dp3 = DataProposal::new(Some(dp2_hash.clone()), vec![]);
+        let dp3 = DataProposal::new(dp2_hash.clone(), vec![]);
         let dp3_hash = dp3.hashed();
         ctx.mempool
             .lanes

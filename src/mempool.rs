@@ -66,6 +66,8 @@ pub type BufferedEntry = (Vec<ValidatorDAG>, DataProposal);
 #[derive(Default, BorshSerialize, BorshDeserialize)]
 pub struct MempoolStore {
     // own_lane.rs
+    #[borsh(skip)]
+    ready_to_create_dps: bool,
     waiting_dissemination_txs: HashMap<LaneId, BorshableIndexMap<TxHash, Transaction>>,
     // TODO: implement serialization, probably with a custom future that yields the unmodified Tx
     // on cancellation
@@ -378,6 +380,9 @@ impl Mempool {
 
                 // Removes all DPs that are not in the new cut, updates lane tip and sends SyncRequest for missing DPs
                 self.clean_and_update_lanes(&cut, &previous_cut)?;
+
+                // We need to wait until we've updated our lanes_tip when restarting.
+                self.ready_to_create_dps = true;
 
                 Ok(())
             }

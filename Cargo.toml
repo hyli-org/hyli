@@ -17,6 +17,7 @@ members = [
   "crates/hyli-crypto",
   "crates/hyli-turmoil-shims",
   "crates/hyli-verifiers",
+  "crates/hyli-bus",
   "crates/hyli-modules",
   "crates/hyli-tools",
   "crates/noir-tools",
@@ -54,6 +55,7 @@ hyli-model = { version = "0.14.0", default-features = false, path = "crates/hyli
 hyli-crypto = { version = "0.14.0", default-features = false, path = "crates/hyli-crypto", package = "hyli-crypto" }
 hyli-turmoil-shims = { version = "0.14.0", default-features = false, path = "crates/hyli-turmoil-shims", package = "hyli-turmoil-shims" }
 hyli-verifiers = { version = "0.14.0", default-features = false, path = "crates/hyli-verifiers", package = "hyli-verifiers" }
+hyli-bus = { version = "0.14.0", default-features = false, path = "crates/hyli-bus", package = "hyli-bus" }
 risc0-recursion = { version = "0.14.0", default-features = false, path = "crates/contracts/risc0-recursion", package = "hyli-risc0-recursion" }
 hydentity = { version = "0.14.0", default-features = false, path = "crates/contracts/hydentity", package = "hyli-hydentity" }
 hyllar = { version = "0.14.0", default-features = false, path = "crates/contracts/hyllar", package = "hyli-hyllar" }
