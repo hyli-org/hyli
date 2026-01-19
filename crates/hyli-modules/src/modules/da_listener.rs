@@ -502,3 +502,6 @@ impl SignedDAListener {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod da_listener_tests;
