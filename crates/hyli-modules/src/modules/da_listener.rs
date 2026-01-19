@@ -234,6 +234,39 @@ impl SignedDAListener {
         self.pending_block_requests.insert(height, state);
     }
 
+    async fn switch_to_next_da_server(
+        &mut self,
+        client: &mut DataAvailabilityClient,
+    ) -> Result<()> {
+        self.current_da_index =
+            (self.current_da_index + 1) % (self.config.da_fallback_addresses.len() + 1);
+
+        let da_address = if self.current_da_index == 0 {
+            &self.config.da_read_from
+        } else {
+            &self.config.da_fallback_addresses[self.current_da_index - 1]
+        };
+
+        warn!("📦 Switching to DA server: {}", da_address);
+
+        // Reconnect to the server
+        *client = DataAvailabilityClient::connect_with_opts(
+            "signed_da_listener".to_string(),
+            Some(1024 * 1024 * 1024),
+            da_address.clone(),
+        )
+        .await?;
+
+        // Start streaming from current block
+        client
+            .send(DataAvailabilityRequest::StreamFromHeight(
+                self.current_block,
+            ))
+            .await?;
+
+        Ok(())
+    }
+
     async fn check_block_request_timeouts(
         &mut self,
         client: &mut DataAvailabilityClient,
@@ -284,31 +317,12 @@ impl SignedDAListener {
                         }
                     }
 
-                    let da_address = if state.current_da_index == 0 {
-                        &self.config.da_read_from
-                    } else {
-                        &self.config.da_fallback_addresses[state.current_da_index - 1]
-                    };
-
                     warn!(
-                        "📦 Block request for height {} timed out (attempt {}). Switching to DA: {}",
-                        height, state.retry_count, da_address
+                        "📦 Block request for height {} timed out (attempt {}). Switching DA server.",
+                        height, state.retry_count
                     );
 
-                    // Reconnect to new DA server
-                    *client = DataAvailabilityClient::connect_with_opts(
-                        "signed_da_listener".to_string(),
-                        Some(1024 * 1024 * 1024),
-                        da_address.clone(),
-                    )
-                    .await?;
-
-                    // Start streaming from current block
-                    client
-                        .send(DataAvailabilityRequest::StreamFromHeight(
-                            self.current_block,
-                        ))
-                        .await?;
+                    self.switch_to_next_da_server(client).await?;
                 } else {
                     warn!(
                         "📦 Block request for height {} timed out (attempt {}). Retrying.",
@@ -348,31 +362,7 @@ impl SignedDAListener {
 
         // Try fallback DA servers
         if !self.config.da_fallback_addresses.is_empty() {
-            self.current_da_index =
-                (self.current_da_index + 1) % (self.config.da_fallback_addresses.len() + 1);
-
-            let da_address = if self.current_da_index == 0 {
-                &self.config.da_read_from
-            } else {
-                &self.config.da_fallback_addresses[self.current_da_index - 1]
-            };
-
-            warn!("📦 Switching to fallback DA server: {}", da_address);
-
-            // Reconnect to fallback server
-            *client = DataAvailabilityClient::connect_with_opts(
-                "signed_da_listener".to_string(),
-                Some(1024 * 1024 * 1024),
-                da_address.clone(),
-            )
-            .await?;
-
-            // Start streaming from current block
-            client
-                .send(DataAvailabilityRequest::StreamFromHeight(
-                    self.current_block,
-                ))
-                .await?;
+            self.switch_to_next_da_server(client).await?;
 
             // Re-request the block
             self.request_specific_block(height);
