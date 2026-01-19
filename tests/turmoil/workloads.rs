@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use anyhow::ensure;
+use anyhow::{bail, ensure};
 use client_sdk::rest_client::NodeApiClient;
 use hyli_modules::log_error;
 use tracing::warn;
@@ -20,6 +20,7 @@ use super::common::make_register_contract_tx;
 /// Check on the node (all of them) that all 10 contracts are here.
 pub async fn submit_10_contracts(node: TurmoilHost) -> anyhow::Result<()> {
     let client_with_retries = node.client.retry_15times_1000ms();
+    let client_no_retry = node.client.with_retry(0, Duration::from_millis(0));
 
     _ = wait_height(&client_with_retries, 1).await;
 
@@ -37,20 +38,22 @@ pub async fn submit_10_contracts(node: TurmoilHost) -> anyhow::Result<()> {
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
 
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
     for i in 1..10 {
         let name = format!("contract-{}", i);
         let mut attempts = 0;
         loop {
-            match client_with_retries.get_contract(name.clone().into()).await {
+            if tokio::time::Instant::now() >= deadline {
+                bail!("Timed out waiting for contract {}", name);
+            }
+
+            match client_no_retry.get_contract(name.clone().into()).await {
                 Ok(contract) => {
                     assert_eq!(contract.contract_name.0, name.as_str());
                     break;
                 }
                 Err(e) => {
                     attempts += 1;
-                    if attempts > 20 {
-                        return Err(e);
-                    }
                     warn!("Retrying get_contract {} attempt {}: {}", name, attempts, e);
                     tokio::time::sleep(Duration::from_secs(1)).await;
                 }

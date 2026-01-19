@@ -30,6 +30,7 @@ required-features = ["rate-proxy"]
 hyli-contract-sdk = { workspace = true }
 client-sdk = { workspace = true, features = ["rest"] }
 hyli-modules = { workspace = true }
+hyli-turmoil-shims = { workspace = true }
 hyli-model = { workspace = true }
 smt-token = { workspace = true, features = ["client"] }
 hyli-registry = { workspace = true }
@@ -89,3 +90,7 @@ rate-proxy = [
 
 default = ["ui", "rate-proxy"]
 ui = ["dep:ratatui", "dep:crossterm"]
+turmoil = []
+
+[package.metadata.cargo-machete]
+ignored = ["hyli-turmoil-shims"]

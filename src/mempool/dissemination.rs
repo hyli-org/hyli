@@ -1,10 +1,7 @@
 //! Dissemination manager: routes data proposals, tracks peer knowledge, and schedules sync/reply.
 //! It consumes events from mempool/consensus and emits outbound network messages.
 
-use std::{
-    collections::{HashMap, HashSet},
-    time::Duration,
-};
+use std::{collections::HashSet, time::Duration};
 
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
@@ -26,6 +23,7 @@ use crate::{
     p2p::network::{HeaderSigner, OutboundMessage},
     utils::conf::{P2pMode, SharedConf},
 };
+use hyli_turmoil_shims::collections::HashMap;
 
 use super::{
     metrics::MempoolMetrics,
@@ -662,7 +660,9 @@ impl DisseminationManager {
     }
 
     pub(super) async fn redisseminate_owned_lanes(&mut self) -> Result<()> {
-        for lane_id in self.owned_lanes.clone().into_iter() {
+        let lane_ids: Vec<_> = self.owned_lanes.iter().cloned().collect();
+
+        for lane_id in lane_ids {
             let pending_entries = {
                 let mut stream = Box::pin(
                     self.lanes
