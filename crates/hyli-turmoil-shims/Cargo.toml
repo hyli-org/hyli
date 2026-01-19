@@ -16,3 +16,6 @@ borsh = { workspace = true }
 
 [features]
 turmoil = ["dep:turmoil"]
+
+[package.metadata.cargo-machete]
+ignored = ["turmoil"]
