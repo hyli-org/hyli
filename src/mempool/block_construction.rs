@@ -54,8 +54,13 @@ impl super::Mempool {
             return Ok(());
         }
 
-        for (lane_id, (to_hash, _)) in &buc.holes_tops {
-            self.try_to_fill_hole_from_storage(buc, lane_id, to_hash)
+        let fill_from: Vec<(LaneId, DataProposalHash)> = buc
+            .holes_tops
+            .iter()
+            .map(|(lane_id, (to_hash, _))| (lane_id.clone(), to_hash.clone()))
+            .collect();
+        for (lane_id, to_hash) in fill_from {
+            self.try_to_fill_hole_from_storage(buc, &lane_id, &to_hash)
                 .await?;
         }
 
