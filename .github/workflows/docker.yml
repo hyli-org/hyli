@@ -35,11 +35,12 @@ jobs:
               ghcr.io/hyli-org/hyli
           - file: .github/docker/Dockerfile.arm64
             name: hyli (arm64)
-            push_ghcr: false
+            push_ghcr: true
             platform: linux/arm64
             dep_image: rust:bookworm
             images: |
               europe-west1-docker.pkg.dev/hyli-shared-all/hyli/hyli-arm
+              ghcr.io/hyli-org/hyli-arm
           - file: .github/docker/Dockerfile.dependencies
             name: hyli dependencies
             push_ghcr: false
@@ -109,7 +110,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: europe-west1-docker.pkg.dev/hyli-shared-all/hyli/hyli
+          images: |
+            europe-west1-docker.pkg.dev/hyli-shared-all/hyli/hyli
+            ghcr.io/hyli-org/hyli
           tags: |
             type=sha
             type=semver,pattern={{version}}
@@ -145,7 +148,4 @@ jobs:
           for tag in "${tags_array[@]}"; do
             echo "Creating manifest for $tag"
             docker buildx imagetools create -t $tag $tag $(echo "$tag" | sed 's/\/hyli:/\/hyli-arm:/g')
-            ghcr_tag=$(echo "$tag" | sed 's/europe-west3-docker.pkg.dev\/hyle-413414\/hyli-docker\/hyli/ghcr.io\/hyli-org\/hyli/g')
-            echo "Tagging and pushing to GHCR: $ghcr_tag"
-            docker buildx imagetools create -t $ghcr_tag $tag
           done
