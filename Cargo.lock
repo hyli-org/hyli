@@ -5788,6 +5788,7 @@ dependencies = [
  "hyli-risc0-recursion",
  "hyli-smt-token",
  "hyli-staking",
+ "hyli-turmoil-shims",
  "hyli-uuid-tld",
  "hyli-verifiers",
  "indexmap 2.13.0",
@@ -5863,6 +5864,7 @@ dependencies = [
  "anymap",
  "borsh",
  "futures",
+ "hyli-turmoil-shims",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
@@ -6047,6 +6049,7 @@ dependencies = [
  "hyli-hydentity",
  "hyli-model",
  "hyli-net",
+ "hyli-turmoil-shims",
  "indexmap 2.13.0",
  "opentelemetry",
  "opentelemetry-http",
@@ -6089,6 +6092,7 @@ dependencies = [
  "hyli-bus",
  "hyli-contract-sdk",
  "hyli-crypto",
+ "hyli-turmoil-shims",
  "hyper 1.8.1",
  "hyper-util",
  "opentelemetry",
@@ -6202,6 +6206,7 @@ dependencies = [
  "hyli-modules",
  "hyli-registry",
  "hyli-smt-token",
+ "hyli-turmoil-shims",
  "hyper 1.8.1",
  "hyper-util",
  "notify",
@@ -6219,6 +6224,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber 0.3.22",
  "ureq",
+]
+
+[[package]]
+name = "hyli-turmoil-shims"
+version = "0.14.0"
+dependencies = [
+ "borsh",
+ "rand 0.9.2",
+ "tokio",
+ "turmoil",
 ]
 
 [[package]]
