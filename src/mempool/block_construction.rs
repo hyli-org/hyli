@@ -24,6 +24,7 @@ pub struct BlockUnderConstruction {
 }
 
 impl super::Mempool {
+    // Best-effort: if a hole's top is already stored locally, fill it now.
     async fn try_to_fill_hole_from_storage(
         &mut self,
         buc: &mut BlockUnderConstruction,
@@ -46,6 +47,7 @@ impl super::Mempool {
         Ok(())
     }
 
+    // Attempt to resolve all pending holes from locally stored data.
     async fn try_to_fill_holes_from_storage(
         &mut self,
         buc: &mut BlockUnderConstruction,
@@ -171,6 +173,7 @@ impl super::Mempool {
         Ok(())
     }
 
+    // Core hole-fill logic shared by sync replies and storage recovery.
     async fn fill_hole_from_entry(
         &mut self,
         buc: &mut BlockUnderConstruction,
@@ -259,10 +262,21 @@ impl super::Mempool {
             let Some(ht) = hole_top else {
                 break;
             };
-            let Some(buffered) = self.inner.buffered_entries.get_mut(lane_id) else {
-                break;
-            };
-            let Some((sigs, dp)) = buffered.remove(ht) else {
+            let mut next_entry = None;
+            if let Some(buffered) = self.inner.buffered_entries.get_mut(lane_id) {
+                if let Some((sigs, dp)) = buffered.remove(ht) {
+                    next_entry = Some((sigs, dp));
+                }
+            }
+            if next_entry.is_none() {
+                if let (Ok(Some(metadata)), Ok(Some(dp))) = (
+                    self.lanes.get_metadata_by_hash(lane_id, ht),
+                    self.lanes.get_dp_by_hash(lane_id, ht),
+                ) {
+                    next_entry = Some((metadata.signatures, dp));
+                }
+            }
+            let Some((sigs, dp)) = next_entry else {
                 break;
             };
             let Some(new_lane_size) = lane_size.0.checked_sub(dp_size) else {
@@ -424,6 +438,7 @@ impl super::Mempool {
         &mut self,
         buc: &mut BlockUnderConstruction,
     ) -> Result<()> {
+        // If we already have missing data locally, resolve holes before materializing/requests.
         self.try_to_fill_holes_from_storage(buc).await?;
 
         // First time, materialize holes (this is done somewhat async as it can be slow,
