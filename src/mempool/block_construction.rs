@@ -24,6 +24,28 @@ pub struct BlockUnderConstruction {
 }
 
 impl super::Mempool {
+    async fn try_to_fill_hole_from_storage(
+        &mut self,
+        buc: &mut BlockUnderConstruction,
+        lane_id: &LaneId,
+        to_hash: &DataProposalHash,
+    ) -> Result<()> {
+        if let (Ok(Some(metadata)), Ok(Some(data_proposal))) = (
+            self.lanes.get_metadata_by_hash(lane_id, to_hash),
+            self.lanes.get_dp_by_hash(lane_id, to_hash),
+        ) {
+            self.fill_hole_from_entry(
+                buc,
+                lane_id,
+                metadata.signatures,
+                data_proposal,
+                to_hash.clone(),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
     async fn try_to_fill_holes_from_storage(
         &mut self,
         buc: &mut BlockUnderConstruction,
@@ -32,23 +54,8 @@ impl super::Mempool {
             return Ok(());
         }
 
-        let mut fill_from = Vec::new();
         for (lane_id, (to_hash, _)) in &buc.holes_tops {
-            if let (Ok(Some(metadata)), Ok(Some(data_proposal))) = (
-                self.lanes.get_metadata_by_hash(lane_id, to_hash),
-                self.lanes.get_dp_by_hash(lane_id, to_hash),
-            ) {
-                fill_from.push((
-                    lane_id.clone(),
-                    metadata.signatures,
-                    data_proposal,
-                    to_hash.clone(),
-                ));
-            }
-        }
-
-        for (lane_id, signatures, data_proposal, to_hash) in fill_from {
-            self.try_to_fill_hole_in_lane(buc, &lane_id, signatures, data_proposal, to_hash)
+            self.try_to_fill_hole_from_storage(buc, lane_id, to_hash)
                 .await?;
         }
 
@@ -121,7 +128,7 @@ impl super::Mempool {
                 if hole_top == &dp_hash {
                     // This uses a non-recursive loop to avoid stack overflow,
                     // unfortunately results in rather cumbersome code to write.
-                    self.try_to_fill_hole_in_lane(
+                    self.fill_hole_from_entry(
                         &mut buc,
                         &lane_id,
                         signatures,
@@ -159,7 +166,7 @@ impl super::Mempool {
         Ok(())
     }
 
-    async fn try_to_fill_hole_in_lane(
+    async fn fill_hole_from_entry(
         &mut self,
         buc: &mut BlockUnderConstruction,
         lane_id: &LaneId,
@@ -429,7 +436,7 @@ impl super::Mempool {
                 }
             }
             for (lane_id, signatures, data_proposal, to_hash) in fill_from {
-                self.try_to_fill_hole_in_lane(buc, &lane_id, signatures, data_proposal, to_hash)
+                self.fill_hole_from_entry(buc, &lane_id, signatures, data_proposal, to_hash)
                     .await?;
             }
 
