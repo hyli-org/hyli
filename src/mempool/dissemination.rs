@@ -14,7 +14,7 @@ use hyli_modules::{
 use hyli_net::clock::TimestampMsClock;
 use staking::state::Staking;
 use strum_macros::IntoStaticStr;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::{
     bus::BusClientSender,
@@ -414,9 +414,21 @@ impl DisseminationManager {
         let mut to_send = Vec::new();
 
         for (key, request) in self.pending_sync_requests.iter_mut() {
-            if self.lanes.contains(&request.lane_id, &request.to) {
-                completed.push(key.clone());
-                continue;
+            match self.lanes.get_dp_by_hash(&request.lane_id, &request.to) {
+                Ok(Some(_)) => {
+                    completed.push(key.clone());
+                    continue;
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    warn!(
+                        "SyncRequest data lookup failed for lane {} to {} on node {}: {}",
+                        request.lane_id,
+                        request.to,
+                        self.conf.id,
+                        err
+                    );
+                }
             }
 
             if should_throttle_since(&request.state, now.clone()) {

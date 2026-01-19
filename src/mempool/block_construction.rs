@@ -381,6 +381,27 @@ impl super::Mempool {
         &mut self,
         buc: &mut BlockUnderConstruction,
     ) -> Result<()> {
+        if buc.holes_materialized && !buc.holes_tops.is_empty() {
+            let mut fill_from = Vec::new();
+            for (lane_id, (to_hash, _)) in &buc.holes_tops {
+                if let (Ok(Some(metadata)), Ok(Some(data_proposal))) = (
+                    self.lanes.get_metadata_by_hash(lane_id, to_hash),
+                    self.lanes.get_dp_by_hash(lane_id, to_hash),
+                ) {
+                    fill_from.push((
+                        lane_id.clone(),
+                        metadata.signatures,
+                        data_proposal,
+                        to_hash.clone(),
+                    ));
+                }
+            }
+            for (lane_id, signatures, data_proposal, to_hash) in fill_from {
+                self.try_to_fill_hole_in_lane(buc, &lane_id, signatures, data_proposal, to_hash)
+                    .await?;
+            }
+        }
+
         // First time, materialize holes (this is done somewhat async as it can be slow,
         // but we might want to refactor this in the future.)
         if !buc.holes_materialized && self.materialize_holes_for_signed_block(buc).await? {
@@ -393,6 +414,25 @@ impl super::Mempool {
                     .and_then(|m| m.remove(to_hash))
                 {
                     fill_from.push((lane_id.clone(), signatures, data_proposal, to_hash.clone()));
+                }
+            }
+            for (lane_id, signatures, data_proposal, to_hash) in fill_from {
+                self.try_to_fill_hole_in_lane(buc, &lane_id, signatures, data_proposal, to_hash)
+                    .await?;
+            }
+
+            let mut fill_from = Vec::new();
+            for (lane_id, (to_hash, _)) in &buc.holes_tops {
+                if let (Ok(Some(metadata)), Ok(Some(data_proposal))) = (
+                    self.lanes.get_metadata_by_hash(lane_id, to_hash),
+                    self.lanes.get_dp_by_hash(lane_id, to_hash),
+                ) {
+                    fill_from.push((
+                        lane_id.clone(),
+                        metadata.signatures,
+                        data_proposal,
+                        to_hash.clone(),
+                    ));
                 }
             }
             for (lane_id, signatures, data_proposal, to_hash) in fill_from {
