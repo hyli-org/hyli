@@ -423,10 +423,7 @@ impl DisseminationManager {
                 Err(err) => {
                     warn!(
                         "SyncRequest data lookup failed for lane {} to {} on node {}: {}",
-                        request.lane_id,
-                        request.to,
-                        self.conf.id,
-                        err
+                        request.lane_id, request.to, self.conf.id, err
                     );
                 }
             }

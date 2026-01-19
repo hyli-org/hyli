@@ -1213,10 +1213,7 @@ async fn test_sync_request_not_satisfied_by_metadata_only() -> Result<()> {
     ctx.mempool
         .lanes
         .by_hash_metadata
-        .insert(
-            format!("{lane_id}:{dp_hash}"),
-            borsh::to_vec(&metadata)?,
-        )?;
+        .insert(format!("{lane_id}:{dp_hash}"), borsh::to_vec(&metadata)?)?;
 
     ctx.dissemination_manager
         .on_event(DisseminationEvent::SyncRequestNeeded {
