@@ -63,7 +63,6 @@ indexmap = { workspace = true }
 
 # Native verifiers
 hyli-crypto = { workspace = true }
-hyli-turmoil-shims = { workspace = true }
 secp256k1 = { workspace = true, features = ["rand"] }
 
 [dev-dependencies]
@@ -79,12 +78,10 @@ sqlx = { workspace = true, features = ["runtime-tokio", "chrono"] }
 [features]
 risc0 = ["client-sdk/risc0"]
 sp1 = ["client-sdk/sp1"]
-turmoil = ["hyli-bus/turmoil", "hyli-turmoil-shims/turmoil"]
+turmoil = ["hyli-bus/turmoil"]
 test = ["dep:test-log"]
 instrumentation = [
   "dep:tracing-opentelemetry",
-  "dep:opentelemetry-otlp",
-  "dep:opentelemetry_sdk",
   "dep:opentelemetry-http",
   "hyli-bus/instrumentation",
 ]

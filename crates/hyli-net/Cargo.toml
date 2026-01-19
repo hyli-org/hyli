@@ -12,7 +12,6 @@ rust-version = { workspace = true }
 sdk = { workspace = true, features = ["full-model"] }
 hyli-crypto = { workspace = true }
 hyli-bus = { workspace = true, optional = true }
-hyli-turmoil-shims = { workspace = true }
 
 anyhow = { workspace = true }
 borsh = { workspace = true }
@@ -29,7 +28,6 @@ hex = { workspace = true }
 paste = { workspace = true }
 serde_json = { workspace = true }
 http-body-util = { workspace = true }
-rand = { workspace = true }
 
 hyper = { workspace = true, features = ["client", "http1"] }
 hyper-util = { workspace = true }
@@ -47,6 +45,6 @@ opentelemetry_sdk = { workspace = true }
 
 [features]
 # default = ["turmoil"]
-turmoil = ["dep:turmoil", "hyli-turmoil-shims/turmoil"]
+turmoil = ["dep:turmoil"]
 instrumentation = ["tracing/attributes", "dep:tracing-opentelemetry"]
 bus = ["dep:hyli-bus"]

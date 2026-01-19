@@ -1,4 +1,10 @@
-use std::{cmp::Ordering, collections::HashSet, sync::Arc, task::Poll, time::Duration};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    task::Poll,
+    time::Duration,
+};
 
 use anyhow::{bail, Context};
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -16,7 +22,6 @@ use crate::{
     ordered_join_set::OrderedJoinSet,
     tcp::{tcp_client::TcpClient, Handshake, TcpHeaders, TcpMessageLabel},
 };
-use hyli_turmoil_shims::collections::HashMap;
 
 use super::{
     tcp_server::{TcpServer, TcpServerOptions},
@@ -199,7 +204,7 @@ where
         // Await either of the joinsets in the self.canal_jobs hashmap
 
         loop {
-            hyli_turmoil_shims::tokio_select_biased! {
+            tokio::select! {
                 Some(tcp_event) = self.tcp_server.listen_next() => {
                     return P2PTcpEvent::TcpEvent(tcp_event);
                 },
