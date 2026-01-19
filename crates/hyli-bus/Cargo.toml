@@ -9,6 +9,7 @@ repository = { workspace = true }
 rust-version = { workspace = true }
 
 [dependencies]
+hyli-turmoil-shims = { workspace = true } 
 anyhow = { workspace = true }
 anymap = { workspace = true }
 borsh = { workspace = true, features = ["derive"] }

@@ -15,6 +15,7 @@ members = [
   "crates/hyli-loadtest",
   "crates/hyli-model",
   "crates/hyli-crypto",
+  "crates/hyli-turmoil-shims",
   "crates/hyli-verifiers",
   "crates/hyli-bus",
   "crates/hyli-modules",
@@ -28,6 +29,7 @@ default-members = [
   "crates/hyli-loadtest",
   "crates/hyli-model",
   "crates/hyli-crypto",
+  "crates/hyli-turmoil-shims",
   "crates/hyli-net",
   "crates/hyli-modules",
   "crates/hyli-tools",
@@ -51,6 +53,7 @@ client-sdk = { version = "0.14.0", default-features = false, path = "crates/clie
 hyli-net = { version = "0.14.0", default-features = false, path = "crates/hyli-net", package = "hyli-net" }
 hyli-model = { version = "0.14.0", default-features = false, path = "crates/hyli-model", package = "hyli-model" }
 hyli-crypto = { version = "0.14.0", default-features = false, path = "crates/hyli-crypto", package = "hyli-crypto" }
+hyli-turmoil-shims = { version = "0.14.0", default-features = false, path = "crates/hyli-turmoil-shims", package = "hyli-turmoil-shims" }
 hyli-verifiers = { version = "0.14.0", default-features = false, path = "crates/hyli-verifiers", package = "hyli-verifiers" }
 hyli-bus = { version = "0.14.0", default-features = false, path = "crates/hyli-bus", package = "hyli-bus" }
 risc0-recursion = { version = "0.14.0", default-features = false, path = "crates/contracts/risc0-recursion", package = "hyli-risc0-recursion" }
@@ -207,6 +210,7 @@ hyli-model = { workspace = true, default-features = false, features = [
   "sqlx",
 ] }
 hyli-crypto = { workspace = true }
+hyli-turmoil-shims = { workspace = true }
 hydentity = { workspace = true, features = ["client"] }
 hyllar = { workspace = true, features = ["client"] }
 smt-token = { workspace = true, features = ["client"] }
@@ -313,7 +317,12 @@ signal-child = "1.0.6"
 [features]
 default = ["risc0", "instrumentation"]
 
-turmoil = ["hyli-net/turmoil", "client-sdk/turmoil", "hyli-modules/turmoil"]
+turmoil = [
+  "hyli-net/turmoil",
+  "client-sdk/turmoil",
+  "hyli-modules/turmoil",
+  "hyli-turmoil-shims/turmoil",
+]
 
 cairo-m = ["hyli-verifiers/cairo-m"]
 risc0 = ["hyli-verifiers/risc0", "client-sdk/risc0"]

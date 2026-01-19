@@ -1,0 +1,21 @@
+[package]
+name = "hyli-turmoil-shims"
+description = "Deterministic utilities for Hyli tests"
+license = "MIT"
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
+
+[dependencies]
+rand = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+turmoil = { workspace = true, optional = true }
+borsh = { workspace = true }
+
+[features]
+turmoil = ["dep:turmoil"]
+
+[package.metadata.cargo-machete]
+ignored = ["turmoil"]
