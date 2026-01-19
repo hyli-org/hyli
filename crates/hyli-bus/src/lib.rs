@@ -14,7 +14,6 @@ pub use bus::{
     BusClientReceiver, BusClientSender, BusEnvelope, BusMessage, BusReceiver, BusSender,
     SharedMessageBus, DEFAULT_CAPACITY, LOW_CAPACITY,
 };
-pub use hyli_turmoil_shims::tokio_select_biased;
 pub use modules::{Module, ModulesHandler, ShutdownClient};
 
 // Macros are automatically exported at crate root via #[macro_export]

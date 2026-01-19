@@ -6216,6 +6216,7 @@ dependencies = [
  "hyli-modules",
  "hyli-registry",
  "hyli-smt-token",
+ "hyli-turmoil-shims",
  "hyper 1.8.1",
  "hyper-util",
  "notify",

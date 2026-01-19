@@ -273,7 +273,7 @@ macro_rules! handle_messages {
             if false {
                 break;
             }
-            $crate::tokio_select_biased! {
+            hyli_turmoil_shims::tokio_select_biased! {
                 $($bind = $fut $(, if $cond)? => $handle,)*
             }
         }
