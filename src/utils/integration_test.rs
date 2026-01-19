@@ -155,7 +155,7 @@ impl NodeIntegrationCtxBuilder {
 
         let node_task = Some(tokio::spawn(async move {
             node_modules.start_modules().await?;
-            hyli_turmoil_shims::tokio_select_biased! {
+            tokio::select! {
                 res = node_modules.shutdown_loop() => {
                     res
                 }

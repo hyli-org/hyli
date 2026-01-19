@@ -87,7 +87,6 @@ pub struct HoldConfiguration {
     pub when: Duration,
     pub duration: Duration,
     pub triggered: bool,
-    pub released: bool,
 }
 
 impl HoldConfiguration {
@@ -109,7 +108,6 @@ impl HoldConfiguration {
             when,
             duration,
             triggered: false,
-            released: false,
         }
     }
 
@@ -123,10 +121,9 @@ impl HoldConfiguration {
             self.triggered = true;
         }
 
-        if current_time > self.when + self.duration && self.triggered && !self.released {
+        if current_time > self.when + self.duration && self.triggered {
             tracing::error!("RELEASE TRIGGERED from {} to {}", self.from, self.to);
             sim.release(self.from.clone(), self.to.clone());
-            self.released = true;
         }
 
         Ok(())

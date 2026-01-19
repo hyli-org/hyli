@@ -101,7 +101,7 @@ async fn setup_basic_host(
     let mut interval = tokio::time::interval(Duration::from_millis(100));
 
     loop {
-        hyli_turmoil_shims::tokio_select_biased! {
+        tokio::select! {
             _ = interval.tick() => {
                 let peer_names = HashSet::from_iter(p2p.peers.iter().map(|(_, v)| v.node_connection_data.name.clone()));
 
@@ -197,7 +197,7 @@ async fn setup_drop_host(
     let mut interval_start_shutdown = tokio::time::interval(Duration::from_millis(1000));
     interval_start_shutdown.tick().await;
     loop {
-        hyli_turmoil_shims::tokio_select_biased! {
+        tokio::select! {
             _ = interval_start_shutdown.tick() => {
                 if turmoil::elapsed() > Duration::from_millis(duration) {
                     tracing::error!("Current peers {:?}", p2p.peers.keys());
@@ -250,7 +250,7 @@ async fn setup_drop_client(
     let mut interval_start_shutdown = tokio::time::interval(Duration::from_millis(1000));
     interval_start_shutdown.tick().await;
     loop {
-        hyli_turmoil_shims::tokio_select_biased! {
+        tokio::select! {
             _ = interval_start_shutdown.tick() => {
 
                 if turmoil::elapsed() > Duration::from_millis(duration) {
@@ -396,7 +396,7 @@ async fn setup_decode_error_host(peer: String, peers: Vec<String>) -> Result<(),
     let deadline = start + Duration::from_secs(12);
 
     loop {
-        hyli_turmoil_shims::tokio_select_biased! {
+        tokio::select! {
             _ = interval.tick() => {
                 if !armed && start.elapsed() > Duration::from_secs(1) && p2p.peers.len() == all_other_peers.len() {
                     armed = true;
@@ -505,7 +505,7 @@ async fn setup_poisoned_socket_host(
     let mut other_pubkey = None;
 
     loop {
-        hyli_turmoil_shims::tokio_select_biased! {
+        tokio::select! {
             _ = interval.tick() => {
                 if !sent_error
                     && peer == "peer-1"

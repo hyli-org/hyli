@@ -85,12 +85,7 @@ pub fn simulation_slow_network(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyho
 ///
 /// Simulate 1 really slow node (with fixed random latencies).
 pub fn simulation_slow_node(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::Result<()> {
-    let slow_node = loop {
-        let candidate = ctx.random_id();
-        if candidate != "node-1" {
-            break candidate;
-        }
-    };
+    let slow_node = ctx.random_id();
 
     for other_node in ctx.nodes.clone().iter().filter(|n| n.conf.id != slow_node) {
         let slowness = Duration::from_millis(ctx.random_between(150, 600));
@@ -111,18 +106,7 @@ pub fn simulation_slow_node(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::
 ///
 /// Simulate 2 really slow nodes (with fixed random latencies).
 pub fn simulation_two_slow_nodes(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::Result<()> {
-    let slow_node = loop {
-        let candidate = ctx.random_id();
-        if candidate != "node-1" {
-            break candidate;
-        }
-    };
-    let slow_node_2 = loop {
-        let candidate = ctx.random_id();
-        if candidate != "node-1" && candidate != slow_node {
-            break candidate;
-        }
-    };
+    let (slow_node, slow_node_2) = ctx.random_id_pair();
 
     for other_node in ctx.nodes.clone().iter().filter(|n| n.conf.id != slow_node) {
         let slowness = Duration::from_millis(ctx.random_between(150, 1500));

@@ -4,7 +4,6 @@ use crate::{bus::BusClientSender, model::*, utils::serialize::BorshableIndexMap}
 
 use anyhow::{bail, Context, Result};
 use client_sdk::tcp_client::TcpServerMessage;
-use hyli_turmoil_shims::collections::HashMap;
 use tracing::{debug, info, trace};
 
 use super::verifiers::{verify_proof, verify_recursive_proof};
@@ -13,7 +12,10 @@ use super::DisseminationEvent;
 use super::MempoolNetMessage;
 use super::{api::RestApiMessage, storage::Storage};
 use indexmap::IndexMap;
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tokio::task::Id as TaskId;
 use tokio::task::JoinSet;
 
@@ -178,7 +180,7 @@ impl super::Mempool {
             let handle = self.inner.long_tasks_runtime.handle();
             self.inner
                 .own_data_proposal_in_preparation
-                .spawn_on(lane_id.clone(), dp, &handle);
+                .spawn_on(lane_id.clone(), dp, handle);
             started = true;
         }
 
@@ -393,16 +395,13 @@ impl super::Mempool {
         #[cfg(test)]
         self.on_new_tx(tx.clone(), &lane_suffix)?;
         #[cfg(not(test))]
-        {
-            let handle = self.inner.long_tasks_runtime.handle();
-            self.inner.processing_txs.spawn_on(
-                async move {
-                    tx.hashed();
-                    Ok((tx, lane_suffix))
-                },
-                &handle,
-            );
-        }
+        self.inner.processing_txs.spawn_on(
+            async move {
+                tx.hashed();
+                Ok((tx, lane_suffix))
+            },
+            self.inner.long_tasks_runtime.handle(),
+        );
         Ok(())
     }
 
@@ -441,7 +440,6 @@ impl super::Mempool {
                 let tx_hashed = tx.hashed();
                 let contract_name = proof_tx.contract_name.clone();
                 let lane_suffix_owned = lane_suffix_owned.clone();
-                let handle = self.inner.long_tasks_runtime.handle();
                 self.inner.processing_txs.spawn_on(
                     async move {
                         let tx = Self::process_proof_tx(tx).context(format!(
@@ -450,7 +448,7 @@ impl super::Mempool {
                         ))?;
                         Ok((tx, lane_suffix_owned))
                     },
-                    &handle,
+                    self.inner.long_tasks_runtime.handle(),
                 );
 
                 return Ok(());

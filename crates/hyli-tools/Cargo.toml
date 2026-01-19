@@ -89,4 +89,3 @@ rate-proxy = [
 
 default = ["ui", "rate-proxy"]
 ui = ["dep:ratatui", "dep:crossterm"]
-turmoil = []

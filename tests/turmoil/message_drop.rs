@@ -92,10 +92,13 @@ pub fn simulation_drop_storm(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow:
 ///
 /// Drop a handful of data proposal messages and ensure the network still converges.
 pub fn simulation_drop_data_proposals(
-    ctx: &mut TurmoilCtx,
+    _ctx: &mut TurmoilCtx,
     sim: &mut Sim<'_>,
 ) -> anyhow::Result<()> {
-    let seed = ctx.seed();
+    let seed = std::env::var("HYLI_TURMOIL_SEED")
+        .ok()
+        .and_then(|seed| seed.parse::<u64>().ok())
+        .unwrap_or(0);
     let rng = std::sync::Arc::new(std::sync::Mutex::new(StdRng::seed_from_u64(seed)));
 
     let _dropper = install_net_message_dropper(move |message| {
@@ -130,8 +133,11 @@ pub fn simulation_drop_data_proposals(
 /// **Simulation**
 ///
 /// Drop a handful of data vote messages and ensure the network still converges.
-pub fn simulation_drop_data_votes(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::Result<()> {
-    let seed = ctx.seed();
+pub fn simulation_drop_data_votes(_ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::Result<()> {
+    let seed = std::env::var("HYLI_TURMOIL_SEED")
+        .ok()
+        .and_then(|seed| seed.parse::<u64>().ok())
+        .unwrap_or(0);
     let rng = std::sync::Arc::new(std::sync::Mutex::new(StdRng::seed_from_u64(seed)));
 
     let _dropper = install_net_message_dropper(move |message| {
@@ -166,8 +172,14 @@ pub fn simulation_drop_data_votes(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> an
 /// **Simulation**
 ///
 /// Drop any message at a high rate and ensure the network still converges.
-pub fn simulation_drop_all_messages(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::Result<()> {
-    let seed = ctx.seed();
+pub fn simulation_drop_all_messages(
+    _ctx: &mut TurmoilCtx,
+    sim: &mut Sim<'_>,
+) -> anyhow::Result<()> {
+    let seed = std::env::var("HYLI_TURMOIL_SEED")
+        .ok()
+        .and_then(|seed| seed.parse::<u64>().ok())
+        .unwrap_or(0);
     let rng = std::sync::Arc::new(std::sync::Mutex::new(StdRng::seed_from_u64(seed)));
 
     let _dropper = install_net_message_dropper(move |_message| {

@@ -19,7 +19,7 @@ use crate::{
     genesis::GenesisEvent,
     model::*,
     p2p::network::{OutboundMessage, PeerEvent},
-    utils::{conf::SharedConf, rng::deterministic_rng},
+    utils::{conf::SharedConf, deterministic_rng::deterministic_rng},
 };
 use anyhow::{Context, Result};
 use core::str;
@@ -401,7 +401,7 @@ impl DaCatchupper {
                 let sleep = sleep_until(deadline);
                 tokio::pin!(sleep);
 
-                hyli_turmoil_shims::tokio_select_biased! {
+                tokio::select! {
                     _ = &mut sleep => {
                         warn!("Timeout expired while waiting for block.");
                         metrics.timeout(&peer);
