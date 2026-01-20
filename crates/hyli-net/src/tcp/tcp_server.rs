@@ -225,6 +225,7 @@ where
         socket_addrs: Vec<String>,
         msg: Vec<u8>,
         headers: TcpHeaders,
+        message_label: &'static str,
     ) -> HashMap<String, anyhow::Error> {
         // Getting targetted addrs that are not in the connected sockets list
         let unknown_socket_addrs = {
@@ -237,7 +238,6 @@ where
         let all_sent = {
             let message = TcpMessage::Data(TcpData::with_headers(msg, headers));
             debug!("Broadcasting msg {:?} to all", message);
-            let message_label = "raw";
             let mut tasks = vec![];
             for (name, socket) in self
                 .sockets
@@ -780,6 +780,7 @@ pub mod tests {
                 vec![client2_addr.to_string()],
                 borsh::to_vec(&DataAvailabilityEvent::SignedBlock(Default::default())).unwrap(),
                 vec![],
+                "raw",
             )
             .await;
 

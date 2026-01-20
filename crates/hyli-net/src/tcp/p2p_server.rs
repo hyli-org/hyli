@@ -89,12 +89,12 @@ type HandShakeJoinSet<Data> = JoinSet<(String, anyhow::Result<TcpClient<Data, Da
 
 type CanalJob = (
     HashSet<ValidatorPublicKey>,
-    (Result<Vec<u8>, std::io::Error>, TcpHeaders),
+    (Result<Vec<u8>, std::io::Error>, TcpHeaders, &'static str),
 );
 type CanalJobResult = (
     Canal,
     HashSet<ValidatorPublicKey>,
-    (Result<Vec<u8>, std::io::Error>, TcpHeaders),
+    (Result<Vec<u8>, std::io::Error>, TcpHeaders, &'static str),
 );
 
 #[derive(Debug)]
@@ -256,13 +256,13 @@ where
                         }
                     }
                 },
-                (canal, pubkeys, (data, headers)) = std::future::poll_fn(|cx| Self::poll_hashmap(&mut self.canal_jobs, cx)) => {
+                (canal, pubkeys, (data, headers, message_label)) = std::future::poll_fn(|cx| Self::poll_hashmap(&mut self.canal_jobs, cx)) => {
                     let Ok(msg) = data else {
                         warn!("Error in canal jobs: {:?}", data);
                         continue
                     };
                     // TODO: handle errors?
-                    self.actually_send_to(pubkeys, &canal, msg, headers).await;
+                    self.actually_send_to(pubkeys, &canal, msg, headers, message_label).await;
                     if let Some(jobs) = self.canal_jobs.get(&canal) {
                         self.metrics
                             .canal_jobs_snapshot(canal.clone(), jobs.len() as u64);
@@ -1087,9 +1087,15 @@ where
                 .unknown_peer("tx", canal.clone(), "unknown_canal");
             return;
         };
+        let message_label = msg.message_label();
         let peers = self.peers.keys().cloned().collect();
         let headers = crate::tcp::headers_from_span();
-        jobs.spawn(async move { (peers, (borsh::to_vec(&P2PTcpMessage::Data(msg)), headers)) });
+        jobs.spawn(async move {
+            (
+                peers,
+                (borsh::to_vec(&P2PTcpMessage::Data(msg)), headers, message_label),
+            )
+        });
         self.metrics
             .canal_jobs_snapshot(canal.clone(), jobs.len() as u64);
     }
@@ -1107,9 +1113,15 @@ where
                 .unknown_peer("tx", canal.clone(), "unknown_canal");
             return;
         };
+        let message_label = msg.message_label();
         let peers = only_for.clone();
         let headers = crate::tcp::headers_from_span();
-        jobs.spawn(async move { (peers, (borsh::to_vec(&P2PTcpMessage::Data(msg)), headers)) });
+        jobs.spawn(async move {
+            (
+                peers,
+                (borsh::to_vec(&P2PTcpMessage::Data(msg)), headers, message_label),
+            )
+        });
         self.metrics
             .canal_jobs_snapshot(canal.clone(), jobs.len() as u64);
     }
@@ -1120,6 +1132,7 @@ where
         canal: &Canal,
         msg: Vec<u8>,
         headers: TcpHeaders,
+        message_label: &'static str,
     ) -> HashMap<ValidatorPublicKey, anyhow::Error> {
         let peer_addr_to_pubkey: HashMap<String, ValidatorPublicKey> = self
             .peers
@@ -1140,7 +1153,12 @@ where
 
         let res = self
             .tcp_server
-            .raw_send_parallel(peer_addr_to_pubkey.keys().cloned().collect(), msg, headers)
+            .raw_send_parallel(
+                peer_addr_to_pubkey.keys().cloned().collect(),
+                msg,
+                headers,
+                message_label,
+            )
             .await;
         self.metrics
             .broadcast_targets(canal.clone(), peer_addr_to_pubkey.len() as u64);
@@ -1999,7 +2017,7 @@ pub mod tests {
 
         let send_errors = p2p_server1
             .tcp_server
-            .raw_send_parallel(vec![socket_addr], vec![255], vec![])
+            .raw_send_parallel(vec![socket_addr], vec![255], vec![], "raw")
             .await;
         assert!(send_errors.is_empty(), "Expected raw send to succeed");
 
