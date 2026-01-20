@@ -647,7 +647,7 @@ pub mod test {
             MempoolStatusEvent::WaitingDissemination { parent_data_proposal_hash, txs } => {
                 assert_eq!(
                     parent_data_proposal_hash,
-                    DataProposalHash::from(ctx.mempool.own_lane_id().to_string())
+                    DataProposalHash(ctx.mempool.own_lane_id().to_string().into_bytes())
                 );
                 assert_eq!(txs, actual_txs);
             }
