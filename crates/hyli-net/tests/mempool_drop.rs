@@ -20,11 +20,9 @@ fn turmoil_drop_mempool_data_proposals() -> anyhow::Result<()> {
 
     let mut drops_left = 2usize;
     let _intercept = set_message_hook_scoped(move |bytes| {
-        if decode_tcp_payload::<DataProposal>(bytes).is_ok() {
-            if drops_left > 0 {
-                drops_left -= 1;
-                return MessageAction::Drop;
-            }
+        if decode_tcp_payload::<DataProposal>(bytes).is_ok() && drops_left > 0 {
+            drops_left -= 1;
+            return MessageAction::Drop;
         }
         MessageAction::Pass
     });
@@ -65,7 +63,7 @@ fn turmoil_drop_mempool_data_proposals() -> anyhow::Result<()> {
     });
 
     sim.run()
-        .map_err(|e| anyhow::anyhow!("Simulation error {}", e.to_string()))?;
+        .map_err(|e| anyhow::anyhow!("Simulation error {e}"))?;
 
     let received = result_rx.recv_timeout(Duration::from_secs(1))?;
     assert_eq!(received, proposal3);
