@@ -1026,13 +1026,18 @@ where
             return Ok(());
         }
 
+        let message_label = msg.message_label();
         let headers = crate::tcp::headers_from_span();
         if let Some(jobs) = self.canal_jobs.get_mut(&canal) {
             if !jobs.is_empty() {
                 jobs.spawn(async move {
                     (
                         HashSet::from_iter(std::iter::once(validator_pub_key)),
-                        (borsh::to_vec(&P2PTcpMessage::Data(msg)), headers),
+                        (
+                            borsh::to_vec(&P2PTcpMessage::Data(msg)),
+                            headers,
+                            message_label,
+                        ),
                     )
                 });
                 self.metrics
@@ -1093,7 +1098,11 @@ where
         jobs.spawn(async move {
             (
                 peers,
-                (borsh::to_vec(&P2PTcpMessage::Data(msg)), headers, message_label),
+                (
+                    borsh::to_vec(&P2PTcpMessage::Data(msg)),
+                    headers,
+                    message_label,
+                ),
             )
         });
         self.metrics
@@ -1119,7 +1128,11 @@ where
         jobs.spawn(async move {
             (
                 peers,
-                (borsh::to_vec(&P2PTcpMessage::Data(msg)), headers, message_label),
+                (
+                    borsh::to_vec(&P2PTcpMessage::Data(msg)),
+                    headers,
+                    message_label,
+                ),
             )
         });
         self.metrics
