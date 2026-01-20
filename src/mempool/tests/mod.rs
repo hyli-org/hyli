@@ -1,4 +1,5 @@
 mod async_data_proposals;
+mod mempool_serialization;
 mod multi_lane_dispatch;
 mod native_verifier_test;
 mod sync_reply;

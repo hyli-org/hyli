@@ -37,7 +37,7 @@ impl Module for Mempool {
             ctx.config.data_directory.join("mempool.bin").as_path(),
         )?;
 
-        Ok(Mempool {
+        let mut mempool = Mempool {
             bus,
             file: Some(ctx.config.data_directory.clone()),
             conf: ctx.config.clone(),
@@ -45,7 +45,9 @@ impl Module for Mempool {
             metrics,
             lanes: shared_lanes_storage(&ctx.config.data_directory)?,
             inner,
-        })
+        };
+        mempool.restore_inflight_work();
+        Ok(mempool)
     }
 
     async fn run(&mut self) -> Result<()> {
@@ -59,10 +61,6 @@ impl Module for Mempool {
         // TODO: Recompute optimistic node_state for contract registrations.
         module_handle_messages! {
             on_self self,
-            delay_shutdown_until {
-                // TODO: serialize these somehow?
-                self.processing_dps.is_empty() && self.processing_txs.is_empty() && self.own_data_proposal_in_preparation.is_empty()
-            },
             listen<MsgWithHeader<MempoolNetMessage>> cmd => {
                 let _ = log_error!(self.handle_net_message(cmd).await, "Handling MempoolNetMessage in Mempool");
             }
@@ -100,13 +98,20 @@ impl Module for Mempool {
                 }
             }
             // own_lane.rs code below
-            Some(Ok(tx)) = self.inner.processing_txs.join_next() => {
-                match tx {
-                    Ok((tx, lane_suffix)) => {
-                        let _ = log_error!(self.on_new_tx(tx, &lane_suffix), "Handling tx in Mempool");
+            Some(result) = self.inner.processing_txs.join_next() => {
+                let Some((_, lane_id)) = self.inner.processing_txs_pending.pop_front() else {
+                    warn!("Could not find pending TX for task");
+                    continue;
+                };
+                match result {
+                    Ok(Ok(tx)) => {
+                        let _ = log_error!(self.on_new_tx(tx, lane_id), "Handling tx in Mempool");
+                    }
+                    Ok(Err(e)) => {
+                        warn!("Error processing tx: {:?}", e);
                     }
                     Err(e) => {
-                        warn!("Error processing tx: {:?}", e);
+                        warn!("Error processing tx task: {:?}", e);
                     }
                 }
             }

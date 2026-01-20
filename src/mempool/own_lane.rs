@@ -3,6 +3,7 @@
 use crate::{bus::BusClientSender, model::*, utils::serialize::BorshableIndexMap};
 
 use anyhow::{bail, Context, Result};
+use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
 use hyli_turmoil_shims::collections::HashMap;
 use tracing::{debug, info, trace};
@@ -19,19 +20,18 @@ use tokio::task::JoinSet;
 
 const MAX_DP_SIZE: usize = 40_000_000; // About 40 MB
 
-#[derive(Default)]
+#[derive(Default, BorshSerialize, BorshDeserialize)]
 pub(super) struct OwnDataProposalPreparation {
+    #[borsh(skip)]
     tasks: JoinSet<(LaneId, DataProposalHash)>,
+    #[borsh(skip)]
     lanes: HashSet<LaneId>,
-    prepared: HashMap<LaneId, Arc<DataProposal>>,
+    prepared: HashMap<LaneId, super::ArcBorsh<DataProposal>>,
+    #[borsh(skip)]
     task_ids: HashMap<TaskId, LaneId>,
 }
 
 impl OwnDataProposalPreparation {
-    pub(super) fn is_empty(&self) -> bool {
-        self.tasks.is_empty()
-    }
-
     pub(super) fn is_lane_in_flight(&self, lane_id: &LaneId) -> bool {
         self.lanes.contains(lane_id)
     }
@@ -39,13 +39,14 @@ impl OwnDataProposalPreparation {
     pub(super) fn spawn_on(
         &mut self,
         lane_id: LaneId,
-        data_proposal: DataProposal,
+        data_proposal: Arc<DataProposal>,
         handle: &tokio::runtime::Handle,
     ) {
-        let data_proposal = Arc::new(data_proposal);
         self.lanes.insert(lane_id.clone());
-        self.prepared
-            .insert(lane_id.clone(), Arc::clone(&data_proposal));
+        self.prepared.insert(
+            lane_id.clone(),
+            super::ArcBorsh::new(Arc::clone(&data_proposal)),
+        );
         let lane_id_clone = lane_id.clone();
         let task = self.tasks.spawn_on(
             async move { (lane_id_clone, data_proposal.hashed()) },
@@ -61,20 +62,36 @@ impl OwnDataProposalPreparation {
         let lane_id = self.task_ids.remove(&task_id)?;
         self.lanes.remove(&lane_id);
         let data_proposal = self.prepared.remove(&lane_id)?;
-        Some((lane_id, data_proposal))
+        Some((lane_id, data_proposal.arc()))
     }
 
     pub(super) fn take_prepared_by_lane(&mut self, lane_id: &LaneId) -> Option<Arc<DataProposal>> {
         self.lanes.remove(lane_id);
         self.task_ids
             .retain(|_, stored_lane| stored_lane != lane_id);
-        self.prepared.remove(lane_id)
+        self.prepared.remove(lane_id).map(|dp| dp.arc())
     }
 
     pub(super) async fn join_next(
         &mut self,
     ) -> Option<Result<(LaneId, DataProposalHash), tokio::task::JoinError>> {
         self.tasks.join_next().await
+    }
+
+    pub(super) fn restore_tasks(&mut self, handle: &tokio::runtime::Handle) {
+        for (lane_id, data_proposal) in self.prepared.iter() {
+            if self.lanes.contains(lane_id) {
+                continue;
+            }
+            self.lanes.insert(lane_id.clone());
+            let lane_id_clone = lane_id.clone();
+            let data_proposal = data_proposal.arc();
+            let task = self.tasks.spawn_on(
+                async move { (lane_id_clone, data_proposal.hashed()) },
+                handle,
+            );
+            self.task_ids.insert(task.id(), lane_id.clone());
+        }
     }
 }
 
@@ -175,10 +192,13 @@ impl super::Mempool {
                 continue;
             };
 
+            let data_proposal = Arc::new(dp);
             let handle = self.inner.long_tasks_runtime.handle();
-            self.inner
-                .own_data_proposal_in_preparation
-                .spawn_on(lane_id.clone(), dp, &handle);
+            self.inner.own_data_proposal_in_preparation.spawn_on(
+                lane_id.clone(),
+                data_proposal,
+                &handle,
+            );
             started = true;
         }
 
@@ -389,31 +409,8 @@ impl super::Mempool {
         lane_suffix: Option<LaneSuffix>,
     ) -> Result<()> {
         let lane_suffix = self.resolve_lane_suffix_for_tx(&tx, lane_suffix.as_ref());
-        // This is annoying to run in tests because we don't have the event loop setup, so go synchronous.
-        #[cfg(test)]
-        self.on_new_tx(tx.clone(), &lane_suffix)?;
-        #[cfg(not(test))]
-        {
-            let handle = self.inner.long_tasks_runtime.handle();
-            self.inner.processing_txs.spawn_on(
-                async move {
-                    tx.hashed();
-                    Ok((tx, lane_suffix))
-                },
-                &handle,
-            );
-        }
-        Ok(())
-    }
 
-    pub(super) fn on_new_tx(&mut self, tx: Transaction, lane_suffix: &LaneSuffix) -> Result<()> {
-        // TODO: Verify fees ?
-
-        let tx_type: &'static str = (&tx.transaction_data).into();
-        trace!("Tx {} received in mempool", tx_type);
-        let lane_suffix_owned = lane_suffix.clone();
-
-        let Some(lane_id) = self.lane_id_for_tx(&tx, lane_suffix) else {
+        let Some(lane_id) = self.lane_id_for_tx(&tx, &lane_suffix) else {
             info!(
                 "Dropping tx {} for unknown lane suffix {:?}",
                 tx.hashed(),
@@ -422,8 +419,34 @@ impl super::Mempool {
             return Ok(());
         };
 
-        match tx.transaction_data {
-            TransactionData::Blob(ref blob_tx) => {
+        match &tx.transaction_data {
+            // This is annoying to run in tests because we don't have the event loop setup, so go synchronous.
+            #[cfg(test)]
+            TransactionData::Blob(_) => self.on_new_tx(tx, lane_id)?,
+            #[cfg(not(test))]
+            TransactionData::Blob(_) => {
+                let arc_tx = self.track_processing_tx(tx, lane_id);
+                self.enqueue_processing_tx_hash(arc_tx)
+            }
+            TransactionData::Proof(_) => {
+                let arc_tx = self.track_processing_tx(tx, lane_id);
+                self.enqueue_processing_tx_proof(arc_tx)
+            }
+            TransactionData::VerifiedProof(_) => {
+                bail!("VerifiedProofs cannot be sent over the API.")
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn on_new_tx(&mut self, tx: Transaction, lane_id: LaneId) -> Result<()> {
+        // TODO: Verify fees ?
+
+        let tx_type: &'static str = (&tx.transaction_data).into();
+        trace!("Tx {} received in mempool", tx_type);
+
+        match &tx.transaction_data {
+            TransactionData::Blob(blob_tx) => {
                 debug!("Got new blob tx {}", tx.hashed());
                 if blob_tx.blobs.len() > 20 {
                     bail!(
@@ -432,34 +455,14 @@ impl super::Mempool {
                     );
                 }
             }
-            TransactionData::Proof(ref proof_tx) => {
-                debug!(
-                    "Got new proof tx {} for {}",
-                    tx.hashed(),
-                    proof_tx.contract_name
-                );
-                let tx_hashed = tx.hashed();
-                let contract_name = proof_tx.contract_name.clone();
-                let lane_suffix_owned = lane_suffix_owned.clone();
-                let handle = self.inner.long_tasks_runtime.handle();
-                self.inner.processing_txs.spawn_on(
-                    async move {
-                        let tx = Self::process_proof_tx(tx).context(format!(
-                            "Processing proof tx {} in blocker for {}",
-                            tx_hashed, contract_name
-                        ))?;
-                        Ok((tx, lane_suffix_owned))
-                    },
-                    &handle,
-                );
-
-                return Ok(());
+            TransactionData::Proof(_) => {
+                unreachable!("Proof TXs are converted to VerifiedProof in on_new_api_tx");
             }
-            TransactionData::VerifiedProof(ref proof_tx) => {
+            TransactionData::VerifiedProof(proof_tx) => {
                 debug!(
                     "Got verified proof tx {} for {}",
                     tx.hashed(),
-                    proof_tx.contract_name.clone()
+                    proof_tx.contract_name
                 );
             }
         }
@@ -483,7 +486,39 @@ impl super::Mempool {
         Ok(())
     }
 
-    fn process_proof_tx(mut tx: Transaction) -> Result<Transaction> {
+    pub(super) fn enqueue_processing_tx_hash(&mut self, arc_tx: Arc<Transaction>) {
+        let handle = self.inner.long_tasks_runtime.handle();
+        self.inner.processing_txs.spawn_on(
+            async move {
+                arc_tx.hashed();
+                Ok((*arc_tx).clone())
+            },
+            &handle,
+        );
+    }
+
+    pub(super) fn enqueue_processing_tx_proof(&mut self, arc_tx: Arc<Transaction>) {
+        let handle = self.inner.long_tasks_runtime.handle();
+        self.inner.processing_txs.spawn_on(
+            async move {
+                arc_tx.hashed();
+                let tx = Self::process_proof_tx((*arc_tx).clone())
+                    .context("Processing proof tx in blocker")?;
+                Ok(tx)
+            },
+            &handle,
+        );
+    }
+
+    fn track_processing_tx(&mut self, tx: Transaction, lane_id: LaneId) -> Arc<Transaction> {
+        let arc_tx = Arc::new(tx);
+        self.inner
+            .processing_txs_pending
+            .push_back((super::ArcBorsh::new(Arc::clone(&arc_tx)), lane_id));
+        arc_tx
+    }
+
+    pub(super) fn process_proof_tx(mut tx: Transaction) -> Result<Transaction> {
         let TransactionData::Proof(proof_transaction) = tx.transaction_data else {
             bail!("Can only process ProofTx");
         };
