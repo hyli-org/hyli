@@ -111,11 +111,13 @@ where
                 );
             }
             Ok(None) => {
-                // No manifest - backwards compat, proceed without verification
-                debug!(
-                    "No manifest found, loading {} without checksum verification",
+                // No manifest - fail if file exists
+                tracing::error!(
+                    "No manifest found for {}, refusing to load persisted file",
                     full_path.to_string_lossy()
                 );
+                return Err(PersistenceError::FileNotInManifest(file.to_path_buf()))
+                    .with_context(|| format!("Module {}", type_name::<S>()));
             }
             Err(e) => {
                 return Err(e).with_context(|| format!("Module {}", type_name::<S>()));
