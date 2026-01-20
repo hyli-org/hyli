@@ -279,19 +279,16 @@ impl Storage for LanesStorage {
         let mut dp_to_store = data_proposal;
         // Save full proofs separately and strip them from the stored DataProposal
         let proofs = dp_to_store.take_proofs();
-        self.by_hash_metadata.insert(
-            format!("{lane_id}:{dp_hash}"),
-            encode_metadata_to_item(lane_entry)?,
-        )?;
-        self.by_hash_data.insert(
-            format!("{lane_id}:{dp_hash}"),
-            encode_data_proposal_to_item(dp_to_store)?,
-        )?;
-        self.dp_proofs.insert(
-            format!("{lane_id}:{dp_hash}"),
-            Slice::from(borsh::to_vec(&proofs)?),
-        )?;
-        Ok(())
+        let key = format!("{lane_id}:{dp_hash}");
+        let metadata = encode_metadata_to_item(lane_entry)?;
+        let data = encode_data_proposal_to_item(dp_to_store)?;
+        let proofs = Slice::from(borsh::to_vec(&proofs)?);
+
+        let mut batch = self.db.batch();
+        batch.insert(&self.by_hash_metadata, key.clone(), metadata);
+        batch.insert(&self.by_hash_data, key.clone(), data);
+        batch.insert(&self.dp_proofs, key, proofs);
+        batch.commit().map_err(Into::into)
     }
 
     fn add_signatures<T: IntoIterator<Item = ValidatorDAG>>(
