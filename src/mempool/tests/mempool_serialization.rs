@@ -32,7 +32,7 @@ fn make_test_verified_proof_tx(contract_name: &str) -> Transaction {
         proof_size: proof.0.len(),
         proven_blobs: vec![BlobProofOutput {
             original_proof_hash: proof_hash,
-            blob_tx_hash: crate::model::TxHash::from("blob-tx"),
+            blob_tx_hash: crate::model::TxHash::from(hex::encode("blob-tx")),
             program_id: ProgramId(vec![]),
             verifier: Verifier("test".into()),
             hyli_output: HyliOutput::default(),

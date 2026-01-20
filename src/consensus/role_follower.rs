@@ -1139,15 +1139,15 @@ mod tests {
         let mut buffered_prepares = BufferedPrepares::default();
         let limit = 2;
         let p1 = ConsensusProposal {
-            parent_hash: ConsensusProposalHash::from("p1-parent"),
+            parent_hash: ConsensusProposalHash::from(hex::encode("p1-parent")),
             ..ConsensusProposal::default()
         };
         let p2 = ConsensusProposal {
-            parent_hash: ConsensusProposalHash::from("p2-parent"),
+            parent_hash: ConsensusProposalHash::from(hex::encode("p2-parent")),
             ..ConsensusProposal::default()
         };
         let p3 = ConsensusProposal {
-            parent_hash: ConsensusProposalHash::from("p3-parent"),
+            parent_hash: ConsensusProposalHash::from(hex::encode("p3-parent")),
             ..ConsensusProposal::default()
         };
 
@@ -1171,15 +1171,15 @@ mod tests {
         buffered_prepares.set_max_size(Some(1));
 
         let p1 = ConsensusProposal {
-            parent_hash: ConsensusProposalHash::from("roundtrip-p1"),
+            parent_hash: ConsensusProposalHash::from(hex::encode("roundtrip-p1")),
             ..ConsensusProposal::default()
         };
         let p2 = ConsensusProposal {
-            parent_hash: ConsensusProposalHash::from("roundtrip-p2"),
+            parent_hash: ConsensusProposalHash::from(hex::encode("roundtrip-p2")),
             ..ConsensusProposal::default()
         };
         let p3 = ConsensusProposal {
-            parent_hash: ConsensusProposalHash::from("roundtrip-p3"),
+            parent_hash: ConsensusProposalHash::from(hex::encode("roundtrip-p3")),
             ..ConsensusProposal::default()
         };
 

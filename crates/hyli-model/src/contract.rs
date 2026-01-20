@@ -559,12 +559,12 @@ impl From<&[u8]> for ProofDataHash {
 }
 impl From<String> for ProofDataHash {
     fn from(s: String) -> Self {
-        ProofDataHash(s.into_bytes())
+        ProofDataHash(crate::utils::decode_hex_string(&s))
     }
 }
 impl From<&str> for ProofDataHash {
     fn from(s: &str) -> Self {
-        ProofDataHash(s.as_bytes().to_vec())
+        ProofDataHash(crate::utils::decode_hex_string(s))
     }
 }
 
@@ -743,12 +743,12 @@ impl From<&[u8]> for ConsensusProposalHash {
 }
 impl From<String> for ConsensusProposalHash {
     fn from(s: String) -> Self {
-        ConsensusProposalHash(s.into_bytes())
+        ConsensusProposalHash(crate::utils::decode_hex_string(&s))
     }
 }
 impl From<&str> for ConsensusProposalHash {
     fn from(s: &str) -> Self {
-        ConsensusProposalHash(s.as_bytes().to_vec())
+        ConsensusProposalHash(crate::utils::decode_hex_string(s))
     }
 }
 
@@ -769,12 +769,12 @@ impl From<&[u8]> for TxHash {
 }
 impl From<String> for TxHash {
     fn from(s: String) -> Self {
-        TxHash(s.into_bytes())
+        TxHash(crate::utils::decode_hex_string(&s))
     }
 }
 impl From<&str> for TxHash {
     fn from(s: &str) -> Self {
-        TxHash(s.as_bytes().to_vec())
+        TxHash(crate::utils::decode_hex_string(s))
     }
 }
 
@@ -1198,5 +1198,47 @@ pub mod base64_field {
     {
         let s = String::deserialize(deserializer)?;
         BASE64_STANDARD.decode(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn consensus_proposal_hash_from_hex_str_roundtrip() {
+        let hex_str = "74657374";
+        let hash = ConsensusProposalHash::from(hex_str);
+        assert_eq!(hash.0, b"test".to_vec());
+        assert_eq!(format!("{hash}"), hex_str);
+        let json = serde_json::to_string(&hash).expect("serialize consensus hash");
+        assert_eq!(json, "\"74657374\"");
+        let decoded: ConsensusProposalHash =
+            serde_json::from_str(&json).expect("deserialize consensus hash");
+        assert_eq!(decoded, hash);
+    }
+
+    #[test]
+    fn txhash_from_hex_str_roundtrip() {
+        let hex_str = "746573745f7478";
+        let hash = TxHash::from(hex_str);
+        assert_eq!(hash.0, b"test_tx".to_vec());
+        assert_eq!(format!("{hash}"), hex_str);
+        let json = serde_json::to_string(&hash).expect("serialize tx hash");
+        assert_eq!(json, "\"746573745f7478\"");
+        let decoded: TxHash = serde_json::from_str(&json).expect("deserialize tx hash");
+        assert_eq!(decoded, hash);
+    }
+
+    #[test]
+    fn proof_data_hash_from_hex_str_roundtrip() {
+        let hex_str = "0x74657374";
+        let hash = ProofDataHash::from(hex_str);
+        assert_eq!(hash.0, b"test".to_vec());
+        assert_eq!(hex::encode(&hash.0), "74657374");
+        let json = serde_json::to_string(&hash).expect("serialize proof hash");
+        assert_eq!(json, "\"74657374\"");
+        let decoded: ProofDataHash = serde_json::from_str(&json).expect("deserialize proof hash");
+        assert_eq!(decoded, hash);
     }
 }

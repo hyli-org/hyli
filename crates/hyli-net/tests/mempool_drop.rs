@@ -30,15 +30,15 @@ fn turmoil_drop_mempool_data_proposals() -> anyhow::Result<()> {
     });
 
     let proposal1 = DataProposal::new(
-        DataProposalHash::from("parent-1"),
+        DataProposalHash::from(hex::encode("parent-1")),
         vec![Transaction::default()],
     );
     let proposal2 = DataProposal::new(
-        DataProposalHash::from("parent-2"),
+        DataProposalHash::from(hex::encode("parent-2")),
         vec![Transaction::default()],
     );
     let proposal3 = DataProposal::new(
-        DataProposalHash::from("parent-3"),
+        DataProposalHash::from(hex::encode("parent-3")),
         vec![Transaction::default()],
     );
     let proposal3_for_client = proposal3.clone();

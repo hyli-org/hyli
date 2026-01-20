@@ -23,8 +23,23 @@ pub mod hex_bytes {
     {
         let s = String::deserialize(deserializer)?;
         let trimmed = s.strip_prefix("0x").unwrap_or(&s);
-        hex::decode(trimmed).map_err(serde::de::Error::custom)
+        let normalized = if trimmed.len() % 2 == 1 {
+            format!("0{trimmed}")
+        } else {
+            trimmed.to_string()
+        };
+        hex::decode(&normalized).map_err(serde::de::Error::custom)
     }
+}
+
+pub fn decode_hex_string(s: &str) -> Vec<u8> {
+    let trimmed = s.strip_prefix("0x").unwrap_or(s);
+    let normalized = if trimmed.len() % 2 == 1 {
+        format!("0{trimmed}")
+    } else {
+        trimmed.to_string()
+    };
+    hex::decode(&normalized).expect("invalid hex string")
 }
 
 #[derive(

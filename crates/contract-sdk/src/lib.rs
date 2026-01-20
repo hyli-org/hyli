@@ -278,23 +278,23 @@ mod tests {
 
     #[test]
     fn test_txhash_from_string() {
-        let txhash_str = "test_txhash".to_string();
+        let txhash_str = "746573745f747868617368".to_string();
         let txhash = TxHash::from(txhash_str.clone());
-        assert_eq!(txhash.0, txhash_str);
+        assert_eq!(txhash.0, b"test_txhash".to_vec());
     }
 
     #[test]
     fn test_txhash_from_str() {
-        let txhash_str = "test_txhash";
+        let txhash_str = "746573745f747868617368";
         let txhash = TxHash::from(txhash_str);
-        assert_eq!(txhash.0, txhash_str.to_string());
+        assert_eq!(txhash.0, b"test_txhash".to_vec());
     }
 
     #[test]
     fn test_txhash_new() {
-        let txhash_str = "test_txhash";
+        let txhash_str = "746573745f747868617368";
         let txhash = TxHash::new(txhash_str);
-        assert_eq!(txhash.0, txhash_str.to_string());
+        assert_eq!(txhash.0, b"test_txhash".to_vec());
     }
 
     #[test]
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn test_txhash_display() {
-        let txhash_str = "test_txhash";
+        let txhash_str = "746573745f747868617368";
         let txhash = TxHash::new(txhash_str);
         assert_eq!(format!("{txhash}"), txhash_str);
     }
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn test_txhash_encoding() {
-        let txhash = TxHash::new("test_txhash");
+        let txhash = TxHash::new("746573745f747868617368");
         let encoded = borsh::to_vec(&txhash).expect("Failed to encode TxHash");
         let decoded: TxHash = borsh::from_slice(&encoded).expect("Failed to decode TxHash");
         assert_eq!(txhash, decoded);

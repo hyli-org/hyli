@@ -224,12 +224,12 @@ impl From<&[u8]> for DataProposalHash {
 }
 impl From<String> for DataProposalHash {
     fn from(s: String) -> Self {
-        DataProposalHash(s.into_bytes())
+        DataProposalHash(crate::utils::decode_hex_string(&s))
     }
 }
 impl From<&str> for DataProposalHash {
     fn from(s: &str) -> Self {
-        DataProposalHash(s.as_bytes().to_vec())
+        DataProposalHash(crate::utils::decode_hex_string(s))
     }
 }
 
@@ -292,5 +292,23 @@ impl Display for CutDisplay<'_> {
             cut_str.push_str(&format!("{lane_id}:{hash}({size}), "));
         }
         write!(f, "{}", cut_str.trim_end())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn data_proposal_hash_from_hex_str_roundtrip() {
+        let hex_str = "746573745f6470";
+        let hash = DataProposalHash::from(hex_str);
+        assert_eq!(hash.0, b"test_dp".to_vec());
+        assert_eq!(format!("{hash}"), hex_str);
+        let json = serde_json::to_string(&hash).expect("serialize data proposal hash");
+        assert_eq!(json, "\"746573745f6470\"");
+        let decoded: DataProposalHash =
+            serde_json::from_str(&json).expect("deserialize data proposal hash");
+        assert_eq!(decoded, hash);
     }
 }

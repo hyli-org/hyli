@@ -1082,7 +1082,7 @@ pub mod test {
 
             self.consensus.bft_round_state.slot = 1;
             self.consensus.bft_round_state.parent_hash =
-                ConsensusProposalHash::from("genesis");
+                ConsensusProposalHash::from(hex::encode("genesis"));
             self.consensus.bft_round_state.parent_cut = vec![(
                 LaneId::new(
                     cryptos
@@ -1091,7 +1091,7 @@ pub mod test {
                         .validator_pubkey()
                         .clone(),
                 ),
-                DataProposalHash::from("genesis"),
+                DataProposalHash::from(hex::encode("genesis")),
                 LaneBytesSize(100),
                 AggregateSignature::default(),
             )];
@@ -1437,7 +1437,7 @@ pub mod test {
         assert_eq!(view1, 0);
         assert_eq!(
             cp1.parent_hash,
-            ConsensusProposalHash::from("genesis")
+            ConsensusProposalHash::from(hex::encode("genesis"))
         );
         assert_eq!(ticket1, Ticket::Genesis);
 
@@ -1475,13 +1475,13 @@ pub mod test {
             .consensus
             .crypto
             .sign((
-                ConsensusProposalHash::from("hash-a"),
+                ConsensusProposalHash::from(hex::encode("hash-a")),
                 PrepareVoteMarker,
             ))
             .unwrap();
         let invalid_vote = Signed {
             msg: (
-                ConsensusProposalHash::from("hash-b"),
+                ConsensusProposalHash::from(hex::encode("hash-b")),
                 PrepareVoteMarker,
             ),
             signature: signed_vote.signature,
@@ -1575,12 +1575,12 @@ pub mod test {
             timestamp: TimestampMs(123),
             cut: vec![(
                 LaneId::new(node2.pubkey()),
-                DataProposalHash::from("test"),
+                DataProposalHash::from(hex::encode("test")),
                 LaneBytesSize::default(),
                 AggregateSignature::default(),
             )],
             staking_actions: vec![],
-            parent_hash: ConsensusProposalHash::from("hash"),
+            parent_hash: ConsensusProposalHash::from(hex::encode("hash")),
         };
 
         // Create wrong prepare
@@ -1655,12 +1655,12 @@ pub mod test {
                     timestamp: TimestampMs(123),
                     cut: vec![(
                         LaneId::new(node2.pubkey()),
-                        DataProposalHash::from("test"),
+                        DataProposalHash::from(hex::encode("test")),
                         LaneBytesSize::default(),
                         AggregateSignature::default(),
                     )],
                     staking_actions: vec![],
-                    parent_hash: ConsensusProposalHash::from("hash"),
+                    parent_hash: ConsensusProposalHash::from(hex::encode("hash")),
                 },
                 Ticket::Genesis,
                 0,
@@ -1704,12 +1704,12 @@ pub mod test {
                     timestamp: TimestampMs(123),
                     cut: vec![(
                         LaneId::new(node2.pubkey()),
-                        DataProposalHash::from("test"),
+                        DataProposalHash::from(hex::encode("test")),
                         LaneBytesSize::default(),
                         AggregateSignature::default(),
                     )],
                     staking_actions: vec![],
-                    parent_hash: ConsensusProposalHash::from("hash"),
+                    parent_hash: ConsensusProposalHash::from(hex::encode("hash")),
                 },
                 Ticket::Genesis,
                 0,
