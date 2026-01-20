@@ -59,17 +59,22 @@ pub struct Genesis {
     bus: GenesisBusClient,
     peer_pubkey: PeerPublicKeyMap,
     crypto: SharedBlstCrypto,
+    already_handled_genesis: bool,
 }
 
 impl Module for Genesis {
     type Context = SharedRunContext;
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
+        let file = PathBuf::from("genesis.bin");
+        let already_handled_genesis: bool =
+            Self::load_from_disk_or_default(&ctx.config.data_directory, &file)?;
         let bus = GenesisBusClient::new_from_bus(bus.new_handle()).await;
         Ok(Genesis {
             config: ctx.config.clone(),
             bus,
             peer_pubkey: BTreeMap::new(),
             crypto: ctx.crypto.clone(),
+            already_handled_genesis,
         })
     }
 
@@ -97,10 +102,7 @@ contract_states!(
 #[allow(clippy::expect_used, reason = "genesis should panic if incorrect")]
 impl Genesis {
     pub async fn start(&mut self) -> Result<(), Error> {
-        let file = PathBuf::from("genesis.bin");
-        let already_handled_genesis: bool =
-            Self::load_from_disk_or_default(&self.config.data_directory, &file)?;
-        if already_handled_genesis {
+        if self.already_handled_genesis {
             debug!("🌿 Genesis block already handled, skipping");
             // TODO: do we need a different message?
             self.bus.send(GenesisEvent::NoGenesis {})?;
@@ -733,6 +735,7 @@ mod tests {
                 bus,
                 peer_pubkey: BTreeMap::new(),
                 crypto,
+                already_handled_genesis: false,
             },
             test_bus,
         )

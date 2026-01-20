@@ -220,3 +220,12 @@ pub fn write_manifest(data_dir: &Path, checksums: &[(PathBuf, u32)]) -> Result<(
     info!("Wrote checksum manifest with {} entries", checksums.len());
     Ok(())
 }
+/// Remove the manifest file from the data directory, if it exists.
+pub fn remove_manifest(data_dir: &Path) -> Result<(), PersistenceError> {
+    let manifest = manifest_path(data_dir);
+    match fs::remove_file(&manifest) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(PersistenceError::IoError(e)),
+    }
+}

@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     bus::{BusClientReceiver, BusClientSender, SharedMessageBus},
-    bus_client, handle_messages, log_error,
+    bus_client, handle_messages, log_error, log_warn,
 };
 use anyhow::{bail, Context, Error, Result};
 use rand::{distr::Alphanumeric, Rng};
@@ -447,6 +447,12 @@ impl ModulesHandler {
         if !self.running_modules.is_empty() {
             bail!("Modules are already running!");
         }
+
+        info!("Manifest file support is being removed; checksums will no longer be verified or written.");
+        _ = log_warn!(
+            checksums::remove_manifest(&self.data_dir),
+            "Removing manifest file"
+        );
 
         for module in self.modules.drain(..) {
             let module_name = module.name.clone();
