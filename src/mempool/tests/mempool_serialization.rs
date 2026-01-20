@@ -230,8 +230,9 @@ async fn test_mempool_full_persistence_cycle() -> Result<()> {
         .processing_txs_pending
         .push_back((ArcBorsh::new(Arc::new(pending_tx.clone())), lane_id.clone()));
 
-    // Save to disk
-    Mempool::save_on_disk(data_dir, mempool_file.as_ref(), &ctx.mempool.inner)?;
+    // Save to disk and write manifest entry for checksum verification.
+    let checksum = Mempool::save_on_disk(data_dir, mempool_file.as_ref(), &ctx.mempool.inner)?;
+    hyli_bus::modules::write_manifest(data_dir, &[(data_dir.join(mempool_file), checksum)])?;
 
     // Load from disk
     let loaded = Mempool::load_from_disk::<MempoolStore>(data_dir, mempool_file.as_ref()).unwrap();
