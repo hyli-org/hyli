@@ -15,6 +15,8 @@ use crate::utils::deterministic_rng::deterministic_rng;
 pub enum PersistenceError {
     /// File not found (not an error, use default)
     NotFound,
+    /// File listed in manifest but missing on disk
+    FileMissingOnDisk(PathBuf),
     /// Checksum verification failed (data corruption)
     ChecksumMismatch { expected: String, actual: String },
     /// File exists but is not listed in the manifest (wasn't in successful shutdown)
@@ -31,6 +33,13 @@ impl std::fmt::Display for PersistenceError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotFound => write!(f, "File not found"),
+            Self::FileMissingOnDisk(path) => {
+                write!(
+                    f,
+                    "File {} is listed in manifest but missing on disk",
+                    path.display()
+                )
+            }
             Self::ChecksumMismatch { expected, actual } => {
                 write!(
                     f,

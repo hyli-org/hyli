@@ -46,6 +46,7 @@ where
     /// Returns:
     /// - `Ok(Some(data))` if file exists and checksum verifies (or no manifest for backwards compat)
     /// - `Ok(None)` if file doesn't exist
+    /// - `Err` with `PersistenceError::FileMissingOnDisk` if file is in manifest but missing on disk
     /// - `Err` with `PersistenceError::FileNotInManifest` if file exists but isn't in manifest
     /// - `Err` with `PersistenceError::ChecksumMismatch` if checksum verification fails
     /// - `Err` with `PersistenceError::DeserializationFailed` if data is corrupted
@@ -58,16 +59,27 @@ where
         }
         let full_path = data_dir.join(file);
 
-        // Read and deserialize while computing checksum
         let data_file = match fs::File::open(&full_path) {
             Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                info!(
-                    "File {} not found for module {} (using default)",
-                    full_path.to_string_lossy(),
-                    type_name::<S>(),
-                );
-                return Ok(None);
+                // Missing file: only acceptable if manifest doesn't list it.
+                match checksums::read_checksum_from_manifest(data_dir, file) {
+                    Ok(Some(_)) => {
+                        return Err(PersistenceError::FileMissingOnDisk(full_path))
+                            .with_context(|| format!("Module {}", type_name::<S>()));
+                    }
+                    Ok(None) | Err(PersistenceError::FileNotInManifest(_)) => {
+                        info!(
+                            "File {} not found for module {} (using default)",
+                            full_path.to_string_lossy(),
+                            type_name::<S>(),
+                        );
+                        return Ok(None);
+                    }
+                    Err(e) => {
+                        return Err(e).with_context(|| format!("Module {}", type_name::<S>()))
+                    }
+                }
             }
             Err(e) => {
                 return Err(PersistenceError::IoError(e))
@@ -75,6 +87,7 @@ where
             }
         };
 
+        // Deserialize while computing checksum to avoid a second read.
         let mut checksum_reader = ChecksumReader::new(data_file);
         let deserialized: S = borsh::from_reader(&mut checksum_reader)
             .with_context(|| format!("Deserializing module {}", type_name::<S>()))?;
@@ -83,30 +96,10 @@ where
             .with_context(|| format!("Module {}", type_name::<S>()))?;
 
         let actual_checksum = checksum_reader.checksum();
-
-        // Check manifest for expected checksum
-        match checksums::read_checksum_from_manifest(data_dir, file) {
-            Ok(Some(expected_checksum)) => {
-                if expected_checksum != actual_checksum {
-                    tracing::error!(
-                        "Checksum mismatch for {}: expected {}, got {}",
-                        full_path.to_string_lossy(),
-                        format_checksum(expected_checksum),
-                        format_checksum(actual_checksum)
-                    );
-                    return Err(PersistenceError::ChecksumMismatch {
-                        expected: format_checksum(expected_checksum),
-                        actual: format_checksum(actual_checksum),
-                    })
-                    .with_context(|| format!("Module {}", type_name::<S>()));
-                }
-                debug!(
-                    "Checksum verification passed for {}",
-                    file.to_string_lossy()
-                );
-            }
+        // Manifest is required if the file exists; it is the source of truth.
+        let expected_checksum = match checksums::read_checksum_from_manifest(data_dir, file) {
+            Ok(Some(expected_checksum)) => expected_checksum,
             Ok(None) => {
-                // No manifest - fail if file exists
                 tracing::error!(
                     "No manifest found for {}, refusing to load persisted file",
                     full_path.to_string_lossy()
@@ -117,7 +110,25 @@ where
             Err(e) => {
                 return Err(e).with_context(|| format!("Module {}", type_name::<S>()));
             }
+        };
+
+        if expected_checksum != actual_checksum {
+            tracing::error!(
+                "Checksum mismatch for {}: expected {}, got {}",
+                full_path.to_string_lossy(),
+                format_checksum(expected_checksum),
+                format_checksum(actual_checksum)
+            );
+            return Err(PersistenceError::ChecksumMismatch {
+                expected: format_checksum(expected_checksum),
+                actual: format_checksum(actual_checksum),
+            })
+            .with_context(|| format!("Module {}", type_name::<S>()));
         }
+        debug!(
+            "Checksum verification passed for {}",
+            file.to_string_lossy()
+        );
 
         info!("Loaded data from disk {}", full_path.to_string_lossy());
         Ok(Some(deserialized))
