@@ -693,7 +693,7 @@ impl Genesis {
                         .into()
                     })
                     .collect(),
-                parent_hash: ConsensusProposalHash::from(hex::encode("genesis")),
+                parent_hash: ConsensusProposalHash(b"genesis".to_vec()),
             },
         }
     }

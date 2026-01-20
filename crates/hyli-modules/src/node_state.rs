@@ -2086,7 +2086,7 @@ pub mod test {
             data_proposals: vec![(
                 LaneId::default(),
                 vec![DataProposal::new(
-                    DataProposalHash::from(hex::encode(format!("{height}"))),
+                    DataProposalHash(format!("{height}").into_bytes()),
                     txs,
                 )],
             )],
