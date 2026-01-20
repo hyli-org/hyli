@@ -25,6 +25,16 @@ pub struct BlockUnderConstruction {
     pub holes_materialized: bool,
 }
 
+struct HoleFillError {
+    lane_id: LaneId,
+    hole_top: DataProposalHash,
+    lane_size: LaneBytesSize,
+    err: anyhow::Error,
+}
+
+type HoleFillChainResult =
+    std::result::Result<(LaneId, bool, Option<(DataProposalHash, LaneBytesSize)>), HoleFillError>;
+
 impl super::Mempool {
     pub(super) async fn on_sync_reply(
         &mut self,
@@ -95,7 +105,8 @@ impl super::Mempool {
                 &mut self.bus,
                 buc,
                 &lane_id,
-                (expected_top, lane_size),
+                &expected_top,
+                lane_size,
                 signatures,
                 data_proposal,
             )?;
@@ -166,8 +177,8 @@ impl super::Mempool {
         let mut filled_any = false;
         let mut iter = fill_from.into_iter();
         while let Some((lane_id, (hole_top, lane_size))) = iter.next() {
-            match self.fill_hole_chain(buc, &lane_id, hole_top, lane_size) {
-                Ok((filled, next_hole)) => {
+            match self.fill_hole_chain(buc, lane_id, hole_top, lane_size) {
+                Ok((lane_id, filled, next_hole)) => {
                     if filled {
                         filled_any = true;
                     }
@@ -175,7 +186,12 @@ impl super::Mempool {
                         buc.holes_tops.insert(lane_id, (next_top, next_size));
                     }
                 }
-                Err(err) => {
+                Err(HoleFillError {
+                    lane_id,
+                    hole_top,
+                    lane_size,
+                    err,
+                }) => {
                     // Reinsert remaining holes on error to avoid dropping state.
                     buc.holes_tops.insert(lane_id, (hole_top, lane_size));
                     for (lane_id, (hole_top, lane_size)) in iter {
@@ -193,32 +209,43 @@ impl super::Mempool {
     fn fill_hole_chain(
         &mut self,
         buc: &mut BlockUnderConstruction,
-        lane_id: &LaneId,
+        lane_id: LaneId,
         mut hole_top: DataProposalHash,
         mut lane_size: LaneBytesSize,
-    ) -> Result<(bool, Option<(DataProposalHash, LaneBytesSize)>)> {
+    ) -> HoleFillChainResult {
         let mut filled_any = false;
         loop {
-            let Some((signatures, data_proposal)) = self.take_entry_for_hash(lane_id, &hole_top)
+            let Some((signatures, data_proposal)) = self.take_entry_for_hash(&lane_id, &hole_top)
             else {
-                return Ok((filled_any, Some((hole_top, lane_size))));
+                return Ok((lane_id, filled_any, Some((hole_top, lane_size))));
             };
             match Self::fill_hole_from_entry(
                 &mut self.lanes,
                 &mut self.bus,
                 buc,
-                lane_id,
-                (hole_top, lane_size),
+                &lane_id,
+                &hole_top,
+                lane_size,
                 signatures,
                 data_proposal,
-            )? {
-                Some((next_top, next_size)) => {
-                    filled_any = true;
-                    hole_top = next_top;
-                    lane_size = next_size;
-                }
-                None => {
-                    return Ok((true, None));
+            ) {
+                Ok(next_hole) => match next_hole {
+                    Some((next_top, next_size)) => {
+                        filled_any = true;
+                        hole_top = next_top;
+                        lane_size = next_size;
+                    }
+                    None => {
+                        return Ok((lane_id, true, None));
+                    }
+                },
+                Err(err) => {
+                    return Err(HoleFillError {
+                        lane_id,
+                        hole_top,
+                        lane_size,
+                        err,
+                    });
                 }
             }
         }
@@ -226,18 +253,20 @@ impl super::Mempool {
 
     // Fill a single hole entry; returns the next hole top, if any.
     // One day rust will have disjoint self borrows.
+    #[expect(clippy::too_many_arguments, reason = "Split to avoid double borrowing")]
     fn fill_hole_from_entry(
         lanes: &mut super::LanesStorage,
         bus: &mut MempoolBusClient,
         buc: &mut BlockUnderConstruction,
         lane_id: &LaneId,
-        (expected_top, lane_size): (DataProposalHash, LaneBytesSize),
+        expected_top: &DataProposalHash,
+        lane_size: LaneBytesSize,
         signatures: Vec<ValidatorDAG>,
         data_proposal: DataProposal,
     ) -> Result<Option<(DataProposalHash, LaneBytesSize)>> {
         let lane_operator = lane_id.operator();
         let dp_hash = data_proposal.hashed();
-        if expected_top != dp_hash {
+        if expected_top != &dp_hash {
             bail!(
                 "Hole fill expected top {} but got {} for lane {}",
                 expected_top,

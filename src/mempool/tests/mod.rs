@@ -911,7 +911,7 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
         },
     );
 
-    // Reply for dp3 should fill dp3 -> dp2 -> dp1 from buffer.
+    // Reply for dp3 should store dp3 and leave buffered entries intact.
     let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
         lane_id.clone(),
         vec![ctx
@@ -924,31 +924,7 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
     let handle = ctx.mempool.handle_net_message(signed_msg).await;
     assert_ok!(handle, "Should handle net message");
 
-    assert!(ctx.mempool.lanes.contains(&lane_id, &dp1.hashed()));
-    assert!(ctx.mempool.lanes.contains(&lane_id, &dp2.hashed()));
     assert!(ctx.mempool.lanes.contains(&lane_id, &dp3.hashed()));
-
-    let metadata = ctx
-        .mempool
-        .lanes
-        .get_metadata_by_hash(&lane_id, &dp1.hashed())?
-        .expect("Expected stored metadata");
-    assert_eq!(
-        metadata.parent_data_proposal_hash,
-        DataProposalParent::LaneRoot(lane_id.clone())
-    );
-    assert_eq!(metadata.cumul_size, cumul_size1);
-
-    let metadata = ctx
-        .mempool
-        .lanes
-        .get_metadata_by_hash(&lane_id, &dp2.hashed())?
-        .expect("Expected stored metadata");
-    assert_eq!(
-        metadata.parent_data_proposal_hash,
-        DataProposalParent::DP(dp1.hashed())
-    );
-    assert_eq!(metadata.cumul_size, cumul_size2);
 
     let metadata = ctx
         .mempool
@@ -960,6 +936,29 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
         DataProposalParent::DP(dp2.hashed())
     );
     assert_eq!(metadata.cumul_size, cumul_size3);
+
+    let buffered = ctx
+        .mempool
+        .buffered_entries
+        .get(&lane_id)
+        .expect("Expected buffered entries");
+    assert!(buffered.contains_key(&dp1.hashed()));
+    assert!(buffered.contains_key(&dp2.hashed()));
+    assert!(buffered.contains_key(&dp_other.hashed()));
+
+    // Building queued blocks should consume the remaining buffered chain entries.
+    ctx.mempool.try_to_send_full_signed_blocks().await?;
+
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp1.hashed()));
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp2.hashed()));
+    let buffered = ctx
+        .mempool
+        .buffered_entries
+        .get(&lane_id)
+        .expect("Expected buffered entries");
+    assert!(!buffered.contains_key(&dp1.hashed()));
+    assert!(!buffered.contains_key(&dp2.hashed()));
+    assert!(buffered.contains_key(&dp_other.hashed()));
 
     // Unrelated buffered entry remains.
     assert!(ctx
