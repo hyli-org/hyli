@@ -42,6 +42,7 @@ where
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send;
 
     /// Load data from disk with checksum verification from manifest.
+    /// `file` is relative to `data_dir`.
     ///
     /// Returns:
     /// - `Ok(Some(data))` if file exists and checksum verifies (or no manifest for backwards compat)
@@ -49,17 +50,22 @@ where
     /// - `Err` with `PersistenceError::FileNotInManifest` if file exists but isn't in manifest
     /// - `Err` with `PersistenceError::ChecksumMismatch` if checksum verification fails
     /// - `Err` with `PersistenceError::DeserializationFailed` if data is corrupted
-    fn load_from_disk<S>(file: &Path) -> Result<Option<S>>
+    fn load_from_disk<S>(data_dir: &Path, file: &Path) -> Result<Option<S>>
     where
         S: borsh::BorshDeserialize,
     {
+        if file.is_absolute() {
+            bail!("Persisted file path must be relative to data_dir");
+        }
+        let full_path = data_dir.join(file);
+
         // Read and deserialize while computing checksum
-        let data_file = match fs::File::open(file) {
+        let data_file = match fs::File::open(&full_path) {
             Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 info!(
                     "File {} not found for module {} (using default)",
-                    file.to_string_lossy(),
+                    full_path.to_string_lossy(),
                     type_name::<S>(),
                 );
                 return Ok(None);
@@ -80,12 +86,12 @@ where
         let actual_checksum = checksum_reader.checksum();
 
         // Check manifest for expected checksum
-        match checksums::read_checksum_from_manifest(file) {
+        match checksums::read_checksum_from_manifest(data_dir, file) {
             Ok(Some(expected_checksum)) => {
                 if expected_checksum != actual_checksum {
                     tracing::error!(
                         "Checksum mismatch for {}: expected {}, got {}",
-                        file.to_string_lossy(),
+                        full_path.to_string_lossy(),
                         format_checksum(expected_checksum),
                         format_checksum(actual_checksum)
                     );
@@ -104,7 +110,7 @@ where
                 // No manifest - backwards compat, proceed without verification
                 debug!(
                     "No manifest found, loading {} without checksum verification",
-                    file.to_string_lossy()
+                    full_path.to_string_lossy()
                 );
             }
             Err(e) => {
@@ -112,7 +118,7 @@ where
             }
         }
 
-        info!("Loaded data from disk {}", file.to_string_lossy());
+        info!("Loaded data from disk {}", full_path.to_string_lossy());
         Ok(Some(deserialized))
     }
 
@@ -128,19 +134,25 @@ where
         }
     }
 
-    fn load_from_disk_or_default<S>(file: &Path) -> Result<S>
+    fn load_from_disk_or_default<S>(data_dir: &Path, file: &Path) -> Result<S>
     where
         S: borsh::BorshDeserialize + Default,
     {
-        Ok(Self::load_from_disk(file)?.unwrap_or_default())
+        Ok(Self::load_from_disk(data_dir, file)?.unwrap_or_default())
     }
 
     /// Save data to disk and return the CRC32 checksum.
+    /// `file` is relative to `data_dir`.
     /// The checksum should be collected by ModulesHandler and written to a manifest file.
-    fn save_on_disk<S>(file: &Path, store: &S) -> Result<u32>
+    fn save_on_disk<S>(data_dir: &Path, file: &Path, store: &S) -> Result<u32>
     where
         S: borsh::BorshSerialize,
     {
+        if file.is_absolute() {
+            bail!("Persisted file path must be relative to data_dir");
+        }
+        let full_path = data_dir.join(file);
+
         // TODO/FIXME: Concurrent writes can happen, and an older state can override a newer one
         // Example:
         // State 1 starts creating a tmp file data.state1.tmp
@@ -154,7 +166,7 @@ where
             .map(char::from)
             .collect();
 
-        let tmp_data = file.with_extension(format!("{salt}.tmp"));
+        let tmp_data = full_path.with_extension(format!("{salt}.tmp"));
 
         debug!("Saving on disk in a tmp file {:?}", tmp_data.clone());
 
@@ -178,8 +190,8 @@ where
         let checksum = checksum_writer.checksum();
 
         // Atomically rename data file
-        debug!("Renaming {:?} to {:?}", &tmp_data, &file);
-        log_error!(fs::rename(&tmp_data, file), "Rename data file")?;
+        debug!("Renaming {:?} to {:?}", &tmp_data, &full_path);
+        log_error!(fs::rename(&tmp_data, &full_path), "Rename data file")?;
 
         Ok(checksum)
     }

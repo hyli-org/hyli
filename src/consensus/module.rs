@@ -4,6 +4,7 @@ use hyli_modules::{
     bus::SharedMessageBus,
     modules::{files::CONSENSUS_BIN, Module},
 };
+use std::path::PathBuf;
 
 use super::{
     api, consensus_bus_client::ConsensusBusClient, metrics::ConsensusMetrics, Consensus,
@@ -15,8 +16,9 @@ impl Module for Consensus {
     type Context = SharedRunContext;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let file = ctx.config.data_directory.join(CONSENSUS_BIN);
-        let mut store: ConsensusStore = Self::load_from_disk_or_default(file.as_path())?;
+        let file = PathBuf::from(CONSENSUS_BIN);
+        let mut store: ConsensusStore =
+            Self::load_from_disk_or_default(&ctx.config.data_directory, &file)?;
         // Cap in-memory prepare cache on startup to avoid loading oversized state.
         store
             .bft_round_state
@@ -59,8 +61,8 @@ impl Module for Consensus {
                 .follower
                 .buffered_prepares
                 .set_max_size(Some(serialize_limit));
-            let checksum = Self::save_on_disk(file.as_path(), &self.store)?;
-            return Ok(vec![(file.clone(), checksum)]);
+            let checksum = Self::save_on_disk(&self.config.data_directory, file, &self.store)?;
+            return Ok(vec![(self.config.data_directory.join(file), checksum)]);
         }
 
         Ok(vec![])

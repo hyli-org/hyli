@@ -38,9 +38,8 @@ impl Module for NodeStateProcessor {
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let node_state_store = Self::load_from_disk_or_default::<NodeStateStore>(
-            ctx.data_directory
-                .join("da_listener_node_state.bin")
-                .as_path(),
+            &ctx.data_directory,
+            "da_listener_node_state.bin".as_ref(),
         )?;
 
         let node_state = NodeState {
@@ -79,12 +78,13 @@ impl Module for NodeStateProcessor {
     }
 
     async fn persist(&mut self) -> Result<ModulePersistOutput> {
-        let file = self
-            .config
-            .data_directory
-            .join("da_listener_node_state.bin");
-        let checksum = Self::save_on_disk::<NodeStateStore>(file.as_path(), &self.node_state)?;
-        Ok(vec![(file, checksum)])
+        let file = "da_listener_node_state.bin";
+        let checksum = Self::save_on_disk::<NodeStateStore>(
+            &self.config.data_directory,
+            file.as_ref(),
+            &self.node_state,
+        )?;
+        Ok(vec![(self.config.data_directory.join(file), checksum)])
     }
 }
 

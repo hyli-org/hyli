@@ -72,7 +72,8 @@ impl Module for NodeStateModule {
         let metrics = NodeStateMetrics::global(ctx.node_id.clone(), "node_state");
 
         let store = Self::load_from_disk_or_default::<NodeStateStore>(
-            ctx.data_directory.join(NODE_STATE_BIN).as_path(),
+            &ctx.data_directory,
+            NODE_STATE_BIN.as_ref(),
         )?;
 
         for name in store.contracts.keys() {
@@ -145,9 +146,10 @@ impl Module for NodeStateModule {
     }
 
     async fn persist(&mut self) -> Result<ModulePersistOutput> {
-        let file = self.data_directory.join(NODE_STATE_BIN);
-        let checksum = Self::save_on_disk::<NodeStateStore>(file.as_path(), &self.inner)?;
-        Ok(vec![(file, checksum)])
+        let file = PathBuf::from(NODE_STATE_BIN);
+        let checksum =
+            Self::save_on_disk::<NodeStateStore>(&self.data_directory, &file, &self.inner)?;
+        Ok(vec![(self.data_directory.join(file), checksum)])
     }
 }
 

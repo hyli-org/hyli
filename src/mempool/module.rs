@@ -35,7 +35,8 @@ impl Module for Mempool {
         let bus = MempoolBusClient::new_from_bus(bus.new_handle()).await;
 
         let inner = Self::load_from_disk_or_default::<MempoolStore>(
-            ctx.config.data_directory.join("mempool.bin").as_path(),
+            &ctx.config.data_directory,
+            "mempool.bin".as_ref(),
         )?;
 
         let mut mempool = Mempool {
@@ -132,16 +133,19 @@ impl Module for Mempool {
 
     async fn persist(&mut self) -> Result<ModulePersistOutput> {
         if let Some(file) = &self.file {
-            let mempool_file = file.join("mempool.bin");
-            let checksum = Self::save_on_disk(mempool_file.as_path(), &self.inner)?;
+            let mempool_file = "mempool.bin";
+            let checksum = Self::save_on_disk(file, mempool_file.as_ref(), &self.inner)?;
 
-            let lanes_tip_file = file.join("mempool_lanes_tip.bin");
-            let lanes_tip_checksum =
-                Self::save_on_disk(lanes_tip_file.as_path(), &self.lanes.lane_tips_snapshot())?;
+            let lanes_tip_file = "mempool_lanes_tip.bin";
+            let lanes_tip_checksum = Self::save_on_disk(
+                file,
+                lanes_tip_file.as_ref(),
+                &self.lanes.lane_tips_snapshot(),
+            )?;
 
             return Ok(vec![
-                (mempool_file, checksum),
-                (lanes_tip_file, lanes_tip_checksum),
+                (file.join(mempool_file), checksum),
+                (file.join(lanes_tip_file), lanes_tip_checksum),
             ]);
         }
 

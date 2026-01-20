@@ -215,7 +215,8 @@ async fn test_mempool_full_persistence_cycle() -> Result<()> {
 
     let mut ctx = MempoolTestCtx::new("mempool").await;
     let tmpdir = tempfile::tempdir()?;
-    let mempool_file = tmpdir.path().join("mempool.bin");
+    let data_dir = tmpdir.path();
+    let mempool_file = "mempool.bin";
 
     // Add some transactions to waiting_dissemination_txs
     let blob_tx = make_test_blob_tx("persist-test");
@@ -230,10 +231,10 @@ async fn test_mempool_full_persistence_cycle() -> Result<()> {
         .push_back((ArcBorsh::new(Arc::new(pending_tx.clone())), lane_id.clone()));
 
     // Save to disk
-    Mempool::save_on_disk(mempool_file.as_path(), &ctx.mempool.inner)?;
+    Mempool::save_on_disk(data_dir, mempool_file.as_ref(), &ctx.mempool.inner)?;
 
     // Load from disk
-    let loaded = Mempool::load_from_disk::<MempoolStore>(mempool_file.as_path()).unwrap();
+    let loaded = Mempool::load_from_disk::<MempoolStore>(data_dir, mempool_file.as_ref()).unwrap();
     assert!(
         loaded.is_some(),
         "Should successfully load mempool from disk"

@@ -97,8 +97,11 @@ impl Module for ContractListener {
             ctx.contracts.len()
         );
 
-        let state_path = ctx.data_directory.join(CONTRACT_LISTENER_STATE_FILE);
-        let store = Self::load_from_disk_or_default::<ContractListenerStore>(state_path.as_path())?;
+        let state_path = PathBuf::from(CONTRACT_LISTENER_STATE_FILE);
+        let store = Self::load_from_disk_or_default::<ContractListenerStore>(
+            &ctx.data_directory,
+            &state_path,
+        )?;
 
         Ok(Self {
             bus,
@@ -120,9 +123,9 @@ impl Module for ContractListener {
             *cursor = BlockCursor::default();
         }
 
-        let file = self.conf.data_directory.join(CONTRACT_LISTENER_STATE_FILE);
-        let checksum = Self::save_on_disk(file.as_path(), &self.store)?;
-        Ok(vec![(file, checksum)])
+        let file = PathBuf::from(CONTRACT_LISTENER_STATE_FILE);
+        let checksum = Self::save_on_disk(&self.conf.data_directory, &file, &self.store)?;
+        Ok(vec![(self.conf.data_directory.join(file), checksum)])
     }
 }
 

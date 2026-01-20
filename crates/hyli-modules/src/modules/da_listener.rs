@@ -50,7 +50,8 @@ impl Module for SignedDAListener {
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let start_block_in_file = NodeStateModule::load_from_disk::<BlockHeight>(
-            ctx.data_directory.join("da_start_height.bin").as_path(),
+            &ctx.data_directory,
+            "da_start_height.bin".as_ref(),
         )?;
 
         debug!(

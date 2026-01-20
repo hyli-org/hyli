@@ -64,13 +64,10 @@ impl Module for SingleNodeConsensus {
     type Context = SharedRunContext;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let file = ctx
-            .config
-            .data_directory
-            .clone()
-            .join("consensus_single_node.bin");
+        let file = PathBuf::from("consensus_single_node.bin");
 
-        let store: SingleNodeConsensusStore = Self::load_from_disk_or_default(file.as_path())?;
+        let store: SingleNodeConsensusStore =
+            Self::load_from_disk_or_default(&ctx.config.data_directory, &file)?;
 
         let api = super::consensus::api::api(&bus, &ctx).await;
         if let Ok(mut guard) = ctx.api.router.lock() {
@@ -96,8 +93,8 @@ impl Module for SingleNodeConsensus {
 
     async fn persist(&mut self) -> Result<ModulePersistOutput> {
         if let Some(file) = &self.file {
-            let checksum = Self::save_on_disk(file.as_path(), &self.store)?;
-            return Ok(vec![(file.clone(), checksum)]);
+            let checksum = Self::save_on_disk(&self.config.data_directory, file, &self.store)?;
+            return Ok(vec![(self.config.data_directory.join(file), checksum)]);
         }
 
         Ok(vec![])
@@ -140,7 +137,7 @@ impl SingleNodeConsensus {
             self.store.has_done_genesis = true;
             // Save the genesis block to disk
             if let Some(file) = &self.file {
-                if let Err(e) = Self::save_on_disk(file.as_path(), &self.store) {
+                if let Err(e) = Self::save_on_disk(&self.config.data_directory, file, &self.store) {
                     warn!(
                         "Failed to save consensus single node storage on disk: {}",
                         e

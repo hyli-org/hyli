@@ -38,6 +38,7 @@ pub struct ContractStateIndexer<State, Event: Clone + Send + Sync + BusMessage +
     bus: CSIBusClient<Event>,
     store: Arc<RwLock<ContractStateStore<State>>>,
     contract_name: ContractName,
+    data_dir: PathBuf,
     file: PathBuf,
 }
 
@@ -63,12 +64,12 @@ where
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus = CSIBusClient::new_from_bus(bus.new_handle()).await;
-        let file = ctx
-            .data_directory
-            .join(format!("state_indexer_{}.bin", ctx.contract_name).as_str());
+        let file = PathBuf::from(format!("state_indexer_{}.bin", ctx.contract_name));
 
-        let mut store =
-            Self::load_from_disk_or_default::<ContractStateStore<State>>(file.as_path())?;
+        let mut store = Self::load_from_disk_or_default::<ContractStateStore<State>>(
+            &ctx.data_directory,
+            &file,
+        )?;
         store.contract_name = ctx.contract_name.clone();
         let store = Arc::new(RwLock::new(store));
 
@@ -102,6 +103,7 @@ where
         Ok(ContractStateIndexer {
             bus,
             file,
+            data_dir: ctx.data_directory,
             store,
             contract_name: ctx.contract_name,
         })
@@ -123,10 +125,11 @@ where
 
     async fn persist(&mut self) -> Result<ModulePersistOutput> {
         let checksum = Self::save_on_disk::<ContractStateStore<State>>(
-            self.file.as_path(),
+            &self.data_dir,
+            &self.file,
             self.store.read().await.deref(),
         )?;
-        Ok(vec![(self.file.clone(), checksum)])
+        Ok(vec![(self.data_dir.join(&self.file), checksum)])
     }
 }
 

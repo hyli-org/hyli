@@ -141,49 +141,30 @@ pub fn manifest_path(data_dir: &Path) -> PathBuf {
 }
 
 /// Read checksum from manifest file for a specific data file
+/// `file` is relative to `data_dir`.
 /// Returns:
 /// - Ok(Some(checksum)) if manifest exists and file is listed
 /// - Ok(None) if manifest doesn't exist (backwards compat - use default)
 /// - Err(FileNotInManifest) if manifest exists but file is not listed
 /// - Err(ChecksumParseFailed) if manifest format is invalid
-pub(crate) fn read_checksum_from_manifest(file: &Path) -> Result<Option<u32>, PersistenceError> {
-    let mut found_manifest: Option<(PathBuf, String)> = None;
-    let mut current_dir = file.parent();
-
-    while let Some(dir) = current_dir {
-        let manifest = manifest_path(dir);
-        match fs::read_to_string(&manifest) {
-            Ok(contents) => {
-                found_manifest = Some((dir.to_path_buf(), contents));
-                break;
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                current_dir = dir.parent();
-                continue;
-            }
-            Err(e) => return Err(PersistenceError::IoError(e)),
-        }
-    }
-
-    let (data_dir, contents) = match found_manifest {
-        Some(found) => found,
-        None => {
+pub(crate) fn read_checksum_from_manifest(
+    data_dir: &Path,
+    file: &Path,
+) -> Result<Option<u32>, PersistenceError> {
+    let manifest = manifest_path(data_dir);
+    let contents = match fs::read_to_string(&manifest) {
+        Ok(contents) => contents,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             tracing::warn!(
                 "No manifest file found for {}, loading from default",
                 file.display()
             );
             return Ok(None);
         }
+        Err(e) => return Err(PersistenceError::IoError(e)),
     };
 
-    // Get relative path for lookup
-    let relative_path = file.strip_prefix(&data_dir).map_err(|_| {
-        PersistenceError::IoError(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "File is not under manifest directory",
-        ))
-    })?;
-    let relative_path = relative_path.to_string_lossy();
+    let relative_path = file.to_string_lossy();
 
     // Parse manifest: each line is "checksum filename"
     for line in contents.lines() {
@@ -207,7 +188,7 @@ pub(crate) fn read_checksum_from_manifest(file: &Path) -> Result<Option<u32>, Pe
     }
 
     // File not in manifest - this means file exists but wasn't in a successful shutdown
-    Err(PersistenceError::FileNotInManifest(file.to_path_buf()))
+    Err(PersistenceError::FileNotInManifest(data_dir.join(file)))
 }
 
 /// Write manifest file with all checksums atomically

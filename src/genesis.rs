@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+};
 
 use crate::{model::*, p2p::network::PeerEvent, utils::conf::SharedConf};
 use anyhow::{Error, Result};
@@ -76,9 +79,9 @@ impl Module for Genesis {
 
     async fn persist(&mut self) -> Result<ModulePersistOutput> {
         // TODO: ideally we'd wait until everyone has processed it, as there's technically a data race.
-        let file = self.config.data_directory.clone().join("genesis.bin");
-        let checksum = Self::save_on_disk(&file, &true)?;
-        Ok(vec![(file, checksum)])
+        let file = PathBuf::from("genesis.bin");
+        let checksum = Self::save_on_disk(&self.config.data_directory, &file, &true)?;
+        Ok(vec![(self.config.data_directory.join(file), checksum)])
     }
 }
 
@@ -94,8 +97,9 @@ contract_states!(
 #[allow(clippy::expect_used, reason = "genesis should panic if incorrect")]
 impl Genesis {
     pub async fn start(&mut self) -> Result<(), Error> {
-        let file = self.config.data_directory.clone().join("genesis.bin");
-        let already_handled_genesis: bool = Self::load_from_disk_or_default(&file)?;
+        let file = PathBuf::from("genesis.bin");
+        let already_handled_genesis: bool =
+            Self::load_from_disk_or_default(&self.config.data_directory, &file)?;
         if already_handled_genesis {
             debug!("🌿 Genesis block already handled, skipping");
             // TODO: do we need a different message?

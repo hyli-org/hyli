@@ -3,11 +3,7 @@ use crate::bus::{dont_use_this::get_receiver, metrics::BusMetrics};
 use super::*;
 use crate::bus::SharedMessageBus;
 use signal::{ShutdownCompleted, ShutdownModule};
-use std::{
-    fs::File,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{fs::File, path::PathBuf, sync::Arc};
 use tempfile::tempdir;
 use tokio::sync::Mutex;
 
@@ -111,8 +107,8 @@ impl Module for TestModule<u32> {
     }
 }
 
-fn multi_persist_paths(data_dir: &Path) -> (PathBuf, PathBuf) {
-    (data_dir.join("one.data"), data_dir.join("two.data"))
+fn multi_persist_paths() -> (PathBuf, PathBuf) {
+    (PathBuf::from("one.data"), PathBuf::from("two.data"))
 }
 
 impl Module for MultiPersistModule {
@@ -133,21 +129,15 @@ impl Module for MultiPersistModule {
     }
 
     async fn persist(&mut self) -> Result<ModulePersistOutput> {
-        let (first_path, second_path) = multi_persist_paths(&self.ctx.data_dir);
-        if let Some(parent) = first_path.parent() {
-            std::fs::create_dir_all(parent).context("Creating first persist directory")?;
-        }
-        if let Some(parent) = second_path.parent() {
-            std::fs::create_dir_all(parent).context("Creating second persist directory")?;
-        }
+        let (first_path, second_path) = multi_persist_paths();
 
         let first_data = TestStruct { value: 1 };
         let second_data = TestStruct { value: 2 };
-        let first_checksum = Self::save_on_disk(&first_path, &first_data)?;
-        let second_checksum = Self::save_on_disk(&second_path, &second_data)?;
+        let first_checksum = Self::save_on_disk(&self.ctx.data_dir, &first_path, &first_data)?;
+        let second_checksum = Self::save_on_disk(&self.ctx.data_dir, &second_path, &second_data)?;
         Ok(vec![
-            (first_path, first_checksum),
-            (second_path, second_checksum),
+            (self.ctx.data_dir.join(first_path), first_checksum),
+            (self.ctx.data_dir.join(second_path), second_checksum),
         ])
     }
 }
@@ -155,10 +145,11 @@ impl Module for MultiPersistModule {
 #[test]
 fn test_save_returns_checksum() {
     let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test_file");
+    let data_dir = dir.path();
+    let file_path = PathBuf::from("test_file");
 
     let test_struct = TestStruct { value: 42 };
-    let checksum = TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
+    let checksum = TestModule::<usize>::save_on_disk(data_dir, &file_path, &test_struct).unwrap();
 
     // Verify checksum is a valid u32 (non-zero for this data)
     assert!(checksum != 0, "Checksum should be non-zero for test data");
@@ -168,45 +159,50 @@ fn test_save_returns_checksum() {
 fn test_load_without_manifest_uses_default() {
     let dir = tempdir().unwrap();
     // No manifest file = backwards compat, load from default
-    let non_existent_path = dir.path().join("non_existent_file");
+    let data_dir = dir.path();
+    let non_existent_path = PathBuf::from("non_existent_file");
     let default_struct: TestStruct =
-        TestModule::<usize>::load_from_disk_or_default(&non_existent_path).unwrap();
+        TestModule::<usize>::load_from_disk_or_default(data_dir, &non_existent_path).unwrap();
     assert_eq!(default_struct.value, 0);
 }
 
 #[test_log::test]
 fn test_load_with_manifest_verifies_checksum() {
     let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test_file.data");
+    let data_dir = dir.path();
+    let file_path = PathBuf::from("test_file.data");
 
     // Save file and get checksum
     let test_struct = TestStruct { value: 42 };
-    let checksum = TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
+    let checksum = TestModule::<usize>::save_on_disk(data_dir, &file_path, &test_struct).unwrap();
 
     // Write manifest with correct checksum
-    let manifest_path = super::manifest_path(dir.path());
+    let manifest_path = super::manifest_path(data_dir);
     let manifest_content = format!("{} test_file.data\n", super::format_checksum(checksum));
     std::fs::write(&manifest_path, &manifest_content).unwrap();
 
     // Load should succeed
-    let loaded: TestStruct = TestModule::<usize>::load_from_disk_or_default(&file_path).unwrap();
+    let loaded: TestStruct =
+        TestModule::<usize>::load_from_disk_or_default(data_dir, &file_path).unwrap();
     assert_eq!(loaded.value, 42);
 }
 
 #[test_log::test]
 fn test_checksum_mismatch_detection() {
     let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test_file.data");
+    let data_dir = dir.path();
+    let file_path = PathBuf::from("test_file.data");
 
     let test_struct = TestStruct { value: 42 };
-    let _checksum = TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
+    let _checksum = TestModule::<usize>::save_on_disk(data_dir, &file_path, &test_struct).unwrap();
 
     // Write manifest with wrong checksum
-    let manifest_path = super::manifest_path(dir.path());
+    let manifest_path = super::manifest_path(data_dir);
     std::fs::write(&manifest_path, "00000001 test_file.data\n").unwrap();
 
     // Load should fail with checksum mismatch
-    let result: Result<Option<TestStruct>> = TestModule::<usize>::load_from_disk(&file_path);
+    let result: Result<Option<TestStruct>> =
+        TestModule::<usize>::load_from_disk(data_dir, &file_path);
 
     let err = result.unwrap_err();
     assert!(
@@ -219,23 +215,26 @@ fn test_checksum_mismatch_detection() {
 #[test_log::test]
 fn test_corrupted_data_detection() {
     let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test_file.data");
+    let data_dir = dir.path();
+    let file_path = PathBuf::from("test_file.data");
 
     let test_struct = TestStruct { value: 42 };
-    let checksum = TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
+    let checksum = TestModule::<usize>::save_on_disk(data_dir, &file_path, &test_struct).unwrap();
 
     // Write manifest with original checksum
-    let manifest_path = super::manifest_path(dir.path());
+    let manifest_path = super::manifest_path(data_dir);
     let manifest_content = format!("{} test_file.data\n", super::format_checksum(checksum));
     std::fs::write(&manifest_path, &manifest_content).unwrap();
 
     // Corrupt the data file
-    let mut data = std::fs::read(&file_path).unwrap();
+    let full_path = data_dir.join(&file_path);
+    let mut data = std::fs::read(&full_path).unwrap();
     data[0] ^= 0xFF; // Flip some bits
-    std::fs::write(&file_path, &data).unwrap();
+    std::fs::write(&full_path, &data).unwrap();
 
     // Load should fail with checksum mismatch
-    let result: Result<Option<TestStruct>> = TestModule::<usize>::load_from_disk(&file_path);
+    let result: Result<Option<TestStruct>> =
+        TestModule::<usize>::load_from_disk(data_dir, &file_path);
 
     let err = result.unwrap_err();
     assert!(
@@ -248,18 +247,20 @@ fn test_corrupted_data_detection() {
 #[test_log::test]
 fn test_file_not_in_manifest_fails() {
     let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test_file.data");
+    let data_dir = dir.path();
+    let file_path = PathBuf::from("test_file.data");
 
     // Save file
     let test_struct = TestStruct { value: 42 };
-    let _checksum = TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
+    let _checksum = TestModule::<usize>::save_on_disk(data_dir, &file_path, &test_struct).unwrap();
 
     // Write manifest without this file
-    let manifest_path = super::manifest_path(dir.path());
+    let manifest_path = super::manifest_path(data_dir);
     std::fs::write(&manifest_path, "00000001 other_file.data\n").unwrap();
 
     // Load should fail because file is not in manifest
-    let result: Result<Option<TestStruct>> = TestModule::<usize>::load_from_disk(&file_path);
+    let result: Result<Option<TestStruct>> =
+        TestModule::<usize>::load_from_disk(data_dir, &file_path);
     let err = result.unwrap_err();
     assert!(
         err.downcast_ref::<super::PersistenceError>()
@@ -271,15 +272,18 @@ fn test_file_not_in_manifest_fails() {
 #[test_log::test]
 fn test_no_manifest_loads_without_verification() {
     let dir = tempdir().unwrap();
-    let file_path = dir.path().join("test_file");
+    let data_dir = dir.path();
+    let file_path = PathBuf::from("test_file");
 
     // Write file directly without manifest (simulating no previous clean shutdown)
-    let mut file = File::create(&file_path).unwrap();
+    let full_path = data_dir.join(&file_path);
+    let mut file = File::create(&full_path).unwrap();
     let test_struct = TestStruct { value: 42 };
     borsh::to_writer(&mut file, &test_struct).unwrap();
 
     // No manifest file should load successfully (backwards compat)
-    let loaded: Option<TestStruct> = TestModule::<usize>::load_from_disk(&file_path).unwrap();
+    let loaded: Option<TestStruct> =
+        TestModule::<usize>::load_from_disk(data_dir, &file_path).unwrap();
     assert!(loaded.is_some());
     assert_eq!(loaded.unwrap().value, 42);
 }
@@ -288,11 +292,11 @@ fn test_no_manifest_loads_without_verification() {
 async fn test_shutdown_timeout_skips_manifest_and_loads_without_verification() {
     let dir = tempdir().unwrap();
     let data_dir = dir.path().to_path_buf();
-    let file_path = data_dir.join("timeout.data");
-    let file_path_for_signal = file_path.clone();
+    let file_path = PathBuf::from("timeout.data");
+    let file_path_for_signal = data_dir.join(&file_path);
 
     let test_struct = TestStruct { value: 99 };
-    let checksum = TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
+    let checksum = TestModule::<usize>::save_on_disk(&data_dir, &file_path, &test_struct).unwrap();
 
     let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
     let mut handler = ModulesHandler::new(&shared_bus, data_dir.clone()).await;
@@ -322,7 +326,8 @@ async fn test_shutdown_timeout_skips_manifest_and_loads_without_verification() {
         "Manifest should not be written when shutdown times out"
     );
 
-    let loaded: Option<TestStruct> = TestModule::<usize>::load_from_disk(&file_path).unwrap();
+    let loaded: Option<TestStruct> =
+        TestModule::<usize>::load_from_disk(&data_dir, &file_path).unwrap();
     assert_eq!(loaded.unwrap().value, 99);
 }
 
@@ -330,7 +335,7 @@ async fn test_shutdown_timeout_skips_manifest_and_loads_without_verification() {
 async fn test_multi_file_persist_writes_manifest_and_loads_files() {
     let dir = tempdir().unwrap();
     let data_dir = dir.path().to_path_buf();
-    let (first_path, second_path) = multi_persist_paths(&data_dir);
+    let (first_path, second_path) = multi_persist_paths();
 
     let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
     let mut handler = ModulesHandler::new(&shared_bus, data_dir.clone()).await;
@@ -354,17 +359,18 @@ async fn test_multi_file_persist_writes_manifest_and_loads_files() {
     info!("data_dir entries: {:?}", entries);
 
     // Log the first_path for debugging
-    info!("first_path: {:?}", first_path);
+    info!("first_path: {:?}", data_dir.join(&first_path));
 
     let manifest_path = super::manifest_path(&data_dir);
     let manifest_content = std::fs::read_to_string(&manifest_path).unwrap();
     assert!(manifest_content.contains("one.data"));
     assert!(manifest_content.contains("two.data"));
 
-    let loaded_first: Option<TestStruct> = MultiPersistModule::load_from_disk(&first_path).unwrap();
+    let loaded_first: Option<TestStruct> =
+        MultiPersistModule::load_from_disk(&data_dir, &first_path).unwrap();
     assert_eq!(loaded_first.unwrap().value, 1);
     let loaded_second: Option<TestStruct> =
-        MultiPersistModule::load_from_disk(&second_path).unwrap();
+        MultiPersistModule::load_from_disk(&data_dir, &second_path).unwrap();
     assert_eq!(loaded_second.unwrap().value, 2);
 
     let first_line = manifest_content
@@ -373,7 +379,8 @@ async fn test_multi_file_persist_writes_manifest_and_loads_files() {
         .unwrap();
     std::fs::write(&manifest_path, format!("{first_line}\n")).unwrap();
 
-    let missing: Result<Option<TestStruct>> = MultiPersistModule::load_from_disk(&second_path);
+    let missing: Result<Option<TestStruct>> =
+        MultiPersistModule::load_from_disk(&data_dir, &second_path);
     let err = missing.unwrap_err();
     assert!(
         err.downcast_ref::<super::PersistenceError>()

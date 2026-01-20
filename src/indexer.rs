@@ -27,6 +27,7 @@ use sqlx::{
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     ops::Deref,
+    path::PathBuf,
 };
 use tokio::io::ReadBuf;
 
@@ -67,9 +68,11 @@ impl Module for Indexer {
         tokio::time::timeout(tokio::time::Duration::from_secs(60), MIGRATOR.run(&pool)).await??;
 
         // Load node state from node_state.bin if it exists or create a new default
-        let node_state_path = ctx.0.data_directory.join("indexer_node_state.bin");
-        let node_state_store =
-            NodeStateModule::load_from_disk_or_default::<NodeStateStore>(&node_state_path)?;
+        let node_state_file = PathBuf::from("indexer_node_state.bin");
+        let node_state_store = NodeStateModule::load_from_disk_or_default::<NodeStateStore>(
+            &ctx.0.data_directory,
+            &node_state_file,
+        )?;
 
         let mut node_state = NodeState::create(ctx.0.id.clone(), "indexer");
         node_state.store = node_state_store;
@@ -92,9 +95,13 @@ impl Module for Indexer {
     }
 
     async fn persist(&mut self) -> Result<ModulePersistOutput> {
-        let node_state_file = self.conf.data_directory.join("indexer_node_state.bin");
-        let checksum = NodeStateModule::save_on_disk(&node_state_file, &self.node_state.store)
-            .context("Failed to save node state to disk")?;
+        let node_state_file = PathBuf::from("indexer_node_state.bin");
+        let checksum = NodeStateModule::save_on_disk(
+            &self.conf.data_directory,
+            &node_state_file,
+            &self.node_state.store,
+        )
+        .context("Failed to save node state to disk")?;
 
         let persisted_da_start_height = BlockHeight(self.node_state.current_height.0 + 1);
         tracing::debug!(
@@ -102,14 +109,20 @@ impl Module for Indexer {
             &persisted_da_start_height
         );
 
-        let da_start_file = self.conf.data_directory.join("da_start_height.bin");
-        let da_start_checksum =
-            NodeStateModule::save_on_disk(&da_start_file, &persisted_da_start_height)
-                .context("Failed to save DA start height to disk")?;
+        let da_start_file = PathBuf::from("da_start_height.bin");
+        let da_start_checksum = NodeStateModule::save_on_disk(
+            &self.conf.data_directory,
+            &da_start_file,
+            &persisted_da_start_height,
+        )
+        .context("Failed to save DA start height to disk")?;
 
         Ok(vec![
-            (node_state_file, checksum),
-            (da_start_file, da_start_checksum),
+            (self.conf.data_directory.join(&node_state_file), checksum),
+            (
+                self.conf.data_directory.join(&da_start_file),
+                da_start_checksum,
+            ),
         ])
     }
 }

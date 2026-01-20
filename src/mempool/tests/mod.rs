@@ -1109,18 +1109,15 @@ async fn test_serialization_deserialization() -> Result<()> {
     ctx.mempool.file = Some(".".into());
 
     assert!(Mempool::save_on_disk(
-        ctx.mempool
-            .file
-            .clone()
-            .unwrap()
-            .join("test-mempool.bin")
-            .as_path(),
+        ctx.mempool.file.as_ref().unwrap(),
+        "test-mempool.bin".as_ref(),
         &ctx.mempool.inner
     )
     .is_ok());
 
     assert!(Mempool::load_from_disk::<MempoolStore>(
-        ctx.mempool.file.unwrap().join("test-mempool.bin").as_path(),
+        ctx.mempool.file.as_ref().unwrap(),
+        "test-mempool.bin".as_ref(),
     )
     .unwrap()
     .is_some());
