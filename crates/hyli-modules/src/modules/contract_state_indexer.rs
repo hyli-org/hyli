@@ -62,14 +62,6 @@ where
 {
     type Context = ContractStateIndexerCtx;
 
-    fn module_name(&self) -> String {
-        format!(
-            "{} -> {}",
-            std::any::type_name::<Self>(),
-            self.contract_name.0
-        )
-    }
-
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus = CSIBusClient::new_from_bus(bus.new_handle()).await;
         let file = PathBuf::from(format!("state_indexer_{}.bin", ctx.contract_name));

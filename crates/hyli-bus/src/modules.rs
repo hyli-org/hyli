@@ -35,10 +35,6 @@ where
 {
     type Context;
 
-    fn module_name(&self) -> String {
-        type_name::<Self>().to_string()
-    }
-
     fn build(
         bus: SharedMessageBus,
         ctx: Self::Context,
@@ -212,7 +208,7 @@ type ModuleStarterFuture =
     Pin<Box<dyn Future<Output = Result<ModulePersistOutput, Error>> + Send + 'static>>;
 
 struct ModuleStarter {
-    pub name: String,
+    pub name: &'static str,
     starter: ModuleStarterFuture,
 }
 
@@ -292,19 +288,6 @@ pub mod signal {
         should_shutdown: &mut bool,
         shutdown_receiver: &mut crate::bus::BusReceiver<crate::modules::signal::ShutdownModule>,
     ) -> anyhow::Result<()> {
-        async_receive_shutdown_by_name::<T>(
-            should_shutdown,
-            shutdown_receiver,
-            std::any::type_name::<T>(),
-        )
-        .await
-    }
-
-    pub async fn async_receive_shutdown_by_name<T: 'static>(
-        should_shutdown: &mut bool,
-        shutdown_receiver: &mut crate::bus::BusReceiver<crate::modules::signal::ShutdownModule>,
-        module_name: &str,
-    ) -> anyhow::Result<()> {
         if *should_shutdown {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             return Ok(());
@@ -316,8 +299,11 @@ pub mod signal {
                 *should_shutdown = true;
                 return Ok(());
             }
-            if shutdown_event.module == module_name {
-                tracing::debug!("Break signal received for module {}", module_name);
+            if shutdown_event.module == std::any::type_name::<T>() {
+                tracing::debug!(
+                    "Break signal received for module {}",
+                    std::any::type_name::<T>()
+                );
                 *should_shutdown = true;
                 return Ok(());
             }
@@ -336,14 +322,13 @@ macro_rules! module_handle_messages {
             // Safety: this is disjoint.
             let mut shutdown_receiver = unsafe { &mut *$crate::utils::static_type_map::Pick::<$crate::bus::BusReceiver<$crate::modules::signal::ShutdownModule>>::splitting_get_mut(&mut $self.bus) };
             let mut should_shutdown = false;
-            let module_name = $crate::modules::Module::module_name($self);
             $crate::handle_messages! {
                 on_bus $self.bus,
                 listen<$crate::modules::signal::PersistModule> _ => {
                     _ = $self.persist().await;
                 }
                 $($rest)*
-                Ok(_) = $crate::modules::signal::async_receive_shutdown_by_name::<Self>(&mut should_shutdown, &mut shutdown_receiver, &module_name) => {
+                Ok(_) = $crate::modules::signal::async_receive_shutdown::<Self>(&mut should_shutdown, &mut shutdown_receiver) => {
                     let res = $lay_shutdow_until;
                     if res {
                         break;
@@ -360,14 +345,13 @@ macro_rules! module_handle_messages {
             // Safety: this is disjoint.
             let mut shutdown_receiver = unsafe { &mut *$crate::utils::static_type_map::Pick::<$crate::bus::BusReceiver<$crate::modules::signal::ShutdownModule>>::splitting_get_mut(&mut $self.bus) };
             let mut should_shutdown = false;
-            let module_name = $crate::modules::Module::module_name($self);
             $crate::handle_messages! {
                 on_bus $self.bus,
                 listen<$crate::modules::signal::PersistModule> _ => {
                     _ = $self.persist().await;
                 }
                 $($rest)*
-                Ok(_) = $crate::modules::signal::async_receive_shutdown_by_name::<Self>(&mut should_shutdown, &mut shutdown_receiver, &module_name) => {
+                Ok(_) = $crate::modules::signal::async_receive_shutdown::<Self>(&mut should_shutdown, &mut shutdown_receiver) => {
                     break;
                 }
             }
@@ -412,7 +396,7 @@ bus_client! {
 pub struct ModulesHandler {
     bus: SharedMessageBus,
     modules: Vec<ModuleStarter>,
-    started_modules: Vec<String>,
+    started_modules: Vec<&'static str>,
     running_modules: Vec<JoinHandle<()>>,
     shut_modules: Vec<String>,
     /// Data directory for manifest file
@@ -455,72 +439,68 @@ impl ModulesHandler {
         );
 
         for module in self.modules.drain(..) {
-            let module_name = module.name.clone();
-            if Self::long_running_module(&module_name) {
-                self.started_modules.push(module_name.clone());
+            if Self::long_running_module(module.name) {
+                self.started_modules.push(module.name);
             }
 
-            debug!("Starting module {}", module_name);
+            debug!("Starting module {}", module.name);
 
             let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
             let mut shutdown_client2 = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
-            let task = tokio::spawn({
-                let module_name = module_name.clone();
-                async move {
-                    let module_task = tokio::spawn(module.starter);
-                    let module_name_for_timeout = module_name.clone();
-                    let timeout_task = tokio::spawn(async move {
-                        loop {
-                            if let Ok(signal::ShutdownModule { module: modname }) =
-                                shutdown_client2.recv().await
-                            {
-                                if modname == module_name_for_timeout {
-                                    tokio::time::sleep(MODULE_SHUTDOWN_TIMEOUT).await;
-                                    break;
-                                }
+            let task = tokio::spawn(async move {
+                let module_task = tokio::spawn(module.starter);
+                let timeout_task = tokio::spawn(async move {
+                    loop {
+                        if let Ok(signal::ShutdownModule { module: modname }) =
+                            shutdown_client2.recv().await
+                        {
+                            if modname == module.name {
+                                tokio::time::sleep(MODULE_SHUTDOWN_TIMEOUT).await;
+                                break;
                             }
                         }
-                    });
-
-                    let (res, timed_out) = tokio::select! {
-                        res = module_task => {
-                            (res, false)
-                        },
-                        _ = timeout_task => {
-                            (Ok(Err(anyhow::anyhow!("Shutdown timeout reached"))), true)
-                        }
-                    };
-
-                    let mut persisted_entries = Vec::new();
-                    match res {
-                        Ok(Ok(entries)) => {
-                            tracing::info!(
-                                module =% module_name,
-                                "Module exited and persisted {} file(s)",
-                                entries.len()
-                            );
-                            persisted_entries = entries;
-                        }
-                        Ok(Err(e)) => {
-                            tracing::error!(module =% module_name, "Module exited with error: {:?}", e);
-                        }
-                        Err(e) => {
-                            tracing::error!(module =% module_name, "Module exited, error joining: {:?}", e);
-                        }
                     }
+                });
 
-                    _ = log_error!(
-                        shutdown_client.send(signal::ShutdownCompleted {
-                            module: module_name,
-                            persisted_entries,
-                            timed_out,
-                        }),
-                        "Sending ShutdownCompleted message"
-                    );
+                let (res, timed_out) = tokio::select! {
+                    res = module_task => {
+                        (res, false)
+                    },
+                    _ = timeout_task => {
+                        (Ok(Err(anyhow::anyhow!("Shutdown timeout reached"))), true)
+                    }
+                };
+
+                let mut persisted_entries = Vec::new();
+                match res {
+                    Ok(Ok(entries)) => {
+                        tracing::info!(
+                            module =% module.name,
+                            "Module {} exited and persisted {} file(s)",
+                            module.name,
+                            entries.len()
+                        );
+                        persisted_entries = entries;
+                    }
+                    Ok(Err(e)) => {
+                        tracing::error!(module =% module.name, "Module {} exited with error: {:?}", module.name, e);
+                    }
+                    Err(e) => {
+                        tracing::error!(module =% module.name, "Module {} exited, error joining: {:?}", module.name, e);
+                    }
                 }
+
+                _ = log_error!(
+                    shutdown_client.send(signal::ShutdownCompleted {
+                        module: module.name.to_string(),
+                        persisted_entries,
+                        timed_out,
+                    }),
+                    "Sending ShutdownCompleted message"
+                );
             });
 
-            if Self::long_running_module(&module_name) {
+            if Self::long_running_module(module.name) {
                 self.running_modules.push(task);
             }
         }
@@ -594,9 +574,9 @@ impl ModulesHandler {
     /// when ShutdownCompleted is received, not when shutdown is initiated.
     async fn shutdown_next_module(&mut self) -> Result<()> {
         let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
-        if let Some(module_name) = self.started_modules.last() {
+        if let Some(&module_name) = self.started_modules.last() {
             // May be the shutdown message was skipped because the module failed somehow
-            if !self.shut_modules.contains(module_name) {
+            if !self.shut_modules.contains(&module_name.to_string()) {
                 _ = log_error!(
                     shutdown_client.send(signal::ShutdownModule {
                         module: module_name.to_string(),
@@ -682,10 +662,9 @@ impl ModulesHandler {
         M: Module + 'static + Send,
         <M as Module>::Context: std::marker::Send,
     {
-        let module_name = module.module_name();
-        debug!("Adding module {}", module_name);
+        debug!("Adding module {}", type_name::<M>());
         self.modules.push(ModuleStarter {
-            name: module_name,
+            name: type_name::<M>(),
             starter: Box::pin(Self::run_module(module)),
         });
         Ok(())
