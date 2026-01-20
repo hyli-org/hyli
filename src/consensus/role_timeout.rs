@@ -847,7 +847,7 @@ mod tests {
         assert_eq!(cp_view, 1);
         assert_eq!(
             cp.parent_hash,
-            ConsensusProposalHash::from(hex::encode("genesis"))
+            ConsensusProposalHash(b"genesis".to_vec())
         );
     }
 
@@ -918,7 +918,7 @@ mod tests {
         assert_eq!(cp_view, 1);
         assert_eq!(
             cp.parent_hash,
-            ConsensusProposalHash::from(hex::encode("genesis"))
+            ConsensusProposalHash(b"genesis".to_vec())
         );
     }
 
@@ -1054,7 +1054,7 @@ mod tests {
         assert_eq!(cp_view, 1);
         assert_eq!(
             cp.parent_hash,
-            ConsensusProposalHash::from(hex::encode("genesis"))
+            ConsensusProposalHash(b"genesis".to_vec())
         );
     }
 
@@ -1131,7 +1131,7 @@ mod tests {
         assert_eq!(cp_view, 1);
         assert_eq!(
             cp.parent_hash,
-            ConsensusProposalHash::from(hex::encode("genesis"))
+            ConsensusProposalHash(b"genesis".to_vec())
         );
     }
 
@@ -1222,7 +1222,7 @@ mod tests {
         assert!(matches!(ticket, Ticket::TimeoutQC(_, _)));
         assert_eq!(
             cp.parent_hash,
-            ConsensusProposalHash::from(hex::encode("genesis"))
+            ConsensusProposalHash(b"genesis".to_vec())
         );
     }
 

@@ -1707,8 +1707,8 @@ async fn test_auto_prover_contract_update_program_id() -> Result<()> {
         .events
         .push((
             TxId(
-                sdk::DataProposalHash::from(hex::encode("update_proposal")),
-                sdk::TxHash::from(hex::encode("contract_update_tx")),
+                sdk::DataProposalHash(b"update_proposal".to_vec()),
+                sdk::TxHash(b"contract_update_tx".to_vec()),
             ),
             StatefulEvent::ContractUpdate(ContractName("test".into()), contract_update),
         ));

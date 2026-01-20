@@ -170,7 +170,7 @@ mod tests {
             cut: Cut::default(),
             staking_actions: vec![],
             timestamp: TimestampMs(1),
-            parent_hash: ConsensusProposalHash::from(hex::encode("")),
+            parent_hash: ConsensusProposalHash(b"".to_vec()),
         };
         let hash = proposal.hashed();
         assert_eq!(hash.0.len(), 32);
@@ -182,7 +182,7 @@ mod tests {
             slot: 1,
             cut: vec![(
                 LaneId::new(ValidatorPublicKey(vec![1])),
-                DataProposalHash::from(hex::encode("propA")),
+                DataProposalHash(b"propA".to_vec()),
                 LaneBytesSize(1),
                 AggregateSignature::default(),
             )],
@@ -197,13 +197,13 @@ mod tests {
             }
             .into()],
             timestamp: TimestampMs(1),
-            parent_hash: ConsensusProposalHash::from(hex::encode("parent")),
+            parent_hash: ConsensusProposalHash(b"parent".to_vec()),
         };
         let mut b = ConsensusProposal {
             slot: 1,
             cut: vec![(
                 LaneId::new(ValidatorPublicKey(vec![1])),
-                DataProposalHash::from(hex::encode("propA")),
+                DataProposalHash(b"propA".to_vec()),
                 LaneBytesSize(1),
                 AggregateSignature {
                     signature: Signature(vec![1, 2, 3]),
@@ -221,7 +221,7 @@ mod tests {
             }
             .into()],
             timestamp: TimestampMs(1),
-            parent_hash: ConsensusProposalHash::from(hex::encode("parent")),
+            parent_hash: ConsensusProposalHash(b"parent".to_vec()),
         };
         assert_ne!(a.hashed(), b.hashed());
         if let ConsensusStakingAction::Bond { candidate: a } =
@@ -249,9 +249,9 @@ mod tests {
         b.slot = 2;
         assert_eq!(a.hashed(), b.hashed());
 
-        a.parent_hash = ConsensusProposalHash::from(hex::encode("different"));
+        a.parent_hash = ConsensusProposalHash(b"different".to_vec());
         assert_ne!(a.hashed(), b.hashed());
-        b.parent_hash = ConsensusProposalHash::from(hex::encode("different"));
+        b.parent_hash = ConsensusProposalHash(b"different".to_vec());
         assert_eq!(a.hashed(), b.hashed());
     }
 }

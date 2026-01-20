@@ -627,7 +627,7 @@ pub mod test {
             proof_size: proof.0.len(),
             proven_blobs: vec![BlobProofOutput {
                 original_proof_hash: proof_hash,
-                blob_tx_hash: crate::model::TxHash::from(hex::encode("blob-tx")),
+                blob_tx_hash: crate::model::TxHash(b"blob-tx".to_vec()),
                 program_id: ProgramId(vec![]),
                 verifier: Verifier("test".into()),
                 hyli_output: HyliOutput::default(),
@@ -740,11 +740,11 @@ pub mod test {
         let mut ctx = MempoolTestCtx::new("mempool").await;
 
         let dp2_size = LaneBytesSize(20);
-        let dp2_hash = DataProposalHash::from(hex::encode("dp2"));
+        let dp2_hash = DataProposalHash(b"dp2".to_vec());
         let dp5_size = LaneBytesSize(50);
-        let dp5_hash = DataProposalHash::from(hex::encode("dp5"));
+        let dp5_hash = DataProposalHash(b"dp5".to_vec());
         let dp6_size = LaneBytesSize(60);
-        let dp6_hash = DataProposalHash::from(hex::encode("dp6"));
+        let dp6_hash = DataProposalHash(b"dp6".to_vec());
 
         let ctx_key = ctx.validator_pubkey().clone();
         let expect_nothing = |ctx: &mut MempoolTestCtx| {
@@ -843,7 +843,7 @@ pub mod test {
             ],
             staking_actions: vec![],
             timestamp: TimestampMs(0),
-            parent_hash: ConsensusProposalHash::from(hex::encode("test")),
+            parent_hash: ConsensusProposalHash(b"test".to_vec()),
         };
 
         // Add the block to mempool 1
@@ -961,7 +961,7 @@ pub mod test {
             )],
             staking_actions: vec![],
             timestamp: TimestampMs(0),
-            parent_hash: ConsensusProposalHash::from(hex::encode("test")),
+            parent_hash: ConsensusProposalHash(b"test".to_vec()),
         };
 
         // Add the block to the mempool

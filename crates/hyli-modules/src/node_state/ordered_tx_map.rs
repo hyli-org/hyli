@@ -187,9 +187,9 @@ mod tests {
     #[test]
     fn can_get_tx() {
         let mut map = OrderedTxMap::default();
-        let tx1 = TxHash::new(hex::encode("tx1"));
-        let tx2 = TxHash::new(hex::encode("tx2"));
-        let tx3 = TxHash::new(hex::encode("tx3"));
+        let tx1 = TxHash(b"tx1".to_vec());
+        let tx2 = TxHash(b"tx2".to_vec());
+        let tx3 = TxHash(b"tx3".to_vec());
 
         map.add(new_tx("tx1", "c1"));
         map.add(new_tx("tx2", "c1"));
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn double_add_ignored() {
         let mut map = OrderedTxMap::default();
-        let tx1 = TxHash::new(hex::encode("tx1"));
+        let tx1 = TxHash(b"tx1".to_vec());
 
         map.add(new_tx("tx1", "c1"));
         map.add(new_tx("tx1", "c1"));
@@ -245,10 +245,10 @@ mod tests {
     #[test]
     fn check_next_unsettled_tx() {
         let mut map = OrderedTxMap::default();
-        let tx1 = TxHash::new(hex::encode("tx1"));
-        let tx2 = TxHash::new(hex::encode("tx2"));
-        let tx3 = TxHash::new(hex::encode("tx3"));
-        let tx4 = TxHash::new(hex::encode("tx4"));
+        let tx1 = TxHash(b"tx1".to_vec());
+        let tx2 = TxHash(b"tx2".to_vec());
+        let tx3 = TxHash(b"tx3".to_vec());
+        let tx4 = TxHash(b"tx4".to_vec());
 
         map.add(new_tx("tx1", "c1"));
         map.add(new_tx("tx2", "c1"));
@@ -264,9 +264,9 @@ mod tests {
     #[test]
     fn remove_tx() {
         let mut map = OrderedTxMap::default();
-        let tx1 = TxHash::new(hex::encode("tx1"));
-        let tx2 = TxHash::new(hex::encode("tx2"));
-        let tx3 = TxHash::new(hex::encode("tx3"));
+        let tx1 = TxHash(b"tx1".to_vec());
+        let tx2 = TxHash(b"tx2".to_vec());
+        let tx3 = TxHash(b"tx3".to_vec());
         let c1 = ContractName::new("c1");
 
         map.add(new_tx("tx1", "c1"));

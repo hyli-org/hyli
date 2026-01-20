@@ -838,7 +838,7 @@ async fn scenario_contracts() -> Result<(
             delete_d.into(),
             delete_d_proof,
         ],
-        DataProposalHash::from(hex::encode("test")),
+        DataProposalHash(b"test".to_vec()),
     );
     // Reconstruct A in a separate DP
     let parent = b5.data_proposals[0].1[0].hashed();

@@ -574,7 +574,7 @@ impl super::Mempool {
             proven_blobs: std::iter::zip(tx_hashes, std::iter::zip(hyli_outputs, program_ids))
                 .map(
                     |(blob_tx_hash, (hyli_output, program_id))| BlobProofOutput {
-                        original_proof_hash: ProofDataHash::from(hex::encode("todo?")),
+                        original_proof_hash: ProofDataHash(b"todo?".to_vec()),
                         blob_tx_hash: blob_tx_hash.clone(),
                         hyli_output,
                         program_id,
@@ -756,7 +756,7 @@ pub mod test {
             proof_size: proof.0.len(),
             proven_blobs: vec![BlobProofOutput {
                 original_proof_hash: proof_hash,
-                blob_tx_hash: crate::model::TxHash::from(hex::encode("blob-tx")),
+                blob_tx_hash: crate::model::TxHash(b"blob-tx".to_vec()),
                 program_id: ProgramId(vec![]),
                 verifier: Verifier("test".into()),
                 hyli_output: HyliOutput::default(),
@@ -883,7 +883,7 @@ pub mod test {
         let signed_msg = create_data_vote(
             &crypto2,
             ctx.mempool.own_lane_id(),
-            DataProposalHash::from(hex::encode("non_existent")),
+            DataProposalHash(b"non_existent".to_vec()),
             LaneBytesSize(0),
         )?;
 
@@ -897,7 +897,7 @@ pub mod test {
             .inner
             .buffered_votes
             .get(&ctx.mempool.own_lane_id())
-            .and_then(|lane| lane.get(&DataProposalHash::from(hex::encode("non_existent"))))
+            .and_then(|lane| lane.get(&DataProposalHash(b"non_existent".to_vec())))
             .map(|votes| votes.len())
             .unwrap_or_default();
         assert_eq!(buffered, 1);
