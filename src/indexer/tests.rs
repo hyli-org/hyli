@@ -953,40 +953,35 @@ async fn test_indexer_api_doubles() -> Result<()> {
 
     let (_indexer, explorer) = new_indexer(db).await;
     let server = setup_test_server(&explorer).await?;
+    let tx_hash_2 = "a2".repeat(32);
+    let tx_hash_3 = "a3".repeat(32);
+    let dp_hash_b = DataProposalHash::from("b1".repeat(32));
+    let block_hash_2 = ConsensusProposalHash::from("02".repeat(32));
+    let block_hash_3 = ConsensusProposalHash::from("03".repeat(32));
 
     // Multiple txs with same hash -- all in different blocks
 
     let transactions_response = server
-        .get("/transaction/hash/test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .get(&format!("/transaction/hash/{tx_hash_2}"))
         .await;
     transactions_response.assert_status_ok();
     let result = transactions_response.json::<APITransaction>();
-    assert_eq!(
-        result.parent_dp_hash,
-        DataProposalHash::from(
-            "dp_hashbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        )
-    );
+    assert_eq!(result.parent_dp_hash, dp_hash_b);
 
     // Multiple txs with same hash -- one not yet in a block, should return the pending one
 
     let transactions_response = server
-        .get("/proof/hash/test_tx_hash_3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .get(&format!("/proof/hash/{tx_hash_3}"))
         .await;
     transactions_response.assert_status_ok();
     let result = transactions_response.json::<APITransaction>();
-    assert_eq!(
-        result.parent_dp_hash,
-        DataProposalHash::from(
-            "dp_hashbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        )
-    );
+    assert_eq!(result.parent_dp_hash, dp_hash_b);
     assert_eq!(result.block_hash, None);
 
     // Get blobs by tx hash
 
     let transactions_response = server
-        .get("/blobs/hash/test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .get(&format!("/blobs/hash/{tx_hash_2}"))
         .await;
     transactions_response.assert_status_ok();
     let result = transactions_response.json::<Vec<APIBlob>>();
@@ -999,7 +994,7 @@ async fn test_indexer_api_doubles() -> Result<()> {
     // Get blob by tx hash
 
     let transactions_response = server
-        .get("/blob/hash/test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/index/0")
+        .get(&format!("/blob/hash/{tx_hash_2}/index/0"))
         .await;
     transactions_response.assert_status_ok();
     let result = transactions_response.json::<APIBlob>();
@@ -1008,32 +1003,25 @@ async fn test_indexer_api_doubles() -> Result<()> {
     // Get proof by tx hash
 
     let transactions_response = server
-        .get("/proof/hash/test_tx_hash_3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .get(&format!("/proof/hash/{tx_hash_3}"))
         .await;
     transactions_response.assert_status_ok();
     let result = transactions_response.json::<APITransaction>();
-    assert_eq!(
-        result.parent_dp_hash,
-        DataProposalHash::from(
-            "dp_hashbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        )
-    );
+    assert_eq!(result.parent_dp_hash, dp_hash_b);
     assert_eq!(result.block_hash, None);
 
     // Get transaction state event, the latest one
 
     let transactions_response = server
-            .get("/transaction/hash/test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/events")
-            .await;
+        .get(&format!("/transaction/hash/{tx_hash_2}/events"))
+        .await;
     transactions_response.assert_status_ok();
     let result = transactions_response.json::<Vec<APITransactionEvents>>();
     assert_eq!(
         result,
         vec![
             APITransactionEvents {
-                block_hash: ConsensusProposalHash::from(
-                    "block2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                ),
+                block_hash: block_hash_2,
                 block_height: BlockHeight(2),
                 events: vec![serde_json::json!({
                     "index": 1,
@@ -1041,9 +1029,7 @@ async fn test_indexer_api_doubles() -> Result<()> {
                 })]
             },
             APITransactionEvents {
-                block_hash: ConsensusProposalHash::from(
-                    "block3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-                ),
+                block_hash: block_hash_3,
                 block_height: BlockHeight(3),
                 events: vec![serde_json::json!({
                     "index": 1,
@@ -1080,6 +1066,10 @@ async fn test_indexer_api() -> Result<()> {
 
     let (_indexer, mut explorer) = new_indexer(db).await;
     let server = setup_test_server(&explorer).await?;
+    let block_hash_1 = "01".repeat(32);
+    let tx_hash_0 = "a0".repeat(32);
+    let tx_hash_1 = "a1".repeat(32);
+    let tx_hash_2 = "a2".repeat(32);
 
     // Blocks
     // Get all blocks
@@ -1126,7 +1116,7 @@ async fn test_indexer_api() -> Result<()> {
 
     // Get block by hash
     let transactions_response = server
-        .get("/block/hash/block1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .get(&format!("/block/hash/{block_hash_1}"))
         .await;
     transactions_response.assert_status_ok();
     assert!(!transactions_response.text().is_empty());
@@ -1154,14 +1144,14 @@ async fn test_indexer_api() -> Result<()> {
 
     // Get an existing transaction by hash
     let transactions_response = server
-        .get("/transaction/hash/test_tx_hash_1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .get(&format!("/transaction/hash/{tx_hash_1}"))
         .await;
     transactions_response.assert_status_ok();
     assert!(!transactions_response.text().is_empty());
 
     // Get an existing transaction, waiting for dissemination by hash
     let transactions_response = server
-        .get("/transaction/hash/test_tx_hash_0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .get(&format!("/transaction/hash/{tx_hash_0}"))
         .await;
     transactions_response.assert_status_ok();
     assert!(!transactions_response.text().is_empty());
@@ -1180,29 +1170,29 @@ async fn test_indexer_api() -> Result<()> {
 
     // Get blobs by tx_hash
     let transactions_response = server
-        .get("/blobs/hash/test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .get(&format!("/blobs/hash/{tx_hash_2}"))
         .await;
     transactions_response.assert_status_ok();
     assert!(!transactions_response.text().is_empty());
 
     // Get unknown blobs by tx_hash
     let transactions_response = server
-        .get("/blobs/hash/test_tx_hash_1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .get(&format!("/blobs/hash/{tx_hash_1}"))
         .await;
     transactions_response.assert_status_ok();
     assert_eq!(transactions_response.text(), "[]");
 
     // Get blob by tx_hash and index
     let transactions_response = server
-        .get("/blob/hash/test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/index/0")
+        .get(&format!("/blob/hash/{tx_hash_2}/index/0"))
         .await;
     transactions_response.assert_status_ok();
     assert!(!transactions_response.text().is_empty());
 
     // Get blob by tx_hash and unknown index
     let transactions_response = server
-            .get("/blob/hash/test_tx_hash_2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/index/1000")
-            .await;
+        .get(&format!("/blob/hash/{tx_hash_2}/index/1000"))
+        .await;
     transactions_response.assert_status_not_found();
 
     // Contracts
