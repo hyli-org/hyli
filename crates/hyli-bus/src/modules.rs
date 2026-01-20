@@ -14,7 +14,6 @@ use crate::{
 };
 use anyhow::{bail, Context, Error, Result};
 use rand::{distr::Alphanumeric, Rng};
-use tokio::task::JoinHandle;
 use tracing::{debug, info};
 
 use crate::utils::checksums::{self, ChecksumReader, ChecksumWriter};
@@ -396,9 +395,7 @@ bus_client! {
 pub struct ModulesHandler {
     bus: SharedMessageBus,
     modules: Vec<ModuleStarter>,
-    started_modules: Vec<&'static str>,
-    running_modules: Vec<JoinHandle<()>>,
-    shut_modules: Vec<String>,
+    running_modules: Vec<&'static str>,
     /// Data directory for manifest file
     data_dir: PathBuf,
     /// Collected checksums from successfully persisted modules
@@ -414,9 +411,7 @@ impl ModulesHandler {
         ModulesHandler {
             bus: shared_message_bus,
             modules: vec![],
-            started_modules: vec![],
             running_modules: vec![],
-            shut_modules: vec![],
             data_dir,
             persisted_checksums: vec![],
             any_timeout: false,
@@ -432,22 +427,19 @@ impl ModulesHandler {
             bail!("Modules are already running!");
         }
 
-        info!("Manifest file support is being removed; checksums will no longer be verified or written.");
         _ = log_warn!(
             checksums::remove_manifest(&self.data_dir),
             "Removing manifest file"
         );
 
         for module in self.modules.drain(..) {
-            if Self::long_running_module(module.name) {
-                self.started_modules.push(module.name);
-            }
+            self.running_modules.push(module.name);
 
             debug!("Starting module {}", module.name);
 
             let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
             let mut shutdown_client2 = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
-            let task = tokio::spawn(async move {
+            tokio::spawn(async move {
                 let module_task = tokio::spawn(module.starter);
                 let timeout_task = tokio::spawn(async move {
                     loop {
@@ -499,10 +491,6 @@ impl ModulesHandler {
                     "Sending ShutdownCompleted message"
                 );
             });
-
-            if Self::long_running_module(module.name) {
-                self.running_modules.push(task);
-            }
         }
 
         Ok(())
@@ -510,7 +498,7 @@ impl ModulesHandler {
 
     /// Setup a loop waiting for shutdown signals from modules
     pub async fn shutdown_loop(&mut self) -> Result<()> {
-        if self.started_modules.is_empty() {
+        if self.running_modules.is_empty() {
             return Ok(());
         }
 
@@ -536,20 +524,12 @@ impl ModulesHandler {
                     );
                     self.persisted_checksums.push((path, checksum));
                 }
-                if Self::long_running_module(msg.module.as_str()) && !self.shut_modules.contains(&msg.module)  {
-                    self.started_modules.retain(|module| *module != msg.module.clone());
-                    self.shut_modules.push(msg.module.clone());
-                    if self.started_modules.is_empty() {
-                        break;
-                    } else {
-                        _ = self.shutdown_next_module().await;
-                    }
+                if let Some(index) = self.running_modules.iter().position(|module| *module == msg.module) {
+                    self.running_modules.remove(index);
                 }
-            }
-
-            // Add one second as buffer to let the module cancel itself, hopefully.
-            _ = tokio::time::sleep(MODULE_SHUTDOWN_TIMEOUT + Duration::from_secs(1)) => {
-                if !self.shut_modules.is_empty() {
+                if self.running_modules.is_empty() {
+                    break;
+                } else if Self::long_running_module(msg.module.as_str()) {
                     _ = self.shutdown_next_module().await;
                 }
             }
@@ -570,22 +550,15 @@ impl ModulesHandler {
     }
 
     /// Shutdown modules in reverse order (start A, B, C, shutdown C, B, A)
-    /// Note:modules are removed from started_modules
-    /// when ShutdownCompleted is received, not when shutdown is initiated.
     async fn shutdown_next_module(&mut self) -> Result<()> {
         let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
-        if let Some(&module_name) = self.started_modules.last() {
-            // May be the shutdown message was skipped because the module failed somehow
-            if !self.shut_modules.contains(&module_name.to_string()) {
-                _ = log_error!(
-                    shutdown_client.send(signal::ShutdownModule {
-                        module: module_name.to_string(),
-                    }),
-                    "Shutting down module"
-                );
-            } else {
-                tracing::debug!("Not shutting already shut module {}", module_name);
-            }
+        if let Some(&module_name) = self.running_modules.last() {
+            _ = log_error!(
+                shutdown_client.send(signal::ShutdownModule {
+                    module: module_name.to_string(),
+                }),
+                "Shutting down module"
+            );
         }
 
         Ok(())
