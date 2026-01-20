@@ -7,8 +7,8 @@ use super::*;
 use crate::mempool::ArcBorsh;
 use anyhow::Result;
 use hyli_model::{
-    BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData,
-    ProofTransaction, Transaction, TransactionData, VerifiedProofTransaction, Verifier,
+    BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, ProofTransaction, Transaction,
+    TransactionData, VerifiedProofTransaction, Verifier,
 };
 use std::sync::Arc;
 

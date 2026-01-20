@@ -733,8 +733,8 @@ pub mod test {
     #[test_log::test(tokio::test)]
     async fn test_broadcast_rehydrates_proofs() -> Result<()> {
         use crate::model::{
-            BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData,
-            Transaction, TransactionData, VerifiedProofTransaction, Verifier,
+            BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, Transaction,
+            TransactionData, VerifiedProofTransaction, Verifier,
         };
 
         let mut ctx = MempoolTestCtx::new("mempool").await;

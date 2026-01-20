@@ -601,9 +601,7 @@ impl Hashed<OnchainEffectHash> for OnchainEffect {
         use sha3::{Digest, Sha3_256};
         let mut hasher = Sha3_256::new();
         match self {
-            OnchainEffect::RegisterContractWithConstructor(c) => {
-                hasher.update(&c.hashed().0)
-            }
+            OnchainEffect::RegisterContractWithConstructor(c) => hasher.update(&c.hashed().0),
             OnchainEffect::RegisterContract(c) => hasher.update(&c.hashed().0),
             OnchainEffect::DeleteContract(cn) => hasher.update(cn.0.as_bytes()),
             OnchainEffect::UpdateContractProgramId(cn, pid) => {

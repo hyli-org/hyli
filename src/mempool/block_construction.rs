@@ -609,8 +609,8 @@ pub mod test {
     #[test_log::test(tokio::test)]
     async fn proofs_deleted_after_commit() -> Result<()> {
         use crate::model::{
-            BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData,
-            Transaction, TransactionData, VerifiedProofTransaction, Verifier,
+            BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, Transaction,
+            TransactionData, VerifiedProofTransaction, Verifier,
         };
 
         let mut ctx = MempoolTestCtx::new("mempool").await;
