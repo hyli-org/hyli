@@ -519,10 +519,6 @@ impl Mempool {
         Ok(())
     }
 
-    fn get_lane_operator<'a>(&self, lane_id: &'a LaneId) -> &'a ValidatorPublicKey {
-        lane_id.operator()
-    }
-
     fn send_sync_request(
         &mut self,
         lane_id: &LaneId,

@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 
 use crate::{
-    bus::BusClientSender, consensus::CommittedConsensusProposal,
-    mempool::storage::EntryOrMissingHash, model::*,
+    bus::BusClientSender,
+    consensus::CommittedConsensusProposal,
+    mempool::{mempool_bus_client::MempoolBusClient, storage::EntryOrMissingHash},
+    model::*,
 };
 use futures::StreamExt;
 use hyli_modules::{log_error, log_warn};
@@ -24,51 +26,6 @@ pub struct BlockUnderConstruction {
 }
 
 impl super::Mempool {
-    // Best-effort: if a hole's top is already stored locally, fill it now.
-    async fn try_to_fill_hole_from_storage(
-        &mut self,
-        buc: &mut BlockUnderConstruction,
-        lane_id: &LaneId,
-        to_hash: &DataProposalHash,
-    ) -> Result<()> {
-        if let (Ok(Some(metadata)), Ok(Some(data_proposal))) = (
-            self.lanes.get_metadata_by_hash(lane_id, to_hash),
-            self.lanes.get_dp_by_hash(lane_id, to_hash),
-        ) {
-            self.fill_hole_from_entry(
-                buc,
-                lane_id,
-                metadata.signatures,
-                data_proposal,
-                to_hash.clone(),
-            )
-            .await?;
-        }
-        Ok(())
-    }
-
-    // Attempt to resolve all pending holes from locally stored data.
-    async fn try_to_fill_holes_from_storage(
-        &mut self,
-        buc: &mut BlockUnderConstruction,
-    ) -> Result<()> {
-        if buc.holes_tops.is_empty() {
-            return Ok(());
-        }
-
-        let fill_from: Vec<(LaneId, DataProposalHash)> = buc
-            .holes_tops
-            .iter()
-            .map(|(lane_id, (to_hash, _))| (lane_id.clone(), to_hash.clone()))
-            .collect();
-        for (lane_id, to_hash) in fill_from {
-            self.try_to_fill_hole_from_storage(buc, &lane_id, &to_hash)
-                .await?;
-        }
-
-        Ok(())
-    }
-
     pub(super) async fn on_sync_reply(
         &mut self,
         lane_id: &LaneId,
@@ -123,44 +80,45 @@ impl super::Mempool {
             data_proposal.parent_data_proposal_hash
         );
 
-        // Check if we can find the BUC this belongs to.
-        // For borrowing + practicality reasons, it's easier
-        // to do this loop pop / push.
-        for _ in 0..self.blocks_under_contruction.len() {
-            if let Some(mut buc) = self.blocks_under_contruction.pop_front() {
-                let Some((hole_top, ..)) = buc.holes_tops.get(&lane_id) else {
-                    self.blocks_under_contruction.push_back(buc);
-                    continue;
-                };
-                if hole_top == &dp_hash {
-                    // This uses a non-recursive loop to avoid stack overflow,
-                    // unfortunately results in rather cumbersome code to write.
-                    self.fill_hole_from_entry(
-                        &mut buc,
-                        &lane_id,
-                        signatures,
-                        data_proposal,
-                        dp_hash.clone(),
-                    )
-                    .await?;
-
-                    let can_send = buc.holes_tops.is_empty();
-                    self.blocks_under_contruction.push_back(buc);
-
-                    // If we no longer have holes, try to send the built block
-                    if can_send {
-                        self.try_to_send_full_signed_blocks()
-                            .await
-                            .context("Try process queued CCP")?;
-                    }
-                    return Ok(());
-                } else {
-                    self.blocks_under_contruction.push_back(buc);
+        if let Some(buc) = self.inner.blocks_under_contruction.iter_mut().find(|buc| {
+            buc.holes_tops
+                .get(&lane_id)
+                .is_some_and(|(hole_top, ..)| hole_top == &dp_hash)
+        }) {
+            let (expected_top, lane_size) = buc
+                .holes_tops
+                .get(&lane_id)
+                .context("Expected hole top missing")?
+                .clone();
+            let next_hole = Self::fill_hole_from_entry(
+                &mut self.lanes,
+                &mut self.bus,
+                buc,
+                &lane_id,
+                (expected_top, lane_size),
+                signatures,
+                data_proposal,
+            )?;
+            match next_hole {
+                Some((next_top, next_size)) => {
+                    buc.holes_tops
+                        .insert(lane_id.clone(), (next_top, next_size));
+                }
+                None => {
+                    buc.holes_tops.remove(&lane_id);
                 }
             }
+
+            if buc.holes_tops.is_empty() {
+                self.try_to_send_full_signed_blocks()
+                    .await
+                    .context("Try process queued CCP")?;
+            }
+
+            return Ok(());
         }
 
-        // If we're here, we didn't find the BUC, so buffer.
+        // Didn't find the matching BUC
         debug!(
             "Buffering SyncReply entry for lane {} with hash {}",
             lane_id, dp_hash
@@ -173,125 +131,188 @@ impl super::Mempool {
         Ok(())
     }
 
-    // Core hole-fill logic shared by sync replies and storage recovery.
-    async fn fill_hole_from_entry(
+    // Consumes buffered entries if present before falling back to stored data.
+    fn take_entry_for_hash(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+    ) -> Option<(Vec<ValidatorDAG>, DataProposal)> {
+        if let Some((signatures, data_proposal)) = self
+            .buffered_entries
+            .get_mut(lane_id)
+            .and_then(|m| m.remove(dp_hash))
+        {
+            return Some((signatures, data_proposal));
+        }
+
+        if let (Ok(Some(metadata)), Ok(Some(data_proposal))) = (
+            self.lanes.get_metadata_by_hash(lane_id, dp_hash),
+            self.lanes.get_dp_by_hash(lane_id, dp_hash),
+        ) {
+            return Some((metadata.signatures, data_proposal));
+        }
+
+        None
+    }
+
+    // Attempt to resolve all pending holes from buffered or locally stored data.
+    fn resolve_all_holes(&mut self, buc: &mut BlockUnderConstruction) -> Result<bool> {
+        if buc.holes_tops.is_empty() {
+            return Ok(false);
+        }
+
+        // Work around copying keys by taking and recreating as needed.
+        let fill_from = std::mem::take(&mut buc.holes_tops);
+        let mut filled_any = false;
+        let mut iter = fill_from.into_iter();
+        while let Some((lane_id, (hole_top, lane_size))) = iter.next() {
+            match self.fill_hole_chain(buc, &lane_id, hole_top, lane_size) {
+                Ok((filled, next_hole)) => {
+                    if filled {
+                        filled_any = true;
+                    }
+                    if let Some((next_top, next_size)) = next_hole {
+                        buc.holes_tops.insert(lane_id, (next_top, next_size));
+                    }
+                }
+                Err(err) => {
+                    // Reinsert remaining holes on error to avoid dropping state.
+                    buc.holes_tops.insert(lane_id, (hole_top, lane_size));
+                    for (lane_id, (hole_top, lane_size)) in iter {
+                        buc.holes_tops.insert(lane_id, (hole_top, lane_size));
+                    }
+                    return Err(err);
+                }
+            }
+        }
+
+        Ok(filled_any)
+    }
+
+    // Core hole-fill loop shared by storage recovery/build path.
+    fn fill_hole_chain(
         &mut self,
         buc: &mut BlockUnderConstruction,
         lane_id: &LaneId,
-        mut signatures: Vec<ValidatorDAG>,
-        mut data_proposal: DataProposal,
-        mut dp_hash: DataProposalHash,
-    ) -> Result<()> {
-        let (mut hole_top, Some(mut lane_size)) =
-            buc.holes_tops.get(lane_id).map(|v| (&v.0, v.1)).unzip()
-        else {
-            return Ok(());
-        };
-        while hole_top == Some(&dp_hash) {
-            // We have found a hole matching this DP - we don't really need to validate signatures to handle it,
-            // as it was part of the cut, but as a warn if signatures don't match
-            let lane_operator = self.get_lane_operator(lane_id);
-            let found_operator_signature = signatures.iter().any(|s| {
-                &s.signature.validator == lane_operator
-                    && s.msg.0 == dp_hash
-                    && s.msg.1 == lane_size
-            });
-            if !found_operator_signature {
-                warn!(
-                    "Operator signature missing from sync reply entry {lane_operator} for DP {dp_hash}"
-                );
-            }
-
-            let dp_size = data_proposal.estimate_size() as u64;
-            let dp_parent_hash = data_proposal.parent_data_proposal_hash.clone();
-            let metadata = LaneEntryMetadata {
-                parent_data_proposal_hash: data_proposal.parent_data_proposal_hash.clone(),
-                cumul_size: lane_size,
+        mut hole_top: DataProposalHash,
+        mut lane_size: LaneBytesSize,
+    ) -> Result<(bool, Option<(DataProposalHash, LaneBytesSize)>)> {
+        let mut filled_any = false;
+        loop {
+            let Some((signatures, data_proposal)) = self.take_entry_for_hash(lane_id, &hole_top)
+            else {
+                return Ok((filled_any, Some((hole_top, lane_size))));
+            };
+            match Self::fill_hole_from_entry(
+                &mut self.lanes,
+                &mut self.bus,
+                buc,
+                lane_id,
+                (hole_top, lane_size),
                 signatures,
-                cached_poda: None,
-            };
-            self.lanes
-                .put_no_verification(lane_id.clone(), (metadata, data_proposal))?;
-            debug!(
-                "Filled hole for lane {} in BUC(slot: {})",
-                lane_id, buc.ccp.consensus_proposal.slot
-            );
-
-            // Move the hole top down
-            match &dp_parent_hash {
-                DataProposalParent::DP(parent_hash) => {
-                    // If we reached the 'from' cut, remove the hole
-                    if buc.from.as_ref().is_some_and(|from_cut| {
-                        from_cut.iter().any(|(from_lane_id, from_dp_hash, _, _)| {
-                            from_lane_id == lane_id && from_dp_hash == parent_hash
-                        })
-                    }) {
-                        buc.holes_tops.remove(lane_id);
-                        hole_top = None;
-                    } else {
-                        let r = buc.holes_tops.entry(lane_id.clone()).or_default();
-                        r.0 = parent_hash.clone();
-                        hole_top = Some(&r.0);
-                    }
+                data_proposal,
+            )? {
+                Some((next_top, next_size)) => {
+                    filled_any = true;
+                    hole_top = next_top;
+                    lane_size = next_size;
                 }
-                DataProposalParent::LaneRoot(_) => {
-                    buc.holes_tops.remove(lane_id); // Just remove otherwise
-                    hole_top = None;
+                None => {
+                    return Ok((true, None));
                 }
             }
-
-            // Inform dissemination we can stop requesting this DP.
-            Self::send_dissemination_event_over(
-                &mut self.bus,
-                DisseminationEvent::DpStored {
-                    lane_id: lane_id.clone(),
-                    data_proposal_hash: dp_hash.clone(),
-                    cumul_size: lane_size,
-                },
-            )?;
-            Self::send_dissemination_event_over(
-                &mut self.bus,
-                DisseminationEvent::SyncRequestProgress {
-                    lane_id: lane_id.clone(),
-                    old_to: dp_hash.clone(),
-                    new_to: hole_top.cloned(),
-                },
-            )?;
-
-            // Try to fill further holes
-            let Some(ht) = hole_top else {
-                break;
-            };
-            let mut next_entry = None;
-            if let Some(buffered) = self.inner.buffered_entries.get_mut(lane_id) {
-                if let Some((sigs, dp)) = buffered.remove(ht) {
-                    next_entry = Some((sigs, dp));
-                }
-            }
-            if next_entry.is_none() {
-                if let (Ok(Some(metadata)), Ok(Some(dp))) = (
-                    self.lanes.get_metadata_by_hash(lane_id, ht),
-                    self.lanes.get_dp_by_hash(lane_id, ht),
-                ) {
-                    next_entry = Some((metadata.signatures, dp));
-                }
-            }
-            let Some((sigs, dp)) = next_entry else {
-                break;
-            };
-            let Some(new_lane_size) = lane_size.0.checked_sub(dp_size) else {
-                bail!(
-                    "Lane size underflow while filling hole for lane {lane_id}: current {:?}, dp_size {}",
-                    lane_size,
-                    dp_size
-                );
-            };
-            lane_size = LaneBytesSize(new_lane_size);
-            dp_hash = ht.clone();
-            signatures = sigs;
-            data_proposal = dp;
         }
-        Ok(())
+    }
+
+    // Fill a single hole entry; returns the next hole top, if any.
+    // One day rust will have disjoint self borrows.
+    fn fill_hole_from_entry(
+        lanes: &mut super::LanesStorage,
+        bus: &mut MempoolBusClient,
+        buc: &mut BlockUnderConstruction,
+        lane_id: &LaneId,
+        (expected_top, lane_size): (DataProposalHash, LaneBytesSize),
+        signatures: Vec<ValidatorDAG>,
+        data_proposal: DataProposal,
+    ) -> Result<Option<(DataProposalHash, LaneBytesSize)>> {
+        let lane_operator = lane_id.operator();
+        let dp_hash = data_proposal.hashed();
+        if expected_top != dp_hash {
+            bail!(
+                "Hole fill expected top {} but got {} for lane {}",
+                expected_top,
+                dp_hash,
+                lane_id
+            );
+        }
+        // We have found a hole matching this DP - we don't really need to validate signatures to handle it,
+        // as it was part of the cut, but as a warn if signatures don't match
+        let found_operator_signature = signatures.iter().any(|s| {
+            &s.signature.validator == lane_operator && s.msg.0 == dp_hash && s.msg.1 == lane_size
+        });
+        if !found_operator_signature {
+            warn!(
+                "Operator signature missing from sync reply entry {lane_operator} for DP {dp_hash}"
+            );
+        }
+
+        let dp_size = data_proposal.estimate_size() as u64;
+        let dp_parent_hash = data_proposal.parent_data_proposal_hash.clone();
+        let metadata = LaneEntryMetadata {
+            parent_data_proposal_hash: data_proposal.parent_data_proposal_hash.clone(),
+            cumul_size: lane_size,
+            signatures,
+            cached_poda: None,
+        };
+        lanes.put_no_verification(lane_id.clone(), (metadata, data_proposal))?;
+        debug!(
+            "Filled hole for lane {} in BUC(slot: {})",
+            lane_id, buc.ccp.consensus_proposal.slot
+        );
+
+        // Compute the next hole top
+        let next_top = match &dp_parent_hash {
+            DataProposalParent::DP(parent_hash) => {
+                let Some(new_lane_size) = lane_size.0.checked_sub(dp_size) else {
+                    bail!(
+                        "Lane size underflow while filling hole for lane {lane_id}: current {:?}, dp_size {}",
+                        lane_size,
+                        dp_size
+                    );
+                };
+                // If we reached the 'from' cut, remove the hole
+                if buc.from.as_ref().is_some_and(|from_cut| {
+                    from_cut.iter().any(|(from_lane_id, from_dp_hash, _, _)| {
+                        from_lane_id == lane_id && from_dp_hash == parent_hash
+                    })
+                }) {
+                    None
+                } else {
+                    Some((parent_hash.clone(), LaneBytesSize(new_lane_size)))
+                }
+            }
+            DataProposalParent::LaneRoot(_) => None,
+        };
+
+        // Inform dissemination we can stop requesting this DP.
+        Self::send_dissemination_event_over(
+            bus,
+            DisseminationEvent::DpStored {
+                lane_id: lane_id.clone(),
+                data_proposal_hash: dp_hash.clone(),
+                cumul_size: lane_size,
+            },
+        )?;
+        Self::send_dissemination_event_over(
+            bus,
+            DisseminationEvent::SyncRequestProgress {
+                lane_id: lane_id.clone(),
+                old_to: dp_hash.clone(),
+                new_to: next_top.as_ref().map(|(dp, ..)| dp.clone()),
+            },
+        )?;
+
+        Ok(next_top)
     }
 
     pub(super) async fn try_to_send_full_signed_blocks(&mut self) -> Result<()> {
@@ -323,8 +344,9 @@ impl super::Mempool {
         buc: &mut BlockUnderConstruction,
     ) -> Result<bool> {
         trace!(
-            "Materializing holes for Block Under Construction {:?}",
-            buc.clone()
+            "Materializing holes for BUC(slot: {}, parent: {})",
+            buc.ccp.consensus_proposal.slot,
+            buc.ccp.consensus_proposal.parent_hash
         );
         debug!(
             "Materializing holes for Block Under Construction {} from parent hash {}",
@@ -438,29 +460,13 @@ impl super::Mempool {
         &mut self,
         buc: &mut BlockUnderConstruction,
     ) -> Result<()> {
-        // If we already have missing data locally, resolve holes before materializing/requests.
-        self.try_to_fill_holes_from_storage(buc).await?;
+        // Resolve holes from buffered or stored data before materializing/requests.
+        self.resolve_all_holes(buc)?;
 
         // First time, materialize holes (this is done somewhat async as it can be slow,
         // but we might want to refactor this in the future.)
         if !buc.holes_materialized && self.materialize_holes_for_signed_block(buc).await? {
-            // Borrowing makes this unworkable without the vec workaround.
-            let mut fill_from = vec![];
-            for (lane_id, (to_hash, _)) in &buc.holes_tops {
-                if let Some((signatures, data_proposal)) = self
-                    .buffered_entries
-                    .get_mut(lane_id)
-                    .and_then(|m| m.remove(to_hash))
-                {
-                    fill_from.push((lane_id.clone(), signatures, data_proposal, to_hash.clone()));
-                }
-            }
-            for (lane_id, signatures, data_proposal, to_hash) in fill_from {
-                self.fill_hole_from_entry(buc, &lane_id, signatures, data_proposal, to_hash)
-                    .await?;
-            }
-
-            self.try_to_fill_holes_from_storage(buc).await?;
+            self.resolve_all_holes(buc)?;
             // Now send sync requests for remaining holes.
             // For simplicity I'll just re-loop here.
             for (lane_id, (to_hash, _)) in &buc.holes_tops {
