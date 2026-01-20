@@ -845,10 +845,7 @@ mod tests {
         assert!(matches!(ticket, Ticket::TimeoutQC(_, _)));
         assert_eq!(cp.slot, 1);
         assert_eq!(cp_view, 1);
-        assert_eq!(
-            cp.parent_hash,
-            ConsensusProposalHash(b"genesis".to_vec())
-        );
+        assert_eq!(cp.parent_hash, ConsensusProposalHash(b"genesis".to_vec()));
     }
 
     #[test_log::test(tokio::test)]
@@ -916,10 +913,7 @@ mod tests {
         assert!(matches!(ticket, Ticket::TimeoutQC(_, _)));
         assert_eq!(cp.slot, 1);
         assert_eq!(cp_view, 1);
-        assert_eq!(
-            cp.parent_hash,
-            ConsensusProposalHash(b"genesis".to_vec())
-        );
+        assert_eq!(cp.parent_hash, ConsensusProposalHash(b"genesis".to_vec()));
     }
 
     #[test_log::test(tokio::test)]
@@ -1052,10 +1046,7 @@ mod tests {
         assert!(matches!(ticket, Ticket::TimeoutQC(_, _)));
         assert_eq!(cp.slot, 1);
         assert_eq!(cp_view, 1);
-        assert_eq!(
-            cp.parent_hash,
-            ConsensusProposalHash(b"genesis".to_vec())
-        );
+        assert_eq!(cp.parent_hash, ConsensusProposalHash(b"genesis".to_vec()));
     }
 
     #[test_log::test(tokio::test)]
@@ -1129,10 +1120,7 @@ mod tests {
         assert!(matches!(ticket, Ticket::TimeoutQC(_, _)));
         assert_eq!(cp.slot, 1);
         assert_eq!(cp_view, 1);
-        assert_eq!(
-            cp.parent_hash,
-            ConsensusProposalHash(b"genesis".to_vec())
-        );
+        assert_eq!(cp.parent_hash, ConsensusProposalHash(b"genesis".to_vec()));
     }
 
     #[test_log::test(tokio::test)]
@@ -1220,10 +1208,7 @@ mod tests {
         assert_eq!(cp.slot, 1);
         assert_eq!(cp_view, 1);
         assert!(matches!(ticket, Ticket::TimeoutQC(_, _)));
-        assert_eq!(
-            cp.parent_hash,
-            ConsensusProposalHash(b"genesis".to_vec())
-        );
+        assert_eq!(cp.parent_hash, ConsensusProposalHash(b"genesis".to_vec()));
     }
 
     #[test_log::test(tokio::test)]

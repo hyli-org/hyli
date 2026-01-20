@@ -1081,8 +1081,7 @@ pub mod test {
             }
 
             self.consensus.bft_round_state.slot = 1;
-            self.consensus.bft_round_state.parent_hash =
-                ConsensusProposalHash(b"genesis".to_vec());
+            self.consensus.bft_round_state.parent_hash = ConsensusProposalHash(b"genesis".to_vec());
             self.consensus.bft_round_state.parent_cut = vec![(
                 LaneId::new(
                     cryptos
@@ -1435,10 +1434,7 @@ pub mod test {
 
         assert_eq!(cp1.slot, 1);
         assert_eq!(view1, 0);
-        assert_eq!(
-            cp1.parent_hash,
-            ConsensusProposalHash(b"genesis".to_vec())
-        );
+        assert_eq!(cp1.parent_hash, ConsensusProposalHash(b"genesis".to_vec()));
         assert_eq!(ticket1, Ticket::Genesis);
 
         // Slot 1 - leader = node2
@@ -1474,16 +1470,10 @@ pub mod test {
         let signed_vote = node2
             .consensus
             .crypto
-            .sign((
-                ConsensusProposalHash(b"hash-a".to_vec()),
-                PrepareVoteMarker,
-            ))
+            .sign((ConsensusProposalHash(b"hash-a".to_vec()), PrepareVoteMarker))
             .unwrap();
         let invalid_vote = Signed {
-            msg: (
-                ConsensusProposalHash(b"hash-b".to_vec()),
-                PrepareVoteMarker,
-            ),
+            msg: (ConsensusProposalHash(b"hash-b".to_vec()), PrepareVoteMarker),
             signature: signed_vote.signature,
         };
 

@@ -604,10 +604,7 @@ async fn test_sending_sync_request() -> Result<()> {
         MempoolNetMessage::SyncRequest(req_lane_id, from, to) => {
             assert_eq!(req_lane_id, lane_id);
             assert_eq!(from, None);
-            assert_eq!(
-                to,
-                Some(DataProposalHash(b"dp_hash_in_cut".to_vec()))
-            );
+            assert_eq!(to, Some(DataProposalHash(b"dp_hash_in_cut".to_vec())));
         }
         _ => panic!("Expected SyncReply message"),
     };
@@ -831,15 +828,9 @@ async fn test_data_vote_invalid_signature_rejected() -> Result<()> {
 
     let crypto2 = BlstCrypto::new("2").unwrap();
     let lane_id = ctx.mempool.own_lane_id().clone();
-    let valid = crypto2.sign((
-        DataProposalHash(b"hash-a".to_vec()),
-        LaneBytesSize(1),
-    ))?;
+    let valid = crypto2.sign((DataProposalHash(b"hash-a".to_vec()), LaneBytesSize(1)))?;
     let invalid = SignedByValidator {
-        msg: (
-            DataProposalHash(b"hash-b".to_vec()),
-            LaneBytesSize(1),
-        ),
+        msg: (DataProposalHash(b"hash-b".to_vec()), LaneBytesSize(1)),
         signature: valid.signature,
     };
 
