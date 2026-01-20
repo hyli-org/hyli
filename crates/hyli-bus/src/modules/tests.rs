@@ -132,7 +132,7 @@ impl Module for MultiPersistModule {
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<Option<Vec<(PathBuf, u32)>>> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         let (first_path, second_path) = multi_persist_paths(&self.ctx.data_dir);
         if let Some(parent) = first_path.parent() {
             std::fs::create_dir_all(parent).context("Creating first persist directory")?;
@@ -145,10 +145,10 @@ impl Module for MultiPersistModule {
         let second_data = TestStruct { value: 2 };
         let first_checksum = Self::save_on_disk(&first_path, &first_data)?;
         let second_checksum = Self::save_on_disk(&second_path, &second_data)?;
-        Ok(Some(vec![
+        Ok(vec![
             (first_path, first_checksum),
             (second_path, second_checksum),
-        ]))
+        ])
     }
 }
 

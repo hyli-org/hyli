@@ -5764,6 +5764,7 @@ dependencies = [
  "futures",
  "hex",
  "hyli-amm",
+ "hyli-bus",
  "hyli-client-sdk",
  "hyli-contract-sdk",
  "hyli-contracts",

@@ -14,6 +14,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::rest_client::NodeApiClient;
 use client_sdk::{helpers::ClientSdkProver, transaction_builder::TxExecutorHandler};
 use futures::future::BoxFuture;
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_net::logged_task::logged_task;
 use indexmap::IndexMap;
 use sdk::{
@@ -255,14 +256,14 @@ where
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         let file = self
             .ctx
             .data_directory
             .join(format!("autoprover_{}.bin", self.ctx.contract_name));
         let checksum =
             Self::save_on_disk::<AutoProverStore<Contract>>(file.as_path(), &self.store)?;
-        Ok(Some(vec![(file, checksum)]))
+        Ok(vec![(file, checksum)])
     }
 }
 

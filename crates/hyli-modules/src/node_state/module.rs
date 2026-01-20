@@ -10,6 +10,7 @@ use crate::modules::files::NODE_STATE_BIN;
 use crate::modules::{module_bus_client, Module, SharedBuildApiCtx};
 use crate::{log_error, log_warn};
 use anyhow::Result;
+use hyli_bus::modules::ModulePersistOutput;
 use sdk::*;
 use std::path::PathBuf;
 use tracing::info;
@@ -143,10 +144,10 @@ impl Module for NodeStateModule {
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         let file = self.data_directory.join(NODE_STATE_BIN);
         let checksum = Self::save_on_disk::<NodeStateStore>(file.as_path(), &self.inner)?;
-        Ok(Some(vec![(file, checksum)]))
+        Ok(vec![(file, checksum)])
     }
 }
 

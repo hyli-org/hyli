@@ -3,6 +3,7 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_model::utils::TimestampMs;
 use hyli_model::{BlockHeight, ContractName, TxHash};
 use indexmap::IndexMap;
@@ -112,7 +113,7 @@ impl Module for ContractListener {
         self.start().await
     }
 
-    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         // Resetting last_seen_block_cursor to default.
         // This forces reprocessing of all sequenced transactions on restart.
         for cursor in self.store.last_sequenced_block_cursor.values_mut() {
@@ -121,7 +122,7 @@ impl Module for ContractListener {
 
         let file = self.conf.data_directory.join(CONTRACT_LISTENER_STATE_FILE);
         let checksum = Self::save_on_disk(file.as_path(), &self.store)?;
-        Ok(Some(vec![(file, checksum)]))
+        Ok(vec![(file, checksum)])
     }
 }
 

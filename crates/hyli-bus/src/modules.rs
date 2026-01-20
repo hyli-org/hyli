@@ -26,6 +26,8 @@ pub use crate::utils::checksums::{
 
 const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
+pub type ModulePersistOutput = Vec<(PathBuf, u32)>;
+
 /// Module trait to define startup dependencies
 pub trait Module
 where
@@ -116,15 +118,13 @@ where
 
     /// Persist module state to disk.
     /// Returns `Some(vec)` if data was saved, `None` if module doesn't persist.
-    fn persist(
-        &mut self,
-    ) -> impl futures::Future<Output = Result<Option<Vec<(PathBuf, u32)>>>> + Send {
+    fn persist(&mut self) -> impl futures::Future<Output = Result<ModulePersistOutput>> + Send {
         async {
             info!(
                 "Persistence is not implemented for module {}",
                 type_name::<Self>()
             );
-            Ok(None)
+            Ok(Vec::new())
         }
     }
 
@@ -191,7 +191,7 @@ pub mod files {
 }
 
 type ModuleStarterFuture =
-    Pin<Box<dyn Future<Output = Result<Option<Vec<(PathBuf, u32)>>, Error>> + Send + 'static>>;
+    Pin<Box<dyn Future<Output = Result<ModulePersistOutput, Error>> + Send + 'static>>;
 
 struct ModuleStarter {
     pub name: &'static str,
@@ -453,7 +453,7 @@ impl ModulesHandler {
 
                 let mut persisted_entries = Vec::new();
                 match res {
-                    Ok(Ok(Some(entries))) => {
+                    Ok(Ok(entries)) => {
                         tracing::info!(
                             module =% module.name,
                             "Module {} exited and persisted {} file(s)",
@@ -461,9 +461,6 @@ impl ModulesHandler {
                             entries.len()
                         );
                         persisted_entries = entries;
-                    }
-                    Ok(Ok(None)) => {
-                        tracing::info!(module =% module.name, "Module {} exited with no persistence.", module.name);
                     }
                     Ok(Err(e)) => {
                         tracing::error!(module =% module.name, "Module {} exited with error: {:?}", module.name, e);
@@ -623,7 +620,7 @@ impl ModulesHandler {
         Ok(())
     }
 
-    async fn run_module<M>(mut module: M) -> Result<Option<Vec<(PathBuf, u32)>>>
+    async fn run_module<M>(mut module: M) -> Result<ModulePersistOutput>
     where
         M: Module,
     {

@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use hyli_bus::modules::ModulePersistOutput;
 use sdk::{DataEvent, Hashed, MempoolStatusEvent, SignedBlock};
 use tracing::{debug, info};
 
@@ -77,13 +78,13 @@ impl Module for NodeStateProcessor {
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         let file = self
             .config
             .data_directory
             .join("da_listener_node_state.bin");
         let checksum = Self::save_on_disk::<NodeStateStore>(file.as_path(), &self.node_state)?;
-        Ok(Some(vec![(file, checksum)]))
+        Ok(vec![(file, checksum)])
     }
 }
 

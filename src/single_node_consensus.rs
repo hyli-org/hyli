@@ -11,6 +11,7 @@ use crate::model::*;
 use crate::utils::conf::SharedConf;
 use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_crypto::SharedBlstCrypto;
 use hyli_model::utils::TimestampMs;
 use hyli_modules::bus::command_response::Query;
@@ -93,13 +94,13 @@ impl Module for SingleNodeConsensus {
         self.start()
     }
 
-    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         if let Some(file) = &self.file {
             let checksum = Self::save_on_disk(file.as_path(), &self.store)?;
-            return Ok(Some(vec![(file.clone(), checksum)]));
+            return Ok(vec![(file.clone(), checksum)]);
         }
 
-        Ok(None)
+        Ok(vec![])
     }
 }
 

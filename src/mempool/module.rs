@@ -1,3 +1,4 @@
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_modules::{log_error, module_handle_messages};
 use std::{sync::Arc, time::Duration};
 
@@ -129,7 +130,7 @@ impl Module for Mempool {
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         if let Some(file) = &self.file {
             let mempool_file = file.join("mempool.bin");
             let checksum = Self::save_on_disk(mempool_file.as_path(), &self.inner)?;
@@ -138,12 +139,12 @@ impl Module for Mempool {
             let lanes_tip_checksum =
                 Self::save_on_disk(lanes_tip_file.as_path(), &self.lanes.lane_tips_snapshot())?;
 
-            return Ok(Some(vec![
+            return Ok(vec![
                 (mempool_file, checksum),
                 (lanes_tip_file, lanes_tip_checksum),
-            ]));
+            ]);
         }
 
-        Ok(None)
+        Ok(vec![])
     }
 }

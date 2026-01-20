@@ -7,6 +7,7 @@ use crate::{
 };
 use anyhow::{Context, Error, Result};
 use chrono::{DateTime, Utc};
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_model::api::{ContractChangeType, TransactionStatusDb, TransactionTypeDb};
 use hyli_model::utils::TimestampMs;
 use hyli_modules::{
@@ -90,7 +91,7 @@ impl Module for Indexer {
         self.start()
     }
 
-    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         let node_state_file = self.conf.data_directory.join("indexer_node_state.bin");
         let checksum = NodeStateModule::save_on_disk(&node_state_file, &self.node_state.store)
             .context("Failed to save node state to disk")?;
@@ -106,10 +107,10 @@ impl Module for Indexer {
             NodeStateModule::save_on_disk(&da_start_file, &persisted_da_start_height)
                 .context("Failed to save DA start height to disk")?;
 
-        Ok(Some(vec![
+        Ok(vec![
             (node_state_file, checksum),
             (da_start_file, da_start_checksum),
-        ]))
+        ])
     }
 }
 

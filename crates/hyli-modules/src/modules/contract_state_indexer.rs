@@ -6,6 +6,7 @@ use crate::{
 use anyhow::{anyhow, bail, Context, Error, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::contract_indexer::{ContractHandler, ContractStateStore};
+use hyli_bus::modules::ModulePersistOutput;
 use sdk::*;
 use std::{any::TypeId, ops::Deref, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
@@ -120,12 +121,12 @@ where
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         let checksum = Self::save_on_disk::<ContractStateStore<State>>(
             self.file.as_path(),
             self.store.read().await.deref(),
         )?;
-        Ok(Some(vec![(self.file.clone(), checksum)]))
+        Ok(vec![(self.file.clone(), checksum)])
     }
 }
 

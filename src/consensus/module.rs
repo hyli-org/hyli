@@ -1,4 +1,5 @@
 use anyhow::Result;
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_modules::{
     bus::SharedMessageBus,
     modules::{files::CONSENSUS_BIN, Module},
@@ -46,7 +47,7 @@ impl Module for Consensus {
         self.wait_genesis().await
     }
 
-    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         if let Some(file) = &self.file {
             let serialize_limit = self
                 .config
@@ -59,9 +60,9 @@ impl Module for Consensus {
                 .buffered_prepares
                 .set_max_size(Some(serialize_limit));
             let checksum = Self::save_on_disk(file.as_path(), &self.store)?;
-            return Ok(Some(vec![(file.clone(), checksum)]));
+            return Ok(vec![(file.clone(), checksum)]);
         }
 
-        Ok(None)
+        Ok(vec![])
     }
 }

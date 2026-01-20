@@ -218,6 +218,7 @@ risc0-recursion = { workspace = true }
 hyli-verifiers = { workspace = true }
 hyli-contracts = { workspace = true }
 hyli-modules = { workspace = true, features = ["db"] }
+hyli-bus = { workspace = true }
 
 
 anyhow = { workspace = true }

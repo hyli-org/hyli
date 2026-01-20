@@ -13,6 +13,7 @@ use hydentity::{
     client::tx_executor_handler::{register_identity, verify_identity},
     Hydentity,
 };
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_contract_sdk::{
     Blob, Calldata, ContractName, Identity, ProgramId, StateCommitment, ZkContract,
 };
@@ -73,11 +74,11 @@ impl Module for Genesis {
         self.start().await
     }
 
-    async fn persist(&mut self) -> Result<Option<Vec<(std::path::PathBuf, u32)>>> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         // TODO: ideally we'd wait until everyone has processed it, as there's technically a data race.
         let file = self.config.data_directory.clone().join("genesis.bin");
         let checksum = Self::save_on_disk(&file, &true)?;
-        Ok(Some(vec![(file, checksum)]))
+        Ok(vec![(file, checksum)])
     }
 }
 
