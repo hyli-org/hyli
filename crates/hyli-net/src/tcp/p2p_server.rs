@@ -1232,7 +1232,9 @@ pub mod tests {
     use opentelemetry_sdk::Resource;
     use tokio::net::TcpListener;
 
-    use crate::tcp::{p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent};
+    use crate::tcp::{
+        p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent, TcpMessageLabel,
+    };
 
     use super::P2PTcpEvent;
 
@@ -1523,9 +1525,17 @@ pub mod tests {
             .unwrap();
         p2p_server1.tcp_server.drop_peer_stream(socket_addr);
 
-        let msg = borsh::to_vec(&P2PTcpMessage::Data(TestMessage("boom".to_string())))?;
+        let message = TestMessage("boom".to_string());
+        let message_label = message.message_label();
+        let msg = borsh::to_vec(&P2PTcpMessage::Data(message))?;
         let send_errors = p2p_server1
-            .actually_send_to(HashSet::from_iter(vec![peer_pubkey]), &canal, msg, vec![])
+            .actually_send_to(
+                HashSet::from_iter(vec![peer_pubkey]),
+                &canal,
+                msg,
+                vec![],
+                message_label,
+            )
             .await;
         assert!(!send_errors.is_empty(), "expected broadcast send errors");
 
