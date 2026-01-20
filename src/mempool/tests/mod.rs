@@ -911,7 +911,7 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
         },
     );
 
-    // Reply for dp3 should fill dp3 -> dp2 -> dp1 from buffer.
+    // Reply for dp3 should store dp3 and leave buffered entries intact.
     let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
         lane_id.clone(),
         vec![ctx
@@ -924,31 +924,7 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
     let handle = ctx.mempool.handle_net_message(signed_msg).await;
     assert_ok!(handle, "Should handle net message");
 
-    assert!(ctx.mempool.lanes.contains(&lane_id, &dp1.hashed()));
-    assert!(ctx.mempool.lanes.contains(&lane_id, &dp2.hashed()));
     assert!(ctx.mempool.lanes.contains(&lane_id, &dp3.hashed()));
-
-    let metadata = ctx
-        .mempool
-        .lanes
-        .get_metadata_by_hash(&lane_id, &dp1.hashed())?
-        .expect("Expected stored metadata");
-    assert_eq!(
-        metadata.parent_data_proposal_hash,
-        DataProposalParent::LaneRoot(lane_id.clone())
-    );
-    assert_eq!(metadata.cumul_size, cumul_size1);
-
-    let metadata = ctx
-        .mempool
-        .lanes
-        .get_metadata_by_hash(&lane_id, &dp2.hashed())?
-        .expect("Expected stored metadata");
-    assert_eq!(
-        metadata.parent_data_proposal_hash,
-        DataProposalParent::DP(dp1.hashed())
-    );
-    assert_eq!(metadata.cumul_size, cumul_size2);
 
     let metadata = ctx
         .mempool
@@ -960,6 +936,29 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
         DataProposalParent::DP(dp2.hashed())
     );
     assert_eq!(metadata.cumul_size, cumul_size3);
+
+    let buffered = ctx
+        .mempool
+        .buffered_entries
+        .get(&lane_id)
+        .expect("Expected buffered entries");
+    assert!(buffered.contains_key(&dp1.hashed()));
+    assert!(buffered.contains_key(&dp2.hashed()));
+    assert!(buffered.contains_key(&dp_other.hashed()));
+
+    // Building queued blocks should consume the remaining buffered chain entries.
+    ctx.mempool.try_to_send_full_signed_blocks().await?;
+
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp1.hashed()));
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp2.hashed()));
+    let buffered = ctx
+        .mempool
+        .buffered_entries
+        .get(&lane_id)
+        .expect("Expected buffered entries");
+    assert!(!buffered.contains_key(&dp1.hashed()));
+    assert!(!buffered.contains_key(&dp2.hashed()));
+    assert!(buffered.contains_key(&dp_other.hashed()));
 
     // Unrelated buffered entry remains.
     assert!(ctx
@@ -1042,6 +1041,91 @@ async fn test_sync_reply_materialize_holes_consumes_buffered_latest_cut() -> Res
 }
 
 #[test_log::test(tokio::test)]
+async fn test_fill_holes_from_storage_resolves_pending_hole() -> Result<()> {
+    let mut ctx = MempoolTestCtx::new("mempool").await;
+
+    let register_tx = make_register_contract_tx(ContractName::new("test1"));
+    let dp1 = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
+    let dp2 = ctx.create_data_proposal(Some(dp1.hashed()), std::slice::from_ref(&register_tx));
+    let dp3 = ctx.create_data_proposal(Some(dp2.hashed()), std::slice::from_ref(&register_tx));
+
+    let dp1_size = LaneBytesSize(dp1.estimate_size() as u64);
+    let dp2_size = LaneBytesSize(dp2.estimate_size() as u64);
+    let dp3_size = LaneBytesSize(dp3.estimate_size() as u64);
+    let cumul_size1 = dp1_size;
+    let cumul_size2 = LaneBytesSize(dp1_size.0 + dp2_size.0);
+    let cumul_size3 = LaneBytesSize(dp1_size.0 + dp2_size.0 + dp3_size.0);
+    let lane_id = ctx.mempool.own_lane_id();
+    let crypto = ctx.mempool.crypto.clone();
+
+    ctx.mempool
+        .lanes
+        .store_data_proposal(&crypto, &lane_id, dp1.clone())?;
+    ctx.mempool
+        .lanes
+        .store_data_proposal(&crypto, &lane_id, dp2.clone())?;
+    ctx.mempool
+        .lanes
+        .store_data_proposal(&crypto, &lane_id, dp3.clone())?;
+
+    let mut holes_tops = std::collections::HashMap::new();
+    holes_tops.insert(lane_id.clone(), (dp3.hashed(), cumul_size3));
+    let mut buc = crate::mempool::block_construction::BlockUnderConstruction {
+        from: None,
+        ccp: CommittedConsensusProposal {
+            consensus_proposal: ConsensusProposal {
+                cut: vec![(lane_id.clone(), dp3.hashed(), cumul_size3, PoDA::default())],
+                slot: 1,
+                ..ConsensusProposal::default()
+            },
+            staking: Staking::default(),
+            certificate: AggregateSignature::default(),
+        },
+        holes_tops,
+        holes_materialized: true,
+    };
+
+    let result = ctx.mempool.build_signed_block_and_emit(&mut buc).await;
+    assert_ok!(result, "Should build signed block after filling holes");
+    assert!(buc.holes_tops.is_empty());
+
+    let metadata = ctx
+        .mempool
+        .lanes
+        .get_metadata_by_hash(&lane_id, &dp1.hashed())?
+        .expect("Expected stored metadata");
+    assert_eq!(
+        metadata.parent_data_proposal_hash,
+        DataProposalParent::LaneRoot(lane_id.clone())
+    );
+    assert_eq!(metadata.cumul_size, cumul_size1);
+
+    let metadata = ctx
+        .mempool
+        .lanes
+        .get_metadata_by_hash(&lane_id, &dp2.hashed())?
+        .expect("Expected stored metadata");
+    assert_eq!(
+        metadata.parent_data_proposal_hash,
+        DataProposalParent::DP(dp1.hashed())
+    );
+    assert_eq!(metadata.cumul_size, cumul_size2);
+
+    let metadata = ctx
+        .mempool
+        .lanes
+        .get_metadata_by_hash(&lane_id, &dp3.hashed())?
+        .expect("Expected stored metadata");
+    assert_eq!(
+        metadata.parent_data_proposal_hash,
+        DataProposalParent::DP(dp2.hashed())
+    );
+    assert_eq!(metadata.cumul_size, cumul_size3);
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
 async fn test_sync_request_single_dp() -> Result<()> {
     let mut ctx = MempoolTestCtx::new("mempool").await;
     let lane_id = ctx.mempool.own_lane_id().clone();
@@ -1099,6 +1183,58 @@ async fn test_sync_request_single_dp() -> Result<()> {
 
     // Verify no other messages were sent
     assert!(ctx.out_receiver.try_recv().is_err());
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_sync_request_not_satisfied_by_metadata_only() -> Result<()> {
+    let mut ctx = MempoolTestCtx::new("mempool").await;
+    let lane_id = ctx.mempool.own_lane_id();
+
+    // Add a peer so we can send a sync request.
+    let crypto2 = BlstCrypto::new("2").unwrap();
+    ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
+
+    let register_tx = make_register_contract_tx(ContractName::new("test1"));
+    let dp = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
+    let dp_hash = dp.hashed();
+    let cumul_size = LaneBytesSize(dp.estimate_size() as u64);
+
+    // Insert metadata only (no data) to mimic the race: metadata visible, data missing.
+    let signatures = vec![ctx.mempool.crypto.sign((dp_hash.clone(), cumul_size))?];
+    let metadata = LaneEntryMetadata {
+        parent_data_proposal_hash: DataProposalParent::LaneRoot(lane_id.clone()),
+        cumul_size,
+        signatures,
+        cached_poda: None,
+    };
+    ctx.mempool
+        .lanes
+        .by_hash_metadata
+        .insert(format!("{lane_id}:{dp_hash}"), borsh::to_vec(&metadata)?)?;
+
+    ctx.dissemination_manager
+        .on_event(DisseminationEvent::SyncRequestNeeded {
+            lane_id: lane_id.clone(),
+            from: None,
+            to: Some(dp_hash.clone()),
+        })
+        .await?;
+    ctx.dissemination_manager
+        .process_sync_requests_and_replies_for_test()
+        .await?;
+
+    let sent = ctx
+        .assert_send(crypto2.validator_pubkey(), "SyncRequest")
+        .await;
+    match sent.msg {
+        MempoolNetMessage::SyncRequest(req_lane_id, _from, to) => {
+            assert_eq!(req_lane_id, lane_id);
+            assert_eq!(to, Some(dp_hash));
+        }
+        other => panic!("Expected SyncRequest message, got {other:?}"),
+    }
 
     Ok(())
 }
