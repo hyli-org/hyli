@@ -505,7 +505,7 @@ mod tests {
 
         // Build a DataProposal with a VerifiedProof tx that includes an inlined proof
         let proof = ProofData(vec![1, 2, 3, 4]);
-        let proof_hash = ProofDataHash(proof.hashed().0);
+        let proof_hash = proof.hashed();
         let vpt = VerifiedProofTransaction {
             contract_name: ContractName::new("test-contract"),
             program_id: ProgramId(vec![]),
@@ -515,7 +515,7 @@ mod tests {
             proof_size: proof.0.len(),
             proven_blobs: vec![BlobProofOutput {
                 original_proof_hash: proof_hash,
-                blob_tx_hash: crate::model::TxHash("blob-tx".into()),
+                blob_tx_hash: crate::model::TxHash::from("blob-tx"),
                 program_id: ProgramId(vec![]),
                 verifier: Verifier("test".into()),
                 hyli_output: HyliOutput::default(),

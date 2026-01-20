@@ -369,7 +369,7 @@ fn rows_to_txs(rows: Vec<PgRow>) -> Result<(BlockCursor, IndexMap<TxHash, TxData
     let mut latest_cursor = BlockCursor::default();
 
     for row in rows {
-        let tx_hash = TxHash(row.try_get("tx_hash")?);
+        let tx_hash: TxHash = row.try_get("tx_hash")?;
         let block_hash: BlockHash = row.try_get("block_hash")?;
         let lane_id: LaneId = row.try_get("lane_id")?;
         let timestamp: TimestampMs = row.try_get("timestamp")?;

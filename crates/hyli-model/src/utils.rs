@@ -7,6 +7,26 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
 
+pub mod hex_bytes {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&hex::encode(bytes))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let trimmed = s.strip_prefix("0x").unwrap_or(&s);
+        hex::decode(trimmed).map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(
     Debug,
     Clone,

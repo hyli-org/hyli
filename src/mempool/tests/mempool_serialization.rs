@@ -7,7 +7,7 @@ use super::*;
 use crate::mempool::ArcBorsh;
 use anyhow::Result;
 use hyli_model::{
-    BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, ProofDataHash,
+    BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData,
     ProofTransaction, Transaction, TransactionData, VerifiedProofTransaction, Verifier,
 };
 use std::sync::Arc;
@@ -22,7 +22,7 @@ fn make_test_blob_tx(name: &str) -> Transaction {
 /// require actual proof verification during processing.
 fn make_test_verified_proof_tx(contract_name: &str) -> Transaction {
     let proof = ProofData(vec![1, 2, 3, 4]);
-    let proof_hash = ProofDataHash(proof.hashed().0);
+    let proof_hash = proof.hashed();
     let vpt = VerifiedProofTransaction {
         contract_name: ContractName::new(contract_name),
         program_id: ProgramId(vec![]),
@@ -32,7 +32,7 @@ fn make_test_verified_proof_tx(contract_name: &str) -> Transaction {
         proof_size: proof.0.len(),
         proven_blobs: vec![BlobProofOutput {
             original_proof_hash: proof_hash,
-            blob_tx_hash: crate::model::TxHash("blob-tx".into()),
+            blob_tx_hash: crate::model::TxHash::from("blob-tx"),
             program_id: ProgramId(vec![]),
             verifier: Verifier("test".into()),
             hyli_output: HyliOutput::default(),

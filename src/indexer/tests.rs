@@ -838,7 +838,7 @@ async fn scenario_contracts() -> Result<(
             delete_d.into(),
             delete_d_proof,
         ],
-        DataProposalHash("test".to_string()),
+        DataProposalHash::from("test"),
     );
     // Reconstruct A in a separate DP
     let parent = b5.data_proposals[0].1[0].hashed();
@@ -962,8 +962,10 @@ async fn test_indexer_api_doubles() -> Result<()> {
     transactions_response.assert_status_ok();
     let result = transactions_response.json::<APITransaction>();
     assert_eq!(
-        result.parent_dp_hash.0,
-        "dp_hashbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()
+        result.parent_dp_hash,
+        DataProposalHash::from(
+            "dp_hashbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        )
     );
 
     // Multiple txs with same hash -- one not yet in a block, should return the pending one
@@ -974,8 +976,10 @@ async fn test_indexer_api_doubles() -> Result<()> {
     transactions_response.assert_status_ok();
     let result = transactions_response.json::<APITransaction>();
     assert_eq!(
-        result.parent_dp_hash.0,
-        "dp_hashbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()
+        result.parent_dp_hash,
+        DataProposalHash::from(
+            "dp_hashbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        )
     );
     assert_eq!(result.block_hash, None);
 
@@ -1009,8 +1013,10 @@ async fn test_indexer_api_doubles() -> Result<()> {
     transactions_response.assert_status_ok();
     let result = transactions_response.json::<APITransaction>();
     assert_eq!(
-        result.parent_dp_hash.0,
-        "dp_hashbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string()
+        result.parent_dp_hash,
+        DataProposalHash::from(
+            "dp_hashbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        )
     );
     assert_eq!(result.block_hash, None);
 
@@ -1025,8 +1031,8 @@ async fn test_indexer_api_doubles() -> Result<()> {
         result,
         vec![
             APITransactionEvents {
-                block_hash: ConsensusProposalHash(
-                    "block2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()
+                block_hash: ConsensusProposalHash::from(
+                    "block2aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                 ),
                 block_height: BlockHeight(2),
                 events: vec![serde_json::json!({
@@ -1035,8 +1041,8 @@ async fn test_indexer_api_doubles() -> Result<()> {
                 })]
             },
             APITransactionEvents {
-                block_hash: ConsensusProposalHash(
-                    "block3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()
+                block_hash: ConsensusProposalHash::from(
+                    "block3aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                 ),
                 block_height: BlockHeight(3),
                 events: vec![serde_json::json!({
@@ -1260,8 +1266,8 @@ async fn test_data_proposal_created_does_not_downgrade_success() -> Result<()> {
         "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity)
          VALUES ($1, $2, $3, $4, $5, NULL, NULL, NULL, $6, $7)",
     )
-    .bind(parent_dp_hash.0.clone())
-    .bind(tx_metadata.id.1.0.clone())
+    .bind(hex::encode(&parent_dp_hash.0))
+    .bind(hex::encode(&tx_metadata.id.1.0))
     .bind(transaction.version as i32)
     .bind(TransactionTypeDb::BlobTransaction)
     .bind(TransactionStatusDb::Success)

@@ -112,8 +112,8 @@ impl UuidTld {
         // Create UUID
         let mut hasher = SipHasher::new();
         hasher.write(&self.commit().0);
-        hasher.write(calldata.tx_hash.0.as_bytes());
-        hasher.write(tx_ctx.block_hash.0.as_bytes());
+        hasher.write(&calldata.tx_hash.0);
+        hasher.write(&tx_ctx.block_hash.0);
         hasher.write_u128(tx_ctx.timestamp.0);
         let mut hasher_rng = hasher.into_rng();
         let id = uuid::Builder::from_random_bytes(hasher_rng.random())
@@ -159,7 +159,7 @@ mod test {
             identity: identity.into(),
             tx_hash: TxHash::default(),
             tx_ctx: Some(TxContext {
-                block_hash: ConsensusProposalHash("0xcafefade".to_owned()),
+                block_hash: ConsensusProposalHash::from("0xcafefade"),
                 timestamp: TimestampMs(3745916),
                 ..TxContext::default()
             }),

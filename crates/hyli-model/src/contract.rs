@@ -22,12 +22,12 @@ use crate::{utils::TimestampMs, LaneId};
     PartialOrd,
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
-pub struct ConsensusProposalHash(pub String);
+pub struct ConsensusProposalHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
 pub type BlockHash = ConsensusProposalHash;
 
 impl std::hash::Hash for ConsensusProposalHash {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write(self.0.as_bytes());
+        state.write(&self.0);
     }
 }
 
@@ -165,7 +165,7 @@ pub struct Identity(pub String);
     PartialOrd,
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
-pub struct TxHash(pub String);
+pub struct TxHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
 
 #[derive(
     Default,
@@ -545,7 +545,28 @@ impl<'de> Deserialize<'de> for ProofData {
 #[derive(
     Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
 )]
-pub struct ProofDataHash(pub String);
+pub struct ProofDataHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
+
+impl From<Vec<u8>> for ProofDataHash {
+    fn from(v: Vec<u8>) -> Self {
+        ProofDataHash(v)
+    }
+}
+impl From<&[u8]> for ProofDataHash {
+    fn from(v: &[u8]) -> Self {
+        ProofDataHash(v.to_vec())
+    }
+}
+impl From<String> for ProofDataHash {
+    fn from(s: String) -> Self {
+        ProofDataHash(s.into_bytes())
+    }
+}
+impl From<&str> for ProofDataHash {
+    fn from(s: &str) -> Self {
+        ProofDataHash(s.as_bytes().to_vec())
+    }
+}
 
 #[cfg(feature = "full")]
 impl Hashed<ProofDataHash> for ProofData {
@@ -554,7 +575,7 @@ impl Hashed<ProofDataHash> for ProofData {
         let mut hasher = sha3::Sha3_256::new();
         hasher.update(self.0.as_slice());
         let hash_bytes = hasher.finalize();
-        ProofDataHash(hex::encode(hash_bytes))
+        ProofDataHash(hash_bytes.to_vec())
     }
 }
 
@@ -581,9 +602,9 @@ impl Hashed<OnchainEffectHash> for OnchainEffect {
         let mut hasher = Sha3_256::new();
         match self {
             OnchainEffect::RegisterContractWithConstructor(c) => {
-                hasher.update(c.hashed().0.as_bytes())
+                hasher.update(&c.hashed().0)
             }
-            OnchainEffect::RegisterContract(c) => hasher.update(c.hashed().0.as_bytes()),
+            OnchainEffect::RegisterContract(c) => hasher.update(&c.hashed().0),
             OnchainEffect::DeleteContract(cn) => hasher.update(cn.0.as_bytes()),
             OnchainEffect::UpdateContractProgramId(cn, pid) => {
                 hasher.update(cn.0.as_bytes());
@@ -705,14 +726,55 @@ impl<S: Into<String>> From<S> for Identity {
     }
 }
 
+impl ConsensusProposalHash {
+    pub fn new<S: Into<Self>>(s: S) -> Self {
+        s.into()
+    }
+}
+impl From<Vec<u8>> for ConsensusProposalHash {
+    fn from(v: Vec<u8>) -> Self {
+        ConsensusProposalHash(v)
+    }
+}
+impl From<&[u8]> for ConsensusProposalHash {
+    fn from(v: &[u8]) -> Self {
+        ConsensusProposalHash(v.to_vec())
+    }
+}
+impl From<String> for ConsensusProposalHash {
+    fn from(s: String) -> Self {
+        ConsensusProposalHash(s.into_bytes())
+    }
+}
+impl From<&str> for ConsensusProposalHash {
+    fn from(s: &str) -> Self {
+        ConsensusProposalHash(s.as_bytes().to_vec())
+    }
+}
+
 impl TxHash {
     pub fn new<S: Into<Self>>(s: S) -> Self {
         s.into()
     }
 }
-impl<S: Into<String>> From<S> for TxHash {
-    fn from(s: S) -> Self {
-        TxHash(s.into())
+impl From<Vec<u8>> for TxHash {
+    fn from(v: Vec<u8>) -> Self {
+        TxHash(v)
+    }
+}
+impl From<&[u8]> for TxHash {
+    fn from(v: &[u8]) -> Self {
+        TxHash(v.to_vec())
+    }
+}
+impl From<String> for TxHash {
+    fn from(s: String) -> Self {
+        TxHash(s.into_bytes())
+    }
+}
+impl From<&str> for TxHash {
+    fn from(s: &str) -> Self {
+        TxHash(s.as_bytes().to_vec())
     }
 }
 
@@ -760,7 +822,7 @@ impl From<&[u8]> for ProgramId {
 
 impl Display for TxHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", &self.0)
+        write!(f, "{}", hex::encode(&self.0))
     }
 }
 impl Display for BlobIndex {
@@ -944,7 +1006,7 @@ impl Hashed<TxHash> for RegisterContractAction {
         }
         // We don't hash the constructor metadata.
         let hash_bytes = hasher.finalize();
-        TxHash(hex::encode(hash_bytes))
+        TxHash(hash_bytes.to_vec())
     }
 }
 
@@ -1113,7 +1175,7 @@ impl Hashed<TxHash> for RegisterContractEffect {
             }
         }
         let hash_bytes = hasher.finalize();
-        TxHash(hex::encode(hash_bytes))
+        TxHash(hash_bytes.to_vec())
     }
 }
 

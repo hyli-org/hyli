@@ -231,7 +231,7 @@ pub async fn get_unsettled_tx(
 ) -> Result<impl IntoResponse, AppError> {
     match state
         .bus
-        .shutdown_aware_request::<()>(QueryUnsettledTx(TxHash(blob_tx_hash)))
+        .shutdown_aware_request::<()>(QueryUnsettledTx(TxHash::from(blob_tx_hash)))
         .await
     {
         Ok(tx_context) => Ok(Json(tx_context)),

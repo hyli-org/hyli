@@ -3,6 +3,11 @@ use crate::{ConsensusProposalHash, LaneId, TxHash, TxId};
 use crate::{ContractName, DataProposalHash};
 use sqlx::Row;
 
+fn decode_hash_string(s: &str) -> Vec<u8> {
+    let trimmed = s.strip_prefix("0x").unwrap_or(s);
+    hex::decode(trimmed).unwrap_or_else(|_| s.as_bytes().to_vec())
+}
+
 impl sqlx::Type<sqlx::Postgres> for TimestampMs {
     fn type_info() -> sqlx::postgres::PgTypeInfo {
         sqlx::postgres::PgTypeInfo::with_name("TIMESTAMP")
@@ -66,7 +71,8 @@ impl sqlx::Encode<'_, sqlx::Postgres> for TxHash {
         sqlx::encode::IsNull,
         std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
+        let encoded = hex::encode(&self.0);
+        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&encoded, buf)
     }
 }
 
@@ -78,7 +84,7 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for TxHash {
         std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
         let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(TxHash(inner))
+        Ok(TxHash(decode_hash_string(&inner)))
     }
 }
 
@@ -124,7 +130,8 @@ impl sqlx::Encode<'_, sqlx::Postgres> for ConsensusProposalHash {
         sqlx::encode::IsNull,
         std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
+        let encoded = hex::encode(&self.0);
+        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&encoded, buf)
     }
 }
 
@@ -136,7 +143,7 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for ConsensusProposalHash {
         std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
         let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(ConsensusProposalHash(inner))
+        Ok(ConsensusProposalHash(decode_hash_string(&inner)))
     }
 }
 
@@ -161,7 +168,8 @@ impl sqlx::Encode<'_, sqlx::Postgres> for DataProposalHash {
         sqlx::encode::IsNull,
         std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
-        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
+        let encoded = hex::encode(&self.0);
+        <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&encoded, buf)
     }
 }
 impl<'r> sqlx::Decode<'r, sqlx::Postgres> for DataProposalHash {
@@ -172,6 +180,6 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for DataProposalHash {
         std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
         let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(DataProposalHash(inner))
+        Ok(DataProposalHash(decode_hash_string(&inner)))
     }
 }

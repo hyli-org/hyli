@@ -114,7 +114,7 @@ async fn expect_event(
                     {
                         return Ok(());
                     }
-                    seen.push(format!("sequenced:{}:{}", seen_hash.0, ctx.block_height.0));
+                    seen.push(format!("sequenced:{}:{}", seen_hash, ctx.block_height.0));
                 }
                 ContractListenerEvent::SettledTx(seen_hash, _blobs, ctx, status) => {
                     if &seen_hash == expected_hash
@@ -125,7 +125,7 @@ async fn expect_event(
                     }
                     seen.push(format!(
                         "settled:{}:{}:{:?}",
-                        seen_hash.0, ctx.block_height.0, status
+                        seen_hash, ctx.block_height.0, status
                     ));
                 }
             }
@@ -159,7 +159,7 @@ async fn insert_settled_tx_with_index(
     let parent_hash = hash(&format!("block-{}", height - 1));
     insert_block(pool, &block_hash, &parent_hash, height).await?;
 
-    let tx_hash = TxHash(hash(&format!("settled-{height}-{index}")));
+    let tx_hash = TxHash::from(hash(&format!("settled-{height}-{index}")));
     let parent_dp_hash = hash("dp-settled");
     let lane_id = LaneId::default().to_string();
 
@@ -223,7 +223,7 @@ async fn insert_sequenced_tx_with_index(
     let parent_hash = hash(&format!("block-{}", height - 1));
     insert_block(pool, &block_hash, &parent_hash, height).await?;
 
-    let tx_hash = TxHash(hash(&format!("sequenced-{height}-{index}")));
+    let tx_hash = TxHash::from(hash(&format!("sequenced-{height}-{index}")));
     let parent_dp_hash = hash("dp-sequenced");
     let lane_id = LaneId::default().to_string();
 
@@ -254,7 +254,7 @@ async fn insert_sequenced_tx_with_index(
     .execute(pool)
     .await?;
 
-    Ok((tx_hash, ConsensusProposalHash(block_hash)))
+    Ok((tx_hash, ConsensusProposalHash::from(block_hash)))
 }
 
 async fn update_tx_status(

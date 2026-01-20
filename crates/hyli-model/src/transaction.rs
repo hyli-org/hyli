@@ -193,7 +193,7 @@ impl Hashed<TxHash> for ProofTransaction {
         hasher.update(self.verifier.0.as_bytes());
         hasher.update(self.proof.hashed().0);
         let hash_bytes = hasher.finalize();
-        TxHash(hex::encode(hash_bytes))
+        TxHash(hash_bytes.to_vec())
     }
 }
 impl Hashed<TxHash> for VerifiedProofTransaction {
@@ -202,9 +202,9 @@ impl Hashed<TxHash> for VerifiedProofTransaction {
         hasher.update(self.contract_name.0.as_bytes());
         hasher.update(self.program_id.0.clone());
         hasher.update(self.verifier.0.as_bytes());
-        hasher.update(self.proof_hash.0.as_bytes());
+        hasher.update(&self.proof_hash.0);
         let hash_bytes = hasher.finalize();
-        TxHash(hex::encode(hash_bytes))
+        TxHash(hash_bytes.to_vec())
     }
 }
 
@@ -294,7 +294,7 @@ impl Hashed<TxHash> for BlobTransaction {
             hasher.update(blob.hashed().0);
         }
         let hash_bytes = hasher.finalize();
-        let tx_hash = TxHash(hex::encode(hash_bytes));
+        let tx_hash = TxHash(hash_bytes.to_vec());
         *self.hash_cache.write().unwrap() = Some(tx_hash.clone());
         tx_hash
     }

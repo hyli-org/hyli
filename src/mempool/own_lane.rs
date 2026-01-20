@@ -574,7 +574,7 @@ impl super::Mempool {
             proven_blobs: std::iter::zip(tx_hashes, std::iter::zip(hyli_outputs, program_ids))
                 .map(
                     |(blob_tx_hash, (hyli_output, program_id))| BlobProofOutput {
-                        original_proof_hash: ProofDataHash("todo?".to_owned()),
+                        original_proof_hash: ProofDataHash::from("todo?"),
                         blob_tx_hash: blob_tx_hash.clone(),
                         hyli_output,
                         program_id,
@@ -647,7 +647,7 @@ pub mod test {
             MempoolStatusEvent::WaitingDissemination { parent_data_proposal_hash, txs } => {
                 assert_eq!(
                     parent_data_proposal_hash,
-                    DataProposalHash(ctx.mempool.own_lane_id().to_string())
+                    DataProposalHash::from(ctx.mempool.own_lane_id().to_string())
                 );
                 assert_eq!(txs, actual_txs);
             }
@@ -733,7 +733,7 @@ pub mod test {
     #[test_log::test(tokio::test)]
     async fn test_broadcast_rehydrates_proofs() -> Result<()> {
         use crate::model::{
-            BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, ProofDataHash,
+            BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData,
             Transaction, TransactionData, VerifiedProofTransaction, Verifier,
         };
 
@@ -746,7 +746,7 @@ pub mod test {
 
         // Build DP with a VerifiedProof tx including the proof
         let proof = ProofData(vec![9, 9, 9, 9]);
-        let proof_hash = ProofDataHash(proof.hashed().0);
+        let proof_hash = proof.hashed();
         let vpt = VerifiedProofTransaction {
             contract_name: ContractName::new("rehydrate"),
             program_id: ProgramId(vec![]),
@@ -756,7 +756,7 @@ pub mod test {
             proof_size: proof.0.len(),
             proven_blobs: vec![BlobProofOutput {
                 original_proof_hash: proof_hash,
-                blob_tx_hash: crate::model::TxHash("blob-tx".into()),
+                blob_tx_hash: crate::model::TxHash::from("blob-tx"),
                 program_id: ProgramId(vec![]),
                 verifier: Verifier("test".into()),
                 hyli_output: HyliOutput::default(),
@@ -883,7 +883,7 @@ pub mod test {
         let signed_msg = create_data_vote(
             &crypto2,
             ctx.mempool.own_lane_id(),
-            DataProposalHash("non_existent".to_owned()),
+            DataProposalHash::from("non_existent"),
             LaneBytesSize(0),
         )?;
 
@@ -897,7 +897,7 @@ pub mod test {
             .inner
             .buffered_votes
             .get(&ctx.mempool.own_lane_id())
-            .and_then(|lane| lane.get(&DataProposalHash("non_existent".to_owned())))
+            .and_then(|lane| lane.get(&DataProposalHash::from("non_existent")))
             .map(|votes| votes.len())
             .unwrap_or_default();
         assert_eq!(buffered, 1);

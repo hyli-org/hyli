@@ -620,7 +620,7 @@ impl<'any> NodeStateProcessing<'any> {
         // If we arrived here, HyliOutput provided is OK and can now be saved
         debug!(
             "Saving a hyli_output for BlobTx {} index {}",
-            blob_proof_data.hyli_output.tx_hash.0, blob_proof_data.hyli_output.index
+            blob_proof_data.hyli_output.tx_hash, blob_proof_data.hyli_output.index
         );
 
         let (Some(blob), Some(possible_proofs)) = (
@@ -2086,7 +2086,7 @@ pub mod test {
             data_proposals: vec![(
                 LaneId::default(),
                 vec![DataProposal::new(
-                    DataProposalHash(format!("{height}")),
+                    DataProposalHash::from(format!("{height}")),
                     txs,
                 )],
             )],
@@ -2220,7 +2220,7 @@ pub mod test {
     fn bogus_tx_context() -> Arc<TxContext> {
         Arc::new(TxContext {
             lane_id: LaneId::default(),
-            block_hash: ConsensusProposalHash("0xfedbeef".to_owned()),
+            block_hash: ConsensusProposalHash::from("0xfedbeef"),
             block_height: BlockHeight(133),
             timestamp: TimestampMsClock::now(),
             chain_id: HYLI_TESTNET_CHAIN_ID,
