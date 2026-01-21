@@ -963,6 +963,7 @@ pub mod test {
     use crate::{
         bus::{bus_client, command_response::CmdRespClient},
         rest::RestApi,
+        tests::autobahn_testing::AutobahnBusClient,
         utils::integration_test::NodeIntegrationCtxBuilder,
     };
     use hyli_modules::{
@@ -978,7 +979,9 @@ pub mod test {
         bus::{dont_use_this::get_receiver, metrics::BusMetrics, SharedMessageBus},
         model::DataProposalHash,
         p2p::network::NetMessage,
-        tests::autobahn_testing::*,
+        //tests::autobahn_testing::*,
+        //tests::autobahn_testing_macros::*,
+        tests::autobahn_testing_macros::{broadcast, send, simple_commit_round},
         utils::conf::Conf,
     };
     use assertables::{assert_contains, assert_none};
@@ -1013,7 +1016,7 @@ pub mod test {
                     nodes.push(node);
                 }
 
-                $crate::tests::autobahn_testing::build_tuple!(nodes.remove(0), $count)
+                $crate::tests::autobahn_testing_macros::build_tuple!(nodes.remove(0), $count)
             }
         }};
     }
@@ -1125,6 +1128,10 @@ pub mod test {
 
         pub fn staking(&self) -> Staking {
             self.consensus.bft_round_state.staking.clone()
+        }
+
+        pub fn slot(&self) -> u64 {
+            self.consensus.bft_round_state.slot
         }
 
         pub async fn timeout(nodes: &mut [&mut ConsensusTestCtx]) {
@@ -1325,7 +1332,7 @@ pub mod test {
                 }
             } else {
                 warn!(
-                    "{description}: OutboundMessage::BroadcastMessage message is missing, found {:?}",
+                    "{description}: BroadcastMessage message missing, found {:?}",
                     rec
                 );
                 self.assert_broadcast(description)

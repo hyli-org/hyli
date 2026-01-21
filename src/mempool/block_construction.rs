@@ -659,7 +659,7 @@ pub mod test {
     use utils::TimestampMs;
 
     use crate::mempool::MempoolNetMessage;
-    use crate::tests::autobahn_testing::assert_chanmsg_matches;
+    use crate::tests::autobahn_testing_macros::assert_chanmsg_matches;
 
     use super::super::tests::*;
     use super::*;
