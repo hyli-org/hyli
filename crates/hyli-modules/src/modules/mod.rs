@@ -16,6 +16,7 @@ pub mod da_listener;
 pub mod da_listener_metrics;
 pub mod data_availability;
 pub mod gcs_uploader;
+pub mod gcs_uploader_metrics;
 #[cfg(feature = "db")]
 pub mod indexer;
 pub mod node_state_processor;

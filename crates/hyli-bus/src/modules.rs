@@ -93,8 +93,10 @@ where
             .collect();
         let tmp = file.with_extension(format!("{salt}.tmp"));
         debug!("Saving on disk in a tmp file {:?}", tmp.clone());
-        let mut buf_writer =
-            BufWriter::new(log_error!(fs::File::create(tmp.as_path()), "Create file")?);
+        let mut buf_writer = BufWriter::new(log_error!(
+            fs::File::create(tmp.as_path()),
+            format!("Create tmp file {}", tmp.display())
+        )?);
         log_error!(
             borsh::to_writer(&mut buf_writer, store),
             "Serializing Ctx chain"
