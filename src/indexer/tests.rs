@@ -955,9 +955,11 @@ async fn test_indexer_api_doubles() -> Result<()> {
     let server = setup_test_server(&explorer).await?;
     let tx_hash_2 = "a2".repeat(32);
     let tx_hash_3 = "a3".repeat(32);
-    let dp_hash_b = DataProposalHash::from("b1".repeat(32));
-    let block_hash_2 = ConsensusProposalHash::from("02".repeat(32));
-    let block_hash_3 = ConsensusProposalHash::from("03".repeat(32));
+    let dp_hash_b = DataProposalHash(hex::decode("b1".repeat(32)).expect("dp hash hex"));
+    let block_hash_2 =
+        ConsensusProposalHash(hex::decode("02".repeat(32)).expect("block hash hex"));
+    let block_hash_3 =
+        ConsensusProposalHash(hex::decode("03".repeat(32)).expect("block hash hex"));
 
     // Multiple txs with same hash -- all in different blocks
 

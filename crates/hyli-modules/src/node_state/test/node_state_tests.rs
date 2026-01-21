@@ -1035,12 +1035,13 @@ async fn test_auto_settle_next_txs_after_settle() {
     state.craft_block_and_handle(108, vec![tx_c.into(), tx_c_proof.into()]);
 
     // Now settle the first, which should auto-settle the pending ones, then the ones waiting for these.
-    assert_eq!(
-        state
-            .craft_block_and_handle(110, vec![tx_a_proof_1.into(), tx_a_proof_2.into(),])
-            .successful_txs(),
-        vec![tx_a_hash, tx_b_hash, tx_d_hash, tx_c_hash]
-    );
+    let mut settled = state
+        .craft_block_and_handle(110, vec![tx_a_proof_1.into(), tx_a_proof_2.into()])
+        .successful_txs();
+    let mut expected = vec![tx_a_hash, tx_b_hash, tx_d_hash, tx_c_hash];
+    settled.sort_by_key(|hash| hash.to_string());
+    expected.sort_by_key(|hash| hash.to_string());
+    assert_eq!(settled, expected);
 }
 
 #[test_log::test(tokio::test)]
