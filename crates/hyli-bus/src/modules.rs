@@ -323,16 +323,16 @@ impl ModulesHandler {
         }
 
         let mut seen_modules: HashSet<&'static str> = HashSet::new();
-        let mut last_module_name: Option<&'static str> = None;
         for module in self.modules.drain(..) {
-            if seen_modules.contains(&module.name) && last_module_name != Some(module.name) {
+            if seen_modules.contains(&module.name)
+                && self.running_modules.last() != Some(&module.name)
+            {
                 bail!(
                     "Module {} appears multiple times but is not consecutive",
                     module.name
                 );
             }
             seen_modules.insert(module.name);
-            last_module_name = Some(module.name);
             self.running_modules.push(module.name);
 
             debug!("Starting module {}", module.name);
