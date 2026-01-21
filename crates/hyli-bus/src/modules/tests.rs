@@ -270,7 +270,7 @@ fn test_file_not_in_manifest_fails() {
 }
 
 #[test_log::test]
-fn test_no_manifest_loads_without_verification() {
+fn test_no_manifest_fails_to_load() {
     let dir = tempdir().unwrap();
     let data_dir = dir.path();
     let file_path = PathBuf::from("test_file");
@@ -281,15 +281,19 @@ fn test_no_manifest_loads_without_verification() {
     let test_struct = TestStruct { value: 42 };
     borsh::to_writer(&mut file, &test_struct).unwrap();
 
-    // No manifest file should load successfully (backwards compat)
-    let loaded: Option<TestStruct> =
-        TestModule::<usize>::load_from_disk(data_dir, &file_path).unwrap();
-    assert!(loaded.is_some());
-    assert_eq!(loaded.unwrap().value, 42);
+    // No manifest should fail to load (manifest is required for persisted files)
+    let result: Result<Option<TestStruct>> =
+        TestModule::<usize>::load_from_disk(data_dir, &file_path);
+    let err = result.unwrap_err();
+    assert!(
+        err.downcast_ref::<super::PersistenceError>()
+            .is_some_and(|e| matches!(e, super::PersistenceError::FileNotInManifest(_))),
+        "Should error when file is not in manifest"
+    );
 }
 
 #[tokio::test]
-async fn test_shutdown_timeout_skips_manifest_and_loads_without_verification() {
+async fn test_shutdown_timeout_skips_manifest_and_fails_to_load() {
     let dir = tempdir().unwrap();
     let data_dir = dir.path().to_path_buf();
     let file_path = PathBuf::from("timeout.data");
@@ -326,9 +330,14 @@ async fn test_shutdown_timeout_skips_manifest_and_loads_without_verification() {
         "Manifest should not be written when shutdown times out"
     );
 
-    let loaded: Option<TestStruct> =
-        TestModule::<usize>::load_from_disk(&data_dir, &file_path).unwrap();
-    assert_eq!(loaded.unwrap().value, 99);
+    let result: Result<Option<TestStruct>> =
+        TestModule::<usize>::load_from_disk(&data_dir, &file_path);
+    let err = result.unwrap_err();
+    assert!(
+        err.downcast_ref::<super::PersistenceError>()
+            .is_some_and(|e| matches!(e, super::PersistenceError::FileNotInManifest(_))),
+        "Should error when file is not in manifest"
+    );
 }
 
 #[test_log::test(tokio::test)]
