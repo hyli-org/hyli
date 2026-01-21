@@ -570,6 +570,15 @@ impl Consensus {
             // If we don't have a CP, we don't care about the passed PQC yet and we'll potentially fail later
         }
 
+        // Always verify the TC before processing it, regardless of whether we have a CP handy.
+        // For the current slot we verify against our known parent hash; for the next slot we use
+        // the parent hash carried by the accompanying proposal (if any).
+        let tc_parent_hash = consensus_proposal
+            .map(|cp| cp.parent_hash.clone())
+            .unwrap_or_else(|| self.bft_round_state.parent_hash.clone());
+
+        self.verify_tc(&timeout_qc, tc_kind_data, tc_slot, tc_view, tc_parent_hash)?;
+
         tracing::debug!(
             "Slot info service: TC for slot {} view {}, bft round state slot {} {}, current proposal slot {:?}",
             tc_slot,
@@ -602,14 +611,6 @@ impl Consensus {
                     tc_slot,
                     tc_view
                 );
-
-                self.verify_tc(
-                    &timeout_qc,
-                    tc_kind_data,
-                    tc_slot,
-                    tc_view,
-                    consensus_proposal.parent_hash.clone(),
-                )?;
 
                 // SOOOOO here we're stuck actually, because we don't have the commit certificate.
                 // It's safe to fast-forward, but our SignedBlock ultimately won't be verifiable.
@@ -1196,6 +1197,47 @@ mod tests {
         assert!(buffered_prepares.get(&p1.hashed()).is_none());
         assert!(buffered_prepares.get(&p2.hashed()).is_none());
         assert!(buffered_prepares.get(&p3.hashed()).is_some());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn prepare_with_timeout_qc_is_verified() {
+        // Build a single validator node configured as follower.
+        let crypto = BlstCrypto::new("node-tc-verify").unwrap();
+        let mut node = ConsensusTestCtx::new("node-tc-verify", crypto.clone()).await;
+        node.setup_node(0, &[crypto]);
+        node.consensus.bft_round_state.state_tag = StateTag::Follower;
+        node.consensus.bft_round_state.slot = 1;
+        node.consensus.bft_round_state.view = 1;
+        node.consensus.bft_round_state.parent_hash = ConsensusProposalHash("parent".into());
+
+        // Prepare for slot 1 / view 1 referencing the same parent cut as the node.
+        let consensus_proposal = ConsensusProposal {
+            slot: 1,
+            parent_hash: node.consensus.bft_round_state.parent_hash.clone(),
+            cut: node.consensus.bft_round_state.parent_cut.clone(),
+            ..ConsensusProposal::default()
+        };
+
+        // Malformed TimeoutQC (no validators, empty signature) + NIL TCKind.
+        let timeout_qc = QuorumCertificate(AggregateSignature::default(), ConsensusTimeoutMarker);
+        let tc_kind = TCKind::NilProposal(QuorumCertificate(
+            AggregateSignature::default(),
+            NilConsensusTimeoutMarker,
+        ));
+
+        let result = node.consensus.on_prepare(
+            node.validator_pubkey(),
+            consensus_proposal,
+            Ticket::TimeoutQC(timeout_qc, tc_kind),
+            1,
+        );
+
+        let err = result.expect_err("TimeoutQC should be verified and rejected");
+        let root = err.root_cause().to_string();
+        assert!(
+            root.contains("Quorum Certificate verification failed"),
+            "TC should fail verification, got: {root}"
+        );
     }
 
     #[test_log::test(tokio::test)]
