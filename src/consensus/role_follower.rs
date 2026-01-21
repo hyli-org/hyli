@@ -843,16 +843,9 @@ impl Consensus {
                 }
             }
 
-            // Edge case: we have already committed a different CQC (this check that bft slot == cp slot + 1 which means we committed)
-            // (this currently triggers when exiting joining, but it's spurious then)
-            // (TODO: fix this for joining by storing a CQC?)
-            if !self.current_slot_prepare_is_present() {
-                warn!(
-                    "Received an unknown commit QC for slot {}. This is unsafe to verify if we have updated staking with changes in that slot.
-                    Proceeding with current staking anyways.",
-                    self.bft_round_state.slot
-                );
-                // To still sorta make this work, verify the CQC with our current staking and hope for the best.
+            // Edge case: we have already committed a different CQC for the CP
+            // Let's verify that one too - the staking _must_be the same.
+            if consensus_proposal.slot == self.bft_round_state.slot {
                 self.verify_quorum_certificate(
                     (self.bft_round_state.parent_hash.clone(), ConfirmAckMarker),
                     &commit_qc,
@@ -860,7 +853,18 @@ impl Consensus {
                 return Ok(TicketVerifyAndProcess::Processed);
             }
 
-            self.verify_commit_quorum_certificate_against_current_proposal(&commit_qc)?;
+            // Now we are considering fast-forwarding. We can only do this if the commit QC
+            // matches our consensus proposal - or there might be staking changes.
+            // However we don't actually know what consensus proposal hash was used for signing here,
+            // so all we can do is treat it as "not processed" if verification fails.
+            if let Err(err) =
+                self.verify_commit_quorum_certificate_against_current_proposal(&commit_qc)
+            {
+                warn!(
+                    "Commit QC verification failed for current proposal: {err}. Buffering and requesting missing parent."
+                );
+                return Ok(TicketVerifyAndProcess::NotProcessed);
+            }
             self.emit_commit_event(&commit_qc)?;
             self.advance_round(Ticket::CommitQC(commit_qc))?;
 
@@ -1192,5 +1196,73 @@ mod tests {
         assert!(buffered_prepares.get(&p1.hashed()).is_none());
         assert!(buffered_prepares.get(&p2.hashed()).is_none());
         assert!(buffered_prepares.get(&p3.hashed()).is_some());
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn commit_qc_mismatch_buffers_and_requests_sync() {
+        // Node holds an uncommitted CP for slot 5. The network committed a different CP
+        // and now sends the slot-6 Prepare carrying that CQC. Verification must fail,
+        // causing the follower to buffer and issue a SyncRequest for the missing parent.
+        let mut ctx =
+            ConsensusTestCtx::new("node-sync", BlstCrypto::new("node-sync").unwrap()).await;
+        ctx.add_trusted_validator(&ctx.pubkey());
+        ctx.consensus.bft_round_state.state_tag = StateTag::Follower;
+        ctx.consensus.bft_round_state.slot = 5;
+        ctx.consensus.bft_round_state.view = 0;
+
+        let local_parent = ConsensusProposalHash("local-parent".into());
+        let local_cp = ConsensusProposal {
+            slot: 5,
+            parent_hash: local_parent.clone(),
+            timestamp: TimestampMs(1),
+            ..Default::default()
+        };
+        ctx.consensus.bft_round_state.parent_hash = local_parent;
+        ctx.consensus.store.bft_round_state.current_proposal = Some(local_cp);
+
+        let missing_parent = ConsensusProposalHash("committed-elsewhere".into());
+        let incoming_prepare = ConsensusProposal {
+            slot: 6,
+            parent_hash: missing_parent.clone(),
+            timestamp: TimestampMs(2),
+            ..Default::default()
+        };
+        // NB - this test doesn't quite check the failure mode we had in practice
+        // because the verifications fails to aggregate the signature, not ends up invalid,
+        // but it behaves identically in the end.
+        let commit_qc = QuorumCertificate(AggregateSignature::default(), ConfirmAckMarker);
+
+        let _ = ctx.consensus.on_prepare(
+            ctx.pubkey(),
+            incoming_prepare.clone(),
+            Ticket::CommitQC(commit_qc),
+            0,
+        );
+
+        // The prepare should be buffered.
+        assert!(ctx
+            .consensus
+            .bft_round_state
+            .follower
+            .buffered_prepares
+            .contains(&incoming_prepare.hashed()));
+
+        // And a SyncRequest for the missing parent should be sent to the sender.
+        let outbound = ctx
+            .out_receiver
+            .try_recv()
+            .expect("Should be a message")
+            .into_message();
+        match outbound {
+            OutboundMessage::SendMessage {
+                msg:
+                    NetMessage::ConsensusMessage(MsgWithHeader::<ConsensusNetMessage> {
+                        msg: ConsensusNetMessage::SyncRequest(hash),
+                        ..
+                    }),
+                ..
+            } => assert_eq!(hash, missing_parent),
+            other => panic!("expected SyncRequest, got {:?}", other),
+        }
     }
 }
