@@ -16,14 +16,14 @@ use hydentity::{
     client::tx_executor_handler::{register_identity, verify_identity},
     Hydentity,
 };
-use hyli_bus::modules::ModulePersistOutput;
+use hyli_bus::{module_handle_messages, modules::ModulePersistOutput};
 use hyli_contract_sdk::{
     Blob, Calldata, ContractName, Identity, ProgramId, StateCommitment, ZkContract,
 };
 use hyli_crypto::SharedBlstCrypto;
 use hyli_modules::{
     bus::{BusClientSender, BusMessage, SharedMessageBus},
-    bus_client, handle_messages,
+    handle_messages, module_bus_client,
     modules::Module,
 };
 use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
@@ -45,7 +45,7 @@ pub enum GenesisEvent {
 
 impl BusMessage for GenesisEvent {}
 
-bus_client! {
+module_bus_client! {
 struct GenesisBusClient {
     sender(GenesisEvent),
     receiver(PeerEvent),
@@ -79,7 +79,11 @@ impl Module for Genesis {
     }
 
     async fn run(&mut self) -> Result<()> {
-        self.start().await
+        self.start().await?;
+        let _ = module_handle_messages! {
+            on_self self,
+        };
+        Ok(())
     }
 
     async fn persist(&mut self) -> Result<ModulePersistOutput> {
@@ -717,7 +721,7 @@ mod tests {
     use hyli_crypto::BlstCrypto;
     use std::sync::Arc;
 
-    bus_client! {
+    module_bus_client! {
     struct TestGenesisBusClient {
         sender(PeerEvent),
         receiver(GenesisEvent),
@@ -848,7 +852,7 @@ mod tests {
 
         assert!(result.is_ok());
 
-        let rec = bus.try_recv().expect("recv");
+        let rec: GenesisEvent = bus.try_recv().expect("recv");
         assert_matches!(rec, GenesisEvent::GenesisBlock(..));
         if let GenesisEvent::GenesisBlock(signed_block) = rec {
             assert!(signed_block.has_txs());
@@ -879,7 +883,7 @@ mod tests {
             height: BlockHeight(height),
             da_address: "".into(),
         };
-        let rec1 = {
+        let rec1: GenesisEvent = {
             let (mut genesis, mut bus) = new(config.clone()).await;
             bus.send(build_new_peer("node-2", 0)).expect("send");
             bus.send(build_new_peer("node-3", 0)).expect("send");
@@ -926,7 +930,7 @@ mod tests {
             da_address: "".into(),
         };
 
-        let rec1 = {
+        let rec1: GenesisEvent = {
             let (mut genesis, mut bus) = new(config.clone()).await;
             bus.send(build_new_peer("node-2", 1)).expect("send");
             bus.send(build_new_peer("node-3", 1)).expect("send");
@@ -981,7 +985,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Vérifier que l'événement reçu est NoGenesis
-        let rec = bus.try_recv().expect("recv");
+        let rec: GenesisEvent = bus.try_recv().expect("recv");
         assert_eq!(rec, GenesisEvent::NoGenesis);
     }
 
@@ -1032,7 +1036,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Vérifier que l’événement attendu est bien GenesisBlock
-        let rec = bus.try_recv().expect("Expected a GenesisBlock event");
+        let rec: GenesisEvent = bus.try_recv().expect("Expected a GenesisBlock event");
         assert_matches!(rec, GenesisEvent::GenesisBlock(..));
     }
 }

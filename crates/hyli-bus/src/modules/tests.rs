@@ -476,6 +476,34 @@ async fn test_start_stop_modules_in_order() {
 }
 
 #[tokio::test]
+async fn test_shutdown_duplicate_modules() {
+    let dir = tempdir().unwrap();
+    let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
+    let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
+    let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
+    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
+
+    handler.build_module::<TestModule<usize>>(()).await.unwrap();
+    handler.build_module::<TestModule<usize>>(()).await.unwrap();
+
+    _ = handler.start_modules().await;
+    _ = handler.shutdown_modules().await;
+
+    let module_name = std::any::type_name::<TestModule<usize>>().to_string();
+
+    assert_eq!(shutdown_receiver.recv().await.unwrap().module, module_name);
+    assert_eq!(shutdown_receiver.recv().await.unwrap().module, module_name);
+    assert_eq!(
+        shutdown_completed_receiver.recv().await.unwrap().module,
+        module_name
+    );
+    assert_eq!(
+        shutdown_completed_receiver.recv().await.unwrap().module,
+        module_name
+    );
+}
+
+#[tokio::test]
 async fn test_shutdown_modules_exactly_once() {
     let dir = tempdir().unwrap();
     let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));

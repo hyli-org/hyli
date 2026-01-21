@@ -1,5 +1,6 @@
 use std::{
     any::type_name,
+    collections::HashSet,
     fs,
     future::Future,
     io::{BufWriter, Write},
@@ -429,21 +430,22 @@ impl ModulesHandler {
         }
     }
 
-    fn long_running_module(module_name: &str) -> bool {
-        !["hyli::genesis::Genesis"].contains(&module_name)
-    }
-
     pub async fn start_modules(&mut self) -> Result<()> {
         if !self.running_modules.is_empty() {
             bail!("Modules are already running!");
         }
 
-        _ = log_warn!(
-            checksums::remove_manifest(&self.data_dir),
-            "Removing manifest file"
-        );
-
+        let mut seen_modules: HashSet<&'static str> = HashSet::new();
+        let mut last_module_name: Option<&'static str> = None;
         for module in self.modules.drain(..) {
+            if seen_modules.contains(&module.name) && last_module_name != Some(module.name) {
+                bail!(
+                    "Module {} appears multiple times but is not consecutive",
+                    module.name
+                );
+            }
+            seen_modules.insert(module.name);
+            last_module_name = Some(module.name);
             self.running_modules.push(module.name);
 
             debug!("Starting module {}", module.name);
@@ -504,6 +506,10 @@ impl ModulesHandler {
             });
         }
 
+        _ = log_warn!(
+            checksums::remove_manifest(&self.data_dir),
+            "Removing manifest file"
+        );
         Ok(())
     }
 
@@ -535,12 +541,12 @@ impl ModulesHandler {
                     );
                     self.persisted_checksums.push((path, checksum));
                 }
-                if let Some(index) = self.running_modules.iter().position(|module| *module == msg.module) {
-                    self.running_modules.remove(index);
+                if let Some(idx) = self.running_modules.iter().position(|module| *module == msg.module) {
+                    self.running_modules.remove(idx);
                 }
                 if self.running_modules.is_empty() {
                     break;
-                } else if Self::long_running_module(msg.module.as_str()) {
+                } else {
                     _ = self.shutdown_next_module().await;
                 }
             }
