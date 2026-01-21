@@ -172,9 +172,7 @@ turmoil_simple!(651..=660, simulation_realistic_network, submit_10_contracts);
 // Partition Tests
 // =============================================================================
 
-// Seed 518 is flaky; skip for now.
-turmoil_simple!(511..=517, simulation_hold, submit_10_contracts);
-turmoil_simple!(519..=520, simulation_hold, submit_10_contracts);
+turmoil_simple!(511..=520, simulation_hold, submit_10_contracts);
 turmoil_simple!(621..=630, simulation_partition, submit_10_contracts);
 turmoil_simple!(
     661..=670,
