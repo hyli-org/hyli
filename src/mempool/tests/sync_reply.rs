@@ -14,7 +14,7 @@ async fn throttles_outbound_sync_requests_during_backoff() -> Result<()> {
     ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
 
     let lane_id = LaneId::new(crypto2.validator_pubkey().clone());
-    let dp_hash = DataProposalHash(b"missing_dp".to_vec());
+    let dp_hash: DataProposalHash = b"missing_dp".into();
     ctx.dissemination_manager.set_request_backoff_for_test(
         lane_id.clone(),
         dp_hash,
@@ -41,7 +41,7 @@ async fn sends_request_after_backoff_window_expires() -> Result<()> {
     ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
 
     let lane_id = LaneId::new(crypto2.validator_pubkey().clone());
-    let dp_hash = DataProposalHash(b"missing_dp".to_vec());
+    let dp_hash: DataProposalHash = b"missing_dp".into();
     ctx.dissemination_manager.set_request_backoff_for_test(
         lane_id.clone(),
         dp_hash.clone(),
@@ -93,7 +93,7 @@ async fn prefers_ccp_signers_for_sync_requests() -> Result<()> {
     assert_ne!(peers[0], strong_peer);
 
     let lane_id = LaneId::new(peers[0].clone());
-    let dp_hash = DataProposalHash(b"missing_dp".to_vec());
+    let dp_hash: DataProposalHash = b"missing_dp".into();
     ctx.dissemination_manager.set_request_backoff_for_test(
         lane_id.clone(),
         dp_hash.clone(),
@@ -119,7 +119,7 @@ async fn prefers_ccp_signers_for_sync_requests() -> Result<()> {
                     )],
                     staking_actions: vec![],
                     timestamp: TimestampMs(777),
-                    parent_hash: ConsensusProposalHash(b"test".to_vec()),
+                    parent_hash: b"test".into(),
                 },
                 certificate: AggregateSignature::default(),
             },

@@ -1139,15 +1139,15 @@ mod tests {
         let mut buffered_prepares = BufferedPrepares::default();
         let limit = 2;
         let p1 = ConsensusProposal {
-            parent_hash: ConsensusProposalHash(b"p1-parent".to_vec()),
+            parent_hash: b"p1-parent".into(),
             ..ConsensusProposal::default()
         };
         let p2 = ConsensusProposal {
-            parent_hash: ConsensusProposalHash(b"p2-parent".to_vec()),
+            parent_hash: b"p2-parent".into(),
             ..ConsensusProposal::default()
         };
         let p3 = ConsensusProposal {
-            parent_hash: ConsensusProposalHash(b"p3-parent".to_vec()),
+            parent_hash: b"p3-parent".into(),
             ..ConsensusProposal::default()
         };
 
@@ -1171,15 +1171,15 @@ mod tests {
         buffered_prepares.set_max_size(Some(1));
 
         let p1 = ConsensusProposal {
-            parent_hash: ConsensusProposalHash(b"roundtrip-p1".to_vec()),
+            parent_hash: b"roundtrip-p1".into(),
             ..ConsensusProposal::default()
         };
         let p2 = ConsensusProposal {
-            parent_hash: ConsensusProposalHash(b"roundtrip-p2".to_vec()),
+            parent_hash: b"roundtrip-p2".into(),
             ..ConsensusProposal::default()
         };
         let p3 = ConsensusProposal {
-            parent_hash: ConsensusProposalHash(b"roundtrip-p3".to_vec()),
+            parent_hash: b"roundtrip-p3".into(),
             ..ConsensusProposal::default()
         };
 

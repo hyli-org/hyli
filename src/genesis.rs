@@ -698,7 +698,7 @@ impl Genesis {
                         .into()
                     })
                     .collect(),
-                parent_hash: ConsensusProposalHash(b"genesis".to_vec()),
+                parent_hash: b"genesis".into(),
             },
         }
     }
