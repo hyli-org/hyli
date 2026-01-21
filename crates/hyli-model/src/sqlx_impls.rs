@@ -3,9 +3,11 @@ use crate::{ConsensusProposalHash, LaneId, TxHash, TxId};
 use crate::{ContractName, DataProposalHash};
 use sqlx::Row;
 
-fn decode_hash_string(s: &str) -> Vec<u8> {
-    let trimmed = s.strip_prefix("0x").unwrap_or(s);
-    hex::decode(trimmed).unwrap_or_else(|_| s.as_bytes().to_vec())
+fn decode_hash_string(
+    s: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync + 'static>> {
+    crate::utils::decode_hex_string_checked(s)
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send + Sync + 'static>)
 }
 
 impl sqlx::Type<sqlx::Postgres> for TimestampMs {
@@ -84,7 +86,8 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for TxHash {
         std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
         let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(TxHash(decode_hash_string(&inner)))
+        let decoded = decode_hash_string(&inner)?;
+        Ok(TxHash(decoded))
     }
 }
 
@@ -143,7 +146,8 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for ConsensusProposalHash {
         std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
         let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(ConsensusProposalHash(decode_hash_string(&inner)))
+        let decoded = decode_hash_string(&inner)?;
+        Ok(ConsensusProposalHash(decoded))
     }
 }
 
@@ -180,6 +184,7 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for DataProposalHash {
         std::boxed::Box<dyn std::error::Error + std::marker::Send + std::marker::Sync + 'static>,
     > {
         let inner = <String as sqlx::Decode<sqlx::Postgres>>::decode(value)?;
-        Ok(DataProposalHash(decode_hash_string(&inner)))
+        let decoded = decode_hash_string(&inner)?;
+        Ok(DataProposalHash(decoded))
     }
 }
