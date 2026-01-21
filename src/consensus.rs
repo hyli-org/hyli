@@ -976,7 +976,6 @@ pub mod test {
     use super::*;
     use crate::{
         bus::{dont_use_this::get_receiver, metrics::BusMetrics, SharedMessageBus},
-        model::DataProposalHash,
         p2p::network::NetMessage,
         tests::autobahn_testing::*,
         utils::conf::Conf,
@@ -1470,10 +1469,10 @@ pub mod test {
         let signed_vote = node2
             .consensus
             .crypto
-            .sign((b"hash-a".into(), PrepareVoteMarker))
+            .sign((ConsensusProposalHash::from(b"hash-a"), PrepareVoteMarker))
             .unwrap();
         let invalid_vote = Signed {
-            msg: (b"hash-b".into(), PrepareVoteMarker),
+            msg: (ConsensusProposalHash::from(b"hash-b"), PrepareVoteMarker),
             signature: signed_vote.signature,
         };
 
