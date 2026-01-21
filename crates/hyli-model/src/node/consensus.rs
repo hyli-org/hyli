@@ -170,7 +170,7 @@ mod tests {
             cut: Cut::default(),
             staking_actions: vec![],
             timestamp: TimestampMs(1),
-            parent_hash: ConsensusProposalHash::from(b""),
+            parent_hash: b"".into(),
         };
         let hash = proposal.hashed();
         assert_eq!(hash.0.len(), 32);
@@ -182,7 +182,7 @@ mod tests {
             slot: 1,
             cut: vec![(
                 LaneId::new(ValidatorPublicKey(vec![1])),
-                DataProposalHash::from(b"propA"),
+                b"propA".into(),
                 LaneBytesSize(1),
                 AggregateSignature::default(),
             )],
@@ -197,13 +197,13 @@ mod tests {
             }
             .into()],
             timestamp: TimestampMs(1),
-            parent_hash: ConsensusProposalHash::from(b"parent"),
+            parent_hash: b"parent".into(),
         };
         let mut b = ConsensusProposal {
             slot: 1,
             cut: vec![(
                 LaneId::new(ValidatorPublicKey(vec![1])),
-                DataProposalHash::from(b"propA"),
+                b"propA".into(),
                 LaneBytesSize(1),
                 AggregateSignature {
                     signature: Signature(vec![1, 2, 3]),
@@ -221,7 +221,7 @@ mod tests {
             }
             .into()],
             timestamp: TimestampMs(1),
-            parent_hash: ConsensusProposalHash::from(b"parent"),
+            parent_hash: b"parent".into(),
         };
         assert_ne!(a.hashed(), b.hashed());
         if let ConsensusStakingAction::Bond { candidate: a } =
@@ -249,9 +249,9 @@ mod tests {
         b.slot = 2;
         assert_eq!(a.hashed(), b.hashed());
 
-        a.parent_hash = ConsensusProposalHash::from(b"different");
+        a.parent_hash = b"different".into();
         assert_ne!(a.hashed(), b.hashed());
-        b.parent_hash = ConsensusProposalHash::from(b"different");
+        b.parent_hash = b"different".into();
         assert_eq!(a.hashed(), b.hashed());
     }
 }

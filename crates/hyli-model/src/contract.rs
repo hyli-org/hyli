@@ -564,6 +564,11 @@ impl From<&[u8]> for ProofDataHash {
         ProofDataHash(v.to_vec())
     }
 }
+impl<const N: usize> From<&[u8; N]> for ProofDataHash {
+    fn from(v: &[u8; N]) -> Self {
+        ProofDataHash(v.to_vec())
+    }
+}
 impl ProofDataHash {
     pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
         crate::utils::decode_hex_string_checked(s).map(ProofDataHash)
@@ -753,6 +758,11 @@ impl From<&[u8]> for ConsensusProposalHash {
         ConsensusProposalHash(v.to_vec())
     }
 }
+impl<const N: usize> From<&[u8; N]> for ConsensusProposalHash {
+    fn from(v: &[u8; N]) -> Self {
+        ConsensusProposalHash(v.to_vec())
+    }
+}
 impl ConsensusProposalHash {
     pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
         crate::utils::decode_hex_string_checked(s).map(ConsensusProposalHash)
@@ -771,6 +781,11 @@ impl From<Vec<u8>> for TxHash {
 }
 impl From<&[u8]> for TxHash {
     fn from(v: &[u8]) -> Self {
+        TxHash(v.to_vec())
+    }
+}
+impl<const N: usize> From<&[u8; N]> for TxHash {
+    fn from(v: &[u8; N]) -> Self {
         TxHash(v.to_vec())
     }
 }

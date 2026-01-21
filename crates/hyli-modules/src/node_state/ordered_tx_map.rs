@@ -159,7 +159,7 @@ mod tests {
                     data: BlobData::default(),
                 }],
             ),
-            tx_id: TxId(DataProposalHash::default(), TxHash::from(hash)),
+            tx_id: TxId(DataProposalHash::default(), hash.into()),
             blobs_hash: BlobsHashes::default(),
             possible_proofs: BTreeMap::from_iter(vec![(BlobIndex(0), vec![])]),
             tx_context: Default::default(),
@@ -187,9 +187,9 @@ mod tests {
     #[test]
     fn can_get_tx() {
         let mut map = OrderedTxMap::default();
-        let tx1 = TxHash::from(b"tx1");
-        let tx2 = TxHash::from(b"tx2");
-        let tx3 = TxHash::from(b"tx3");
+        let tx1: TxHash = b"tx1".into();
+        let tx2: TxHash = b"tx2".into();
+        let tx3: TxHash = b"tx3".into();
 
         map.add(new_tx(b"tx1", "c1"));
         map.add(new_tx(b"tx2", "c1"));
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn double_add_ignored() {
         let mut map = OrderedTxMap::default();
-        let tx1 = TxHash::from(b"tx1");
+        let tx1: TxHash = b"tx1".into();
 
         map.add(new_tx(b"tx1", "c1"));
         map.add(new_tx(b"tx1", "c1"));
@@ -245,10 +245,10 @@ mod tests {
     #[test]
     fn check_next_unsettled_tx() {
         let mut map = OrderedTxMap::default();
-        let tx1 = TxHash::from(b"tx1");
-        let tx2 = TxHash::from(b"tx2");
-        let tx3 = TxHash::from(b"tx3");
-        let tx4 = TxHash::from(b"tx4");
+        let tx1: TxHash = b"tx1".into();
+        let tx2: TxHash = b"tx2".into();
+        let tx3: TxHash = b"tx3".into();
+        let tx4: TxHash = b"tx4".into();
 
         map.add(new_tx(b"tx1", "c1"));
         map.add(new_tx(b"tx2", "c1"));
@@ -264,9 +264,9 @@ mod tests {
     #[test]
     fn remove_tx() {
         let mut map = OrderedTxMap::default();
-        let tx1 = TxHash::from(b"tx1");
-        let tx2 = TxHash::from(b"tx2");
-        let tx3 = TxHash::from(b"tx3");
+        let tx1: TxHash = b"tx1".into();
+        let tx2: TxHash = b"tx2".into();
+        let tx3: TxHash = b"tx3".into();
         let c1 = ContractName::new("c1");
 
         map.add(new_tx(b"tx1", "c1"));

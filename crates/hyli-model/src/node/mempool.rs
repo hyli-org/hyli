@@ -223,6 +223,11 @@ impl From<&[u8]> for DataProposalHash {
         DataProposalHash(v.to_vec())
     }
 }
+impl<const N: usize> From<&[u8; N]> for DataProposalHash {
+    fn from(v: &[u8; N]) -> Self {
+        DataProposalHash(v.to_vec())
+    }
+}
 impl DataProposalHash {
     pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
         crate::utils::decode_hex_string_checked(s).map(DataProposalHash)

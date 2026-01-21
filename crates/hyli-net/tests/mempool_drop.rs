@@ -27,18 +27,9 @@ fn turmoil_drop_mempool_data_proposals() -> anyhow::Result<()> {
         MessageAction::Pass
     });
 
-    let proposal1 = DataProposal::new(
-        DataProposalHash::from(b"parent-1"),
-        vec![Transaction::default()],
-    );
-    let proposal2 = DataProposal::new(
-        DataProposalHash::from(b"parent-2"),
-        vec![Transaction::default()],
-    );
-    let proposal3 = DataProposal::new(
-        DataProposalHash::from(b"parent-3"),
-        vec![Transaction::default()],
-    );
+    let proposal1 = DataProposal::new(b"parent-1".into(), vec![Transaction::default()]);
+    let proposal2 = DataProposal::new(b"parent-2".into(), vec![Transaction::default()]);
+    let proposal3 = DataProposal::new(b"parent-3".into(), vec![Transaction::default()]);
     let proposal3_for_client = proposal3.clone();
 
     sim.client("server", async move {
