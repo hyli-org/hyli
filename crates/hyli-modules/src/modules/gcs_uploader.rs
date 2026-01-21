@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::{bail, Result};
 use bytes::Bytes;
 use google_cloud_storage::client::{Storage, StorageControl};
-use sdk::{DataEvent, DataProposalHash, TxHash};
+use sdk::{DataEvent, DataProposalHash, SignedBlock, TxHash};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
@@ -151,7 +151,6 @@ impl GcsUploader {
     async fn handle_data_availability_event(&mut self, event: DataEvent) -> Result<()> {
         let DataEvent::OrderedSignedBlock(block) = event;
         let block_height = block.height().0;
-        let data = borsh::to_vec(&block)?;
 
         if block_height <= self.last_uploaded_height {
             debug!(
@@ -161,14 +160,14 @@ impl GcsUploader {
             return Ok(());
         }
 
-        self.upload_block_parallel(block_height, data).await;
+        self.upload_block_parallel(block_height, block).await;
 
         self.last_uploaded_height = block_height;
 
         Ok(())
     }
 
-    async fn upload_block_parallel(&mut self, block_height: u64, data: Vec<u8>) {
+    async fn upload_block_parallel(&mut self, block_height: u64, block: SignedBlock) {
         let gcs_client = self.gcs_client.clone();
         let bucket_path = Self::gcs_bucket_path(&self.ctx.gcs_config.gcs_bucket);
         let prefix = self.ctx.gcs_config.gcs_prefix.clone();
@@ -178,6 +177,7 @@ impl GcsUploader {
         // Spawn parallel upload task
         tokio::spawn(async move {
             let object_name = format!("{prefix}/block_{block_height}.bin");
+            let data = borsh::to_vec(&block).expect("Failed to serialize SignedBlock");
 
             match gcs_client
                 .write_object(bucket_path, object_name.clone(), Bytes::from(data))
