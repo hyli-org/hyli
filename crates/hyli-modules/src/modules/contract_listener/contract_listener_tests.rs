@@ -61,7 +61,11 @@ async fn setup_pg() -> Result<PgTestCtx> {
 }
 
 fn hash(value: &str) -> String {
-    format!("{value:0<64}")
+    use sha3::{Digest, Sha3_256};
+
+    let mut hasher = Sha3_256::new();
+    hasher.update(value.as_bytes());
+    hex::encode(hasher.finalize())
 }
 
 async fn insert_block(pool: &PgPool, hash: &str, parent_hash: &str, height: i64) -> Result<()> {
@@ -160,6 +164,7 @@ async fn insert_settled_tx_with_index(
     insert_block(pool, &block_hash, &parent_hash, height).await?;
 
     let tx_hash = TxHash::from(hash(&format!("settled-{height}-{index}")));
+    let tx_hash_hex = hex::encode(&tx_hash.0);
     let parent_dp_hash = hash("dp-settled");
     let lane_id = LaneId::default().to_string();
 
@@ -170,7 +175,7 @@ async fn insert_settled_tx_with_index(
         "#,
     )
     .bind(&parent_dp_hash)
-    .bind(&tx_hash.0)
+    .bind(&tx_hash_hex)
     .bind(&block_hash)
     .bind(height)
     .bind(&lane_id)
@@ -185,7 +190,7 @@ async fn insert_settled_tx_with_index(
         "#,
     )
     .bind(&parent_dp_hash)
-    .bind(&tx_hash.0)
+    .bind(&tx_hash_hex)
     .bind(&contract.0)
     .execute(pool)
     .await?;
@@ -197,7 +202,7 @@ async fn insert_settled_tx_with_index(
         "#,
     )
     .bind(&parent_dp_hash)
-    .bind(&tx_hash.0)
+    .bind(&tx_hash_hex)
     .bind(&contract.0)
     .execute(pool)
     .await?;
@@ -224,6 +229,7 @@ async fn insert_sequenced_tx_with_index(
     insert_block(pool, &block_hash, &parent_hash, height).await?;
 
     let tx_hash = TxHash::from(hash(&format!("sequenced-{height}-{index}")));
+    let tx_hash_hex = hex::encode(&tx_hash.0);
     let parent_dp_hash = hash("dp-sequenced");
     let lane_id = LaneId::default().to_string();
 
@@ -234,7 +240,7 @@ async fn insert_sequenced_tx_with_index(
         "#,
     )
     .bind(&parent_dp_hash)
-    .bind(&tx_hash.0)
+    .bind(&tx_hash_hex)
     .bind(&block_hash)
     .bind(height)
     .bind(&lane_id)
@@ -249,7 +255,7 @@ async fn insert_sequenced_tx_with_index(
         "#,
     )
     .bind(&parent_dp_hash)
-    .bind(&tx_hash.0)
+    .bind(&tx_hash_hex)
     .bind(&contract.0)
     .execute(pool)
     .await?;
@@ -265,6 +271,7 @@ async fn update_tx_status(
 ) -> Result<()> {
     let block_hash = hash(&format!("block-{height}"));
     let parent_hash = hash(&format!("block-{}", height - 1));
+    let tx_hash_hex = hex::encode(&tx_hash.0);
     insert_block(pool, &block_hash, &parent_hash, height).await?;
 
     sqlx::query(
@@ -277,7 +284,7 @@ async fn update_tx_status(
     .bind(status)
     .bind(&block_hash)
     .bind(height)
-    .bind(&tx_hash.0)
+    .bind(&tx_hash_hex)
     .execute(pool)
     .await?;
 
@@ -285,6 +292,7 @@ async fn update_tx_status(
 }
 
 async fn update_tx_status_in_place(pool: &PgPool, tx_hash: &TxHash, status: &str) -> Result<()> {
+    let tx_hash_hex = hex::encode(&tx_hash.0);
     sqlx::query(
         r#"
         UPDATE transactions
@@ -293,7 +301,7 @@ async fn update_tx_status_in_place(pool: &PgPool, tx_hash: &TxHash, status: &str
         "#,
     )
     .bind(status)
-    .bind(&tx_hash.0)
+    .bind(&tx_hash_hex)
     .execute(pool)
     .await?;
 
