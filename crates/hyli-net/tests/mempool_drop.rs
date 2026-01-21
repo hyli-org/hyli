@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use hyli_net::tcp::intercept::{set_message_hook_scoped, MessageAction};
 use hyli_net::tcp::{decode_tcp_payload, tcp_client::TcpClient, tcp_server::TcpServer, TcpEvent};
-use sdk::{DataProposal, DataProposalHash, Transaction};
+use sdk::{DataProposal, Transaction};
 
 #[test_log::test]
 fn turmoil_drop_mempool_data_proposals() -> anyhow::Result<()> {

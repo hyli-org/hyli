@@ -161,9 +161,9 @@ LIMIT 1;
                 .zip(blob_proof_output_indexes)
                 .zip(proof_outputs)
                 .filter_map(|(((tx_hash, tx_idx), proof_idx), output)| {
-                    TxHash::from_hex(&tx_hash).ok().map(|tx_hash| {
-                        (tx_hash, tx_idx as u32, proof_idx as u32, output)
-                    })
+                    TxHash::from_hex(&tx_hash)
+                        .ok()
+                        .map(|tx_hash| (tx_hash, tx_idx as u32, proof_idx as u32, output))
                 })
                 .collect();
 
