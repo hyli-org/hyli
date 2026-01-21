@@ -51,7 +51,7 @@ pub mod tests {
         let mut t = Timeouts::default();
         let b1 = BlockHeight(0);
         let b2 = BlockHeight(1);
-        let tx1 = TxHash(b"tx1".to_vec());
+        let tx1 = TxHash::from(b"tx1");
         let window = BlockHeight(100);
 
         t.set(tx1.clone(), b1, window);

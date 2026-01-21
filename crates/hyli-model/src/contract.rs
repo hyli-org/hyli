@@ -369,15 +369,7 @@ pub struct Blob {
 }
 
 #[derive(
-    Default,
-    Clone,
-    Serialize,
-    Deserialize,
-    Eq,
-    PartialEq,
-    Hash,
-    BorshSerialize,
-    BorshDeserialize,
+    Default, Clone, Serialize, Deserialize, Eq, PartialEq, Hash, BorshSerialize, BorshDeserialize,
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct BlobHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);

@@ -1236,8 +1236,8 @@ async fn test_data_proposal_created_does_not_downgrade_success() -> Result<()> {
         "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity)
          VALUES ($1, $2, $3, $4, $5, NULL, NULL, NULL, $6, $7)",
     )
-    .bind(hex::encode(&parent_dp_hash.0))
-    .bind(hex::encode(&tx_metadata.id.1.0))
+    .bind(parent_dp_hash.to_string())
+    .bind(tx_metadata.id.1.to_string())
     .bind(transaction.version as i32)
     .bind(TransactionTypeDb::BlobTransaction)
     .bind(TransactionStatusDb::Success)
