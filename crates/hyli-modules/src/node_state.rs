@@ -2220,7 +2220,7 @@ pub mod test {
     fn bogus_tx_context() -> Arc<TxContext> {
         Arc::new(TxContext {
             lane_id: LaneId::default(),
-            block_hash: ConsensusProposalHash::from("0xfedbeef"),
+            block_hash: ConsensusProposalHash::from_hex("0xfedbeef").expect("block_hash hex"),
             block_height: BlockHeight(133),
             timestamp: TimestampMsClock::now(),
             chain_id: HYLI_TESTNET_CHAIN_ID,

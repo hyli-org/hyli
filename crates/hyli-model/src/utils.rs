@@ -32,14 +32,14 @@ pub mod hex_bytes {
     }
 }
 
-pub fn decode_hex_string(s: &str) -> Vec<u8> {
+pub fn decode_hex_string_checked(s: &str) -> Result<Vec<u8>, hex::FromHexError> {
     let trimmed = s.strip_prefix("0x").unwrap_or(s);
     let normalized = if trimmed.len() % 2 == 1 {
         format!("0{trimmed}")
     } else {
         trimmed.to_string()
     };
-    hex::decode(&normalized).expect("invalid hex string")
+    hex::decode(&normalized)
 }
 
 #[derive(

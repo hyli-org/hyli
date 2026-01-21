@@ -163,7 +163,8 @@ async fn insert_settled_tx_with_index(
     let parent_hash = hash(&format!("block-{}", height - 1));
     insert_block(pool, &block_hash, &parent_hash, height).await?;
 
-    let tx_hash = TxHash::from(hash(&format!("settled-{height}-{index}")));
+    let tx_hash =
+        TxHash::from_hex(&hash(&format!("settled-{height}-{index}"))).expect("tx_hash hex");
     let tx_hash_hex = hex::encode(&tx_hash.0);
     let parent_dp_hash = hash("dp-settled");
     let lane_id = LaneId::default().to_string();
@@ -228,7 +229,8 @@ async fn insert_sequenced_tx_with_index(
     let parent_hash = hash(&format!("block-{}", height - 1));
     insert_block(pool, &block_hash, &parent_hash, height).await?;
 
-    let tx_hash = TxHash::from(hash(&format!("sequenced-{height}-{index}")));
+    let tx_hash =
+        TxHash::from_hex(&hash(&format!("sequenced-{height}-{index}"))).expect("tx_hash hex");
     let tx_hash_hex = hex::encode(&tx_hash.0);
     let parent_dp_hash = hash("dp-sequenced");
     let lane_id = LaneId::default().to_string();
@@ -260,7 +262,10 @@ async fn insert_sequenced_tx_with_index(
     .execute(pool)
     .await?;
 
-    Ok((tx_hash, ConsensusProposalHash::from(block_hash)))
+    Ok((
+        tx_hash,
+        ConsensusProposalHash::from_hex(&block_hash).expect("block_hash hex"),
+    ))
 }
 
 async fn update_tx_status(

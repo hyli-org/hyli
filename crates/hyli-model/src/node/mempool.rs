@@ -223,14 +223,9 @@ impl From<&[u8]> for DataProposalHash {
         DataProposalHash(v.to_vec())
     }
 }
-impl From<String> for DataProposalHash {
-    fn from(s: String) -> Self {
-        DataProposalHash(crate::utils::decode_hex_string(&s))
-    }
-}
-impl From<&str> for DataProposalHash {
-    fn from(s: &str) -> Self {
-        DataProposalHash(crate::utils::decode_hex_string(s))
+impl DataProposalHash {
+    pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
+        crate::utils::decode_hex_string_checked(s).map(DataProposalHash)
     }
 }
 
@@ -309,7 +304,7 @@ mod tests {
     #[test]
     fn data_proposal_hash_from_hex_str_roundtrip() {
         let hex_str = "746573745f6470";
-        let hash = DataProposalHash::from(hex_str);
+        let hash = DataProposalHash::from_hex(hex_str).expect("data proposal hash hex");
         assert_eq!(hash.0, b"test_dp".to_vec());
         assert_eq!(format!("{hash}"), hex_str);
         let json = serde_json::to_string(&hash).expect("serialize data proposal hash");

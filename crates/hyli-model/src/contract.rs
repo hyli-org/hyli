@@ -561,14 +561,9 @@ impl From<&[u8]> for ProofDataHash {
         ProofDataHash(v.to_vec())
     }
 }
-impl From<String> for ProofDataHash {
-    fn from(s: String) -> Self {
-        ProofDataHash(crate::utils::decode_hex_string(&s))
-    }
-}
-impl From<&str> for ProofDataHash {
-    fn from(s: &str) -> Self {
-        ProofDataHash(crate::utils::decode_hex_string(s))
+impl ProofDataHash {
+    pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
+        crate::utils::decode_hex_string_checked(s).map(ProofDataHash)
     }
 }
 
@@ -755,14 +750,9 @@ impl From<&[u8]> for ConsensusProposalHash {
         ConsensusProposalHash(v.to_vec())
     }
 }
-impl From<String> for ConsensusProposalHash {
-    fn from(s: String) -> Self {
-        ConsensusProposalHash(crate::utils::decode_hex_string(&s))
-    }
-}
-impl From<&str> for ConsensusProposalHash {
-    fn from(s: &str) -> Self {
-        ConsensusProposalHash(crate::utils::decode_hex_string(s))
+impl ConsensusProposalHash {
+    pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
+        crate::utils::decode_hex_string_checked(s).map(ConsensusProposalHash)
     }
 }
 
@@ -781,14 +771,9 @@ impl From<&[u8]> for TxHash {
         TxHash(v.to_vec())
     }
 }
-impl From<String> for TxHash {
-    fn from(s: String) -> Self {
-        TxHash(crate::utils::decode_hex_string(&s))
-    }
-}
-impl From<&str> for TxHash {
-    fn from(s: &str) -> Self {
-        TxHash(crate::utils::decode_hex_string(s))
+impl TxHash {
+    pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
+        crate::utils::decode_hex_string_checked(s).map(TxHash)
     }
 }
 
@@ -1227,7 +1212,7 @@ mod tests {
     #[test]
     fn consensus_proposal_hash_from_hex_str_roundtrip() {
         let hex_str = "74657374";
-        let hash = ConsensusProposalHash::from(hex_str);
+        let hash = ConsensusProposalHash::from_hex(hex_str).expect("consensus hash hex");
         assert_eq!(hash.0, b"test".to_vec());
         assert_eq!(format!("{hash}"), hex_str);
         let json = serde_json::to_string(&hash).expect("serialize consensus hash");
@@ -1240,7 +1225,7 @@ mod tests {
     #[test]
     fn txhash_from_hex_str_roundtrip() {
         let hex_str = "746573745f7478";
-        let hash = TxHash::from(hex_str);
+        let hash = TxHash::from_hex(hex_str).expect("txhash hex");
         assert_eq!(hash.0, b"test_tx".to_vec());
         assert_eq!(format!("{hash}"), hex_str);
         let json = serde_json::to_string(&hash).expect("serialize tx hash");
@@ -1252,7 +1237,7 @@ mod tests {
     #[test]
     fn proof_data_hash_from_hex_str_roundtrip() {
         let hex_str = "0x74657374";
-        let hash = ProofDataHash::from(hex_str);
+        let hash = ProofDataHash::from_hex(hex_str).expect("proof hash hex");
         assert_eq!(hash.0, b"test".to_vec());
         assert_eq!(hex::encode(&hash.0), "74657374");
         let json = serde_json::to_string(&hash).expect("serialize proof hash");

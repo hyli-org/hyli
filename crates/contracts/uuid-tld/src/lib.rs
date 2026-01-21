@@ -159,7 +159,7 @@ mod test {
             identity: identity.into(),
             tx_hash: TxHash::default(),
             tx_ctx: Some(TxContext {
-                block_hash: ConsensusProposalHash::from("0xcafefade"),
+                block_hash: ConsensusProposalHash::from_hex("0xcafefade").expect("block_hash hex"),
                 timestamp: TimestampMs(3745916),
                 ..TxContext::default()
             }),
