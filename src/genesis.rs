@@ -80,6 +80,7 @@ impl Module for Genesis {
 
     async fn run(&mut self) -> Result<()> {
         self.start().await?;
+        // We keep never resolving loop to keep the module alive
         let _ = module_handle_messages! {
             on_self self,
         };
