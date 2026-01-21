@@ -546,7 +546,9 @@ impl<'de> Deserialize<'de> for ProofData {
     }
 }
 
-#[derive(Default, Serialize, Deserialize, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[derive(
+    Default, Serialize, Deserialize, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
+)]
 pub struct ProofDataHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
 
 impl From<Vec<u8>> for ProofDataHash {
