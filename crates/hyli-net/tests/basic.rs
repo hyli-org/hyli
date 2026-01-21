@@ -404,7 +404,10 @@ async fn setup_decode_error_host(peer: String, peers: Vec<String>) -> Result<(),
 
                 if armed && !sent_error && peer == "peer-1" {
                     if let Some(socket) = p2p.tcp_server.connected_clients().first().cloned() {
-                        let errors = p2p.tcp_server.raw_send_parallel(vec![socket], vec![255], vec![]).await;
+                        let errors = p2p
+                            .tcp_server
+                            .raw_send_parallel(vec![socket], vec![255], vec![], "raw")
+                            .await;
                         assert!(errors.is_empty(), "Expected raw send to succeed");
                         sent_error = true;
                     }
@@ -513,7 +516,10 @@ async fn setup_poisoned_socket_host(
                     && p2p.peers.len() == all_other_peers.len()
                 {
                     if let Some(socket) = p2p.tcp_server.connected_clients().first().cloned() {
-                        let errors = p2p.tcp_server.raw_send_parallel(vec![socket], vec![255], vec![]).await;
+                        let errors = p2p
+                            .tcp_server
+                            .raw_send_parallel(vec![socket], vec![255], vec![], "raw")
+                            .await;
                         assert!(errors.is_empty(), "Expected raw send to succeed");
                         sent_error = true;
                         sent_error_at = Some(tokio::time::Instant::now());
