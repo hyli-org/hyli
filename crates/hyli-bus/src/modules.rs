@@ -1,5 +1,6 @@
 use std::{
     any::type_name,
+    collections::HashSet,
     fs,
     future::Future,
     io::{BufWriter, Write},
@@ -14,7 +15,6 @@ use crate::{
 };
 use anyhow::{bail, Error, Result};
 use rand::{distr::Alphanumeric, Rng};
-use tokio::task::JoinHandle;
 use tracing::{debug, info};
 
 use crate::utils::deterministic_rng::deterministic_rng;
@@ -303,9 +303,7 @@ bus_client! {
 pub struct ModulesHandler {
     bus: SharedMessageBus,
     modules: Vec<ModuleStarter>,
-    started_modules: Vec<&'static str>,
-    running_modules: Vec<JoinHandle<()>>,
-    shut_modules: Vec<String>,
+    running_modules: Vec<&'static str>,
 }
 
 impl ModulesHandler {
@@ -315,14 +313,8 @@ impl ModulesHandler {
         ModulesHandler {
             bus: shared_message_bus,
             modules: vec![],
-            started_modules: vec![],
             running_modules: vec![],
-            shut_modules: vec![],
         }
-    }
-
-    fn long_running_module(module_name: &str) -> bool {
-        !["hyli::genesis::Genesis"].contains(&module_name)
     }
 
     pub async fn start_modules(&mut self) -> Result<()> {
@@ -330,16 +322,24 @@ impl ModulesHandler {
             bail!("Modules are already running!");
         }
 
+        let mut seen_modules: HashSet<&'static str> = HashSet::new();
+        let mut last_module_name: Option<&'static str> = None;
         for module in self.modules.drain(..) {
-            if Self::long_running_module(module.name) {
-                self.started_modules.push(module.name);
+            if seen_modules.contains(&module.name) && last_module_name != Some(module.name) {
+                bail!(
+                    "Module {} appears multiple times but is not consecutive",
+                    module.name
+                );
             }
+            seen_modules.insert(module.name);
+            last_module_name = Some(module.name);
+            self.running_modules.push(module.name);
 
             debug!("Starting module {}", module.name);
 
             let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
             let mut shutdown_client2 = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
-            let task = tokio::spawn(async move {
+            tokio::spawn(async move {
                 let module_task = tokio::spawn(module.starter);
                 let timeout_task = tokio::spawn(async move {
                     loop {
@@ -381,10 +381,6 @@ impl ModulesHandler {
                     "Sending ShutdownCompleted message"
                 );
             });
-
-            if Self::long_running_module(module.name) {
-                self.running_modules.push(task);
-            }
         }
 
         Ok(())
@@ -392,7 +388,7 @@ impl ModulesHandler {
 
     /// Setup a loop waiting for shutdown signals from modules
     pub async fn shutdown_loop(&mut self) -> Result<()> {
-        if self.started_modules.is_empty() {
+        if self.running_modules.is_empty() {
             return Ok(());
         }
 
@@ -402,20 +398,16 @@ impl ModulesHandler {
         handle_messages! {
             on_bus shutdown_client,
             listen<signal::ShutdownCompleted> msg => {
-                if Self::long_running_module(msg.module.as_str()) && !self.shut_modules.contains(&msg.module)  {
-                    self.started_modules.retain(|module| *module != msg.module.clone());
-                    self.shut_modules.push(msg.module.clone());
-                    if self.started_modules.is_empty() {
-                        break;
-                    } else {
-                        _ = self.shutdown_next_module().await;
-                    }
+                if let Some(idx) = self
+                    .running_modules
+                    .iter()
+                    .position(|module| *module == msg.module.as_str())
+                {
+                    self.running_modules.remove(idx);
                 }
-            }
-
-            // Add one second as buffer to let the module cancel itself, hopefully.
-            _ = tokio::time::sleep(MODULE_SHUTDOWN_TIMEOUT + Duration::from_secs(1)) => {
-                if !self.shut_modules.is_empty() {
+                if self.running_modules.is_empty() {
+                    break;
+                } else {
                     _ = self.shutdown_next_module().await;
                 }
             }
@@ -427,18 +419,13 @@ impl ModulesHandler {
     /// Shutdown modules in reverse order (start A, B, C, shutdown C, B, A)
     async fn shutdown_next_module(&mut self) -> Result<()> {
         let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
-        if let Some(module_name) = self.started_modules.pop() {
-            // May be the shutdown message was skipped because the module failed somehow
-            if !self.shut_modules.contains(&module_name.to_string()) {
-                _ = log_error!(
-                    shutdown_client.send(signal::ShutdownModule {
-                        module: module_name.to_string(),
-                    }),
-                    "Shutting down module"
-                );
-            } else {
-                tracing::debug!("Not shutting already shut module {}", module_name);
-            }
+        if let Some(module_name) = self.running_modules.last() {
+            _ = log_error!(
+                shutdown_client.send(signal::ShutdownModule {
+                    module: module_name.to_string(),
+                }),
+                "Shutting down module"
+            );
         }
 
         Ok(())
@@ -738,6 +725,33 @@ mod tests {
         assert_eq!(
             shutdown_completed_receiver.recv().await.unwrap().module,
             std::any::type_name::<TestModule<usize>>().to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_shutdown_duplicate_modules() {
+        let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
+        let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
+        let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
+        let mut handler = ModulesHandler::new(&shared_bus).await;
+
+        handler.build_module::<TestModule<usize>>(()).await.unwrap();
+        handler.build_module::<TestModule<usize>>(()).await.unwrap();
+
+        _ = handler.start_modules().await;
+        _ = handler.shutdown_modules().await;
+
+        let module_name = std::any::type_name::<TestModule<usize>>().to_string();
+
+        assert_eq!(shutdown_receiver.recv().await.unwrap().module, module_name);
+        assert_eq!(shutdown_receiver.recv().await.unwrap().module, module_name);
+        assert_eq!(
+            shutdown_completed_receiver.recv().await.unwrap().module,
+            module_name
+        );
+        assert_eq!(
+            shutdown_completed_receiver.recv().await.unwrap().module,
+            module_name
         );
     }
 
