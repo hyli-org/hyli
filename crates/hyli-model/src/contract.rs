@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use crate::{utils::TimestampMs, LaneId};
 
 #[derive(
-    Debug,
     Serialize,
     Deserialize,
     Clone,
@@ -28,6 +27,12 @@ pub type BlockHash = ConsensusProposalHash;
 impl std::hash::Hash for ConsensusProposalHash {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write(&self.0);
+    }
+}
+
+impl std::fmt::Debug for ConsensusProposalHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ConsensusProposalHash({})", hex::encode(&self.0))
     }
 }
 
@@ -154,7 +159,6 @@ pub struct Identity(pub String);
     Default,
     Serialize,
     Deserialize,
-    Debug,
     Clone,
     PartialEq,
     Eq,
@@ -542,9 +546,7 @@ impl<'de> Deserialize<'de> for ProofData {
     }
 }
 
-#[derive(
-    Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
-)]
+#[derive(Default, Serialize, Deserialize, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct ProofDataHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
 
 impl From<Vec<u8>> for ProofDataHash {
@@ -565,6 +567,18 @@ impl From<String> for ProofDataHash {
 impl From<&str> for ProofDataHash {
     fn from(s: &str) -> Self {
         ProofDataHash(crate::utils::decode_hex_string(s))
+    }
+}
+
+impl std::fmt::Debug for ProofDataHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ProofDataHash({})", hex::encode(&self.0))
+    }
+}
+
+impl Display for ProofDataHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
     }
 }
 
@@ -821,6 +835,11 @@ impl From<&[u8]> for ProgramId {
 impl Display for TxHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", hex::encode(&self.0))
+    }
+}
+impl std::fmt::Debug for TxHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TxHash({})", hex::encode(&self.0))
     }
 }
 impl Display for BlobIndex {

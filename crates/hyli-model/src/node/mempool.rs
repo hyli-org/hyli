@@ -199,7 +199,6 @@ pub struct TxId(pub DataProposalHash, pub TxHash);
 
 #[derive(
     Clone,
-    Debug,
     Default,
     Serialize,
     Deserialize,
@@ -232,6 +231,12 @@ impl From<String> for DataProposalHash {
 impl From<&str> for DataProposalHash {
     fn from(s: &str) -> Self {
         DataProposalHash(crate::utils::decode_hex_string(s))
+    }
+}
+
+impl std::fmt::Debug for DataProposalHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DataProposalHash({})", hex::encode(&self.0))
     }
 }
 
