@@ -370,7 +370,6 @@ pub struct Blob {
 
 #[derive(
     Default,
-    Debug,
     Clone,
     Serialize,
     Deserialize,
@@ -381,7 +380,7 @@ pub struct Blob {
     BorshDeserialize,
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
-pub struct BlobHash(pub String);
+pub struct BlobHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
 
 #[cfg(feature = "full")]
 impl Hashed<BlobHash> for Blob {
@@ -392,7 +391,19 @@ impl Hashed<BlobHash> for Blob {
         hasher.update(self.contract_name.0.clone());
         hasher.update(self.data.0.clone());
         let hash_bytes = hasher.finalize();
-        BlobHash(hex::encode(hash_bytes))
+        BlobHash(hash_bytes.to_vec())
+    }
+}
+
+impl std::fmt::Debug for BlobHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "BlobHash({})", hex::encode(&self.0))
+    }
+}
+
+impl std::fmt::Display for BlobHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
     }
 }
 

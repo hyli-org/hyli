@@ -421,7 +421,7 @@ impl BlobsHashes {
 
 impl std::fmt::Display for BlobsHashes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (BlobIndex(index), BlobHash(hash)) in self.hashes.iter() {
+        for (BlobIndex(index), hash) in self.hashes.iter() {
             write!(f, "[{index}]: {hash}")?;
         }
         Ok(())
