@@ -22,23 +22,22 @@ pub mod hex_bytes {
         D: Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        let trimmed = s.strip_prefix("0x").unwrap_or(&s);
-        let normalized = if trimmed.len() % 2 == 1 {
-            format!("0{trimmed}")
-        } else {
-            trimmed.to_string()
-        };
+        let normalized = super::normalize_hex_string(&s);
         hex::decode(&normalized).map_err(serde::de::Error::custom)
     }
 }
 
-pub fn decode_hex_string_checked(s: &str) -> Result<Vec<u8>, hex::FromHexError> {
+fn normalize_hex_string(s: &str) -> String {
     let trimmed = s.strip_prefix("0x").unwrap_or(s);
-    let normalized = if trimmed.len() % 2 == 1 {
+    if trimmed.len() % 2 == 1 {
         format!("0{trimmed}")
     } else {
         trimmed.to_string()
-    };
+    }
+}
+
+pub fn decode_hex_string_checked(s: &str) -> Result<Vec<u8>, hex::FromHexError> {
+    let normalized = normalize_hex_string(s);
     hex::decode(&normalized)
 }
 
