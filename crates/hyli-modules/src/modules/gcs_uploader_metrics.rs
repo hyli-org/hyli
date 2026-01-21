@@ -19,12 +19,8 @@ impl GcsUploaderMetrics {
         GcsUploaderMetrics {
             module_name,
             current_height: my_meter.u64_gauge("gcs_uploader_current_height").build(),
-            success_total: my_meter
-                .u64_counter("gcs_uploader_success_total")
-                .build(),
-            failure_total: my_meter
-                .u64_counter("gcs_uploader_failure_total")
-                .build(),
+            success_total: my_meter.u64_counter("gcs_uploader_success_total").build(),
+            failure_total: my_meter.u64_counter("gcs_uploader_failure_total").build(),
         }
     }
 
