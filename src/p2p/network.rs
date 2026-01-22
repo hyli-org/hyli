@@ -146,9 +146,10 @@ impl<T: BusMessage + IntoHeaderSignableData> BusMessage for MsgWithHeader<T> {
 impl<T: IntoHeaderSignableData + std::fmt::Debug> std::fmt::Debug for MsgWithHeader<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MsgWithHeader")
+            .field("msg", &self.msg)
             .field("header", &{
                 format!(
-                    "MsgHeader {{ timestamp: {}, hash: {}, }}",
+                    "timestamp: {}, hash: {}",
                     self.header.msg.timestamp,
                     match &self.header.msg.hash.0.len() {
                         0 => "empty".to_string(),
@@ -161,10 +162,10 @@ impl<T: IntoHeaderSignableData + std::fmt::Debug> std::fmt::Debug for MsgWithHea
                     }
                 )
             })
-            .field("msg", &self.msg)
             .finish()
     }
 }
+
 pub trait HeaderSigner {
     fn sign_msg_with_header<T: IntoHeaderSignableData>(
         &self,
