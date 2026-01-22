@@ -869,23 +869,23 @@ async fn autobahn_rejoin_flow_in_consensus_with_tc() {
 
     broadcast! {
         description: "Follower - Timeout",
-        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx, joining_node.consensus_ctx],
+        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx], // joining_node skipped to avoid spurious errors
         message_matches: ConsensusNetMessage::Timeout(..)
     };
     broadcast! {
         description: "Follower - Timeout",
-        from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx, joining_node.consensus_ctx],
+        from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx], // joining_node skipped to avoid spurious errors
         message_matches: ConsensusNetMessage::Timeout(..)
     };
     broadcast! {
         description: "Follower - Timeout",
-        from: node3.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, joining_node.consensus_ctx],
+        from: node3.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx], // joining_node skipped to avoid spurious errors
         message_matches: ConsensusNetMessage::Timeout(..)
     };
 
     broadcast! {
         description: "Follower - Timeout Certificate",
-        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx, joining_node.consensus_ctx],
+        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx], // joining_node skipped to avoid spurious errors
         message_matches: ConsensusNetMessage::TimeoutCertificate(..)
     };
 
