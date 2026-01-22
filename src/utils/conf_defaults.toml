@@ -120,3 +120,5 @@ save_proofs = false
 save_blocks = false
 
 start_block = 0
+
+max_concurrent_uploads = 1000
