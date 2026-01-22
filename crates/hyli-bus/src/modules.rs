@@ -1,6 +1,6 @@
 use std::{
     any::type_name,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     future::Future,
     io::{BufWriter, Write},
@@ -233,6 +233,7 @@ pub mod signal {
     #[derive(Clone, Debug)]
     pub enum ShutdownCompletion {
         Timeout,
+        PersistanceFailed,
         PersistedEntries(ModulePersistOutput),
     }
 
@@ -405,8 +406,15 @@ pub struct ModulesHandler {
     data_dir: PathBuf,
     /// Collected checksums from successfully persisted modules
     persisted_checksums: Vec<(PathBuf, u32)>,
-    /// Track if any module timed out during shutdown
-    any_timeout: bool,
+    /// Track shutdown status for each module
+    shutdown_statuses: HashMap<String, ModuleShutdownStatus>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ModuleShutdownStatus {
+    TimedOut,
+    PersistenceFailed,
+    Persisted,
 }
 
 impl ModulesHandler {
@@ -419,7 +427,7 @@ impl ModulesHandler {
             running_modules: vec![],
             data_dir,
             persisted_checksums: vec![],
-            any_timeout: false,
+            shutdown_statuses: HashMap::new(),
         }
     }
 
@@ -469,8 +477,7 @@ impl ModulesHandler {
                     }
                 };
 
-                let mut completion = signal::ShutdownCompletion::PersistedEntries(Vec::new());
-                match res {
+                let completion = match res {
                     Ok(Ok(entries)) => {
                         tracing::info!(
                             module =% module.name,
@@ -478,15 +485,17 @@ impl ModulesHandler {
                             module.name,
                             entries.len()
                         );
-                        completion = signal::ShutdownCompletion::PersistedEntries(entries);
+                        signal::ShutdownCompletion::PersistedEntries(entries)
                     }
                     Ok(Err(e)) => {
                         tracing::error!(module =% module.name, "Module {} exited with error: {:?}", module.name, e);
+                        signal::ShutdownCompletion::PersistanceFailed
                     }
                     Err(e) => {
                         tracing::error!(module =% module.name, "Module {} exited, error joining: {:?}", module.name, e);
+                        signal::ShutdownCompletion::PersistanceFailed
                     }
-                }
+                };
 
                 _ = log_error!(
                     shutdown_client.send(signal::ShutdownCompleted {
@@ -527,7 +536,16 @@ impl ModulesHandler {
                             "Module {} timed out during shutdown, manifest will not be written",
                             msg.module
                         );
-                        self.any_timeout = true;
+                        self.shutdown_statuses
+                            .insert(msg.module.clone(), ModuleShutdownStatus::TimedOut);
+                    }
+                    signal::ShutdownCompletion::PersistanceFailed => {
+                        tracing::warn!(
+                            "Module {} failed to persist during shutdown, manifest will not be written",
+                            msg.module
+                        );
+                        self.shutdown_statuses
+                            .insert(msg.module.clone(), ModuleShutdownStatus::PersistenceFailed);
                     }
                     signal::ShutdownCompletion::PersistedEntries(entries) => {
                         for (path, checksum) in entries {
@@ -539,6 +557,8 @@ impl ModulesHandler {
                             );
                             self.persisted_checksums.push((path, checksum));
                         }
+                        self.shutdown_statuses
+                            .insert(msg.module.clone(), ModuleShutdownStatus::Persisted);
                     }
                 }
                 if let Some(idx) = self.running_modules.iter().position(|module| *module == msg.module) {
@@ -553,14 +573,35 @@ impl ModulesHandler {
         }
 
         info!("All modules have been shut down");
-        // Write manifest if no timeouts occurred
-        if !self.any_timeout && !self.persisted_checksums.is_empty() {
+        let timed_out_modules: Vec<&str> = self
+            .shutdown_statuses
+            .iter()
+            .filter_map(|(module, status)| {
+                matches!(status, ModuleShutdownStatus::TimedOut).then_some(module.as_str())
+            })
+            .collect();
+        let persistence_failed_modules: Vec<&str> = self
+            .shutdown_statuses
+            .iter()
+            .filter_map(|(module, status)| {
+                matches!(status, ModuleShutdownStatus::PersistenceFailed).then_some(module.as_str())
+            })
+            .collect();
+        let has_shutdown_errors =
+            !timed_out_modules.is_empty() || !persistence_failed_modules.is_empty();
+
+        // Write manifest if no shutdown errors occurred
+        if !has_shutdown_errors && !self.persisted_checksums.is_empty() {
             _ = log_error!(
                 write_manifest(&self.data_dir, &self.persisted_checksums),
                 "Writing checksum manifest"
             );
-        } else if self.any_timeout {
-            tracing::warn!("Skipping manifest write due to module timeout");
+        } else if has_shutdown_errors {
+            tracing::warn!(
+                timed_out_modules = ?timed_out_modules,
+                persistence_failed_modules = ?persistence_failed_modules,
+                "Skipping manifest write due to module shutdown errors"
+            );
         }
 
         Ok(())
