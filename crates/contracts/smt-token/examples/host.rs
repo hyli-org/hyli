@@ -18,7 +18,7 @@ async fn main() {
 
     // Create some test accounts
     for user in 0..1000 {
-        let account = Account::new(Identity::from(user.to_string()), 100);
+        let account = Account::new(Identity::from(format!("{user}")), 100);
         let key = account.get_key();
         smt.0.update(key, account).expect("Failed to update SMT");
     }

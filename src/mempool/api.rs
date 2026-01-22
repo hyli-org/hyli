@@ -126,7 +126,7 @@ async fn send_blob_transaction_inner(
     lane_suffix: Option<LaneSuffix>,
 ) -> Result<impl IntoResponse, AppError> {
     info!(
-        tx_hash = %payload.hashed().0,
+        tx_hash = %payload.hashed(),
         identity = %payload.identity.0,
         blob_count = payload.blobs.len(),
        contracts = ?payload
@@ -152,7 +152,7 @@ async fn send_blob_transaction_inner(
                 &parameters.state_commitment,
             ) {
                 warn!(
-                    tx_hash = %payload.hashed().0,
+                    tx_hash = %payload.hashed(),
                     contract = %parameters.contract_name.0,
                     verifier = %parameters.verifier.0,
                     error = ?err,
@@ -166,7 +166,7 @@ async fn send_blob_transaction_inner(
     // Filter out transactions with incorrect identity
     if let Err(e) = payload.validate_identity() {
         warn!(
-            tx_hash = %payload.hashed().0,
+            tx_hash = %payload.hashed(),
             identity = %payload.identity.0,
             error = %e,
             "rejecting blob transaction due to invalid identity"
@@ -180,7 +180,7 @@ async fn send_blob_transaction_inner(
     // Filter out transactions with too many blobs
     if payload.blobs.len() > 20 {
         warn!(
-            tx_hash = %payload.hashed().0,
+            tx_hash = %payload.hashed(),
             blob_count = payload.blobs.len(),
             "rejecting blob transaction due to blob count limit"
         );

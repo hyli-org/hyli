@@ -150,7 +150,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    fn new_tx(hash: &str, contract: &str) -> UnsettledBlobTransaction {
+    fn new_tx(hash: &'static [u8], contract: &str) -> UnsettledBlobTransaction {
         UnsettledBlobTransaction {
             tx: BlobTransaction::new(
                 Identity::new("toto"),
@@ -159,7 +159,7 @@ mod tests {
                     data: BlobData::default(),
                 }],
             ),
-            tx_id: TxId(DataProposalHash::default(), TxHash::new(hash)),
+            tx_id: TxId(DataProposalHash::default(), hash.into()),
             blobs_hash: BlobsHashes::default(),
             possible_proofs: BTreeMap::from_iter(vec![(BlobIndex(0), vec![])]),
             tx_context: Default::default(),
@@ -177,7 +177,7 @@ mod tests {
     #[test]
     fn can_add_tx() {
         let mut map = OrderedTxMap::default();
-        let tx = new_tx("tx1", "contract1");
+        let tx = new_tx(b"tx1", "contract1");
 
         map.add(tx);
         assert_eq!(map.map.len(), 1);
@@ -187,13 +187,13 @@ mod tests {
     #[test]
     fn can_get_tx() {
         let mut map = OrderedTxMap::default();
-        let tx1 = TxHash::new("tx1");
-        let tx2 = TxHash::new("tx2");
-        let tx3 = TxHash::new("tx3");
+        let tx1: TxHash = b"tx1".into();
+        let tx2: TxHash = b"tx2".into();
+        let tx3: TxHash = b"tx3".into();
 
-        map.add(new_tx("tx1", "c1"));
-        map.add(new_tx("tx2", "c1"));
-        map.add(new_tx("tx3", "c2"));
+        map.add(new_tx(b"tx1", "c1"));
+        map.add(new_tx(b"tx2", "c1"));
+        map.add(new_tx(b"tx3", "c2"));
 
         assert_eq!(tx1, map.get(&tx1).unwrap().tx_id.1);
         assert_eq!(tx2, map.get(&tx2).unwrap().tx_id.1);
@@ -206,10 +206,10 @@ mod tests {
     #[test]
     fn double_add_ignored() {
         let mut map = OrderedTxMap::default();
-        let tx1 = TxHash::new("tx1");
+        let tx1: TxHash = b"tx1".into();
 
-        map.add(new_tx("tx1", "c1"));
-        map.add(new_tx("tx1", "c1"));
+        map.add(new_tx(b"tx1", "c1"));
+        map.add(new_tx(b"tx1", "c1"));
 
         assert_eq!(tx1, map.get(&tx1).unwrap().tx_id.1);
 
@@ -222,7 +222,7 @@ mod tests {
     fn add_double_contract_name() {
         let mut map = OrderedTxMap::default();
 
-        let mut tx = new_tx("tx1", "c1");
+        let mut tx = new_tx(b"tx1", "c1");
         let mut blobs = tx.tx.blobs.clone();
         blobs.push(tx.tx.blobs[0].clone());
         blobs.push(tx.tx.blobs[0].clone());
@@ -245,14 +245,14 @@ mod tests {
     #[test]
     fn check_next_unsettled_tx() {
         let mut map = OrderedTxMap::default();
-        let tx1 = TxHash::new("tx1");
-        let tx2 = TxHash::new("tx2");
-        let tx3 = TxHash::new("tx3");
-        let tx4 = TxHash::new("tx4");
+        let tx1: TxHash = b"tx1".into();
+        let tx2: TxHash = b"tx2".into();
+        let tx3: TxHash = b"tx3".into();
+        let tx4: TxHash = b"tx4".into();
 
-        map.add(new_tx("tx1", "c1"));
-        map.add(new_tx("tx2", "c1"));
-        map.add(new_tx("tx3", "c2"));
+        map.add(new_tx(b"tx1", "c1"));
+        map.add(new_tx(b"tx2", "c1"));
+        map.add(new_tx(b"tx3", "c2"));
 
         assert!(is_next_unsettled_tx(&mut map, &tx1));
         assert!(!is_next_unsettled_tx(&mut map, &tx2));
@@ -264,14 +264,14 @@ mod tests {
     #[test]
     fn remove_tx() {
         let mut map = OrderedTxMap::default();
-        let tx1 = TxHash::new("tx1");
-        let tx2 = TxHash::new("tx2");
-        let tx3 = TxHash::new("tx3");
+        let tx1: TxHash = b"tx1".into();
+        let tx2: TxHash = b"tx2".into();
+        let tx3: TxHash = b"tx3".into();
         let c1 = ContractName::new("c1");
 
-        map.add(new_tx("tx1", "c1"));
-        map.add(new_tx("tx2", "c1"));
-        map.add(new_tx("tx3", "c2"));
+        map.add(new_tx(b"tx1", "c1"));
+        map.add(new_tx(b"tx2", "c1"));
+        map.add(new_tx(b"tx3", "c2"));
         map.remove(&tx1);
 
         assert!(!is_next_unsettled_tx(&mut map, &tx1));
@@ -294,7 +294,7 @@ mod tests {
         let contract1 = ContractName::new("hyli");
         let contract2 = ContractName::new("c2");
 
-        let mut tx = new_tx("tx1", "hyli");
+        let mut tx = new_tx(b"tx1", "hyli");
         let mut blobs = tx.tx.blobs.clone();
         blobs.push(
             RegisterContractAction {

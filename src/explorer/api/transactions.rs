@@ -335,7 +335,7 @@ pub async fn get_transactions_by_height(
     get,
     tag = "Indexer",
     params(
-        ("tx_hash" = String, Path, description = "Tx hash"),
+        ("tx_hash" = TxHash, Path, description = "Tx hash"),
     ),
     path = "/transaction/hash/{tx_hash}",
     responses(
@@ -343,7 +343,7 @@ pub async fn get_transactions_by_height(
     )
 )]
 pub async fn get_transaction_with_hash(
-    Path(tx_hash): Path<String>,
+    Path(tx_hash): Path<TxHash>,
     State(state): State<ExplorerApiState>,
 ) -> Result<Json<APITransaction>, StatusCode> {
     let transaction = log_error!(
@@ -357,7 +357,7 @@ ORDER BY block_height DESC, index DESC
 LIMIT 1;
         "#,
         )
-        .bind(tx_hash)
+        .bind(tx_hash.to_string())
         .fetch_optional(&state.db)
         .await
         .map(|db| db.map(|test| { Into::<APITransaction>::into(test) })),
@@ -375,7 +375,7 @@ LIMIT 1;
     get,
     tag = "Indexer",
     params(
-        ("tx_hash" = String, Path, description = "Tx hash"),
+        ("tx_hash" = TxHash, Path, description = "Tx hash"),
     ),
     path = "/transaction/hash/{tx_hash}/events",
     responses(
@@ -383,7 +383,7 @@ LIMIT 1;
     )
 )]
 pub async fn get_transaction_events(
-    Path(tx_hash): Path<String>,
+    Path(tx_hash): Path<TxHash>,
     State(state): State<ExplorerApiState>,
 ) -> Result<Json<Vec<APITransactionEvents>>, StatusCode> {
     let rows = log_error!(
@@ -402,7 +402,7 @@ GROUP BY t.block_hash, t.block_height
 ORDER BY t.block_height ASC;
 "#,
         )
-        .bind(tx_hash)
+        .bind(tx_hash.to_string())
         .fetch_all(&state.db)
         .await,
         "Failed to fetch transaction events"

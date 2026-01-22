@@ -1,6 +1,8 @@
 use crate::consensus::{test::ConsensusTestCtx, ConsensusNetMessage};
+use crate::mempool::tests::make_register_contract_tx;
 use hyli_crypto::BlstCrypto;
 use hyli_model::utils::TimestampMs;
+use hyli_model::{ContractName, Hashed};
 use tracing::info;
 
 use super::autobahn_testing::AutobahnTestCtx;
@@ -404,4 +406,144 @@ async fn test_buffer_and_sync_reply_multiple_alt() {
     assert_eq!(node2.consensus_ctx.slot(), 7);
     assert_eq!(node3.consensus_ctx.slot(), 7);
     assert_eq!(node4.consensus_ctx.slot(), 7);
+}
+
+#[test_log::test(tokio::test)]
+async fn sync_after_conflicting_commit_qc() {
+    // Node0 led view 0 of slot 5 and keeps its local CP (never committed).
+    // Other nodes move to view 1, commit a different CP, then start slot 6.
+    // When node0 receives the Prepare for slot 6 carrying that conflicting CQC,
+    // it should buffer and request a sync instead of getting stuck.
+    let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
+
+    ConsensusTestCtx::setup_for_round(
+        &mut [
+            &mut node0.consensus_ctx,
+            &mut node1.consensus_ctx,
+            &mut node2.consensus_ctx,
+            &mut node3.consensus_ctx,
+        ],
+        4,
+        0,
+    );
+
+    node3
+        .start_round_with_cut_from_mempool(TimestampMs(1000))
+        .await;
+
+    simple_commit_round! {
+        leader: node3.consensus_ctx,
+        followers: [node1.consensus_ctx, node2.consensus_ctx, node0.consensus_ctx]
+    };
+
+    // Ensure each side builds a distinct CP hash by giving different DPs.
+    node0.mempool_ctx.set_ready_to_create_dps();
+    node1.mempool_ctx.set_ready_to_create_dps();
+    node2.mempool_ctx.set_ready_to_create_dps();
+    node3.mempool_ctx.set_ready_to_create_dps();
+
+    // Node0 will propose with tx "cp-a".
+    let tx_a = make_register_contract_tx(ContractName::new("cp-a"));
+    node0.mempool_ctx.submit_tx(&tx_a);
+    node0.mempool_ctx.timer_tick().await.unwrap();
+    node0
+        .mempool_ctx
+        .process_dissemination_events()
+        .await
+        .unwrap();
+
+    // Node1/2/3 will propose/validate with tx "cp-b".
+    let tx_b = make_register_contract_tx(ContractName::new("cp-b"));
+    for n in [&mut node1, &mut node2, &mut node3] {
+        n.mempool_ctx.submit_tx(&tx_b);
+        n.mempool_ctx.timer_tick().await.unwrap();
+        n.mempool_ctx.process_dissemination_events().await.unwrap();
+    }
+
+    // node0 proposes a CP for slot 5 view 0 but we keep it local (do not deliver).
+    node0
+        .start_round_with_cut_from_mempool(TimestampMs(1000))
+        .await;
+
+    let prepare_from_node0 = node0
+        .consensus_ctx
+        .assert_broadcast("Leader0 Prepare (kept local)")
+        .await;
+    let local_cp_hash = match &prepare_from_node0.msg {
+        ConsensusNetMessage::Prepare(cp, _, _) => cp.hashed(),
+        other => panic!("expected Prepare from node0, got {:?}", other),
+    };
+
+    // Now timeout
+
+    // Timeout
+    ConsensusTestCtx::timeout(&mut [
+        &mut node1.consensus_ctx,
+        &mut node2.consensus_ctx,
+        &mut node3.consensus_ctx,
+    ])
+    .await;
+
+    broadcast! {
+        description: "Timeout",
+        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx, node0.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Timeout",
+        from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx, node0.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Timeout",
+        from: node3.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node0.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+
+    // Now disseminate a different DP.
+    node1
+        .start_round_with_cut_from_mempool(TimestampMs(2000))
+        .await;
+
+    // Commit slot 5 in view 1 without node0 participating.
+    simple_commit_round! {
+        leader: node1.consensus_ctx,
+        followers: [node2.consensus_ctx, node3.consensus_ctx]
+    };
+
+    // Slot 6 begins (leader is node1 for this slot as well).
+    node1
+        .start_round_with_cut_from_mempool(TimestampMs(3000))
+        .await;
+
+    // Deliver the Prepare for slot 6 (with the conflicting CQC) to node0.
+    broadcast! {
+        description: "Prepare slot 6 with conflicting CQC",
+        from: node1.consensus_ctx, to: [node0.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Prepare(cp, _, _) => {
+            assert_ne!(cp.parent_hash, local_cp_hash, "parent hash must differ to reproduce the bug");
+        }
+    };
+
+    assert_eq!(node0.consensus_ctx.slot(), 5);
+    assert_eq!(node1.consensus_ctx.slot(), 6);
+    assert_eq!(node2.consensus_ctx.slot(), 6);
+    assert_eq!(node3.consensus_ctx.slot(), 6);
+
+    // node0 should not accept the commit QC; it should buffer and ask for the missing parent.
+    send! {
+        description: "SyncRequest from node0 for the committed CP",
+        from: [node0.consensus_ctx], to: node1.consensus_ctx,
+        message_matches: ConsensusNetMessage::SyncRequest(_)
+    };
+
+    send! {
+        description: "SyncReply - Reply with prepare",
+        from: [node1.consensus_ctx], to: node0.consensus_ctx,
+        message_matches: ConsensusNetMessage::SyncReply(_)
+    };
+    assert_eq!(node0.consensus_ctx.slot(), 6);
+    assert_eq!(node1.consensus_ctx.slot(), 6);
+    assert_eq!(node2.consensus_ctx.slot(), 6);
+    assert_eq!(node3.consensus_ctx.slot(), 6);
 }
