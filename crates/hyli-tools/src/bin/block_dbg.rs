@@ -12,6 +12,7 @@ use hyli_contract_sdk::{BlockHeight, SignedBlock};
 use hyli_contract_sdk::{NodeStateEvent, TransactionData, TxId, api::NodeInfo};
 use hyli_model::{DataEvent, StatefulEvent, StatefulEvents};
 use hyli_modules::modules::{
+    block_processor::BusOnlyProcessor,
     da_listener::DAListenerConf,
     da_listener::SignedDAListener,
     prover::{AutoProver, AutoProverCtx},
@@ -172,11 +173,12 @@ async fn main() -> Result<()> {
 
     if !has_blocks {
         handler
-            .build_module::<SignedDAListener>(DAListenerConf {
+            .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {
                 data_directory: data_dir.clone(),
                 da_read_from: "localhost:4141".to_string(),
                 start_block: Some(BlockHeight(0)),
                 timeout_client_secs: 10,
+                processor_config: (),
             })
             .await?;
     } else {
