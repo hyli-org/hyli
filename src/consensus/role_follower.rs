@@ -59,7 +59,7 @@ impl Consensus {
             sender = %sender,
             slot = %self.bft_round_state.slot,
             view = %self.bft_round_state.view,
-            "Received Prepare message: {}", consensus_proposal
+            "Received Prepare message: {} (Ticket: {})", consensus_proposal, ticket
         );
 
         if matches!(self.bft_round_state.state_tag, StateTag::Joining) {
@@ -755,12 +755,9 @@ impl Consensus {
         view: View,
     ) -> Result<()> {
         let mut missing_dp_hash = consensus_proposal.parent_hash.clone();
-
+        let cp_hash = consensus_proposal.hashed();
         // Buffer this prepare if we don't know one.
-        if !follower_state!(self)
-            .buffered_prepares
-            .contains(&consensus_proposal.hashed())
-        {
+        if !follower_state!(self).buffered_prepares.contains(&cp_hash) {
             let prepare_message = (sender.clone(), consensus_proposal, ticket, view);
             follower_state!(self)
                 .buffered_prepares
@@ -787,8 +784,9 @@ impl Consensus {
         }
         debug!(
             to = %sender,
-            "🔉 Requesting missing parent prepare for proposal {}",
-            missing_dp_hash
+            "🔉 Requesting missing parent prepare {} for proposal {}",
+            missing_dp_hash,
+            cp_hash,
         );
         // We use send instead of broadcast to avoid an exponential number of messages
         // TODO: improve on this.

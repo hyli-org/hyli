@@ -518,7 +518,6 @@ impl IntoHeaderSignableData for ConsensusNetMessage {
 pub struct QuorumCertificateHash(pub Vec<u8>);
 
 #[derive(
-    Debug,
     Serialize,
     Deserialize,
     Clone,
@@ -538,6 +537,25 @@ impl<T> Deref for QuorumCertificate<T> {
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+struct DebugValidators<'a, V>(pub &'a [V]);
+
+impl<'a, V: std::fmt::Debug + std::fmt::Display> std::fmt::Debug for DebugValidators<'a, V> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list()
+            .entries(self.0.iter().map(|x| format!("{x}")))
+            .finish()
+    }
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for QuorumCertificate<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QuorumCert")
+            .field("type", &self.1)
+            .field("validators", &DebugValidators(&self.0.validators))
+            .finish()
     }
 }
 

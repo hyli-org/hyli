@@ -597,7 +597,7 @@ pub mod test {
     use super::*;
     use crate::{
         mempool::storage::LaneEntryMetadata, p2p::network::HeaderSigner,
-        tests::autobahn_testing::assert_chanmsg_matches,
+        tests::autobahn_testing_macros::assert_chanmsg_matches,
     };
     use anyhow::Result;
     use hyli_crypto::BlstCrypto;

@@ -285,6 +285,12 @@ impl Consensus {
             bail!("PrepareVote has not received valid consensus proposal hash");
         }
 
+        debug!(
+            "📩 Slot {} votes: {}",
+            self.bft_round_state.slot,
+            self.store.bft_round_state.leader.prepare_votes.len()
+        );
+
         // Save vote message
         self.store
             .bft_round_state

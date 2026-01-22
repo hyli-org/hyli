@@ -557,7 +557,8 @@ impl Consensus {
 
 #[cfg(test)]
 mod tests {
-    use crate::{consensus::test::*, tests::autobahn_testing::*};
+    use crate::consensus::test::*;
+    use crate::tests::autobahn_testing_macros::{broadcast, send, simple_commit_round};
 
     use super::*;
 

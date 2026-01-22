@@ -12,9 +12,9 @@ use hyli_modules::{
     modules::{
         BuildApiContextInner, ModulesHandler,
         admin::{AdminApi, AdminApiRunContext},
+        block_processor::NodeStateBlockProcessor,
         da_listener::DAListenerConf,
         da_listener::SignedDAListener,
-        node_state_processor::{NodeStateProcessor, NodeStateProcessorCtx},
         prover::{AutoProver, AutoProverCtx},
         rest::{ApiDoc, RestApi, RestApiRunContext, Router},
     },
@@ -96,18 +96,15 @@ async fn main() -> Result<()> {
         }))
         .await?;
 
+    // Use SignedDAListener with NodeStateBlockProcessor to guarantee atomic persistence
+    // of both NodeState and block height, avoiding potential data loss from bus messaging gap
     handler
-        .build_module::<SignedDAListener>(DAListenerConf {
+        .build_module::<SignedDAListener<NodeStateBlockProcessor>>(DAListenerConf {
             start_block: None,
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
             timeout_client_secs: 10,
-        })
-        .await?;
-
-    handler
-        .build_module::<NodeStateProcessor>(NodeStateProcessorCtx {
-            data_directory: config.data_directory.clone(),
+            processor_config: (),
         })
         .await?;
 
