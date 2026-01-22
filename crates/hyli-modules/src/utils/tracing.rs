@@ -1,5 +1,4 @@
 #[cfg_attr(not(feature = "instrumentation"), allow(unused_variables))]
-#[cfg_attr(not(feature = "instrumentation"), expect(clippy::unused_variables))]
 pub fn extract(headers: Vec<(String, String)>) -> opentelemetry::Context {
     #[cfg(feature = "instrumentation")]
     {
