@@ -302,7 +302,7 @@ async fn test_shutdown_timeout_skips_manifest_and_fails_to_load() {
     let send_task = tokio::spawn(async move {
         _ = shutdown_client.send(signal::ShutdownCompleted {
             module: module_name.clone(),
-            completion: signal::ShutdownCompletion::Timeout,
+            shutdown_status: ModuleShutdownStatus::TimedOut,
         });
         _ = shutdown_client.send(signal::ShutdownModule {
             module: module_name,

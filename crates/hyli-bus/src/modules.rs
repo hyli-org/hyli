@@ -214,7 +214,7 @@ struct ModuleStarter {
 pub mod signal {
     use std::any::TypeId;
 
-    use crate::{bus::BusMessage, modules::ModulePersistOutput, utils::static_type_map::Pick};
+    use crate::{bus::BusMessage, modules::ModuleShutdownStatus, utils::static_type_map::Pick};
 
     #[derive(Clone, Debug)]
     pub struct PersistModule {}
@@ -227,14 +227,7 @@ pub mod signal {
     #[derive(Clone, Debug)]
     pub struct ShutdownCompleted {
         pub module: String,
-        pub completion: ShutdownCompletion,
-    }
-
-    #[derive(Clone, Debug)]
-    pub enum ShutdownCompletion {
-        Timeout,
-        PersistenceFailed,
-        PersistedEntries(ModulePersistOutput),
+        pub shutdown_status: ModuleShutdownStatus,
     }
 
     impl BusMessage for PersistModule {}
@@ -410,11 +403,11 @@ pub struct ModulesHandler {
     shutdown_statuses: HashMap<String, ModuleShutdownStatus>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ModuleShutdownStatus {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ModuleShutdownStatus {
     TimedOut,
     PersistenceFailed,
-    Persisted,
+    PersistedEntries(ModulePersistOutput),
 }
 
 impl ModulesHandler {
@@ -475,8 +468,8 @@ impl ModulesHandler {
                     }
                 };
 
-                let completion = if timed_out {
-                    signal::ShutdownCompletion::Timeout
+                let shutdown_status = if timed_out {
+                    ModuleShutdownStatus::TimedOut
                 } else {
                     match res {
                         Ok(Ok(entries)) => {
@@ -486,7 +479,7 @@ impl ModulesHandler {
                                 module.name,
                                 entries.len()
                             );
-                            signal::ShutdownCompletion::PersistedEntries(entries)
+                            ModuleShutdownStatus::PersistedEntries(entries)
                         }
                         Ok(Err(e)) => {
                             tracing::error!(
@@ -495,7 +488,7 @@ impl ModulesHandler {
                                 module.name,
                                 e
                             );
-                            signal::ShutdownCompletion::PersistenceFailed
+                            ModuleShutdownStatus::PersistenceFailed
                         }
                         Err(e) => {
                             tracing::error!(
@@ -504,7 +497,7 @@ impl ModulesHandler {
                                 module.name,
                                 e
                             );
-                            signal::ShutdownCompletion::PersistenceFailed
+                            ModuleShutdownStatus::PersistenceFailed
                         }
                     }
                 };
@@ -512,7 +505,7 @@ impl ModulesHandler {
                 _ = log_error!(
                     shutdown_client.send(signal::ShutdownCompleted {
                         module: module.name.to_string(),
-                        completion
+                        shutdown_status
                     }),
                     "Sending ShutdownCompleted message"
                 );
@@ -538,8 +531,8 @@ impl ModulesHandler {
         handle_messages! {
             on_bus shutdown_client,
             listen<signal::ShutdownCompleted> msg => {
-                match msg.completion {
-                    signal::ShutdownCompletion::Timeout => {
+                match msg.shutdown_status {
+                    ModuleShutdownStatus::TimedOut => {
                         tracing::warn!(
                             "Module {} timed out during shutdown, manifest will not be written",
                             msg.module
@@ -547,7 +540,7 @@ impl ModulesHandler {
                         self.shutdown_statuses
                             .insert(msg.module.clone(), ModuleShutdownStatus::TimedOut);
                     }
-                    signal::ShutdownCompletion::PersistenceFailed => {
+                    ModuleShutdownStatus::PersistenceFailed => {
                         tracing::warn!(
                             "Module {} failed to persist during shutdown, manifest will not be written",
                             msg.module
@@ -555,18 +548,9 @@ impl ModulesHandler {
                         self.shutdown_statuses
                             .insert(msg.module.clone(), ModuleShutdownStatus::PersistenceFailed);
                     }
-                    signal::ShutdownCompletion::PersistedEntries(entries) => {
-                        for (path, checksum) in entries {
-                            debug!(
-                                "Received persisted entries for {}: {} -> {}",
-                                msg.module,
-                                path.display(),
-                                format_checksum(checksum)
-                            );
-                            self.persisted_checksums.push((path, checksum));
-                        }
+                    ModuleShutdownStatus::PersistedEntries(entries) => {
                         self.shutdown_statuses
-                            .insert(msg.module.clone(), ModuleShutdownStatus::Persisted);
+                            .insert(msg.module.clone(), ModuleShutdownStatus::PersistedEntries(entries));
                     }
                 }
                 if let Some(idx) = self.running_modules.iter().position(|module| *module == msg.module) {
