@@ -15,7 +15,7 @@ use crate::{
 };
 use anyhow::{bail, Context, Error, Result};
 use rand::{distr::Alphanumeric, Rng};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::utils::checksums::{self, ChecksumReader, ChecksumWriter};
 use crate::utils::deterministic_rng::deterministic_rng;
@@ -214,7 +214,7 @@ struct ModuleStarter {
 pub mod signal {
     use std::any::TypeId;
 
-    use crate::{bus::BusMessage, utils::static_type_map::Pick};
+    use crate::{bus::BusMessage, modules::ModulePersistOutput, utils::static_type_map::Pick};
 
     #[derive(Clone, Debug)]
     pub struct PersistModule {}
@@ -227,8 +227,13 @@ pub mod signal {
     #[derive(Clone, Debug)]
     pub struct ShutdownCompleted {
         pub module: String,
-        pub persisted_entries: Vec<(std::path::PathBuf, u32)>,
-        pub timed_out: bool,
+        pub completion: ShutdownCompletion,
+    }
+
+    #[derive(Clone, Debug)]
+    pub enum ShutdownCompletion {
+        Timeout,
+        PersistedEntries(ModulePersistOutput),
     }
 
     impl BusMessage for PersistModule {}
@@ -464,7 +469,7 @@ impl ModulesHandler {
                     }
                 };
 
-                let mut persisted_entries = Vec::new();
+                let mut completion = signal::ShutdownCompletion::PersistedEntries(Vec::new());
                 match res {
                     Ok(Ok(entries)) => {
                         tracing::info!(
@@ -473,7 +478,7 @@ impl ModulesHandler {
                             module.name,
                             entries.len()
                         );
-                        persisted_entries = entries;
+                        completion = signal::ShutdownCompletion::PersistedEntries(entries);
                     }
                     Ok(Err(e)) => {
                         tracing::error!(module =% module.name, "Module {} exited with error: {:?}", module.name, e);
@@ -486,8 +491,11 @@ impl ModulesHandler {
                 _ = log_error!(
                     shutdown_client.send(signal::ShutdownCompleted {
                         module: module.name.to_string(),
-                        persisted_entries,
-                        timed_out,
+                        completion: if timed_out {
+                            signal::ShutdownCompletion::Timeout
+                        } else {
+                            completion
+                        },
                     }),
                     "Sending ShutdownCompleted message"
                 );
@@ -513,21 +521,25 @@ impl ModulesHandler {
         handle_messages! {
             on_bus shutdown_client,
             listen<signal::ShutdownCompleted> msg => {
-                if msg.timed_out {
-                    tracing::warn!(
-                        "Module {} timed out during shutdown, manifest will not be written",
-                        msg.module
-                    );
-                    self.any_timeout = true;
-                }
-                for (path, checksum) in msg.persisted_entries {
-                    debug!(
-                        "Received persisted entries for {}: {} -> {}",
-                        msg.module,
-                        path.display(),
-                        format_checksum(checksum)
-                    );
-                    self.persisted_checksums.push((path, checksum));
+                match msg.completion {
+                    signal::ShutdownCompletion::Timeout => {
+                        tracing::warn!(
+                            "Module {} timed out during shutdown, manifest will not be written",
+                            msg.module
+                        );
+                        self.any_timeout = true;
+                    }
+                    signal::ShutdownCompletion::PersistedEntries(entries) => {
+                        for (path, checksum) in entries {
+                            debug!(
+                                "Received persisted entries for {}: {} -> {}",
+                                msg.module,
+                                path.display(),
+                                format_checksum(checksum)
+                            );
+                            self.persisted_checksums.push((path, checksum));
+                        }
+                    }
                 }
                 if let Some(idx) = self.running_modules.iter().position(|module| *module == msg.module) {
                     self.running_modules.remove(idx);

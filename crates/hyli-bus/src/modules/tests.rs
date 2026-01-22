@@ -287,10 +287,9 @@ async fn test_shutdown_timeout_skips_manifest_and_fails_to_load() {
     let dir = tempdir().unwrap();
     let data_dir = dir.path().to_path_buf();
     let file_path = PathBuf::from("timeout.data");
-    let file_path_for_signal = data_dir.join(&file_path);
 
     let test_struct = TestStruct { value: 99 };
-    let checksum = TestModule::<usize>::save_on_disk(&data_dir, &file_path, &test_struct).unwrap();
+    let _checksum = TestModule::<usize>::save_on_disk(&data_dir, &file_path, &test_struct).unwrap();
 
     let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
     let mut handler = ModulesHandler::new(&shared_bus, data_dir.clone()).await;
@@ -303,8 +302,7 @@ async fn test_shutdown_timeout_skips_manifest_and_fails_to_load() {
     let send_task = tokio::spawn(async move {
         _ = shutdown_client.send(signal::ShutdownCompleted {
             module: module_name.clone(),
-            persisted_entries: vec![(file_path_for_signal, checksum)],
-            timed_out: true,
+            completion: signal::ShutdownCompletion::Timeout,
         });
         _ = shutdown_client.send(signal::ShutdownModule {
             module: module_name,
