@@ -18,6 +18,8 @@
 
 mod fixtures;
 
+#[path = "turmoil/chaos.rs"]
+mod chaos;
 #[path = "turmoil/common.rs"]
 mod common;
 #[path = "turmoil/corruption.rs"]
@@ -38,6 +40,10 @@ use std::time::Duration;
 use crate::fixtures::turmoil::TurmoilCtx;
 
 // Re-export simulations for use in test macros
+use chaos::{
+    simulation_chaos_full_outage, simulation_chaos_graceful_shutdown_all_nodes,
+    simulation_chaos_quorum_loss,
+};
 use corruption::{
     simulation_corrupt_consensus_messages, simulation_corrupt_mempool_messages,
     simulation_corrupt_random_messages,
@@ -199,6 +205,18 @@ turmoil_simple!(691..=700, simulation_drop_all_messages, submit_10_contracts);
 
 turmoil_simple!(611..=620, simulation_one_more_node, submit_10_contracts);
 turmoil_simple!(641..=650, simulation_restart_node, submit_10_contracts);
+turmoil_simple!(
+    781..=790,
+    simulation_chaos_graceful_shutdown_all_nodes,
+    submit_10_contracts
+);
+
+// =============================================================================
+// Chaos-style Tests
+// =============================================================================
+
+turmoil_simple!(741..=750, simulation_chaos_full_outage, submit_10_contracts);
+turmoil_simple!(771..=780, simulation_chaos_quorum_loss, submit_10_contracts);
 
 // =============================================================================
 // Message Corruption Tests

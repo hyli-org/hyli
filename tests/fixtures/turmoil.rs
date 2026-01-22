@@ -8,7 +8,11 @@ use std::time::Duration;
 use anyhow::Context;
 use bytes::Bytes;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
-use hyli::{entrypoint::main_loop, utils::conf::Conf};
+use hyli::{
+    bus::{metrics::BusMetrics, SharedMessageBus},
+    entrypoint::main_loop_with_bus,
+    utils::conf::Conf,
+};
 use hyli_crypto::BlstCrypto;
 use hyli_net::net::Sim;
 use hyli_net::tcp::intercept::{set_message_hook_scoped, MessageAction};
@@ -105,13 +109,14 @@ where
 pub struct TurmoilHost {
     pub conf: Conf,
     pub client: NodeApiHttpClient,
+    pub bus: Arc<SharedMessageBus>,
 }
 
 impl TurmoilHost {
     pub async fn start(&self) -> anyhow::Result<()> {
         let crypto = Arc::new(BlstCrypto::new(&self.conf.id).context("Creating crypto")?);
 
-        main_loop(self.conf.clone(), Some(crypto)).await?;
+        main_loop_with_bus(self.conf.clone(), Some(crypto), self.bus.new_handle()).await?;
 
         Ok(())
     }
@@ -120,9 +125,11 @@ impl TurmoilHost {
         let client =
             NodeApiHttpClient::new(format!("http://{}:{}", conf.id, &conf.rest_server_port))
                 .expect("Creating client");
+        let bus = Arc::new(SharedMessageBus::new(BusMetrics::global(conf.id.clone())));
         TurmoilHost {
             conf: conf.clone(),
             client: client.with_retry(3, Duration::from_millis(1000)),
+            bus,
         }
     }
 }
@@ -276,6 +283,17 @@ impl TurmoilCtx {
 
     pub fn client(&self) -> NodeApiHttpClient {
         self.nodes.first().unwrap().client.clone()
+    }
+
+    pub fn bus_handle(&self, node_id: &str) -> Option<SharedMessageBus> {
+        self.nodes
+            .iter()
+            .find(|node| node.conf.id == node_id)
+            .map(|node| node.bus.new_handle())
+    }
+
+    pub fn bus_handle_by_index(&self, index: usize) -> Option<SharedMessageBus> {
+        self.nodes.get(index).map(|node| node.bus.new_handle())
     }
 
     pub fn seed(&self) -> u64 {
