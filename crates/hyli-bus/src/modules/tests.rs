@@ -155,17 +155,6 @@ fn test_save_returns_checksum() {
     assert!(checksum != 0, "Checksum should be non-zero for test data");
 }
 
-#[test]
-fn test_load_without_manifest_uses_default() {
-    let dir = tempdir().unwrap();
-    // No manifest file = backwards compat, load from default
-    let data_dir = dir.path();
-    let non_existent_path = PathBuf::from("non_existent_file");
-    let default_struct: TestStruct =
-        TestModule::<usize>::load_from_disk_or_default(data_dir, &non_existent_path).unwrap();
-    assert_eq!(default_struct.value, 0);
-}
-
 #[test_log::test]
 fn test_load_with_manifest_verifies_checksum() {
     let dir = tempdir().unwrap();
@@ -182,8 +171,9 @@ fn test_load_with_manifest_verifies_checksum() {
     std::fs::write(&manifest_path, &manifest_content).unwrap();
 
     // Load should succeed
-    let loaded: TestStruct =
-        TestModule::<usize>::load_from_disk_or_default(data_dir, &file_path).unwrap();
+    let loaded: TestStruct = TestModule::<usize>::load_from_disk(data_dir, &file_path)
+        .unwrap()
+        .unwrap();
     assert_eq!(loaded.value, 42);
 }
 

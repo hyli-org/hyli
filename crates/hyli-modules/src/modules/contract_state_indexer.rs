@@ -10,7 +10,7 @@ use hyli_bus::modules::ModulePersistOutput;
 use sdk::*;
 use std::{any::TypeId, ops::Deref, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::node_state::module::NodeStateEvent;
 
@@ -66,10 +66,14 @@ where
         let bus = CSIBusClient::new_from_bus(bus.new_handle()).await;
         let file = PathBuf::from(format!("state_indexer_{}.bin", ctx.contract_name));
 
-        let mut store = Self::load_from_disk_or_default::<ContractStateStore<State>>(
-            &ctx.data_directory,
-            &file,
-        )?;
+        let mut store =
+            match Self::load_from_disk::<ContractStateStore<State>>(&ctx.data_directory, &file)? {
+                Some(s) => s,
+                None => {
+                    warn!("Starting {} from default.", ctx.contract_name);
+                    ContractStateStore::default()
+                }
+            };
         store.contract_name = ctx.contract_name.clone();
         let store = Arc::new(RwLock::new(store));
 

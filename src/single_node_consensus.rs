@@ -67,7 +67,13 @@ impl Module for SingleNodeConsensus {
         let file = PathBuf::from("consensus_single_node.bin");
 
         let store: SingleNodeConsensusStore =
-            Self::load_from_disk_or_default(&ctx.config.data_directory, &file)?;
+            match Self::load_from_disk(&ctx.config.data_directory, &file)? {
+                Some(s) => s,
+                None => {
+                    warn!("Starting SingleNodeConsensus from default.");
+                    SingleNodeConsensusStore::default()
+                }
+            };
 
         let api = super::consensus::api::api(&bus, &ctx).await;
         if let Ok(mut guard) = ctx.api.router.lock() {

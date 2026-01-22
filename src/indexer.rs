@@ -30,6 +30,7 @@ use std::{
     path::PathBuf,
 };
 use tokio::io::ReadBuf;
+use tracing::warn;
 
 module_bus_client! {
 #[derive(Debug)]
@@ -69,10 +70,16 @@ impl Module for Indexer {
 
         // Load node state from node_state.bin if it exists or create a new default
         let node_state_file = PathBuf::from("indexer_node_state.bin");
-        let node_state_store = NodeStateModule::load_from_disk_or_default::<NodeStateStore>(
+        let node_state_store = match NodeStateModule::load_from_disk::<NodeStateStore>(
             &ctx.0.data_directory,
             &node_state_file,
-        )?;
+        )? {
+            Some(s) => s,
+            None => {
+                warn!("Starting Indexer's NodeStateStore from default.");
+                NodeStateStore::default()
+            }
+        };
 
         let mut node_state = NodeState::create(ctx.0.id.clone(), "indexer");
         node_state.store = node_state_store;

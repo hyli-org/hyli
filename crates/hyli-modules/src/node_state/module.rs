@@ -13,7 +13,7 @@ use anyhow::Result;
 use hyli_bus::modules::ModulePersistOutput;
 use sdk::*;
 use std::path::PathBuf;
-use tracing::info;
+use tracing::{info, warn};
 
 /// NodeStateModule maintains a NodeState,
 /// listens to DA, and sends events when it has processed blocks.
@@ -71,10 +71,16 @@ impl Module for NodeStateModule {
         }
         let metrics = NodeStateMetrics::global(ctx.node_id.clone(), "node_state");
 
-        let store = Self::load_from_disk_or_default::<NodeStateStore>(
+        let store = match Self::load_from_disk::<NodeStateStore>(
             &ctx.data_directory,
             NODE_STATE_BIN.as_ref(),
-        )?;
+        )? {
+            Some(s) => s,
+            None => {
+                warn!("Starting NodeModule's NodeStateStore from default.");
+                NodeStateStore::default()
+            }
+        };
 
         for name in store.contracts.keys() {
             info!("📝 Loaded contract state for {}", name);

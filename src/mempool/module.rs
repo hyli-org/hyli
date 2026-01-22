@@ -34,10 +34,16 @@ impl Module for Mempool {
         }
         let bus = MempoolBusClient::new_from_bus(bus.new_handle()).await;
 
-        let inner = Self::load_from_disk_or_default::<MempoolStore>(
+        let inner = match Self::load_from_disk::<MempoolStore>(
             &ctx.config.data_directory,
             "mempool.bin".as_ref(),
-        )?;
+        )? {
+            Some(s) => s,
+            None => {
+                warn!("Starting MempoolStore from default.");
+                MempoolStore::default()
+            }
+        };
 
         let mut mempool = Mempool {
             bus,

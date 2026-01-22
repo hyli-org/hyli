@@ -5,6 +5,7 @@ use hyli_modules::{
     modules::{files::CONSENSUS_BIN, Module},
 };
 use std::path::PathBuf;
+use tracing::warn;
 
 use super::{
     api, consensus_bus_client::ConsensusBusClient, metrics::ConsensusMetrics, Consensus,
@@ -18,7 +19,13 @@ impl Module for Consensus {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let file = PathBuf::from(CONSENSUS_BIN);
         let mut store: ConsensusStore =
-            Self::load_from_disk_or_default(&ctx.config.data_directory, &file)?;
+            match Self::load_from_disk(&ctx.config.data_directory, &file)? {
+                Some(s) => s,
+                None => {
+                    warn!("Starting consensus from default.");
+                    ConsensusStore::default()
+                }
+            };
         // Cap in-memory prepare cache on startup to avoid loading oversized state.
         store
             .bft_round_state

@@ -164,10 +164,6 @@ pub(crate) fn read_checksum_from_manifest(
     let contents = match fs::read_to_string(&manifest) {
         Ok(contents) => contents,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            tracing::warn!(
-                "No manifest file found for {}, loading from default",
-                file.display()
-            );
             return Ok(None);
         }
         Err(e) => return Err(PersistenceError::IoError(e)),

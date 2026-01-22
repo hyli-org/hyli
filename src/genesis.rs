@@ -33,7 +33,7 @@ use staking::{
     client::tx_executor_handler::{delegate, deposit_for_fees, stake},
     state::Staking,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use utils::TimestampMs;
 use verifiers::NativeVerifiers;
 
@@ -67,7 +67,13 @@ impl Module for Genesis {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let file = PathBuf::from("genesis.bin");
         let already_handled_genesis: bool =
-            Self::load_from_disk_or_default(&ctx.config.data_directory, &file)?;
+            match Self::load_from_disk(&ctx.config.data_directory, &file)? {
+                Some(t) => t,
+                None => {
+                    warn!("Starting Genesis from default.");
+                    false
+                }
+            };
         let bus = GenesisBusClient::new_from_bus(bus.new_handle()).await;
         Ok(Genesis {
             config: ctx.config.clone(),

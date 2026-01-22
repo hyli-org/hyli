@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use hyli_bus::modules::ModulePersistOutput;
 use sdk::{DataEvent, Hashed, MempoolStatusEvent, SignedBlock};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::{
     bus::{BusClientSender, SharedMessageBus},
@@ -37,10 +37,16 @@ impl Module for NodeStateProcessor {
     type Context = NodeStateProcessorCtx;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let node_state_store = Self::load_from_disk_or_default::<NodeStateStore>(
+        let node_state_store = match Self::load_from_disk::<NodeStateStore>(
             &ctx.data_directory,
             "da_listener_node_state.bin".as_ref(),
-        )?;
+        )? {
+            Some(s) => s,
+            None => {
+                warn!("Starting NodeStateProcessor's NodeStateStore from default.");
+                NodeStateStore::default()
+            }
+        };
 
         let node_state = NodeState {
             store: node_state_store,

@@ -15,7 +15,7 @@ use crate::{
 };
 use anyhow::{bail, Context, Error, Result};
 use rand::{distr::Alphanumeric, Rng};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::utils::checksums::{self, ChecksumReader, ChecksumWriter};
 use crate::utils::deterministic_rng::deterministic_rng;
@@ -46,7 +46,7 @@ where
     ///
     /// Returns:
     /// - `Ok(Some(data))` if file exists and checksum verifies (or no manifest for backwards compat)
-    /// - `Ok(None)` if file doesn't exist
+    /// - `Ok(None)` if file doesn't exist and no manifest entry exists
     /// - `Err` with `PersistenceError::FileMissingOnDisk` if file is in manifest but missing on disk
     /// - `Err` with `PersistenceError::FileNotInManifest` if file exists but isn't in manifest
     /// - `Err` with `PersistenceError::ChecksumMismatch` if checksum verification fails
@@ -69,12 +69,7 @@ where
                         return Err(PersistenceError::FileMissingOnDisk(full_path))
                             .with_context(|| format!("Module {}", type_name::<S>()));
                     }
-                    Ok(None) | Err(PersistenceError::FileNotInManifest(_)) => {
-                        info!(
-                            "File {} not found for module {} (using default)",
-                            full_path.to_string_lossy(),
-                            type_name::<S>(),
-                        );
+                    Ok(None) => {
                         return Ok(None);
                     }
                     Err(e) => {
@@ -145,13 +140,6 @@ where
             );
             Ok(Vec::new())
         }
-    }
-
-    fn load_from_disk_or_default<S>(data_dir: &Path, file: &Path) -> Result<S>
-    where
-        S: borsh::BorshDeserialize + Default,
-    {
-        Ok(Self::load_from_disk(data_dir, file)?.unwrap_or_default())
     }
 
     /// Save data to disk and return the CRC32 checksum.

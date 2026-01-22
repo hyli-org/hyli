@@ -98,10 +98,16 @@ impl Module for ContractListener {
         );
 
         let state_path = PathBuf::from(CONTRACT_LISTENER_STATE_FILE);
-        let store = Self::load_from_disk_or_default::<ContractListenerStore>(
+        let store = match Self::load_from_disk::<ContractListenerStore>(
             &ctx.data_directory,
             &state_path,
-        )?;
+        )? {
+            Some(s) => s,
+            None => {
+                warn!("Starting ContractListenerStore from default.");
+                ContractListenerStore::default()
+            }
+        };
 
         Ok(Self {
             bus,
