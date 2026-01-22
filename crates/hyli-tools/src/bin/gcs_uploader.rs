@@ -8,6 +8,7 @@ use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
         ModulesHandler,
+        block_processor::BusOnlyProcessor,
         da_listener::DAListenerConf,
         da_listener::SignedDAListener,
         gcs_uploader::{GCSConf, GcsUploader, GcsUploaderCtx},
@@ -42,11 +43,12 @@ async fn main() -> Result<()> {
     let mut handler = ModulesHandler::new(&bus).await;
 
     handler
-        .build_module::<SignedDAListener>(DAListenerConf {
+        .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
             start_block: Some(BlockHeight(config.gcs.start_block)),
             timeout_client_secs: 10,
+            processor_config: (),
         })
         .await?;
 

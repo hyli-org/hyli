@@ -26,6 +26,7 @@ use hyli_modules::{
     log_error,
     modules::{
         admin::{AdminApi, AdminApiRunContext, NodeAdminApiClient},
+        block_processor::BusOnlyProcessor,
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::DAListenerConf,
@@ -435,11 +436,12 @@ async fn common_main(
         handler.build_module::<P2P>(ctx.clone()).await?;
     } else if config.run_indexer {
         handler
-            .build_module::<SignedDAListener>(DAListenerConf {
+            .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {
                 data_directory: config.data_directory.clone(),
                 da_read_from: config.da_read_from.clone(),
                 start_block: None,
                 timeout_client_secs: config.da_timeout_client_secs,
+                processor_config: (),
             })
             .await?;
     }
