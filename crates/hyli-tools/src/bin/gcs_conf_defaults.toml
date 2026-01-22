@@ -17,3 +17,5 @@ save_proofs = true
 save_blocks = true
 
 start_block = 0
+
+max_concurrent_uploads = 1000

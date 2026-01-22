@@ -1,10 +1,13 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{bail, Result};
 use bytes::Bytes;
 use google_cloud_storage::client::{Storage, StorageControl};
 use sdk::{DataEvent, DataProposalHash, SignedBlock, TxHash};
 use serde::{Deserialize, Serialize};
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
 
 use crate::bus::{BusMessage, SharedMessageBus};
@@ -40,6 +43,7 @@ pub struct GCSConf {
     pub save_blocks: bool,
 
     pub start_block: u64,
+    pub max_concurrent_uploads: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -54,6 +58,8 @@ pub struct GcsUploader {
     gcs_client: Storage,
     last_uploaded_height: u64,
     metrics: GcsUploaderMetrics,
+    upload_tasks: JoinSet<(u64, Result<(), String>)>,
+    upload_semaphore: Arc<Semaphore>,
 }
 
 impl Module for GcsUploader {
@@ -101,12 +107,21 @@ impl Module for GcsUploader {
         let metrics = GcsUploaderMetrics::global("hyle-node".to_string(), "gcs_uploader");
         metrics.record_success(last_uploaded_height);
 
+        // Initialize semaphore with configured max (default to 100 if 0)
+        let max_concurrent = if ctx.gcs_config.max_concurrent_uploads == 0 {
+            100
+        } else {
+            ctx.gcs_config.max_concurrent_uploads
+        };
+
         Ok(GcsUploader {
             ctx,
             bus,
             gcs_client,
             last_uploaded_height,
             metrics,
+            upload_tasks: JoinSet::new(),
+            upload_semaphore: Arc::new(Semaphore::new(max_concurrent)),
         })
     }
 
@@ -143,6 +158,9 @@ impl GcsUploader {
                         );
                     }
                 }
+            },
+            Some(result) = self.upload_tasks.join_next() => {
+                self.handle_upload_result(result);
             }
         };
         Ok(())
@@ -160,24 +178,27 @@ impl GcsUploader {
             return Ok(());
         }
 
-        self.upload_block_parallel(block_height, block).await;
+        self.upload_block_parallel(block_height, block);
 
         self.last_uploaded_height = block_height;
 
         Ok(())
     }
 
-    async fn upload_block_parallel(&mut self, block_height: u64, block: SignedBlock) {
+    fn upload_block_parallel(&mut self, block_height: u64, block: SignedBlock) {
         let gcs_client = self.gcs_client.clone();
         let bucket_path = Self::gcs_bucket_path(&self.ctx.gcs_config.gcs_bucket);
         let prefix = self.ctx.gcs_config.gcs_prefix.clone();
-        let bucket_name = self.ctx.gcs_config.gcs_bucket.clone();
-        let metrics = self.metrics.clone();
+        let semaphore = self.upload_semaphore.clone();
 
-        // Spawn parallel upload task
-        tokio::spawn(async move {
+        // Serialize block before spawning to avoid holding SignedBlock across await
+        let data = borsh::to_vec(&block).expect("Failed to serialize SignedBlock");
+
+        self.upload_tasks.spawn(async move {
+            // Acquire permit - this will wait if at capacity
+            let _permit = semaphore.acquire().await.expect("Semaphore closed");
+
             let object_name = format!("{prefix}/block_{block_height}.bin");
-            let data = borsh::to_vec(&block).expect("Failed to serialize SignedBlock");
 
             match gcs_client
                 .write_object(bucket_path, object_name.clone(), Bytes::from(data))
@@ -185,22 +206,31 @@ impl GcsUploader {
                 .send_unbuffered()
                 .await
             {
-                Ok(_) => {
-                    info!(
-                        "Successfully uploaded block {} to GCS bucket {}",
-                        block_height, bucket_name
-                    );
-                    metrics.record_success(block_height);
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to upload block {} to GCS bucket {}: {}",
-                        block_height, bucket_name, e
-                    );
-                    metrics.record_failure();
-                }
+                Ok(_) => (block_height, Ok(())),
+                Err(e) => (block_height, Err(e.to_string())),
             }
+            // _permit is dropped here, releasing the semaphore slot
         });
+    }
+
+    fn handle_upload_result(
+        &self,
+        result: Result<(u64, Result<(), String>), tokio::task::JoinError>,
+    ) {
+        match result {
+            Ok((height, Ok(()))) => {
+                info!("Successfully uploaded block {} to GCS bucket", height);
+                self.metrics.record_success(height);
+            }
+            Ok((height, Err(e))) => {
+                warn!("Upload task for block {} failed: {}", height, e);
+                self.metrics.record_failure();
+            }
+            Err(e) => {
+                warn!("Upload task panicked: {}", e);
+                self.metrics.record_failure();
+            }
+        }
     }
 
     pub async fn upload_proof(
