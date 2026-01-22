@@ -127,19 +127,19 @@ pub async fn get_block(
     tag = "Indexer",
     path = "/block/hash/{hash}",
     params(
-        ("hash" = String, Path, description = "Block hash"),
+        ("hash" = ConsensusProposalHash, Path, description = "Block hash"),
     ),
     responses(
         (status = OK, body = APIBlock)
     )
 )]
 pub async fn get_block_by_hash(
-    Path(hash): Path<String>,
+    Path(hash): Path<ConsensusProposalHash>,
     State(state): State<ExplorerApiState>,
 ) -> Result<Json<APIBlock>, StatusCode> {
     let block = log_error!(
         sqlx::query_as::<_, BlockDb>("SELECT * FROM blocks WHERE hash = $1")
-            .bind(hash)
+            .bind(hash.to_string())
             .fetch_optional(&state.db)
             .await
             .map(|db| db.map(Into::<APIBlock>::into)),

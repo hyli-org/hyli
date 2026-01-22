@@ -258,7 +258,7 @@ impl Genesis {
                     proven_blobs: outputs
                         .drain(..)
                         .map(|(contract_name, out)| BlobProofOutput {
-                            original_proof_hash: ProofDataHash(blob_tx_hash.0.clone()),
+                            original_proof_hash: ProofDataHash::from(blob_tx_hash.0.clone()),
                             verifier: hyli_model::verifiers::RISC0_3.into(),
                             program_id: contract_program_ids
                                 .get(&contract_name)
@@ -269,7 +269,7 @@ impl Genesis {
                         })
                         .collect(),
                     is_recursive: true,
-                    proof_hash: ProofDataHash(blob_tx_hash.0.clone()),
+                    proof_hash: ProofDataHash::from(blob_tx_hash.0.clone()),
                     proof_size: 0,
                     proof: None,
                 }
@@ -712,7 +712,7 @@ impl Genesis {
                         .into()
                     })
                     .collect(),
-                parent_hash: ConsensusProposalHash("genesis".into()),
+                parent_hash: b"genesis".into(),
             },
         }
     }

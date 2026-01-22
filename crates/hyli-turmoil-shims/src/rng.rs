@@ -44,7 +44,7 @@ mod turmoil_seed {
 
     /// Set a deterministic seed for the current thread. Restores the previous seed on drop.
     pub fn set_deterministic_seed(seed: u64) -> DeterministicSeedGuard {
-        let previous_seed = LOCAL_SEED.with(|slot| slot.borrow().clone());
+        let previous_seed = LOCAL_SEED.with(|slot| *slot.borrow());
         let previous_counter = LOCAL_COUNTER.with(|counter| counter.get());
 
         LOCAL_SEED.with(|slot| {

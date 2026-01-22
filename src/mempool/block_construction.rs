@@ -706,15 +706,15 @@ pub mod test {
     #[test_log::test(tokio::test)]
     async fn proofs_deleted_after_commit() -> Result<()> {
         use crate::model::{
-            BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, ProofDataHash,
-            Transaction, TransactionData, VerifiedProofTransaction, Verifier,
+            BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, Transaction,
+            TransactionData, VerifiedProofTransaction, Verifier,
         };
 
         let mut ctx = MempoolTestCtx::new("mempool").await;
 
         // Create a DP with a VerifiedProof tx containing an inlined proof
         let proof = ProofData(vec![1, 2, 3, 4, 5]);
-        let proof_hash = ProofDataHash(proof.hashed().0);
+        let proof_hash = proof.hashed();
         let vpt = VerifiedProofTransaction {
             contract_name: ContractName::new("cleanup-proof"),
             program_id: ProgramId(vec![]),
@@ -724,7 +724,7 @@ pub mod test {
             proof_size: proof.0.len(),
             proven_blobs: vec![BlobProofOutput {
                 original_proof_hash: proof_hash,
-                blob_tx_hash: crate::model::TxHash("blob-tx".into()),
+                blob_tx_hash: b"blob-tx".into(),
                 program_id: ProgramId(vec![]),
                 verifier: Verifier("test".into()),
                 hyli_output: HyliOutput::default(),
@@ -837,11 +837,11 @@ pub mod test {
         let mut ctx = MempoolTestCtx::new("mempool").await;
 
         let dp2_size = LaneBytesSize(20);
-        let dp2_hash = DataProposalHash("dp2".to_string());
+        let dp2_hash: DataProposalHash = b"dp2".into();
         let dp5_size = LaneBytesSize(50);
-        let dp5_hash = DataProposalHash("dp5".to_string());
+        let dp5_hash: DataProposalHash = b"dp5".into();
         let dp6_size = LaneBytesSize(60);
-        let dp6_hash = DataProposalHash("dp6".to_string());
+        let dp6_hash: DataProposalHash = b"dp6".into();
 
         let ctx_key = ctx.validator_pubkey().clone();
         let expect_nothing = |ctx: &mut MempoolTestCtx| {
@@ -940,7 +940,7 @@ pub mod test {
             ],
             staking_actions: vec![],
             timestamp: TimestampMs(0),
-            parent_hash: ConsensusProposalHash("test".to_string()),
+            parent_hash: b"test".into(),
         };
 
         // Add the block to mempool 1
@@ -1058,7 +1058,7 @@ pub mod test {
             )],
             staking_actions: vec![],
             timestamp: TimestampMs(0),
-            parent_hash: ConsensusProposalHash("test".to_string()),
+            parent_hash: b"test".into(),
         };
 
         // Add the block to the mempool

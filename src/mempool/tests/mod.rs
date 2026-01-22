@@ -536,7 +536,7 @@ impl MempoolTestCtx {
                         cut: cut.clone(),
                         staking_actions: vec![],
                         timestamp: TimestampMs(777),
-                        parent_hash: ConsensusProposalHash("test".to_string()),
+                        parent_hash: b"test".into(),
                     },
                     certificate: AggregateSignature::default(),
                 },
@@ -586,7 +586,7 @@ async fn test_sending_sync_request() -> Result<()> {
         slot: 1,
         cut: vec![(
             lane_id.clone(),
-            DataProposalHash("dp_hash_in_cut".to_owned()),
+            b"dp_hash_in_cut".into(),
             LaneBytesSize::default(),
             PoDA::default(),
         )],
@@ -604,7 +604,7 @@ async fn test_sending_sync_request() -> Result<()> {
         MempoolNetMessage::SyncRequest(req_lane_id, from, to) => {
             assert_eq!(req_lane_id, lane_id);
             assert_eq!(from, None);
-            assert_eq!(to, Some(DataProposalHash("dp_hash_in_cut".to_owned())));
+            assert_eq!(to, Some(b"dp_hash_in_cut".into()));
         }
         _ => panic!("Expected SyncReply message"),
     };
@@ -828,9 +828,9 @@ async fn test_data_vote_invalid_signature_rejected() -> Result<()> {
 
     let crypto2 = BlstCrypto::new("2").unwrap();
     let lane_id = ctx.mempool.own_lane_id().clone();
-    let valid = crypto2.sign((DataProposalHash("hash-a".to_string()), LaneBytesSize(1)))?;
+    let valid = crypto2.sign((DataProposalHash::from(b"hash-a"), LaneBytesSize(1)))?;
     let invalid = SignedByValidator {
-        msg: (DataProposalHash("hash-b".to_string()), LaneBytesSize(1)),
+        msg: (DataProposalHash::from(b"hash-b"), LaneBytesSize(1)),
         signature: valid.signature,
     };
 
