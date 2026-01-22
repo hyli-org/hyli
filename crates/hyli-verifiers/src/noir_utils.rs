@@ -60,7 +60,7 @@ pub fn parse_noir_output(public_inputs: &[u8]) -> Result<HyliOutput, Error> {
         initial_state: StateCommitment(initial_state),
         next_state: StateCommitment(next_state),
         identity: identity.into(),
-        tx_hash: TxHash(tx_hash),
+        tx_hash: TxHash::from_hex(&tx_hash).context("invalid tx_hash hex")?,
         tx_ctx: None,
         index: BlobIndex(index as usize),
         blobs,

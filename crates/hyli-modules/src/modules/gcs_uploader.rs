@@ -152,7 +152,7 @@ impl GcsUploader {
         let prefix = &self.ctx.gcs_config.gcs_prefix;
         let object_name = format!(
             "{}/proofs/{}/{}.bin",
-            prefix, parent_data_proposal_hash.0, tx_hash.0
+            prefix, parent_data_proposal_hash, tx_hash
         );
 
         match self
