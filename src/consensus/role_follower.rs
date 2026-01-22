@@ -36,25 +36,6 @@ macro_rules! follower_state {
 
 pub(crate) use follower_state;
 
-macro_rules! ticket_err {
-    ($variant:ident) => {{
-        Err(TicketVerificationError::$variant)
-    }};
-    ($variant:ident, $fmt:literal $(, $arg:expr )* $(,)?) => {{
-        debug!($fmt $(, $arg)*);
-        Err(TicketVerificationError::$variant)
-    }};
-}
-
-macro_rules! bail_ticket_err {
-    ($expr:expr, $variant:ident, $fmt:literal $(, $arg:expr )* $(,)?) => {{
-        if let Err(e) = $expr {
-            debug!($fmt $(, $arg)*, e);
-            return Err(TicketVerificationError::$variant);
-        }
-    }};
-}
-
 #[derive(Debug)]
 pub(super) enum TicketVerificationError {
     // Ticket is confirmed invalid and should be ignored
@@ -591,9 +572,9 @@ impl Consensus {
                 tc_slot, tc_view, self.bft_round_state.slot, self.bft_round_state.view,
             );
             if tc_slot > self.bft_round_state.slot + 1 {
-                return ticket_err!(Unverifiable);
+                return Err(TicketVerificationError::Unverifiable);
             }
-            return ticket_err!(Invalid);
+            return Err(TicketVerificationError::Invalid);
         }
 
         // Validity check: if we are processing a new Prepare, the ticket must be
@@ -601,12 +582,11 @@ impl Consensus {
         if let Some(consensus_proposal) = consensus_proposal {
             if let TCKind::PrepareQC((_, cp)) = tc_kind_data {
                 if cp != consensus_proposal {
-                    return ticket_err!(
-                        Invalid,
-                        "Timeout Certificate does not match consensus proposal. Expected {}, got {}",
+                    debug!("Timeout Certificate does not match consensus proposal. Expected {}, got {}",
                         cp.hashed(),
                         consensus_proposal.hashed()
                     );
+                    return Err(TicketVerificationError::Invalid);
                 }
             }
             // Not processing a new prepare so we can accept either type of ticket.
@@ -627,7 +607,8 @@ impl Consensus {
             if let Some(pv) = prepare_view {
                 // The prepare for a TC must be for the next view.
                 if pv != tc_view + 1 {
-                    return ticket_err!(Invalid, "Invalid prepare view {pv} for TC view {tc_view}");
+                    debug!("Invalid prepare view {pv} for TC view {tc_view}");
+                    return Err(TicketVerificationError::Invalid);
                 }
                 match (self.bft_round_state.view, pv) {
                     // Already at prepare view -> nothing to do after verification.
@@ -636,13 +617,11 @@ impl Consensus {
                     (lv, _) if lv <= tc_view => {}
                     // Other cases (we're farther ahead, ...) - invalid
                     _ => {
-                        return ticket_err!(
-                            Invalid,
-                            "Unexpected view combo: local {}, tc {}, prepare {} (expected local == tc or local == prepare)",
-                            self.bft_round_state.view,
-                            tc_view,
-                            pv
-                        )
+                        debug!("
+                            Unexpected view combo: local {}, tc {tc_view}, prepare {pv} (expected local == tc or local == prepare)",
+                            self.bft_round_state.view
+                        );
+                        return Err(TicketVerificationError::Invalid);
                     }
                 }
             } else {
@@ -651,30 +630,28 @@ impl Consensus {
                 if self.bft_round_state.view == tc_view + 1 {
                     skip_round_advance = true
                 } else if self.bft_round_state.view > tc_view {
-                    return ticket_err!(
-                        Invalid,
-                        "Timeout Certificate slot {} view {} is not correct for current slot {} view {}",
-                        tc_slot,
-                        tc_view,
+                    debug!(
+                        "Timeout Certificate slot {tc_slot} view {tc_view} is not correct for current slot {} view {}",
                         self.bft_round_state.slot,
                         self.bft_round_state.view,
                     );
+                    return Err(TicketVerificationError::Invalid);
                 }
             }
 
             // Back to the regular case -> this is a TC for the current or future views.
             // Staking is stable across views so we can verify it.
-            bail_ticket_err!(
-                self.verify_tc(
-                    &timeout_qc,
-                    tc_kind_data,
-                    self.bft_round_state.slot,
-                    tc_view,
-                    self.bft_round_state.parent_hash.clone()
-                ),
-                Invalid,
-                "Invalid TC: {}"
-            );
+            self.verify_tc(
+                &timeout_qc,
+                tc_kind_data,
+                self.bft_round_state.slot,
+                tc_view,
+                self.bft_round_state.parent_hash.clone(),
+            )
+            .map_err(|e| {
+                debug!("Invalid TC: {}", e);
+                TicketVerificationError::Invalid
+            })?;
 
             if let TCKind::PrepareQC((qc, cp)) = tc_kind_data {
                 // Update prepare QC & local CP
@@ -710,11 +687,11 @@ impl Consensus {
 
             // Fake our view so we fast-forward properly, see TODO in apply_ticket.
             self.bft_round_state.view = tc_view;
-            bail_ticket_err!(
-                self.advance_round(Ticket::TimeoutQC(timeout_qc, tc_kind_data.clone())),
-                ProcessingError,
-                "Error advancing round with TC: {}"
-            );
+            self.advance_round(Ticket::TimeoutQC(timeout_qc, tc_kind_data.clone()))
+                .map_err(|e| {
+                    debug!("Error advancing round with TC: {e}");
+                    TicketVerificationError::ProcessingError
+                })?;
 
             return Ok(());
         }
@@ -724,12 +701,12 @@ impl Consensus {
         // otherwise we can't fast-forward as there might be unknown staking changes.
         let local_cp_to_commit = match (current_proposal!(self), consensus_proposal) {
             (Some(local_cp), Some(tc_cp)) if local_cp.hashed() == tc_cp.parent_hash => {
-                Some(tc_cp.parent_hash.clone())
+                tc_cp.parent_hash.clone()
             }
-            _ => None,
-        };
-        let Some(local_cp_to_commit) = local_cp_to_commit else {
-            return ticket_err!(Unverifiable, "Cannot verify TC for next slot {tc_slot} view {tc_view}, no local prepare / different local prepare");
+            _ => {
+                debug!("Cannot verify TC for next slot {tc_slot} view {tc_view}, no local prepare / different local prepare");
+                return Err(TicketVerificationError::Unverifiable);
+            }
         };
 
         // We can fast forward.
@@ -738,25 +715,21 @@ impl Consensus {
         // but we would need to revert if there is an error, so that sounds annoying for now.
         // Let's just assert that our current proposal wouldn't change staking (it generally won't).
         if self.current_proposal_changes_voting_power() {
-            return ticket_err!(
-                    Unverifiable,
-                    "Timeout Certificate slot {} view {} is for the next slot, and current proposal changes voting power",
-                    tc_slot,
-                    tc_view
-                );
+            debug!("Timeout Certificate slot {tc_slot} view {tc_view} is for the next slot, and current proposal changes voting power");
+            return Err(TicketVerificationError::Unverifiable);
         }
 
-        bail_ticket_err!(
-            self.verify_tc(
-                &timeout_qc,
-                tc_kind_data,
-                tc_slot,
-                tc_view,
-                local_cp_to_commit
-            ),
-            Invalid,
-            "Invalid TC for fast-forward: {}"
-        );
+        self.verify_tc(
+            &timeout_qc,
+            tc_kind_data,
+            tc_slot,
+            tc_view,
+            local_cp_to_commit,
+        )
+        .map_err(|e| {
+            debug!("Invalid TC for fast-forward: {e}");
+            TicketVerificationError::Invalid
+        })?;
 
         // Emit a placeholder commit event so downstream consumers see the fast-forwarded commit
         // even though we don't have a real commit QC for this parent.
@@ -768,17 +741,17 @@ impl Consensus {
             self.set_state_tag(StateTag::Follower);
         }
 
-        bail_ticket_err!(
-            self.emit_commit_event(&placeholder_commit_qc),
-            ProcessingError,
-            "Error emitting commit event during FF: {}"
-        );
+        self.emit_commit_event(&placeholder_commit_qc)
+            .map_err(|e| {
+                debug!("Error emitting commit event during FF: {e}");
+                TicketVerificationError::ProcessingError
+            })?;
         // Pass in the new view
-        bail_ticket_err!(
-            self.advance_round(Ticket::ForcedCommitQC(tc_view + 1)),
-            ProcessingError,
-            "Error advancing round during FF: {}"
-        );
+        self.advance_round(Ticket::ForcedCommitQC(tc_view + 1))
+            .map_err(|e| {
+                debug!("Error advancing round during FF: {e}");
+                TicketVerificationError::ProcessingError
+            })?;
 
         info!(
             "🔀 Fast forwarded to slot {} view {}",
@@ -963,14 +936,14 @@ impl Consensus {
             // Edge case: we have already committed a different CQC for the CP
             // Let's verify that one too - the staking _must_be the same.
             if consensus_proposal.slot == self.bft_round_state.slot {
-                bail_ticket_err!(
-                    self.verify_quorum_certificate(
-                        (self.bft_round_state.parent_hash.clone(), ConfirmAckMarker),
-                        &commit_qc,
-                    ),
-                    Invalid,
-                    "Commit QC verification failed for current slot: {}"
-                );
+                self.verify_quorum_certificate(
+                    (self.bft_round_state.parent_hash.clone(), ConfirmAckMarker),
+                    &commit_qc,
+                )
+                .map_err(|e| {
+                    debug!("Commit QC verification failed for current slot: {e}");
+                    TicketVerificationError::Invalid
+                })?;
                 return Ok(());
             }
 
@@ -986,16 +959,15 @@ impl Consensus {
                 );
                 return Err(TicketVerificationError::Unverifiable);
             }
-            bail_ticket_err!(
-                self.emit_commit_event(&commit_qc),
-                ProcessingError,
-                "Error emitting commit event: {}"
-            );
-            bail_ticket_err!(
-                self.advance_round(Ticket::CommitQC(commit_qc)),
-                ProcessingError,
-                "Error advancing round after commit QC: {}"
-            );
+            self.emit_commit_event(&commit_qc).map_err(|e| {
+                debug!("Error emitting commit event: {e}");
+                TicketVerificationError::ProcessingError
+            })?;
+            self.advance_round(Ticket::CommitQC(commit_qc))
+                .map_err(|e| {
+                    debug!("Error advancing round after commit QC: {e}");
+                    TicketVerificationError::ProcessingError
+                })?;
 
             info!("🔀 Fast forwarded to slot {}", &self.bft_round_state.slot);
             return Ok(());
