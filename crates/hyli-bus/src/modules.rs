@@ -233,7 +233,7 @@ pub mod signal {
     #[derive(Clone, Debug)]
     pub enum ShutdownCompletion {
         Timeout,
-        PersistanceFailed,
+        PersistenceFailed,
         PersistedEntries(ModulePersistOutput),
     }
 
@@ -469,42 +469,50 @@ impl ModulesHandler {
                 });
 
                 let (res, timed_out) = tokio::select! {
-                    res = module_task => {
-                        (res, false)
-                    },
+                    res = module_task => (res, false),
                     _ = timeout_task => {
                         (Ok(Err(anyhow::anyhow!("Shutdown timeout reached"))), true)
                     }
                 };
 
-                let completion = match res {
-                    Ok(Ok(entries)) => {
-                        tracing::info!(
-                            module =% module.name,
-                            "Module {} exited and persisted {} file(s)",
-                            module.name,
-                            entries.len()
-                        );
-                        signal::ShutdownCompletion::PersistedEntries(entries)
-                    }
-                    Ok(Err(e)) => {
-                        tracing::error!(module =% module.name, "Module {} exited with error: {:?}", module.name, e);
-                        signal::ShutdownCompletion::PersistanceFailed
-                    }
-                    Err(e) => {
-                        tracing::error!(module =% module.name, "Module {} exited, error joining: {:?}", module.name, e);
-                        signal::ShutdownCompletion::PersistanceFailed
+                let completion = if timed_out {
+                    signal::ShutdownCompletion::Timeout
+                } else {
+                    match res {
+                        Ok(Ok(entries)) => {
+                            tracing::info!(
+                                module = %module.name,
+                                "Module {} exited and persisted {} file(s)",
+                                module.name,
+                                entries.len()
+                            );
+                            signal::ShutdownCompletion::PersistedEntries(entries)
+                        }
+                        Ok(Err(e)) => {
+                            tracing::error!(
+                                module = %module.name,
+                                "Module {} exited with error: {:?}",
+                                module.name,
+                                e
+                            );
+                            signal::ShutdownCompletion::PersistenceFailed
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                module = %module.name,
+                                "Module {} exited, error joining: {:?}",
+                                module.name,
+                                e
+                            );
+                            signal::ShutdownCompletion::PersistenceFailed
+                        }
                     }
                 };
 
                 _ = log_error!(
                     shutdown_client.send(signal::ShutdownCompleted {
                         module: module.name.to_string(),
-                        completion: if timed_out {
-                            signal::ShutdownCompletion::Timeout
-                        } else {
-                            completion
-                        },
+                        completion
                     }),
                     "Sending ShutdownCompleted message"
                 );
@@ -539,7 +547,7 @@ impl ModulesHandler {
                         self.shutdown_statuses
                             .insert(msg.module.clone(), ModuleShutdownStatus::TimedOut);
                     }
-                    signal::ShutdownCompletion::PersistanceFailed => {
+                    signal::ShutdownCompletion::PersistenceFailed => {
                         tracing::warn!(
                             "Module {} failed to persist during shutdown, manifest will not be written",
                             msg.module
