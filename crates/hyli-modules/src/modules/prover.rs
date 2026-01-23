@@ -14,6 +14,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::rest_client::NodeApiClient;
 use client_sdk::{helpers::ClientSdkProver, transaction_builder::TxExecutorHandler};
 use futures::future::BoxFuture;
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_net::logged_task::logged_task;
 use indexmap::IndexMap;
 use sdk::{
@@ -126,26 +127,25 @@ where
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus = AutoProverBusClient::<Contract>::new_from_bus(bus.new_handle()).await;
 
-        let file = ctx
-            .data_directory
-            .join(format!("autoprover_{}.bin", ctx.contract_name).as_str());
+        let file = PathBuf::from(format!("autoprover_{}.bin", ctx.contract_name));
 
-        let mut store = match Self::load_from_disk::<AutoProverStore<Contract>>(file.as_path()) {
-            Some(store) => store,
-            None => AutoProverStore::<Contract> {
-                unsettled_txs: vec![],
-                proving_txs: vec![],
-                state_history: BTreeMap::new(),
-                tx_chain: vec![],
-                buffered_blobs: vec![],
-                buffered_blocks_count: 0,
-                batch_id: 0,
-                #[cfg(test)]
-                next_height: BlockHeight(1),
-                #[cfg(not(test))]
-                next_height: BlockHeight(0),
-            },
-        };
+        let mut store =
+            match Self::load_from_disk::<AutoProverStore<Contract>>(&ctx.data_directory, &file)? {
+                Some(store) => store,
+                None => AutoProverStore::<Contract> {
+                    unsettled_txs: vec![],
+                    proving_txs: vec![],
+                    state_history: BTreeMap::new(),
+                    tx_chain: vec![],
+                    buffered_blobs: vec![],
+                    buffered_blocks_count: 0,
+                    batch_id: 0,
+                    #[cfg(test)]
+                    next_height: BlockHeight(1),
+                    #[cfg(not(test))]
+                    next_height: BlockHeight(0),
+                },
+            };
 
         let infos = ctx.prover.info();
         let mut provers = HashMap::new();
@@ -255,17 +255,14 @@ where
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<()> {
-        log_error!(
-            Self::save_on_disk::<AutoProverStore<Contract>>(
-                self.ctx
-                    .data_directory
-                    .join(format!("autoprover_{}.bin", self.ctx.contract_name))
-                    .as_path(),
-                &self.store,
-            ),
-            "Saving prover"
-        )
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
+        let file = PathBuf::from(format!("autoprover_{}.bin", self.ctx.contract_name));
+        let checksum = Self::save_on_disk::<AutoProverStore<Contract>>(
+            &self.ctx.data_directory,
+            &file,
+            &self.store,
+        )?;
+        Ok(vec![(self.ctx.data_directory.join(file), checksum)])
     }
 }
 

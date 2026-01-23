@@ -13,6 +13,7 @@ hyli-turmoil-shims = { workspace = true }
 anyhow = { workspace = true }
 anymap = { workspace = true }
 borsh = { workspace = true, features = ["derive"] }
+crc32fast = { workspace = true }
 futures = { workspace = true }
 paste = { workspace = true }
 rand = { workspace = true }

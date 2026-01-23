@@ -11,16 +11,17 @@ use crate::model::*;
 use crate::utils::conf::SharedConf;
 use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_crypto::SharedBlstCrypto;
 use hyli_model::utils::TimestampMs;
 use hyli_modules::bus::command_response::Query;
 use hyli_modules::bus::SharedMessageBus;
+use hyli_modules::module_handle_messages;
 use hyli_modules::modules::admin::{
     QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse,
 };
 use hyli_modules::modules::module_bus_client;
 use hyli_modules::modules::Module;
-use hyli_modules::{log_error, module_handle_messages};
 use hyli_net::clock::TimestampMsClock;
 use staking::state::Staking;
 use tracing::{debug, warn};
@@ -63,13 +64,16 @@ impl Module for SingleNodeConsensus {
     type Context = SharedRunContext;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let file = ctx
-            .config
-            .data_directory
-            .clone()
-            .join("consensus_single_node.bin");
+        let file = PathBuf::from("consensus_single_node.bin");
 
-        let store: SingleNodeConsensusStore = Self::load_from_disk_or_default(file.as_path());
+        let store: SingleNodeConsensusStore =
+            match Self::load_from_disk(&ctx.config.data_directory, &file)? {
+                Some(s) => s,
+                None => {
+                    warn!("Starting SingleNodeConsensus from default.");
+                    SingleNodeConsensusStore::default()
+                }
+            };
 
         let api = super::consensus::api::api(&bus, &ctx).await;
         if let Ok(mut guard) = ctx.api.router.lock() {
@@ -93,15 +97,13 @@ impl Module for SingleNodeConsensus {
         self.start()
     }
 
-    async fn persist(&mut self) -> Result<()> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         if let Some(file) = &self.file {
-            _ = log_error!(
-                Self::save_on_disk(file.as_path(), &self.store),
-                "Persisting single node consensus state"
-            );
+            let checksum = Self::save_on_disk(&self.config.data_directory, file, &self.store)?;
+            return Ok(vec![(self.config.data_directory.join(file), checksum)]);
         }
 
-        Ok(())
+        Ok(vec![])
     }
 }
 
@@ -141,7 +143,7 @@ impl SingleNodeConsensus {
             self.store.has_done_genesis = true;
             // Save the genesis block to disk
             if let Some(file) = &self.file {
-                if let Err(e) = Self::save_on_disk(file.as_path(), &self.store) {
+                if let Err(e) = Self::save_on_disk(&self.config.data_directory, file, &self.store) {
                     warn!(
                         "Failed to save consensus single node storage on disk: {}",
                         e
