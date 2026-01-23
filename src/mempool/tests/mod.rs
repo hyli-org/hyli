@@ -602,7 +602,7 @@ async fn test_redisseminate_owned_lanes_sends_oldest_first() -> Result<()> {
     ctx.dissemination_manager.add_owned_lane(lane_id.clone());
 
     // Drain any prior outbound messages
-    while let Ok(_) = ctx.out_receiver.try_recv() {}
+    while ctx.out_receiver.try_recv().is_ok() {}
 
     ctx.dissemination_manager
         .redisseminate_owned_lanes()
