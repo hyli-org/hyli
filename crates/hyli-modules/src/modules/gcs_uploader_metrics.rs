@@ -2,6 +2,7 @@ use opentelemetry::{
     metrics::{Counter, Gauge},
     InstrumentationScope, KeyValue,
 };
+use sdk::BlockHeight;
 
 #[derive(Debug, Clone)]
 pub struct GcsUploaderMetrics {
@@ -24,10 +25,10 @@ impl GcsUploaderMetrics {
         }
     }
 
-    pub fn record_success(&self, height: u64) {
+    pub fn record_success(&self, height: BlockHeight) {
         let labels = [KeyValue::new("module_name", self.module_name)];
         self.success_total.add(1, &labels);
-        self.current_height.record(height, &labels);
+        self.current_height.record(height.0, &labels);
     }
 
     pub fn record_failure(&self) {
@@ -51,7 +52,7 @@ mod tests {
         let metrics = GcsUploaderMetrics::global("test-node".to_string(), "gcs_uploader");
 
         // These should not panic
-        metrics.record_success(100);
+        metrics.record_success(BlockHeight(100));
         metrics.record_failure();
     }
 }

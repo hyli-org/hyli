@@ -3,7 +3,6 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{Context, Result};
 use clap::Parser;
 
-use hyli_contract_sdk::BlockHeight;
 use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
@@ -31,7 +30,9 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let config = Conf::new(args.config_file).context("reading config file")?;
 
-    setup_tracing(&config.log_format, "gcs block uploader".to_string())?;
+    let node_name = "gcs_block_uploader".to_string();
+
+    setup_tracing(&config.log_format, node_name.clone())?;
 
     std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
 
@@ -44,11 +45,14 @@ async fn main() -> Result<()> {
     // Initialize modules
     let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
+    let (last_uploaded_height, genesis_timestamp_folder) =
+        GcsUploader::get_last_uploaded_block(&config.gcs).await?;
+
     handler
         .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
-            start_block: Some(BlockHeight(config.gcs.start_block)),
+            start_block: Some(last_uploaded_height + 1),
             timeout_client_secs: 10,
             processor_config: (),
         })
@@ -58,6 +62,9 @@ async fn main() -> Result<()> {
         .build_module::<GcsUploader>(GcsUploaderCtx {
             gcs_config: config.gcs.clone(),
             data_directory: config.data_directory.clone(),
+            node_name,
+            last_uploaded_height,
+            genesis_timestamp_folder,
         })
         .await?;
 
