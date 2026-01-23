@@ -1143,19 +1143,19 @@ pub mod tests {
     #[test_log::test(tokio::test)]
     async fn test_da_many_clients_only_last_connected() {
         let port = find_available_port().await;
-        let mut server = DataAvailabilityServer::start(port, "DaServer").await.unwrap();
+        let mut server = DataAvailabilityServer::start(port, "DaServer")
+            .await
+            .unwrap();
 
         let client_count = 5usize;
         let mut clients = Vec::with_capacity(client_count);
         let mut addr_by_idx = HashMap::new();
 
         for i in 0..client_count {
-            let mut client = DataAvailabilityClient::connect(
-                format!("client-{i}"),
-                format!("0.0.0.0:{port}"),
-            )
-            .await
-            .unwrap();
+            let mut client =
+                DataAvailabilityClient::connect(format!("client-{i}"), format!("0.0.0.0:{port}"))
+                    .await
+                    .unwrap();
             client
                 .send(DataAvailabilityRequest(BlockHeight(i as u64)))
                 .await
@@ -1198,17 +1198,12 @@ pub mod tests {
                 if tokio::time::Instant::now() >= deadline {
                     panic!("Expected client {} to be dropped", dropped_addr);
                 }
-                if let Ok(Some(event)) =
-                    tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await
+                if let Ok(Some(
+                    TcpEvent::Closed { socket_addr } | TcpEvent::Error { socket_addr, .. },
+                )) = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await
                 {
-                    match event {
-                        TcpEvent::Closed { socket_addr }
-                        | TcpEvent::Error { socket_addr, .. } => {
-                            if socket_addr == dropped_addr {
-                                server.drop_peer_stream(socket_addr);
-                            }
-                        }
-                        _ => {}
+                    if socket_addr == dropped_addr {
+                        server.drop_peer_stream(socket_addr);
                     }
                 }
             }
@@ -1225,17 +1220,12 @@ pub mod tests {
                     server.connected_clients()
                 );
             }
-            if let Ok(Some(event)) =
-                tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await
+            if let Ok(Some(
+                TcpEvent::Closed { socket_addr } | TcpEvent::Error { socket_addr, .. },
+            )) = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await
             {
-                match event {
-                    TcpEvent::Closed { socket_addr }
-                    | TcpEvent::Error { socket_addr, .. } => {
-                        if socket_addr != last_addr {
-                            server.drop_peer_stream(socket_addr);
-                        }
-                    }
-                    _ => {}
+                if socket_addr != last_addr {
+                    server.drop_peer_stream(socket_addr);
                 }
             }
         }
