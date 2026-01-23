@@ -690,6 +690,8 @@ impl DisseminationManager {
                     }
                 }
 
+                // The storage stream walks from tip -> root, so reverse to process oldest first.
+                entries.reverse();
                 entries
             };
 
