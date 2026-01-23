@@ -615,7 +615,10 @@ async fn test_redisseminate_owned_lanes_sends_oldest_first() -> Result<()> {
     match msg.msg {
         MempoolNetMessage::DataProposal(broadcast_lane, hashed, _, _) => {
             assert_eq!(broadcast_lane, lane_id);
-            assert_eq!(hashed, dp1_hash, "oldest pending DP must be broadcast first");
+            assert_eq!(
+                hashed, dp1_hash,
+                "oldest pending DP must be broadcast first"
+            );
         }
         other => panic!("Expected DataProposal broadcast, got {other:?}"),
     }

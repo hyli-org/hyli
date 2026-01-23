@@ -14,7 +14,7 @@ use hyli_modules::{
 use hyli_net::clock::TimestampMsClock;
 use staking::state::Staking;
 use strum_macros::IntoStaticStr;
-use tracing::{debug, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use crate::{
     bus::BusClientSender,
@@ -272,7 +272,17 @@ impl DisseminationManager {
                     .entry((lane_id.clone(), data_proposal_hash.clone()))
                     .or_insert(self.current_slot);
                 if self.owned_lanes.contains(&lane_id) {
+                    info!(
+                        "🚀 Owned lane {} stored dp {}, triggering instant dissemination",
+                        lane_id, data_proposal_hash
+                    );
                     self.maybe_disseminate_dp(&lane_id, &data_proposal_hash)?;
+                } else {
+                    trace!(
+                        "ℹ️ DpStored for lane {} dp {} (not owned, skipping dissemination)",
+                        lane_id,
+                        data_proposal_hash
+                    );
                 }
             }
             DisseminationEvent::SyncRequestNeeded { lane_id, from, to } => {
@@ -280,6 +290,10 @@ impl DisseminationManager {
                     debug!("SyncRequestNeeded missing 'to' for lane {}", lane_id);
                     return Ok(());
                 };
+                debug!(
+                    "📬 Queueing SyncRequestNeeded for lane {} from {:?} to {:?}",
+                    lane_id, from, to
+                );
                 let key = (lane_id.clone(), to.clone());
                 self.pending_sync_requests
                     .entry(key)
@@ -300,12 +314,21 @@ impl DisseminationManager {
                 new_to,
             } => match new_to {
                 None => {
+                    debug!(
+                        "✅ SyncRequestProgress completed for lane {} up to {}",
+                        lane_id, old_to
+                    );
                     self.pending_sync_requests.remove(&(lane_id, old_to));
                 }
                 Some(new_to) => {
-                    if let Some((mut key, mut request)) =
-                        self.pending_sync_requests.remove_entry(&(lane_id, old_to))
+                    if let Some((mut key, mut request)) = self
+                        .pending_sync_requests
+                        .remove_entry(&(lane_id.clone(), old_to.clone()))
                     {
+                        debug!(
+                            "➡️ SyncRequestProgress advancing lane {} from {} to {}",
+                            lane_id, old_to, new_to
+                        );
                         key.1 = new_to.clone();
                         request.to = new_to;
                         self.pending_sync_requests.insert(key, request);
@@ -320,6 +343,12 @@ impl DisseminationManager {
                 self.knowledge.by_dp.insert(
                     (lane_id.clone(), data_proposal_hash.clone(), voter.clone()),
                     EvidenceState::ObservedHas,
+                );
+                trace!(
+                    "👀 Recorded ObservedHas for voter {} on dp {} lane {}",
+                    voter,
+                    data_proposal_hash,
+                    lane_id
                 );
             }
             DisseminationEvent::SyncRequestIn {
@@ -385,6 +414,11 @@ impl DisseminationManager {
     }
 
     async fn process_sync_requests_and_replies(&mut self) -> Result<()> {
+        trace!(
+            "🔁 Processing sync requests/replies: {} pending requests, {} knowledge entries",
+            self.pending_sync_requests.len(),
+            self.knowledge.by_dp.len()
+        );
         self.process_outbound_sync_requests()?;
         self.send_sync_replies()?;
         self.prune_peer_knowledge();
@@ -395,6 +429,10 @@ impl DisseminationManager {
         if self.pending_sync_requests.is_empty() {
             return Ok(());
         }
+        trace!(
+            "📤 Evaluating {} pending outbound SyncRequests",
+            self.pending_sync_requests.len()
+        );
 
         let bonded_validators = self.staking.bonded();
         let self_validator = self.crypto.validator_pubkey();
@@ -405,6 +443,7 @@ impl DisseminationManager {
             .collect();
 
         if peers.is_empty() {
+            trace!("No bonded peers available to send SyncRequests to; skipping");
             return Ok(());
         }
 
@@ -416,6 +455,10 @@ impl DisseminationManager {
         for (key, request) in self.pending_sync_requests.iter_mut() {
             match self.lanes.get_dp_by_hash(&request.lane_id, &request.to) {
                 Ok(Some(_)) => {
+                    debug!(
+                        "🟢 Dropping pending SyncRequest for lane {} to {}: DP already present",
+                        request.lane_id, request.to
+                    );
                     completed.push(key.clone());
                     continue;
                 }
@@ -429,6 +472,10 @@ impl DisseminationManager {
             }
 
             if should_throttle_since(&request.state, now.clone()) {
+                debug!(
+                    "⏳ Throttling outbound SyncRequest for lane {} to {} (backoff {:?}, last_sent {:?})",
+                    request.lane_id, request.to, request.state.backoff, request.state.last_sent
+                );
                 continue;
             }
 
@@ -439,6 +486,13 @@ impl DisseminationManager {
                 let to = request.to.clone();
                 to_send.push((lane_id, from, to, target));
                 request.record_sent(now.clone());
+            } else {
+                debug!(
+                    "🤷 No eligible peer found for SyncRequest lane {} to {} (peers: {})",
+                    request.lane_id,
+                    request.to,
+                    bonded_validators.len().saturating_sub(1)
+                );
             }
         }
 
@@ -538,11 +592,20 @@ impl DisseminationManager {
 
         for (lane_id, dp_hash, validator) in pending {
             if self.should_debounce_sync_reply(&lane_id, &dp_hash, &validator, now.clone()) {
+                debug!(
+                    "⏳ Throttling SyncReply for DP Hash: {} to: {} (debounce window)",
+                    &dp_hash, &validator
+                );
                 self.metrics.mempool_sync_throttled(&lane_id, &validator);
                 continue;
             }
 
             let Some(metadata) = self.lanes.get_metadata_by_hash(&lane_id, &dp_hash)? else {
+                trace!(
+                    "Missing metadata while preparing SyncReply for DP Hash: {} lane {}, skipping",
+                    &dp_hash,
+                    &lane_id
+                );
                 continue;
             };
 
@@ -614,6 +677,11 @@ impl DisseminationManager {
             if self.owned_lanes.contains(lane_id)
                 && !self.all_peers_have_weak_has(lane_id, dp_hash, bonded)
             {
+                trace!(
+                    "ℹ️ Retaining dp {} in lane {} because not all peers have Weak/Strong/Observed",
+                    dp_hash,
+                    lane_id
+                );
                 continue;
             }
 
@@ -625,6 +693,14 @@ impl DisseminationManager {
         }
 
         for (lane_id, dp_hash) in to_drop {
+            debug!(
+                "🧹 Pruning peer knowledge for dp {} in lane {} (first seen slot {})",
+                dp_hash,
+                lane_id,
+                self.dp_first_seen_slot
+                    .get(&(lane_id.clone(), dp_hash.clone()))
+                    .unwrap_or(&0)
+            );
             self.dp_first_seen_slot
                 .remove(&(lane_id.clone(), dp_hash.clone()));
             self.knowledge
@@ -672,6 +748,11 @@ impl DisseminationManager {
         let lane_ids: Vec<_> = self.owned_lanes.iter().cloned().collect();
 
         for lane_id in lane_ids {
+            trace!(
+                "🔁 Redisseminating owned lane {} with last_cut present: {}",
+                lane_id,
+                self.last_cut.is_some()
+            );
             let pending_entries = {
                 let mut stream = Box::pin(
                     self.lanes
@@ -696,6 +777,13 @@ impl DisseminationManager {
             };
 
             for (metadata, dp_hash) in pending_entries {
+                trace!(
+                    "📡 Considering rebroadcast of dp {} in lane {} (cumul_size {} sigs {})",
+                    dp_hash,
+                    lane_id,
+                    metadata.cumul_size,
+                    metadata.signatures.len()
+                );
                 if self.rebroadcast_data_proposal(&lane_id, &dp_hash, &metadata)? {
                     break;
                 }
@@ -777,11 +865,24 @@ impl DisseminationManager {
             self.metrics
                 .dp_disseminations
                 .add(filtered_targets.len() as u64, &[]);
+            debug!(
+                "📢 Broadcasting dp {} in lane {} to all {} bonded validators",
+                dp_hash,
+                lane_id,
+                filtered_targets.len()
+            );
             self.send_net_message(net_message)?;
         } else {
             self.metrics
                 .dp_disseminations
                 .add(filtered_targets.len() as u64, &[]);
+            debug!(
+                "🎯 Broadcasting dp {} in lane {} to {} targeted validators ({} bonded total)",
+                dp_hash,
+                lane_id,
+                filtered_targets.len(),
+                bonded_validators_len
+            );
             self.send_net_message_only_for(filtered_targets.clone(), net_message)?;
         }
 
@@ -829,6 +930,7 @@ impl DisseminationManager {
         self.bus
             .send(OutboundMessage::broadcast(signed_message))
             .context("Broadcasting mempool message")?;
+        trace!("Broadcasted mempool message to all peers");
         Ok(())
     }
 
@@ -844,6 +946,7 @@ impl DisseminationManager {
                 signed_message,
             ))
             .context("Broadcasting mempool message only for targets")?;
+        trace!("Broadcasted mempool message to filtered peers");
         Ok(())
     }
 
