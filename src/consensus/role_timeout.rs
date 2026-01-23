@@ -4,7 +4,10 @@ use std::{collections::HashSet, time::Duration};
 use tracing::{debug, info, trace, warn};
 
 use super::*;
-use crate::model::{Slot, View};
+use crate::{
+    consensus::role_follower::TicketVerificationError,
+    model::{Slot, View},
+};
 use hyli_model::{utils::TimestampMs, ConsensusProposalHash, Hashed, Signed, SignedByValidator};
 use hyli_net::clock::TimestampMsClock;
 
@@ -144,13 +147,21 @@ impl Consensus {
         received_slot: Slot,
         received_view: View,
     ) -> Result<()> {
-        self.verify_and_process_tc_ticket(
+        match self.verify_and_process_tc_ticket(
             received_timeout_certificate.clone(),
             &received_proposal_qc,
             received_slot,
             received_view,
             None,
-        )?;
+            None,
+        ) {
+            Err(TicketVerificationError::ProcessingError) => {
+                panic!("Unrecoverable error processing TC")
+            }
+            Err(TicketVerificationError::Unverifiable) => bail!("Unverifiable ticket"), // should we send a sync request?
+            Err(TicketVerificationError::Invalid) => bail!("Invalid ticket"),
+            Ok(()) => {}
+        };
         self.cache_timeout_certificate(
             received_slot,
             received_view,
@@ -557,7 +568,8 @@ impl Consensus {
 
 #[cfg(test)]
 mod tests {
-    use crate::{consensus::test::*, tests::autobahn_testing::*};
+    use crate::consensus::test::*;
+    use crate::tests::autobahn_testing_macros::{broadcast, send, simple_commit_round};
 
     use super::*;
 
@@ -845,7 +857,7 @@ mod tests {
         assert!(matches!(ticket, Ticket::TimeoutQC(_, _)));
         assert_eq!(cp.slot, 1);
         assert_eq!(cp_view, 1);
-        assert_eq!(cp.parent_hash, ConsensusProposalHash("genesis".into()));
+        assert_eq!(cp.parent_hash, b"genesis".into());
     }
 
     #[test_log::test(tokio::test)]
@@ -913,7 +925,7 @@ mod tests {
         assert!(matches!(ticket, Ticket::TimeoutQC(_, _)));
         assert_eq!(cp.slot, 1);
         assert_eq!(cp_view, 1);
-        assert_eq!(cp.parent_hash, ConsensusProposalHash("genesis".into()));
+        assert_eq!(cp.parent_hash, b"genesis".into());
     }
 
     #[test_log::test(tokio::test)]
@@ -1046,7 +1058,7 @@ mod tests {
         assert!(matches!(ticket, Ticket::TimeoutQC(_, _)));
         assert_eq!(cp.slot, 1);
         assert_eq!(cp_view, 1);
-        assert_eq!(cp.parent_hash, ConsensusProposalHash("genesis".into()));
+        assert_eq!(cp.parent_hash, b"genesis".into());
     }
 
     #[test_log::test(tokio::test)]
@@ -1120,7 +1132,7 @@ mod tests {
         assert!(matches!(ticket, Ticket::TimeoutQC(_, _)));
         assert_eq!(cp.slot, 1);
         assert_eq!(cp_view, 1);
-        assert_eq!(cp.parent_hash, ConsensusProposalHash("genesis".into()));
+        assert_eq!(cp.parent_hash, b"genesis".into());
     }
 
     #[test_log::test(tokio::test)]
@@ -1208,7 +1220,7 @@ mod tests {
         assert_eq!(cp.slot, 1);
         assert_eq!(cp_view, 1);
         assert!(matches!(ticket, Ticket::TimeoutQC(_, _)));
-        assert_eq!(cp.parent_hash, ConsensusProposalHash("genesis".into()));
+        assert_eq!(cp.parent_hash, b"genesis".into());
     }
 
     #[test_log::test(tokio::test)]
@@ -1234,9 +1246,12 @@ mod tests {
             ))
             .expect("Error while signing");
 
-        node1
-            .handle_msg(&msg, "Future TC while joining should be ignored")
-            .await;
+        let err = node1.handle_msg_err(&msg).await;
+        let root = err.root_cause().to_string();
+        assert!(
+            root.contains("Unverifiable ticket"),
+            "TC should fail verification, got: {root}"
+        );
 
         assert!(matches!(
             node1.consensus.bft_round_state.state_tag,

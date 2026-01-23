@@ -5,7 +5,6 @@ use std::fmt::{self, Display};
 use crate::{staking::*, *};
 
 #[derive(
-    Debug,
     Serialize,
     Deserialize,
     Clone,
@@ -103,5 +102,21 @@ impl<T: Display + borsh::BorshSerialize> Display for SignedByValidator<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         _ = write!(f, " --> from validator {}", self.signature.validator);
         write!(f, "")
+    }
+}
+
+impl<T: std::fmt::Debug + borsh::BorshSerialize> std::fmt::Debug for SignedByValidator<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Signed")
+            .field("msg", &self.msg)
+            .field("validator", &format!("{}", self.signature.validator))
+            .field("sig", &{
+                format!("{}...", {
+                    let mut hash = hex::encode(&self.signature.signature.0);
+                    hash.truncate(4);
+                    hash
+                })
+            })
+            .finish()
     }
 }

@@ -101,7 +101,7 @@ pub async fn get_proofs_by_height(
     get,
     tag = "Indexer",
     params(
-        ("tx_hash" = String, Path, description = "Tx hash")
+        ("tx_hash" = TxHash, Path, description = "Tx hash")
     ),
     path = "/proof/hash/{tx_hash}",
     responses(
@@ -109,7 +109,7 @@ pub async fn get_proofs_by_height(
     )
 )]
 pub async fn get_proof_with_hash(
-    Path(tx_hash): Path<String>,
+    Path(tx_hash): Path<TxHash>,
     State(state): State<ExplorerApiState>,
 ) -> Result<Json<APIProofDetails>, StatusCode> {
     let transaction: Result<APIProofDetails, sqlx::Error> = log_error!(
@@ -144,7 +144,7 @@ ORDER BY b.height DESC, t.index DESC
 LIMIT 1;
 "#,
         )
-        .bind(tx_hash)
+        .bind(tx_hash.to_string())
         .fetch_optional(&state.db)
         .await
         .map(|row| {
@@ -160,8 +160,10 @@ LIMIT 1;
                 .zip(blob_tx_indexes)
                 .zip(blob_proof_output_indexes)
                 .zip(proof_outputs)
-                .map(|(((tx_hash, tx_idx), proof_idx), output)| {
-                    (tx_hash.into(), tx_idx as u32, proof_idx as u32, output)
+                .filter_map(|(((tx_hash, tx_idx), proof_idx), output)| {
+                    TxHash::from_hex(&tx_hash)
+                        .ok()
+                        .map(|tx_hash| (tx_hash, tx_idx as u32, proof_idx as u32, output))
                 })
                 .collect();
 

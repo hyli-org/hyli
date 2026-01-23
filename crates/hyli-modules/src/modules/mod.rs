@@ -8,6 +8,7 @@ use axum::Router;
 
 // Domain-specific modules
 pub mod admin;
+pub mod block_processor;
 pub mod bus_ws_connector;
 #[cfg(feature = "db")]
 pub mod contract_listener;
@@ -19,7 +20,6 @@ pub mod gcs_uploader;
 pub mod gcs_uploader_metrics;
 #[cfg(feature = "db")]
 pub mod indexer;
-pub mod node_state_processor;
 pub mod prover;
 pub mod prover_metrics;
 pub mod rest;

@@ -4,7 +4,7 @@ use crate::model::ValidatorPublicKey;
 use anyhow::Context;
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_crypto::BlstCrypto;
-use hyli_model::{BlockHeight, SignedByValidator};
+use hyli_model::{utils::TimestampMs, BlockHeight, SignedByValidator};
 use hyli_modules::bus::BusMessage;
 use hyli_net::clock::TimestampMsClock;
 use hyli_net::tcp::{P2PTcpMessage, TcpMessageLabel};
@@ -48,6 +48,7 @@ pub enum PeerEvent {
         pubkey: ValidatorPublicKey,
         da_address: String,
         height: BlockHeight,
+        timestamp: TimestampMs,
     },
 }
 
@@ -146,9 +147,10 @@ impl<T: BusMessage + IntoHeaderSignableData> BusMessage for MsgWithHeader<T> {
 impl<T: IntoHeaderSignableData + std::fmt::Debug> std::fmt::Debug for MsgWithHeader<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MsgWithHeader")
+            .field("msg", &self.msg)
             .field("header", &{
                 format!(
-                    "MsgHeader {{ timestamp: {}, hash: {}, }}",
+                    "timestamp: {}, hash: {}",
                     self.header.msg.timestamp,
                     match &self.header.msg.hash.0.len() {
                         0 => "empty".to_string(),
@@ -161,10 +163,10 @@ impl<T: IntoHeaderSignableData + std::fmt::Debug> std::fmt::Debug for MsgWithHea
                     }
                 )
             })
-            .field("msg", &self.msg)
             .finish()
     }
 }
+
 pub trait HeaderSigner {
     fn sign_msg_with_header<T: IntoHeaderSignableData>(
         &self,

@@ -64,7 +64,9 @@ impl DataProposalParent {
 
     pub fn as_tx_parent_hash(&self) -> DataProposalHash {
         match self {
-            DataProposalParent::LaneRoot(lane_id) => DataProposalHash(lane_id.to_string()),
+            DataProposalParent::LaneRoot(lane_id) => {
+                DataProposalHash(lane_id.to_string().into_bytes())
+            }
             DataProposalParent::DP(hash) => hash.clone(),
         }
     }
@@ -197,7 +199,6 @@ pub struct TxId(pub DataProposalHash, pub TxHash);
 
 #[derive(
     Clone,
-    Debug,
     Default,
     Serialize,
     Deserialize,
@@ -210,7 +211,34 @@ pub struct TxId(pub DataProposalHash, pub TxHash);
     PartialOrd,
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
-pub struct DataProposalHash(pub String);
+pub struct DataProposalHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
+
+impl From<Vec<u8>> for DataProposalHash {
+    fn from(v: Vec<u8>) -> Self {
+        DataProposalHash(v)
+    }
+}
+impl From<&[u8]> for DataProposalHash {
+    fn from(v: &[u8]) -> Self {
+        DataProposalHash(v.to_vec())
+    }
+}
+impl<const N: usize> From<&[u8; N]> for DataProposalHash {
+    fn from(v: &[u8; N]) -> Self {
+        DataProposalHash(v.to_vec())
+    }
+}
+impl DataProposalHash {
+    pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
+        crate::utils::decode_hex_string_checked(s).map(DataProposalHash)
+    }
+}
+
+impl std::fmt::Debug for DataProposalHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DataProposalHash({})", hex::encode(&self.0))
+    }
+}
 
 impl Hashed<DataProposalHash> for DataProposal {
     fn hashed(&self) -> DataProposalHash {
@@ -223,13 +251,13 @@ impl Hashed<DataProposalHash> for DataProposal {
                 hasher.update(lane_id.to_string().as_bytes());
             }
             DataProposalParent::DP(parent_data_proposal_hash) => {
-                hasher.update(parent_data_proposal_hash.0.as_bytes());
+                hasher.update(&parent_data_proposal_hash.0);
             }
         }
         for tx in self.txs.iter() {
-            hasher.update(tx.hashed().0.as_bytes());
+            hasher.update(&tx.hashed().0);
         }
-        let hash = DataProposalHash(hex::encode(hasher.finalize()));
+        let hash = DataProposalHash(hasher.finalize().to_vec());
         *self.hash_cache.write().unwrap() = Some(hash.clone());
         hash
     }
@@ -244,7 +272,7 @@ impl std::hash::Hash for DataProposal {
 
 impl Display for DataProposalHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", hex::encode(&self.0))
     }
 }
 impl Display for DataProposal {
@@ -258,7 +286,7 @@ pub type Cut = Vec<(LaneId, DataProposalHash, LaneBytesSize, PoDA)>;
 
 impl Display for TxId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}/{}", &self.0 .0, &self.1 .0)
+        write!(f, "{}/{}", self.0, self.1)
     }
 }
 
@@ -271,5 +299,23 @@ impl Display for CutDisplay<'_> {
             cut_str.push_str(&format!("{lane_id}:{hash}({size}), "));
         }
         write!(f, "{}", cut_str.trim_end())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn data_proposal_hash_from_hex_str_roundtrip() {
+        let hex_str = "746573745f6470";
+        let hash = DataProposalHash::from_hex(hex_str).expect("data proposal hash hex");
+        assert_eq!(hash.0, b"test_dp".to_vec());
+        assert_eq!(format!("{hash}"), hex_str);
+        let json = serde_json::to_string(&hash).expect("serialize data proposal hash");
+        assert_eq!(json, "\"746573745f6470\"");
+        let decoded: DataProposalHash =
+            serde_json::from_str(&json).expect("deserialize data proposal hash");
+        assert_eq!(decoded, hash);
     }
 }

@@ -30,7 +30,7 @@ pub fn verify(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutpu
     tracing::info!(
         target: "hyli::verifiers::reth",
         identity = %calldata.identity.0,
-        tx_hash = %calldata.tx_hash.0,
+        tx_hash = %calldata.tx_hash,
         "Starting Reth proof verification"
     );
 
@@ -89,7 +89,7 @@ pub fn verify(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutpu
     tracing::info!(
         target: "hyli::verifiers::reth",
         identity = %output.identity.0,
-        tx_hash = %output.tx_hash.0,
+        tx_hash = %output.tx_hash,
         blob_count = output.tx_blob_count,
         "Reth proof verification succeeded"
     );
@@ -602,7 +602,8 @@ mod tests {
 
         // Calldata referencing the program blob (index 0) with correct blob data.
         let calldata = Calldata {
-            tx_hash: TxHash(format!("0x{}", hex::encode(tx_signed.tx_hash()))),
+            tx_hash: TxHash::from_hex(&format!("0x{}", hex::encode(tx_signed.tx_hash())))
+                .expect("tx_hash hex"),
             identity: Identity("id".to_string()),
             blobs: blobs.clone(),
             tx_blob_count: blobs.len(),
@@ -661,7 +662,8 @@ mod tests {
         };
         let blobs: IndexedBlobs = vec![wrong_blob, caller_blob].into();
         let calldata = Calldata {
-            tx_hash: TxHash(format!("0x{}", hex::encode(tx_signed.tx_hash()))),
+            tx_hash: TxHash::from_hex(&format!("0x{}", hex::encode(tx_signed.tx_hash())))
+                .expect("tx_hash hex"),
             identity: Identity("id".to_string()),
             blobs,
             tx_blob_count: 2,
@@ -713,7 +715,8 @@ mod tests {
         };
         let blobs: IndexedBlobs = vec![program_blob, caller_blob].into();
         let calldata = Calldata {
-            tx_hash: TxHash(format!("0x{}", hex::encode(tx_a.tx_hash()))),
+            tx_hash: TxHash::from_hex(&format!("0x{}", hex::encode(tx_a.tx_hash())))
+                .expect("tx_hash hex"),
             identity: Identity("id".to_string()),
             blobs,
             tx_blob_count: 2,

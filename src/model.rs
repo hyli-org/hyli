@@ -16,4 +16,5 @@ pub struct SharedRunContext {
     pub api: SharedBuildApiCtx,
     pub crypto: SharedBlstCrypto,
     pub start_height: Option<BlockHeight>,
+    pub start_timestamp: utils::TimestampMs,
 }

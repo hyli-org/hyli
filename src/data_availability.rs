@@ -547,8 +547,17 @@ impl DataAvailability {
             }
 
             Some(tcp_event) = server.listen_next() => {
-                if let TcpEvent::Message { socket_addr, data, .. } = tcp_event {
-                    _ = log_error!(self.start_streaming_to_peer(data.0, &mut catchup_joinset, &socket_addr).await, "Starting streaming to peer");
+                match tcp_event {
+                    TcpEvent::Message { socket_addr, data, .. } => {
+                        _ = log_error!(self.start_streaming_to_peer(data.0, &mut catchup_joinset, &socket_addr).await, "Starting streaming to peer");
+                    }
+                    TcpEvent::Closed { socket_addr } => {
+                        server.drop_peer_stream(socket_addr);
+                    }
+                    TcpEvent::Error { socket_addr, error } => {
+                        warn!("TCP error from {}: {}. Dropping socket.", socket_addr, error);
+                        server.drop_peer_stream(socket_addr);
+                    }
                 }
             }
 

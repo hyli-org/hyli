@@ -26,6 +26,7 @@ use hyli_modules::{
     log_error,
     modules::{
         admin::{AdminApi, AdminApiRunContext, NodeAdminApiClient},
+        block_processor::BusOnlyProcessor,
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::DAListenerConf,
@@ -41,6 +42,7 @@ use hyli_modules::{
     },
     utils::db::use_fresh_db,
 };
+use hyli_net::clock::TimestampMsClock;
 use hyllar::Hyllar;
 use prometheus::Registry;
 use smt_token::account::AccountSMT;
@@ -216,6 +218,9 @@ async fn common_main(
 
     welcome_message(&config);
     info!("Starting node with config: {:?}", &config);
+
+    // Capture node start timestamp for use across all modules
+    let start_timestamp = TimestampMsClock::now();
 
     let registry = Registry::new();
     // Init global metrics meter we expose as an endpoint
@@ -401,6 +406,7 @@ async fn common_main(
             start_height: node_state_override
                 .as_ref()
                 .map(|node_state| node_state.current_height),
+            start_timestamp,
         };
 
         handler
@@ -435,11 +441,12 @@ async fn common_main(
         handler.build_module::<P2P>(ctx.clone()).await?;
     } else if config.run_indexer {
         handler
-            .build_module::<SignedDAListener>(DAListenerConf {
+            .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {
                 data_directory: config.data_directory.clone(),
                 da_read_from: config.da_read_from.clone(),
                 start_block: None,
                 timeout_client_secs: config.da_timeout_client_secs,
+                processor_config: (),
             })
             .await?;
     }
