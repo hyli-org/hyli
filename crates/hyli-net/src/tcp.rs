@@ -202,6 +202,7 @@ impl TcpMessageLabel for TcpMessage {
     }
 }
 
+#[expect(clippy::large_enum_variant)]
 #[derive(Debug, Clone, BorshDeserialize, BorshSerialize, PartialEq)]
 pub enum P2PTcpMessage<Data: BorshDeserialize + BorshSerialize> {
     Handshake(Handshake),

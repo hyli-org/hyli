@@ -22,7 +22,6 @@ use hyli_modules::{
     handle_messages, log_error, module_bus_client, module_handle_messages,
     modules::Module,
 };
-use hyli_net::clock::TimestampMsClock;
 use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
 use serde::{Deserialize, Serialize};
 use smt_token::{account::AccountSMT, SmtTokenAction};
@@ -30,7 +29,7 @@ use staking::{
     client::tx_executor_handler::{delegate, deposit_for_fees, stake},
     state::Staking,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 use utils::TimestampMs;
 use verifiers::NativeVerifiers;
 

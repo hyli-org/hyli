@@ -22,7 +22,6 @@ use anyhow::{bail, Context, Result};
 use axum::Router;
 use hydentity::Hydentity;
 use hyli_crypto::SharedBlstCrypto;
-use hyli_net::clock::TimestampMsClock;
 use hyli_modules::{
     log_error,
     modules::{
@@ -43,6 +42,7 @@ use hyli_modules::{
     },
     utils::db::use_fresh_db,
 };
+use hyli_net::clock::TimestampMsClock;
 use hyllar::Hyllar;
 use prometheus::Registry;
 use smt_token::account::AccountSMT;
