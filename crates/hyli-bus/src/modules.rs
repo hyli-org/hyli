@@ -397,8 +397,6 @@ pub struct ModulesHandler {
     running_modules: Vec<&'static str>,
     /// Data directory for manifest file
     data_dir: PathBuf,
-    /// Collected checksums from successfully persisted modules
-    persisted_checksums: Vec<(PathBuf, u32)>,
     /// Track shutdown status for each module
     shutdown_statuses: HashMap<String, ModuleShutdownStatus>,
 }
@@ -419,7 +417,6 @@ impl ModulesHandler {
             modules: vec![],
             running_modules: vec![],
             data_dir,
-            persisted_checksums: vec![],
             shutdown_statuses: HashMap::new(),
         }
     }
@@ -582,10 +579,19 @@ impl ModulesHandler {
         let has_shutdown_errors =
             !timed_out_modules.is_empty() || !persistence_failed_modules.is_empty();
 
+        let persisted_entries: ModulePersistOutput = self
+            .shutdown_statuses
+            .values()
+            .flat_map(|status| match status {
+                ModuleShutdownStatus::PersistedEntries(entries) => entries.clone(),
+                _ => Vec::new(),
+            })
+            .collect();
+
         // Write manifest if no shutdown errors occurred
-        if !has_shutdown_errors && !self.persisted_checksums.is_empty() {
+        if !has_shutdown_errors && !persisted_entries.is_empty() {
             _ = log_error!(
-                write_manifest(&self.data_dir, &self.persisted_checksums),
+                write_manifest(&self.data_dir, &persisted_entries),
                 "Writing checksum manifest"
             );
         } else if has_shutdown_errors {
