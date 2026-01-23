@@ -298,10 +298,16 @@ async fn test_shutdown_timeout_skips_manifest_and_fails_to_load() {
     handler.start_modules().await.unwrap();
 
     let mut shutdown_client = ShutdownClient::new_from_bus(shared_bus.new_handle()).await;
+    let module_id = handler
+        .modules_statuses
+        .keys()
+        .next()
+        .cloned()
+        .expect("module id");
     let module_name = std::any::type_name::<TestModule<usize>>().to_string();
     let send_task = tokio::spawn(async move {
         _ = shutdown_client.send(signal::ShutdownCompleted {
-            module: module_name.clone(),
+            module: module_id,
             shutdown_status: ModuleShutdownStatus::TimedOut,
         });
         _ = shutdown_client.send(signal::ShutdownModule {
@@ -426,10 +432,12 @@ async fn test_start_modules() {
         std::any::type_name::<TestModule<usize>>().to_string()
     );
 
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        std::any::type_name::<TestModule<usize>>().to_string()
-    );
+    assert!(shutdown_completed_receiver
+        .recv()
+        .await
+        .unwrap()
+        .module
+        .starts_with(std::any::type_name::<TestModule<usize>>()));
 }
 
 // When modules are started in the following order A, B, C, they should be closed in the reverse order C, B, A
@@ -455,10 +463,12 @@ async fn test_start_stop_modules_in_order() {
         std::any::type_name::<TestModule<String>>().to_string()
     );
 
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        std::any::type_name::<TestModule<String>>().to_string()
-    );
+    assert!(shutdown_completed_receiver
+        .recv()
+        .await
+        .unwrap()
+        .module
+        .starts_with(std::any::type_name::<TestModule<String>>()));
 
     // Then first module at last
     assert_eq!(
@@ -466,10 +476,12 @@ async fn test_start_stop_modules_in_order() {
         std::any::type_name::<TestModule<usize>>().to_string()
     );
 
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        std::any::type_name::<TestModule<usize>>().to_string()
-    );
+    assert!(shutdown_completed_receiver
+        .recv()
+        .await
+        .unwrap()
+        .module
+        .starts_with(std::any::type_name::<TestModule<usize>>()));
 }
 
 #[tokio::test]
@@ -490,14 +502,11 @@ async fn test_shutdown_duplicate_modules() {
 
     assert_eq!(shutdown_receiver.recv().await.unwrap().module, module_name);
     assert_eq!(shutdown_receiver.recv().await.unwrap().module, module_name);
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        module_name
-    );
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        module_name
-    );
+    let first_completed = &shutdown_completed_receiver.recv().await.unwrap().module;
+    let second_completed = &shutdown_completed_receiver.recv().await.unwrap().module;
+    assert!(first_completed.starts_with(&module_name));
+    assert!(second_completed.starts_with(&module_name));
+    assert_ne!(first_completed, second_completed);
 }
 
 #[tokio::test]
@@ -520,22 +529,28 @@ async fn test_shutdown_modules_exactly_once() {
     _ = handler.shutdown_modules().await;
 
     // Shutdown last module first
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        std::any::type_name::<TestModule<bool>>().to_string()
-    );
+    assert!(shutdown_completed_receiver
+        .recv()
+        .await
+        .unwrap()
+        .module
+        .starts_with(std::any::type_name::<TestModule<bool>>()));
 
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        std::any::type_name::<TestModule<String>>().to_string()
-    );
+    assert!(shutdown_completed_receiver
+        .recv()
+        .await
+        .unwrap()
+        .module
+        .starts_with(std::any::type_name::<TestModule<String>>()));
 
     // Then first module at last
 
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        std::any::type_name::<TestModule<usize>>().to_string()
-    );
+    assert!(shutdown_completed_receiver
+        .recv()
+        .await
+        .unwrap()
+        .module
+        .starts_with(std::any::type_name::<TestModule<usize>>()));
 
     assert_eq!(
         cancellation_counter_receiver
@@ -584,28 +599,36 @@ async fn test_shutdown_all_modules_if_one_fails() {
     _ = handler.shutdown_loop().await;
 
     // u64 module fails first and emits shutdown completion
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        std::any::type_name::<TestModule<u64>>().to_string()
-    );
+    assert!(shutdown_completed_receiver
+        .recv()
+        .await
+        .unwrap()
+        .module
+        .starts_with(std::any::type_name::<TestModule<u64>>()));
 
     // Shutdown last module first
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        std::any::type_name::<TestModule<bool>>().to_string()
-    );
+    assert!(shutdown_completed_receiver
+        .recv()
+        .await
+        .unwrap()
+        .module
+        .starts_with(std::any::type_name::<TestModule<bool>>()));
 
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        std::any::type_name::<TestModule<String>>().to_string()
-    );
+    assert!(shutdown_completed_receiver
+        .recv()
+        .await
+        .unwrap()
+        .module
+        .starts_with(std::any::type_name::<TestModule<String>>()));
 
     // Then first module at last
 
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        std::any::type_name::<TestModule<usize>>().to_string()
-    );
+    assert!(shutdown_completed_receiver
+        .recv()
+        .await
+        .unwrap()
+        .module
+        .starts_with(std::any::type_name::<TestModule<usize>>()));
 }
 
 // in case a module panics,
@@ -634,23 +657,31 @@ async fn test_shutdown_all_modules_if_one_module_panics() {
 
     // u32 module failed with panic, but the event should be emitted
 
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        std::any::type_name::<TestModule<u32>>().to_string()
-    );
+    assert!(shutdown_completed_receiver
+        .recv()
+        .await
+        .unwrap()
+        .module
+        .starts_with(std::any::type_name::<TestModule<u32>>()));
 
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        std::any::type_name::<TestModule<bool>>().to_string()
-    );
+    assert!(shutdown_completed_receiver
+        .recv()
+        .await
+        .unwrap()
+        .module
+        .starts_with(std::any::type_name::<TestModule<bool>>()));
 
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        std::any::type_name::<TestModule<String>>().to_string()
-    );
+    assert!(shutdown_completed_receiver
+        .recv()
+        .await
+        .unwrap()
+        .module
+        .starts_with(std::any::type_name::<TestModule<String>>()));
 
-    assert_eq!(
-        shutdown_completed_receiver.recv().await.unwrap().module,
-        std::any::type_name::<TestModule<usize>>().to_string()
-    );
+    assert!(shutdown_completed_receiver
+        .recv()
+        .await
+        .unwrap()
+        .module
+        .starts_with(std::any::type_name::<TestModule<usize>>()));
 }

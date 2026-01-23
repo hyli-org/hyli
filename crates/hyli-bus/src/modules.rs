@@ -25,6 +25,7 @@ pub use crate::utils::checksums::{
 };
 
 const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const MODULE_ID_SEPARATOR: char = '#';
 
 pub type ModulePersistOutput = Vec<(PathBuf, u32)>;
 
@@ -394,11 +395,12 @@ bus_client! {
 pub struct ModulesHandler {
     bus: SharedMessageBus,
     modules: Vec<ModuleStarter>,
-    running_modules: Vec<&'static str>,
     /// Data directory for manifest file
     data_dir: PathBuf,
-    /// Track shutdown status for each module
-    shutdown_statuses: HashMap<String, ModuleShutdownStatus>,
+    /// Track status for each module instance (keyed by module_id).
+    modules_statuses: HashMap<String, ModuleStatus>,
+    /// Startup order for shutdown sequencing (keyed by module_id).
+    module_shutdown_order: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -408,6 +410,12 @@ pub enum ModuleShutdownStatus {
     PersistedEntries(ModulePersistOutput),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ModuleStatus {
+    Running,
+    Shutdown(ModuleShutdownStatus),
+}
+
 impl ModulesHandler {
     pub async fn new(shared_bus: &SharedMessageBus, data_dir: PathBuf) -> ModulesHandler {
         let shared_message_bus = shared_bus.new_handle();
@@ -415,16 +423,18 @@ impl ModulesHandler {
         ModulesHandler {
             bus: shared_message_bus,
             modules: vec![],
-            running_modules: vec![],
             data_dir,
-            shutdown_statuses: HashMap::new(),
+            modules_statuses: HashMap::new(),
+            module_shutdown_order: Vec::new(),
         }
     }
 
     pub async fn start_modules(&mut self) -> Result<()> {
-        if !self.running_modules.is_empty() {
+        if self.has_running_modules() {
             bail!("Modules are already running!");
         }
+        self.modules_statuses.clear();
+        self.module_shutdown_order.clear();
 
         let mut seen_modules: HashSet<&'static str> = HashSet::new();
         let mut last_module_name: Option<&'static str> = None;
@@ -437,20 +447,24 @@ impl ModulesHandler {
             }
             seen_modules.insert(module.name);
             last_module_name = Some(module.name);
-            self.running_modules.push(module.name);
+            let module_id = Self::build_module_id(module.name);
+            self.modules_statuses
+                .insert(module_id.clone(), ModuleStatus::Running);
+            self.module_shutdown_order.push(module_id.clone());
 
-            debug!("Starting module {}", module.name);
+            debug!(module = %module.name, module_id = %module_id, "Starting module");
 
             let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
             let mut shutdown_client2 = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
             tokio::spawn(async move {
+                let module_name = module.name;
                 let module_task = tokio::spawn(module.starter);
                 let timeout_task = tokio::spawn(async move {
                     loop {
                         if let Ok(signal::ShutdownModule { module: modname }) =
                             shutdown_client2.recv().await
                         {
-                            if modname == module.name {
+                            if modname == module_name {
                                 tokio::time::sleep(MODULE_SHUTDOWN_TIMEOUT).await;
                                 break;
                             }
@@ -471,27 +485,30 @@ impl ModulesHandler {
                     match res {
                         Ok(Ok(entries)) => {
                             tracing::info!(
-                                module = %module.name,
+                                module = %module_name,
+                                module_id = %module_id,
                                 "Module {} exited and persisted {} file(s)",
-                                module.name,
+                                module_name,
                                 entries.len()
                             );
                             ModuleShutdownStatus::PersistedEntries(entries)
                         }
                         Ok(Err(e)) => {
                             tracing::error!(
-                                module = %module.name,
+                                module = %module_name,
+                                module_id = %module_id,
                                 "Module {} exited with error: {:?}",
-                                module.name,
+                                module_name,
                                 e
                             );
                             ModuleShutdownStatus::PersistenceFailed
                         }
                         Err(e) => {
                             tracing::error!(
-                                module = %module.name,
+                                module = %module_name,
+                                module_id = %module_id,
                                 "Module {} exited, error joining: {:?}",
-                                module.name,
+                                module_name,
                                 e
                             );
                             ModuleShutdownStatus::PersistenceFailed
@@ -501,7 +518,7 @@ impl ModulesHandler {
 
                 _ = log_error!(
                     shutdown_client.send(signal::ShutdownCompleted {
-                        module: module.name.to_string(),
+                        module: module_id,
                         shutdown_status
                     }),
                     "Sending ShutdownCompleted message"
@@ -518,7 +535,7 @@ impl ModulesHandler {
 
     /// Setup a loop waiting for shutdown signals from modules
     pub async fn shutdown_loop(&mut self) -> Result<()> {
-        if self.running_modules.is_empty() {
+        if !self.has_running_modules() {
             return Ok(());
         }
 
@@ -528,32 +545,25 @@ impl ModulesHandler {
         handle_messages! {
             on_bus shutdown_client,
             listen<signal::ShutdownCompleted> msg => {
-                match msg.shutdown_status {
+                let shutdown_status = msg.shutdown_status.clone();
+                match shutdown_status {
                     ModuleShutdownStatus::TimedOut => {
                         tracing::warn!(
                             "Module {} timed out during shutdown, manifest will not be written",
                             msg.module
                         );
-                        self.shutdown_statuses
-                            .insert(msg.module.clone(), ModuleShutdownStatus::TimedOut);
                     }
                     ModuleShutdownStatus::PersistenceFailed => {
                         tracing::warn!(
                             "Module {} failed to persist during shutdown, manifest will not be written",
                             msg.module
                         );
-                        self.shutdown_statuses
-                            .insert(msg.module.clone(), ModuleShutdownStatus::PersistenceFailed);
                     }
-                    ModuleShutdownStatus::PersistedEntries(entries) => {
-                        self.shutdown_statuses
-                            .insert(msg.module.clone(), ModuleShutdownStatus::PersistedEntries(entries));
-                    }
+                    ModuleShutdownStatus::PersistedEntries(_) => {}
                 }
-                if let Some(idx) = self.running_modules.iter().position(|module| *module == msg.module) {
-                    self.running_modules.remove(idx);
-                }
-                if self.running_modules.is_empty() {
+                self.modules_statuses
+                    .insert(msg.module.clone(), ModuleStatus::Shutdown(shutdown_status));
+                if !self.has_running_modules() {
                     break;
                 } else {
                     _ = self.shutdown_next_module().await;
@@ -563,27 +573,37 @@ impl ModulesHandler {
 
         info!("All modules have been shut down");
         let timed_out_modules: Vec<&str> = self
-            .shutdown_statuses
+            .modules_statuses
             .iter()
             .filter_map(|(module, status)| {
-                matches!(status, ModuleShutdownStatus::TimedOut).then_some(module.as_str())
+                matches!(
+                    status,
+                    ModuleStatus::Shutdown(ModuleShutdownStatus::TimedOut)
+                )
+                .then_some(module.as_str())
             })
             .collect();
         let persistence_failed_modules: Vec<&str> = self
-            .shutdown_statuses
+            .modules_statuses
             .iter()
             .filter_map(|(module, status)| {
-                matches!(status, ModuleShutdownStatus::PersistenceFailed).then_some(module.as_str())
+                matches!(
+                    status,
+                    ModuleStatus::Shutdown(ModuleShutdownStatus::PersistenceFailed)
+                )
+                .then_some(module.as_str())
             })
             .collect();
         let has_shutdown_errors =
             !timed_out_modules.is_empty() || !persistence_failed_modules.is_empty();
 
         let persisted_entries: ModulePersistOutput = self
-            .shutdown_statuses
+            .modules_statuses
             .values()
             .flat_map(|status| match status {
-                ModuleShutdownStatus::PersistedEntries(entries) => entries.clone(),
+                ModuleStatus::Shutdown(ModuleShutdownStatus::PersistedEntries(entries)) => {
+                    entries.clone()
+                }
                 _ => Vec::new(),
             })
             .collect();
@@ -608,7 +628,8 @@ impl ModulesHandler {
     /// Shutdown modules in reverse order (start A, B, C, shutdown C, B, A)
     async fn shutdown_next_module(&mut self) -> Result<()> {
         let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
-        if let Some(&module_name) = self.running_modules.last() {
+        if let Some(module_id) = self.next_running_module_id() {
+            let module_name = Self::module_name_from_id(module_id);
             _ = log_error!(
                 shutdown_client.send(signal::ShutdownModule {
                     module: module_name.to_string(),
@@ -697,6 +718,37 @@ impl ModulesHandler {
             starter: Box::pin(Self::run_module(module)),
         });
         Ok(())
+    }
+
+    fn has_running_modules(&self) -> bool {
+        self.modules_statuses
+            .values()
+            .any(|status| matches!(status, ModuleStatus::Running))
+    }
+
+    fn next_running_module_id(&self) -> Option<&String> {
+        self.module_shutdown_order.iter().rev().find(|module_id| {
+            matches!(
+                self.modules_statuses.get(*module_id),
+                Some(ModuleStatus::Running)
+            )
+        })
+    }
+
+    fn module_name_from_id(module_id: &str) -> &str {
+        module_id
+            .split_once(MODULE_ID_SEPARATOR)
+            .map(|(module_name, _)| module_name)
+            .unwrap_or(module_id)
+    }
+
+    fn build_module_id(module_name: &str) -> String {
+        let unique_id: String = deterministic_rng()
+            .sample_iter(&Alphanumeric)
+            .take(8)
+            .map(char::from)
+            .collect();
+        format!("{module_name}{MODULE_ID_SEPARATOR}{unique_id}")
     }
 }
 
