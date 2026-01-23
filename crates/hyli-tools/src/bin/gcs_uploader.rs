@@ -33,6 +33,8 @@ async fn main() -> Result<()> {
 
     setup_tracing(&config.log_format, "gcs block uploader".to_string())?;
 
+    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
+
     tracing::info!("Starting GCS block uploader");
 
     let bus = SharedMessageBus::new(BusMetrics::global("gcs_block_uploader".to_string()));
