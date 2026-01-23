@@ -331,10 +331,16 @@ async fn common_main(
 
     if config.run_indexer {
         if config.gcs.save_proofs || config.gcs.save_blocks {
+            let (last_uploaded_height, genesis_timestamp_folder) =
+                GcsUploader::get_last_uploaded_block(&config.gcs).await?;
+
             handler
                 .build_module::<GcsUploader>(GcsUploaderCtx {
                     gcs_config: config.gcs.clone(),
                     data_directory: config.data_directory.clone(),
+                    node_name: config.id.clone(),
+                    last_uploaded_height,
+                    genesis_timestamp_folder,
                 })
                 .await?;
         }
