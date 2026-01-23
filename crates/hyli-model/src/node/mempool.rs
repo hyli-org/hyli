@@ -64,9 +64,7 @@ impl DataProposalParent {
 
     pub fn as_tx_parent_hash(&self) -> DataProposalHash {
         match self {
-            DataProposalParent::LaneRoot(lane_id) => {
-                DataProposalHash(lane_id.to_bytes())
-            }
+            DataProposalParent::LaneRoot(lane_id) => DataProposalHash(lane_id.to_bytes()),
             DataProposalParent::DP(hash) => hash.clone(),
         }
     }
