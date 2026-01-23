@@ -326,10 +326,12 @@ impl super::Mempool {
     ) -> Result<()> {
         let validator_key = self.crypto.validator_pubkey().clone();
         debug!(
-            "Creating new DataProposal in local lane ({}) with {} transactions (parent: {:?})",
+            dp_hash =% data_proposal.hashed(),
+            parent_hash =% data_proposal.parent_data_proposal_hash.as_tx_parent_hash(),
+            "Creating new DataProposal in local lane ({}) with {} transactions, {:?}",
             validator_key,
             data_proposal.txs.len(),
-            data_proposal.parent_data_proposal_hash
+            data_proposal.parent_data_proposal_hash.as_tx_parent_hash()
         );
 
         // TODO: handle this differently
@@ -935,23 +937,20 @@ pub mod test {
         ctx1.submit_tx(&tx2);
         ctx1.timer_tick().await?;
 
+        // This ends up disseminating 4 DPs for now - when we receive it, then on tick, then the other, then on tick.
         let mut dps = vec![];
-        for _ in 0..2 {
+        for _ in 0..4 {
             match ctx1.assert_broadcast("DataProposal").await.msg {
                 MempoolNetMessage::DataProposal(_, hash, dp, _) => dps.push((hash, dp)),
                 _ => panic!("Expected DataProposal message"),
             }
         }
 
-        assert!(dps.len() == 2, "Should have two DataProposals");
-        assert_eq!(dps[0].1.txs.len(), 1);
-        assert_eq!(dps[1].1.txs.len(), 1);
-        let txs = dps
-            .iter()
-            .map(|(_, dp)| dp.txs[0].clone())
-            .collect::<Vec<_>>();
-        assert!(txs.contains(&tx1));
-        assert!(txs.contains(&tx2));
+        assert!(dps.len() == 4, "Should have 4 DataProposals");
+        assert_eq!(dps[0].1.txs, vec![tx1.clone()]);
+        assert_eq!(dps[1].1.txs, vec![tx1.clone()]);
+        assert_eq!(dps[2].1.txs, vec![tx2.clone()]);
+        assert_eq!(dps[3].1.txs, vec![tx1.clone()]);
 
         // Redisseminate the oldest pending DataProposal
         // TODO: implement this as more of an integration test?
