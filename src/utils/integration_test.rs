@@ -265,6 +265,7 @@ impl NodeIntegrationCtx {
             }),
             crypto,
             start_height: None,
+            start_timestamp: hyli_model::utils::TimestampMs(1000000),
         };
 
         let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;

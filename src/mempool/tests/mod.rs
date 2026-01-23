@@ -64,6 +64,7 @@ impl MempoolTestCtx {
             api: Arc::new(BuildApiContextInner::default()),
             crypto: crypto.clone().into(),
             start_height: None,
+            start_timestamp: utils::TimestampMs(1000000),
         };
 
         // TODO: split module from functionality?
