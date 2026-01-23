@@ -128,6 +128,8 @@ impl GcsUploader {
             },
             Some(result) = self.upload_tasks.join_next() => {
                 self.handle_upload_result(result);
+                // Drain any other completed tasks while we're here
+                self.drain_completed_tasks();
             }
         };
         Ok(())
@@ -201,6 +203,9 @@ impl GcsUploader {
             }
             // _permit is dropped here, releasing the semaphore slot
         });
+
+        // Drain completed tasks to prevent memory buildup
+        self.drain_completed_tasks();
     }
 
     fn handle_upload_result(
@@ -219,6 +224,13 @@ impl GcsUploader {
                 warn!("Upload task panicked: {}", e);
                 self.metrics.record_failure();
             }
+        }
+    }
+
+    fn drain_completed_tasks(&mut self) {
+        // Drain all completed tasks without blocking to prevent memory buildup
+        while let Some(result) = self.upload_tasks.try_join_next() {
+            self.handle_upload_result(result);
         }
     }
 
