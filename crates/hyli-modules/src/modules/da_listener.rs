@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, path::PathBuf};
 
 use anyhow::Result;
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_bus::{module_bus_client, module_handle_messages};
 use sdk::{BlockHeight, DataAvailabilityEvent, DataAvailabilityRequest, Hashed, SignedBlock};
 use tokio::task::yield_now;
@@ -47,16 +48,26 @@ impl<P: BlockProcessor + 'static> Module for SignedDAListener<P> {
     type Context = DAListenerConf<P>;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let start_block_in_file = NodeStateModule::load_from_disk::<BlockHeight>(
-            ctx.data_directory.join("da_start_height.bin").as_path(),
-        );
+        let start_block_in_file = match NodeStateModule::load_from_disk::<BlockHeight>(
+            &ctx.data_directory,
+            "da_start_height.bin".as_ref(),
+        )? {
+            Some(b) => b,
+            None => {
+                warn!("Starting SignedDAListener's NodeStateStore from default.");
+                BlockHeight(0)
+            }
+        };
 
         debug!(
             "Building SignedDAListener with start block from file: {:?}",
             start_block_in_file
         );
 
-        let current_block = ctx.start_block.or(start_block_in_file).unwrap_or_default();
+        let current_block = ctx
+            .start_block
+            .or(Some(start_block_in_file))
+            .unwrap_or_default();
 
         info!(
             "SignedDAListener current block height set to: {}",
@@ -88,7 +99,7 @@ impl<P: BlockProcessor + 'static> Module for SignedDAListener<P> {
         self.start()
     }
 
-    async fn persist(&mut self) -> Result<()> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         self.processor.persist(self.current_block).await
     }
 }

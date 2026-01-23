@@ -2,8 +2,9 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use futures::FutureExt;
+use hyli_bus::modules::ModulePersistOutput;
 use sdk::{BlockHeight, DataEvent, MempoolStatusEvent, SignedBlock};
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
     bus::{BusClientSender, SharedMessageBus},
@@ -44,7 +45,7 @@ pub trait BlockProcessor: Send + Sync {
     fn persist(
         &mut self,
         current_block: BlockHeight,
-    ) -> impl std::future::Future<Output = Result<()>> + Send;
+    ) -> impl std::future::Future<Output = Result<ModulePersistOutput>> + Send;
 }
 
 module_bus_client! {
@@ -90,13 +91,12 @@ impl BlockProcessor for BusOnlyProcessor {
     fn persist(
         &mut self,
         current_block: BlockHeight,
-    ) -> impl std::future::Future<Output = Result<()>> + Send {
+    ) -> impl std::future::Future<Output = Result<ModulePersistOutput>> + Send {
         let data_directory = self.data_directory.clone();
         async move {
-            NodeStateModule::save_on_disk(
-                &data_directory.join("da_start_height.bin"),
-                &current_block,
-            )
+            let file = PathBuf::from("da_start_height.bin");
+            let checksum = NodeStateModule::save_on_disk(&data_directory, &file, &current_block)?;
+            Ok(vec![(data_directory.join(file), checksum)])
         }
     }
 }
@@ -121,9 +121,16 @@ impl BlockProcessor for NodeStateBlockProcessor {
     type Config = ();
 
     async fn build(bus: SharedMessageBus, _config: &(), data_directory: PathBuf) -> Result<Self> {
-        let node_state_store = NodeStateModule::load_from_disk_or_default::<NodeStateStore>(
-            data_directory.join("da_listener_node_state.bin").as_path(),
-        );
+        let node_state_store = match NodeStateModule::load_from_disk::<NodeStateStore>(
+            &data_directory,
+            "da_listener_node_state.bin".as_ref(),
+        )? {
+            Some(store) => store,
+            None => {
+                warn!("Starting BlockProcessor's NodeStateStore from default.");
+                NodeStateStore::default()
+            }
+        };
 
         let node_state = NodeState {
             store: node_state_store,
@@ -170,20 +177,28 @@ impl BlockProcessor for NodeStateBlockProcessor {
     fn persist(
         &mut self,
         current_block: BlockHeight,
-    ) -> impl std::future::Future<Output = Result<()>> + Send {
+    ) -> impl std::future::Future<Output = Result<ModulePersistOutput>> + Send {
         let data_directory = self.data_directory.clone();
         let node_state_store = self.node_state.store.clone();
         async move {
             // Atomically persist BOTH node_state and current_block
             // This guarantees coherence!
-            NodeStateModule::save_on_disk(
-                &data_directory.join("da_listener_node_state.bin"),
+            let node_state_file = PathBuf::from("da_listener_node_state.bin");
+            let node_state_checksum = NodeStateModule::save_on_disk(
+                &data_directory,
+                &node_state_file,
                 &node_state_store,
             )?;
-            NodeStateModule::save_on_disk(
-                &data_directory.join("da_start_height.bin"),
-                &current_block,
-            )
+            let start_height_file = PathBuf::from("da_start_height.bin");
+            let start_height_checksum =
+                NodeStateModule::save_on_disk(&data_directory, &start_height_file, &current_block)?;
+            Ok(vec![
+                (data_directory.join(node_state_file), node_state_checksum),
+                (
+                    data_directory.join(start_height_file),
+                    start_height_checksum,
+                ),
+            ])
         }
     }
 }

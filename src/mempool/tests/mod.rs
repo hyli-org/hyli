@@ -1242,26 +1242,15 @@ async fn test_sync_request_not_satisfied_by_metadata_only() -> Result<()> {
 
 #[test_log::test(tokio::test)]
 async fn test_serialization_deserialization() -> Result<()> {
-    let mut ctx = MempoolTestCtx::new("mempool").await;
-    ctx.mempool.file = Some(".".into());
+    let ctx = MempoolTestCtx::new("mempool").await;
+    let tmpdir = tempfile::tempdir()?;
+    let data_dir = tmpdir.path();
+    let mempool_file = "test-mempool.bin";
 
-    assert!(Mempool::save_on_disk(
-        ctx.mempool
-            .file
-            .clone()
-            .unwrap()
-            .join("test-mempool.bin")
-            .as_path(),
-        &ctx.mempool.inner
-    )
-    .is_ok());
+    let checksum = Mempool::save_on_disk(data_dir, mempool_file.as_ref(), &ctx.mempool.inner)?;
+    hyli_bus::modules::write_manifest(data_dir, &[(data_dir.join(mempool_file), checksum)])?;
 
-    assert!(Mempool::load_from_disk::<MempoolStore>(
-        ctx.mempool.file.unwrap().join("test-mempool.bin").as_path(),
-    )
-    .is_some());
-
-    std::fs::remove_file("./test-mempool.bin").expect("Failed to delete test-mempool.bin");
+    assert!(Mempool::load_from_disk::<MempoolStore>(data_dir, mempool_file.as_ref())?.is_some());
 
     Ok(())
 }

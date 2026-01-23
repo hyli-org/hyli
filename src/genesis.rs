@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+};
 
 use crate::{model::*, p2p::network::PeerEvent, utils::conf::SharedConf};
 use anyhow::{Error, Result};
@@ -13,13 +16,14 @@ use hydentity::{
     client::tx_executor_handler::{register_identity, verify_identity},
     Hydentity,
 };
+use hyli_bus::{module_handle_messages, modules::ModulePersistOutput};
 use hyli_contract_sdk::{
     Blob, Calldata, ContractName, Identity, ProgramId, StateCommitment, ZkContract,
 };
 use hyli_crypto::SharedBlstCrypto;
 use hyli_modules::{
     bus::{BusClientSender, BusMessage, SharedMessageBus},
-    handle_messages, log_error, module_bus_client, module_handle_messages,
+    handle_messages, module_bus_client,
     modules::Module,
 };
 use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
@@ -29,7 +33,7 @@ use staking::{
     client::tx_executor_handler::{delegate, deposit_for_fees, stake},
     state::Staking,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use utils::TimestampMs;
 use verifiers::NativeVerifiers;
 
@@ -55,6 +59,7 @@ pub struct Genesis {
     bus: GenesisBusClient,
     peer_pubkey: PeerPublicKeyMap,
     crypto: SharedBlstCrypto,
+    already_handled_genesis: bool,
     peer_timestamps: Vec<TimestampMs>,
     start_timestamp: TimestampMs,
 }
@@ -62,12 +67,22 @@ pub struct Genesis {
 impl Module for Genesis {
     type Context = SharedRunContext;
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
+        let file = PathBuf::from("genesis.bin");
+        let already_handled_genesis: bool =
+            match Self::load_from_disk(&ctx.config.data_directory, &file)? {
+                Some(t) => t,
+                None => {
+                    warn!("Starting Genesis from default.");
+                    false
+                }
+            };
         let bus = GenesisBusClient::new_from_bus(bus.new_handle()).await;
         Ok(Genesis {
             config: ctx.config.clone(),
             bus,
             peer_pubkey: BTreeMap::new(),
             crypto: ctx.crypto.clone(),
+            already_handled_genesis,
             peer_timestamps: Vec::new(),
             start_timestamp: ctx.start_timestamp,
         })
@@ -82,10 +97,11 @@ impl Module for Genesis {
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<()> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         // TODO: ideally we'd wait until everyone has processed it, as there's technically a data race.
-        let file = self.config.data_directory.clone().join("genesis.bin");
-        log_error!(Self::save_on_disk(&file, &true), "Persisting genesis state")
+        let file = PathBuf::from("genesis.bin");
+        let checksum = Self::save_on_disk(&self.config.data_directory, &file, &true)?;
+        Ok(vec![(self.config.data_directory.join(file), checksum)])
     }
 }
 
@@ -101,9 +117,7 @@ contract_states!(
 #[allow(clippy::expect_used, reason = "genesis should panic if incorrect")]
 impl Genesis {
     pub async fn start(&mut self) -> Result<(), Error> {
-        let file = self.config.data_directory.clone().join("genesis.bin");
-        let already_handled_genesis: bool = Self::load_from_disk_or_default(&file);
-        if already_handled_genesis {
+        if self.already_handled_genesis {
             debug!("🌿 Genesis block already handled, skipping");
             // TODO: do we need a different message?
             self.bus.send(GenesisEvent::NoGenesis {})?;
@@ -754,6 +768,7 @@ mod tests {
                 bus,
                 peer_pubkey: BTreeMap::new(),
                 crypto,
+                already_handled_genesis: false,
                 peer_timestamps: Vec::new(),
                 start_timestamp: TimestampMs(1000000),
             },
@@ -870,7 +885,7 @@ mod tests {
 
         assert!(result.is_ok());
 
-        let rec = bus.try_recv().expect("recv");
+        let rec: GenesisEvent = bus.try_recv().expect("recv");
         assert_matches!(rec, GenesisEvent::GenesisBlock(..));
         if let GenesisEvent::GenesisBlock(signed_block) = rec {
             assert!(signed_block.has_txs());
@@ -1059,7 +1074,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Vérifier que l’événement attendu est bien GenesisBlock
-        let rec = bus.try_recv().expect("Expected a GenesisBlock event");
+        let rec: GenesisEvent = bus.try_recv().expect("Expected a GenesisBlock event");
         assert_matches!(rec, GenesisEvent::GenesisBlock(..));
     }
 }

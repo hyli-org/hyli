@@ -1,25 +1,33 @@
 use std::{
     any::type_name,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     future::Future,
     io::{BufWriter, Write},
-    path::Path,
+    path::{Path, PathBuf},
     pin::Pin,
     time::Duration,
 };
 
 use crate::{
     bus::{BusClientReceiver, BusClientSender, SharedMessageBus},
-    bus_client, handle_messages, log_error,
+    bus_client, handle_messages, log_error, log_warn,
 };
-use anyhow::{bail, Error, Result};
+use anyhow::{bail, Context, Error, Result};
 use rand::{distr::Alphanumeric, Rng};
 use tracing::{debug, info};
 
+use crate::utils::checksums::{self, ChecksumReader, ChecksumWriter};
 use crate::utils::deterministic_rng::deterministic_rng;
 
+pub use crate::utils::checksums::{
+    format_checksum, manifest_path, write_manifest, PersistenceError, CHECKSUMS_MANIFEST,
+};
+
 const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
+const MODULE_ID_SEPARATOR: char = '#';
+
+pub type ModulePersistOutput = Vec<(PathBuf, u32)>;
 
 /// Module trait to define startup dependencies
 pub trait Module
@@ -34,82 +42,160 @@ where
     ) -> impl futures::Future<Output = Result<Self>> + Send;
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send;
 
-    fn load_from_disk<S>(file: &Path) -> Option<S>
+    /// Load data from disk with checksum verification from manifest.
+    /// `file` is relative to `data_dir`.
+    ///
+    /// Returns:
+    /// - `Ok(Some(data))` if file exists and checksum verifies (or no manifest for backwards compat)
+    /// - `Ok(None)` if file doesn't exist and no manifest entry exists
+    /// - `Err` with `PersistenceError::FileMissingOnDisk` if file is in manifest but missing on disk
+    /// - `Err` with `PersistenceError::FileNotInManifest` if file exists but isn't in manifest
+    /// - `Err` with `PersistenceError::ChecksumMismatch` if checksum verification fails
+    /// - `Err` with `PersistenceError::DeserializationFailed` if data is corrupted
+    fn load_from_disk<S>(data_dir: &Path, file: &Path) -> Result<Option<S>>
     where
         S: borsh::BorshDeserialize,
     {
-        match fs::File::open(file) {
-            Ok(mut reader) => {
-                info!("Loaded data from disk {}", file.to_string_lossy());
-                log_error!(
-                    borsh::from_reader(&mut reader),
-                    "Loading and decoding {}",
-                    file.to_string_lossy()
-                )
-                .ok()
-            }
-            Err(_) => {
-                info!(
-                    "File {} not found for module {} (using default)",
-                    file.to_string_lossy(),
-                    type_name::<S>(),
-                );
-                None
-            }
+        if file.is_absolute() {
+            bail!("Persisted file path must be relative to data_dir");
         }
+        let full_path = data_dir.join(file);
+
+        let data_file = match fs::File::open(&full_path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // Missing file: only acceptable if manifest doesn't list it.
+                match checksums::read_checksum_from_manifest(data_dir, file) {
+                    Ok(Some(_)) => {
+                        return Err(PersistenceError::FileMissingOnDisk(full_path))
+                            .with_context(|| format!("Module {}", type_name::<S>()));
+                    }
+                    Ok(None) => {
+                        return Ok(None);
+                    }
+                    Err(e) => {
+                        return Err(e).with_context(|| format!("Module {}", type_name::<S>()))
+                    }
+                }
+            }
+            Err(e) => {
+                return Err(PersistenceError::IoError(e))
+                    .with_context(|| format!("Module {}", type_name::<S>()))
+            }
+        };
+
+        // Deserialize while computing checksum to avoid a second read.
+        let mut checksum_reader = ChecksumReader::new(data_file);
+        let deserialized: S = borsh::from_reader(&mut checksum_reader)
+            .with_context(|| format!("Deserializing module {}", type_name::<S>()))?;
+        checksum_reader
+            .drain_to_end()
+            .with_context(|| format!("Module {}", type_name::<S>()))?;
+
+        let actual_checksum = checksum_reader.checksum();
+        // Manifest is required if the file exists; it is the source of truth.
+        let expected_checksum = match checksums::read_checksum_from_manifest(data_dir, file) {
+            Ok(Some(expected_checksum)) => expected_checksum,
+            Ok(None) => {
+                tracing::error!(
+                    "No manifest found for {}, refusing to load persisted file",
+                    full_path.to_string_lossy()
+                );
+                return Err(PersistenceError::FileNotInManifest(file.to_path_buf()))
+                    .with_context(|| format!("Module {}", type_name::<S>()));
+            }
+            Err(e) => {
+                return Err(e).with_context(|| format!("Module {}", type_name::<S>()));
+            }
+        };
+
+        if expected_checksum != actual_checksum {
+            tracing::error!(
+                "Checksum mismatch for {}: expected {}, got {}",
+                full_path.to_string_lossy(),
+                format_checksum(expected_checksum),
+                format_checksum(actual_checksum)
+            );
+            return Err(PersistenceError::ChecksumMismatch {
+                expected: format_checksum(expected_checksum),
+                actual: format_checksum(actual_checksum),
+            })
+            .with_context(|| format!("Module {}", type_name::<S>()));
+        }
+        debug!(
+            "Checksum verification passed for {}",
+            file.to_string_lossy()
+        );
+
+        info!("Loaded data from disk {}", full_path.to_string_lossy());
+        Ok(Some(deserialized))
     }
 
-    fn persist(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
+    /// Persist module state to disk.
+    /// Returns `Some(vec)` if data was saved, `None` if module doesn't persist.
+    fn persist(&mut self) -> impl futures::Future<Output = Result<ModulePersistOutput>> + Send {
         async {
             info!(
                 "Persistence is not implemented for module {}",
                 type_name::<Self>()
             );
-            Ok(())
+            Ok(Vec::new())
         }
     }
 
-    fn load_from_disk_or_default<S>(file: &Path) -> S
-    where
-        S: borsh::BorshDeserialize + Default,
-    {
-        Self::load_from_disk(file).unwrap_or(S::default())
-    }
-
-    fn save_on_disk<S>(file: &Path, store: &S) -> Result<()>
+    /// Save data to disk and return the CRC32 checksum.
+    /// `file` is relative to `data_dir`.
+    /// The checksum should be collected by ModulesHandler and written to a manifest file.
+    fn save_on_disk<S>(data_dir: &Path, file: &Path, store: &S) -> Result<u32>
     where
         S: borsh::BorshSerialize,
     {
+        if file.is_absolute() {
+            bail!("Persisted file path must be relative to data_dir");
+        }
+        let full_path = data_dir.join(file);
+
         // TODO/FIXME: Concurrent writes can happen, and an older state can override a newer one
         // Example:
         // State 1 starts creating a tmp file data.state1.tmp
         // State 2 starts creating a tmp file data.state2.tmp
         // rename data.state2.tmp into store (atomic override)
         // rename data.state1.tmp into
+
         let salt: String = deterministic_rng()
             .sample_iter(&Alphanumeric)
             .take(8)
             .map(char::from)
             .collect();
-        let tmp = file.with_extension(format!("{salt}.tmp"));
-        debug!("Saving on disk in a tmp file {:?}", tmp.clone());
-        let mut buf_writer = BufWriter::new(log_error!(
-            fs::File::create(tmp.as_path()),
-            format!("Create tmp file {}", tmp.display())
-        )?);
-        log_error!(
-            borsh::to_writer(&mut buf_writer, store),
-            "Serializing Ctx chain"
-        )?;
 
+        let tmp_data = full_path.with_extension(format!("{salt}.tmp"));
+
+        debug!("Saving on disk in a tmp file {:?}", tmp_data.clone());
+
+        // Write data to temp file
+        let buf_writer = BufWriter::new(log_error!(
+            fs::File::create(tmp_data.as_path()),
+            "Create data file"
+        )?);
+        let mut checksum_writer = ChecksumWriter::new(buf_writer);
         log_error!(
-            buf_writer.flush(),
+            borsh::to_writer(&mut checksum_writer, store),
+            "Serializing {}",
+            type_name::<S>()
+        )?;
+        log_error!(
+            checksum_writer.flush(),
             "Flushing Buffer writer for store {}",
             type_name::<S>()
         )?;
-        debug!("Renaming {:?} to {:?}", &tmp, &file);
-        log_error!(fs::rename(tmp, file), "Rename file")?;
-        Ok(())
+
+        let checksum = checksum_writer.checksum();
+
+        // Atomically rename data file
+        debug!("Renaming {:?} to {:?}", &tmp_data, &full_path);
+        log_error!(fs::rename(&tmp_data, &full_path), "Rename data file")?;
+
+        Ok(checksum)
     }
 }
 
@@ -118,15 +204,18 @@ pub mod files {
     pub const CONSENSUS_BIN: &str = "consensus.bin";
 }
 
+type ModuleStarterFuture =
+    Pin<Box<dyn Future<Output = Result<ModulePersistOutput, Error>> + Send + 'static>>;
+
 struct ModuleStarter {
     pub name: &'static str,
-    starter: Pin<Box<dyn Future<Output = Result<(), Error>> + Send + 'static>>,
+    starter: ModuleStarterFuture,
 }
 
 pub mod signal {
     use std::any::TypeId;
 
-    use crate::{bus::BusMessage, utils::static_type_map::Pick};
+    use crate::{bus::BusMessage, modules::ModuleShutdownStatus, utils::static_type_map::Pick};
 
     #[derive(Clone, Debug)]
     pub struct PersistModule {}
@@ -139,6 +228,7 @@ pub mod signal {
     #[derive(Clone, Debug)]
     pub struct ShutdownCompleted {
         pub module: String,
+        pub shutdown_status: ModuleShutdownStatus,
     }
 
     impl BusMessage for PersistModule {}
@@ -305,50 +395,76 @@ bus_client! {
 pub struct ModulesHandler {
     bus: SharedMessageBus,
     modules: Vec<ModuleStarter>,
-    running_modules: Vec<&'static str>,
+    /// Data directory for manifest file
+    data_dir: PathBuf,
+    /// Track status for each module instance (keyed by module_id).
+    modules_statuses: HashMap<String, ModuleStatus>,
+    /// Startup order for shutdown sequencing (keyed by module_id).
+    module_shutdown_order: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ModuleShutdownStatus {
+    TimedOut,
+    PersistenceFailed,
+    PersistedEntries(ModulePersistOutput),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ModuleStatus {
+    Running,
+    Shutdown(ModuleShutdownStatus),
 }
 
 impl ModulesHandler {
-    pub async fn new(shared_bus: &SharedMessageBus) -> ModulesHandler {
+    pub async fn new(shared_bus: &SharedMessageBus, data_dir: PathBuf) -> ModulesHandler {
         let shared_message_bus = shared_bus.new_handle();
 
         ModulesHandler {
             bus: shared_message_bus,
             modules: vec![],
-            running_modules: vec![],
+            data_dir,
+            modules_statuses: HashMap::new(),
+            module_shutdown_order: Vec::new(),
         }
     }
 
     pub async fn start_modules(&mut self) -> Result<()> {
-        if !self.running_modules.is_empty() {
+        if self.has_running_modules() {
             bail!("Modules are already running!");
         }
+        self.modules_statuses.clear();
+        self.module_shutdown_order.clear();
 
         let mut seen_modules: HashSet<&'static str> = HashSet::new();
+        let mut last_module_name: Option<&'static str> = None;
         for module in self.modules.drain(..) {
-            if seen_modules.contains(&module.name)
-                && self.running_modules.last() != Some(&module.name)
-            {
+            if seen_modules.contains(&module.name) && last_module_name != Some(module.name) {
                 bail!(
                     "Module {} appears multiple times but is not consecutive",
                     module.name
                 );
             }
             seen_modules.insert(module.name);
-            self.running_modules.push(module.name);
+            last_module_name = Some(module.name);
+            let module_id = Self::build_module_id(module.name);
+            self.modules_statuses
+                .insert(module_id.clone(), ModuleStatus::Running);
+            self.module_shutdown_order.push(module_id.clone());
 
-            debug!("Starting module {}", module.name);
+            debug!(module = %module.name, module_id = %module_id, "Starting module");
 
             let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
             let mut shutdown_client2 = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
             tokio::spawn(async move {
+                let module_name = module.name;
                 let module_task = tokio::spawn(module.starter);
                 let timeout_task = tokio::spawn(async move {
                     loop {
                         if let Ok(signal::ShutdownModule { module: modname }) =
                             shutdown_client2.recv().await
                         {
-                            if modname == module.name {
+                            if modname == module_name {
                                 tokio::time::sleep(MODULE_SHUTDOWN_TIMEOUT).await;
                                 break;
                             }
@@ -356,41 +472,70 @@ impl ModulesHandler {
                     }
                 });
 
-                let res = tokio::select! {
-                    res = module_task => {
-                        res
-                    },
+                let (res, timed_out) = tokio::select! {
+                    res = module_task => (res, false),
                     _ = timeout_task => {
-                        Ok(Err(anyhow::anyhow!("Shutdown timeout reached")))
+                        (Ok(Err(anyhow::anyhow!("Shutdown timeout reached"))), true)
                     }
                 };
-                match res {
-                    Ok(Ok(())) => {
-                        tracing::warn!(module =% module.name, "Module {} exited with no error.", module.name);
+
+                let shutdown_status = if timed_out {
+                    ModuleShutdownStatus::TimedOut
+                } else {
+                    match res {
+                        Ok(Ok(entries)) => {
+                            tracing::info!(
+                                module = %module_name,
+                                module_id = %module_id,
+                                "Module {} exited and persisted {} file(s)",
+                                module_name,
+                                entries.len()
+                            );
+                            ModuleShutdownStatus::PersistedEntries(entries)
+                        }
+                        Ok(Err(e)) => {
+                            tracing::error!(
+                                module = %module_name,
+                                module_id = %module_id,
+                                "Module {} exited with error: {:?}",
+                                module_name,
+                                e
+                            );
+                            ModuleShutdownStatus::PersistenceFailed
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                module = %module_name,
+                                module_id = %module_id,
+                                "Module {} exited, error joining: {:?}",
+                                module_name,
+                                e
+                            );
+                            ModuleShutdownStatus::PersistenceFailed
+                        }
                     }
-                    Ok(Err(e)) => {
-                        tracing::error!(module =% module.name, "Module {} exited with error: {:?}", module.name, e);
-                    }
-                    Err(e) => {
-                        tracing::error!(module =% module.name, "Module {} exited, error joining: {:?}", module.name, e);
-                    }
-                }
+                };
 
                 _ = log_error!(
                     shutdown_client.send(signal::ShutdownCompleted {
-                        module: module.name.to_string(),
+                        module: module_id,
+                        shutdown_status
                     }),
                     "Sending ShutdownCompleted message"
                 );
             });
         }
 
+        _ = log_warn!(
+            checksums::remove_manifest(&self.data_dir),
+            "Removing manifest file"
+        );
         Ok(())
     }
 
     /// Setup a loop waiting for shutdown signals from modules
     pub async fn shutdown_loop(&mut self) -> Result<()> {
-        if self.running_modules.is_empty() {
+        if !self.has_running_modules() {
             return Ok(());
         }
 
@@ -400,19 +545,81 @@ impl ModulesHandler {
         handle_messages! {
             on_bus shutdown_client,
             listen<signal::ShutdownCompleted> msg => {
-                if let Some(idx) = self
-                    .running_modules
-                    .iter()
-                    .position(|module| *module == msg.module.as_str())
-                {
-                    self.running_modules.remove(idx);
+                let shutdown_status = msg.shutdown_status.clone();
+                match shutdown_status {
+                    ModuleShutdownStatus::TimedOut => {
+                        tracing::warn!(
+                            "Module {} timed out during shutdown, manifest will not be written",
+                            msg.module
+                        );
+                    }
+                    ModuleShutdownStatus::PersistenceFailed => {
+                        tracing::warn!(
+                            "Module {} failed to persist during shutdown, manifest will not be written",
+                            msg.module
+                        );
+                    }
+                    ModuleShutdownStatus::PersistedEntries(_) => {}
                 }
-                if self.running_modules.is_empty() {
+                self.modules_statuses
+                    .insert(msg.module.clone(), ModuleStatus::Shutdown(shutdown_status));
+                if !self.has_running_modules() {
                     break;
                 } else {
                     _ = self.shutdown_next_module().await;
                 }
             }
+        }
+
+        info!("All modules have been shut down");
+        let timed_out_modules: Vec<&str> = self
+            .modules_statuses
+            .iter()
+            .filter_map(|(module, status)| {
+                matches!(
+                    status,
+                    ModuleStatus::Shutdown(ModuleShutdownStatus::TimedOut)
+                )
+                .then_some(module.as_str())
+            })
+            .collect();
+        let persistence_failed_modules: Vec<&str> = self
+            .modules_statuses
+            .iter()
+            .filter_map(|(module, status)| {
+                matches!(
+                    status,
+                    ModuleStatus::Shutdown(ModuleShutdownStatus::PersistenceFailed)
+                )
+                .then_some(module.as_str())
+            })
+            .collect();
+        let has_shutdown_errors =
+            !timed_out_modules.is_empty() || !persistence_failed_modules.is_empty();
+
+        let persisted_entries: ModulePersistOutput = self
+            .modules_statuses
+            .values()
+            .flat_map(|status| match status {
+                ModuleStatus::Shutdown(ModuleShutdownStatus::PersistedEntries(entries)) => {
+                    entries.clone()
+                }
+                _ => Vec::new(),
+            })
+            .collect();
+
+        // Write manifest if no shutdown errors occurred
+        if !has_shutdown_errors && !persisted_entries.is_empty() {
+            _ = log_error!(
+                write_manifest(&self.data_dir, &persisted_entries),
+                "Writing checksum manifest"
+            );
+        } else if has_shutdown_errors {
+            tracing::warn!(
+                timed_out_modules = ?timed_out_modules,
+                persistence_failed_modules = ?persistence_failed_modules,
+                "Skipping manifest write due to module shutdown errors"
+            );
         }
 
         Ok(())
@@ -421,7 +628,8 @@ impl ModulesHandler {
     /// Shutdown modules in reverse order (start A, B, C, shutdown C, B, A)
     async fn shutdown_next_module(&mut self) -> Result<()> {
         let mut shutdown_client = ShutdownClient::new_from_bus(self.bus.new_handle()).await;
-        if let Some(module_name) = self.running_modules.last() {
+        if let Some(module_id) = self.next_running_module_id() {
+            let module_name = Self::module_name_from_id(module_id);
             _ = log_error!(
                 shutdown_client.send(signal::ShutdownModule {
                     module: module_name.to_string(),
@@ -482,7 +690,7 @@ impl ModulesHandler {
         Ok(())
     }
 
-    async fn run_module<M>(mut module: M) -> Result<()>
+    async fn run_module<M>(mut module: M) -> Result<ModulePersistOutput>
     where
         M: Module,
     {
@@ -511,402 +719,38 @@ impl ModulesHandler {
         });
         Ok(())
     }
+
+    fn has_running_modules(&self) -> bool {
+        self.modules_statuses
+            .values()
+            .any(|status| matches!(status, ModuleStatus::Running))
+    }
+
+    fn next_running_module_id(&self) -> Option<&String> {
+        self.module_shutdown_order.iter().rev().find(|module_id| {
+            matches!(
+                self.modules_statuses.get(*module_id),
+                Some(ModuleStatus::Running)
+            )
+        })
+    }
+
+    fn module_name_from_id(module_id: &str) -> &str {
+        module_id
+            .split_once(MODULE_ID_SEPARATOR)
+            .map(|(module_name, _)| module_name)
+            .unwrap_or(module_id)
+    }
+
+    fn build_module_id(module_name: &str) -> String {
+        let unique_id: String = deterministic_rng()
+            .sample_iter(&Alphanumeric)
+            .take(8)
+            .map(char::from)
+            .collect();
+        format!("{module_name}{MODULE_ID_SEPARATOR}{unique_id}")
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::bus::{dont_use_this::get_receiver, metrics::BusMetrics};
-
-    use super::*;
-    use crate::bus::SharedMessageBus;
-    use signal::{ShutdownCompleted, ShutdownModule};
-    use std::{fs::File, sync::Arc};
-    use tempfile::tempdir;
-    use tokio::sync::Mutex;
-
-    #[derive(Default, borsh::BorshSerialize, borsh::BorshDeserialize)]
-    struct TestStruct {
-        value: u32,
-    }
-
-    struct TestModule<T> {
-        bus: TestBusClient,
-        _field: T,
-    }
-
-    module_bus_client! {
-        struct TestBusClient { sender(usize), }
-    }
-
-    macro_rules! test_module {
-        ($bus_client:ty, $tag:ty) => {
-            impl Module for TestModule<$tag> {
-                type Context = ();
-                async fn build(bus: SharedMessageBus, _ctx: Self::Context) -> Result<Self> {
-                    Ok(TestModule {
-                        bus: <$bus_client>::new_from_bus(bus).await,
-                        _field: Default::default(),
-                    })
-                }
-
-                async fn run(&mut self) -> Result<()> {
-                    let nb_shutdowns: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
-                    let cloned = Arc::clone(&nb_shutdowns);
-                    module_handle_messages! {
-                        on_self self,
-                        _ = async {
-                            let mut guard = cloned.lock().await;
-                            (*guard) += 1;
-                            std::future::pending::<()>().await
-                        } => { }
-                    };
-
-                    self.bus.send(*cloned.lock().await).expect(
-                        "Error while sending the number of loop cancellations while shutting down",
-                    );
-
-                    Ok(())
-                }
-            }
-        };
-    }
-
-    test_module!(TestBusClient, String);
-    test_module!(TestBusClient, usize);
-    test_module!(TestBusClient, bool);
-
-    // Failing module by breaking event loop
-
-    impl Module for TestModule<u64> {
-        type Context = ();
-        async fn build(bus: SharedMessageBus, _ctx: Self::Context) -> Result<Self> {
-            Ok(TestModule {
-                bus: TestBusClient::new_from_bus(bus).await,
-                _field: Default::default(),
-            })
-        }
-
-        async fn run(&mut self) -> Result<()> {
-            module_handle_messages! {
-                on_self self,
-                _ = async { } => {
-                    break;
-                }
-            };
-
-            Ok(())
-        }
-    }
-
-    // Failing module by early exit (no shutdown completed event emitted)
-
-    impl Module for TestModule<u32> {
-        type Context = ();
-        async fn build(bus: SharedMessageBus, _ctx: Self::Context) -> Result<Self> {
-            Ok(TestModule {
-                bus: TestBusClient::new_from_bus(bus).await,
-                _field: Default::default(),
-            })
-        }
-
-        async fn run(&mut self) -> Result<()> {
-            panic!("bruh");
-        }
-    }
-
-    #[test]
-    fn test_load_from_disk_or_default() {
-        let dir = tempdir().unwrap();
-        let file_path = dir.path().join("test_file");
-
-        // Write a valid TestStruct to the file
-        let mut file = File::create(&file_path).unwrap();
-        let test_struct = TestStruct { value: 42 };
-        borsh::to_writer(&mut file, &test_struct).unwrap();
-
-        // Load the struct from the file
-        let loaded_struct: TestStruct = TestModule::<usize>::load_from_disk_or_default(&file_path);
-        assert_eq!(loaded_struct.value, 42);
-
-        // Load from a non-existent file
-        let non_existent_path = dir.path().join("non_existent_file");
-        let default_struct: TestStruct =
-            TestModule::<usize>::load_from_disk_or_default(&non_existent_path);
-        assert_eq!(default_struct.value, 0);
-    }
-
-    #[test_log::test]
-    fn test_save_on_disk() {
-        let dir = tempdir().unwrap();
-        let file_path = dir.path().join("test_file.data");
-
-        let test_struct = TestStruct { value: 42 };
-        TestModule::<usize>::save_on_disk(&file_path, &test_struct).unwrap();
-
-        // Load the struct from the file to verify it was saved correctly
-        let loaded_struct: TestStruct = TestModule::<usize>::load_from_disk_or_default(&file_path);
-        assert_eq!(loaded_struct.value, 42);
-    }
-
-    #[tokio::test]
-    async fn test_build_module() {
-        let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
-        let mut handler = ModulesHandler::new(&shared_bus).await;
-        handler.build_module::<TestModule<usize>>(()).await.unwrap();
-        assert_eq!(handler.modules.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_add_module() {
-        let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
-        let mut handler = ModulesHandler::new(&shared_bus).await;
-        let module = TestModule {
-            bus: TestBusClient::new_from_bus(shared_bus.new_handle()).await,
-            _field: 2_usize,
-        };
-
-        handler.add_module(module).unwrap();
-        assert_eq!(handler.modules.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_start_modules() {
-        let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
-        let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
-        let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-        let mut handler = ModulesHandler::new(&shared_bus).await;
-        handler.build_module::<TestModule<usize>>(()).await.unwrap();
-
-        _ = handler.start_modules().await;
-        _ = handler.shutdown_next_module().await;
-
-        assert_eq!(
-            shutdown_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<usize>>().to_string()
-        );
-
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<usize>>().to_string()
-        );
-    }
-
-    // When modules are started in the following order A, B, C, they should be closed in the reverse order C, B, A
-    #[tokio::test]
-    async fn test_start_stop_modules_in_order() {
-        let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
-        let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
-        let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-        let mut handler = ModulesHandler::new(&shared_bus).await;
-
-        handler.build_module::<TestModule<usize>>(()).await.unwrap();
-        handler
-            .build_module::<TestModule<String>>(())
-            .await
-            .unwrap();
-        _ = handler.start_modules().await;
-        _ = handler.shutdown_modules().await;
-
-        // Shutdown last module first
-        assert_eq!(
-            shutdown_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<String>>().to_string()
-        );
-
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<String>>().to_string()
-        );
-
-        // Then first module at last
-        assert_eq!(
-            shutdown_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<usize>>().to_string()
-        );
-
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<usize>>().to_string()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_shutdown_duplicate_modules() {
-        let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
-        let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
-        let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-        let mut handler = ModulesHandler::new(&shared_bus).await;
-
-        handler.build_module::<TestModule<usize>>(()).await.unwrap();
-        handler.build_module::<TestModule<usize>>(()).await.unwrap();
-
-        _ = handler.start_modules().await;
-        _ = handler.shutdown_modules().await;
-
-        let module_name = std::any::type_name::<TestModule<usize>>().to_string();
-
-        assert_eq!(shutdown_receiver.recv().await.unwrap().module, module_name);
-        assert_eq!(shutdown_receiver.recv().await.unwrap().module, module_name);
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            module_name
-        );
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            module_name
-        );
-    }
-
-    #[tokio::test]
-    async fn test_shutdown_modules_exactly_once() {
-        let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
-        let mut cancellation_counter_receiver = get_receiver::<usize>(&shared_bus).await;
-        let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-        let mut handler = ModulesHandler::new(&shared_bus).await;
-
-        handler.build_module::<TestModule<usize>>(()).await.unwrap();
-        handler
-            .build_module::<TestModule<String>>(())
-            .await
-            .unwrap();
-        handler.build_module::<TestModule<bool>>(()).await.unwrap();
-
-        _ = handler.start_modules().await;
-        _ = tokio::time::sleep(Duration::from_millis(100)).await;
-        _ = handler.shutdown_modules().await;
-
-        // Shutdown last module first
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<bool>>().to_string()
-        );
-
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<String>>().to_string()
-        );
-
-        // Then first module at last
-
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<usize>>().to_string()
-        );
-
-        assert_eq!(
-            cancellation_counter_receiver
-                .try_recv()
-                .expect("1")
-                .into_message(),
-            1
-        );
-        assert_eq!(
-            cancellation_counter_receiver
-                .try_recv()
-                .expect("1")
-                .into_message(),
-            1
-        );
-        assert_eq!(
-            cancellation_counter_receiver
-                .try_recv()
-                .expect("1")
-                .into_message(),
-            1
-        );
-    }
-
-    // in case a module fails, it will emit a shutdowncompleted event that will trigger the shutdown loop and shut all other modules
-    // All other modules are shut in the right order
-    #[tokio::test]
-    async fn test_shutdown_all_modules_if_one_fails() {
-        let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
-        let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-        let mut handler = ModulesHandler::new(&shared_bus).await;
-
-        handler.build_module::<TestModule<usize>>(()).await.unwrap();
-        handler
-            .build_module::<TestModule<String>>(())
-            .await
-            .unwrap();
-        handler.build_module::<TestModule<u64>>(()).await.unwrap();
-        handler.build_module::<TestModule<bool>>(()).await.unwrap();
-
-        _ = handler.start_modules().await;
-
-        // Starting shutdown loop should shut all modules because one failed immediately
-
-        _ = handler.shutdown_loop().await;
-
-        // u64 module fails first, emits two events, one because it is the first task to end,
-        // and the other because it finished to shutdown correctly
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<u64>>().to_string()
-        );
-
-        // Shutdown last module first
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<bool>>().to_string()
-        );
-
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<String>>().to_string()
-        );
-
-        // Then first module at last
-
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<usize>>().to_string()
-        );
-    }
-
-    // in case a module panics,
-    // the module panic listener will know the task has ended, and will trigger a shutdown completed event
-    // the other modules will shut in the right order
-    #[tokio::test]
-    async fn test_shutdown_all_modules_if_one_module_panics() {
-        let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
-        let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-        let mut handler = ModulesHandler::new(&shared_bus).await;
-
-        handler.build_module::<TestModule<usize>>(()).await.unwrap();
-        handler
-            .build_module::<TestModule<String>>(())
-            .await
-            .unwrap();
-        handler.build_module::<TestModule<u32>>(()).await.unwrap();
-        handler.build_module::<TestModule<bool>>(()).await.unwrap();
-
-        _ = handler.start_modules().await;
-
-        // Starting shutdown loop should shut all modules because one failed immediately
-
-        _ = handler.shutdown_loop().await;
-
-        // u32 module failed with panic, but the event should be emitted
-
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<u32>>().to_string()
-        );
-
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<bool>>().to_string()
-        );
-
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<String>>().to_string()
-        );
-
-        assert_eq!(
-            shutdown_completed_receiver.recv().await.unwrap().module,
-            std::any::type_name::<TestModule<usize>>().to_string()
-        );
-    }
-}
+mod tests;
