@@ -187,6 +187,14 @@ impl LaneId {
         &self.suffix
     }
 
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(self.operator.0.len() + 1 + self.suffix.len());
+        bytes.extend_from_slice(&self.operator.0);
+        bytes.push(b'-');
+        bytes.extend_from_slice(self.suffix.as_bytes());
+        bytes
+    }
+
     #[cfg(feature = "full")]
     pub fn update_hasher<D: Digest>(&self, hasher: &mut D) {
         hasher.update(&self.operator.0);
