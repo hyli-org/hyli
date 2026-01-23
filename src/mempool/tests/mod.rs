@@ -204,6 +204,7 @@ impl MempoolTestCtx {
 
         self.mempool.resume_new_data_proposal(lane_id).await?;
 
+        self.process_dissemination_events().await?;
         self.disseminate_owned_lanes().await
     }
 
