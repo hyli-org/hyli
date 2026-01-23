@@ -55,6 +55,8 @@ pub struct Genesis {
     bus: GenesisBusClient,
     peer_pubkey: PeerPublicKeyMap,
     crypto: SharedBlstCrypto,
+    peer_timestamps: Vec<TimestampMs>,
+    start_timestamp: TimestampMs,
 }
 
 impl Module for Genesis {
@@ -66,6 +68,8 @@ impl Module for Genesis {
             bus,
             peer_pubkey: BTreeMap::new(),
             crypto: ctx.crypto.clone(),
+            peer_timestamps: Vec::new(),
+            start_timestamp: ctx.start_timestamp,
         })
     }
 
@@ -127,6 +131,7 @@ impl Genesis {
             self.config.id.clone(),
             self.crypto.validator_pubkey().clone(),
         );
+        self.peer_timestamps.push(self.start_timestamp.clone());
 
         // Wait until we've connected with all other genesis peers.
         // (We've already checked we're part of the stakers, so if we're alone carry on).
@@ -136,7 +141,7 @@ impl Genesis {
                 on_bus self.bus,
                 listen<PeerEvent> msg => {
                     match msg {
-                        PeerEvent::NewPeer { name, pubkey, height, .. } => {
+                        PeerEvent::NewPeer { name, pubkey, height, timestamp, .. } => {
                             if !self.config.genesis.stakers.contains_key(&name) {
                                 continue;
                             }
@@ -150,6 +155,7 @@ impl Genesis {
 
                             info!("🌱 New peer {}({}) added to genesis", &name, &pubkey);
                             self.peer_pubkey.insert(name.clone(), pubkey.clone());
+                            self.peer_timestamps.push(timestamp.clone());
 
                             // Once we know everyone in the initial quorum, craft & process the genesis block.
                             if self.peer_pubkey.len() == self.config.genesis.stakers.len() {
@@ -178,7 +184,23 @@ impl Genesis {
             }
         };
 
-        let signed_block = self.make_genesis_block(genesis_txs, initial_validators);
+        // Calculate mean timestamp from all peers (rounded)
+        let genesis_timestamp = if self.config.consensus.genesis_timestamp != 0 {
+            info!(
+                "🌱 Using configured genesis timestamp of {} ms for genesis block",
+                self.config.consensus.genesis_timestamp * 1000
+            );
+            TimestampMs((self.config.consensus.genesis_timestamp * 1000) as u128)
+        } else {
+            let sum: f64 = self.peer_timestamps.iter().map(|t| t.0 as f64).sum();
+            let mean = (sum / self.peer_timestamps.len() as f64).round();
+
+            info!("🌱 Using mean timestamp of {} ms for genesis block", mean);
+            TimestampMs(mean as u128)
+        };
+
+        let signed_block =
+            self.make_genesis_block(genesis_txs, initial_validators, genesis_timestamp);
 
         // At this point, we can setup the genesis block.
         _ = self.bus.send(GenesisEvent::GenesisBlock(signed_block));
@@ -655,6 +677,7 @@ impl Genesis {
         &self,
         genesis_txs: Vec<Transaction>,
         initial_validators: Vec<ValidatorPublicKey>,
+        mean_timestamp: TimestampMs,
     ) -> SignedBlock {
         // TODO: do something better?
         let round_leader = initial_validators
@@ -672,8 +695,7 @@ impl Genesis {
             },
             consensus_proposal: ConsensusProposal {
                 slot: 0,
-                // TODO: genesis block should have a consistent, up-to-date timestamp
-                timestamp: TimestampMs((self.config.consensus.genesis_timestamp * 1000) as u128),
+                timestamp: mean_timestamp,
                 // TODO: We aren't actually storing the data proposal above, so we cannot store it here,
                 // or we might mistakenly request data from that cut, but mempool hasn't seen it.
                 // This should be fixed by storing the data proposal in mempool or handling this whole thing differently.
@@ -732,6 +754,8 @@ mod tests {
                 bus,
                 peer_pubkey: BTreeMap::new(),
                 crypto,
+                peer_timestamps: Vec::new(),
+                start_timestamp: TimestampMs(1000000),
             },
             test_bus,
         )
@@ -799,6 +823,7 @@ mod tests {
             pubkey: ValidatorPublicKey("aaa".into()),
             da_address: "".into(),
             height: BlockHeight(0),
+            timestamp: TimestampMs(1000000),
         })
         .expect("send");
 
@@ -836,6 +861,7 @@ mod tests {
             pubkey: node_1_pubkey.clone(),
             height: BlockHeight(0),
             da_address: "".into(),
+            timestamp: TimestampMs(1000000),
         })
         .expect("send");
 
@@ -874,6 +900,7 @@ mod tests {
             pubkey: BlstCrypto::new(name).unwrap().validator_pubkey().clone(),
             height: BlockHeight(height),
             da_address: "".into(),
+            timestamp: TimestampMs(1000000),
         };
         let rec1: GenesisEvent = {
             let (mut genesis, mut bus) = new(config.clone()).await;
@@ -920,6 +947,7 @@ mod tests {
             pubkey: BlstCrypto::new(name).unwrap().validator_pubkey().clone(),
             height: BlockHeight(height),
             da_address: "".into(),
+            timestamp: TimestampMs(1000000),
         };
 
         let rec1: GenesisEvent = {
@@ -968,6 +996,7 @@ mod tests {
                 .clone(),
             height: BlockHeight(1),
             da_address: "".into(),
+            timestamp: TimestampMs(1000000),
         })
         .expect("send");
 
@@ -1008,6 +1037,7 @@ mod tests {
                 .clone(),
             height: BlockHeight(0),
             da_address: "".into(),
+            timestamp: TimestampMs(1000000),
         })
         .expect("send");
 
@@ -1020,6 +1050,7 @@ mod tests {
                 .clone(),
             height: BlockHeight(0),
             da_address: "".into(),
+            timestamp: TimestampMs(1000000),
         })
         .expect("send");
 

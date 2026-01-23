@@ -42,6 +42,7 @@ use hyli_modules::{
     },
     utils::db::use_fresh_db,
 };
+use hyli_net::clock::TimestampMsClock;
 use hyllar::Hyllar;
 use prometheus::Registry;
 use smt_token::account::AccountSMT;
@@ -217,6 +218,9 @@ async fn common_main(
 
     welcome_message(&config);
     info!("Starting node with config: {:?}", &config);
+
+    // Capture node start timestamp for use across all modules
+    let start_timestamp = TimestampMsClock::now();
 
     let registry = Registry::new();
     // Init global metrics meter we expose as an endpoint
@@ -402,6 +406,7 @@ async fn common_main(
             start_height: node_state_override
                 .as_ref()
                 .map(|node_state| node_state.current_height),
+            start_timestamp,
         };
 
         handler

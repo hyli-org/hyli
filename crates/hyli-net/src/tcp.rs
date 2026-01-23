@@ -202,6 +202,7 @@ impl TcpMessageLabel for TcpMessage {
     }
 }
 
+#[expect(clippy::large_enum_variant)]
 #[derive(Debug, Clone, BorshDeserialize, BorshSerialize, PartialEq)]
 pub enum P2PTcpMessage<Data: BorshDeserialize + BorshSerialize> {
     Handshake(Handshake),
@@ -302,6 +303,7 @@ pub struct NodeConnectionData {
     pub current_height: u64,
     pub p2p_public_address: String,
     pub da_public_address: String,
+    pub start_timestamp: TimestampMs,
     // TODO: add known peers
     // pub peers: Vec<String>, // List of known peers
 }

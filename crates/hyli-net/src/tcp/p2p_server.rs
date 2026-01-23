@@ -49,6 +49,7 @@ pub enum P2PServerEvent<Msg> {
         pubkey: ValidatorPublicKey,
         height: u64,
         da_address: String,
+        start_timestamp: TimestampMs,
     },
     P2PMessage {
         msg: Msg,
@@ -128,6 +129,7 @@ where
     // Serialization of messages can take time so we offload them.
     canal_jobs: HashMap<Canal, OrderedJoinSet<CanalJob>>,
     timeouts: P2PTimeouts,
+    start_timestamp: TimestampMs,
     _phantom: std::marker::PhantomData<Msg>,
 }
 
@@ -145,6 +147,7 @@ where
         node_da_public_address: String,
         canals: HashSet<Canal>,
         timeouts: P2PTimeouts,
+        start_timestamp: TimestampMs,
     ) -> Result<Self, anyhow::Error> {
         Ok(Self {
             crypto,
@@ -172,6 +175,7 @@ where
                 .map(|canal| (canal, OrderedJoinSet::new()))
                 .collect(),
             timeouts,
+            start_timestamp,
             _phantom: std::marker::PhantomData,
         })
     }
@@ -783,6 +787,7 @@ where
                 pubkey: v.signature.validator.clone(),
                 da_address: v.msg.da_public_address.clone(),
                 height: v.msg.current_height,
+                start_timestamp: v.msg.start_timestamp.clone(),
             });
         }
 
@@ -831,6 +836,7 @@ where
             current_height: self.current_height,
             p2p_public_address: self.node_p2p_public_address.clone(),
             da_public_address: self.node_da_public_address.clone(),
+            start_timestamp: self.start_timestamp.clone(),
         };
         self.crypto.sign(node_connection_data)
     }
@@ -1232,6 +1238,7 @@ pub mod tests {
     use opentelemetry_sdk::Resource;
     use tokio::net::TcpListener;
 
+    use crate::clock::TimestampMsClock;
     use crate::tcp::{
         p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent, TcpMessageLabel,
     };
@@ -1302,6 +1309,7 @@ pub mod tests {
             "127.0.0.1:4321".into(), // send some dummy address for DA,
             HashSet::from_iter(vec![Canal::new("A"), Canal::new("B")]),
             super::P2PTimeouts::default(),
+            TimestampMsClock::now(),
         )
         .await?;
         let p2p_server2 = P2PServer::new(
@@ -1313,6 +1321,7 @@ pub mod tests {
             "127.0.0.1:4321".into(), // send some dummy address for DA
             HashSet::from_iter(vec![Canal::new("A"), Canal::new("B")]),
             super::P2PTimeouts::default(),
+            TimestampMsClock::now(),
         )
         .await?;
 
