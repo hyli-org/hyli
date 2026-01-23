@@ -22,6 +22,7 @@ use anyhow::{bail, Context, Result};
 use axum::Router;
 use hydentity::Hydentity;
 use hyli_crypto::SharedBlstCrypto;
+use hyli_net::clock::TimestampMsClock;
 use hyli_modules::{
     log_error,
     modules::{
@@ -218,6 +219,9 @@ async fn common_main(
     welcome_message(&config);
     info!("Starting node with config: {:?}", &config);
 
+    // Capture node start timestamp for use across all modules
+    let start_timestamp = TimestampMsClock::now();
+
     let registry = Registry::new();
     // Init global metrics meter we expose as an endpoint
     let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
@@ -402,6 +406,7 @@ async fn common_main(
             start_height: node_state_override
                 .as_ref()
                 .map(|node_state| node_state.current_height),
+            start_timestamp,
         };
 
         handler
