@@ -4,7 +4,7 @@ use crate::model::ValidatorPublicKey;
 use anyhow::Context;
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_crypto::BlstCrypto;
-use hyli_model::{BlockHeight, SignedByValidator};
+use hyli_model::{utils::TimestampMs, BlockHeight, SignedByValidator};
 use hyli_modules::bus::BusMessage;
 use hyli_net::clock::TimestampMsClock;
 use hyli_net::tcp::{P2PTcpMessage, TcpMessageLabel};
@@ -48,6 +48,7 @@ pub enum PeerEvent {
         pubkey: ValidatorPublicKey,
         da_address: String,
         height: BlockHeight,
+        timestamp: TimestampMs,
     },
 }
 
