@@ -172,15 +172,16 @@ impl GcsUploader {
         let semaphore = self.upload_semaphore.clone();
         let timestamp_folder = self.ctx.genesis_timestamp_folder.clone();
 
-        // Serialize block before spawning to avoid holding SignedBlock across await
-        let data = borsh::to_vec(&block).expect("Failed to serialize SignedBlock");
-
         self.upload_tasks.spawn(async move {
             // Acquire permit - this will wait if at capacity
             let _permit = semaphore.acquire().await.expect("Semaphore closed");
 
+            let data = borsh::to_vec(&block).expect("Failed to serialize SignedBlock");
+
             // Build object name with timestamp folder if available
             let object_name = format!("{}/{}/block_{}.bin", prefix, timestamp_folder, block_height);
+
+            let now = std::time::Instant::now();
 
             match gcs_client
                 .write_object(bucket_path, object_name.clone(), Bytes::from(data))
@@ -188,7 +189,14 @@ impl GcsUploader {
                 .send_unbuffered()
                 .await
             {
-                Ok(_) => (block_height, Ok(())),
+                Ok(_) => {
+                    let elapsed = now.elapsed();
+                    info!(
+                        "Successfully uploaded block {} to GCS in {:.2?}",
+                        block_height, elapsed
+                    );
+                    (block_height, Ok(()))
+                }
                 Err(e) => (block_height, Err(e.to_string())),
             }
             // _permit is dropped here, releasing the semaphore slot
@@ -201,7 +209,6 @@ impl GcsUploader {
     ) {
         match result {
             Ok((height, Ok(()))) => {
-                info!("Successfully uploaded block {} to GCS bucket", height);
                 self.metrics.record_success(height);
             }
             Ok((height, Err(e))) => {
