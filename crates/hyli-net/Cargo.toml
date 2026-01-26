@@ -13,6 +13,7 @@ sdk = { workspace = true, features = ["full-model"] }
 hyli-crypto = { workspace = true }
 hyli-turmoil-shims = { workspace = true }
 hyli-bus = { workspace = true, optional = true }
+hyli-telemetry = { workspace = true }
 
 anyhow = { workspace = true }
 borsh = { workspace = true }

@@ -25,7 +25,7 @@ use hyli_net::{
 use network::{
     IntoHeaderSignableData, MsgHeader, MsgWithHeader, NetMessage, OutboundMessage, PeerEvent,
 };
-use opentelemetry::{metrics::Histogram, InstrumentationScope};
+use hyli_telemetry::{Histogram, KeyValue};
 use tracing::{info, trace, warn, Instrument};
 
 pub mod network;
@@ -62,8 +62,7 @@ impl Module for P2P {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus_client = P2PBusClient::new_from_bus(bus.new_handle()).await;
 
-        let scope = InstrumentationScope::builder(ctx.config.id.clone()).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+        let my_meter = hyli_telemetry::global_meter_with_id_or_panic(ctx.config.id.clone());
 
         Ok(P2P {
             config: ctx.config.clone(),
@@ -216,8 +215,8 @@ impl P2P {
         self.netmessage_delay.record(
             header.timestamp.abs_diff(TimestampMsClock::now().0) as u64,
             &[
-                opentelemetry::KeyValue::new("msg_type", msg_type),
-                opentelemetry::KeyValue::new("validator_pubkey", validator.to_string()),
+                KeyValue::new("msg_type", msg_type),
+                KeyValue::new("validator_pubkey", validator.to_string()),
             ],
         );
     }

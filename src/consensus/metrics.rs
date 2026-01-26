@@ -1,7 +1,4 @@
-use opentelemetry::{
-    metrics::{Counter, Gauge},
-    InstrumentationScope,
-};
+use hyli_telemetry::{global_meter_with_id_or_panic, Counter, Gauge};
 
 #[repr(u64)]
 #[derive(Clone, Copy)]
@@ -50,8 +47,7 @@ macro_rules! build {
 
 impl ConsensusMetrics {
     pub fn global(id: String) -> ConsensusMetrics {
-        let scope = InstrumentationScope::builder(id).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+        let my_meter = global_meter_with_id_or_panic(id);
 
         ConsensusMetrics {
             current_slot: build!(my_meter, gauge, "current_slot"),

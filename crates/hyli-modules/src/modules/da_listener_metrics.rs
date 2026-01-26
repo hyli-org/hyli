@@ -1,7 +1,4 @@
-use opentelemetry::{
-    metrics::{Counter, Gauge},
-    InstrumentationScope, KeyValue,
-};
+use hyli_telemetry::{global_meter_with_id_or_panic, Counter, Gauge, KeyValue};
 
 #[derive(Debug, Clone)]
 pub struct DaTcpClientMetrics {
@@ -13,8 +10,7 @@ pub struct DaTcpClientMetrics {
 
 impl DaTcpClientMetrics {
     pub fn global(node_name: String, module_name: &'static str) -> DaTcpClientMetrics {
-        let scope = InstrumentationScope::builder(node_name).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+        let my_meter = global_meter_with_id_or_panic(node_name);
 
         DaTcpClientMetrics {
             module_name,

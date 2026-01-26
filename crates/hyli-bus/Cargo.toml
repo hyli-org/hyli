@@ -29,6 +29,7 @@ tracing-subscriber = { workspace = true, features = [
 tokio = { workspace = true, features = ["full", "tracing"] }
 
 opentelemetry = { workspace = true }
+hyli-telemetry = { workspace = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 tracing-opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }

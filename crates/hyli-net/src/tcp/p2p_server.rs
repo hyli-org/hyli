@@ -1229,7 +1229,8 @@ pub mod tests {
     use anyhow::Result;
     use borsh::{BorshDeserialize, BorshSerialize};
     use hyli_crypto::BlstCrypto;
-    use opentelemetry::KeyValue;
+    use hyli_telemetry::init_global_meter_provider;
+    use hyli_telemetry::KeyValue;
     use opentelemetry_sdk::metrics::{
         data::{self, Sum},
         reader::MetricReader,
@@ -1400,7 +1401,7 @@ pub mod tests {
             let provider = SdkMeterProvider::builder()
                 .with_reader(reader.clone())
                 .build();
-            opentelemetry::global::set_meter_provider(provider.clone());
+            init_global_meter_provider(provider.clone());
             TestMetrics {
                 reader,
                 _provider: provider,

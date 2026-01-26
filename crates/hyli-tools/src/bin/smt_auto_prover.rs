@@ -7,6 +7,7 @@ use client_sdk::{
     contract_indexer::utoipa::OpenApi, helpers::risc0::Risc0Prover, rest_client::NodeApiHttpClient,
 };
 use hyli_contract_sdk::api::NodeInfo;
+use hyli_telemetry::init_prometheus_registry_meter_provider;
 use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
@@ -20,7 +21,6 @@ use hyli_modules::{
     },
     utils::logger::setup_tracing,
 };
-use prometheus::Registry;
 use serde::{Deserialize, Serialize};
 use smt_token::client::tx_executor_handler::SmtTokenProvableState;
 
@@ -46,18 +46,9 @@ async fn main() -> Result<()> {
 
     tracing::info!("Setting up modules");
 
-    let registry = Registry::new();
     // Init global metrics meter we expose as an endpoint
-    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-        .with_reader(
-            opentelemetry_prometheus::exporter()
-                .with_registry(registry.clone())
-                .build()
-                .context("starting prometheus exporter")?,
-        )
-        .build();
-
-    opentelemetry::global::set_meter_provider(provider.clone());
+    let _registry =
+        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
     let node_client =
         Arc::new(NodeApiHttpClient::new(config.node_url.clone()).context("build node client")?);

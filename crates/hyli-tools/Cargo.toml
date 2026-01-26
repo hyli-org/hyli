@@ -34,6 +34,7 @@ hyli-turmoil-shims = { workspace = true }
 hyli-model = { workspace = true }
 smt-token = { workspace = true, features = ["client"] }
 hyli-registry = { workspace = true }
+hyli-telemetry = { workspace = true }
 
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["std"] }

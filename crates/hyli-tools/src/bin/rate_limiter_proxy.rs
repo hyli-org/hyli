@@ -12,6 +12,9 @@ use chrono::{Local, NaiveDate};
 use clap::Parser;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
+use hyli_telemetry::{
+    global_meter_with_id_or_panic, init_prometheus_registry_meter_provider, Counter, Gauge, KeyValue,
+};
 use hyli_model::api::APIRegisterContract;
 use hyli_model::{BlobTransaction, ContractName, Identity, RegisterContractAction};
 use hyli_modules::{modules::rest::handle_panic, utils::logger::setup_tracing};
@@ -21,10 +24,6 @@ use hyper_util::{
     rt::TokioExecutor,
 };
 use notify::{Event, RecursiveMode, Watcher};
-use opentelemetry::{
-    InstrumentationScope, KeyValue,
-    metrics::{Counter, Gauge},
-};
 use prometheus::{Encoder, Registry, TextEncoder};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -487,18 +486,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Listen address: {}", proxy_config.listen_addr);
     tracing::info!("Target URL: {}", proxy_config.target_url);
 
-    let registry = Registry::new();
     // Init global metrics meter we expose as an endpoint
-    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-        .with_reader(
-            opentelemetry_prometheus::exporter()
-                .with_registry(registry.clone())
-                .build()
-                .context("starting prometheus exporter")?,
-        )
-        .build();
-
-    opentelemetry::global::set_meter_provider(provider.clone());
+    let registry =
+        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
     // Configure HTTP connector for better load balancing with headless k8s services
     // Set idle timeout to force DNS re-resolution and distribute load across pods
@@ -649,8 +639,7 @@ struct RateLimiterMetrics {
 
 impl RateLimiterMetrics {
     pub fn global(node_name: String) -> RateLimiterMetrics {
-        let scope = InstrumentationScope::builder(node_name).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+        let my_meter = global_meter_with_id_or_panic(node_name);
 
         let rate_limiter = "proxy_limit";
 

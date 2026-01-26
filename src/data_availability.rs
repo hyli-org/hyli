@@ -7,10 +7,7 @@ use hyli_modules::utils::da_codec::{DataAvailabilityClient, DataAvailabilityServ
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::TcpEvent;
-use opentelemetry::{
-    metrics::{Counter, Gauge},
-    InstrumentationScope, KeyValue,
-};
+use hyli_telemetry::{global_meter_with_id_or_panic, Counter, Gauge, KeyValue};
 use tokio::task::JoinHandle;
 
 use crate::{
@@ -135,8 +132,7 @@ impl Default for DaCatchupMetrics {
 
 impl DaCatchupMetrics {
     pub fn global(node_name: String) -> DaCatchupMetrics {
-        let scope = InstrumentationScope::builder(node_name).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+        let my_meter = global_meter_with_id_or_panic(node_name);
         DaCatchupMetrics {
             start: my_meter.u64_counter("da_catchup_start").build(),
             restart: my_meter.u64_counter("da_catchup_restart").build(),

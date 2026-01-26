@@ -1,7 +1,4 @@
-use opentelemetry::{
-    metrics::{Counter, Gauge, Histogram},
-    InstrumentationScope, KeyValue,
-};
+use hyli_telemetry::{global_meter_with_id_or_panic, Counter, Gauge, Histogram, KeyValue};
 
 use crate::tcp::Canal;
 
@@ -35,8 +32,7 @@ pub(crate) struct P2PMetrics {
 
 impl P2PMetrics {
     pub fn global(node_name: String) -> P2PMetrics {
-        let scope = InstrumentationScope::builder(node_name).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+        let my_meter = global_meter_with_id_or_panic(node_name);
 
         P2PMetrics {
             ping: build!(my_meter, counter, "ping"),
@@ -403,8 +399,7 @@ pub struct TcpServerMetrics {
 
 impl TcpServerMetrics {
     pub fn global(pool_name: String) -> TcpServerMetrics {
-        let scope = InstrumentationScope::builder(pool_name.clone()).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+        let my_meter = global_meter_with_id_or_panic(pool_name.clone());
         TcpServerMetrics {
             peers: my_meter.u64_gauge("tcp_server_peers").build(),
             message_received: my_meter.u64_counter("tcp_server_message_received").build(),
@@ -490,8 +485,7 @@ pub struct TcpClientMetrics {
 
 impl TcpClientMetrics {
     pub fn global(client_name: String) -> TcpClientMetrics {
-        let scope = InstrumentationScope::builder(client_name.clone()).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+        let my_meter = global_meter_with_id_or_panic(client_name.clone());
         TcpClientMetrics {
             message_received: my_meter.u64_counter("tcp_client_message_received").build(),
             message_received_bytes: my_meter

@@ -5790,6 +5790,7 @@ dependencies = [
  "hyli-risc0-recursion",
  "hyli-smt-token",
  "hyli-staking",
+ "hyli-telemetry",
  "hyli-turmoil-shims",
  "hyli-uuid-tld",
  "hyli-verifiers",
@@ -5867,6 +5868,7 @@ dependencies = [
  "borsh",
  "crc32fast",
  "futures",
+ "hyli-telemetry",
  "hyli-turmoil-shims",
  "opentelemetry",
  "opentelemetry-otlp",
@@ -6053,6 +6055,7 @@ dependencies = [
  "hyli-hydentity",
  "hyli-model",
  "hyli-net",
+ "hyli-telemetry",
  "hyli-turmoil-shims",
  "indexmap 2.13.0",
  "opentelemetry",
@@ -6096,6 +6099,7 @@ dependencies = [
  "hyli-bus",
  "hyli-contract-sdk",
  "hyli-crypto",
+ "hyli-telemetry",
  "hyli-turmoil-shims",
  "hyper 1.8.1",
  "hyper-util",
@@ -6192,6 +6196,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyli-telemetry"
+version = "0.14.0"
+dependencies = [
+ "opentelemetry",
+ "opentelemetry-prometheus",
+ "opentelemetry_sdk",
+ "prometheus",
+]
+
+[[package]]
 name = "hyli-tools"
 version = "0.14.0"
 dependencies = [
@@ -6210,6 +6224,7 @@ dependencies = [
  "hyli-modules",
  "hyli-registry",
  "hyli-smt-token",
+ "hyli-telemetry",
  "hyli-turmoil-shims",
  "hyper 1.8.1",
  "hyper-util",
