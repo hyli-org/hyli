@@ -25,8 +25,10 @@ use staking::state::Staking;
 use std::{
     collections::{BTreeMap, VecDeque},
     fmt::Display,
+    io::{Read, Write},
     ops::{Deref, DerefMut},
     path::PathBuf,
+    sync::Arc,
 };
 use storage::Storage;
 use verify_tx::DataProposalVerdict;
@@ -56,6 +58,32 @@ pub mod tests;
 
 pub use dissemination::DisseminationEvent;
 
+#[derive(Clone, Debug)]
+pub(super) struct ArcBorsh<T>(Arc<T>);
+
+impl<T> ArcBorsh<T> {
+    pub(super) fn new(value: Arc<T>) -> Self {
+        Self(value)
+    }
+
+    pub(super) fn arc(&self) -> Arc<T> {
+        Arc::clone(&self.0)
+    }
+}
+
+impl<T: BorshSerialize> BorshSerialize for ArcBorsh<T> {
+    fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
+        self.0.serialize(writer)
+    }
+}
+
+impl<T: BorshDeserialize> BorshDeserialize for ArcBorsh<T> {
+    fn deserialize_reader<R: Read>(reader: &mut R) -> std::io::Result<Self> {
+        let value = T::deserialize_reader(reader)?;
+        Ok(Self(Arc::new(value)))
+    }
+}
+
 /// Validator Data Availability Guarantee
 /// This is a signed message that contains the hash of the data proposal and the size of the lane (DP included)
 /// It acts as proof the validator committed to making this DP available.
@@ -72,8 +100,8 @@ pub struct MempoolStore {
     // TODO: implement serialization, probably with a custom future that yields the unmodified Tx
     // on cancellation
     #[borsh(skip)]
-    processing_txs: OrderedJoinSet<Result<(Transaction, LaneSuffix)>>,
-    #[borsh(skip)]
+    processing_txs: OrderedJoinSet<Result<Transaction>>,
+    processing_txs_pending: VecDeque<(ArcBorsh<Transaction>, LaneId)>,
     own_data_proposal_in_preparation: own_lane::OwnDataProposalPreparation,
     // Skipped to clear on reset
     #[borsh(skip)]
@@ -210,6 +238,28 @@ pub enum ProcessedDPEvent {
 }
 
 impl Mempool {
+    pub(super) fn restore_inflight_work(&mut self) {
+        let txs_to_restore = self
+            .inner
+            .processing_txs_pending
+            .iter()
+            .map(|(tx, _)| tx.arc().clone())
+            .collect::<Vec<_>>();
+        for arc_tx in txs_to_restore {
+            let is_proof = matches!(arc_tx.transaction_data, TransactionData::Proof(_));
+            if is_proof {
+                self.enqueue_processing_tx_hash(arc_tx);
+            } else {
+                self.enqueue_processing_tx_proof(arc_tx);
+            }
+        }
+
+        let handle = self.inner.long_tasks_runtime.handle();
+        self.inner
+            .own_data_proposal_in_preparation
+            .restore_tasks(&handle);
+    }
+
     pub(super) fn on_data_vote(&mut self, lane_id: LaneId, vdag: ValidatorDAG) -> Result<()> {
         self.metrics.on_data_vote.add(1, &[]);
 
@@ -467,10 +517,6 @@ impl Mempool {
         })?;
 
         Ok(())
-    }
-
-    fn get_lane_operator<'a>(&self, lane_id: &'a LaneId) -> &'a ValidatorPublicKey {
-        lane_id.operator()
     }
 
     fn send_sync_request(

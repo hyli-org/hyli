@@ -38,7 +38,7 @@ impl From<BlobDb> for APIBlob {
     get,
     tag = "Indexer",
     params(
-        ("tx_hash" = String, Path, description = "Tx hash"),
+        ("tx_hash" = TxHash, Path, description = "Tx hash"),
     ),
     path = "/blobs/hash/{tx_hash}",
     responses(
@@ -46,7 +46,7 @@ impl From<BlobDb> for APIBlob {
     )
 )]
 pub async fn get_blobs_by_tx_hash(
-    Path(tx_hash): Path<String>,
+    Path(tx_hash): Path<TxHash>,
     State(state): State<ExplorerApiState>,
 ) -> Result<Json<Vec<APIBlob>>, StatusCode> {
     let blobs = log_error!(
@@ -82,7 +82,7 @@ GROUP BY
       blobs.identity
 "#,
         )
-        .bind(tx_hash)
+        .bind(tx_hash.to_string())
         .fetch_all(&state.db)
         .await
         .map(|db| db.into_iter().map(Into::<APIBlob>::into).collect()),
@@ -97,7 +97,7 @@ GROUP BY
     get,
     tag = "Indexer",
     params(
-        ("tx_hash" = String, Path, description = "Tx hash"),
+        ("tx_hash" = TxHash, Path, description = "Tx hash"),
         ("blob_index" = String, Path, description = "Blob index"),
     ),
     path = "/blob/hash/{tx_hash}/index/{blob_index}",
@@ -106,7 +106,7 @@ GROUP BY
     )
 )]
 pub async fn get_blob(
-    Path((tx_hash, blob_index)): Path<(String, i32)>,
+    Path((tx_hash, blob_index)): Path<(TxHash, i32)>,
     State(state): State<ExplorerApiState>,
 ) -> Result<Json<APIBlob>, StatusCode> {
     let blob = log_error!(
@@ -135,7 +135,7 @@ ORDER BY transactions.block_height DESC, transactions.index DESC
 LIMIT 1;
 "#,
         )
-        .bind(tx_hash)
+        .bind(tx_hash.to_string())
         .bind(blob_index)
         .fetch_optional(&state.db)
         .await

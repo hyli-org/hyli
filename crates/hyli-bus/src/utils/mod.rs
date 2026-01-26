@@ -1,3 +1,4 @@
+pub mod checksums;
 pub mod deterministic_rng;
 pub mod logger;
 pub mod profiling;

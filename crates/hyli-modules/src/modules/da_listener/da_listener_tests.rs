@@ -1,19 +1,20 @@
 use super::*;
 use crate::bus::metrics::BusMetrics;
+use crate::modules::block_processor::BusOnlyProcessor;
 use crate::node_state::test::craft_signed_block;
 use crate::utils::da_codec::DataAvailabilityServer;
 use sdk::{BlockHeight, DataAvailabilityEvent, SignedBlock};
 use tempfile::tempdir;
 
 /// Helper to create a test configuration
-fn create_test_config(fallback_addresses: Vec<String>) -> DAListenerConf {
+fn create_test_config(fallback_addresses: Vec<String>) -> DAListenerConf<BusOnlyProcessor> {
     create_test_config_with_read_from("test://localhost:1234".to_string(), fallback_addresses)
 }
 
 fn create_test_config_with_read_from(
     da_read_from: String,
     fallback_addresses: Vec<String>,
-) -> DAListenerConf {
+) -> DAListenerConf<BusOnlyProcessor> {
     let temp_dir = tempdir().unwrap();
     DAListenerConf {
         data_directory: temp_dir.path().to_path_buf(),
@@ -21,11 +22,12 @@ fn create_test_config_with_read_from(
         start_block: Some(BlockHeight(0)),
         timeout_client_secs: 30,
         da_fallback_addresses: fallback_addresses,
+        processor_config: (),
     }
 }
 
 /// Helper to create a test SignedDAListener
-async fn create_test_listener(config: DAListenerConf) -> Result<SignedDAListener> {
+async fn create_test_listener(config: DAListenerConf<BusOnlyProcessor>) -> Result<SignedDAListener<BusOnlyProcessor>> {
     let bus = SharedMessageBus::new(BusMetrics::global("test_da_listener".to_string()));
     SignedDAListener::build(bus.new_handle(), config).await
 }

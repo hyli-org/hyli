@@ -5,15 +5,15 @@ log_format = "full"
 data_directory = "data"
 
 # URL to connect to
-da_read_from = "http://localhost:4141"
+da_read_from = "localhost:4141"
 
 [gcs]
 # GCS bucket info
-gcs_bucket = "testnet_proofs"
+gcs_bucket = "hyli-dev-gcs-uploader"
 gcs_prefix = "local"
 
 # GCS uploader options
 save_proofs = true
 save_blocks = true
 
-start_block = 0
+max_concurrent_uploads = 1000

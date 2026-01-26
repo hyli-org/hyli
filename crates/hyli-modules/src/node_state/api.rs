@@ -218,7 +218,7 @@ pub async fn get_unsettled_txs_count(
     get,
     path = "/unsettled_tx/{blob_tx_hash}",
     params(
-        ("blob_tx_hash" = String, Path, description = "Blob tx hash"),
+        ("blob_tx_hash" = TxHash, Path, description = "Blob tx hash"),
     ),
     tag = "Node State",
     responses(
@@ -226,12 +226,12 @@ pub async fn get_unsettled_txs_count(
     )
 )]
 pub async fn get_unsettled_tx(
-    Path(blob_tx_hash): Path<String>,
+    Path(blob_tx_hash): Path<TxHash>,
     State(mut state): State<RouterState>,
 ) -> Result<impl IntoResponse, AppError> {
     match state
         .bus
-        .shutdown_aware_request::<()>(QueryUnsettledTx(TxHash(blob_tx_hash)))
+        .shutdown_aware_request::<()>(QueryUnsettledTx(blob_tx_hash))
         .await
     {
         Ok(tx_context) => Ok(Json(tx_context)),

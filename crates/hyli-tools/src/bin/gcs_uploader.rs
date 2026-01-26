@@ -3,11 +3,11 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::{Context, Result};
 use clap::Parser;
 
-use hyli_contract_sdk::BlockHeight;
 use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
         ModulesHandler,
+        block_processor::BusOnlyProcessor,
         da_listener::DAListenerConf,
         da_listener::SignedDAListener,
         gcs_uploader::{GCSConf, GcsUploader, GcsUploaderCtx},
@@ -30,7 +30,11 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let config = Conf::new(args.config_file).context("reading config file")?;
 
-    setup_tracing(&config.log_format, "gcs block uploader".to_string())?;
+    let node_name = "gcs_block_uploader".to_string();
+
+    setup_tracing(&config.log_format, node_name.clone())?;
+
+    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
 
     tracing::info!("Starting GCS block uploader");
 
@@ -39,15 +43,19 @@ async fn main() -> Result<()> {
     tracing::info!("Setting up modules");
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus).await;
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
+
+    let (last_uploaded_height, genesis_timestamp_folder) =
+        GcsUploader::get_last_uploaded_block(&config.gcs).await?;
 
     handler
-        .build_module::<SignedDAListener>(DAListenerConf {
+        .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
-            start_block: Some(BlockHeight(config.gcs.start_block)),
+            start_block: Some(last_uploaded_height + 1),
             timeout_client_secs: 10,
             da_fallback_addresses: vec![],
+            processor_config: (),
         })
         .await?;
 
@@ -55,6 +63,9 @@ async fn main() -> Result<()> {
         .build_module::<GcsUploader>(GcsUploaderCtx {
             gcs_config: config.gcs.clone(),
             data_directory: config.data_directory.clone(),
+            node_name,
+            last_uploaded_height,
+            genesis_timestamp_folder,
         })
         .await?;
 

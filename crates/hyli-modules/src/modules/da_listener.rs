@@ -5,26 +5,25 @@ use std::{
 };
 
 use anyhow::Result;
-use sdk::{
-    BlockHeight, DataAvailabilityEvent, DataAvailabilityRequest, DataEvent, Hashed,
-    MempoolStatusEvent, SignedBlock,
-};
+use hyli_bus::modules::ModulePersistOutput;
+use hyli_bus::{module_bus_client, module_handle_messages};
+use sdk::{BlockHeight, DataAvailabilityEvent, DataAvailabilityRequest, Hashed, SignedBlock};
 use tokio::task::yield_now;
 use tracing::{debug, error, info, warn};
 
+use crate::log_error;
 use crate::{
-    bus::{BusClientSender, SharedMessageBus},
+    bus::SharedMessageBus,
     modules::{
-        da_listener_metrics::DaTcpClientMetrics, data_availability::blocks_fjall::Blocks,
-        module_bus_client, Module,
+        block_processor::BlockProcessor, da_listener_metrics::DaTcpClientMetrics,
+        data_availability::blocks_fjall::Blocks, Module,
     },
     node_state::module::NodeStateModule,
     utils::da_codec::DataAvailabilityClient,
 };
-use crate::{log_error, module_handle_messages};
 
-/// Configuration for DA listeners (SignedDAListener and NodeStateProcessor)
-pub struct DAListenerConf {
+/// Configuration for DA listeners
+pub struct DAListenerConf<P: BlockProcessor> {
     pub data_directory: PathBuf,
     pub da_read_from: String,
     /// Used to specify a starting block height
@@ -32,13 +31,12 @@ pub struct DAListenerConf {
     pub timeout_client_secs: u64,
     /// Fallback DA server addresses for block requests
     pub da_fallback_addresses: Vec<String>,
+    pub processor_config: P::Config,
 }
 
 module_bus_client! {
 #[derive(Debug)]
 struct SignedDAListenerBusClient {
-    sender(DataEvent),
-    sender(MempoolStatusEvent),
 }
 }
 
@@ -50,10 +48,11 @@ struct BlockRequestState {
     current_da_index: usize,
 }
 
-/// Module that listens to the raw data availability stream and sends the signed blocks to the bus
-pub struct SignedDAListener {
-    config: DAListenerConf,
+/// Module that listens to the raw data availability stream and processes blocks
+pub struct SignedDAListener<P: BlockProcessor> {
+    config: DAListenerConf<P>,
     bus: SignedDAListenerBusClient,
+    processor: P,
     current_block: BlockHeight,
     block_buffer: BTreeMap<BlockHeight, SignedBlock>,
     tcp_client_metrics: DaTcpClientMetrics,
@@ -62,32 +61,49 @@ pub struct SignedDAListener {
     current_da_index: usize,
 }
 
-impl Module for SignedDAListener {
-    type Context = DAListenerConf;
+impl<P: BlockProcessor + 'static> Module for SignedDAListener<P> {
+    type Context = DAListenerConf<P>;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let start_block_in_file = NodeStateModule::load_from_disk::<BlockHeight>(
-            ctx.data_directory.join("da_start_height.bin").as_path(),
-        );
+        let start_block_in_file = match NodeStateModule::load_from_disk::<BlockHeight>(
+            &ctx.data_directory,
+            "da_start_height.bin".as_ref(),
+        )? {
+            Some(b) => b,
+            None => {
+                warn!("Starting SignedDAListener's NodeStateStore from default.");
+                BlockHeight(0)
+            }
+        };
 
         debug!(
             "Building SignedDAListener with start block from file: {:?}",
             start_block_in_file
         );
 
-        let current_block = ctx.start_block.or(start_block_in_file).unwrap_or_default();
+        let current_block = ctx
+            .start_block
+            .or(Some(start_block_in_file))
+            .unwrap_or_default();
 
         info!(
             "SignedDAListener current block height set to: {}",
             current_block
         );
 
+        let processor = P::build(
+            bus.new_handle(),
+            &ctx.processor_config,
+            ctx.data_directory.clone(),
+        )
+        .await?;
         let bus = SignedDAListenerBusClient::new_from_bus(bus.new_handle()).await;
 
         Ok(SignedDAListener {
             config: ctx,
-            current_block,
             bus,
+            current_block,
+            processor,
             block_buffer: BTreeMap::new(),
             tcp_client_metrics: DaTcpClientMetrics::global(
                 "signed_da_listener".to_string(),
@@ -101,9 +117,13 @@ impl Module for SignedDAListener {
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
         self.start()
     }
+
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
+        self.processor.persist(self.current_block).await
+    }
 }
 
-impl SignedDAListener {
+impl<P: BlockProcessor + 'static> SignedDAListener<P> {
     async fn start_client(&self, block_height: BlockHeight) -> Result<DataAvailabilityClient> {
         let mut client = DataAvailabilityClient::connect_with_opts(
             "signed_da_listener".to_string(),
@@ -136,13 +156,13 @@ impl SignedDAListener {
             std::cmp::Ordering::Equal => {
                 if block_height.0.is_multiple_of(1000) {
                     info!(
-                        "📦 Sending block: {} {}",
+                        "📦 Processing block: {} {}",
                         block.consensus_proposal.slot,
                         block.consensus_proposal.hashed()
                     );
                 } else {
                     debug!(
-                        "📦 Sending block: {} {}",
+                        "📦 Processing block: {} {}",
                         block.consensus_proposal.slot,
                         block.consensus_proposal.hashed()
                     );
@@ -151,9 +171,7 @@ impl SignedDAListener {
                 // Remove from pending requests if it was requested
                 self.pending_block_requests.remove(&block_height);
 
-                self.bus
-                    .send_waiting_if_full(DataEvent::OrderedSignedBlock(block))
-                    .await?;
+                self.processor.process_block(block).await?;
 
                 self.current_block = block_height + 1;
 
@@ -198,9 +216,7 @@ impl SignedDAListener {
                     block.consensus_proposal.slot,
                     block.consensus_proposal.hashed()
                 );
-                self.bus
-                    .send_waiting_if_full(DataEvent::OrderedSignedBlock(block))
-                    .await?;
+                self.processor.process_block(block).await?;
                 self.current_block = height + 1;
             } else {
                 // In general, DA isn't guaranteed to send blocks in order.
@@ -492,7 +508,7 @@ impl SignedDAListener {
                 self.process_block(block).await?;
             }
             DataAvailabilityEvent::MempoolStatusEvent(status) => {
-                self.bus.send_waiting_if_full(status).await?;
+                self.processor.process_mempool_status(status).await?;
             }
             DataAvailabilityEvent::BlockNotFound(_) => {
                 // Already handled in the event loop

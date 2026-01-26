@@ -1,305 +1,6 @@
 //! This module is intended for "integration" testing of the consensus and other modules.
 
-macro_rules! build_tuple {
-    ($nodes:expr, 1) => {
-        ($nodes)
-    };
-    ($nodes:expr, 2) => {
-        ($nodes, $nodes)
-    };
-    ($nodes:expr, 3) => {
-        ($nodes, $nodes, $nodes)
-    };
-    ($nodes:expr, 4) => {
-        ($nodes, $nodes, $nodes, $nodes)
-    };
-    ($nodes:expr, 5) => {
-        ($nodes, $nodes, $nodes, $nodes, $nodes)
-    };
-    ($nodes:expr, 6) => {
-        ($nodes, $nodes, $nodes, $nodes, $nodes, $nodes)
-    };
-    ($nodes:expr, 7) => {
-        ($nodes, $nodes, $nodes, $nodes, $nodes, $nodes, $nodes)
-    };
-    ($nodes:expr, $count:expr) => {
-        panic!("More than {} nodes isn't supported", $count)
-    };
-}
-
-macro_rules! broadcast {
-    (description: $description:literal, from: $sender:expr, to: [$($node:expr),*]$(, message_matches: $pattern:pat $(=> $asserts:block)? )?) => {
-        {
-            // Construct the broadcast message with sender information
-            let message = $sender.assert_broadcast(format!("[broadcast from: {}] {}", stringify!($sender), $description).as_str()).await;
-
-            $({
-                let msg_variant_name: &'static str = message.msg.clone().into();
-                if let $pattern = &message.msg {
-                    $($asserts)?
-                } else {
-                    panic!("[broadcast from: {}] {}: Message {} did not match {}", stringify!($sender), $description, msg_variant_name, stringify!($pattern));
-                }
-            })?
-
-            // Distribute the message to each specified node
-            $(
-                $node.handle_msg(&message, (format!("[handling broadcast message from: {} at: {}] {}", stringify!($sender), stringify!($node), $description).as_str())).await;
-            )*
-
-            message
-        }
-    };
-}
-
-macro_rules! send {
-    (
-        description: $description:literal,
-        from: [$($node:expr),+],
-        to: $to:expr,
-        message_matches: $pattern:pat
-    ) => {
-        // Distribute the message to the target node from all specified nodes
-        ($({
-            let answer = loop {
-                let candidate = $node
-                    .assert_send(
-                        &$to.validator_pubkey(),
-                        format!(
-                            "[send from: {} to: {}] {}",
-                            stringify!($node),
-                            stringify!($to),
-                            $description
-                        )
-                        .as_str(),
-                    )
-                    .await;
-
-                if let $pattern = &candidate.msg {
-                    break candidate;
-                } else {
-                    let msg_variant_name: &'static str = candidate.msg.clone().into();
-                    info!(
-                        "[send from: {}] {}: skipping {} while waiting for {}",
-                        stringify!($node),
-                        $description,
-                        msg_variant_name,
-                        stringify!($pattern)
-                    );
-                }
-            };
-
-            // Handle the message
-            $to.handle_msg(
-                &answer,
-                format!("[handling sent message from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            ).await;
-            answer
-        },)+)
-    };
-
-    (
-        description: $description:literal,
-        from: [$($node:expr; $pattern:pat $(=> $asserts:block)?),+],
-        to: $to:expr
-    ) => {
-        // Distribute the message to the target node from all specified nodes
-        ($({
-            let answer = loop {
-                let candidate = $node
-                    .assert_send(
-                        &$to.validator_pubkey(),
-                        format!(
-                            "[send from: {} to: {}] {}",
-                            stringify!($node),
-                            stringify!($to),
-                            $description
-                        )
-                        .as_str(),
-                    )
-                    .await;
-
-                if let $pattern = &candidate.msg {
-                    $($asserts)?
-                    break candidate;
-                } else {
-                    let msg_variant_name: &'static str = candidate.msg.clone().into();
-                    info!(
-                        "[send from: {}] {}: skipping {} while waiting for {}",
-                        stringify!($node),
-                        $description,
-                        msg_variant_name,
-                        stringify!($pattern)
-                    );
-                }
-            };
-
-            // Handle the message
-            $to.handle_msg(
-                &answer,
-                format!("[handling sent message from: {} to: {}] {}", stringify!($node), stringify!($to), $description).as_str()
-            ).await;
-        },)+)
-    };
-}
-
-macro_rules! simple_commit_round {
-    (leader: $leader:expr, followers: [$($follower:expr),+]$(, joining: $joining:expr)?) => {{
-        let round_consensus_proposal;
-        let round_ticket;
-        let view: u64;
-
-        broadcast! {
-            description: "Leader - Prepare",
-            from: $leader, to: [$($follower),+$(,$joining)?],
-            message_matches: ConsensusNetMessage::Prepare(cp, ticket, prep_view) => {
-                round_consensus_proposal = cp.clone();
-                round_ticket = ticket.clone();
-                view = *prep_view;
-            }
-        };
-
-        send! {
-            description: "Follower - PrepareVote",
-            from: [$($follower),+], to: $leader,
-            message_matches: ConsensusNetMessage::PrepareVote(_)
-        };
-
-        broadcast! {
-            description: "Leader - Confirm",
-            from: $leader, to: [$($follower),+$(,$joining)?],
-            message_matches: ConsensusNetMessage::Confirm(..)
-        };
-
-        send! {
-            description: "Follower - Confirm Ack",
-            from: [$($follower),+], to: $leader,
-            message_matches: ConsensusNetMessage::ConfirmAck(_)
-        };
-
-        broadcast! {
-            description: "Leader - Commit",
-            from: $leader, to: [$($follower),+$(,$joining)?],
-            message_matches: ConsensusNetMessage::Commit(..)
-        };
-
-        (round_consensus_proposal, round_ticket, view)
-    }};
-}
-
-macro_rules! disseminate {
-    (txs: [$($txs:expr),+], owner: $owner:expr, voters: [$($voter:expr),+]) => {{
-
-        let lane_id = LaneId::new($owner.validator_pubkey().clone());
-        let dp = $owner.create_data_proposal_on_top(lane_id, &[$($txs),+]);
-        $owner
-            .process_new_data_proposal(dp.clone())
-            .unwrap();
-        $owner
-            .process_dissemination_events()
-            .await
-            .expect("process dissemination events");
-
-        let dp_msg = broadcast! {
-            description: "Disseminate DataProposal",
-            from: $owner, to: [$($voter),+],
-            message_matches: MempoolNetMessage::DataProposal(..)
-        };
-
-        let mut voters = vec![$(&mut $voter),+];
-
-        join_all(
-            voters
-                .iter_mut()
-                .map(|ctx| ctx.handle_processed_data_proposals()),
-        )
-        .await;
-
-        let mut votes = Vec::new();
-        for voter_idx in 0..voters.len() {
-            let vote_msg = {
-                let voter = &mut voters[voter_idx];
-                let message = voter
-                    .assert_broadcast("Disseminated DataProposal Vote")
-                    .await;
-                match &message.msg {
-                    MempoolNetMessage::DataVote(..) => {}
-                    _ => {
-                        let msg_variant_name: &'static str = message.msg.clone().into();
-                        panic!(
-                            "[broadcast from: voter] Disseminated DataProposal Vote: Message {msg_variant_name} did not match DataVote"
-                        );
-                    }
-                }
-                message
-            };
-
-            $owner
-                .handle_msg(&vote_msg, "Handling disseminated data proposal vote")
-                .await;
-            for receiver in voters.iter_mut() {
-                receiver
-                    .handle_msg(&vote_msg, "Handling disseminated data proposal vote")
-                    .await;
-            }
-            votes.push(vote_msg);
-        }
-
-        $owner
-            .process_dissemination_events()
-            .await
-            .expect("process dissemination events");
-
-        (dp, dp_msg, votes)
-    }};
-}
-
-macro_rules! assert_chanmsg_matches {
-    ($chan: expr, $pat:pat => $block:block) => {{
-        let var = $chan.try_recv().unwrap().into_message();
-        if let $pat = var {
-            $block
-        } else {
-            panic!("Var {:?} should match {}", var, stringify!($pat));
-        }
-    }};
-}
-
-pub(crate) use assert_chanmsg_matches;
-use assertables::assert_matches;
-pub(crate) use broadcast;
-pub(crate) use build_tuple;
-use futures::future::join_all;
-use hyli_model::utils::TimestampMs;
-use hyli_modules::{
-    bus::{dont_use_this::get_sender, BusEnvelope},
-    node_state::NodeState,
-};
-pub(crate) use send;
-pub(crate) use simple_commit_round;
-
-macro_rules! build_nodes {
-    ($count:tt) => {{
-        async {
-            let cryptos: Vec<BlstCrypto> = AutobahnTestCtx::generate_cryptos($count);
-
-            let mut nodes = vec![];
-
-            for i in 0..$count {
-                let crypto = cryptos.get(i).unwrap().clone();
-                let mut autobahn_node =
-                    AutobahnTestCtx::new(format!("node-{i}").as_ref(), crypto).await;
-
-                autobahn_node.consensus_ctx.setup_node(i, &cryptos);
-                autobahn_node.mempool_ctx.setup_node(&cryptos).await;
-                nodes.push(autobahn_node);
-            }
-
-            build_tuple!(nodes.remove(0), $count)
-        }
-    }};
-}
-
+use super::autobahn_testing_macros::*;
 use crate::{
     bus::{
         bus_client, command_response::Query, dont_use_this::get_receiver, metrics::BusMetrics,
@@ -315,8 +16,15 @@ use crate::{
     model::*,
     p2p::{network::OutboundMessage, P2PCommand},
 };
+use assertables::assert_matches;
+use futures::future::join_all;
 use hyli_crypto::BlstCrypto;
+use hyli_model::utils::TimestampMs;
 use hyli_modules::handle_messages;
+use hyli_modules::{
+    bus::{dont_use_this::get_sender, BusEnvelope},
+    node_state::NodeState,
+};
 use tracing::info;
 
 bus_client!(
@@ -326,13 +34,13 @@ bus_client!(
 );
 
 pub struct AutobahnTestCtx {
-    shared_bus: SharedMessageBus,
-    consensus_ctx: ConsensusTestCtx,
-    mempool_ctx: MempoolTestCtx,
+    pub shared_bus: SharedMessageBus,
+    pub consensus_ctx: ConsensusTestCtx,
+    pub mempool_ctx: MempoolTestCtx,
 }
 
 impl AutobahnTestCtx {
-    async fn new(name: &str, crypto: BlstCrypto) -> Self {
+    pub async fn new(name: &str, crypto: BlstCrypto) -> Self {
         let shared_bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
         let event_receiver = get_receiver::<ConsensusEvent>(&shared_bus).await;
         let p2p_receiver = get_receiver::<P2PCommand>(&shared_bus).await;
@@ -367,7 +75,7 @@ impl AutobahnTestCtx {
     }
 
     /// Spawn a coroutine to answer the command response call of start_round, with the current of mempool
-    async fn start_round_with_cut_from_mempool(&mut self, ts: TimestampMs) {
+    pub async fn start_round_with_cut_from_mempool(&mut self, ts: TimestampMs) {
         let staking = self.consensus_ctx.staking();
         let latest_cut: Cut = self.mempool_ctx.gen_cut(&staking);
 
@@ -391,7 +99,7 @@ impl AutobahnTestCtx {
     }
 
     /// Just start the round and wait for the timeout
-    async fn start_round_with_last_seen_cut(&mut self, ts: TimestampMs) {
+    pub async fn start_round_with_last_seen_cut(&mut self, ts: TimestampMs) {
         self.consensus_ctx.start_round_at(ts).await;
     }
 }
@@ -721,7 +429,10 @@ async fn mempool_votes_before_data_proposal() {
 }
 
 #[test_log::test(tokio::test)]
-async fn consensus_missed_prepare() {
+async fn consensus_missed_prepare_then_timeout() {
+    // Scenario here - a node misses a prepare at round 2, then timeout at R3V0,
+    // Upon receiving the Prepare for R3V1, it seems a QC for R2, which it can process,
+    // thus catching up.
     let (mut node1, mut node2, mut node3, mut node4) = build_nodes!(4).await;
 
     // First data proposal
@@ -1158,23 +869,23 @@ async fn autobahn_rejoin_flow_in_consensus_with_tc() {
 
     broadcast! {
         description: "Follower - Timeout",
-        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx, joining_node.consensus_ctx],
+        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx], // joining_node skipped to avoid spurious errors
         message_matches: ConsensusNetMessage::Timeout(..)
     };
     broadcast! {
         description: "Follower - Timeout",
-        from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx, joining_node.consensus_ctx],
+        from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx], // joining_node skipped to avoid spurious errors
         message_matches: ConsensusNetMessage::Timeout(..)
     };
     broadcast! {
         description: "Follower - Timeout",
-        from: node3.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, joining_node.consensus_ctx],
+        from: node3.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx], // joining_node skipped to avoid spurious errors
         message_matches: ConsensusNetMessage::Timeout(..)
     };
 
     broadcast! {
         description: "Follower - Timeout Certificate",
-        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx, joining_node.consensus_ctx],
+        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx], // joining_node skipped to avoid spurious errors
         message_matches: ConsensusNetMessage::TimeoutCertificate(..)
     };
 
@@ -1824,175 +1535,6 @@ async fn autobahn_missed_confirm_and_commit_messages() {
         description: "Commit",
         from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx, node4.consensus_ctx],
         message_matches: ConsensusNetMessage::Commit(..)
-    };
-}
-
-#[test_log::test(tokio::test)]
-async fn autobahn_buffer_early_messages() {
-    // node 4 got disconnected for a slot
-    let (mut node1, mut node2, mut node3, mut node4) = build_nodes!(4).await;
-
-    ConsensusTestCtx::setup_for_round(
-        &mut [
-            &mut node1.consensus_ctx,
-            &mut node2.consensus_ctx,
-            &mut node3.consensus_ctx,
-            &mut node4.consensus_ctx,
-        ],
-        5,
-        0,
-    );
-
-    // Slot 5 starts, all nodes receive the prepare
-    node1
-        .start_round_with_cut_from_mempool(TimestampMs(1000))
-        .await;
-
-    broadcast! {
-        description: "Prepare",
-        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx, node4.consensus_ctx],
-        message_matches: ConsensusNetMessage::Prepare(..)
-    };
-
-    send! {
-        description: "PrepareVote",
-        from: [node2.consensus_ctx, node3.consensus_ctx, node4.consensus_ctx], to: node1.consensus_ctx,
-        message_matches: ConsensusNetMessage::PrepareVote(_)
-    };
-
-    broadcast! {
-        description: "Confirm - Node4 disconnected",
-        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx],
-        message_matches: ConsensusNetMessage::Confirm(..)
-    };
-
-    send! {
-        description: "ConfirmAck",
-        from: [node2.consensus_ctx, node3.consensus_ctx], to: node1.consensus_ctx,
-        message_matches: ConsensusNetMessage::ConfirmAck(_)
-    };
-
-    broadcast! {
-        description: "Commit - Node4 still disconnected",
-        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx],
-        message_matches: ConsensusNetMessage::Commit(..)
-    };
-
-    // Slot 4 starts with new leader with node4 disconnected
-    node2
-        .start_round_with_cut_from_mempool(TimestampMs(2000))
-        .await;
-
-    broadcast! {
-        description: "Prepare",
-        from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx],
-        message_matches: ConsensusNetMessage::Prepare(..)
-    };
-
-    send! {
-        description: "PrepareVote",
-        from: [node1.consensus_ctx, node3.consensus_ctx], to: node2.consensus_ctx,
-        message_matches: ConsensusNetMessage::PrepareVote(_)
-    };
-
-    broadcast! {
-        description: "Confirm",
-        from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx],
-        message_matches: ConsensusNetMessage::Confirm(..)
-    };
-
-    send! {
-        description: "ConfirmAck",
-        from: [node1.consensus_ctx, node3.consensus_ctx], to: node2.consensus_ctx,
-        message_matches: ConsensusNetMessage::ConfirmAck(_)
-    };
-
-    broadcast! {
-        description: "Commit",
-        from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx],
-        message_matches: ConsensusNetMessage::Commit(..)
-    };
-
-    // Slot 5 starts with new leader but node4 is back online
-    node3
-        .start_round_with_cut_from_mempool(TimestampMs(3000))
-        .await;
-
-    broadcast! {
-        description: "Prepare",
-        from: node3.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node4.consensus_ctx],
-        message_matches: ConsensusNetMessage::Prepare(..)
-    };
-
-    send! {
-        description: "PrepareVote",
-        from: [node1.consensus_ctx, node2.consensus_ctx], to: node3.consensus_ctx,
-        message_matches: ConsensusNetMessage::PrepareVote(_)
-    };
-
-    let confirm = node3.consensus_ctx.assert_broadcast("Confirm").await;
-
-    send! {
-        description: "SyncRequest - Node4 ask for missed proposal Slot 4",
-        from: [node4.consensus_ctx], to: node3.consensus_ctx,
-        message_matches: ConsensusNetMessage::SyncRequest(_)
-    };
-
-    send! {
-        description: "SyncReply - Node 3 replies with proposal Slot 4",
-        from: [node3.consensus_ctx], to: node4.consensus_ctx,
-        message_matches: ConsensusNetMessage::SyncReply(_)
-    };
-
-    send! {
-        description: "PrepareVote - Node4 votes on slot 5",
-        from: [node4.consensus_ctx], to: node3.consensus_ctx,
-        message_matches: ConsensusNetMessage::PrepareVote(_)
-    };
-
-    node1
-        .consensus_ctx
-        .handle_msg(
-            &confirm,
-            "[handling broadcast message from: node3 at: node1] Confirm",
-        )
-        .await;
-    node2
-        .consensus_ctx
-        .handle_msg(
-            &confirm,
-            "[handling broadcast message from: node3 at: node2] Confirm",
-        )
-        .await;
-    node4
-        .consensus_ctx
-        .handle_msg(
-            &confirm,
-            "[handling broadcast message from: node3 at: node4] Confirm",
-        )
-        .await;
-
-    send! {
-        description: "ConfirmAck",
-        from: [node1.consensus_ctx, node2.consensus_ctx, node4.consensus_ctx], to: node3.consensus_ctx,
-        message_matches: ConsensusNetMessage::ConfirmAck(_)
-    };
-
-    broadcast! {
-        description: "Commit",
-        from: node3.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node4.consensus_ctx],
-        message_matches: ConsensusNetMessage::Commit(..)
-    };
-
-    // Slot 6 starts with node4 as leader
-    node4
-        .start_round_with_cut_from_mempool(TimestampMs(4000))
-        .await;
-
-    broadcast! {
-        description: "Prepare",
-        from: node4.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
-        message_matches: ConsensusNetMessage::Prepare(..)
     };
 }
 

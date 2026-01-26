@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use hyli_net::tcp::intercept::{set_message_hook_scoped, MessageAction};
 use hyli_net::tcp::{decode_tcp_payload, tcp_client::TcpClient, tcp_server::TcpServer, TcpEvent};
-use sdk::{DataProposal, DataProposalHash, Transaction};
+use sdk::{DataProposal, Transaction};
 
 #[test_log::test]
 fn turmoil_drop_mempool_data_proposals() -> anyhow::Result<()> {
@@ -20,27 +20,16 @@ fn turmoil_drop_mempool_data_proposals() -> anyhow::Result<()> {
 
     let mut drops_left = 2usize;
     let _intercept = set_message_hook_scoped(move |bytes| {
-        if decode_tcp_payload::<DataProposal>(bytes).is_ok() {
-            if drops_left > 0 {
-                drops_left -= 1;
-                return MessageAction::Drop;
-            }
+        if decode_tcp_payload::<DataProposal>(bytes).is_ok() && drops_left > 0 {
+            drops_left -= 1;
+            return MessageAction::Drop;
         }
         MessageAction::Pass
     });
 
-    let proposal1 = DataProposal::new(
-        DataProposalHash("parent-1".to_string()),
-        vec![Transaction::default()],
-    );
-    let proposal2 = DataProposal::new(
-        DataProposalHash("parent-2".to_string()),
-        vec![Transaction::default()],
-    );
-    let proposal3 = DataProposal::new(
-        DataProposalHash("parent-3".to_string()),
-        vec![Transaction::default()],
-    );
+    let proposal1 = DataProposal::new(b"parent-1".into(), vec![Transaction::default()]);
+    let proposal2 = DataProposal::new(b"parent-2".into(), vec![Transaction::default()]);
+    let proposal3 = DataProposal::new(b"parent-3".into(), vec![Transaction::default()]);
     let proposal3_for_client = proposal3.clone();
 
     sim.client("server", async move {
@@ -65,7 +54,7 @@ fn turmoil_drop_mempool_data_proposals() -> anyhow::Result<()> {
     });
 
     sim.run()
-        .map_err(|e| anyhow::anyhow!("Simulation error {}", e.to_string()))?;
+        .map_err(|e| anyhow::anyhow!("Simulation error {e}"))?;
 
     let received = result_rx.recv_timeout(Duration::from_secs(1))?;
     assert_eq!(received, proposal3);
