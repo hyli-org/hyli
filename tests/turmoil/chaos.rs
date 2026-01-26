@@ -15,59 +15,13 @@ use hyli_modules::modules::signal::ShutdownModule;
 use hyli_net::net::Sim;
 use rand::seq::SliceRandom;
 
-use crate::fixtures::turmoil::TurmoilCtx;
+use crate::fixtures::turmoil::{
+    hold_all_links, hold_node, release_all_links, release_node, TurmoilCtx,
+};
 
 bus_client! {
     struct ShutdownBusClient {
         sender(ShutdownModule),
-    }
-}
-
-/// Block traffic in both directions between two node IDs.
-fn hold_bidirectional(sim: &mut Sim<'_>, from: &str, to: &str) {
-    sim.hold(from.to_string(), to.to_string());
-    sim.hold(to.to_string(), from.to_string());
-}
-
-/// Restore traffic in both directions between two node IDs.
-fn release_bidirectional(sim: &mut Sim<'_>, from: &str, to: &str) {
-    sim.release(from.to_string(), to.to_string());
-    sim.release(to.to_string(), from.to_string());
-}
-
-/// Isolate a single node by holding links to every other node in the cluster.
-fn hold_node(ctx: &TurmoilCtx, sim: &mut Sim<'_>, node_id: &str) {
-    for other in ctx.nodes.iter().filter(|n| n.conf.id != node_id) {
-        hold_bidirectional(sim, node_id, &other.conf.id);
-    }
-}
-
-/// Heal a single node by releasing links to every other node in the cluster.
-fn release_node(ctx: &TurmoilCtx, sim: &mut Sim<'_>, node_id: &str) {
-    for other in ctx.nodes.iter().filter(|n| n.conf.id != node_id) {
-        release_bidirectional(sim, node_id, &other.conf.id);
-    }
-}
-
-/// Partition the entire cluster by holding every pairwise link.
-fn hold_all_links(ctx: &TurmoilCtx, sim: &mut Sim<'_>) {
-    for i in 0..ctx.nodes.len() {
-        for j in (i + 1)..ctx.nodes.len() {
-            let from = ctx.nodes[i].conf.id.as_str();
-            let to = ctx.nodes[j].conf.id.as_str();
-            hold_bidirectional(sim, from, to);
-        }
-    }
-}
-
-/// Heal the entire cluster by releasing every pairwise link.
-fn release_all_links(ctx: &TurmoilCtx, sim: &mut Sim<'_>) {
-    for i in 0..ctx.nodes.len() {
-        for j in (i + 1)..ctx.nodes.len() {
-            let from = ctx.nodes[i].conf.id.as_str();
-            let to = ctx.nodes[j].conf.id.as_str();
-            release_bidirectional(sim, from, to);
-        }
     }
 }
 
