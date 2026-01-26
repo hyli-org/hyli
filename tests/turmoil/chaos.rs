@@ -111,6 +111,53 @@ pub fn simulation_chaos_quorum_loss(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> 
 
 /// **Simulation**
 ///
+/// Crash a single node after warmup, keep it down for a short window, then restart it.
+pub fn simulation_chaos_crash_one_node_restart(
+    ctx: &mut TurmoilCtx,
+    sim: &mut Sim<'_>,
+) -> anyhow::Result<()> {
+    let warmup = Duration::from_secs(5);
+    let downtime = Duration::from_secs(ctx.random_between(4, 8));
+    let target = ctx.random_id();
+    let mut crashed = false;
+    let mut restarted = false;
+    let mut restart_at: Option<Duration> = None;
+
+    loop {
+        let finished = sim.step().map_err(|s| anyhow::anyhow!(s.to_string()))?;
+        let now = sim.elapsed();
+
+        if !crashed && now > warmup {
+            tracing::info!("Chaos: crashing {}", target);
+            sim.crash(target.clone());
+            crashed = true;
+            restart_at = Some(now + downtime);
+        }
+
+        if !restarted {
+            if let Some(when) = restart_at {
+                if now >= when {
+                    tracing::info!("Chaos: restarting {}", target);
+                    sim.bounce(target.clone());
+                    restarted = true;
+                }
+            }
+        }
+
+        if finished {
+            if !restarted {
+                anyhow::bail!(
+                    "simulation finished before crash/restart sequence completed"
+                );
+            }
+            tracing::info!("Time spent {}", sim.elapsed().as_millis());
+            return Ok(());
+        }
+    }
+}
+
+/// **Simulation**
+///
 /// Gracefully shut down all nodes once they reach a seed-derived target height,
 /// in a deterministic shuffled order (one per tick), then restart them and
 /// assert consensus resumes at >= target_height + 1.

@@ -41,8 +41,8 @@ use crate::fixtures::turmoil::TurmoilCtx;
 
 // Re-export simulations for use in test macros
 use chaos::{
-    simulation_chaos_full_outage, simulation_chaos_graceful_shutdown_all_nodes,
-    simulation_chaos_quorum_loss,
+    simulation_chaos_crash_one_node_restart, simulation_chaos_full_outage,
+    simulation_chaos_graceful_shutdown_all_nodes, simulation_chaos_quorum_loss,
 };
 use corruption::{
     simulation_corrupt_consensus_messages, simulation_corrupt_mempool_messages,
@@ -217,6 +217,11 @@ turmoil_simple!(
 
 turmoil_simple!(741..=750, simulation_chaos_full_outage, submit_10_contracts);
 turmoil_simple!(771..=780, simulation_chaos_quorum_loss, submit_10_contracts);
+turmoil_simple!(
+    791..=800,
+    simulation_chaos_crash_one_node_restart,
+    submit_10_contracts
+);
 
 // =============================================================================
 // Message Corruption Tests
