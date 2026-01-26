@@ -204,6 +204,7 @@ impl MempoolTestCtx {
 
         self.mempool.resume_new_data_proposal(lane_id).await?;
 
+        self.process_dissemination_events().await?;
         self.disseminate_owned_lanes().await
     }
 
@@ -573,6 +574,62 @@ pub fn make_register_contract_tx(name: ContractName) -> Transaction {
         .as_blob("hyli".into())],
     )
     .into()
+}
+
+#[test_log::test(tokio::test)]
+async fn test_redisseminate_owned_lanes_sends_oldest_first() -> Result<()> {
+    let mut ctx = MempoolTestCtx::new("mempool").await;
+
+    // Need a peer so dissemination actually broadcasts.
+    let peer_crypto = BlstCrypto::new("peer").unwrap();
+    ctx.setup_node(&[peer_crypto]).await;
+
+    let lane_id = ctx.own_lane();
+    let tx = make_register_contract_tx(ContractName::new("order-check"));
+
+    // Oldest DP (root)
+    let dp1 = ctx.create_data_proposal(None, std::slice::from_ref(&tx));
+    ctx.process_new_data_proposal(dp1.clone())?;
+    ctx.process_dissemination_events().await?;
+    let dp1_hash = ctx.current_hash(&lane_id).unwrap();
+
+    // Newer DP on top
+    let dp2 = ctx.create_data_proposal(Some(dp1_hash.clone()), std::slice::from_ref(&tx));
+    ctx.process_new_data_proposal(dp2.clone())?;
+    ctx.process_dissemination_events().await?;
+    let dp2_hash = ctx.current_hash(&lane_id).unwrap();
+    assert_ne!(dp1_hash, dp2_hash, "hashes should differ");
+
+    ctx.dissemination_manager.add_owned_lane(lane_id.clone());
+
+    // Drain any prior outbound messages
+    while ctx.out_receiver.try_recv().is_ok() {}
+
+    ctx.dissemination_manager
+        .redisseminate_owned_lanes()
+        .await?;
+
+    let msg = ctx
+        .assert_broadcast("redissemination should broadcast oldest first")
+        .await;
+
+    match msg.msg {
+        MempoolNetMessage::DataProposal(broadcast_lane, hashed, _, _) => {
+            assert_eq!(broadcast_lane, lane_id);
+            assert_eq!(
+                hashed, dp1_hash,
+                "oldest pending DP must be broadcast first"
+            );
+        }
+        other => panic!("Expected DataProposal broadcast, got {other:?}"),
+    }
+
+    assert!(
+        ctx.out_receiver.is_empty(),
+        "only one pending DP should be broadcast per tick"
+    );
+
+    Ok(())
 }
 
 #[test_log::test(tokio::test)]

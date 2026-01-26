@@ -173,6 +173,10 @@ where
         self.sockets.keys().cloned().collect::<Vec<String>>()
     }
 
+    pub fn connected(&self, socket_addr: &str) -> bool {
+        self.sockets.contains_key(socket_addr)
+    }
+
     pub async fn broadcast(&mut self, msg: Res) -> HashMap<String, anyhow::Error> {
         let mut tasks = vec![];
 
