@@ -146,9 +146,58 @@ pub fn simulation_chaos_crash_one_node_restart(
 
         if finished {
             if !restarted {
-                anyhow::bail!(
-                    "simulation finished before crash/restart sequence completed"
-                );
+                anyhow::bail!("simulation finished before crash/restart sequence completed");
+            }
+            tracing::info!("Time spent {}", sim.elapsed().as_millis());
+            return Ok(());
+        }
+    }
+}
+
+/// **Simulation**
+///
+/// Crash three nodes at the same time after warmup, then restart them.
+pub fn simulation_chaos_crash_three_nodes_same_time(
+    ctx: &mut TurmoilCtx,
+    sim: &mut Sim<'_>,
+) -> anyhow::Result<()> {
+    let warmup = Duration::from_secs(5);
+    let downtime = Duration::from_secs(ctx.random_between(4, 8));
+    let mut targets: Vec<String> = ctx.nodes.iter().map(|n| n.conf.id.clone()).collect();
+    targets.shuffle(&mut ctx.rng);
+    targets.truncate(3.min(targets.len()));
+    let mut crashed = false;
+    let mut restarted = false;
+    let mut restart_at: Option<Duration> = None;
+
+    loop {
+        let finished = sim.step().map_err(|s| anyhow::anyhow!(s.to_string()))?;
+        let now = sim.elapsed();
+
+        if !crashed && now > warmup {
+            tracing::info!("Chaos: crashing nodes {:?}", targets);
+            for node_id in targets.iter() {
+                sim.crash(node_id.clone());
+            }
+            crashed = true;
+            restart_at = Some(now + downtime);
+        }
+
+        if crashed && !restarted {
+            if let Some(when) = restart_at {
+                if now >= when {
+                    tracing::info!("Chaos: restarting nodes {:?}", targets);
+                    for node_id in targets.iter() {
+                        sim.bounce(node_id.clone());
+                    }
+                    restarted = true;
+                }
+            }
+        }
+
+        if finished {
+            if !crashed || !restarted {
+                anyhow::bail!("simulation finished before crash/restart sequence completed");
             }
             tracing::info!("Time spent {}", sim.elapsed().as_millis());
             return Ok(());
