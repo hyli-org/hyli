@@ -54,6 +54,7 @@ async fn main() -> Result<()> {
             da_read_from: config.da_read_from.clone(),
             start_block: Some(last_uploaded_height),
             timeout_client_secs: 10,
+            da_fallback_addresses: vec![],
             processor_config: (),
         })
         .await?;
