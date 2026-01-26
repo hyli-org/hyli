@@ -326,10 +326,12 @@ impl super::Mempool {
     ) -> Result<()> {
         let validator_key = self.crypto.validator_pubkey().clone();
         debug!(
-            "Creating new DataProposal in local lane ({}) with {} transactions (parent: {:?})",
+            dp_hash =% data_proposal.hashed(),
+            parent_hash =% data_proposal.parent_data_proposal_hash.as_tx_parent_hash(),
+            "Creating new DataProposal in local lane ({}) with {} transactions, {:?}",
             validator_key,
             data_proposal.txs.len(),
-            data_proposal.parent_data_proposal_hash
+            data_proposal.parent_data_proposal_hash.as_tx_parent_hash()
         );
 
         // TODO: handle this differently
@@ -574,7 +576,7 @@ impl super::Mempool {
             proven_blobs: std::iter::zip(tx_hashes, std::iter::zip(hyli_outputs, program_ids))
                 .map(
                     |(blob_tx_hash, (hyli_output, program_id))| BlobProofOutput {
-                        original_proof_hash: ProofDataHash("todo?".to_owned()),
+                        original_proof_hash: b"todo?".into(),
                         blob_tx_hash: blob_tx_hash.clone(),
                         hyli_output,
                         program_id,
@@ -597,7 +599,7 @@ pub mod test {
     use super::*;
     use crate::{
         mempool::storage::LaneEntryMetadata, p2p::network::HeaderSigner,
-        tests::autobahn_testing::assert_chanmsg_matches,
+        tests::autobahn_testing_macros::assert_chanmsg_matches,
     };
     use anyhow::Result;
     use hyli_crypto::BlstCrypto;
@@ -647,7 +649,7 @@ pub mod test {
             MempoolStatusEvent::WaitingDissemination { parent_data_proposal_hash, txs } => {
                 assert_eq!(
                     parent_data_proposal_hash,
-                    DataProposalHash(ctx.mempool.own_lane_id().to_string())
+                    DataProposalHash(ctx.mempool.own_lane_id().to_bytes())
                 );
                 assert_eq!(txs, actual_txs);
             }
@@ -733,8 +735,8 @@ pub mod test {
     #[test_log::test(tokio::test)]
     async fn test_broadcast_rehydrates_proofs() -> Result<()> {
         use crate::model::{
-            BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, ProofDataHash,
-            Transaction, TransactionData, VerifiedProofTransaction, Verifier,
+            BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, Transaction,
+            TransactionData, VerifiedProofTransaction, Verifier,
         };
 
         let mut ctx = MempoolTestCtx::new("mempool").await;
@@ -746,7 +748,7 @@ pub mod test {
 
         // Build DP with a VerifiedProof tx including the proof
         let proof = ProofData(vec![9, 9, 9, 9]);
-        let proof_hash = ProofDataHash(proof.hashed().0);
+        let proof_hash = proof.hashed();
         let vpt = VerifiedProofTransaction {
             contract_name: ContractName::new("rehydrate"),
             program_id: ProgramId(vec![]),
@@ -756,7 +758,7 @@ pub mod test {
             proof_size: proof.0.len(),
             proven_blobs: vec![BlobProofOutput {
                 original_proof_hash: proof_hash,
-                blob_tx_hash: crate::model::TxHash("blob-tx".into()),
+                blob_tx_hash: b"blob-tx".into(),
                 program_id: ProgramId(vec![]),
                 verifier: Verifier("test".into()),
                 hyli_output: HyliOutput::default(),
@@ -883,7 +885,7 @@ pub mod test {
         let signed_msg = create_data_vote(
             &crypto2,
             ctx.mempool.own_lane_id(),
-            DataProposalHash("non_existent".to_owned()),
+            b"non_existent".into(),
             LaneBytesSize(0),
         )?;
 
@@ -897,7 +899,7 @@ pub mod test {
             .inner
             .buffered_votes
             .get(&ctx.mempool.own_lane_id())
-            .and_then(|lane| lane.get(&DataProposalHash("non_existent".to_owned())))
+            .and_then(|lane| lane.get(&b"non_existent".into()))
             .map(|votes| votes.len())
             .unwrap_or_default();
         assert_eq!(buffered, 1);
@@ -935,23 +937,20 @@ pub mod test {
         ctx1.submit_tx(&tx2);
         ctx1.timer_tick().await?;
 
+        // This ends up disseminating 4 DPs for now - when we receive it, then on tick, then the other, then on tick.
         let mut dps = vec![];
-        for _ in 0..2 {
+        for _ in 0..4 {
             match ctx1.assert_broadcast("DataProposal").await.msg {
                 MempoolNetMessage::DataProposal(_, hash, dp, _) => dps.push((hash, dp)),
                 _ => panic!("Expected DataProposal message"),
             }
         }
 
-        assert!(dps.len() == 2, "Should have two DataProposals");
-        assert_eq!(dps[0].1.txs.len(), 1);
-        assert_eq!(dps[1].1.txs.len(), 1);
-        let txs = dps
-            .iter()
-            .map(|(_, dp)| dp.txs[0].clone())
-            .collect::<Vec<_>>();
-        assert!(txs.contains(&tx1));
-        assert!(txs.contains(&tx2));
+        assert!(dps.len() == 4, "Should have 4 DataProposals");
+        assert_eq!(dps[0].1.txs, vec![tx1.clone()]);
+        assert_eq!(dps[1].1.txs, vec![tx1.clone()]);
+        assert_eq!(dps[2].1.txs, vec![tx2.clone()]);
+        assert_eq!(dps[3].1.txs, vec![tx1.clone()]);
 
         // Redisseminate the oldest pending DataProposal
         // TODO: implement this as more of an integration test?

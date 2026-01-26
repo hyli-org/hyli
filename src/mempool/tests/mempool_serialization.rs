@@ -7,8 +7,8 @@ use super::*;
 use crate::mempool::ArcBorsh;
 use anyhow::Result;
 use hyli_model::{
-    BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, ProofDataHash,
-    ProofTransaction, Transaction, TransactionData, VerifiedProofTransaction, Verifier,
+    BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, ProofTransaction, Transaction,
+    TransactionData, VerifiedProofTransaction, Verifier,
 };
 use std::sync::Arc;
 
@@ -22,7 +22,7 @@ fn make_test_blob_tx(name: &str) -> Transaction {
 /// require actual proof verification during processing.
 fn make_test_verified_proof_tx(contract_name: &str) -> Transaction {
     let proof = ProofData(vec![1, 2, 3, 4]);
-    let proof_hash = ProofDataHash(proof.hashed().0);
+    let proof_hash = proof.hashed();
     let vpt = VerifiedProofTransaction {
         contract_name: ContractName::new(contract_name),
         program_id: ProgramId(vec![]),
@@ -32,7 +32,7 @@ fn make_test_verified_proof_tx(contract_name: &str) -> Transaction {
         proof_size: proof.0.len(),
         proven_blobs: vec![BlobProofOutput {
             original_proof_hash: proof_hash,
-            blob_tx_hash: crate::model::TxHash("blob-tx".into()),
+            blob_tx_hash: b"blob-tx".into(),
             program_id: ProgramId(vec![]),
             verifier: Verifier("test".into()),
             hyli_output: HyliOutput::default(),
@@ -215,7 +215,8 @@ async fn test_mempool_full_persistence_cycle() -> Result<()> {
 
     let mut ctx = MempoolTestCtx::new("mempool").await;
     let tmpdir = tempfile::tempdir()?;
-    let mempool_file = tmpdir.path().join("mempool.bin");
+    let data_dir = tmpdir.path();
+    let mempool_file = "mempool.bin";
 
     // Add some transactions to waiting_dissemination_txs
     let blob_tx = make_test_blob_tx("persist-test");
@@ -229,11 +230,12 @@ async fn test_mempool_full_persistence_cycle() -> Result<()> {
         .processing_txs_pending
         .push_back((ArcBorsh::new(Arc::new(pending_tx.clone())), lane_id.clone()));
 
-    // Save to disk
-    Mempool::save_on_disk(mempool_file.as_path(), &ctx.mempool.inner)?;
+    // Save to disk and write manifest entry for checksum verification.
+    let checksum = Mempool::save_on_disk(data_dir, mempool_file.as_ref(), &ctx.mempool.inner)?;
+    hyli_bus::modules::write_manifest(data_dir, &[(data_dir.join(mempool_file), checksum)])?;
 
     // Load from disk
-    let loaded = Mempool::load_from_disk::<MempoolStore>(mempool_file.as_path());
+    let loaded = Mempool::load_from_disk::<MempoolStore>(data_dir, mempool_file.as_ref()).unwrap();
     assert!(
         loaded.is_some(),
         "Should successfully load mempool from disk"

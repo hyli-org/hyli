@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use crate::{utils::TimestampMs, LaneId};
 
 #[derive(
-    Debug,
     Serialize,
     Deserialize,
     Clone,
@@ -22,12 +21,18 @@ use crate::{utils::TimestampMs, LaneId};
     PartialOrd,
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
-pub struct ConsensusProposalHash(pub String);
+pub struct ConsensusProposalHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
 pub type BlockHash = ConsensusProposalHash;
 
 impl std::hash::Hash for ConsensusProposalHash {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write(self.0.as_bytes());
+        state.write(&self.0);
+    }
+}
+
+impl std::fmt::Debug for ConsensusProposalHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ConsensusProposalHash({})", hex::encode(&self.0))
     }
 }
 
@@ -154,7 +159,6 @@ pub struct Identity(pub String);
     Default,
     Serialize,
     Deserialize,
-    Debug,
     Clone,
     PartialEq,
     Eq,
@@ -165,7 +169,7 @@ pub struct Identity(pub String);
     PartialOrd,
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
-pub struct TxHash(pub String);
+pub struct TxHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
 
 #[derive(
     Default,
@@ -365,19 +369,10 @@ pub struct Blob {
 }
 
 #[derive(
-    Default,
-    Debug,
-    Clone,
-    Serialize,
-    Deserialize,
-    Eq,
-    PartialEq,
-    Hash,
-    BorshSerialize,
-    BorshDeserialize,
+    Default, Clone, Serialize, Deserialize, Eq, PartialEq, Hash, BorshSerialize, BorshDeserialize,
 )]
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
-pub struct BlobHash(pub String);
+pub struct BlobHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
 
 #[cfg(feature = "full")]
 impl Hashed<BlobHash> for Blob {
@@ -388,7 +383,19 @@ impl Hashed<BlobHash> for Blob {
         hasher.update(self.contract_name.0.clone());
         hasher.update(self.data.0.clone());
         let hash_bytes = hasher.finalize();
-        BlobHash(hex::encode(hash_bytes))
+        BlobHash(hash_bytes.to_vec())
+    }
+}
+
+impl std::fmt::Debug for BlobHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "BlobHash({})", hex::encode(&self.0))
+    }
+}
+
+impl std::fmt::Display for BlobHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
     }
 }
 
@@ -543,9 +550,42 @@ impl<'de> Deserialize<'de> for ProofData {
 }
 
 #[derive(
-    Debug, Default, Serialize, Deserialize, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
+    Default, Serialize, Deserialize, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
 )]
-pub struct ProofDataHash(pub String);
+pub struct ProofDataHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
+
+impl From<Vec<u8>> for ProofDataHash {
+    fn from(v: Vec<u8>) -> Self {
+        ProofDataHash(v)
+    }
+}
+impl From<&[u8]> for ProofDataHash {
+    fn from(v: &[u8]) -> Self {
+        ProofDataHash(v.to_vec())
+    }
+}
+impl<const N: usize> From<&[u8; N]> for ProofDataHash {
+    fn from(v: &[u8; N]) -> Self {
+        ProofDataHash(v.to_vec())
+    }
+}
+impl ProofDataHash {
+    pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
+        crate::utils::decode_hex_string_checked(s).map(ProofDataHash)
+    }
+}
+
+impl std::fmt::Debug for ProofDataHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ProofDataHash({})", hex::encode(&self.0))
+    }
+}
+
+impl Display for ProofDataHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
+    }
+}
 
 #[cfg(feature = "full")]
 impl Hashed<ProofDataHash> for ProofData {
@@ -554,7 +594,7 @@ impl Hashed<ProofDataHash> for ProofData {
         let mut hasher = sha3::Sha3_256::new();
         hasher.update(self.0.as_slice());
         let hash_bytes = hasher.finalize();
-        ProofDataHash(hex::encode(hash_bytes))
+        ProofDataHash(hash_bytes.to_vec())
     }
 }
 
@@ -580,10 +620,8 @@ impl Hashed<OnchainEffectHash> for OnchainEffect {
         use sha3::{Digest, Sha3_256};
         let mut hasher = Sha3_256::new();
         match self {
-            OnchainEffect::RegisterContractWithConstructor(c) => {
-                hasher.update(c.hashed().0.as_bytes())
-            }
-            OnchainEffect::RegisterContract(c) => hasher.update(c.hashed().0.as_bytes()),
+            OnchainEffect::RegisterContractWithConstructor(c) => hasher.update(&c.hashed().0),
+            OnchainEffect::RegisterContract(c) => hasher.update(&c.hashed().0),
             OnchainEffect::DeleteContract(cn) => hasher.update(cn.0.as_bytes()),
             OnchainEffect::UpdateContractProgramId(cn, pid) => {
                 hasher.update(cn.0.as_bytes());
@@ -705,14 +743,55 @@ impl<S: Into<String>> From<S> for Identity {
     }
 }
 
+impl ConsensusProposalHash {
+    pub fn new<S: Into<Self>>(s: S) -> Self {
+        s.into()
+    }
+}
+impl From<Vec<u8>> for ConsensusProposalHash {
+    fn from(v: Vec<u8>) -> Self {
+        ConsensusProposalHash(v)
+    }
+}
+impl From<&[u8]> for ConsensusProposalHash {
+    fn from(v: &[u8]) -> Self {
+        ConsensusProposalHash(v.to_vec())
+    }
+}
+impl<const N: usize> From<&[u8; N]> for ConsensusProposalHash {
+    fn from(v: &[u8; N]) -> Self {
+        ConsensusProposalHash(v.to_vec())
+    }
+}
+impl ConsensusProposalHash {
+    pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
+        crate::utils::decode_hex_string_checked(s).map(ConsensusProposalHash)
+    }
+}
+
 impl TxHash {
     pub fn new<S: Into<Self>>(s: S) -> Self {
         s.into()
     }
 }
-impl<S: Into<String>> From<S> for TxHash {
-    fn from(s: S) -> Self {
-        TxHash(s.into())
+impl From<Vec<u8>> for TxHash {
+    fn from(v: Vec<u8>) -> Self {
+        TxHash(v)
+    }
+}
+impl From<&[u8]> for TxHash {
+    fn from(v: &[u8]) -> Self {
+        TxHash(v.to_vec())
+    }
+}
+impl<const N: usize> From<&[u8; N]> for TxHash {
+    fn from(v: &[u8; N]) -> Self {
+        TxHash(v.to_vec())
+    }
+}
+impl TxHash {
+    pub fn from_hex(s: &str) -> Result<Self, hex::FromHexError> {
+        crate::utils::decode_hex_string_checked(s).map(TxHash)
     }
 }
 
@@ -760,7 +839,12 @@ impl From<&[u8]> for ProgramId {
 
 impl Display for TxHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", &self.0)
+        write!(f, "{}", hex::encode(&self.0))
+    }
+}
+impl std::fmt::Debug for TxHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TxHash({})", hex::encode(&self.0))
     }
 }
 impl Display for BlobIndex {
@@ -944,7 +1028,7 @@ impl Hashed<TxHash> for RegisterContractAction {
         }
         // We don't hash the constructor metadata.
         let hash_bytes = hasher.finalize();
-        TxHash(hex::encode(hash_bytes))
+        TxHash(hash_bytes.to_vec())
     }
 }
 
@@ -1113,7 +1197,7 @@ impl Hashed<TxHash> for RegisterContractEffect {
             }
         }
         let hash_bytes = hasher.finalize();
-        TxHash(hex::encode(hash_bytes))
+        TxHash(hash_bytes.to_vec())
     }
 }
 
@@ -1136,5 +1220,47 @@ pub mod base64_field {
     {
         let s = String::deserialize(deserializer)?;
         BASE64_STANDARD.decode(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn consensus_proposal_hash_from_hex_str_roundtrip() {
+        let hex_str = "74657374";
+        let hash = ConsensusProposalHash::from_hex(hex_str).expect("consensus hash hex");
+        assert_eq!(hash.0, b"test".to_vec());
+        assert_eq!(format!("{hash}"), hex_str);
+        let json = serde_json::to_string(&hash).expect("serialize consensus hash");
+        assert_eq!(json, "\"74657374\"");
+        let decoded: ConsensusProposalHash =
+            serde_json::from_str(&json).expect("deserialize consensus hash");
+        assert_eq!(decoded, hash);
+    }
+
+    #[test]
+    fn txhash_from_hex_str_roundtrip() {
+        let hex_str = "746573745f7478";
+        let hash = TxHash::from_hex(hex_str).expect("txhash hex");
+        assert_eq!(hash.0, b"test_tx".to_vec());
+        assert_eq!(format!("{hash}"), hex_str);
+        let json = serde_json::to_string(&hash).expect("serialize tx hash");
+        assert_eq!(json, "\"746573745f7478\"");
+        let decoded: TxHash = serde_json::from_str(&json).expect("deserialize tx hash");
+        assert_eq!(decoded, hash);
+    }
+
+    #[test]
+    fn proof_data_hash_from_hex_str_roundtrip() {
+        let hex_str = "0x74657374";
+        let hash = ProofDataHash::from_hex(hex_str).expect("proof hash hex");
+        assert_eq!(hash.0, b"test".to_vec());
+        assert_eq!(hex::encode(&hash.0), "74657374");
+        let json = serde_json::to_string(&hash).expect("serialize proof hash");
+        assert_eq!(json, "\"74657374\"");
+        let decoded: ProofDataHash = serde_json::from_str(&json).expect("deserialize proof hash");
+        assert_eq!(decoded, hash);
     }
 }

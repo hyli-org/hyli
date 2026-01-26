@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::{bail, Context, Error, Result};
 use hyli_crypto::{BlstCrypto, SharedBlstCrypto};
-use hyli_model::{BlockHeight, NodeStateEvent, ValidatorPublicKey};
+use hyli_model::{utils::TimestampMs, BlockHeight, NodeStateEvent, ValidatorPublicKey};
 use hyli_modules::{
     bus::{BusMessage, SharedMessageBus},
     log_warn, module_handle_messages,
@@ -53,6 +53,7 @@ pub struct P2P {
     crypto: SharedBlstCrypto,
     // Metrics stuff
     netmessage_delay: Histogram<u64>,
+    start_timestamp: TimestampMs,
 }
 
 impl Module for P2P {
@@ -73,6 +74,7 @@ impl Module for P2P {
                 .with_description("Reception delay in milliseconds for net messages")
                 .with_unit("ms")
                 .build(),
+            start_timestamp: ctx.start_timestamp,
         })
     }
 
@@ -112,6 +114,7 @@ impl P2P {
                     self.config.p2p.timeouts.connect_retry_cooldown_ms,
                 ),
             },
+            self.start_timestamp.clone(),
         )
         .await?;
 
@@ -170,12 +173,13 @@ impl P2P {
             p2p_tcp_event = p2p_server.listen_next() => {
                 if let Ok(Some(p2p_server_event)) = log_warn!(p2p_server.handle_p2p_tcp_event(p2p_tcp_event).await, "Handling P2PTcpEvent") {
                     match p2p_server_event {
-                        P2PServerEvent::NewPeer { name, pubkey, da_address, height } => {
+                        P2PServerEvent::NewPeer { name, pubkey, da_address, height, start_timestamp } => {
                             let _ = log_warn!(self.bus.send(PeerEvent::NewPeer {
                                 name,
                                 pubkey,
                                 da_address,
-                                height: BlockHeight(height)
+                                height: BlockHeight(height),
+                                timestamp: start_timestamp,
                             }), "Sending new peer event");
                         },
                         P2PServerEvent::P2PMessage { msg: net_message, headers } => {

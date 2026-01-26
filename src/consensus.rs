@@ -963,6 +963,7 @@ pub mod test {
     use crate::{
         bus::{bus_client, command_response::CmdRespClient},
         rest::RestApi,
+        tests::autobahn_testing::AutobahnBusClient,
         utils::integration_test::NodeIntegrationCtxBuilder,
     };
     use hyli_modules::{
@@ -976,9 +977,10 @@ pub mod test {
     use super::*;
     use crate::{
         bus::{dont_use_this::get_receiver, metrics::BusMetrics, SharedMessageBus},
-        model::DataProposalHash,
         p2p::network::NetMessage,
-        tests::autobahn_testing::*,
+        //tests::autobahn_testing::*,
+        //tests::autobahn_testing_macros::*,
+        tests::autobahn_testing_macros::{broadcast, send, simple_commit_round},
         utils::conf::Conf,
     };
     use assertables::{assert_contains, assert_none};
@@ -1013,7 +1015,7 @@ pub mod test {
                     nodes.push(node);
                 }
 
-                $crate::tests::autobahn_testing::build_tuple!(nodes.remove(0), $count)
+                $crate::tests::autobahn_testing_macros::build_tuple!(nodes.remove(0), $count)
             }
         }};
     }
@@ -1081,8 +1083,7 @@ pub mod test {
             }
 
             self.consensus.bft_round_state.slot = 1;
-            self.consensus.bft_round_state.parent_hash =
-                ConsensusProposalHash("genesis".to_string());
+            self.consensus.bft_round_state.parent_hash = b"genesis".into();
             self.consensus.bft_round_state.parent_cut = vec![(
                 LaneId::new(
                     cryptos
@@ -1091,7 +1092,7 @@ pub mod test {
                         .validator_pubkey()
                         .clone(),
                 ),
-                DataProposalHash("genesis".to_string()),
+                b"genesis".into(),
                 LaneBytesSize(100),
                 AggregateSignature::default(),
             )];
@@ -1125,6 +1126,10 @@ pub mod test {
 
         pub fn staking(&self) -> Staking {
             self.consensus.bft_round_state.staking.clone()
+        }
+
+        pub fn slot(&self) -> u64 {
+            self.consensus.bft_round_state.slot
         }
 
         pub async fn timeout(nodes: &mut [&mut ConsensusTestCtx]) {
@@ -1325,7 +1330,7 @@ pub mod test {
                 }
             } else {
                 warn!(
-                    "{description}: OutboundMessage::BroadcastMessage message is missing, found {:?}",
+                    "{description}: BroadcastMessage message missing, found {:?}",
                     rec
                 );
                 self.assert_broadcast(description)
@@ -1435,10 +1440,7 @@ pub mod test {
 
         assert_eq!(cp1.slot, 1);
         assert_eq!(view1, 0);
-        assert_eq!(
-            cp1.parent_hash,
-            ConsensusProposalHash("genesis".to_string())
-        );
+        assert_eq!(cp1.parent_hash, b"genesis".into());
         assert_eq!(ticket1, Ticket::Genesis);
 
         // Slot 1 - leader = node2
@@ -1474,16 +1476,10 @@ pub mod test {
         let signed_vote = node2
             .consensus
             .crypto
-            .sign((
-                ConsensusProposalHash("hash-a".to_string()),
-                PrepareVoteMarker,
-            ))
+            .sign((ConsensusProposalHash::from(b"hash-a"), PrepareVoteMarker))
             .unwrap();
         let invalid_vote = Signed {
-            msg: (
-                ConsensusProposalHash("hash-b".to_string()),
-                PrepareVoteMarker,
-            ),
+            msg: (ConsensusProposalHash::from(b"hash-b"), PrepareVoteMarker),
             signature: signed_vote.signature,
         };
 
@@ -1575,12 +1571,12 @@ pub mod test {
             timestamp: TimestampMs(123),
             cut: vec![(
                 LaneId::new(node2.pubkey()),
-                DataProposalHash("test".to_string()),
+                b"test".into(),
                 LaneBytesSize::default(),
                 AggregateSignature::default(),
             )],
             staking_actions: vec![],
-            parent_hash: ConsensusProposalHash("hash".into()),
+            parent_hash: b"hash".into(),
         };
 
         // Create wrong prepare
@@ -1655,12 +1651,12 @@ pub mod test {
                     timestamp: TimestampMs(123),
                     cut: vec![(
                         LaneId::new(node2.pubkey()),
-                        DataProposalHash("test".to_string()),
+                        b"test".into(),
                         LaneBytesSize::default(),
                         AggregateSignature::default(),
                     )],
                     staking_actions: vec![],
-                    parent_hash: ConsensusProposalHash("hash".into()),
+                    parent_hash: b"hash".into(),
                 },
                 Ticket::Genesis,
                 0,
@@ -1704,12 +1700,12 @@ pub mod test {
                     timestamp: TimestampMs(123),
                     cut: vec![(
                         LaneId::new(node2.pubkey()),
-                        DataProposalHash("test".to_string()),
+                        b"test".into(),
                         LaneBytesSize::default(),
                         AggregateSignature::default(),
                     )],
                     staking_actions: vec![],
-                    parent_hash: ConsensusProposalHash("hash".into()),
+                    parent_hash: b"hash".into(),
                 },
                 Ticket::Genesis,
                 0,

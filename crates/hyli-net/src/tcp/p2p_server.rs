@@ -49,6 +49,7 @@ pub enum P2PServerEvent<Msg> {
         pubkey: ValidatorPublicKey,
         height: u64,
         da_address: String,
+        start_timestamp: TimestampMs,
     },
     P2PMessage {
         msg: Msg,
@@ -89,12 +90,12 @@ type HandShakeJoinSet<Data> = JoinSet<(String, anyhow::Result<TcpClient<Data, Da
 
 type CanalJob = (
     HashSet<ValidatorPublicKey>,
-    (Result<Vec<u8>, std::io::Error>, TcpHeaders),
+    (Result<Vec<u8>, std::io::Error>, TcpHeaders, &'static str),
 );
 type CanalJobResult = (
     Canal,
     HashSet<ValidatorPublicKey>,
-    (Result<Vec<u8>, std::io::Error>, TcpHeaders),
+    (Result<Vec<u8>, std::io::Error>, TcpHeaders, &'static str),
 );
 
 #[derive(Debug)]
@@ -128,6 +129,7 @@ where
     // Serialization of messages can take time so we offload them.
     canal_jobs: HashMap<Canal, OrderedJoinSet<CanalJob>>,
     timeouts: P2PTimeouts,
+    start_timestamp: TimestampMs,
     _phantom: std::marker::PhantomData<Msg>,
 }
 
@@ -145,6 +147,7 @@ where
         node_da_public_address: String,
         canals: HashSet<Canal>,
         timeouts: P2PTimeouts,
+        start_timestamp: TimestampMs,
     ) -> Result<Self, anyhow::Error> {
         Ok(Self {
             crypto,
@@ -172,6 +175,7 @@ where
                 .map(|canal| (canal, OrderedJoinSet::new()))
                 .collect(),
             timeouts,
+            start_timestamp,
             _phantom: std::marker::PhantomData,
         })
     }
@@ -256,13 +260,13 @@ where
                         }
                     }
                 },
-                (canal, pubkeys, (data, headers)) = std::future::poll_fn(|cx| Self::poll_hashmap(&mut self.canal_jobs, cx)) => {
+                (canal, pubkeys, (data, headers, message_label)) = std::future::poll_fn(|cx| Self::poll_hashmap(&mut self.canal_jobs, cx)) => {
                     let Ok(msg) = data else {
                         warn!("Error in canal jobs: {:?}", data);
                         continue
                     };
                     // TODO: handle errors?
-                    self.actually_send_to(pubkeys, &canal, msg, headers).await;
+                    self.actually_send_to(pubkeys, &canal, msg, headers, message_label).await;
                     if let Some(jobs) = self.canal_jobs.get(&canal) {
                         self.metrics
                             .canal_jobs_snapshot(canal.clone(), jobs.len() as u64);
@@ -783,6 +787,7 @@ where
                 pubkey: v.signature.validator.clone(),
                 da_address: v.msg.da_public_address.clone(),
                 height: v.msg.current_height,
+                start_timestamp: v.msg.start_timestamp.clone(),
             });
         }
 
@@ -831,6 +836,7 @@ where
             current_height: self.current_height,
             p2p_public_address: self.node_p2p_public_address.clone(),
             da_public_address: self.node_da_public_address.clone(),
+            start_timestamp: self.start_timestamp.clone(),
         };
         self.crypto.sign(node_connection_data)
     }
@@ -1026,13 +1032,18 @@ where
             return Ok(());
         }
 
+        let message_label = msg.message_label();
         let headers = crate::tcp::headers_from_span();
         if let Some(jobs) = self.canal_jobs.get_mut(&canal) {
             if !jobs.is_empty() {
                 jobs.spawn(async move {
                     (
                         HashSet::from_iter(std::iter::once(validator_pub_key)),
-                        (borsh::to_vec(&P2PTcpMessage::Data(msg)), headers),
+                        (
+                            borsh::to_vec(&P2PTcpMessage::Data(msg)),
+                            headers,
+                            message_label,
+                        ),
                     )
                 });
                 self.metrics
@@ -1087,9 +1098,19 @@ where
                 .unknown_peer("tx", canal.clone(), "unknown_canal");
             return;
         };
+        let message_label = msg.message_label();
         let peers = self.peers.keys().cloned().collect();
         let headers = crate::tcp::headers_from_span();
-        jobs.spawn(async move { (peers, (borsh::to_vec(&P2PTcpMessage::Data(msg)), headers)) });
+        jobs.spawn(async move {
+            (
+                peers,
+                (
+                    borsh::to_vec(&P2PTcpMessage::Data(msg)),
+                    headers,
+                    message_label,
+                ),
+            )
+        });
         self.metrics
             .canal_jobs_snapshot(canal.clone(), jobs.len() as u64);
     }
@@ -1107,9 +1128,19 @@ where
                 .unknown_peer("tx", canal.clone(), "unknown_canal");
             return;
         };
+        let message_label = msg.message_label();
         let peers = only_for.clone();
         let headers = crate::tcp::headers_from_span();
-        jobs.spawn(async move { (peers, (borsh::to_vec(&P2PTcpMessage::Data(msg)), headers)) });
+        jobs.spawn(async move {
+            (
+                peers,
+                (
+                    borsh::to_vec(&P2PTcpMessage::Data(msg)),
+                    headers,
+                    message_label,
+                ),
+            )
+        });
         self.metrics
             .canal_jobs_snapshot(canal.clone(), jobs.len() as u64);
     }
@@ -1120,6 +1151,7 @@ where
         canal: &Canal,
         msg: Vec<u8>,
         headers: TcpHeaders,
+        message_label: &'static str,
     ) -> HashMap<ValidatorPublicKey, anyhow::Error> {
         let peer_addr_to_pubkey: HashMap<String, ValidatorPublicKey> = self
             .peers
@@ -1140,7 +1172,12 @@ where
 
         let res = self
             .tcp_server
-            .raw_send_parallel(peer_addr_to_pubkey.keys().cloned().collect(), msg, headers)
+            .raw_send_parallel(
+                peer_addr_to_pubkey.keys().cloned().collect(),
+                msg,
+                headers,
+                message_label,
+            )
             .await;
         self.metrics
             .broadcast_targets(canal.clone(), peer_addr_to_pubkey.len() as u64);
@@ -1201,7 +1238,10 @@ pub mod tests {
     use opentelemetry_sdk::Resource;
     use tokio::net::TcpListener;
 
-    use crate::tcp::{p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent};
+    use crate::clock::TimestampMsClock;
+    use crate::tcp::{
+        p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent, TcpMessageLabel,
+    };
 
     use super::P2PTcpEvent;
 
@@ -1269,6 +1309,7 @@ pub mod tests {
             "127.0.0.1:4321".into(), // send some dummy address for DA,
             HashSet::from_iter(vec![Canal::new("A"), Canal::new("B")]),
             super::P2PTimeouts::default(),
+            TimestampMsClock::now(),
         )
         .await?;
         let p2p_server2 = P2PServer::new(
@@ -1280,6 +1321,7 @@ pub mod tests {
             "127.0.0.1:4321".into(), // send some dummy address for DA
             HashSet::from_iter(vec![Canal::new("A"), Canal::new("B")]),
             super::P2PTimeouts::default(),
+            TimestampMsClock::now(),
         )
         .await?;
 
@@ -1492,9 +1534,17 @@ pub mod tests {
             .unwrap();
         p2p_server1.tcp_server.drop_peer_stream(socket_addr);
 
-        let msg = borsh::to_vec(&P2PTcpMessage::Data(TestMessage("boom".to_string())))?;
+        let message = TestMessage("boom".to_string());
+        let message_label = message.message_label();
+        let msg = borsh::to_vec(&P2PTcpMessage::Data(message))?;
         let send_errors = p2p_server1
-            .actually_send_to(HashSet::from_iter(vec![peer_pubkey]), &canal, msg, vec![])
+            .actually_send_to(
+                HashSet::from_iter(vec![peer_pubkey]),
+                &canal,
+                msg,
+                vec![],
+                message_label,
+            )
             .await;
         assert!(!send_errors.is_empty(), "expected broadcast send errors");
 
@@ -1999,7 +2049,7 @@ pub mod tests {
 
         let send_errors = p2p_server1
             .tcp_server
-            .raw_send_parallel(vec![socket_addr], vec![255], vec![])
+            .raw_send_parallel(vec![socket_addr], vec![255], vec![], "raw")
             .await;
         assert!(send_errors.is_empty(), "Expected raw send to succeed");
 

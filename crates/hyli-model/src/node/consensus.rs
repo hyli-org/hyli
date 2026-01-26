@@ -77,7 +77,7 @@ impl Hashed<ConsensusProposalHash> for ConsensusProposal {
         hasher.update(self.slot.to_le_bytes());
         self.cut.iter().for_each(|(lane_id, hash, _, _)| {
             lane_id.update_hasher(&mut hasher);
-            hasher.update(hash.0.as_bytes());
+            hasher.update(&hash.0);
         });
         self.staking_actions.iter().for_each(|val| match val {
             ConsensusStakingAction::Bond { candidate } => {
@@ -92,8 +92,8 @@ impl Hashed<ConsensusProposalHash> for ConsensusProposal {
             }
         });
         hasher.update(self.timestamp.0.to_le_bytes());
-        hasher.update(self.parent_hash.0.as_bytes());
-        ConsensusProposalHash(hex::encode(hasher.finalize()))
+        hasher.update(&self.parent_hash.0);
+        ConsensusProposalHash(hasher.finalize().to_vec())
     }
 }
 
@@ -119,7 +119,7 @@ impl Display for ConsensusProposal {
 
 impl Display for ConsensusProposalHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", &self.0)
+        write!(f, "{}", hex::encode(&self.0))
     }
 }
 
@@ -170,10 +170,10 @@ mod tests {
             cut: Cut::default(),
             staking_actions: vec![],
             timestamp: TimestampMs(1),
-            parent_hash: ConsensusProposalHash("".to_string()),
+            parent_hash: b"".into(),
         };
         let hash = proposal.hashed();
-        assert_eq!(hash.0.len(), 64);
+        assert_eq!(hash.0.len(), 32);
     }
     #[test]
     fn test_consensus_proposal_hash_all_items() {
@@ -182,7 +182,7 @@ mod tests {
             slot: 1,
             cut: vec![(
                 LaneId::new(ValidatorPublicKey(vec![1])),
-                DataProposalHash("propA".to_string()),
+                b"propA".into(),
                 LaneBytesSize(1),
                 AggregateSignature::default(),
             )],
@@ -197,13 +197,13 @@ mod tests {
             }
             .into()],
             timestamp: TimestampMs(1),
-            parent_hash: ConsensusProposalHash("parent".to_string()),
+            parent_hash: b"parent".into(),
         };
         let mut b = ConsensusProposal {
             slot: 1,
             cut: vec![(
                 LaneId::new(ValidatorPublicKey(vec![1])),
-                DataProposalHash("propA".to_string()),
+                b"propA".into(),
                 LaneBytesSize(1),
                 AggregateSignature {
                     signature: Signature(vec![1, 2, 3]),
@@ -221,7 +221,7 @@ mod tests {
             }
             .into()],
             timestamp: TimestampMs(1),
-            parent_hash: ConsensusProposalHash("parent".to_string()),
+            parent_hash: b"parent".into(),
         };
         assert_ne!(a.hashed(), b.hashed());
         if let ConsensusStakingAction::Bond { candidate: a } =
@@ -249,9 +249,9 @@ mod tests {
         b.slot = 2;
         assert_eq!(a.hashed(), b.hashed());
 
-        a.parent_hash = ConsensusProposalHash("different".to_string());
+        a.parent_hash = b"different".into();
         assert_ne!(a.hashed(), b.hashed());
-        b.parent_hash = ConsensusProposalHash("different".to_string());
+        b.parent_hash = b"different".into();
         assert_eq!(a.hashed(), b.hashed());
     }
 }

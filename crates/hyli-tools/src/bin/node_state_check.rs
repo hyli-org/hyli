@@ -11,7 +11,10 @@ use hyli_modules::module_handle_messages;
 use hyli_modules::modules::{Module, module_bus_client};
 use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
-    modules::{ModulesHandler, da_listener::DAListenerConf, da_listener::SignedDAListener},
+    modules::{
+        ModulesHandler, block_processor::BusOnlyProcessor, da_listener::DAListenerConf,
+        da_listener::SignedDAListener,
+    },
     node_state::NodeState,
     utils::logger::setup_tracing,
 };
@@ -37,14 +40,15 @@ async fn main() -> Result<()> {
     tracing::info!("Setting up modules");
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus).await;
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
     handler
-        .build_module::<SignedDAListener>(DAListenerConf {
+        .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
             start_block: Some(BlockHeight(0)),
             timeout_client_secs: 10,
+            processor_config: (),
         })
         .await?;
 

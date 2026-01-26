@@ -6,8 +6,12 @@ use std::{collections::HashSet, error::Error, time::Duration};
 
 use hyli_crypto::BlstCrypto;
 use hyli_net::{
+    clock::TimestampMsClock,
     net::Sim,
-    tcp::{p2p_server::P2PServer, p2p_server::P2PTimeouts, Canal, P2PTcpMessage, TcpMessageLabel},
+    tcp::{
+        p2p_server::{P2PServer, P2PTimeouts},
+        Canal, P2PTcpMessage, TcpMessageLabel,
+    },
 };
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
@@ -84,6 +88,7 @@ async fn setup_basic_host(
         format!("{}:{}", peer, 4141),
         HashSet::from_iter(std::iter::once(Canal::new("A"))),
         P2PTimeouts::default(),
+        TimestampMsClock::now(),
     )
     .await?;
 
@@ -181,6 +186,7 @@ async fn setup_drop_host(
         format!("{}:{}", peer, 4141),
         HashSet::from_iter(std::iter::once(Canal::new("A"))),
         P2PTimeouts::default(),
+        TimestampMsClock::now(),
     )
     .await?;
 
@@ -234,6 +240,7 @@ async fn setup_drop_client(
         format!("{}:{}", peer, 4141),
         HashSet::from_iter(std::iter::once(Canal::new("A"))),
         P2PTimeouts::default(),
+        TimestampMsClock::now(),
     )
     .await?;
 
@@ -377,6 +384,7 @@ async fn setup_decode_error_host(peer: String, peers: Vec<String>) -> Result<(),
         format!("{}:{}", peer, 4141),
         HashSet::from_iter(std::iter::once(Canal::new("A"))),
         P2PTimeouts::default(),
+        TimestampMsClock::now(),
     )
     .await?;
 
@@ -404,7 +412,10 @@ async fn setup_decode_error_host(peer: String, peers: Vec<String>) -> Result<(),
 
                 if armed && !sent_error && peer == "peer-1" {
                     if let Some(socket) = p2p.tcp_server.connected_clients().first().cloned() {
-                        let errors = p2p.tcp_server.raw_send_parallel(vec![socket], vec![255], vec![]).await;
+                        let errors = p2p
+                            .tcp_server
+                            .raw_send_parallel(vec![socket], vec![255], vec![], "raw")
+                            .await;
                         assert!(errors.is_empty(), "Expected raw send to succeed");
                         sent_error = true;
                     }
@@ -485,6 +496,7 @@ async fn setup_poisoned_socket_host(
         format!("{}:{}", peer, 4141),
         HashSet::from_iter(std::iter::once(Canal::new("A"))),
         P2PTimeouts::default(),
+        TimestampMsClock::now(),
     )
     .await?;
 
@@ -513,7 +525,10 @@ async fn setup_poisoned_socket_host(
                     && p2p.peers.len() == all_other_peers.len()
                 {
                     if let Some(socket) = p2p.tcp_server.connected_clients().first().cloned() {
-                        let errors = p2p.tcp_server.raw_send_parallel(vec![socket], vec![255], vec![]).await;
+                        let errors = p2p
+                            .tcp_server
+                            .raw_send_parallel(vec![socket], vec![255], vec![], "raw")
+                            .await;
                         assert!(errors.is_empty(), "Expected raw send to succeed");
                         sent_error = true;
                         sent_error_at = Some(tokio::time::Instant::now());

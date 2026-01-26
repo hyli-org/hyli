@@ -1592,7 +1592,7 @@ async fn test_auto_prover_serialize_and_resume() -> Result<()> {
     let temp_dir = tempdir()?;
     let data_dir = temp_dir.path().to_path_buf();
     let ctx = Arc::new(AutoProverCtx {
-        data_directory: data_dir,
+        data_directory: data_dir.clone(),
         prover: Arc::new(TxExecutorTestProver::<TestContract>::new()),
         contract_name: ContractName("test".into()),
         api: None,
@@ -1616,7 +1616,8 @@ async fn test_auto_prover_serialize_and_resume() -> Result<()> {
     assert_eq!(proofs.len(), 1);
 
     // Step 3: Serialize the prover state
-    auto_prover.persist().await?;
+    let persisted = auto_prover.persist().await?;
+    hyli_bus::modules::write_manifest(&data_dir, &persisted)?;
 
     // Step 4: Run a couple more blocks
     let block_4 = node_state.craft_new_block_and_handle(4, vec![new_blob_tx(4)]); //, proofs.pop().unwrap()]);
@@ -1706,10 +1707,7 @@ async fn test_auto_prover_contract_update_program_id() -> Result<()> {
         .unwrap()
         .events
         .push((
-            TxId(
-                sdk::DataProposalHash("update_proposal".to_string()),
-                sdk::TxHash("contract_update_tx".to_string()),
-            ),
+            TxId(b"update_proposal".into(), b"contract_update_tx".into()),
             StatefulEvent::ContractUpdate(ContractName("test".into()), contract_update),
         ));
 

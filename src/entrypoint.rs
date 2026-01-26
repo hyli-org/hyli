@@ -26,6 +26,7 @@ use hyli_modules::{
     log_error,
     modules::{
         admin::{AdminApi, AdminApiRunContext, NodeAdminApiClient},
+        block_processor::BusOnlyProcessor,
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::DAListenerConf,
@@ -41,6 +42,7 @@ use hyli_modules::{
     },
     utils::db::use_fresh_db,
 };
+use hyli_net::clock::TimestampMsClock;
 use hyllar::Hyllar;
 use prometheus::Registry;
 use smt_token::account::AccountSMT;
@@ -217,6 +219,9 @@ async fn common_main(
     welcome_message(&config);
     info!("Starting node with config: {:?}", &config);
 
+    // Capture node start timestamp for use across all modules
+    let start_timestamp = TimestampMsClock::now();
+
     let registry = Registry::new();
     // Init global metrics meter we expose as an endpoint
     let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
@@ -322,14 +327,20 @@ async fn common_main(
         }
     }
 
-    let mut handler = ModulesHandler::new(&bus).await;
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
     if config.run_indexer {
         if config.gcs.save_proofs || config.gcs.save_blocks {
+            let (last_uploaded_height, genesis_timestamp_folder) =
+                GcsUploader::get_last_uploaded_block(&config.gcs).await?;
+
             handler
                 .build_module::<GcsUploader>(GcsUploaderCtx {
                     gcs_config: config.gcs.clone(),
                     data_directory: config.data_directory.clone(),
+                    node_name: config.id.clone(),
+                    last_uploaded_height,
+                    genesis_timestamp_folder,
                 })
                 .await?;
         }
@@ -401,6 +412,7 @@ async fn common_main(
             start_height: node_state_override
                 .as_ref()
                 .map(|node_state| node_state.current_height),
+            start_timestamp,
         };
 
         handler
@@ -435,11 +447,12 @@ async fn common_main(
         handler.build_module::<P2P>(ctx.clone()).await?;
     } else if config.run_indexer {
         handler
-            .build_module::<SignedDAListener>(DAListenerConf {
+            .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {
                 data_directory: config.data_directory.clone(),
                 da_read_from: config.da_read_from.clone(),
                 start_block: None,
                 timeout_client_secs: config.da_timeout_client_secs,
+                processor_config: (),
             })
             .await?;
     }

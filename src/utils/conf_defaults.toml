@@ -75,7 +75,7 @@ timestamp_checks = "Monotonic"
 # Whether to run the single-node or full consensus
 solo = true
 # Timestamp of the genesis block in seconds since epoch.
-genesis_timestamp = 1735689600 # Default to 2025-01-01T00:00:00Z
+genesis_timestamp = 0
 # Number of recent timeout certificates to keep for timeout recovery.
 timeout_certificate_cache_size = 100
 # Max number of prepares kept in memory for sync replies.
@@ -119,4 +119,4 @@ gcs_prefix = "local"
 save_proofs = false
 save_blocks = false
 
-start_block = 0
+max_concurrent_uploads = 1000

@@ -29,7 +29,7 @@ use tokio::{
     task::JoinSet,
     time::{sleep_until, Instant},
 };
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::model::SharedRunContext;
 
@@ -488,10 +488,10 @@ impl DataAvailability {
         let mut first_hole_receiver = self.start_scanning_for_first_hole();
 
         // Used to send blocks to clients (indexers/peers)
-        // // This is a JoinSet of tuples containing:
-        // // - A vector of block hashes to send
-        // // - The peer IP address to send the blocks to
-        // // - The number of retries for sending the blocks
+        // This is a JoinSet of tuples containing:
+        // - A vector of block hashes to send
+        // - The peer IP address to send the blocks to
+        // - The number of retries for sending the blocks
         let mut catchup_joinset: JoinSet<(Vec<ConsensusProposalHash>, String, usize)> =
             tokio::task::JoinSet::new();
         let mut catchup_task_checker_ticker =
@@ -547,8 +547,17 @@ impl DataAvailability {
             }
 
             Some(tcp_event) = server.listen_next() => {
-                if let TcpEvent::Message { socket_addr, data, .. } = tcp_event {
-                    _ = log_error!(self.start_streaming_to_peer(data.0, &mut catchup_joinset, &socket_addr).await, "Starting streaming to peer");
+                match tcp_event {
+                    TcpEvent::Message { socket_addr, data, .. } => {
+                        _ = log_error!(self.start_streaming_to_peer(data.0, &mut catchup_joinset, &socket_addr).await, "Starting streaming to peer");
+                    }
+                    TcpEvent::Closed { socket_addr } => {
+                        server.drop_peer_stream(socket_addr);
+                    }
+                    TcpEvent::Error { socket_addr, error } => {
+                        warn!("TCP error from {}: {}. Dropping socket.", socket_addr, error);
+                        server.drop_peer_stream(socket_addr);
+                    }
                 }
             }
 
@@ -591,6 +600,20 @@ impl DataAvailability {
         catchup_joinset: &mut JoinSet<(Vec<ConsensusProposalHash>, String, usize)>,
         server: &mut DataAvailabilityServer,
     ) -> Result<()> {
+        if !server.connected(&peer_ip) {
+            debug!("Peer {} disconnected before catchup send", peer_ip);
+            return Ok(());
+        }
+
+        if retries > 10 {
+            warn!(
+                "Failed to send block, too many retries for peer {}",
+                &peer_ip
+            );
+            server.drop_peer_stream(peer_ip);
+            return Ok(());
+        }
+
         if let Some(hash) = block_hashes.pop() {
             debug!("📡  Sending block {} to peer {}", &hash, &peer_ip);
             if let Ok(Some(signed_block)) = self.blocks.get(&hash) {
@@ -603,9 +626,6 @@ impl DataAvailability {
                     .is_ok()
                 {
                     catchup_joinset.spawn(async move { (block_hashes, peer_ip, 0) });
-                } else if retries > 10 {
-                    warn!("Failed to send block {} to peer {}", &hash, &peer_ip);
-                    server.drop_peer_stream(peer_ip);
                 } else {
                     // Retry sending the block
                     block_hashes.push(hash);
@@ -614,6 +634,11 @@ impl DataAvailability {
                         (block_hashes, peer_ip, retries + 1)
                     });
                 }
+            } else {
+                error!(
+                    "Block {} not found in storage while sending to peer {}. Should not happen",
+                    &hash, &peer_ip
+                );
             }
         }
         Ok(())
@@ -852,7 +877,6 @@ impl DataAvailability {
         processed_block_hashes.reverse();
 
         let peer_ip = peer_ip.to_string();
-
         catchup_joinset.spawn(async move { (processed_block_hashes, peer_ip, 0) });
 
         Ok(())
@@ -862,7 +886,7 @@ impl DataAvailability {
 #[cfg(test)]
 pub mod tests {
     #![allow(clippy::indexing_slicing)]
-    use std::time::Duration;
+    use std::{collections::HashMap, time::Duration};
 
     use super::module_bus_client;
     use super::Blocks;
@@ -879,6 +903,7 @@ pub mod tests {
     use hyli_modules::node_state::NodeState;
     use hyli_modules::utils::da_codec::DataAvailabilityClient;
     use hyli_modules::utils::da_codec::DataAvailabilityServer;
+    use hyli_net::tcp::TcpEvent;
     use staking::state::Staking;
 
     struct DataAvailabilityTestCtx {
@@ -1112,6 +1137,97 @@ pub mod tests {
 
         for i in 0..18 {
             assert!(heights_received.contains(&i));
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_da_many_clients_only_last_connected() {
+        let port = find_available_port().await;
+        let mut server = DataAvailabilityServer::start(port, "DaServer")
+            .await
+            .unwrap();
+
+        let client_count = 5usize;
+        let mut clients = Vec::with_capacity(client_count);
+        let mut addr_by_idx = HashMap::new();
+
+        for i in 0..client_count {
+            let mut client =
+                DataAvailabilityClient::connect(format!("client-{i}"), format!("0.0.0.0:{port}"))
+                    .await
+                    .unwrap();
+            client
+                .send(DataAvailabilityRequest(BlockHeight(i as u64)))
+                .await
+                .unwrap();
+
+            let event = tokio::time::timeout(Duration::from_secs(1), server.listen_next())
+                .await
+                .unwrap()
+                .unwrap();
+
+            match event {
+                TcpEvent::Message {
+                    socket_addr, data, ..
+                } => {
+                    assert_eq!(data, DataAvailabilityRequest(BlockHeight(i as u64)));
+                    assert!(
+                        server.connected(&socket_addr),
+                        "Server should track connected client {}",
+                        socket_addr
+                    );
+                    addr_by_idx.insert(i, socket_addr);
+                }
+                other => panic!("Expected Message event, got {other:?}"),
+            }
+
+            clients.push(client);
+        }
+
+        let last_idx = client_count - 1;
+        let last_addr = addr_by_idx.get(&last_idx).unwrap().clone();
+
+        for client in clients.drain(..last_idx) {
+            let dropped_addr = client.socket_addr.to_string();
+            drop(client);
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+            loop {
+                if !server.connected(&dropped_addr) {
+                    break;
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    panic!("Expected client {} to be dropped", dropped_addr);
+                }
+                if let Ok(Some(
+                    TcpEvent::Closed { socket_addr } | TcpEvent::Error { socket_addr, .. },
+                )) = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await
+                {
+                    if socket_addr == dropped_addr {
+                        server.drop_peer_stream(socket_addr);
+                    }
+                }
+            }
+        }
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if server.connected_clients().len() == 1 && server.connected(&last_addr) {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                panic!(
+                    "Expected only last client connected, got {:?}",
+                    server.connected_clients()
+                );
+            }
+            if let Ok(Some(
+                TcpEvent::Closed { socket_addr } | TcpEvent::Error { socket_addr, .. },
+            )) = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await
+            {
+                if socket_addr != last_addr {
+                    server.drop_peer_stream(socket_addr);
+                }
+            }
         }
     }
 

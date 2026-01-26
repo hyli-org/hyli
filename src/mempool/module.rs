@@ -1,3 +1,4 @@
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_modules::{log_error, module_handle_messages};
 use std::{sync::Arc, time::Duration};
 
@@ -33,10 +34,16 @@ impl Module for Mempool {
         }
         let bus = MempoolBusClient::new_from_bus(bus.new_handle()).await;
 
-        let attributes = Self::load_from_disk::<MempoolStore>(
-            ctx.config.data_directory.join("mempool.bin").as_path(),
-        )
-        .unwrap_or_default();
+        let inner = match Self::load_from_disk::<MempoolStore>(
+            &ctx.config.data_directory,
+            "mempool.bin".as_ref(),
+        )? {
+            Some(s) => s,
+            None => {
+                warn!("Starting MempoolStore from default.");
+                MempoolStore::default()
+            }
+        };
 
         let mut mempool = Mempool {
             bus,
@@ -45,7 +52,7 @@ impl Module for Mempool {
             crypto: Arc::clone(&ctx.crypto),
             metrics,
             lanes: shared_lanes_storage(&ctx.config.data_directory)?,
-            inner: attributes,
+            inner,
         };
         mempool.restore_inflight_work();
         Ok(mempool)
@@ -130,21 +137,24 @@ impl Module for Mempool {
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<()> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         if let Some(file) = &self.file {
-            _ = log_error!(
-                Self::save_on_disk(file.join("mempool.bin").as_path(), &self.inner),
-                "Persisting Mempool storage"
-            );
-            _ = log_error!(
-                Self::save_on_disk(
-                    file.join("mempool_lanes_tip.bin").as_path(),
-                    &self.lanes.lane_tips_snapshot()
-                ),
-                "Persisting Mempool lanes tip"
-            );
+            let mempool_file = "mempool.bin";
+            let checksum = Self::save_on_disk(file, mempool_file.as_ref(), &self.inner)?;
+
+            let lanes_tip_file = "mempool_lanes_tip.bin";
+            let lanes_tip_checksum = Self::save_on_disk(
+                file,
+                lanes_tip_file.as_ref(),
+                &self.lanes.lane_tips_snapshot(),
+            )?;
+
+            return Ok(vec![
+                (file.join(mempool_file), checksum),
+                (file.join(lanes_tip_file), lanes_tip_checksum),
+            ]);
         }
 
-        Ok(())
+        Ok(vec![])
     }
 }

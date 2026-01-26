@@ -10,9 +10,10 @@ use crate::modules::files::NODE_STATE_BIN;
 use crate::modules::{module_bus_client, Module, SharedBuildApiCtx};
 use crate::{log_error, log_warn};
 use anyhow::Result;
+use hyli_bus::modules::ModulePersistOutput;
 use sdk::*;
 use std::path::PathBuf;
-use tracing::info;
+use tracing::{info, warn};
 
 /// NodeStateModule maintains a NodeState,
 /// listens to DA, and sends events when it has processed blocks.
@@ -70,9 +71,16 @@ impl Module for NodeStateModule {
         }
         let metrics = NodeStateMetrics::global(ctx.node_id.clone(), "node_state");
 
-        let store = Self::load_from_disk_or_default::<NodeStateStore>(
-            ctx.data_directory.join(NODE_STATE_BIN).as_path(),
-        );
+        let store = match Self::load_from_disk::<NodeStateStore>(
+            &ctx.data_directory,
+            NODE_STATE_BIN.as_ref(),
+        )? {
+            Some(s) => s,
+            None => {
+                warn!("Starting NodeModule's NodeStateStore from default.");
+                NodeStateStore::default()
+            }
+        };
 
         for name in store.contracts.keys() {
             info!("📝 Loaded contract state for {}", name);
@@ -143,14 +151,11 @@ impl Module for NodeStateModule {
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<()> {
-        log_error!(
-            Self::save_on_disk::<NodeStateStore>(
-                self.data_directory.join(NODE_STATE_BIN).as_path(),
-                &self.inner,
-            ),
-            "Saving node state"
-        )
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
+        let file = PathBuf::from(NODE_STATE_BIN);
+        let checksum =
+            Self::save_on_disk::<NodeStateStore>(&self.data_directory, &file, &self.inner)?;
+        Ok(vec![(self.data_directory.join(file), checksum)])
     }
 }
 

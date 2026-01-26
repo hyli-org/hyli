@@ -1,9 +1,11 @@
 use anyhow::Result;
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_modules::{
     bus::SharedMessageBus,
-    log_error,
     modules::{files::CONSENSUS_BIN, Module},
 };
+use std::path::PathBuf;
+use tracing::warn;
 
 use super::{
     api, consensus_bus_client::ConsensusBusClient, metrics::ConsensusMetrics, Consensus,
@@ -15,8 +17,15 @@ impl Module for Consensus {
     type Context = SharedRunContext;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let file = ctx.config.data_directory.join(CONSENSUS_BIN);
-        let mut store: ConsensusStore = Self::load_from_disk_or_default(file.as_path());
+        let file = PathBuf::from(CONSENSUS_BIN);
+        let mut store: ConsensusStore =
+            match Self::load_from_disk(&ctx.config.data_directory, &file)? {
+                Some(s) => s,
+                None => {
+                    warn!("Starting consensus from default.");
+                    ConsensusStore::default()
+                }
+            };
         // Cap in-memory prepare cache on startup to avoid loading oversized state.
         store
             .bft_round_state
@@ -47,7 +56,7 @@ impl Module for Consensus {
         self.wait_genesis().await
     }
 
-    async fn persist(&mut self) -> Result<()> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         if let Some(file) = &self.file {
             let serialize_limit = self
                 .config
@@ -59,12 +68,10 @@ impl Module for Consensus {
                 .follower
                 .buffered_prepares
                 .set_max_size(Some(serialize_limit));
-            _ = log_error!(
-                Self::save_on_disk(file.as_path(), &self.store),
-                "Persisting consensus state"
-            );
+            let checksum = Self::save_on_disk(&self.config.data_directory, file, &self.store)?;
+            return Ok(vec![(self.config.data_directory.join(file), checksum)]);
         }
 
-        Ok(())
+        Ok(vec![])
     }
 }

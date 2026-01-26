@@ -3,6 +3,7 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_model::utils::TimestampMs;
 use hyli_model::{BlockHeight, ContractName, TxHash};
 use indexmap::IndexMap;
@@ -96,8 +97,17 @@ impl Module for ContractListener {
             ctx.contracts.len()
         );
 
-        let state_path = ctx.data_directory.join(CONTRACT_LISTENER_STATE_FILE);
-        let store = Self::load_from_disk_or_default::<ContractListenerStore>(state_path.as_path());
+        let state_path = PathBuf::from(CONTRACT_LISTENER_STATE_FILE);
+        let store = match Self::load_from_disk::<ContractListenerStore>(
+            &ctx.data_directory,
+            &state_path,
+        )? {
+            Some(s) => s,
+            None => {
+                warn!("Starting ContractListenerStore from default.");
+                ContractListenerStore::default()
+            }
+        };
 
         Ok(Self {
             bus,
@@ -112,20 +122,16 @@ impl Module for ContractListener {
         self.start().await
     }
 
-    async fn persist(&mut self) -> Result<()> {
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
         // Resetting last_seen_block_cursor to default.
         // This forces reprocessing of all sequenced transactions on restart.
         for cursor in self.store.last_sequenced_block_cursor.values_mut() {
             *cursor = BlockCursor::default();
         }
 
-        Self::save_on_disk(
-            self.conf
-                .data_directory
-                .join(CONTRACT_LISTENER_STATE_FILE)
-                .as_path(),
-            &self.store,
-        )
+        let file = PathBuf::from(CONTRACT_LISTENER_STATE_FILE);
+        let checksum = Self::save_on_disk(&self.conf.data_directory, &file, &self.store)?;
+        Ok(vec![(self.conf.data_directory.join(file), checksum)])
     }
 }
 
@@ -369,7 +375,7 @@ fn rows_to_txs(rows: Vec<PgRow>) -> Result<(BlockCursor, IndexMap<TxHash, TxData
     let mut latest_cursor = BlockCursor::default();
 
     for row in rows {
-        let tx_hash = TxHash(row.try_get("tx_hash")?);
+        let tx_hash: TxHash = row.try_get("tx_hash")?;
         let block_hash: BlockHash = row.try_get("block_hash")?;
         let lane_id: LaneId = row.try_get("lane_id")?;
         let timestamp: TimestampMs = row.try_get("timestamp")?;

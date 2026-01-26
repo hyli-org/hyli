@@ -6,10 +6,11 @@ use crate::{
 use anyhow::{anyhow, bail, Context, Error, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::contract_indexer::{ContractHandler, ContractStateStore};
+use hyli_bus::modules::ModulePersistOutput;
 use sdk::*;
 use std::{any::TypeId, ops::Deref, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::node_state::module::NodeStateEvent;
 
@@ -37,6 +38,7 @@ pub struct ContractStateIndexer<State, Event: Clone + Send + Sync + BusMessage +
     bus: CSIBusClient<Event>,
     store: Arc<RwLock<ContractStateStore<State>>>,
     contract_name: ContractName,
+    data_dir: PathBuf,
     file: PathBuf,
 }
 
@@ -62,12 +64,16 @@ where
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus = CSIBusClient::new_from_bus(bus.new_handle()).await;
-        let file = ctx
-            .data_directory
-            .join(format!("state_indexer_{}.bin", ctx.contract_name).as_str());
+        let file = PathBuf::from(format!("state_indexer_{}.bin", ctx.contract_name));
 
         let mut store =
-            Self::load_from_disk_or_default::<ContractStateStore<State>>(file.as_path());
+            match Self::load_from_disk::<ContractStateStore<State>>(&ctx.data_directory, &file)? {
+                Some(s) => s,
+                None => {
+                    warn!("Starting {} from default.", ctx.contract_name);
+                    ContractStateStore::default()
+                }
+            };
         store.contract_name = ctx.contract_name.clone();
         let store = Arc::new(RwLock::new(store));
 
@@ -101,6 +107,7 @@ where
         Ok(ContractStateIndexer {
             bus,
             file,
+            data_dir: ctx.data_directory,
             store,
             contract_name: ctx.contract_name,
         })
@@ -120,15 +127,13 @@ where
         Ok(())
     }
 
-    async fn persist(&mut self) -> Result<()> {
-        if let Err(e) = Self::save_on_disk::<ContractStateStore<State>>(
-            self.file.as_path(),
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
+        let checksum = Self::save_on_disk::<ContractStateStore<State>>(
+            &self.data_dir,
+            &self.file,
             self.store.read().await.deref(),
-        ) {
-            tracing::warn!(cn = %self.contract_name, "Failed to save contract state indexer on disk: {}", e);
-        }
-
-        Ok(())
+        )?;
+        Ok(vec![(self.data_dir.join(&self.file), checksum)])
     }
 }
 
