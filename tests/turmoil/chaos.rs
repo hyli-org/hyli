@@ -132,6 +132,7 @@ pub fn simulation_chaos_crash_one_node_restart(
             sim.crash(target.clone());
             crashed = true;
             restart_at = Some(now + downtime);
+            tracing::info!("Chaos: waiting {}s before restart", downtime.as_secs());
         }
 
         if !restarted {
@@ -181,6 +182,7 @@ pub fn simulation_chaos_crash_three_nodes_same_time(
             }
             crashed = true;
             restart_at = Some(now + downtime);
+            tracing::info!("Chaos: waiting {}s before restart", downtime.as_secs());
         }
 
         if crashed && !restarted {
@@ -215,6 +217,7 @@ pub fn simulation_chaos_graceful_shutdown_all_nodes(
     sim: &mut Sim<'_>,
 ) -> anyhow::Result<()> {
     let target_height = ctx.random_between(5, 15);
+    let downtime = Duration::from_secs(ctx.random_between(4, 8));
     tracing::info!("Chaos: target shutdown height {}", target_height);
     let shutdown_ready = Arc::new(AtomicBool::new(false));
     let verified = Arc::new(AtomicBool::new(false));
@@ -224,6 +227,7 @@ pub fn simulation_chaos_graceful_shutdown_all_nodes(
     let mut shutdown_order: Option<Vec<String>> = None;
     let mut shutdown_index = 0;
     let mut restart_triggered = false;
+    let mut restart_at: Option<Duration> = None;
     let mut verification_started = false;
 
     loop {
@@ -287,7 +291,21 @@ pub fn simulation_chaos_graceful_shutdown_all_nodes(
                     .iter()
                     .all(|node| !sim.is_host_running(node.conf.id.as_str()));
                 if all_stopped {
-                    tracing::info!("Chaos: all nodes stopped, restarting cluster");
+                    if restart_at.is_none() {
+                        tracing::info!(
+                            "Chaos: all nodes stopped, waiting {}s before restart",
+                            downtime.as_secs()
+                        );
+                        restart_at = Some(sim.elapsed() + downtime);
+                    }
+                }
+            }
+        }
+
+        if !restart_triggered {
+            if let Some(when) = restart_at {
+                if sim.elapsed() >= when {
+                    tracing::info!("Chaos: restarting cluster");
                     for node in ctx.nodes.iter() {
                         sim.bounce(node.conf.id.clone());
                     }
