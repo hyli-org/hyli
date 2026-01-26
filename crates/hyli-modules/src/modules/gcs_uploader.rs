@@ -128,6 +128,8 @@ impl GcsUploader {
             },
             Some(result) = self.upload_tasks.join_next() => {
                 self.handle_upload_result(result);
+                // Drain any other completed tasks while we're here
+                self.drain_completed_tasks();
             }
         };
         Ok(())
@@ -172,15 +174,16 @@ impl GcsUploader {
         let semaphore = self.upload_semaphore.clone();
         let timestamp_folder = self.ctx.genesis_timestamp_folder.clone();
 
-        // Serialize block before spawning to avoid holding SignedBlock across await
-        let data = borsh::to_vec(&block).expect("Failed to serialize SignedBlock");
-
         self.upload_tasks.spawn(async move {
             // Acquire permit - this will wait if at capacity
             let _permit = semaphore.acquire().await.expect("Semaphore closed");
 
+            let data = borsh::to_vec(&block).expect("Failed to serialize SignedBlock");
+
             // Build object name with timestamp folder if available
             let object_name = format!("{}/{}/block_{}.bin", prefix, timestamp_folder, block_height);
+
+            let now = std::time::Instant::now();
 
             match gcs_client
                 .write_object(bucket_path, object_name.clone(), Bytes::from(data))
@@ -188,11 +191,21 @@ impl GcsUploader {
                 .send_unbuffered()
                 .await
             {
-                Ok(_) => (block_height, Ok(())),
+                Ok(_) => {
+                    let elapsed = now.elapsed();
+                    info!(
+                        "Successfully uploaded block {} to GCS in {:.2?}",
+                        block_height, elapsed
+                    );
+                    (block_height, Ok(()))
+                }
                 Err(e) => (block_height, Err(e.to_string())),
             }
             // _permit is dropped here, releasing the semaphore slot
         });
+
+        // Drain completed tasks to prevent memory buildup
+        self.drain_completed_tasks();
     }
 
     fn handle_upload_result(
@@ -201,7 +214,6 @@ impl GcsUploader {
     ) {
         match result {
             Ok((height, Ok(()))) => {
-                info!("Successfully uploaded block {} to GCS bucket", height);
                 self.metrics.record_success(height);
             }
             Ok((height, Err(e))) => {
@@ -212,6 +224,13 @@ impl GcsUploader {
                 warn!("Upload task panicked: {}", e);
                 self.metrics.record_failure();
             }
+        }
+    }
+
+    fn drain_completed_tasks(&mut self) {
+        // Drain all completed tasks without blocking to prevent memory buildup
+        while let Some(result) = self.upload_tasks.try_join_next() {
+            self.handle_upload_result(result);
         }
     }
 
