@@ -202,6 +202,7 @@ where
 pub mod files {
     pub const NODE_STATE_BIN: &str = "node_state.bin";
     pub const CONSENSUS_BIN: &str = "consensus.bin";
+    pub const DA_LAST_PROCESSED_HEIGHT_BIN: &str = "da_last_processed_height.bin";
 }
 
 type ModuleStarterFuture =
