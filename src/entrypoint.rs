@@ -189,34 +189,25 @@ pub fn welcome_message(conf: &conf::Conf) {
 }
 
 pub async fn main_loop(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> Result<()> {
-    let mut handler = common_main(config, crypto, None).await?;
-    handler.exit_loop().await?;
-
-    Ok(())
-}
-
-pub async fn main_loop_with_bus(
-    config: conf::Conf,
-    crypto: Option<SharedBlstCrypto>,
-    bus: SharedMessageBus,
-) -> Result<()> {
-    let mut handler = common_main(config, crypto, Some(bus)).await?;
+    let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
+    let mut handler = common_main(config, crypto, bus).await?;
     handler.exit_loop().await?;
 
     Ok(())
 }
 
 pub async fn main_process(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> Result<()> {
-    let mut handler = common_main(config, crypto, None).await?;
+    let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
+    let mut handler = common_main(config, crypto, bus).await?;
     handler.exit_process().await?;
 
     Ok(())
 }
 
-async fn common_main(
+pub async fn common_main(
     mut config: conf::Conf,
     crypto: Option<SharedBlstCrypto>,
-    bus: Option<SharedMessageBus>,
+    bus: SharedMessageBus,
 ) -> Result<ModulesHandler> {
     std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
 
@@ -273,8 +264,6 @@ async fn common_main(
             }
         });
     }
-
-    let bus = bus.unwrap_or_else(|| SharedMessageBus::new(BusMetrics::global(config.id.clone())));
 
     let build_api_ctx = Arc::new(BuildApiContextInner {
         router: Mutex::new(Some(Router::new())),

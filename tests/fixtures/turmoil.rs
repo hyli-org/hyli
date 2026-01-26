@@ -10,7 +10,7 @@ use bytes::Bytes;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli::{
     bus::{metrics::BusMetrics, SharedMessageBus},
-    entrypoint::main_loop_with_bus,
+    entrypoint::common_main,
     utils::conf::Conf,
 };
 use hyli_crypto::BlstCrypto;
@@ -116,7 +116,8 @@ impl TurmoilHost {
     pub async fn start(&self) -> anyhow::Result<()> {
         let crypto = Arc::new(BlstCrypto::new(&self.conf.id).context("Creating crypto")?);
 
-        main_loop_with_bus(self.conf.clone(), Some(crypto), self.bus.new_handle()).await?;
+        let mut handler = common_main(self.conf.clone(), Some(crypto), self.bus.new_handle()).await?;
+        handler.exit_loop().await?;
 
         Ok(())
     }
