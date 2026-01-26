@@ -4,8 +4,9 @@ pub use opentelemetry::{
     metrics::{Counter, Gauge, Histogram, Meter, MeterProvider},
     InstrumentationScope, KeyValue,
 };
+pub use prometheus::Registry;
 use opentelemetry_sdk::metrics::MetricResult;
-use prometheus::Registry;
+use prometheus::{Encoder, TextEncoder};
 
 static GLOBAL_METER_PROVIDER: OnceLock<Option<Arc<dyn MeterProvider + Send + Sync>>> =
     OnceLock::new();
@@ -51,4 +52,11 @@ pub fn init_prometheus_registry_meter_provider() -> MetricResult<Registry> {
         .build();
     init_global_meter_provider(provider);
     Ok(registry)
+}
+
+pub fn encode_registry_text(registry: &Registry) -> prometheus::Result<String> {
+    let mut buffer = Vec::new();
+    let encoder = TextEncoder::new();
+    encoder.encode(&registry.gather(), &mut buffer)?;
+    String::from_utf8(buffer).map_err(|err| prometheus::Error::Msg(err.to_string()))
 }

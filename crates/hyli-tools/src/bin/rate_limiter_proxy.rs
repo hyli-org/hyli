@@ -13,7 +13,8 @@ use clap::Parser;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use hyli_telemetry::{
-    global_meter_with_id_or_panic, init_prometheus_registry_meter_provider, Counter, Gauge, KeyValue,
+    encode_registry_text, global_meter_with_id_or_panic, init_prometheus_registry_meter_provider,
+    Counter, Gauge, KeyValue, Registry,
 };
 use hyli_model::api::APIRegisterContract;
 use hyli_model::{BlobTransaction, ContractName, Identity, RegisterContractAction};
@@ -24,7 +25,6 @@ use hyper_util::{
     rt::TokioExecutor,
 };
 use notify::{Event, RecursiveMode, Watcher};
-use prometheus::{Encoder, Registry, TextEncoder};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::RwLock;
@@ -617,12 +617,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub(crate) async fn get_metrics(State(s): State<AppConfig>) -> Result<Response, StatusCode> {
-    let mut buffer = Vec::new();
-    let encoder = TextEncoder::new();
-    encoder
-        .encode(&s.registry.gather(), &mut buffer)
+    let res = encode_registry_text(&s.registry)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let res = String::from_utf8(buffer).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(res.into_response())
 }

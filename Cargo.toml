@@ -242,11 +242,7 @@ clap = { workspace = true, features = ["derive"] }
 config = { workspace = true, default-features = false, features = ["toml"] }
 futures = { workspace = true }
 indexmap = { workspace = true, features = ["serde"] }
-opentelemetry = { workspace = true }
-opentelemetry-prometheus = { workspace = true }
-opentelemetry_sdk = { workspace = true }
 paste = { workspace = true }
-prometheus = { workspace = true }
 rand = { workspace = true }
 sqlx = { workspace = true, features = [
   "runtime-tokio",

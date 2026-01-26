@@ -49,10 +49,6 @@ borsh = { workspace = true }
 serde_json = { workspace = true }
 
 # needs to match workspace
-opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-opentelemetry-prometheus = { workspace = true }
-prometheus = { workspace = true }
 
 # Feature UI
 ratatui = { workspace = true, features = ["crossterm"], optional = true }

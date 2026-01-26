@@ -14,7 +14,7 @@ use axum::{
     routing::get,
     Json,
 };
-use prometheus::{Encoder, Registry, TextEncoder};
+use hyli_telemetry::{encode_registry_text, Registry};
 use sdk::{api::NodeInfo, *};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -206,10 +206,7 @@ pub async fn get_info(State(state): State<RouterState>) -> Result<impl IntoRespo
 }
 
 pub async fn get_metrics(State(s): State<RouterState>) -> Result<impl IntoResponse, AppError> {
-    let mut buffer = Vec::new();
-    let encoder = TextEncoder::new();
-    encoder.encode(&s.registry.gather(), &mut buffer)?;
-    String::from_utf8(buffer).map_err(Into::into)
+    encode_registry_text(&s.registry).map_err(Into::into)
 }
 
 impl RestApi {
