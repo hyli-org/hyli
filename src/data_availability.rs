@@ -1231,7 +1231,9 @@ pub mod tests {
                     .await
                     .unwrap();
             client
-                .send(DataAvailabilityRequest::StreamFromHeight(BlockHeight(i as u64)))
+                .send(DataAvailabilityRequest::StreamFromHeight(BlockHeight(
+                    i as u64,
+                )))
                 .await
                 .unwrap();
 
@@ -1244,7 +1246,10 @@ pub mod tests {
                 TcpEvent::Message {
                     socket_addr, data, ..
                 } => {
-                    assert_eq!(data, DataAvailabilityRequest::StreamFromHeight(BlockHeight(i as u64)));
+                    assert_eq!(
+                        data,
+                        DataAvailabilityRequest::StreamFromHeight(BlockHeight(i as u64))
+                    );
                     assert!(
                         server.connected(&socket_addr),
                         "Server should track connected client {}",

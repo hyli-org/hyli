@@ -27,7 +27,9 @@ fn create_test_config_with_read_from(
 }
 
 /// Helper to create a test SignedDAListener
-async fn create_test_listener(config: DAListenerConf<BusOnlyProcessor>) -> Result<SignedDAListener<BusOnlyProcessor>> {
+async fn create_test_listener(
+    config: DAListenerConf<BusOnlyProcessor>,
+) -> Result<SignedDAListener<BusOnlyProcessor>> {
     let bus = SharedMessageBus::new(BusMetrics::global("test_da_listener".to_string()));
     SignedDAListener::build(bus.new_handle(), config).await
 }
