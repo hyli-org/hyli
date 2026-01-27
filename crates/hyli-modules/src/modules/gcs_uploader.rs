@@ -155,7 +155,6 @@ impl GcsUploader {
         let DataEvent::OrderedSignedBlock(block) = event;
         let block_height = block.height();
         let is_genesis = block_height.0 == 0;
-        info!("Handling DA event for block {}", block_height);
 
         // Check if this is genesis block (height 0)
         if is_genesis {
@@ -186,8 +185,9 @@ impl GcsUploader {
             {
                 if last_uploaded > 0 {
                     info!(
-                        "Blocks for timestamp folder {} already exists, skipping upload until block {last_uploaded}",
-                        self.ctx.genesis_timestamp_folder
+                        "Blocks for timestamp folder {} already exists, skipping uploads; will resume at {}",
+                        self.ctx.genesis_timestamp_folder,
+                        last_uploaded + 1
                     );
                     self.ctx.last_uploaded_height = BlockHeight(last_uploaded);
                     return Ok(());
@@ -515,6 +515,11 @@ impl GcsUploader {
 
         let store: GenesisTimestampStore =
             borsh::from_reader(&mut handle).context("Deserializing genesis timestamp file")?;
+
+        // Validate the loaded timestamp_folder
+        chrono::NaiveDateTime::parse_from_str(&store.timestamp_folder, "%Y-%m-%dT%H-%M-%SZ")
+            .context("Parsing genesis timestamp")?;
+
         Ok(Some(store.timestamp_folder))
     }
 
