@@ -1,4 +1,4 @@
-use hyli_telemetry::{global_meter_with_id_or_panic, Counter, Gauge, KeyValue};
+use hyli_turmoil_shims::{global_meter_or_panic, Counter, Gauge, KeyValue};
 use sdk::BlockHeight;
 
 #[derive(Debug, Clone)]
@@ -10,8 +10,8 @@ pub struct GcsUploaderMetrics {
 }
 
 impl GcsUploaderMetrics {
-    pub fn global(node_name: String, module_name: &'static str) -> GcsUploaderMetrics {
-        let my_meter = global_meter_with_id_or_panic(node_name);
+    pub fn global(module_name: &'static str) -> GcsUploaderMetrics {
+        let my_meter = global_meter_or_panic();
 
         GcsUploaderMetrics {
             module_name,
@@ -39,13 +39,13 @@ mod tests {
 
     #[test]
     fn test_metrics_creation() {
-        let metrics = GcsUploaderMetrics::global("test-node".to_string(), "gcs_uploader");
+        let metrics = GcsUploaderMetrics::global("gcs_uploader");
         assert_eq!(metrics.module_name, "gcs_uploader");
     }
 
     #[test]
     fn test_metrics_methods_dont_panic() {
-        let metrics = GcsUploaderMetrics::global("test-node".to_string(), "gcs_uploader");
+        let metrics = GcsUploaderMetrics::global("gcs_uploader");
 
         // These should not panic
         metrics.record_success(BlockHeight(100));

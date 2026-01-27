@@ -12,9 +12,9 @@ use chrono::{Local, NaiveDate};
 use clap::Parser;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
-use hyli_telemetry::{
-    encode_registry_text, global_meter_with_id_or_panic, init_prometheus_registry_meter_provider,
-    Counter, Gauge, KeyValue, Registry,
+use hyli_turmoil_shims::{
+    encode_registry_text, global_meter_or_panic, init_prometheus_registry_meter_provider, Counter,
+    Gauge, KeyValue, Registry,
 };
 use hyli_model::api::APIRegisterContract;
 use hyli_model::{BlobTransaction, ContractName, Identity, RegisterContractAction};
@@ -510,7 +510,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config: shared_config.clone(),
         client,
         rate_limits,
-        metrics: RateLimiterMetrics::global("rate_limiter_proxy".to_string()),
+        metrics: RateLimiterMetrics::global(),
         registry,
     };
 
@@ -634,8 +634,8 @@ struct RateLimiterMetrics {
 }
 
 impl RateLimiterMetrics {
-    pub fn global(node_name: String) -> RateLimiterMetrics {
-        let my_meter = global_meter_with_id_or_panic(node_name);
+    pub fn global() -> RateLimiterMetrics {
+        let my_meter = global_meter_or_panic();
 
         let rate_limiter = "proxy_limit";
 

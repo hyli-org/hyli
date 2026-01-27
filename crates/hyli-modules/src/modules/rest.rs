@@ -14,7 +14,7 @@ use axum::{
     routing::get,
     Json,
 };
-use hyli_telemetry::{encode_registry_text, Registry};
+use hyli_turmoil_shims::{encode_registry_text, Registry};
 use sdk::{api::NodeInfo, *};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;

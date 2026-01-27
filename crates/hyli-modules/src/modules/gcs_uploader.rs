@@ -72,7 +72,7 @@ impl Module for GcsUploader {
         let gcs_client = Storage::builder().build().await?;
 
         // Initialize metrics
-        let metrics = GcsUploaderMetrics::global(ctx.node_name.clone(), "gcs_uploader");
+        let metrics = GcsUploaderMetrics::global("gcs_uploader");
         metrics.record_success(ctx.last_uploaded_height);
 
         // Initialize semaphore with configured max (default to 100 if 0)

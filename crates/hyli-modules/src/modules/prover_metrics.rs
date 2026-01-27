@@ -1,5 +1,5 @@
 use client_sdk::helpers::ProverInfo;
-use hyli_telemetry::{global_meter_or_panic, Counter, Gauge, Histogram, KeyValue};
+use hyli_turmoil_shims::{global_meter_or_panic, Counter, Gauge, Histogram, KeyValue};
 
 #[derive(Debug, Clone)]
 pub struct AutoProverMetrics {
@@ -20,7 +20,7 @@ pub struct AutoProverMetrics {
 
 impl AutoProverMetrics {
     pub fn global(contract_name: String, infos: ProverInfo) -> AutoProverMetrics {
-        let my_meter = global_meter_or_panic("auto_prover");
+        let my_meter = global_meter_or_panic();
 
         AutoProverMetrics {
             proofs_requested: my_meter

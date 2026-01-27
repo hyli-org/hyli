@@ -9,7 +9,7 @@ repository = { workspace = true }
 rust-version = { workspace = true }
 
 [dependencies]
-hyli-turmoil-shims = { workspace = true }
+hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 anyhow = { workspace = true }
 anymap = { workspace = true }
 borsh = { workspace = true, features = ["derive"] }
@@ -29,7 +29,6 @@ tracing-subscriber = { workspace = true, features = [
 tokio = { workspace = true, features = ["full", "tracing"] }
 
 opentelemetry = { workspace = true }
-hyli-telemetry = { workspace = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 tracing-opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true }

@@ -25,7 +25,7 @@ use hyli_net::{
 use network::{
     IntoHeaderSignableData, MsgHeader, MsgWithHeader, NetMessage, OutboundMessage, PeerEvent,
 };
-use hyli_telemetry::{Histogram, KeyValue};
+use hyli_turmoil_shims::{global_meter_or_panic, Histogram, KeyValue};
 use tracing::{info, trace, warn, Instrument};
 
 pub mod network;
@@ -62,7 +62,7 @@ impl Module for P2P {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus_client = P2PBusClient::new_from_bus(bus.new_handle()).await;
 
-        let my_meter = hyli_telemetry::global_meter_with_id_or_panic(ctx.config.id.clone());
+        let my_meter = global_meter_or_panic();
 
         Ok(P2P {
             config: ctx.config.clone(),

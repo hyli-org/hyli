@@ -7,7 +7,7 @@ use hyli_modules::utils::da_codec::{DataAvailabilityClient, DataAvailabilityServ
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::TcpEvent;
-use hyli_telemetry::{global_meter_with_id_or_panic, Counter, Gauge, KeyValue};
+use hyli_turmoil_shims::{global_meter_or_panic, Counter, Gauge, KeyValue};
 use tokio::task::JoinHandle;
 
 use crate::{
@@ -71,11 +71,7 @@ impl Module for DataAvailability {
             bus,
             blocks,
             buffered_signed_blocks: BTreeSet::new(),
-            catchupper: DaCatchupper::new(
-                catchup_policy,
-                ctx.config.da_max_frame_length,
-                ctx.config.id.clone(),
-            ),
+            catchupper: DaCatchupper::new(catchup_policy, ctx.config.da_max_frame_length),
         })
     }
 
@@ -126,13 +122,13 @@ struct DaCatchupMetrics {
 
 impl Default for DaCatchupMetrics {
     fn default() -> Self {
-        Self::global("default_node".to_string())
+        Self::global()
     }
 }
 
 impl DaCatchupMetrics {
-    pub fn global(node_name: String) -> DaCatchupMetrics {
-        let my_meter = global_meter_with_id_or_panic(node_name);
+    pub fn global() -> DaCatchupMetrics {
+        let my_meter = global_meter_or_panic();
         DaCatchupMetrics {
             start: my_meter.u64_counter("da_catchup_start").build(),
             restart: my_meter.u64_counter("da_catchup_restart").build(),
@@ -177,11 +173,7 @@ struct DaCatchupper {
 }
 
 impl DaCatchupper {
-    pub fn new(
-        policy: Option<DaCatchupPolicy>,
-        da_max_frame_length: usize,
-        node_name: String,
-    ) -> Self {
+    pub fn new(policy: Option<DaCatchupPolicy>, da_max_frame_length: usize) -> Self {
         DaCatchupper {
             policy,
             status: None,
@@ -189,7 +181,7 @@ impl DaCatchupper {
             peers: vec![],
             da_max_frame_length,
             stop_height: None,
-            metrics: DaCatchupMetrics::global(node_name),
+            metrics: DaCatchupMetrics::global(),
         }
     }
 
@@ -919,7 +911,7 @@ pub mod tests {
 
             let mut config: Conf = Conf::new(vec![], None, None).unwrap();
 
-            let node_state = NodeState::create(config.id.clone(), "data_availability");
+            let node_state = NodeState::create("data_availability");
 
             config.da_server_port = find_available_port().await;
             config.da_public_address = format!("127.0.0.1:{}", config.da_server_port);
@@ -981,7 +973,7 @@ pub mod tests {
             .unwrap();
 
         let bus = super::DABusClient::new_from_bus(crate::bus::SharedMessageBus::new(
-            crate::bus::metrics::BusMetrics::global("global".to_string()),
+            crate::bus::metrics::BusMetrics::global(),
         ))
         .await;
         let mut da = super::DataAvailability {
@@ -1024,7 +1016,7 @@ pub mod tests {
         let blocks = Blocks::new(&tmpdir).unwrap();
 
         let global_bus = crate::bus::SharedMessageBus::new(
-            crate::bus::metrics::BusMetrics::global("global".to_string()),
+            crate::bus::metrics::BusMetrics::global(),
         );
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
         let mut block_sender = TestBusClient::new_from_bus(global_bus).await;
@@ -1230,7 +1222,7 @@ pub mod tests {
     #[test_log::test(tokio::test)]
     async fn test_da_catchup() {
         let sender_global_bus = crate::bus::SharedMessageBus::new(
-            crate::bus::metrics::BusMetrics::global("global".to_string()),
+            crate::bus::metrics::BusMetrics::global(),
         );
         let mut block_sender = TestBusClient::new_from_bus(sender_global_bus.new_handle()).await;
         let mut da_sender = DataAvailabilityTestCtx::new(sender_global_bus).await;
@@ -1239,7 +1231,7 @@ pub mod tests {
             .unwrap();
 
         let receiver_global_bus = crate::bus::SharedMessageBus::new(
-            crate::bus::metrics::BusMetrics::global("global".to_string()),
+            crate::bus::metrics::BusMetrics::global(),
         );
         let mut da_receiver = DataAvailabilityTestCtx::new(receiver_global_bus).await;
         da_receiver.da.catchupper.policy = Some(DaCatchupPolicy {
@@ -1381,7 +1373,7 @@ pub mod tests {
     #[test_log::test(tokio::test)]
     async fn test_da_fast_catchup() {
         let sender_global_bus = crate::bus::SharedMessageBus::new(
-            crate::bus::metrics::BusMetrics::global("global".to_string()),
+            crate::bus::metrics::BusMetrics::global(),
         );
         let mut block_sender = TestBusClient::new_from_bus(sender_global_bus.new_handle()).await;
         let mut da_sender = DataAvailabilityTestCtx::new(sender_global_bus).await;
@@ -1390,7 +1382,7 @@ pub mod tests {
             .unwrap();
 
         let receiver_global_bus = crate::bus::SharedMessageBus::new(
-            crate::bus::metrics::BusMetrics::global("global".to_string()),
+            crate::bus::metrics::BusMetrics::global(),
         );
         let mut da_receiver = DataAvailabilityTestCtx::new(receiver_global_bus).await;
         da_receiver.da.catchupper.policy = Some(DaCatchupPolicy {

@@ -3,7 +3,7 @@ use std::{
     collections::HashMap,
 };
 
-use hyli_telemetry::{global_meter_with_id_or_panic, Counter, KeyValue};
+use hyli_turmoil_shims::{global_meter_or_panic, Counter, KeyValue};
 use quote::ToTokens;
 use syn::{parse_str, Type};
 
@@ -16,8 +16,8 @@ pub struct BusMetrics {
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 impl BusMetrics {
-    pub fn global(meter_id: String) -> BusMetrics {
-        let my_meter = global_meter_with_id_or_panic(meter_id);
+    pub fn global() -> BusMetrics {
+        let my_meter = global_meter_or_panic();
 
         BusMetrics {
             labels: HashMap::new(),

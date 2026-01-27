@@ -7,7 +7,7 @@ use client_sdk::{
     contract_indexer::utoipa::OpenApi, helpers::risc0::Risc0Prover, rest_client::NodeApiHttpClient,
 };
 use hyli_contract_sdk::api::NodeInfo;
-use hyli_telemetry::init_prometheus_registry_meter_provider;
+use hyli_turmoil_shims::init_prometheus_registry_meter_provider;
 use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting smt auto prover");
 
-    let bus = SharedMessageBus::new(BusMetrics::global("smt_auto_prover".to_string()));
+    let bus = SharedMessageBus::new(BusMetrics::global());
 
     tracing::info!("Setting up modules");
 

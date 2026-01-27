@@ -152,7 +152,7 @@ where
         Ok(Self {
             crypto,
             node_id: node_id.clone(),
-            metrics: P2PMetrics::global(node_id.clone()),
+            metrics: P2PMetrics::global(),
             connecting: HashMap::default(),
             max_frame_length,
             node_p2p_public_address,
@@ -1229,8 +1229,8 @@ pub mod tests {
     use anyhow::Result;
     use borsh::{BorshDeserialize, BorshSerialize};
     use hyli_crypto::BlstCrypto;
-    use hyli_telemetry::init_global_meter_provider;
-    use hyli_telemetry::KeyValue;
+    use hyli_turmoil_shims::init_global_meter_provider;
+    use hyli_turmoil_shims::KeyValue;
     use opentelemetry_sdk::metrics::{
         data::{self, Sum},
         reader::MetricReader,

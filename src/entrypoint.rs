@@ -22,9 +22,9 @@ use anyhow::{bail, Context, Result};
 use axum::Router;
 use hydentity::Hydentity;
 use hyli_crypto::SharedBlstCrypto;
-use hyli_telemetry::init_prometheus_registry_meter_provider;
+use hyli_turmoil_shims::init_prometheus_registry_meter_provider;
 #[cfg(feature = "monitoring")]
-use hyli_telemetry::global_meter_with_id_or_panic;
+use hyli_turmoil_shims::global_meter_or_panic;
 use hyli_modules::{
     log_error,
     modules::{
@@ -230,7 +230,7 @@ async fn common_main(
 
     #[cfg(feature = "monitoring")]
     {
-        let my_meter = global_meter_with_id_or_panic(config.id.clone());
+        let my_meter = global_meter_or_panic();
         let alloc_metric = my_meter.u64_gauge("malloc_allocated_size").build();
         let alloc_metric2 = my_meter.u64_gauge("malloc_allocations").build();
         let latency_metric = my_meter.u64_histogram("tokio_latency").build();
@@ -254,7 +254,7 @@ async fn common_main(
         });
     }
 
-    let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
+    let bus = SharedMessageBus::new(BusMetrics::global());
 
     let build_api_ctx = Arc::new(BuildApiContextInner {
         router: Mutex::new(Some(Router::new())),

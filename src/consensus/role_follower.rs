@@ -1166,7 +1166,7 @@ mod tests {
             ..ConsensusProposal::default()
         };
 
-        let bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
+        let bus = SharedMessageBus::new(BusMetrics::global());
         let mut sync_request_rv = get_receiver::<OutboundMessage>(&bus).await;
 
         let mut consensus =

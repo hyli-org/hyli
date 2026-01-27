@@ -1,5 +1,5 @@
 use hyli_model::LaneId;
-use hyli_telemetry::{Counter, Gauge, KeyValue};
+use hyli_turmoil_shims::{global_meter_or_panic, Counter, Gauge, KeyValue};
 
 use crate::model::ValidatorPublicKey;
 
@@ -26,8 +26,8 @@ pub struct MempoolMetrics {
 }
 
 impl MempoolMetrics {
-    pub fn global(node_name: String) -> MempoolMetrics {
-        let my_meter = hyli_telemetry::global_meter_with_id_or_panic(node_name);
+    pub fn global() -> MempoolMetrics {
+        let my_meter = global_meter_or_panic();
 
         let mempool = "mempool";
 

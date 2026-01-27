@@ -14,7 +14,6 @@ client-sdk = { workspace = true, features = ["rest", "indexer"] }
 hyli-net = { workspace = true, features = ["bus"] }
 hyli-bus = { workspace = true }
 hyli-model = { workspace = true, features = ["bus"] }
-hyli-telemetry = { workspace = true }
 
 config = { workspace = true, default-features = false, features = ["toml"] }
 sha3 = { workspace = true }
@@ -64,7 +63,7 @@ indexmap = { workspace = true }
 
 # Native verifiers
 hyli-crypto = { workspace = true }
-hyli-turmoil-shims = { workspace = true }
+hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 secp256k1 = { workspace = true, features = ["rand"] }
 
 [dev-dependencies]

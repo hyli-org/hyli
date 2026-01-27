@@ -1,4 +1,4 @@
-use hyli_telemetry::{global_meter_with_id_or_panic, Counter, Gauge, KeyValue};
+use hyli_turmoil_shims::{global_meter_or_panic, Counter, Gauge, KeyValue};
 
 #[derive(Debug, Clone)]
 pub struct NodeStateMetrics {
@@ -15,8 +15,8 @@ pub struct NodeStateMetrics {
 }
 
 impl NodeStateMetrics {
-    pub fn global(node_name: String, module_name: &'static str) -> NodeStateMetrics {
-        let my_meter = global_meter_with_id_or_panic(node_name);
+    pub fn global(module_name: &'static str) -> NodeStateMetrics {
+        let my_meter = global_meter_or_panic();
 
         let node_state = "node_state";
 

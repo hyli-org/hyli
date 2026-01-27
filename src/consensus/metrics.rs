@@ -1,4 +1,4 @@
-use hyli_telemetry::{global_meter_with_id_or_panic, Counter, Gauge};
+use hyli_turmoil_shims::{global_meter_or_panic, Counter, Gauge};
 
 #[repr(u64)]
 #[derive(Clone, Copy)]
@@ -46,8 +46,8 @@ macro_rules! build {
 }
 
 impl ConsensusMetrics {
-    pub fn global(id: String) -> ConsensusMetrics {
-        let my_meter = global_meter_with_id_or_panic(id);
+    pub fn global() -> ConsensusMetrics {
+        let my_meter = global_meter_or_panic();
 
         ConsensusMetrics {
             current_slot: build!(my_meter, gauge, "current_slot"),

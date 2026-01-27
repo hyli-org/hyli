@@ -41,7 +41,7 @@ pub struct AutobahnTestCtx {
 
 impl AutobahnTestCtx {
     pub async fn new(name: &str, crypto: BlstCrypto) -> Self {
-        let shared_bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
+        let shared_bus = SharedMessageBus::new(BusMetrics::global());
         let event_receiver = get_receiver::<ConsensusEvent>(&shared_bus).await;
         let p2p_receiver = get_receiver::<P2PCommand>(&shared_bus).await;
         let consensus_out_receiver = get_receiver::<OutboundMessage>(&shared_bus).await;
@@ -778,7 +778,7 @@ async fn autobahn_rejoin_flow_in_consensus_with_tc() {
     joining_node.consensus_ctx.setup_for_rejoining(0);
 
     // Let's setup a NodeState on this bus
-    let mut ns = NodeState::create("test".to_string(), "test");
+    let mut ns = NodeState::create("test");
     let ns_event_sender = get_sender::<NodeStateEvent>(&joining_node.shared_bus).await;
     let mut ns_event_receiver = get_receiver::<NodeStateEvent>(&joining_node.shared_bus).await;
     let mut commit_receiver = get_receiver::<ConsensusEvent>(&node1.shared_bus).await;
@@ -1091,7 +1091,7 @@ async fn autobahn_rejoin_flow_outside_consensus() {
         .setup_for_joining(&[&node1.consensus_ctx, &node2.consensus_ctx]);
 
     // Let's setup a NodeState on this bus
-    let mut ns = NodeState::create("test".to_string(), "test");
+    let mut ns = NodeState::create("test");
 
     let mut blocks = vec![SignedBlock {
         data_proposals: vec![],

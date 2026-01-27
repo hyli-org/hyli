@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting Node State Check with config: {:?}", config);
 
-    let bus = SharedMessageBus::new(BusMetrics::global("node_state_check".to_string()));
+    let bus = SharedMessageBus::new(BusMetrics::global());
 
     tracing::info!("Setting up modules");
 
@@ -157,7 +157,7 @@ impl Module for NodeStateCheck {
 
 impl NodeStateCheck {
     pub async fn start(&mut self) -> Result<()> {
-        let mut node_state = NodeState::create("node_state_check".to_string(), "node_state_check");
+        let mut node_state = NodeState::create("node_state_check");
         module_handle_messages! {
             on_self self,
             listen<DataEvent> event => {
