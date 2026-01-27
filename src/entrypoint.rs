@@ -32,7 +32,6 @@ use hyli_modules::{
         da_listener::DAListenerConf,
         da_listener::SignedDAListener,
         files::{CONSENSUS_BIN, NODE_STATE_BIN},
-        gcs_uploader::{GcsUploader, GcsUploaderCtx},
         websocket::WebSocketModule,
         BuildApiContextInner,
     },
