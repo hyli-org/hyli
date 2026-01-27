@@ -330,21 +330,6 @@ async fn common_main(
     let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
     if config.run_indexer {
-        if config.gcs.save_proofs || config.gcs.save_blocks {
-            let upload_start =
-                GcsUploader::get_last_uploaded_block(&config.gcs, &config.data_directory).await?;
-
-            handler
-                .build_module::<GcsUploader>(GcsUploaderCtx {
-                    gcs_config: config.gcs.clone(),
-                    data_directory: config.data_directory.clone(),
-                    node_name: config.id.clone(),
-                    last_uploaded_height: upload_start.last_uploaded_height,
-                    genesis_timestamp_folder: upload_start.genesis_timestamp_folder,
-                })
-                .await?;
-        }
-
         handler
             .build_module::<ContractStateIndexer<Hyllar>>(ContractStateIndexerCtx {
                 contract_name: "hyllar".into(),

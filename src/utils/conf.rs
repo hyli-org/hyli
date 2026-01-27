@@ -227,9 +227,6 @@ pub struct Conf {
 
     /// Own-lane configuration
     pub own_lanes: OwnLaneConf,
-
-    /// GCSUploader configuration
-    pub gcs: GCSConf,
 }
 
 impl Conf {
