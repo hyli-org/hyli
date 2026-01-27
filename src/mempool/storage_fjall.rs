@@ -6,10 +6,7 @@ use std::{
 
 use anyhow::{bail, Result};
 use async_stream::try_stream;
-use fjall::{
-    Config, GarbageCollection, Keyspace, KvSeparationOptions, PartitionCreateOptions,
-    PartitionHandle, Slice,
-};
+use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slice};
 use futures::Stream;
 use hyli_model::{LaneId, ProofData, TxHash};
 use tracing::{info, warn};
@@ -30,10 +27,10 @@ pub use hyli_model::LaneBytesSize;
 #[derive(Clone)]
 pub struct LanesStorage {
     pub lanes_tip: Arc<RwLock<BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>>>,
-    db: Keyspace,
-    pub by_hash_metadata: PartitionHandle,
-    pub by_hash_data: PartitionHandle,
-    pub dp_proofs: PartitionHandle,
+    db: Database,
+    pub by_hash_metadata: Keyspace,
+    pub by_hash_data: Keyspace,
+    pub dp_proofs: Keyspace,
 }
 
 static SHARED_LANES: OnceLock<Mutex<HashMap<PathBuf, LanesStorage>>> = OnceLock::new();
@@ -121,44 +118,37 @@ impl LanesStorage {
         path: &Path,
         lanes_tip: BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>,
     ) -> Result<Self> {
-        let db = Config::new(path)
+        let db = Database::builder(path)
             .cache_size(256 * 1024 * 1024)
             .max_journaling_size(512 * 1024 * 1024)
-            .max_write_buffer_size(512 * 1024 * 1024)
             .open()?;
 
-        let by_hash_metadata = db.open_partition(
-            "dp_metadata",
-            PartitionCreateOptions::default()
-                .with_kv_separation(
+        let by_hash_metadata = db.keyspace("dp_metadata", || {
+            KeyspaceCreateOptions::default()
+                .with_kv_separation(Some(
                     KvSeparationOptions::default().file_target_size(256 * 1024 * 1024),
-                )
-                .block_size(32 * 1024)
+                ))
                 .manual_journal_persist(true)
-                .max_memtable_size(128 * 1024 * 1024),
-        )?;
+                .max_memtable_size(128 * 1024 * 1024)
+        })?;
 
-        let by_hash_data = db.open_partition(
-            "dp_data",
-            PartitionCreateOptions::default()
-                .with_kv_separation(
+        let by_hash_data = db.keyspace("dp_data", || {
+            KeyspaceCreateOptions::default()
+                .with_kv_separation(Some(
                     KvSeparationOptions::default().file_target_size(256 * 1024 * 1024),
-                )
-                .block_size(32 * 1024)
+                ))
                 .manual_journal_persist(true)
-                .max_memtable_size(128 * 1024 * 1024),
-        )?;
+                .max_memtable_size(128 * 1024 * 1024)
+        })?;
 
-        let dp_proofs = db.open_partition(
-            "dp_proofs",
-            PartitionCreateOptions::default()
-                .with_kv_separation(
+        let dp_proofs = db.keyspace("dp_proofs", || {
+            KeyspaceCreateOptions::default()
+                .with_kv_separation(Some(
                     KvSeparationOptions::default().file_target_size(256 * 1024 * 1024),
-                )
-                .block_size(32 * 1024)
+                ))
                 .manual_journal_persist(true)
-                .max_memtable_size(64 * 1024 * 1024),
-        )?;
+                .max_memtable_size(64 * 1024 * 1024)
+        })?;
 
         info!("{} DP(s) available", by_hash_metadata.len()?);
 
@@ -239,9 +229,7 @@ impl Storage for LanesStorage {
 
     fn delete_proofs(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> Result<()> {
         self.dp_proofs.remove(format!("{lane_id}:{dp_hash}"))?;
-        // TODO: this is probably not super super efficient.
-        self.dp_proofs.gc_scan()?;
-        self.dp_proofs.gc_drop_stale_segments()?;
+        // NOTE: Garbage collection is now automatic in fjall 3.0
         Ok(())
     }
 
