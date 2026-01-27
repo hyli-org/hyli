@@ -21,10 +21,6 @@ thread_local! {
 static GLOBAL_METER_PROVIDER: OnceLock<Option<Arc<dyn MeterProvider + Send + Sync>>> =
     OnceLock::new();
 
-#[cfg(feature = "turmoil")]
-thread_local! {
-    static THREAD_REGISTRY: RefCell<Option<Registry>> = const { RefCell::new(None) };
-}
 
 #[cfg(feature = "turmoil")]
 pub fn init_global_meter_provider<P>(provider: P) -> Arc<dyn MeterProvider + Send + Sync>
@@ -82,11 +78,6 @@ pub fn init_prometheus_registry_meter_provider(
         .build();
 
     init_global_meter_provider(provider);
-
-    #[cfg(feature = "turmoil")]
-    THREAD_REGISTRY.with(|cell| {
-        *cell.borrow_mut() = Some(registry.clone());
-    });
 
     Ok(registry)
 }

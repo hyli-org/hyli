@@ -583,9 +583,7 @@ async fn emits_sequenced_events_within_same_block_by_index() -> Result<()> {
     } = setup_pg().await?;
     let contract = ContractName("contract_1".to_string());
 
-    let bus = SharedMessageBus::new(BusMetrics::global(
-        "contract-listener-sequenced-index".into(),
-    ));
+    let bus = SharedMessageBus::new(BusMetrics::global());
     let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
     let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
 
@@ -701,9 +699,7 @@ async fn emits_settled_update_below_last_seen_height() -> Result<()> {
     } = setup_pg().await?;
     let contract = ContractName("contract_1".to_string());
 
-    let bus = SharedMessageBus::new(BusMetrics::global(
-        "contract-listener-settled-backfill".into(),
-    ));
+    let bus = SharedMessageBus::new(BusMetrics::global());
     let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
     let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
 
