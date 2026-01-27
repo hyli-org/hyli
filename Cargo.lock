@@ -6047,7 +6047,6 @@ dependencies = [
  "borsh",
  "bytes",
  "chrono",
- "config",
  "fjall",
  "futures",
  "google-cloud-storage",
