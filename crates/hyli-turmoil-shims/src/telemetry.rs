@@ -82,6 +82,10 @@ pub fn init_prometheus_registry_meter_provider(
     Ok(registry)
 }
 
+pub fn init_test_meter_provider() -> Arc<dyn MeterProvider + Send + Sync> {
+    init_global_meter_provider(opentelemetry_sdk::metrics::SdkMeterProvider::default())
+}
+
 pub fn encode_registry_text(registry: &Registry) -> prometheus::Result<String> {
     use prometheus::{Encoder, TextEncoder};
 
