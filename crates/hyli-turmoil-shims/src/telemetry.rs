@@ -21,7 +21,6 @@ thread_local! {
 static GLOBAL_METER_PROVIDER: OnceLock<Option<Arc<dyn MeterProvider + Send + Sync>>> =
     OnceLock::new();
 
-
 #[cfg(feature = "turmoil")]
 pub fn init_global_meter_provider<P>(provider: P) -> Arc<dyn MeterProvider + Send + Sync>
 where
@@ -42,6 +41,7 @@ where
     opentelemetry::global::set_meter_provider(provider.clone());
     let provider = Arc::new(provider);
     let _ = GLOBAL_METER_PROVIDER.set(Some(provider.clone()));
+    eprintln!("[hyli-turmoil-shims] global meter provider initialized");
     provider
 }
 
@@ -56,10 +56,31 @@ pub fn global_meter_provider_or_panic() -> Arc<dyn MeterProvider + Send + Sync> 
 
 #[cfg(not(feature = "turmoil"))]
 pub fn global_meter_provider_or_panic() -> Arc<dyn MeterProvider + Send + Sync> {
-    match GLOBAL_METER_PROVIDER.get() {
-        Some(Some(provider)) => provider.clone(),
-        _ => panic!("global meter provider is not initialized"),
+    if let Some(Some(provider)) = GLOBAL_METER_PROVIDER.get() {
+        return provider.clone();
     }
+
+    if is_test_process() {
+        let provider = GLOBAL_METER_PROVIDER.get_or_init(|| {
+            eprintln!("[hyli-turmoil-shims] initializing test meter provider");
+            Some(Arc::new(
+                opentelemetry_sdk::metrics::SdkMeterProvider::default(),
+            ))
+        });
+        return provider
+            .as_ref()
+            .expect("global meter provider is initialized for tests")
+            .clone();
+    }
+
+    panic!("global meter provider is not initialized");
+}
+
+#[cfg(not(feature = "turmoil"))]
+fn is_test_process() -> bool {
+    std::env::var("RUST_TEST_THREADS").is_ok()
+        || std::env::var("NEXTEST_EXECUTION").is_ok()
+        || std::env::var("NEXTEST").is_ok()
 }
 
 pub fn global_meter_or_panic() -> Meter {
@@ -80,10 +101,6 @@ pub fn init_prometheus_registry_meter_provider(
     init_global_meter_provider(provider);
 
     Ok(registry)
-}
-
-pub fn init_test_meter_provider() -> Arc<dyn MeterProvider + Send + Sync> {
-    init_global_meter_provider(opentelemetry_sdk::metrics::SdkMeterProvider::default())
 }
 
 pub fn encode_registry_text(registry: &Registry) -> prometheus::Result<String> {
