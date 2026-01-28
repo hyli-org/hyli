@@ -42,7 +42,7 @@ version = "0.14.0"
 edition = "2021"
 homepage = "https://hyli.org/"
 repository = "https://github.com/hyli-org/hyli/"
-rust-version = "1.88"
+rust-version = "1.93"
 license-file = "LICENSE"
 
 [workspace.dependencies]
@@ -101,7 +101,7 @@ crossterm = { version = "0.29.0" }
 dashmap = { version = "6.1.0", default-features = false }
 derive_more = { version = "2.0.1", default-features = false }
 dhat = { version = "0.3.3", default-features = false }
-fjall = { version = "2.11.1" }
+fjall = { version = "3.0.1" }
 futures = { version = "0.3.31" }
 google-cloud-storage = { version = "1.5.0" }
 hex = { version = "0.4.3" }
