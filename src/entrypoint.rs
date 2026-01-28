@@ -207,7 +207,8 @@ async fn common_main(
     mut config: conf::Conf,
     crypto: Option<SharedBlstCrypto>,
 ) -> Result<ModulesHandler> {
-    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
+    let bus = SharedMessageBus::new(BusMetrics::global());
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await?;
 
     // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.
     // Handle this configuration rewrite before we print anything.
@@ -252,8 +253,6 @@ async fn common_main(
             }
         });
     }
-
-    let bus = SharedMessageBus::new(BusMetrics::global());
 
     let build_api_ctx = Arc::new(BuildApiContextInner {
         router: Mutex::new(Some(Router::new())),
@@ -317,8 +316,6 @@ async fn common_main(
             );
         }
     }
-
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
     if config.run_indexer {
         handler

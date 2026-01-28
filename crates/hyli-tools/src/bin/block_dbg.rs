@@ -169,7 +169,7 @@ async fn main() -> Result<()> {
         .unwrap_or(false);
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus, data_dir.clone()).await;
+    let mut handler = ModulesHandler::new(&bus, data_dir.clone()).await?;
 
     if !has_blocks {
         handler
