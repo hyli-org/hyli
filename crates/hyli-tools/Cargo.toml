@@ -30,7 +30,7 @@ required-features = ["rate-proxy"]
 hyli-contract-sdk = { workspace = true }
 client-sdk = { workspace = true, features = ["rest"] }
 hyli-modules = { workspace = true }
-hyli-turmoil-shims = { workspace = true }
+hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 hyli-model = { workspace = true }
 smt-token = { workspace = true, features = ["client"] }
 hyli-registry = { workspace = true }
@@ -48,10 +48,6 @@ borsh = { workspace = true }
 serde_json = { workspace = true }
 
 # needs to match workspace
-opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-opentelemetry-prometheus = { workspace = true }
-prometheus = { workspace = true }
 
 # Feature UI
 ratatui = { workspace = true, features = ["crossterm"], optional = true }

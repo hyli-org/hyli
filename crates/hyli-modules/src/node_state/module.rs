@@ -69,7 +69,7 @@ impl Module for NodeStateModule {
                 guard.replace(router.nest("/v1/", api));
             }
         }
-        let metrics = NodeStateMetrics::global(ctx.node_id.clone(), "node_state");
+        let metrics = NodeStateMetrics::global("node_state");
 
         let store = match Self::load_from_disk::<NodeStateStore>(
             &ctx.data_directory,

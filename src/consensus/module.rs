@@ -32,7 +32,7 @@ impl Module for Consensus {
             .follower
             .buffered_prepares
             .set_max_size(Some(ctx.config.consensus.buffered_prepares_max_in_memory));
-        let metrics = ConsensusMetrics::global(ctx.config.id.clone());
+        let metrics = ConsensusMetrics::global();
 
         let api = api::api(&bus, &ctx).await;
         if let Ok(mut guard) = ctx.api.router.lock() {

@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting GCS block uploader");
 
-    let bus = SharedMessageBus::new(BusMetrics::global("gcs_block_uploader".to_string()));
+    let bus = SharedMessageBus::new(BusMetrics::global());
 
     tracing::info!("Setting up modules");
 

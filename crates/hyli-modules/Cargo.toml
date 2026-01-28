@@ -51,7 +51,6 @@ utoipa-axum = { workspace = true }
 utoipa-swagger-ui = { workspace = true, features = ["axum"] }
 
 tower-http = { workspace = true, features = ["trace", "cors", "catch-panic"] }
-prometheus = { workspace = true }
 opentelemetry = { workspace = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 tracing-opentelemetry = { workspace = true, optional = true }
@@ -63,7 +62,7 @@ indexmap = { workspace = true }
 
 # Native verifiers
 hyli-crypto = { workspace = true }
-hyli-turmoil-shims = { workspace = true }
+hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 secp256k1 = { workspace = true, features = ["rand"] }
 
 [dev-dependencies]

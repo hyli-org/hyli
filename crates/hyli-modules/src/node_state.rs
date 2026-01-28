@@ -226,9 +226,9 @@ struct NodeStateProcessing<'a> {
 }
 
 impl NodeState {
-    pub fn create(node_id: String, module_name: &'static str) -> Self {
+    pub fn create(module_name: &'static str) -> Self {
         NodeState {
-            metrics: NodeStateMetrics::global(node_id, module_name),
+            metrics: NodeStateMetrics::global(module_name),
             store: NodeStateStore::default(),
         }
     }
@@ -1871,7 +1871,7 @@ pub mod test {
 
     pub(crate) async fn new_node_state() -> NodeState {
         NodeState {
-            metrics: NodeStateMetrics::global("test".to_string(), "test"),
+            metrics: NodeStateMetrics::global("test"),
             store: NodeStateStore::default(),
         }
     }

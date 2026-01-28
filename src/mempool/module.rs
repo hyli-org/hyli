@@ -25,7 +25,7 @@ impl Module for Mempool {
     type Context = SharedRunContext;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let metrics = MempoolMetrics::global(ctx.config.id.clone());
+        let metrics = MempoolMetrics::global();
         let api = api::api(&bus, &ctx.api).await;
         if let Ok(mut guard) = ctx.api.router.lock() {
             if let Some(router) = guard.take() {

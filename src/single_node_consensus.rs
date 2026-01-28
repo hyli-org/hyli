@@ -269,7 +269,7 @@ mod tests {
     impl TestContext {
         pub async fn new(name: &str) -> Self {
             let crypto = BlstCrypto::new(name).unwrap();
-            let shared_bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
+            let shared_bus = SharedMessageBus::new(BusMetrics::global());
             let conf = Arc::new(Conf::default());
             let store = SingleNodeConsensusStore::default();
 

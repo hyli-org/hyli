@@ -81,7 +81,7 @@ impl Module for Indexer {
             }
         };
 
-        let mut node_state = NodeState::create(ctx.0.id.clone(), "indexer");
+        let mut node_state = NodeState::create("indexer");
         node_state.store = node_state_store;
 
         let conf: Conf = ctx.0.deref().clone();

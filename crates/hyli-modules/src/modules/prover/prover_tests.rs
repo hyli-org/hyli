@@ -142,7 +142,7 @@ async fn new_buffering_auto_prover(
         tx_working_window_size: max_txs_per_proof,
     });
 
-    let bus = SharedMessageBus::new(BusMetrics::global("default".to_string()));
+    let bus = SharedMessageBus::new(BusMetrics::global());
     TestAutoProver::build(bus.new_handle(), ctx).await
 }
 
@@ -1603,7 +1603,7 @@ async fn test_auto_prover_serialize_and_resume() -> Result<()> {
         tx_working_window_size: 3,
     });
 
-    let bus = SharedMessageBus::new(BusMetrics::global("default".to_string()));
+    let bus = SharedMessageBus::new(BusMetrics::global());
     let mut auto_prover = TestAutoProver::build(bus.new_handle(), ctx.clone())
         .await
         .unwrap();
@@ -1669,7 +1669,7 @@ async fn test_auto_prover_contract_update_program_id() -> Result<()> {
         tx_working_window_size: 100,
     });
 
-    let bus = SharedMessageBus::new(BusMetrics::global("default".to_string()));
+    let bus = SharedMessageBus::new(BusMetrics::global());
     let mut auto_prover = TestAutoProver::build(bus.new_handle(), ctx).await?;
 
     // Verify initial program_id

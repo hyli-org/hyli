@@ -49,7 +49,7 @@ async fn new_indexer(pool: PgPool) -> (Indexer, Explorer) {
         Indexer {
             bus: IndexerBusClient::new_from_bus(bus.new_handle()).await,
             db: pool.clone(),
-            node_state: NodeState::create("indexer".to_string(), "indexer"),
+            node_state: NodeState::create("indexer"),
             handler_store: IndexerHandlerStore::default(),
             conf,
         },

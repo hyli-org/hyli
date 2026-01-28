@@ -98,7 +98,7 @@ pub struct NodeIntegrationCtxBuilder {
 impl NodeIntegrationCtxBuilder {
     pub async fn new() -> Self {
         let tmpdir = tempfile::tempdir().unwrap();
-        let bus = SharedMessageBus::new(BusMetrics::global("default".to_string()));
+        let bus = SharedMessageBus::new(BusMetrics::global());
         let mut conf = Conf::new(
             vec![],
             tmpdir.path().to_str().map(|s| s.to_owned()),

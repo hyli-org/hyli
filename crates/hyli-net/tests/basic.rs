@@ -13,6 +13,7 @@ use hyli_net::{
         Canal, P2PTcpMessage, TcpMessageLabel,
     },
 };
+use hyli_turmoil_shims::init_test_meter_provider;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 #[derive(Clone, Debug, borsh::BorshDeserialize, borsh::BorshSerialize)]
@@ -36,6 +37,7 @@ macro_rules! turmoil_simple {
         #[test_log::test]
             fn [<turmoil_p2p_ $nb _nodes_ $simulation _ $seed >]() -> anyhow::Result<()> {
                 tracing::info!("Starting test {} with seed {}", stringify!([<turmoil_ $simulation _ $seed >]), $seed);
+                init_test_meter_provider();
                 let mut sim = hyli_net::turmoil::Builder::new()
                     .simulation_duration(Duration::from_secs(50))
                     .tick_duration(Duration::from_millis(50))

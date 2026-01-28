@@ -291,7 +291,7 @@ async fn test_shutdown_timeout_skips_manifest_and_fails_to_load() {
     let test_struct = TestStruct { value: 99 };
     let _checksum = TestModule::<usize>::save_on_disk(&data_dir, &file_path, &test_struct).unwrap();
 
-    let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
+    let shared_bus = SharedMessageBus::new(BusMetrics::global());
     let mut handler = ModulesHandler::new(&shared_bus, data_dir.clone()).await;
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
 
@@ -340,7 +340,7 @@ async fn test_multi_file_persist_writes_manifest_and_loads_files() {
     let data_dir = dir.path().to_path_buf();
     let (first_path, second_path) = multi_persist_paths();
 
-    let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
+    let shared_bus = SharedMessageBus::new(BusMetrics::global());
     let mut handler = ModulesHandler::new(&shared_bus, data_dir.clone()).await;
     handler
         .build_module::<MultiPersistModule>(MultiPersistCtx {
@@ -395,7 +395,7 @@ async fn test_multi_file_persist_writes_manifest_and_loads_files() {
 #[tokio::test]
 async fn test_build_module() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
+    let shared_bus = SharedMessageBus::new(BusMetrics::global());
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
     assert_eq!(handler.modules.len(), 1);
@@ -404,7 +404,7 @@ async fn test_build_module() {
 #[tokio::test]
 async fn test_add_module() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
+    let shared_bus = SharedMessageBus::new(BusMetrics::global());
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
     let module = TestModule {
         bus: TestBusClient::new_from_bus(shared_bus.new_handle()).await,
@@ -418,7 +418,7 @@ async fn test_add_module() {
 #[tokio::test]
 async fn test_start_modules() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
+    let shared_bus = SharedMessageBus::new(BusMetrics::global());
     let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
@@ -444,7 +444,7 @@ async fn test_start_modules() {
 #[tokio::test]
 async fn test_start_stop_modules_in_order() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
+    let shared_bus = SharedMessageBus::new(BusMetrics::global());
     let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
@@ -487,7 +487,7 @@ async fn test_start_stop_modules_in_order() {
 #[tokio::test]
 async fn test_shutdown_duplicate_modules() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
+    let shared_bus = SharedMessageBus::new(BusMetrics::global());
     let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
@@ -512,7 +512,7 @@ async fn test_shutdown_duplicate_modules() {
 #[tokio::test]
 async fn test_shutdown_modules_exactly_once() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
+    let shared_bus = SharedMessageBus::new(BusMetrics::global());
     let mut cancellation_counter_receiver = get_receiver::<usize>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
@@ -580,7 +580,7 @@ async fn test_shutdown_modules_exactly_once() {
 #[tokio::test]
 async fn test_shutdown_all_modules_if_one_fails() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
+    let shared_bus = SharedMessageBus::new(BusMetrics::global());
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
 
@@ -637,7 +637,7 @@ async fn test_shutdown_all_modules_if_one_fails() {
 #[tokio::test]
 async fn test_shutdown_all_modules_if_one_module_panics() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global("id".to_string()));
+    let shared_bus = SharedMessageBus::new(BusMetrics::global());
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
 
