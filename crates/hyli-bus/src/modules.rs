@@ -15,7 +15,7 @@ use crate::{
 };
 use anyhow::{bail, Context, Error, Result};
 use rand::{distr::Alphanumeric, Rng};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::utils::checksums::{self, ChecksumReader, ChecksumWriter};
 use crate::utils::deterministic_rng::deterministic_rng;
@@ -417,16 +417,66 @@ pub enum ModuleStatus {
 }
 
 impl ModulesHandler {
-    pub async fn new(shared_bus: &SharedMessageBus, data_dir: PathBuf) -> ModulesHandler {
+    pub async fn new(shared_bus: &SharedMessageBus, data_dir: PathBuf) -> Result<ModulesHandler> {
         let shared_message_bus = shared_bus.new_handle();
 
-        ModulesHandler {
+        // If data_dir exists but has no valid manifest, back it up to prevent loading unverified data
+        if data_dir.exists() {
+            let manifest_file = manifest_path(&data_dir);
+
+            let should_backup = if manifest_file.exists() {
+                // Manifest exists, check if it's empty
+                fs::read_to_string(&manifest_file)
+                    .ok()
+                    .map(|content| content.trim().is_empty())
+                    .unwrap_or(false)
+            } else {
+                // No manifest exists
+                true
+            };
+
+            if should_backup {
+                // Check if there are any module state files (the ones we actually care about)
+                let module_state_files = [files::NODE_STATE_BIN, files::CONSENSUS_BIN];
+                let has_module_state_files = module_state_files
+                    .iter()
+                    .any(|file| data_dir.join(file).exists());
+
+                if has_module_state_files {
+                    // Generate a backup directory name with timestamp
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis();
+                    let backup_dir = data_dir.with_extension(format!("backup_{}", timestamp));
+
+                    log_warn!(
+                        fs::rename(&data_dir, &backup_dir),
+                        "Moving data_dir to backup location"
+                    )
+                    .context("Failed to move data_dir to backup location")?;
+
+                    warn!(
+                        "Moved data_dir without valid manifest to backup: {} -> {}",
+                        data_dir.display(),
+                        backup_dir.display()
+                    );
+
+                    // Recreate data_dir
+                    fs::create_dir_all(&data_dir).context("Failed to recreate data_dir")?;
+                }
+            }
+        } else {
+            fs::create_dir_all(&data_dir).context("Failed to create data directory")?;
+        }
+
+        Ok(ModulesHandler {
             bus: shared_message_bus,
             modules: vec![],
             data_dir,
             modules_statuses: HashMap::new(),
             module_shutdown_order: Vec::new(),
-        }
+        })
     }
 
     pub async fn start_modules(&mut self) -> Result<()> {
