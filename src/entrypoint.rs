@@ -187,65 +187,30 @@ pub fn welcome_message(conf: &conf::Conf) {
     );
 }
 
-pub async fn main_loop(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> Result<()> {
-    let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
-    let mut handler = common_main(config, crypto, bus).await?;
-    handler.exit_loop().await?;
-
-    Ok(())
-}
-
-pub async fn main_process(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> Result<()> {
-    let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
-    let mut handler = common_main(config, crypto, bus).await?;
-    handler.exit_process().await?;
-
-    Ok(())
-}
-
-pub async fn common_main(
-    mut config: conf::Conf,
-    crypto: Option<SharedBlstCrypto>,
-    bus: SharedMessageBus,
-) -> Result<ModulesHandler> {
-    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
-
-    // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.
-    // Handle this configuration rewrite before we print anything.
-    if config.run_explorer || config.run_indexer {
-        use_fresh_db(&config.data_directory, &mut config.database_url).await?;
-    }
-
-    let config = Arc::new(config);
-
-    welcome_message(&config);
-    info!("Starting node with config: {:?}", &config);
-
-    // Capture node start timestamp for use across all modules
-    let start_timestamp = TimestampMsClock::now();
-
+/// Initialize the global OpenTelemetry metrics provider.
+/// This must be called before creating any BusMetrics instances.
+/// Returns the registry for use with the REST API metrics endpoint.
+pub fn init_metrics(#[allow(unused_variables)] node_id: &str) -> Registry {
     let registry = Registry::new();
-    // Init global metrics meter we expose as an endpoint
     let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
         .with_reader(
             opentelemetry_prometheus::exporter()
                 .with_registry(registry.clone())
                 .build()
-                .context("starting prometheus exporter")?,
+                .expect("Failed to build prometheus exporter"),
         )
         .build();
 
-    opentelemetry::global::set_meter_provider(provider.clone());
+    opentelemetry::global::set_meter_provider(provider);
 
     #[cfg(feature = "monitoring")]
     {
-        let scope = opentelemetry::InstrumentationScope::builder(config.id.clone()).build();
+        let scope = opentelemetry::InstrumentationScope::builder(node_id.to_string()).build();
         let my_meter = opentelemetry::global::meter_with_scope(scope);
         let alloc_metric = my_meter.u64_gauge("malloc_allocated_size").build();
         let alloc_metric2 = my_meter.u64_gauge("malloc_allocations").build();
         let latency_metric = my_meter.u64_histogram("tokio_latency").build();
-        // Measure the event loop latency
-        // Bit of a noisey hack, but it's indicative.
+
         tokio::spawn(async move {
             let mut latency = tokio::time::Instant::now();
             loop {
@@ -263,6 +228,49 @@ pub async fn common_main(
             }
         });
     }
+
+    registry
+}
+
+pub async fn main_loop(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> Result<()> {
+    let registry = init_metrics(&config.id);
+    let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
+    let mut handler = common_main(config, crypto, bus, registry).await?;
+    handler.exit_loop().await?;
+
+    Ok(())
+}
+
+pub async fn main_process(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> Result<()> {
+    let registry = init_metrics(&config.id);
+    let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
+    let mut handler = common_main(config, crypto, bus, registry).await?;
+    handler.exit_process().await?;
+
+    Ok(())
+}
+
+pub async fn common_main(
+    mut config: conf::Conf,
+    crypto: Option<SharedBlstCrypto>,
+    bus: SharedMessageBus,
+    registry: Registry,
+) -> Result<ModulesHandler> {
+    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
+
+    // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.
+    // Handle this configuration rewrite before we print anything.
+    if config.run_explorer || config.run_indexer {
+        use_fresh_db(&config.data_directory, &mut config.database_url).await?;
+    }
+
+    let config = Arc::new(config);
+
+    welcome_message(&config);
+    info!("Starting node with config: {:?}", &config);
+
+    // Capture node start timestamp for use across all modules
+    let start_timestamp = TimestampMsClock::now();
 
     let build_api_ctx = Arc::new(BuildApiContextInner {
         router: Mutex::new(Some(Router::new())),

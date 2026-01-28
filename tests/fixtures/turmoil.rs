@@ -109,15 +109,23 @@ where
 pub struct TurmoilHost {
     pub conf: Conf,
     pub client: NodeApiHttpClient,
-    pub bus: Arc<SharedMessageBus>,
+    pub bus: Arc<tokio::sync::OnceCell<SharedMessageBus>>,
 }
 
 impl TurmoilHost {
     pub async fn start(&self) -> anyhow::Result<()> {
         let crypto = Arc::new(BlstCrypto::new(&self.conf.id).context("Creating crypto")?);
 
-        let mut handler =
-            common_main(self.conf.clone(), Some(crypto), self.bus.new_handle()).await?;
+        // Initialize metrics before creating the bus
+        let registry = hyli::entrypoint::init_metrics(&self.conf.id);
+
+        // Create the bus after metrics initialization
+        let bus = SharedMessageBus::new(BusMetrics::global(self.conf.id.clone()));
+
+        // Store the bus handle for later access
+        let _ = self.bus.set(bus.new_handle());
+
+        let mut handler = common_main(self.conf.clone(), Some(crypto), bus, registry).await?;
         handler.exit_loop().await?;
 
         Ok(())
@@ -127,11 +135,10 @@ impl TurmoilHost {
         let client =
             NodeApiHttpClient::new(format!("http://{}:{}", conf.id, &conf.rest_server_port))
                 .expect("Creating client");
-        let bus = Arc::new(SharedMessageBus::new(BusMetrics::global(conf.id.clone())));
         TurmoilHost {
             conf: conf.clone(),
             client: client.with_retry(3, Duration::from_millis(1000)),
-            bus,
+            bus: Arc::new(tokio::sync::OnceCell::new()),
         }
     }
 }
@@ -291,11 +298,13 @@ impl TurmoilCtx {
         self.nodes
             .iter()
             .find(|node| node.conf.id == node_id)
-            .map(|node| node.bus.new_handle())
+            .and_then(|node| node.bus.get().map(|bus| bus.new_handle()))
     }
 
     pub fn bus_handle_by_index(&self, index: usize) -> Option<SharedMessageBus> {
-        self.nodes.get(index).map(|node| node.bus.new_handle())
+        self.nodes
+            .get(index)
+            .and_then(|node| node.bus.get().map(|bus| bus.new_handle()))
     }
 
     pub fn seed(&self) -> u64 {
