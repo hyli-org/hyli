@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use config::{Config, Environment, File};
-use hyli_modules::modules::gcs_uploader::GCSConf;
 use hyli_modules::modules::websocket::WebSocketConfig;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -227,9 +226,6 @@ pub struct Conf {
 
     /// Own-lane configuration
     pub own_lanes: OwnLaneConf,
-
-    /// GCSUploader configuration
-    pub gcs: GCSConf,
 }
 
 impl Conf {
