@@ -1,6 +1,5 @@
 //! Minimal block storage layer for data availability.
 
-use hyli_bus::modules::files::DA_LAST_PROCESSED_HEIGHT_BIN;
 // Pick one of the two implementations
 use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
 use hyli_modules::utils::da_codec::{DataAvailabilityClient, DataAvailabilityServer};
@@ -22,7 +21,7 @@ use crate::{
 use anyhow::{Context, Result};
 use core::str;
 use rand::seq::IndexedRandom;
-use std::{collections::BTreeSet, fs, path::PathBuf, time::Duration};
+use std::{collections::BTreeSet, time::Duration};
 use tokio::{
     task::JoinSet,
     time::{sleep_until, Instant},
@@ -30,7 +29,6 @@ use tokio::{
 use tracing::{debug, error, info, trace, warn};
 
 use crate::model::SharedRunContext;
-use hyli_bus::modules::ModulePersistOutput;
 
 impl Module for DataAvailability {
     type Context = SharedRunContext;
@@ -38,40 +36,8 @@ impl Module for DataAvailability {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> anyhow::Result<Self> {
         let bus = DABusClient::new_from_bus(bus.new_handle()).await;
 
-        let db_path = ctx.config.data_directory.join("data_availability.db");
-        let mut blocks = Blocks::new(&db_path)?;
-        let persisted_height = Self::load_from_disk::<BlockHeight>(
-            &ctx.config.data_directory,
-            DA_LAST_PROCESSED_HEIGHT_BIN.as_ref(),
-        )?
-        .unwrap_or_default();
-
+        let blocks = Blocks::new(&ctx.config.data_directory.join("data_availability.db"))?;
         let highest_block = blocks.highest();
-        if highest_block != persisted_height {
-            warn!(
-                "DA persisted height {} does not match fjall highest {}, clearing DA storage",
-                persisted_height, highest_block
-            );
-            drop(blocks);
-            if let Err(err) = fs::remove_dir_all(&db_path) {
-                warn!(
-                    "Failed to remove data availability db at {}: {:?}",
-                    db_path.display(),
-                    err
-                );
-            }
-            let persisted_file = PathBuf::from(DA_LAST_PROCESSED_HEIGHT_BIN);
-            if let Err(err) = fs::remove_file(ctx.config.data_directory.join(&persisted_file)) {
-                if err.kind() != std::io::ErrorKind::NotFound {
-                    warn!(
-                        "Failed to remove persisted DA height file {}: {:?}",
-                        persisted_file.display(),
-                        err
-                    );
-                }
-            }
-            blocks = Blocks::new(&db_path)?;
-        }
 
         // When fast catchup is enabled, we load the node state from disk to load blocks
 
@@ -111,14 +77,6 @@ impl Module for DataAvailability {
 
     async fn run(&mut self) -> anyhow::Result<()> {
         self.start().await
-    }
-
-    async fn persist(&mut self) -> Result<ModulePersistOutput> {
-        let file = PathBuf::from(DA_LAST_PROCESSED_HEIGHT_BIN);
-        let height = self.blocks.highest();
-        let checksum = Self::save_on_disk(&self.config.data_directory, &file, &height)?;
-        _ = log_error!(self.blocks.persist(), "Persisting blocks");
-        Ok(vec![(self.config.data_directory.join(file), checksum)])
     }
 }
 
@@ -928,14 +886,6 @@ impl DataAvailability {
         block: SignedBlock,
         tcp_server: &mut DataAvailabilityServer,
     ) -> anyhow::Result<()> {
-        // Send to NodeState before persisting so fjall can't get ahead on crash.
-        _ = log_error!(
-            self.bus
-                .send_waiting_if_full(DataEvent::OrderedSignedBlock(block.clone()))
-                .await,
-            "Sending OrderedSignedBlock"
-        );
-
         self.store_block(&block)?;
 
         // TODO: use retain once async closures are supported ?
@@ -952,6 +902,14 @@ impl DataAvailability {
             );
             tcp_server.drop_peer_stream(peer.clone());
         }
+
+        // Send the block to NodeState for processing
+        _ = log_error!(
+            self.bus
+                .send_waiting_if_full(DataEvent::OrderedSignedBlock(block))
+                .await,
+            "Sending OrderedSignedBlock"
+        );
 
         Ok(())
     }
