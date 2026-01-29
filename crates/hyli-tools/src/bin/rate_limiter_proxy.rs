@@ -12,7 +12,7 @@ use chrono::{Local, NaiveDate};
 use clap::Parser;
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
-use hyli_turmoil_shims::{
+use hyli_modules::telemetry::{
     encode_registry_text, global_meter_or_panic, init_prometheus_registry_meter_provider, Counter,
     Gauge, KeyValue, Registry,
 };

@@ -7,7 +7,7 @@ use client_sdk::{
     contract_indexer::utoipa::OpenApi, helpers::risc0::Risc0Prover, rest_client::NodeApiHttpClient,
 };
 use hyli_contract_sdk::api::NodeInfo;
-use hyli_turmoil_shims::init_prometheus_registry_meter_provider;
+use hyli_modules::telemetry::init_prometheus_registry_meter_provider;
 use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
