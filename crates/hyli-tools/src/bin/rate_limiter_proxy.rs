@@ -1,4 +1,3 @@
-use anyhow::Context;
 use axum::http::header::CONNECTION;
 use axum::{
     Router,
@@ -14,10 +13,7 @@ use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use hyli_model::api::APIRegisterContract;
 use hyli_model::{BlobTransaction, ContractName, Identity, RegisterContractAction};
-use hyli_modules::telemetry::{
-    Counter, Gauge, KeyValue, Registry, encode_registry_text, global_meter_or_panic,
-    init_prometheus_registry_meter_provider,
-};
+use hyli_modules::telemetry::{Counter, Gauge, KeyValue, global_meter_or_panic};
 use hyli_modules::{modules::rest::handle_panic, utils::logger::setup_tracing};
 use hyper::body::Incoming;
 use hyper_util::{
@@ -468,7 +464,6 @@ struct AppConfig {
     client: Arc<Client<HttpConnector, Body>>,
     rate_limits: Arc<RateLimitData>,
     metrics: RateLimiterMetrics,
-    registry: Registry,
 }
 
 #[tokio::main]
@@ -485,10 +480,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Configuration file: {}", args.config);
     tracing::info!("Listen address: {}", proxy_config.listen_addr);
     tracing::info!("Target URL: {}", proxy_config.target_url);
-
-    // Init global metrics meter we expose as an endpoint
-    let registry =
-        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
     // Configure HTTP connector for better load balancing with headless k8s services
     // Set idle timeout to force DNS re-resolution and distribute load across pods
@@ -511,7 +502,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         client,
         rate_limits,
         metrics: RateLimiterMetrics::global(),
-        registry,
     };
 
     // Set up file watcher
@@ -594,7 +584,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Build the application
     let app = Router::new()
         .route("/health", get(health_check))
-        .route("/v1/metrics", get(get_metrics))
         // Blob transaction with custom rate limiting and contract parsing
         .route("/v1/tx/send/blob", post(blob_proxy_handler))
         .route("/v1/tx/send/blob/{lane_suffix}", post(blob_proxy_handler))
@@ -614,12 +603,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     axum::serve(listener, app).await?;
 
     Ok(())
-}
-
-pub(crate) async fn get_metrics(State(s): State<AppConfig>) -> Result<Response, StatusCode> {
-    let res = encode_registry_text(&s.registry).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    Ok(res.into_response())
 }
 
 #[derive(Clone)]

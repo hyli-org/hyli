@@ -1,4 +1,5 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
+use hyli_turmoil_shims::init_otlp_meter_provider;
 #[cfg(feature = "instrumentation")]
 use opentelemetry::trace::TracerProvider;
 use tracing::level_filters::LevelFilter;
@@ -164,6 +165,11 @@ pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) ->
         filter = filter.add_directive("risc0_zkvm=warn".parse()?);
     }
 
+    let endpoint =
+        std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".to_string());
+    init_otlp_meter_provider(endpoint.clone(), node_name.clone())
+        .context("starting OTLP metrics exporter")?;
+
     // Can't use match inline because these are different return types
     let mode = match log_format {
         "json" => TracingMode::Json,
@@ -187,9 +193,6 @@ pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) ->
     #[cfg(feature = "instrumentation")]
     if tracing_enabled {
         use opentelemetry_sdk::propagation::TraceContextPropagator;
-
-        let endpoint =
-            std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".to_string());
 
         opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 

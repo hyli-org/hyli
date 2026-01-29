@@ -24,7 +24,6 @@ use hydentity::Hydentity;
 use hyli_crypto::SharedBlstCrypto;
 #[cfg(feature = "monitoring")]
 use hyli_modules::telemetry::global_meter_or_panic;
-use hyli_modules::telemetry::init_prometheus_registry_meter_provider;
 use hyli_modules::{
     log_error,
     modules::{
@@ -222,10 +221,6 @@ async fn common_main(
 
     // Capture node start timestamp for use across all modules
     let start_timestamp = TimestampMsClock::now();
-
-    // Init global metrics meter we expose as an endpoint
-    let registry =
-        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
     #[cfg(feature = "monitoring")]
     {
@@ -460,20 +455,17 @@ async fn common_main(
             .clone();
 
         handler
-            .build_module::<RestApi>(
-                RestApiRunContext::new(
-                    config.rest_server_port,
-                    NodeInfo {
-                        id: config.id.clone(),
-                        pubkey: crypto.as_ref().map(|c| c.validator_pubkey()).cloned(),
-                        da_address: config.da_public_address.clone(),
-                    },
-                    router.clone(),
-                    config.rest_server_max_body_size,
-                    openapi,
-                )
-                .with_registry(registry),
-            )
+            .build_module::<RestApi>(RestApiRunContext::new(
+                config.rest_server_port,
+                NodeInfo {
+                    id: config.id.clone(),
+                    pubkey: crypto.as_ref().map(|c| c.validator_pubkey()).cloned(),
+                    da_address: config.da_public_address.clone(),
+                },
+                router.clone(),
+                config.rest_server_max_body_size,
+                openapi,
+            ))
             .await?;
     }
 

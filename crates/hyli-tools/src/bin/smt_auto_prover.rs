@@ -7,7 +7,6 @@ use client_sdk::{
     contract_indexer::utoipa::OpenApi, helpers::risc0::Risc0Prover, rest_client::NodeApiHttpClient,
 };
 use hyli_contract_sdk::api::NodeInfo;
-use hyli_modules::telemetry::init_prometheus_registry_meter_provider;
 use hyli_modules::{
     bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
@@ -45,10 +44,6 @@ async fn main() -> Result<()> {
     let bus = SharedMessageBus::new(BusMetrics::global());
 
     tracing::info!("Setting up modules");
-
-    // Init global metrics meter we expose as an endpoint
-    let registry =
-        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
     let node_client =
         Arc::new(NodeApiHttpClient::new(config.node_url.clone()).context("build node client")?);
@@ -123,20 +118,17 @@ async fn main() -> Result<()> {
     }
 
     handler
-        .build_module::<RestApi>(
-            RestApiRunContext::new(
-                config.rest_server_port,
-                NodeInfo {
-                    id: "smt_auto_prover".to_string(),
-                    pubkey: None,
-                    da_address: config.da_read_from.clone(),
-                },
-                router,
-                config.rest_server_max_body_size,
-                openapi,
-            )
-            .with_registry(registry),
-        )
+        .build_module::<RestApi>(RestApiRunContext::new(
+            config.rest_server_port,
+            NodeInfo {
+                id: "smt_auto_prover".to_string(),
+                pubkey: None,
+                da_address: config.da_read_from.clone(),
+            },
+            router,
+            config.rest_server_max_body_size,
+            openapi,
+        ))
         .await?;
 
     tracing::info!("Starting modules");
