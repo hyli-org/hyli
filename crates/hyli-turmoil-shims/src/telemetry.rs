@@ -79,7 +79,7 @@ mod imp {
                     extensions.get::<NodeName>().map(|value| value.0.clone())
                 };
                 let Some(name) = name else { return };
-                CURRENT_HOST_STACK.with(|stack| stack.borrow_mut().push(name));
+                let _ = CURRENT_HOST_STACK.try_with(|stack| stack.borrow_mut().push(name));
             }
 
             fn on_exit(&self, id: &tracing::Id, ctx: Context<'_, S>) {
@@ -89,7 +89,7 @@ mod imp {
                     extensions.get::<NodeName>().map(|value| value.0.clone())
                 };
                 let Some(name) = name else { return };
-                CURRENT_HOST_STACK.with(|stack| {
+                let _ = CURRENT_HOST_STACK.try_with(|stack| {
                     let mut stack = stack.borrow_mut();
                     if stack.last().map(|v| v == &name).unwrap_or(false) {
                         stack.pop();
@@ -99,20 +99,26 @@ mod imp {
         }
 
         pub fn current_span_host_name() -> Option<String> {
-            CURRENT_HOST_STACK.with(|stack| stack.borrow().last().cloned())
+            CURRENT_HOST_STACK
+                .try_with(|stack| stack.borrow().last().cloned())
+                .ok()
+                .flatten()
         }
 
         pub fn register_host_meter_provider(
             host_name: impl Into<String>,
             provider: Arc<dyn MeterProvider + Send + Sync>,
         ) {
-            HOST_METER_PROVIDERS.with(|map| {
+            let _ = HOST_METER_PROVIDERS.try_with(|map| {
                 map.borrow_mut().insert(host_name.into(), provider);
             });
         }
 
         fn host_meter_provider(host_name: &str) -> Option<Arc<dyn MeterProvider + Send + Sync>> {
-            HOST_METER_PROVIDERS.with(|map| map.borrow().get(host_name).cloned())
+            HOST_METER_PROVIDERS
+                .try_with(|map| map.borrow().get(host_name).cloned())
+                .ok()
+                .flatten()
         }
 
         pub fn init_global_meter_provider<P>(provider: P) -> Arc<dyn MeterProvider + Send + Sync>
@@ -137,7 +143,7 @@ mod imp {
             use tracing_subscriber::util::SubscriberInitExt;
 
             static TURMOIL_TEST_DISPATCH: OnceLock<tracing::Dispatch> = OnceLock::new();
-            HOST_METER_PROVIDERS.with(|map| map.borrow_mut().clear());
+            let _ = HOST_METER_PROVIDERS.try_with(|map| map.borrow_mut().clear());
 
             let make_subscriber = || {
                 let mut filter = tracing_subscriber::EnvFilter::builder()
