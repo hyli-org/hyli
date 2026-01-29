@@ -9,6 +9,7 @@ use crate::{
 use anyhow::{bail, Context, Error, Result};
 use hyli_crypto::{BlstCrypto, SharedBlstCrypto};
 use hyli_model::{utils::TimestampMs, BlockHeight, NodeStateEvent, ValidatorPublicKey};
+use hyli_modules::telemetry::{global_meter_or_panic, Histogram, KeyValue};
 use hyli_modules::{
     bus::{BusMessage, SharedMessageBus},
     log_warn, module_handle_messages,
@@ -25,7 +26,6 @@ use hyli_net::{
 use network::{
     IntoHeaderSignableData, MsgHeader, MsgWithHeader, NetMessage, OutboundMessage, PeerEvent,
 };
-use hyli_modules::telemetry::{global_meter_or_panic, Histogram, KeyValue};
 use tracing::{info, trace, warn, Instrument};
 
 pub mod network;

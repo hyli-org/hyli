@@ -85,10 +85,10 @@ mod imp {
         }
     }
 
-    #[cfg(feature = "turmoil")]
-    pub use turmoil::{global_meter_provider_or_panic, init_global_meter_provider};
     #[cfg(not(feature = "turmoil"))]
     pub use non_turmoil::{global_meter_provider_or_panic, init_global_meter_provider};
+    #[cfg(feature = "turmoil")]
+    pub use turmoil::{global_meter_provider_or_panic, init_global_meter_provider};
 
     pub fn global_meter_or_panic() -> Meter {
         global_meter_provider_or_panic().meter("hyli")

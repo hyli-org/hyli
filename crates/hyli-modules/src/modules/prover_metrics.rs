@@ -1,5 +1,5 @@
-use client_sdk::helpers::ProverInfo;
 use crate::telemetry::{global_meter_or_panic, Counter, Gauge, Histogram, KeyValue};
+use client_sdk::helpers::ProverInfo;
 
 #[derive(Debug, Clone)]
 pub struct AutoProverMetrics {

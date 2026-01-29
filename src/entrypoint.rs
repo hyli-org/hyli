@@ -22,9 +22,9 @@ use anyhow::{bail, Context, Result};
 use axum::Router;
 use hydentity::Hydentity;
 use hyli_crypto::SharedBlstCrypto;
-use hyli_modules::telemetry::init_prometheus_registry_meter_provider;
 #[cfg(feature = "monitoring")]
 use hyli_modules::telemetry::global_meter_or_panic;
+use hyli_modules::telemetry::init_prometheus_registry_meter_provider;
 use hyli_modules::{
     log_error,
     modules::{

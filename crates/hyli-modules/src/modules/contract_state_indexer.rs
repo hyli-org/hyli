@@ -346,12 +346,9 @@ mod tests {
             api: Default::default(),
         };
 
-        ContractStateIndexer::<MockState>::build(
-            SharedMessageBus::new(BusMetrics::global()),
-            ctx,
-        )
-        .await
-        .unwrap()
+        ContractStateIndexer::<MockState>::build(SharedMessageBus::new(BusMetrics::global()), ctx)
+            .await
+            .unwrap()
     }
 
     async fn register_contract(indexer: &mut ContractStateIndexer<MockState>) {

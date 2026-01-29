@@ -4,10 +4,10 @@
 use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
 use hyli_modules::utils::da_codec::{DataAvailabilityClient, DataAvailabilityServer};
 //use hyli_modules::modules::data_availability::blocks_memory::Blocks;
+use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::TcpEvent;
-use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 use tokio::task::JoinHandle;
 
 use crate::{
@@ -1015,9 +1015,8 @@ pub mod tests {
         let tmpdir = tempfile::tempdir().unwrap().keep();
         let blocks = Blocks::new(&tmpdir).unwrap();
 
-        let global_bus = crate::bus::SharedMessageBus::new(
-            crate::bus::metrics::BusMetrics::global(),
-        );
+        let global_bus =
+            crate::bus::SharedMessageBus::new(crate::bus::metrics::BusMetrics::global());
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
         let mut block_sender = TestBusClient::new_from_bus(global_bus).await;
 
@@ -1221,18 +1220,16 @@ pub mod tests {
 
     #[test_log::test(tokio::test)]
     async fn test_da_catchup() {
-        let sender_global_bus = crate::bus::SharedMessageBus::new(
-            crate::bus::metrics::BusMetrics::global(),
-        );
+        let sender_global_bus =
+            crate::bus::SharedMessageBus::new(crate::bus::metrics::BusMetrics::global());
         let mut block_sender = TestBusClient::new_from_bus(sender_global_bus.new_handle()).await;
         let mut da_sender = DataAvailabilityTestCtx::new(sender_global_bus).await;
         let mut server = DataAvailabilityServer::start(7890, "DaServer")
             .await
             .unwrap();
 
-        let receiver_global_bus = crate::bus::SharedMessageBus::new(
-            crate::bus::metrics::BusMetrics::global(),
-        );
+        let receiver_global_bus =
+            crate::bus::SharedMessageBus::new(crate::bus::metrics::BusMetrics::global());
         let mut da_receiver = DataAvailabilityTestCtx::new(receiver_global_bus).await;
         da_receiver.da.catchupper.policy = Some(DaCatchupPolicy {
             floor: None,
@@ -1372,18 +1369,16 @@ pub mod tests {
 
     #[test_log::test(tokio::test)]
     async fn test_da_fast_catchup() {
-        let sender_global_bus = crate::bus::SharedMessageBus::new(
-            crate::bus::metrics::BusMetrics::global(),
-        );
+        let sender_global_bus =
+            crate::bus::SharedMessageBus::new(crate::bus::metrics::BusMetrics::global());
         let mut block_sender = TestBusClient::new_from_bus(sender_global_bus.new_handle()).await;
         let mut da_sender = DataAvailabilityTestCtx::new(sender_global_bus).await;
         let mut server = DataAvailabilityServer::start(7891, "DaServer")
             .await
             .unwrap();
 
-        let receiver_global_bus = crate::bus::SharedMessageBus::new(
-            crate::bus::metrics::BusMetrics::global(),
-        );
+        let receiver_global_bus =
+            crate::bus::SharedMessageBus::new(crate::bus::metrics::BusMetrics::global());
         let mut da_receiver = DataAvailabilityTestCtx::new(receiver_global_bus).await;
         da_receiver.da.catchupper.policy = Some(DaCatchupPolicy {
             floor: Some(BlockHeight(8)),

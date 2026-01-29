@@ -1,5 +1,6 @@
 //! Public API for interacting with the node.
 
+use crate::telemetry::{encode_registry_text, Registry};
 use crate::{
     bus::SharedMessageBus, log_error, module_bus_client, module_handle_messages, modules::Module,
 };
@@ -14,7 +15,6 @@ use axum::{
     routing::get,
     Json,
 };
-use crate::telemetry::{encode_registry_text, Registry};
 use sdk::{api::NodeInfo, *};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
