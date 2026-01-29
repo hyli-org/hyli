@@ -1,4 +1,4 @@
-use hyli_turmoil_shims::{global_meter_or_panic, Counter, Gauge};
+use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge};
 
 #[repr(u64)]
 #[derive(Clone, Copy)]

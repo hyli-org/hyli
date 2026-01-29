@@ -25,7 +25,7 @@ use hyli_net::{
 use network::{
     IntoHeaderSignableData, MsgHeader, MsgWithHeader, NetMessage, OutboundMessage, PeerEvent,
 };
-use hyli_turmoil_shims::{global_meter_or_panic, Histogram, KeyValue};
+use hyli_modules::telemetry::{global_meter_or_panic, Histogram, KeyValue};
 use tracing::{info, trace, warn, Instrument};
 
 pub mod network;

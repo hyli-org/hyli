@@ -1,5 +1,5 @@
 use client_sdk::helpers::ProverInfo;
-use hyli_turmoil_shims::{global_meter_or_panic, Counter, Gauge, Histogram, KeyValue};
+use crate::telemetry::{global_meter_or_panic, Counter, Gauge, Histogram, KeyValue};
 
 #[derive(Debug, Clone)]
 pub struct AutoProverMetrics {

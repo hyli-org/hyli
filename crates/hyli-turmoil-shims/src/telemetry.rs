@@ -1,10 +1,7 @@
 use std::sync::Arc;
 
-pub use opentelemetry::{
-    metrics::{Counter, Gauge, Histogram, Meter, MeterProvider},
-    KeyValue,
-};
-pub use prometheus::Registry;
+use opentelemetry::metrics::{Meter, MeterProvider};
+use prometheus::Registry;
 
 mod imp {
     use super::{Meter, MeterProvider};

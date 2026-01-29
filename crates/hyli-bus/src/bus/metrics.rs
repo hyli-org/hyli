@@ -3,7 +3,8 @@ use std::{
     collections::HashMap,
 };
 
-use hyli_turmoil_shims::{global_meter_or_panic, Counter, KeyValue};
+use hyli_turmoil_shims::global_meter_or_panic;
+use opentelemetry::{metrics::Counter, KeyValue};
 use quote::ToTokens;
 use syn::{parse_str, Type};
 

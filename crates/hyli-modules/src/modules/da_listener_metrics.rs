@@ -1,4 +1,4 @@
-use hyli_turmoil_shims::{global_meter_or_panic, Counter, Gauge, KeyValue};
+use crate::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 
 #[derive(Debug, Clone)]
 pub struct DaTcpClientMetrics {

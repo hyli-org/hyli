@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use hyli_turmoil_shims::KeyValue;
+use opentelemetry::KeyValue;
 
 pub trait LatencyMetricSink {
     fn latency(&self, latency: u64, labels: &[KeyValue]);

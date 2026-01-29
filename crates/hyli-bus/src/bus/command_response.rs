@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use anyhow::bail;
 use anyhow::Result;
-use hyli_turmoil_shims::{global_meter_or_panic, Histogram, KeyValue};
+use hyli_turmoil_shims::global_meter_or_panic;
+use opentelemetry::{metrics::Histogram, KeyValue};
 use tokio::sync::Mutex;
 
 use crate::bus::{BusClientSender, BusMessage, BusReceiver};
@@ -172,7 +173,7 @@ macro_rules! handle_messages {
         // Safety: this is disjoint.
         let $index = unsafe { &mut *Pick::<$crate::bus::BusReceiver<$crate::bus::command_response::Query<$command, $response>>>::splitting_get_mut(&mut $bus) };
         $crate::utils::static_type_map::paste::paste! {
-        let [<branch_ $index>] = [hyli_turmoil_shims::KeyValue::new("branch", $crate::bus::metrics::BusMetrics::simplified_name::<$crate::bus::command_response::Query<$command, $response>>())];
+        let [<branch_ $index>] = [::opentelemetry::KeyValue::new("branch", $crate::bus::metrics::BusMetrics::simplified_name::<$crate::bus::command_response::Query<$command, $response>>())];
         $crate::handle_messages! {
             $(processed $bind = $fut $(, if $cond)? => $handle,)*
             processed Ok(_raw_query) = #[allow(clippy::macro_metavars_in_unsafe)] $index.recv() => {
@@ -217,7 +218,7 @@ macro_rules! handle_messages {
         // Safety: this is disjoint.
         let $index = unsafe { &mut *Pick::<$crate::bus::BusReceiver<$message>>::splitting_get_mut(&mut $bus) };
         $crate::utils::static_type_map::paste::paste! {
-        let [<branch_ $index>] = [hyli_turmoil_shims::KeyValue::new("branch", $crate::bus::metrics::BusMetrics::simplified_name::<$message>())];
+        let [<branch_ $index>] = [::opentelemetry::KeyValue::new("branch", $crate::bus::metrics::BusMetrics::simplified_name::<$message>())];
         $crate::handle_messages! {
             $(processed $bind = $fut $(, if $cond)? => $handle,)*
             processed Ok(mut __envelope) = $index.recv() => {
@@ -247,7 +248,7 @@ macro_rules! handle_messages {
         $($rest:tt)*
     ) => {
         $crate::utils::static_type_map::paste::paste! {
-        let [<branch_ $index>] = [hyli_turmoil_shims::KeyValue::new("branch", stringify!($fut2))];
+        let [<branch_ $index>] = [::opentelemetry::KeyValue::new("branch", stringify!($fut2))];
         $crate::handle_messages! {
             $(processed $bind = $fut $(, if $cond)? => $handle,)*
             processed $bind2 = $fut2 $(, if $cond2)? => {

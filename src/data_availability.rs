@@ -7,7 +7,7 @@ use hyli_modules::utils::da_codec::{DataAvailabilityClient, DataAvailabilityServ
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::TcpEvent;
-use hyli_turmoil_shims::{global_meter_or_panic, Counter, Gauge, KeyValue};
+use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 use tokio::task::JoinHandle;
 
 use crate::{
