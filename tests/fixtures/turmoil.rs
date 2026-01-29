@@ -32,6 +32,14 @@ pub struct NetMessageInterceptor {
     _guard: hyli_net::tcp::intercept::MessageHookGuard,
 }
 
+struct MeterProviderShutdownGuard(Arc<SdkMeterProvider>);
+
+impl Drop for MeterProviderShutdownGuard {
+    fn drop(&mut self) {
+        let _ = self.0.shutdown();
+    }
+}
+
 pub fn install_net_message_dropper<F>(mut should_drop: F) -> NetMessageInterceptor
 where
     F: FnMut(&NetMessage) -> bool + Send + 'static,
@@ -251,7 +259,9 @@ impl TurmoilCtx {
                     let host_name = host_name.clone();
                     async move {
                         eprintln!("[turmoil] starting host task for {}", host_name);
-                        let provider = Arc::new(SdkMeterProvider::default())
+                        let provider = Arc::new(SdkMeterProvider::default());
+                        let _provider_guard = MeterProviderShutdownGuard(provider.clone());
+                        let provider = provider
                             as Arc<dyn hyli_modules::telemetry::MeterProvider + Send + Sync>;
                         register_host_meter_provider(host_name, provider);
                         let _ = hyli_turmoil_shims::global_meter_or_panic();
@@ -277,7 +287,9 @@ impl TurmoilCtx {
                     let host_name = host_name.clone();
                     async move {
                         eprintln!("[turmoil] starting host task for {}", host_name);
-                        let provider = Arc::new(SdkMeterProvider::default())
+                        let provider = Arc::new(SdkMeterProvider::default());
+                        let _provider_guard = MeterProviderShutdownGuard(provider.clone());
+                        let provider = provider
                             as Arc<dyn hyli_modules::telemetry::MeterProvider + Send + Sync>;
                         register_host_meter_provider(host_name, provider);
                         let _ = hyli_turmoil_shims::global_meter_or_panic();
