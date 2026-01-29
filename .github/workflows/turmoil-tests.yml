@@ -24,7 +24,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run turmoil tests - Basic
-        run: cargo test turmoil_simulation_basic --features turmoil
+        run: RUST_BACKTRACE=1 cargo test turmoil_simulation_basic --features turmoil
       - name: Run turmoil tests - Add a node
         run: cargo test turmoil_simulation_one_more_node --features turmoil
       - name: Run turmoil tests - Hold traffic
