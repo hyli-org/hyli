@@ -293,6 +293,7 @@ hyli-modules = { workspace = true, default-features = false, features = [
   "test",
   "db",
 ] }
+opentelemetry_sdk = { workspace = true }
 
 assert_cmd = "2.0.17"
 axum-test = { version = "17.2.0" }

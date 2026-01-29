@@ -5801,6 +5801,7 @@ dependencies = [
  "hyli-verifiers",
  "indexmap 2.13.0",
  "native-tls",
+ "opentelemetry_sdk",
  "paste",
  "rand 0.9.2",
  "risc0-zkvm",
@@ -6235,6 +6236,8 @@ dependencies = [
  "prometheus",
  "rand 0.9.2",
  "tokio",
+ "tracing",
+ "tracing-subscriber 0.3.22",
  "turmoil",
 ]
 
