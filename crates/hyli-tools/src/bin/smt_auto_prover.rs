@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
     tracing::info!("Setting up modules");
 
     // Init global metrics meter we expose as an endpoint
-    let _registry =
+    let registry =
         init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
     let node_client =
