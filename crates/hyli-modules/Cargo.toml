@@ -25,11 +25,6 @@ tracing = { workspace = true }
 assertables = { workspace = true }
 rand = { workspace = true }
 futures = { workspace = true }
-tracing-subscriber = { workspace = true, features = [
-  "env-filter",
-  "fmt",
-  "json",
-] }
 paste = { workspace = true }
 hex = { workspace = true }
 fjall = { workspace = true }
@@ -51,19 +46,17 @@ utoipa-axum = { workspace = true }
 utoipa-swagger-ui = { workspace = true, features = ["axum"] }
 
 tower-http = { workspace = true, features = ["trace", "cors", "catch-panic"] }
-prometheus = { workspace = true }
 opentelemetry = { workspace = true }
-opentelemetry-otlp = { workspace = true, optional = true }
 tracing-opentelemetry = { workspace = true, optional = true }
-opentelemetry_sdk = { workspace = true, optional = true }
 opentelemetry-http = { workspace = true, optional = true }
+prometheus = { workspace = true }
 
 test-log = { workspace = true, features = ["color", "trace"], optional = true }
 indexmap = { workspace = true }
 
 # Native verifiers
 hyli-crypto = { workspace = true }
-hyli-turmoil-shims = { workspace = true }
+hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 secp256k1 = { workspace = true, features = ["rand"] }
 
 [dev-dependencies]

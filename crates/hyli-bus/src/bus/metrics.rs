@@ -3,22 +3,22 @@ use std::{
     collections::HashMap,
 };
 
-use opentelemetry::{InstrumentationScope, KeyValue};
+use hyli_turmoil_shims::global_meter_or_panic;
+use opentelemetry::{metrics::Counter, KeyValue};
 use quote::ToTokens;
 use syn::{parse_str, Type};
 
 #[derive(Debug, Clone)]
 pub struct BusMetrics {
     labels: HashMap<(TypeId, TypeId), [KeyValue; 2]>,
-    send: opentelemetry::metrics::Counter<u64>,
-    receive: opentelemetry::metrics::Counter<u64>,
+    send: Counter<u64>,
+    receive: Counter<u64>,
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 impl BusMetrics {
-    pub fn global(meter_id: String) -> BusMetrics {
-        let scope = InstrumentationScope::builder(meter_id).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+    pub fn global() -> BusMetrics {
+        let my_meter = global_meter_or_panic();
 
         BusMetrics {
             labels: HashMap::new(),

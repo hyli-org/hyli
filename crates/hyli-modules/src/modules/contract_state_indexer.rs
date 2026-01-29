@@ -346,12 +346,9 @@ mod tests {
             api: Default::default(),
         };
 
-        ContractStateIndexer::<MockState>::build(
-            SharedMessageBus::new(BusMetrics::global("global".to_string())),
-            ctx,
-        )
-        .await
-        .unwrap()
+        ContractStateIndexer::<MockState>::build(SharedMessageBus::new(BusMetrics::global()), ctx)
+            .await
+            .unwrap()
     }
 
     async fn register_contract(indexer: &mut ContractStateIndexer<MockState>) {
@@ -418,7 +415,7 @@ mod tests {
         let mut indexer = build_indexer(contract_name.clone()).await;
         register_contract(&mut indexer).await;
 
-        let mut node_state = NodeState::create("test".to_string(), "test");
+        let mut node_state = NodeState::create("test");
         let block = node_state
             .handle_signed_block(SignedBlock::default())
             .unwrap();
