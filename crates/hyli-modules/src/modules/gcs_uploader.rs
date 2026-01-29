@@ -1,7 +1,9 @@
-use std::path::PathBuf;
+use std::fs::File;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
+use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
 use chrono;
 use google_cloud_storage::client::{Storage, StorageControl};
@@ -9,7 +11,7 @@ use sdk::{BlockHeight, DataEvent, DataProposalHash, SignedBlock, TxHash};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::bus::{BusMessage, SharedMessageBus};
 use crate::modules::{gcs_uploader_metrics::GcsUploaderMetrics, Module};
@@ -60,9 +62,23 @@ pub struct GcsUploader {
     bus: GcsUploaderBusClient,
     gcs_client: Storage,
     metrics: GcsUploaderMetrics,
-    upload_tasks: JoinSet<(BlockHeight, Result<(), String>)>,
+    upload_tasks: JoinSet<(BlockHeight, Result<(), google_cloud_storage::Error>)>,
     upload_semaphore: Arc<Semaphore>,
 }
+
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
+struct GenesisTimestampStore {
+    timestamp_folder: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct GcsUploadStart {
+    pub last_uploaded_height: BlockHeight,
+    pub genesis_timestamp_folder: String,
+    pub start_height: BlockHeight,
+}
+
+const GENESIS_TIMESTAMP_FILE: &str = "gcs_genesis_timestamp.bin";
 
 impl Module for GcsUploader {
     type Context = GcsUploaderCtx;
@@ -128,6 +144,8 @@ impl GcsUploader {
             },
             Some(result) = self.upload_tasks.join_next() => {
                 self.handle_upload_result(result);
+                // Drain any other completed tasks while we're here
+                self.drain_completed_tasks();
             }
         };
         Ok(())
@@ -136,9 +154,10 @@ impl GcsUploader {
     async fn handle_data_availability_event(&mut self, event: DataEvent) -> Result<()> {
         let DataEvent::OrderedSignedBlock(block) = event;
         let block_height = block.height();
+        let is_genesis = block_height.0 == 0;
 
         // Check if this is genesis block (height 0)
-        if block_height.0 == 0 {
+        if is_genesis {
             let timestamp_ms = block.consensus_proposal.timestamp.0;
             let timestamp_folder = Self::timestamp_to_folder_name(timestamp_ms);
 
@@ -148,6 +167,32 @@ impl GcsUploader {
             );
 
             self.ctx.genesis_timestamp_folder = timestamp_folder;
+
+            if let Err(e) = Self::save_genesis_timestamp_folder(
+                &self.ctx.data_directory,
+                &self.ctx.genesis_timestamp_folder,
+            ) {
+                warn!("Failed to persist genesis timestamp folder: {}", e);
+            }
+
+            // Check that no blocks have been uploaded yet for this timestamp
+            if let Some(last_uploaded) = Self::find_last_uploaded_block_for_timestamp(
+                &Self::gcs_bucket_path(&self.ctx.gcs_config.gcs_bucket),
+                &self.ctx.gcs_config.gcs_prefix,
+                &self.ctx.genesis_timestamp_folder,
+            )
+            .await?
+            {
+                if last_uploaded > 0 {
+                    info!(
+                        "Blocks for timestamp folder {} already exists, skipping uploads; will resume at {}",
+                        self.ctx.genesis_timestamp_folder,
+                        last_uploaded + 1
+                    );
+                    self.ctx.last_uploaded_height = BlockHeight(last_uploaded);
+                    return Ok(());
+                }
+            }
         }
 
         if block_height <= self.ctx.last_uploaded_height {
@@ -172,15 +217,16 @@ impl GcsUploader {
         let semaphore = self.upload_semaphore.clone();
         let timestamp_folder = self.ctx.genesis_timestamp_folder.clone();
 
-        // Serialize block before spawning to avoid holding SignedBlock across await
-        let data = borsh::to_vec(&block).expect("Failed to serialize SignedBlock");
-
         self.upload_tasks.spawn(async move {
             // Acquire permit - this will wait if at capacity
             let _permit = semaphore.acquire().await.expect("Semaphore closed");
 
+            let data = borsh::to_vec(&block).expect("Failed to serialize SignedBlock");
+
             // Build object name with timestamp folder if available
             let object_name = format!("{}/{}/block_{}.bin", prefix, timestamp_folder, block_height);
+
+            let now = std::time::Instant::now();
 
             match gcs_client
                 .write_object(bucket_path, object_name.clone(), Bytes::from(data))
@@ -188,30 +234,57 @@ impl GcsUploader {
                 .send_unbuffered()
                 .await
             {
-                Ok(_) => (block_height, Ok(())),
-                Err(e) => (block_height, Err(e.to_string())),
+                Ok(_) => {
+                    let elapsed = now.elapsed();
+                    if block_height.0.is_multiple_of(1000) {
+                        info!(
+                            "Successfully uploaded block {} to GCS in {:.2?}",
+                            block_height, elapsed
+                        );
+                    } else {
+                        debug!(
+                            "Successfully uploaded block {} to GCS in {:.2?}",
+                            block_height, elapsed
+                        );
+                    }
+
+                    (block_height, Ok(()))
+                }
+                Err(e) => (block_height, Err(e)),
             }
             // _permit is dropped here, releasing the semaphore slot
         });
+
+        // Drain completed tasks to prevent memory buildup
+        self.drain_completed_tasks();
     }
 
     fn handle_upload_result(
         &self,
-        result: Result<(BlockHeight, Result<(), String>), tokio::task::JoinError>,
+        result: Result<
+            (BlockHeight, Result<(), google_cloud_storage::Error>),
+            tokio::task::JoinError,
+        >,
     ) {
         match result {
             Ok((height, Ok(()))) => {
-                info!("Successfully uploaded block {} to GCS bucket", height);
                 self.metrics.record_success(height);
             }
             Ok((height, Err(e))) => {
-                warn!("Upload task for block {} failed: {}", height, e);
+                error!("Upload task for block {} failed: {:#}", height, e);
                 self.metrics.record_failure();
             }
             Err(e) => {
-                warn!("Upload task panicked: {}", e);
+                error!("Upload task panicked: {}", e);
                 self.metrics.record_failure();
             }
+        }
+    }
+
+    fn drain_completed_tasks(&mut self) {
+        // Drain all completed tasks without blocking to prevent memory buildup
+        while let Some(result) = self.upload_tasks.try_join_next() {
+            self.handle_upload_result(result);
         }
     }
 
@@ -266,21 +339,52 @@ impl GcsUploader {
         }
     }
 
-    pub async fn get_last_uploaded_block(conf: &GCSConf) -> Result<(BlockHeight, String)> {
+    pub async fn get_last_uploaded_block(
+        conf: &GCSConf,
+        data_directory: &Path,
+    ) -> Result<GcsUploadStart> {
         let GCSConf {
             gcs_prefix,
             gcs_bucket,
             ..
         } = conf;
+        let Some(genesis_timestamp_folder) = Self::load_genesis_timestamp_folder(data_directory)?
+        else {
+            info!("No genesis timestamp on disk, starting from block 0");
+            return Ok(GcsUploadStart {
+                last_uploaded_height: BlockHeight(0),
+                genesis_timestamp_folder: "none".to_string(),
+                start_height: BlockHeight(0),
+            });
+        };
+
         let bucket_path = Self::gcs_bucket_path(gcs_bucket);
-        match Self::find_last_uploaded_block(&bucket_path, gcs_prefix).await {
-            Ok(Some((last_height, timestamp_folder))) => {
+        match Self::find_last_uploaded_block_for_timestamp(
+            &bucket_path,
+            gcs_prefix,
+            &genesis_timestamp_folder,
+        )
+        .await
+        {
+            Ok(Some(last_height)) => {
                 info!("Found last uploaded block in GCS: {}", last_height);
-                Ok((BlockHeight(last_height), timestamp_folder))
+                let last_uploaded_height = BlockHeight(last_height);
+                Ok(GcsUploadStart {
+                    last_uploaded_height,
+                    genesis_timestamp_folder,
+                    start_height: last_uploaded_height + 1,
+                })
             }
             Ok(None) => {
-                info!("No blocks found in GCS, starting from beginning");
-                Ok((BlockHeight(0), "none".to_string()))
+                info!(
+                    "No blocks found in GCS for genesis timestamp {}, starting from block 0",
+                    genesis_timestamp_folder
+                );
+                Ok(GcsUploadStart {
+                    last_uploaded_height: BlockHeight(0),
+                    genesis_timestamp_folder,
+                    start_height: BlockHeight(0),
+                })
             }
             Err(e) => {
                 warn!("Failed to query GCS for last block: {}.", e);
@@ -289,25 +393,22 @@ impl GcsUploader {
         }
     }
 
-    async fn find_last_uploaded_block(
+    async fn find_last_uploaded_block_for_timestamp(
         bucket_path: &str,
         prefix: &str,
-    ) -> Result<Option<(u64, String)>> {
+        timestamp_folder: &str,
+    ) -> Result<Option<u64>> {
         let gcs_control = StorageControl::builder().build().await?;
-        use google_cloud_storage::model::ListObjectsRequest;
-
-        // First, discover timestamp folders
-        let timestamp_folders =
-            Self::discover_timestamp_folders(&gcs_control, bucket_path, prefix).await?;
-
-        let Some(timestamp_folder) = timestamp_folders.last().map(|s| s.to_string()) else {
-            return Ok(None);
-        };
-
-        info!("Found timestamp folder in GCS: {}", timestamp_folder);
-
-        // Determine block prefix based on whether we have a timestamp folder
         let block_prefix = format!("{}/{}/block_", prefix, timestamp_folder);
+        Self::find_last_uploaded_block_with_prefix(&gcs_control, bucket_path, &block_prefix).await
+    }
+
+    async fn find_last_uploaded_block_with_prefix(
+        gcs_control: &StorageControl,
+        bucket_path: &str,
+        block_prefix: &str,
+    ) -> Result<Option<u64>> {
+        use google_cloud_storage::model::ListObjectsRequest;
 
         let mut heights: Vec<u64> = Vec::new();
         let mut page_token: Option<String> = None;
@@ -316,7 +417,7 @@ impl GcsUploader {
         loop {
             let mut request = ListObjectsRequest::new()
                 .set_parent(bucket_path)
-                .set_prefix(&block_prefix);
+                .set_prefix(block_prefix);
 
             if let Some(token) = &page_token {
                 request = request.set_page_token(token);
@@ -332,7 +433,7 @@ impl GcsUploader {
             for object in response.objects {
                 // Object name format: "{prefix}/{timestamp}/block_{height}.bin"
                 let object_name: String = object.name;
-                if let Some(name) = object_name.as_str().strip_prefix(&block_prefix) {
+                if let Some(name) = object_name.as_str().strip_prefix(block_prefix) {
                     if let Some(height_str) = name.strip_suffix(".bin") {
                         if let Ok(height) = height_str.parse::<u64>() {
                             heights.push(height);
@@ -369,7 +470,7 @@ impl GcsUploader {
         }
 
         if gaps.is_empty() {
-            return Ok(Some((max_height, timestamp_folder)));
+            return Ok(Some(max_height));
         }
 
         for (start, end) in &gaps {
@@ -393,43 +494,7 @@ impl GcsUploader {
             first_missing
         );
 
-        Ok(Some((first_missing.saturating_sub(1), timestamp_folder)))
-    }
-
-    async fn discover_timestamp_folders(
-        gcs_control: &StorageControl,
-        bucket_path: &str,
-        prefix: &str,
-    ) -> Result<Vec<String>> {
-        use google_cloud_storage::model::ListObjectsRequest;
-
-        let prefix_with_slash = format!("{}/", prefix);
-        let request = ListObjectsRequest::new()
-            .set_parent(bucket_path)
-            .set_prefix(&prefix_with_slash)
-            .set_delimiter("/");
-
-        let response = gcs_control
-            .list_objects()
-            .with_request(request)
-            .send()
-            .await?;
-
-        let mut timestamp_folders = Vec::new();
-        for prefix_entry in response.prefixes {
-            // Extract folder name: "prefix/2025-01-23T12-00-00Z/" -> "2025-01-23T12-00-00Z"
-            if let Some(folder_name) = prefix_entry.strip_prefix(&prefix_with_slash) {
-                if let Some(folder_name) = folder_name.strip_suffix('/') {
-                    // Validate timestamp format: 20 chars ending with Z
-                    if folder_name.len() == 20 && folder_name.ends_with('Z') {
-                        timestamp_folders.push(folder_name.to_string());
-                    }
-                }
-            }
-        }
-
-        timestamp_folders.sort();
-        Ok(timestamp_folders)
+        Ok(Some(first_missing.saturating_sub(1)))
     }
 
     fn timestamp_to_folder_name(timestamp_ms: u128) -> String {
@@ -437,5 +502,32 @@ impl GcsUploader {
         let datetime =
             chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0).expect("Invalid timestamp");
         datetime.format("%Y-%m-%dT%H-%M-%SZ").to_string()
+    }
+
+    fn load_genesis_timestamp_folder(data_directory: &Path) -> Result<Option<String>> {
+        let file = PathBuf::from(GENESIS_TIMESTAMP_FILE);
+        let full_path = data_directory.join(&file);
+        let mut handle = match File::open(&full_path) {
+            Ok(handle) => handle,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e).context("Opening genesis timestamp file"),
+        };
+
+        let store: GenesisTimestampStore =
+            borsh::from_reader(&mut handle).context("Deserializing genesis timestamp file")?;
+
+        // Validate the loaded timestamp_folder
+        chrono::NaiveDateTime::parse_from_str(&store.timestamp_folder, "%Y-%m-%dT%H-%M-%SZ")
+            .context("Parsing genesis timestamp")?;
+
+        Ok(Some(store.timestamp_folder))
+    }
+
+    fn save_genesis_timestamp_folder(data_directory: &Path, timestamp_folder: &str) -> Result<u32> {
+        let file = PathBuf::from(GENESIS_TIMESTAMP_FILE);
+        let store = GenesisTimestampStore {
+            timestamp_folder: timestamp_folder.to_string(),
+        };
+        Self::save_on_disk(data_directory, &file, &store)
     }
 }

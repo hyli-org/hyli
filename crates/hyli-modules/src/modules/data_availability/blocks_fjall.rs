@@ -1,10 +1,8 @@
 use anyhow::{Context, Result};
-use fjall::{
-    Config, Keyspace, KvSeparationOptions, PartitionCreateOptions, PartitionHandle, Slice,
-};
+use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slice};
 use sdk::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock};
 use std::{fmt::Debug, path::Path};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, info, trace};
 
 struct FjallHashKey(ConsensusProposalHash);
 struct FjallHeightKey([u8; 8]);
@@ -50,9 +48,9 @@ impl AsRef<[u8]> for FjallValue {
 }
 
 pub struct Blocks {
-    db: Keyspace,
-    by_hash: PartitionHandle,
-    by_height: PartitionHandle,
+    db: Database,
+    by_hash: Keyspace,
+    by_height: Keyspace,
 }
 
 impl Blocks {
@@ -76,24 +74,20 @@ impl Blocks {
     }
 
     pub fn new(path: &Path) -> Result<Self> {
-        let db = Config::new(path)
+        let db = Database::builder(path)
             .cache_size(256 * 1024 * 1024)
             .max_journaling_size(512 * 1024 * 1024)
-            .max_write_buffer_size(512 * 1024 * 1024)
             .open()?;
-        let by_hash = db.open_partition(
-            "blocks_by_hash",
-            PartitionCreateOptions::default()
+        let by_hash = db.keyspace("blocks_by_hash", || {
+            KeyspaceCreateOptions::default()
                 // Up from default 128Mb
-                .with_kv_separation(
+                .with_kv_separation(Some(
                     KvSeparationOptions::default().file_target_size(256 * 1024 * 1024),
-                )
-                .block_size(32 * 1024)
+                ))
                 .manual_journal_persist(true)
-                .max_memtable_size(128 * 1024 * 1024),
-        )?;
-        let by_height =
-            db.open_partition("block_hashes_by_height", PartitionCreateOptions::default())?;
+                .max_memtable_size(128 * 1024 * 1024)
+        })?;
+        let by_height = db.keyspace("block_hashes_by_height", KeyspaceCreateOptions::default)?;
 
         info!("{} block(s) available", by_hash.len()?);
 
@@ -158,14 +152,11 @@ impl Blocks {
 
     /// Scan the whole by_height table and returns the first missing height
     pub fn first_hole_by_height(&self) -> Result<Option<BlockHeight>> {
-        let Some(upper_bound) = self
-            .by_height
-            .last_key_value()
-            .unwrap_or_default()
-            .and_then(|(k, _v)| Self::decode_height(k).ok())
-        else {
+        let Some(guard) = self.by_height.last_key_value() else {
             anyhow::bail!("Empty partition can't have holes");
         };
+        let (k, _v) = guard.into_inner()?;
+        let upper_bound = Self::decode_height(k)?;
 
         debug!(
             "Start scanning by_height partition to find first missing block up to {:?}",
@@ -196,19 +187,10 @@ impl Blocks {
     }
 
     pub fn last(&self) -> Option<SignedBlock> {
-        match self.by_height.last_key_value() {
-            Ok(Some((_, v))) => {
-                let Ok(hash) = Self::decode_block_hash(v) else {
-                    return None;
-                };
-                self.get(&hash).ok().flatten()
-            }
-            Ok(None) => None,
-            Err(e) => {
-                error!("Error getting last block: {:?}", e);
-                None
-            }
-        }
+        let guard = self.by_height.last_key_value()?;
+        let (_k, v) = guard.into_inner().ok()?;
+        let hash = Self::decode_block_hash(v).ok()?;
+        self.get(&hash).ok().flatten()
     }
 
     pub fn highest(&self) -> BlockHeight {
@@ -226,9 +208,9 @@ impl Blocks {
     ) -> impl Iterator<Item = Result<ConsensusProposalHash>> {
         self.by_height
             .range(FjallHeightKey::new(min)..FjallHeightKey::new(max))
-            .map_while(|maybe_item| match maybe_item {
-                Ok((_, v)) => Some(Self::decode_block_hash(v)),
-                Err(_) => None,
+            .map_while(|guard| {
+                let (_k, v) = guard.into_inner().ok()?;
+                Some(Self::decode_block_hash(v))
             })
     }
 }

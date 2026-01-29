@@ -45,14 +45,14 @@ async fn main() -> Result<()> {
     // Initialize modules
     let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
-    let (last_uploaded_height, genesis_timestamp_folder) =
-        GcsUploader::get_last_uploaded_block(&config.gcs).await?;
+    let upload_start =
+        GcsUploader::get_last_uploaded_block(&config.gcs, &config.data_directory).await?;
 
     handler
         .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
-            start_block: Some(last_uploaded_height + 1),
+            start_block: Some(upload_start.start_height),
             timeout_client_secs: 10,
             da_fallback_addresses: vec![],
             processor_config: (),
@@ -64,8 +64,8 @@ async fn main() -> Result<()> {
             gcs_config: config.gcs.clone(),
             data_directory: config.data_directory.clone(),
             node_name,
-            last_uploaded_height,
-            genesis_timestamp_folder,
+            last_uploaded_height: upload_start.last_uploaded_height,
+            genesis_timestamp_folder: upload_start.genesis_timestamp_folder,
         })
         .await?;
 

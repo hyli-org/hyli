@@ -111,14 +111,3 @@ persist_proofs = true
 suffixes = ["default"]
 default_blob_suffix = "default"
 default_proof_suffix = "default"
-
-[gcs]
-# GCS bucket info
-gcs_bucket = "testnet_proofs"
-gcs_prefix = "local"
-
-# GCS uploader options
-save_proofs = false
-save_blocks = false
-
-max_concurrent_uploads = 1000
