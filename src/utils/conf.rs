@@ -217,6 +217,8 @@ pub struct Conf {
     pub da_read_from: String,
     /// Timeout for DA client requests, in seconds, before it tries to reconnect to stream blocks
     pub da_timeout_client_secs: u64,
+    /// Fallback DA server addresses for block requests when blocks are missing
+    pub da_fallback_addresses: Vec<String>,
 
     /// Websocket configuration
     pub websocket: NodeWebSocketConfig,

@@ -258,7 +258,12 @@ impl TcpMessageLabel for String {
 
 impl TcpMessageLabel for DataAvailabilityRequest {
     fn message_label(&self) -> &'static str {
-        "DataAvailabilityRequest"
+        match self {
+            DataAvailabilityRequest::StreamFromHeight(_) => {
+                "DataAvailabilityRequest::StreamFromHeight"
+            }
+            DataAvailabilityRequest::BlockRequest(_) => "DataAvailabilityRequest::BlockRequest",
+        }
     }
 }
 
@@ -269,6 +274,7 @@ impl TcpMessageLabel for DataAvailabilityEvent {
             DataAvailabilityEvent::MempoolStatusEvent(_) => {
                 "DataAvailabilityEvent::MempoolStatusEvent"
             }
+            DataAvailabilityEvent::BlockNotFound(_) => "DataAvailabilityEvent::BlockNotFound",
         }
     }
 }

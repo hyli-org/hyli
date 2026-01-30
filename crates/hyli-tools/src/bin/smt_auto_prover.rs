@@ -95,6 +95,7 @@ async fn main() -> Result<()> {
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
             timeout_client_secs: 10,
+            da_fallback_addresses: vec![],
             processor_config: (),
         })
         .await?;
