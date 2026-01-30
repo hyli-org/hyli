@@ -5,8 +5,13 @@
 
 pub mod commands;
 pub mod config;
+pub mod constants;
+pub mod docker;
+pub mod env_builder;
 pub mod error;
 pub mod logging;
+pub mod process;
+pub mod validation;
 
 // Re-export commonly used types
 pub use config::{BackendType, HylixConfig};

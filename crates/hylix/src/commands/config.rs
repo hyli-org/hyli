@@ -4,12 +4,18 @@ use crate::logging::{log_info, log_success};
 use std::path::PathBuf;
 
 /// Configuration action enumeration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::Subcommand)]
 pub enum ConfigAction {
     /// Display current configuration
     Show,
     /// Edit configuration values
-    Edit { key: String, value: String },
+    #[command(alias = "set")]
+    Edit {
+        /// Configuration key to edit (e.g., "default_backend", "devnet.node_port")
+        key: String,
+        /// New value for the configuration key
+        value: String,
+    },
     /// Reset configuration to defaults
     Reset,
 }

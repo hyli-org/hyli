@@ -284,128 +284,164 @@ impl HylixConfig {
 
     /// Migrate TOML configuration from previous versions
     fn migrate_toml(
-        mut toml_value: toml::Value,
+        toml_value: toml::Value,
         file_version: String,
     ) -> crate::error::HylixResult<toml::Value> {
+        let migrations: Vec<Box<dyn ConfigMigration>> = vec![
+            Box::new(LegacyMigration),
+            Box::new(Migration0_6_0),
+        ];
+
+        for migration in migrations {
+            if migration.version() == file_version.as_str() {
+                return migration.migrate(toml_value);
+            }
+        }
+
+        log_error(&format!(
+            "Unsupported configuration version: {file_version}"
+        ));
+        log_info("Failed to migrate configuration. Please check your configuration file.");
+        log_info(&format!(
+            "You can reset to default configuration by running `{}`",
+            console::style("hy config reset").bold().green()
+        ));
+        Err(crate::error::HylixError::config(
+            "Unsupported configuration version".to_string(),
+        ))
+    }
+}
+
+/// Strategy pattern for config migrations
+trait ConfigMigration {
+    fn version(&self) -> &str;
+    fn migrate(&self, toml_value: toml::Value) -> crate::error::HylixResult<toml::Value>;
+}
+
+/// Migration from legacy configuration (no version field)
+struct LegacyMigration;
+
+impl ConfigMigration for LegacyMigration {
+    fn version(&self) -> &str {
+        "legacy"
+    }
+
+    fn migrate(&self, mut toml_value: toml::Value) -> crate::error::HylixResult<toml::Value> {
+        log_info("Migrating from legacy configuration");
         let current_version = default_config_version();
 
-        // Migration from legacy (no version field) to v1
-        match file_version.as_str() {
-            "legacy" => {
-                log_info("Migrating from legacy configuration");
+        if let Some(table) = toml_value.as_table_mut() {
+            // Add version field
+            table.insert(
+                "version".to_string(),
+                toml::Value::String(current_version.clone()),
+            );
 
-                if let Some(table) = toml_value.as_table_mut() {
-                    // Add version field
-                    table.insert(
-                        "version".to_string(),
-                        toml::Value::String(current_version.clone()),
-                    );
-
-                    // Add node_rust_log field if devnet section exists
-                    if let Some(devnet) = table.get_mut("devnet") {
-                        if let Some(devnet_table) = devnet.as_table_mut() {
-                            if !devnet_table.contains_key("node_rust_log") {
-                                devnet_table.insert(
-                                    "node_rust_log".to_string(),
-                                    toml::Value::String("info".to_string()),
-                                );
-                            }
-                        }
-                    } else {
-                        log_error("Devnet section not found in configuration");
-                        log_info("Failed to migrate configuration. Please check your configuration file.");
-                        log_info(&format!(
-                            "You can reset to default configuration by running `{}`",
-                            console::style("hy config reset").bold().green()
-                        ));
-                        return Err(crate::error::HylixError::config(
-                            "Devnet section not found in configuration".to_string(),
-                        ));
+            // Add node_rust_log field if devnet section exists
+            if let Some(devnet) = table.get_mut("devnet") {
+                if let Some(devnet_table) = devnet.as_table_mut() {
+                    if !devnet_table.contains_key("node_rust_log") {
+                        devnet_table.insert(
+                            "node_rust_log".to_string(),
+                            toml::Value::String("info".to_string()),
+                        );
                     }
                 }
-            }
-            "0.6.0" => {
-                log_info("Migrating from configuration version 0.6.0 to 0.9.0");
-
-                if let Some(table) = toml_value.as_table_mut() {
-                    // Update version field
-                    table.insert(
-                        "version".to_string(),
-                        toml::Value::String(current_version.clone()),
-                    );
-
-                    // Add registry fields to devnet section
-                    if let Some(devnet) = table.get_mut("devnet") {
-                        if let Some(devnet_table) = devnet.as_table_mut() {
-                            // Add registry_server_image if missing
-                            if !devnet_table.contains_key("registry_server_image") {
-                                devnet_table.insert(
-                                    "registry_server_image".to_string(),
-                                    toml::Value::String("ghcr.io/hyli-org/hyli-registry/zkvm-registry-server:latest".to_string()),
-                                );
-                            }
-                            // Add registry_ui_image if missing
-                            if !devnet_table.contains_key("registry_ui_image") {
-                                devnet_table.insert(
-                                    "registry_ui_image".to_string(),
-                                    toml::Value::String(
-                                        "ghcr.io/hyli-org/hyli-registry/zkvm-registry-ui:latest"
-                                            .to_string(),
-                                    ),
-                                );
-                            }
-                            // Add registry_server_port if missing
-                            if !devnet_table.contains_key("registry_server_port") {
-                                devnet_table.insert(
-                                    "registry_server_port".to_string(),
-                                    toml::Value::Integer(9003),
-                                );
-                            }
-                            // Add registry_ui_port if missing
-                            if !devnet_table.contains_key("registry_ui_port") {
-                                devnet_table.insert(
-                                    "registry_ui_port".to_string(),
-                                    toml::Value::Integer(8082),
-                                );
-                            }
-                        }
-                    }
-
-                    // Add registry_server to container_env if it exists
-                    if let Some(devnet) = table.get_mut("devnet") {
-                        if let Some(devnet_table) = devnet.as_table_mut() {
-                            if let Some(container_env) = devnet_table.get_mut("container_env") {
-                                if let Some(container_env_table) = container_env.as_table_mut() {
-                                    if !container_env_table.contains_key("registry_server") {
-                                        container_env_table.insert(
-                                            "registry_server".to_string(),
-                                            toml::Value::Array(vec![]),
-                                        );
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {
-                log_error(&format!(
-                    "Unsupported configuration version: {file_version}"
-                ));
+            } else {
+                log_error("Devnet section not found in configuration");
                 log_info("Failed to migrate configuration. Please check your configuration file.");
                 log_info(&format!(
                     "You can reset to default configuration by running `{}`",
                     console::style("hy config reset").bold().green()
                 ));
                 return Err(crate::error::HylixError::config(
-                    "Unsupported configuration version".to_string(),
+                    "Devnet section not found in configuration".to_string(),
                 ));
             }
         }
 
         Ok(toml_value)
     }
+}
 
+/// Migration from version 0.6.0 to 0.9.0
+struct Migration0_6_0;
+
+impl ConfigMigration for Migration0_6_0 {
+    fn version(&self) -> &str {
+        "0.6.0"
+    }
+
+    fn migrate(&self, mut toml_value: toml::Value) -> crate::error::HylixResult<toml::Value> {
+        log_info("Migrating from configuration version 0.6.0 to 0.9.0");
+        let current_version = default_config_version();
+
+        if let Some(table) = toml_value.as_table_mut() {
+            // Update version field
+            table.insert(
+                "version".to_string(),
+                toml::Value::String(current_version.clone()),
+            );
+
+            // Add registry fields to devnet section
+            if let Some(devnet) = table.get_mut("devnet") {
+                if let Some(devnet_table) = devnet.as_table_mut() {
+                    // Add registry_server_image if missing
+                    if !devnet_table.contains_key("registry_server_image") {
+                        devnet_table.insert(
+                            "registry_server_image".to_string(),
+                            toml::Value::String("ghcr.io/hyli-org/hyli-registry/zkvm-registry-server:latest".to_string()),
+                        );
+                    }
+                    // Add registry_ui_image if missing
+                    if !devnet_table.contains_key("registry_ui_image") {
+                        devnet_table.insert(
+                            "registry_ui_image".to_string(),
+                            toml::Value::String(
+                                "ghcr.io/hyli-org/hyli-registry/zkvm-registry-ui:latest"
+                                    .to_string(),
+                            ),
+                        );
+                    }
+                    // Add registry_server_port if missing
+                    if !devnet_table.contains_key("registry_server_port") {
+                        devnet_table.insert(
+                            "registry_server_port".to_string(),
+                            toml::Value::Integer(9003),
+                        );
+                    }
+                    // Add registry_ui_port if missing
+                    if !devnet_table.contains_key("registry_ui_port") {
+                        devnet_table.insert(
+                            "registry_ui_port".to_string(),
+                            toml::Value::Integer(8082),
+                        );
+                    }
+                }
+            }
+
+            // Add registry_server to container_env if it exists
+            if let Some(devnet) = table.get_mut("devnet") {
+                if let Some(devnet_table) = devnet.as_table_mut() {
+                    if let Some(container_env) = devnet_table.get_mut("container_env") {
+                        if let Some(container_env_table) = container_env.as_table_mut() {
+                            if !container_env_table.contains_key("registry_server") {
+                                container_env_table.insert(
+                                    "registry_server".to_string(),
+                                    toml::Value::Array(vec![]),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(toml_value)
+    }
+}
+
+impl HylixConfig {
     /// Save configuration to file
     pub fn save(&self) -> crate::error::HylixResult<()> {
         let config_path = Self::config_path()?;
@@ -499,40 +535,40 @@ impl HylixConfig {
                 accounts: vec![
                     AccountConfig {
                         name: "bob".to_string(),
-                        password: "hylisecure".to_string(),
+                        password: crate::constants::passwords::DEFAULT.to_string(),
                         invite_code: "vip".to_string(),
                     },
                     AccountConfig {
                         name: "alice".to_string(),
-                        password: "hylisecure".to_string(),
+                        password: crate::constants::passwords::DEFAULT.to_string(),
                         invite_code: "vip".to_string(),
                     },
                 ],
                 funds: vec![
                     FundConfig {
                         from: "hyli".to_string(),
-                        from_password: "hylisecure".to_string(),
+                        from_password: crate::constants::passwords::DEFAULT.to_string(),
                         amount: 1000,
                         token: "oranj".to_string(),
                         to: "bob".to_string(),
                     },
                     FundConfig {
                         from: "hyli".to_string(),
-                        from_password: "hylisecure".to_string(),
+                        from_password: crate::constants::passwords::DEFAULT.to_string(),
                         amount: 1000,
                         token: "oranj".to_string(),
                         to: "alice".to_string(),
                     },
                     FundConfig {
                         from: "hyli".to_string(),
-                        from_password: "hylisecure".to_string(),
+                        from_password: crate::constants::passwords::DEFAULT.to_string(),
                         amount: 500,
                         token: "oxygen".to_string(),
                         to: "bob".to_string(),
                     },
                     FundConfig {
                         from: "bob".to_string(),
-                        from_password: "hylisecure".to_string(),
+                        from_password: crate::constants::passwords::DEFAULT.to_string(),
                         amount: 50,
                         token: "oxygen".to_string(),
                         to: "alice".to_string(),
