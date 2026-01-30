@@ -42,13 +42,13 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting smt auto prover");
 
-    let bus = SharedMessageBus::new(BusMetrics::global());
-
-    tracing::info!("Setting up modules");
-
     // Init global metrics meter we expose as an endpoint
     let registry =
         init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
+
+    let bus = SharedMessageBus::new(BusMetrics::global());
+
+    tracing::info!("Setting up modules");
 
     let node_client =
         Arc::new(NodeApiHttpClient::new(config.node_url.clone()).context("build node client")?);
