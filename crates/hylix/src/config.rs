@@ -287,10 +287,8 @@ impl HylixConfig {
         toml_value: toml::Value,
         file_version: String,
     ) -> crate::error::HylixResult<toml::Value> {
-        let migrations: Vec<Box<dyn ConfigMigration>> = vec![
-            Box::new(LegacyMigration),
-            Box::new(Migration0_6_0),
-        ];
+        let migrations: Vec<Box<dyn ConfigMigration>> =
+            vec![Box::new(LegacyMigration), Box::new(Migration0_6_0)];
 
         for migration in migrations {
             if migration.version() == file_version.as_str() {
@@ -390,7 +388,10 @@ impl ConfigMigration for Migration0_6_0 {
                     if !devnet_table.contains_key("registry_server_image") {
                         devnet_table.insert(
                             "registry_server_image".to_string(),
-                            toml::Value::String("ghcr.io/hyli-org/hyli-registry/zkvm-registry-server:latest".to_string()),
+                            toml::Value::String(
+                                "ghcr.io/hyli-org/hyli-registry/zkvm-registry-server:latest"
+                                    .to_string(),
+                            ),
                         );
                     }
                     // Add registry_ui_image if missing
@@ -412,10 +413,8 @@ impl ConfigMigration for Migration0_6_0 {
                     }
                     // Add registry_ui_port if missing
                     if !devnet_table.contains_key("registry_ui_port") {
-                        devnet_table.insert(
-                            "registry_ui_port".to_string(),
-                            toml::Value::Integer(8082),
-                        );
+                        devnet_table
+                            .insert("registry_ui_port".to_string(), toml::Value::Integer(8082));
                     }
                 }
             }

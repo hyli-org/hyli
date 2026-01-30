@@ -6,10 +6,7 @@ use client_sdk::rest_client::NodeApiClient;
 use std::time::Duration;
 
 /// Execute the `hy bake` command
-pub async fn bake_devnet(
-    executor: &ProgressExecutor,
-    context: &DevnetContext,
-) -> HylixResult<()> {
+pub async fn bake_devnet(executor: &ProgressExecutor, context: &DevnetContext) -> HylixResult<()> {
     // Create default profile if it doesn't exist
     context.config.create_default_profile()?;
 
@@ -98,7 +95,10 @@ pub async fn create_test_accounts(
             .await?;
 
         if !success {
-            log_warning(&format!("{} account creation completed with warnings", account.name));
+            log_warning(&format!(
+                "{} account creation completed with warnings",
+                account.name
+            ));
         } else {
             main_pb.set_message(format!("{} account created successfully", account.name));
         }
@@ -145,7 +145,10 @@ pub async fn send_funds_to_test_accounts(
             .await?;
 
         if !success {
-            log_warning(&format!("{} account funding completed with warnings", fund.to));
+            log_warning(&format!(
+                "{} account funding completed with warnings",
+                fund.to
+            ));
             log_warning(&format!(
                 "Command was: {}",
                 console::style(format!(

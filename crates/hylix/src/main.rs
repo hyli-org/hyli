@@ -140,7 +140,7 @@ async fn main() -> Result<()> {
         Commands::Devnet { action } => commands::devnet::execute(action).await,
         Commands::Clean => commands::clean::execute().await,
         Commands::Config { action } => commands::config::execute(action).await,
-        Commands::Contract { action } => commands::contract::execute(action).await
+        Commands::Contract { action } => commands::contract::execute(action).await,
     };
 
     if let Err(err) = result {

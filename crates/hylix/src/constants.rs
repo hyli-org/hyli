@@ -7,7 +7,15 @@ pub mod containers {
     pub const WALLET_UI: &str = "hyli-devnet-wallet-ui";
     pub const REGISTRY: &str = "hyli-devnet-registry";
     pub const REGISTRY_UI: &str = "hyli-devnet-registry-ui";
-    pub const ALL: [&str; 7] = [NODE, POSTGRES, INDEXER, WALLET, WALLET_UI, REGISTRY, REGISTRY_UI];
+    pub const ALL: [&str; 7] = [
+        NODE,
+        POSTGRES,
+        INDEXER,
+        WALLET,
+        WALLET_UI,
+        REGISTRY,
+        REGISTRY_UI,
+    ];
 }
 
 /// Docker network names
