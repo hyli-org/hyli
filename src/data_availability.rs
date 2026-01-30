@@ -1567,9 +1567,8 @@ pub mod tests {
         let tmpdir = tempfile::tempdir().unwrap().keep();
         let mut blocks_storage = Blocks::new(&tmpdir).unwrap();
 
-        let global_bus = crate::bus::SharedMessageBus::new(
-            crate::bus::metrics::BusMetrics::global("global".to_string()),
-        );
+        let global_bus =
+            crate::bus::SharedMessageBus::new(crate::bus::metrics::BusMetrics::global());
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
 
         let mut config: Conf = Conf::new(vec![], None, None).unwrap();

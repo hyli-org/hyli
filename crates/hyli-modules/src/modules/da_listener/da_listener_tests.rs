@@ -30,7 +30,7 @@ fn create_test_config_with_read_from(
 async fn create_test_listener(
     config: DAListenerConf<BusOnlyProcessor>,
 ) -> Result<SignedDAListener<BusOnlyProcessor>> {
-    let bus = SharedMessageBus::new(BusMetrics::global("test_da_listener".to_string()));
+    let bus = SharedMessageBus::new(BusMetrics::global());
     SignedDAListener::build(bus.new_handle(), config).await
 }
 
