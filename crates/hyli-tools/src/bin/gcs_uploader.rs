@@ -39,8 +39,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting GCS block uploader");
 
-    let registry =
-        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
+    let _ = init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
     let bus = SharedMessageBus::new(BusMetrics::global());
 
