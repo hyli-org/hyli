@@ -1,7 +1,4 @@
-use opentelemetry::{
-    metrics::{Counter, Gauge},
-    InstrumentationScope, KeyValue,
-};
+use crate::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 
 #[derive(Debug, Clone)]
 pub struct NodeStateMetrics {
@@ -18,9 +15,8 @@ pub struct NodeStateMetrics {
 }
 
 impl NodeStateMetrics {
-    pub fn global(node_name: String, module_name: &'static str) -> NodeStateMetrics {
-        let scope = InstrumentationScope::builder(node_name).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+    pub fn global(module_name: &'static str) -> NodeStateMetrics {
+        let my_meter = global_meter_or_panic();
 
         let node_state = "node_state";
 

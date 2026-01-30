@@ -105,10 +105,7 @@ impl<P: BlockProcessor + 'static> Module for SignedDAListener<P> {
             current_block,
             processor,
             block_buffer: BTreeMap::new(),
-            tcp_client_metrics: DaTcpClientMetrics::global(
-                "signed_da_listener".to_string(),
-                "signed_da_listener",
-            ),
+            tcp_client_metrics: DaTcpClientMetrics::global("signed_da_listener"),
             pending_block_requests: HashMap::new(),
             current_da_index: 0,
         })
