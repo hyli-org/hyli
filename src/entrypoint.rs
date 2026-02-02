@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used, reason = "Fail on misconfiguration")]
 
 use crate::{
-    bus::{metrics::BusMetrics, SharedMessageBus},
+    bus::SharedMessageBus,
     consensus::Consensus,
     data_availability::DataAvailability,
     explorer::Explorer,
@@ -211,7 +211,7 @@ async fn common_main(
     let registry =
         init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
-    let bus = SharedMessageBus::new(BusMetrics::global());
+    let bus = SharedMessageBus::new();
     let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
     // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.
@@ -251,6 +251,7 @@ async fn common_main(
                 alloc_metric2.record(metrics.allocations as u64, &[]);
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
+            .unwrap()
         });
     }
 

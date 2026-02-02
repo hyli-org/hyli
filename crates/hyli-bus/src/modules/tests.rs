@@ -1,4 +1,4 @@
-use crate::bus::{dont_use_this::get_receiver, metrics::BusMetrics};
+use crate::bus::dont_use_this::get_receiver;
 
 use super::*;
 use crate::bus::SharedMessageBus;
@@ -288,7 +288,7 @@ async fn test_multi_file_persist_writes_manifest_and_loads_files() {
     let data_dir = dir.path().to_path_buf();
     let (first_path, second_path) = multi_persist_paths();
 
-    let shared_bus = SharedMessageBus::new(BusMetrics::global());
+    let shared_bus = SharedMessageBus::new();
     let mut handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
     handler
         .build_module::<MultiPersistModule>(MultiPersistCtx {
@@ -343,7 +343,8 @@ async fn test_multi_file_persist_writes_manifest_and_loads_files() {
 #[tokio::test]
 async fn test_build_module() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global());
+    hyli_turmoil_shims::init_test_meter_provider();
+    let shared_bus = SharedMessageBus::new();
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
     assert_eq!(handler.modules.len(), 1);
@@ -352,7 +353,8 @@ async fn test_build_module() {
 #[tokio::test]
 async fn test_add_module() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global());
+    hyli_turmoil_shims::init_test_meter_provider();
+    let shared_bus = SharedMessageBus::new();
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
     let module = TestModule {
         bus: TestBusClient::new_from_bus(shared_bus.new_handle()).await,
@@ -366,7 +368,8 @@ async fn test_add_module() {
 #[tokio::test]
 async fn test_start_modules() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global());
+    hyli_turmoil_shims::init_test_meter_provider();
+    let shared_bus = SharedMessageBus::new();
     let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
@@ -392,7 +395,8 @@ async fn test_start_modules() {
 #[tokio::test]
 async fn test_start_stop_modules_in_order() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global());
+    hyli_turmoil_shims::init_test_meter_provider();
+    let shared_bus = SharedMessageBus::new();
     let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
@@ -435,7 +439,8 @@ async fn test_start_stop_modules_in_order() {
 #[tokio::test]
 async fn test_shutdown_duplicate_modules() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global());
+    hyli_turmoil_shims::init_test_meter_provider();
+    let shared_bus = SharedMessageBus::new();
     let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
@@ -460,7 +465,8 @@ async fn test_shutdown_duplicate_modules() {
 #[tokio::test]
 async fn test_shutdown_modules_exactly_once() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global());
+    hyli_turmoil_shims::init_test_meter_provider();
+    let shared_bus = SharedMessageBus::new();
     let mut cancellation_counter_receiver = get_receiver::<usize>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
@@ -528,7 +534,8 @@ async fn test_shutdown_modules_exactly_once() {
 #[tokio::test]
 async fn test_shutdown_all_modules_if_one_fails() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global());
+    hyli_turmoil_shims::init_test_meter_provider();
+    let shared_bus = SharedMessageBus::new();
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
 
@@ -585,7 +592,8 @@ async fn test_shutdown_all_modules_if_one_fails() {
 #[tokio::test]
 async fn test_shutdown_all_modules_if_one_module_panics() {
     let dir = tempdir().unwrap();
-    let shared_bus = SharedMessageBus::new(BusMetrics::global());
+    hyli_turmoil_shims::init_test_meter_provider();
+    let shared_bus = SharedMessageBus::new();
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
 
@@ -648,7 +656,7 @@ async fn test_new_with_missing_manifest_backs_up_state_files() {
     std::fs::write(&node_state_path, b"fake node state data").unwrap();
     std::fs::write(&consensus_path, b"fake consensus data").unwrap();
 
-    let shared_bus = SharedMessageBus::new(BusMetrics::global());
+    let shared_bus = SharedMessageBus::new();
 
     // This should back up the directory
     let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
@@ -690,7 +698,7 @@ async fn test_new_with_empty_manifest_backs_up_state_files() {
     let manifest_path = super::manifest_path(&data_dir);
     std::fs::write(&manifest_path, "   \n  \n").unwrap(); // Only whitespace
 
-    let shared_bus = SharedMessageBus::new(BusMetrics::global());
+    let shared_bus = SharedMessageBus::new();
 
     // This should back up the directory because manifest is effectively empty
     let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
@@ -726,7 +734,7 @@ async fn test_new_with_valid_manifest_does_not_backup() {
     let manifest_path = super::manifest_path(&data_dir);
     std::fs::write(&manifest_path, "12345678 node_state.bin\n").unwrap();
 
-    let shared_bus = SharedMessageBus::new(BusMetrics::global());
+    let shared_bus = SharedMessageBus::new();
 
     // This should NOT back up because manifest is valid
     let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
@@ -759,7 +767,7 @@ async fn test_new_creates_fresh_data_dir() {
     // data_dir doesn't exist yet
     assert!(!data_dir.exists());
 
-    let shared_bus = SharedMessageBus::new(BusMetrics::global());
+    let shared_bus = SharedMessageBus::new();
 
     let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
 
@@ -788,7 +796,7 @@ async fn test_new_empty_manifest_without_state_files_backs_up() {
     let manifest_path = super::manifest_path(&data_dir);
     std::fs::write(&manifest_path, "\n").unwrap();
 
-    let shared_bus = SharedMessageBus::new(BusMetrics::global());
+    let shared_bus = SharedMessageBus::new();
 
     // This should back up because an empty manifest is invalid even without state files
     let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
