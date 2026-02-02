@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
     tracing::info!("Setting up modules");
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await?;
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
     let upload_start =
         GcsUploader::get_last_uploaded_block(&config.gcs, &config.data_directory).await?;

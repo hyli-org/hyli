@@ -207,8 +207,12 @@ async fn common_main(
     mut config: conf::Conf,
     crypto: Option<SharedBlstCrypto>,
 ) -> Result<ModulesHandler> {
+    // Init global metrics meter we expose as an endpoint.
+    let registry =
+        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
+
     let bus = SharedMessageBus::new(BusMetrics::global());
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await?;
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
     // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.
     // Handle this configuration rewrite before we print anything.
@@ -223,10 +227,6 @@ async fn common_main(
 
     // Capture node start timestamp for use across all modules
     let start_timestamp = TimestampMsClock::now();
-
-    // Init global metrics meter we expose as an endpoint
-    let registry =
-        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
     #[cfg(feature = "monitoring")]
     {

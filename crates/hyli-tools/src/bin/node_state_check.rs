@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
     tracing::info!("Setting up modules");
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await?;
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
     handler
         .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {
