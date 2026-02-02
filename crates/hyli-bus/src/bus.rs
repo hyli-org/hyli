@@ -157,7 +157,7 @@ pub mod dont_use_this {
 
 impl Default for SharedMessageBus {
     fn default() -> Self {
-        Self::new(BusMetrics::global("default".to_string()))
+        Self::new(BusMetrics::global())
     }
 }
 

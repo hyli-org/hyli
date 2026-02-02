@@ -22,6 +22,9 @@ use anyhow::{bail, Context, Result};
 use axum::Router;
 use hydentity::Hydentity;
 use hyli_crypto::SharedBlstCrypto;
+#[cfg(feature = "monitoring")]
+use hyli_modules::telemetry::global_meter_or_panic;
+use hyli_modules::telemetry::{init_prometheus_registry_meter_provider, Registry};
 use hyli_modules::{
     log_error,
     modules::{
@@ -43,7 +46,6 @@ use hyli_modules::{
 };
 use hyli_net::clock::TimestampMsClock;
 use hyllar::Hyllar;
-use prometheus::Registry;
 use smt_token::account::AccountSMT;
 use std::{
     fs::{self, File},
@@ -187,54 +189,11 @@ pub fn welcome_message(conf: &conf::Conf) {
     );
 }
 
-/// Initialize the global OpenTelemetry metrics provider.
-/// This must be called before creating any BusMetrics instances.
-/// Returns the registry for use with the REST API metrics endpoint.
-pub fn init_metrics(#[allow(unused_variables)] node_id: &str) -> Registry {
-    let registry = Registry::new();
-    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-        .with_reader(
-            opentelemetry_prometheus::exporter()
-                .with_registry(registry.clone())
-                .build()
-                .expect("Failed to build prometheus exporter"),
-        )
-        .build();
-
-    opentelemetry::global::set_meter_provider(provider);
-
-    #[cfg(feature = "monitoring")]
-    {
-        let scope = opentelemetry::InstrumentationScope::builder(node_id.to_string()).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
-        let alloc_metric = my_meter.u64_gauge("malloc_allocated_size").build();
-        let alloc_metric2 = my_meter.u64_gauge("malloc_allocations").build();
-        let latency_metric = my_meter.u64_histogram("tokio_latency").build();
-
-        tokio::spawn(async move {
-            let mut latency = tokio::time::Instant::now();
-            loop {
-                latency_metric.record(latency.elapsed().as_millis() as u64 - 250, &[]);
-                latency = tokio::time::Instant::now();
-                tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
-            }
-        });
-        tokio::spawn(async move {
-            loop {
-                let metrics = alloc_metrics::global_metrics();
-                alloc_metric.record(metrics.allocated_bytes as u64, &[]);
-                alloc_metric2.record(metrics.allocations as u64, &[]);
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-            }
-        });
-    }
-
-    registry
-}
-
 pub async fn main_loop(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> Result<()> {
-    let registry = init_metrics(&config.id);
-    let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
+    // Init global metrics meter we expose as an endpoint
+    let registry =
+        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
+    let bus = SharedMessageBus::new(BusMetrics::global());
     let mut handler = common_main(config, crypto, bus, registry).await?;
     handler.exit_loop().await?;
 
@@ -242,8 +201,10 @@ pub async fn main_loop(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> 
 }
 
 pub async fn main_process(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> Result<()> {
-    let registry = init_metrics(&config.id);
-    let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
+    // Init global metrics meter we expose as an endpoint
+    let registry =
+        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
+    let bus = SharedMessageBus::new(BusMetrics::global());
     let mut handler = common_main(config, crypto, bus, registry).await?;
     handler.exit_process().await?;
 
@@ -445,6 +406,7 @@ pub async fn common_main(
                 da_read_from: config.da_read_from.clone(),
                 start_block: None,
                 timeout_client_secs: config.da_timeout_client_secs,
+                da_fallback_addresses: config.da_fallback_addresses.clone(),
                 processor_config: (),
             })
             .await?;

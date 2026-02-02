@@ -14,6 +14,10 @@ use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
 use hyli_model::api::APIRegisterContract;
 use hyli_model::{BlobTransaction, ContractName, Identity, RegisterContractAction};
+use hyli_modules::telemetry::{
+    Counter, Gauge, KeyValue, Registry, encode_registry_text, global_meter_or_panic,
+    init_prometheus_registry_meter_provider,
+};
 use hyli_modules::{modules::rest::handle_panic, utils::logger::setup_tracing};
 use hyper::body::Incoming;
 use hyper_util::{
@@ -21,11 +25,6 @@ use hyper_util::{
     rt::TokioExecutor,
 };
 use notify::{Event, RecursiveMode, Watcher};
-use opentelemetry::{
-    InstrumentationScope, KeyValue,
-    metrics::{Counter, Gauge},
-};
-use prometheus::{Encoder, Registry, TextEncoder};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::RwLock;
@@ -487,18 +486,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Listen address: {}", proxy_config.listen_addr);
     tracing::info!("Target URL: {}", proxy_config.target_url);
 
-    let registry = Registry::new();
     // Init global metrics meter we expose as an endpoint
-    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-        .with_reader(
-            opentelemetry_prometheus::exporter()
-                .with_registry(registry.clone())
-                .build()
-                .context("starting prometheus exporter")?,
-        )
-        .build();
-
-    opentelemetry::global::set_meter_provider(provider.clone());
+    let registry =
+        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
     // Configure HTTP connector for better load balancing with headless k8s services
     // Set idle timeout to force DNS re-resolution and distribute load across pods
@@ -520,7 +510,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config: shared_config.clone(),
         client,
         rate_limits,
-        metrics: RateLimiterMetrics::global("rate_limiter_proxy".to_string()),
+        metrics: RateLimiterMetrics::global(),
         registry,
     };
 
@@ -627,12 +617,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub(crate) async fn get_metrics(State(s): State<AppConfig>) -> Result<Response, StatusCode> {
-    let mut buffer = Vec::new();
-    let encoder = TextEncoder::new();
-    encoder
-        .encode(&s.registry.gather(), &mut buffer)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let res = String::from_utf8(buffer).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let res = encode_registry_text(&s.registry).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(res.into_response())
 }
@@ -648,9 +633,8 @@ struct RateLimiterMetrics {
 }
 
 impl RateLimiterMetrics {
-    pub fn global(node_name: String) -> RateLimiterMetrics {
-        let scope = InstrumentationScope::builder(node_name).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+    pub fn global() -> RateLimiterMetrics {
+        let my_meter = global_meter_or_panic();
 
         let rate_limiter = "proxy_limit";
 

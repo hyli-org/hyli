@@ -151,7 +151,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting block debugger");
 
-    let bus = SharedMessageBus::new(BusMetrics::global("debug".to_string()));
+    let bus = SharedMessageBus::new(BusMetrics::global());
 
     tracing::info!("Setting up modules");
 
@@ -178,6 +178,7 @@ async fn main() -> Result<()> {
                 da_read_from: "localhost:4141".to_string(),
                 start_block: Some(BlockHeight(0)),
                 timeout_client_secs: 10,
+                da_fallback_addresses: vec![],
                 processor_config: (),
             })
             .await?;
@@ -520,7 +521,7 @@ impl BlockDbg {
                                         tracing::info!("Processing blocks up to height {}", target_height);
 
                                         // Process blocks in order
-                                        ui_state.node_state = Some(NodeState::create("block_dbg".to_string(), "block_dbg"));
+                                        ui_state.node_state = Some(NodeState::create("block_dbg"));
                                         ui_state.tx_status.clear();
                                         let outputs = ui_state.blocks.iter().filter_map(|(block, _)|
                                                 if block.consensus_proposal.slot <= target_height {

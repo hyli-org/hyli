@@ -80,7 +80,7 @@ impl MempoolTestCtx {
                 file: None,
                 conf: SharedConf::default(),
                 crypto: Arc::new(crypto),
-                metrics: MempoolMetrics::global("id".to_string()),
+                metrics: MempoolMetrics::global(),
                 lanes,
                 inner: MempoolStore::default(),
             },
@@ -116,7 +116,7 @@ impl MempoolTestCtx {
 
     pub async fn new(name: &str) -> Self {
         let crypto = BlstCrypto::new(name).unwrap();
-        let shared_bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
+        let shared_bus = SharedMessageBus::new(BusMetrics::global());
         Self::new_with_shared_bus(name, &shared_bus, crypto).await
     }
 

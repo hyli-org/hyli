@@ -211,7 +211,7 @@ impl Module for DisseminationManager {
             bus,
             conf: ctx.config.clone(),
             crypto: ctx.crypto.clone(),
-            metrics: MempoolMetrics::global(ctx.config.id.clone()),
+            metrics: MempoolMetrics::global(),
             lanes,
             knowledge: PeerKnowledge::default(),
             pending_sync_requests: HashMap::new(),
