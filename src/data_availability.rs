@@ -666,13 +666,21 @@ impl DataAvailability {
                     block_height, socket_addr
                 );
                 // Send immediately - this is inserted next in the send queue
-                server
+                if let Err(e) = server
                     .send(
                         socket_addr.to_string(),
                         DataAvailabilityEvent::SignedBlock(block),
                         vec![],
                     )
-                    .await?;
+                    .await
+                {
+                    warn!(
+                        "📦 Error while responding to block request at height {} for {}: {:#}. Dropping socket.",
+                        block_height, socket_addr, e
+                    );
+                    server.drop_peer_stream(socket_addr.to_string());
+                    return Ok(());
+                }
             }
             Ok(None) => {
                 // Block not in storage - this is a gap
@@ -680,26 +688,42 @@ impl DataAvailability {
                     "📦 Block at height {} not found in storage, sending BlockNotFound to {}",
                     block_height, socket_addr
                 );
-                server
+                if let Err(e) = server
                     .send(
                         socket_addr.to_string(),
                         DataAvailabilityEvent::BlockNotFound(block_height),
                         vec![],
                     )
-                    .await?;
+                    .await
+                {
+                    warn!(
+                        "📦 Error while responding BlockNotFound at height {} for {}: {:#}. Dropping socket.",
+                        block_height, socket_addr, e
+                    );
+                    server.drop_peer_stream(socket_addr.to_string());
+                    return Ok(());
+                }
             }
             Err(e) => {
                 error!(
                     "📦 Error retrieving block at height {}: {:#}",
                     block_height, e
                 );
-                server
+                if let Err(e) = server
                     .send(
                         socket_addr.to_string(),
                         DataAvailabilityEvent::BlockNotFound(block_height),
                         vec![],
                     )
-                    .await?;
+                    .await
+                {
+                    warn!(
+                        "📦 Error while responding BlockNotFound at height {} for {}: {:#}. Dropping socket.",
+                        block_height, socket_addr, e
+                    );
+                    server.drop_peer_stream(socket_addr.to_string());
+                    return Ok(());
+                }
             }
         }
 
