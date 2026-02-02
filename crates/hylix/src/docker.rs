@@ -7,6 +7,7 @@ pub struct ContainerSpec {
     name: String,
     image: String,
     network: String,
+    host_network: bool,
     ports: Vec<(u16, u16)>,
     env_builder: EnvBuilder,
     custom_env: Vec<String>,
@@ -19,6 +20,7 @@ impl ContainerSpec {
             name: name.to_string(),
             image: image.to_string(),
             network: constants::networks::DEVNET.to_string(),
+            host_network: false,
             ports: Vec::new(),
             env_builder: EnvBuilder::new(),
             custom_env: Vec::new(),
@@ -28,6 +30,13 @@ impl ContainerSpec {
 
     pub fn port(mut self, host: u16, container: u16) -> Self {
         self.ports.push((host, container));
+        self
+    }
+
+    /// Use host network mode (--network host)
+    /// This disables port mappings and the container shares the host's network namespace
+    pub fn network_mode_host(mut self) -> Self {
+        self.host_network = true;
         self
     }
 
@@ -52,18 +61,26 @@ impl ContainerSpec {
     }
 
     fn build_run_args(&self) -> Vec<String> {
-        let mut args = vec![
-            "run".to_string(),
-            "-d".to_string(),
-            "--network".to_string(),
-            self.network.clone(),
-            "--name".to_string(),
-            self.name.clone(),
-        ];
+        let mut args = vec!["run".to_string(), "-d".to_string()];
 
-        for (host, container) in &self.ports {
-            args.push("-p".to_string());
-            args.push(format!("{}:{}", host, container));
+        // Network configuration
+        if self.host_network {
+            args.push("--network".to_string());
+            args.push("host".to_string());
+        } else {
+            args.push("--network".to_string());
+            args.push(self.network.clone());
+        }
+
+        args.push("--name".to_string());
+        args.push(self.name.clone());
+
+        // Port mappings (only for non-host network mode)
+        if !self.host_network {
+            for (host, container) in &self.ports {
+                args.push("-p".to_string());
+                args.push(format!("{}:{}", host, container));
+            }
         }
 
         args.extend(self.env_builder.to_docker_args());
