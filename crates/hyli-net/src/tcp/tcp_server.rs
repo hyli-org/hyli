@@ -33,6 +33,27 @@ use super::{tcp_client::TcpClient, SocketStream, TcpEvent};
 type TcpSender = SplitSink<FramedStream, Bytes>;
 type TcpReceiver = SplitStream<FramedStream>;
 
+// Best-effort enqueue into the main TcpServer event loop. If the queue is full, log once and apply
+// backpressure by awaiting. If the queue is closed, do whatever the caller decides (typically
+// break out of the task loop).
+macro_rules! enqueue_server_event {
+    ($sender:expr, $event:expr, $pool:expr, $label:expr, $socket_addr:expr) => {{
+        match $sender.try_send($event) {
+            Ok(()) => {}
+            Err(tokio::sync::mpsc::error::TrySendError::Full(event)) => {
+                warn!(
+                    pool = %$pool,
+                    "TCP event channel full for peer {} (socket_addr={})",
+                    $label,
+                    $socket_addr
+                );
+                let _ = $sender.send(event).await;
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_event)) => break,
+        }
+    }};
+}
+
 fn peer_label_or_addr(peer_label: &RwLock<String>, socket_addr: &str) -> String {
     match peer_label.read() {
         Ok(guard) => guard.clone(),
@@ -107,7 +128,7 @@ where
         options: TcpServerOptions,
     ) -> anyhow::Result<Self> {
         let tcp_listener = TcpListener::bind(&(Ipv4Addr::UNSPECIFIED, port)).await?;
-        let (pool_sender, pool_receiver) = tokio::sync::mpsc::channel(100);
+        let (pool_sender, pool_receiver) = tokio::sync::mpsc::channel(1000);
         let (ping_sender, ping_receiver) = tokio::sync::mpsc::channel(100);
         debug!(
             "Starting TcpConnectionPool {}, listening for stream requests on {} with max_frame_len: {:?}",
@@ -177,7 +198,7 @@ where
         self.sockets.contains_key(socket_addr)
     }
 
-    pub async fn broadcast(&mut self, msg: Res) -> HashMap<String, anyhow::Error> {
+    pub fn broadcast(&mut self, msg: Res) -> HashMap<String, anyhow::Error> {
         let message_label = msg.message_label();
         let Ok(binary_data) = to_tcp_message(&msg) else {
             return self
@@ -215,7 +236,7 @@ where
         errors
     }
 
-    pub async fn raw_send_parallel(
+    pub fn raw_send_parallel(
         &mut self,
         socket_addrs: Vec<String>,
         msg: Vec<u8>,
@@ -246,7 +267,11 @@ where
             }) {
                 result.insert(
                     name.clone(),
-                    anyhow::anyhow!("Outbound TCP channel full/closed for client {}: {}", name, e),
+                    anyhow::anyhow!(
+                        "Outbound TCP channel full/closed for client {}: {}",
+                        name,
+                        e
+                    ),
                 );
             }
         }
@@ -261,7 +286,7 @@ where
 
         result
     }
-    pub async fn send(
+    pub fn send(
         &mut self,
         socket_addr: String,
         msg: Res,
@@ -290,25 +315,7 @@ where
             })
     }
 
-    pub fn try_send(&mut self, socket_addr: String, msg: Res) -> anyhow::Result<()> {
-        debug!(pool = %self.pool_name, "Try Sending msg {:?} to {}", msg, socket_addr);
-        let message_label = msg.message_label();
-        let stream = self
-            .sockets
-            .get_mut(&socket_addr)
-            .context(format!("Retrieving client {socket_addr}"))?;
-
-        let binary_data = to_tcp_message(&msg)?;
-        stream
-            .sender
-            .try_send(TcpOutboundMessage {
-                message: binary_data,
-                message_label,
-            })
-            .map_err(|e| anyhow::anyhow!("Try sending msg to client {}: {}", socket_addr, e))
-    }
-
-    pub async fn ping(&mut self, socket_addr: String) -> anyhow::Result<()> {
+    pub fn ping(&mut self, socket_addr: String) -> anyhow::Result<()> {
         let stream = self
             .sockets
             .get_mut(&socket_addr)
@@ -320,7 +327,13 @@ where
                 message: TcpMessage::Ping,
                 message_label: "ping",
             })
-            .map_err(|e| anyhow::anyhow!("Outbound TCP channel full/closed while pinging client {}: {}", socket_addr, e))
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Outbound TCP channel full/closed while pinging client {}: {}",
+                    socket_addr,
+                    e
+                )
+            })
     }
 
     /// Setup stream in the managed list for a new client
@@ -403,36 +416,27 @@ where
                                             io
                                         );
                                         // Treat decode failure as fatal: notify upstream and stop the loop.
-                                        let _ = pool_sender.try_send(Box::new(TcpEvent::Error {
-                                            socket_addr: cloned_socket_addr.clone(),
-                                            error: io.to_string(),
-                                        }));
+                                        enqueue_server_event!(
+                                            pool_sender,
+                                            Box::new(TcpEvent::Error {
+                                                socket_addr: cloned_socket_addr.clone(),
+                                                error: io.to_string(),
+                                            }),
+                                            pool,
+                                            label,
+                                            cloned_socket_addr
+                                        );
                                         break;
                                     }
                                 };
 
-                                // Never await on the shared event channel: if the consumer is stalled
-                                // (e.g. blocked broadcasting to a stuck peer), awaiting here can
-                                // deadlock the whole DA/P2P pipeline.
-                                let boxed = Box::new(event);
-                                match pool_sender.try_send(boxed) {
-                                    Ok(_) => {}
-                                    Err(tokio::sync::mpsc::error::TrySendError::Full(_event)) => {
-                                        warn!(
-                                            pool = %pool,
-                                            "TCP event channel full for peer {} (socket_addr={}), dropping event",
-                                            label, cloned_socket_addr
-                                        );
-                                    }
-                                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_event)) => {
-                                        warn!(
-                                            pool = %pool,
-                                            "TCP event channel closed for peer {} (socket_addr={}), dropping event",
-                                            label, cloned_socket_addr,
-                                        );
-                                        break;
-                                    }
-                                }
+                                enqueue_server_event!(
+                                    pool_sender,
+                                    Box::new(event),
+                                    pool,
+                                    label,
+                                    cloned_socket_addr
+                                );
                             }
                         }
 
@@ -455,10 +459,16 @@ where
                                     err.kind()
                                 );
                                 metrics.message_error();
-                                let _ = pool_sender.try_send(Box::new(TcpEvent::Error {
-                                    socket_addr: cloned_socket_addr.clone(),
-                                    error: err.to_string(),
-                                }));
+                                enqueue_server_event!(
+                                    pool_sender,
+                                    Box::new(TcpEvent::Error {
+                                        socket_addr: cloned_socket_addr.clone(),
+                                        error: err.to_string(),
+                                    }),
+                                    pool,
+                                    label,
+                                    cloned_socket_addr
+                                );
                                 break;
                             }
                         }
@@ -471,9 +481,15 @@ where
                                 label, cloned_socket_addr, frames_received
                             );
                             metrics.message_closed();
-                            let _ = pool_sender.try_send(Box::new(TcpEvent::Closed {
-                                socket_addr: cloned_socket_addr.clone(),
-                            }));
+                            enqueue_server_event!(
+                                pool_sender,
+                                Box::new(TcpEvent::Closed {
+                                    socket_addr: cloned_socket_addr.clone(),
+                                }),
+                                pool,
+                                label,
+                                cloned_socket_addr
+                            );
                             break;
                         }
                     }
@@ -542,10 +558,16 @@ where
                                 "Timeout sending message to peer {} (socket_addr={}): {}",
                                 label, cloned_socket_addr, e
                             );
-                            let _ = pool_sender.try_send(Box::new(TcpEvent::Error {
-                                socket_addr: cloned_socket_addr.clone(),
-                                error: format!("send_timeout: {e}"),
-                            }));
+                            enqueue_server_event!(
+                                pool_sender,
+                                Box::new(TcpEvent::Error {
+                                    socket_addr: cloned_socket_addr.clone(),
+                                    error: format!("send_timeout: {e}"),
+                                }),
+                                pool,
+                                label,
+                                cloned_socket_addr
+                            );
                             metrics.message_send_error();
                             break;
                         }
@@ -556,10 +578,16 @@ where
                                 "Sending message to peer {} (socket_addr={}): {}",
                                 label, cloned_socket_addr, e
                             );
-                            let _ = pool_sender.try_send(Box::new(TcpEvent::Error {
-                                socket_addr: cloned_socket_addr.clone(),
-                                error: e.to_string(),
-                            }));
+                            enqueue_server_event!(
+                                pool_sender,
+                                Box::new(TcpEvent::Error {
+                                    socket_addr: cloned_socket_addr.clone(),
+                                    error: e.to_string(),
+                                }),
+                                pool,
+                                label,
+                                cloned_socket_addr
+                            );
                             metrics.message_send_error();
                             break;
                         }
@@ -660,9 +688,7 @@ pub mod tests {
         assert!(server.pool_receiver.try_recv().is_err());
 
         // From server to client
-        _ = server
-            .broadcast(DataAvailabilityEvent::SignedBlock(Default::default()))
-            .await;
+        _ = server.broadcast(DataAvailabilityEvent::SignedBlock(Default::default()));
 
         assert_eq!(
             client.recv().await.unwrap(),
@@ -671,7 +697,7 @@ pub mod tests {
 
         let client_socket_addr = server.connected_clients().first().unwrap().clone();
 
-        server.ping(client_socket_addr).await?;
+        server.ping(client_socket_addr)?;
 
         assert_eq!(
             client.receiver.try_next().await.unwrap().unwrap(),
@@ -701,9 +727,7 @@ pub mod tests {
 
         tokio::time::sleep(Duration::from_millis(200)).await;
 
-        server
-            .broadcast(DataAvailabilityEvent::SignedBlock(Default::default()))
-            .await;
+        server.broadcast(DataAvailabilityEvent::SignedBlock(Default::default()));
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -755,14 +779,12 @@ pub mod tests {
             .rfind(|addr| addr != &client1_addr)
             .unwrap();
 
-        server
-            .raw_send_parallel(
-                vec![client2_addr.to_string()],
-                borsh::to_vec(&DataAvailabilityEvent::SignedBlock(Default::default())).unwrap(),
-                vec![],
-                "raw",
-            )
-            .await;
+        server.raw_send_parallel(
+            vec![client2_addr.to_string()],
+            borsh::to_vec(&DataAvailabilityEvent::SignedBlock(Default::default())).unwrap(),
+            vec![],
+            "raw",
+        );
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -808,13 +830,11 @@ pub mod tests {
             .rfind(|addr| addr != &client1_addr)
             .unwrap();
 
-        _ = server
-            .send(
-                client2_addr.to_string(),
-                DataAvailabilityEvent::SignedBlock(Default::default()),
-                vec![],
-            )
-            .await;
+        _ = server.send(
+            client2_addr.to_string(),
+            DataAvailabilityEvent::SignedBlock(Default::default()),
+            vec![],
+        );
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 

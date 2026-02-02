@@ -622,9 +622,10 @@ impl DataAvailability {
             if let Ok(Some(signed_block)) = self.blocks.get(&hash) {
                 // Errors will be handled when sending new blocks, ignore here.
                 if server
-                    .try_send(
+                    .send(
                         peer_ip.clone(),
                         DataAvailabilityEvent::SignedBlock(signed_block),
+                        vec![],
                     )
                     .is_ok()
                 {
@@ -672,7 +673,6 @@ impl DataAvailability {
                         DataAvailabilityEvent::SignedBlock(block),
                         vec![],
                     )
-                    .await
                 {
                     warn!(
                         "📦 Error while responding to block request at height {} for {}: {:#}. Dropping socket.",
@@ -694,7 +694,6 @@ impl DataAvailability {
                         DataAvailabilityEvent::BlockNotFound(block_height),
                         vec![],
                     )
-                    .await
                 {
                     warn!(
                         "📦 Error while responding BlockNotFound at height {} for {}: {:#}. Dropping socket.",
@@ -715,7 +714,6 @@ impl DataAvailability {
                         DataAvailabilityEvent::BlockNotFound(block_height),
                         vec![],
                     )
-                    .await
                 {
                     warn!(
                         "📦 Error while responding BlockNotFound at height {} for {}: {:#}. Dropping socket.",
@@ -763,9 +761,7 @@ impl DataAvailability {
         evt: MempoolStatusEvent,
         tcp_server: &mut DataAvailabilityServer,
     ) {
-        let errors = tcp_server
-            .broadcast(DataAvailabilityEvent::MempoolStatusEvent(evt))
-            .await;
+        let errors = tcp_server.broadcast(DataAvailabilityEvent::MempoolStatusEvent(evt));
 
         for (peer, error) in errors {
             warn!("Error while broadcasting mempool status event {:#}", error);
@@ -914,9 +910,7 @@ impl DataAvailability {
 
         // TODO: use retain once async closures are supported ?
         //
-        let errors = tcp_server
-            .broadcast(DataAvailabilityEvent::SignedBlock(block.clone()))
-            .await;
+        let errors = tcp_server.broadcast(DataAvailabilityEvent::SignedBlock(block.clone()));
 
         for (peer, error) in errors {
             warn!(
