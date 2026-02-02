@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::*;
-use crate::bus::metrics::BusMetrics;
 use crate::bus::SharedMessageBus;
 use crate::mempool::dissemination::DisseminationManager;
 use crate::mempool::storage::LaneEntryMetadata;
@@ -30,6 +29,7 @@ use hyli_crypto::BlstCrypto;
 use hyli_modules::bus::BusReceiver;
 use hyli_modules::modules::BuildApiContextInner;
 use hyli_modules::modules::Module;
+use hyli_turmoil_shims::init_test_meter_provider;
 use std::path::{Path, PathBuf};
 use tokio::sync::broadcast::error::TryRecvError;
 use utils::TimestampMs;
@@ -116,7 +116,8 @@ impl MempoolTestCtx {
 
     pub async fn new(name: &str) -> Self {
         let crypto = BlstCrypto::new(name).unwrap();
-        let shared_bus = SharedMessageBus::new(BusMetrics::global());
+        init_test_meter_provider();
+        let shared_bus = SharedMessageBus::new();
         Self::new_with_shared_bus(name, &shared_bus, crypto).await
     }
 
@@ -1269,8 +1270,7 @@ async fn test_sync_request_not_satisfied_by_metadata_only() -> Result<()> {
     };
     ctx.mempool
         .lanes
-        .by_hash_metadata
-        .insert(format!("{lane_id}:{dp_hash}"), borsh::to_vec(&metadata)?)?;
+        .put_metadata_only(&lane_id, &dp_hash, metadata)?;
 
     ctx.dissemination_manager
         .on_event(DisseminationEvent::SyncRequestNeeded {

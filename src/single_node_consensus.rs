@@ -242,7 +242,6 @@ impl SingleNodeConsensus {
 mod tests {
     use super::*;
     use crate::bus::dont_use_this::get_receiver;
-    use crate::bus::metrics::BusMetrics;
     use crate::bus::{bus_client, SharedMessageBus};
     use crate::utils::conf::Conf;
     use anyhow::Result;
@@ -269,7 +268,8 @@ mod tests {
     impl TestContext {
         pub async fn new(name: &str) -> Self {
             let crypto = BlstCrypto::new(name).unwrap();
-            let shared_bus = SharedMessageBus::new(BusMetrics::global());
+            hyli_turmoil_shims::init_test_meter_provider();
+            let shared_bus = SharedMessageBus::new();
             let conf = Arc::new(Conf::default());
             let store = SingleNodeConsensusStore::default();
 

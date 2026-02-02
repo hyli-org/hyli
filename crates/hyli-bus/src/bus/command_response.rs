@@ -295,6 +295,7 @@ mod test {
 
     #[tokio::test]
     async fn test_cmd_resp() {
+        hyli_turmoil_shims::init_test_meter_provider();
         let shared_bus = SharedMessageBus::default();
         let mut sender = TestBusClient::new_from_bus(shared_bus.new_handle()).await;
         let mut receiver = TestBusClient::new_from_bus(shared_bus).await;

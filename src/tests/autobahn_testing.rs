@@ -2,10 +2,7 @@
 
 use super::autobahn_testing_macros::*;
 use crate::{
-    bus::{
-        bus_client, command_response::Query, dont_use_this::get_receiver, metrics::BusMetrics,
-        SharedMessageBus,
-    },
+    bus::{bus_client, command_response::Query, dont_use_this::get_receiver, SharedMessageBus},
     consensus::{
         test::ConsensusTestCtx, ConsensusEvent, ConsensusNetMessage, TCKind, Ticket, TimeoutKind,
     },
@@ -24,6 +21,7 @@ use hyli_modules::handle_messages;
 use hyli_modules::{
     bus::{dont_use_this::get_sender, BusEnvelope},
     node_state::NodeState,
+    telemetry::init_test_meter_provider,
 };
 use tracing::info;
 
@@ -41,7 +39,8 @@ pub struct AutobahnTestCtx {
 
 impl AutobahnTestCtx {
     pub async fn new(name: &str, crypto: BlstCrypto) -> Self {
-        let shared_bus = SharedMessageBus::new(BusMetrics::global());
+        init_test_meter_provider();
+        let shared_bus = SharedMessageBus::new();
         let event_receiver = get_receiver::<ConsensusEvent>(&shared_bus).await;
         let p2p_receiver = get_receiver::<P2PCommand>(&shared_bus).await;
         let consensus_out_receiver = get_receiver::<OutboundMessage>(&shared_bus).await;

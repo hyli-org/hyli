@@ -976,7 +976,7 @@ pub mod test {
 
     use super::*;
     use crate::{
-        bus::{dont_use_this::get_receiver, metrics::BusMetrics, SharedMessageBus},
+        bus::{dont_use_this::get_receiver, SharedMessageBus},
         p2p::network::NetMessage,
         //tests::autobahn_testing::*,
         //tests::autobahn_testing_macros::*,
@@ -1051,7 +1051,8 @@ pub mod test {
         }
 
         pub async fn new(name: &str, crypto: BlstCrypto) -> Self {
-            let shared_bus = SharedMessageBus::new(BusMetrics::global());
+            hyli_turmoil_shims::init_test_meter_provider();
+            let shared_bus = SharedMessageBus::new();
             let out_receiver = get_receiver::<OutboundMessage>(&shared_bus).await;
             let event_receiver = get_receiver::<ConsensusEvent>(&shared_bus).await;
             let p2p_receiver = get_receiver::<P2PCommand>(&shared_bus).await;

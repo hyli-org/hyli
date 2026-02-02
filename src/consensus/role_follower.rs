@@ -1084,7 +1084,6 @@ impl BufferedPrepares {
 mod tests {
     use super::*;
     use crate::bus::dont_use_this::get_receiver;
-    use crate::bus::metrics::BusMetrics;
     use crate::bus::SharedMessageBus;
     use crate::consensus::test::ConsensusTestCtx;
     use crate::consensus::*;
@@ -1166,7 +1165,7 @@ mod tests {
             ..ConsensusProposal::default()
         };
 
-        let bus = SharedMessageBus::new(BusMetrics::global());
+        let bus = SharedMessageBus::new();
         let mut sync_request_rv = get_receiver::<OutboundMessage>(&bus).await;
 
         let mut consensus =
