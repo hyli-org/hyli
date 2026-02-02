@@ -442,7 +442,7 @@ impl ModulesHandler {
             // Manifest exists → invalid if empty
             match fs::read_to_string(&manifest_file) {
                 Ok(content) => content.trim().is_empty(),
-                Err(_) => false,
+                Err(_) => true,
             }
         } else {
             // No manifest → back up only if there are other files
