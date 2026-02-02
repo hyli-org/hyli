@@ -9,6 +9,8 @@ use crate::logging::{
     log_warning, ProgressExecutor,
 };
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
+use std::path::PathBuf;
+use std::process::Command;
 use std::time::Duration;
 
 /// Container status enum
@@ -37,6 +39,15 @@ pub enum DevnetAction {
         /// No pull docker images (use existing local)
         #[arg(long)]
         no_pull: bool,
+        /// Number of validator nodes for multi-node devnet (includes 1 local node by default)
+        #[arg(long, value_name = "COUNT")]
+        nodes: Option<u32>,
+        /// Run all nodes in Docker (no local node for debugging)
+        #[arg(long)]
+        no_local: bool,
+        /// Don't run extra services (indexer, registry, wallet)
+        #[arg(long)]
+        bare: bool,
     },
     /// Stop the local devnet
     #[command(alias = "d")]
@@ -62,6 +73,9 @@ pub enum DevnetAction {
         /// No pull docker images (use existing local)
         #[arg(long)]
         no_pull: bool,
+        /// Don't run extra services (indexer, registry, wallet)
+        #[arg(long)]
+        bare: bool,
     },
     /// Create and fund test accounts
     #[command(alias = "b")]
@@ -81,9 +95,59 @@ pub enum DevnetAction {
     /// Follow logs of a devnet service
     #[command(alias = "l")]
     Logs {
-        /// Service to follow logs for
-        service: String,
+        /// Service to follow logs for (e.g., node, node-1, node-2, indexer)
+        service: Option<String>,
+        /// Follow logs of all nodes (multi-node only)
+        #[arg(long)]
+        all: bool,
     },
+    /// Start the local node to join a multi-node devnet
+    #[command(alias = "j")]
+    Join {
+        /// Only print the cargo command without executing
+        #[arg(long)]
+        dry_run: bool,
+        /// Build in release mode
+        #[arg(long)]
+        release: bool,
+        /// Additional arguments to pass to the hyli binary
+        #[arg(last = true)]
+        extra_args: Vec<String>,
+    },
+}
+
+/// Multi-node configuration
+#[derive(Debug, Clone)]
+pub struct MultiNodeConfig {
+    /// Total number of validators (including local node if enabled)
+    pub total_nodes: u32,
+    /// Number of Docker nodes
+    pub docker_nodes: u32,
+    /// Whether there's a local node for debugging
+    pub has_local_node: bool,
+    /// Genesis timestamp shared by all nodes
+    pub genesis_timestamp: u64,
+}
+
+impl MultiNodeConfig {
+    pub fn new(total_nodes: u32, no_local: bool) -> Self {
+        let has_local_node = !no_local;
+        let docker_nodes = if has_local_node {
+            total_nodes - 1
+        } else {
+            total_nodes
+        };
+        let genesis_timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        Self {
+            total_nodes,
+            docker_nodes,
+            has_local_node,
+            genesis_timestamp,
+        }
+    }
 }
 
 /// Context struct containing client and config for devnet operations
@@ -92,6 +156,7 @@ pub struct DevnetContext {
     pub config: HylixConfig,
     pub profile: Option<String>,
     pub pull: bool,
+    pub multi_node: Option<MultiNodeConfig>,
 }
 
 impl From<HylixConfig> for DevnetContext {
@@ -112,6 +177,7 @@ impl DevnetContext {
             config,
             profile: None,
             pull: true,
+            multi_node: None,
         })
     }
 
@@ -124,11 +190,16 @@ impl DevnetContext {
             config,
             profile,
             pull: true,
+            multi_node: None,
         })
     }
 
     pub fn without_pull(&mut self) {
         self.pull = false;
+    }
+
+    pub fn with_multi_node(&mut self, multi_node: MultiNodeConfig) {
+        self.multi_node = Some(multi_node);
     }
 }
 
@@ -144,7 +215,29 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
             bake,
             profile,
             no_pull,
+            nodes,
+            no_local,
+            bare,
         } => {
+            // Multi-node mode
+            if let Some(node_count) = nodes {
+                if node_count < 2 {
+                    return Err(HylixError::devnet(
+                        "Multi-node devnet requires at least 2 nodes".to_string(),
+                    ));
+                }
+                let multi_node = MultiNodeConfig::new(node_count, no_local);
+                let mut context_with_profile =
+                    DevnetContext::new_with_profile(context.config, profile)?;
+                if no_pull {
+                    context_with_profile.without_pull();
+                }
+                context_with_profile.with_multi_node(multi_node);
+                start_multi_node_devnet(reset, bake, &context_with_profile, bare).await?;
+                return Ok(());
+            }
+
+            // Single-node mode (existing behavior)
             start_containers(&context).await?;
 
             if is_devnet_responding(&context).await? {
@@ -156,7 +249,7 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
             if no_pull {
                 context_with_profile.without_pull();
             }
-            start_devnet(reset, bake, &context_with_profile).await?;
+            start_devnet(reset, bake, &context_with_profile, bare).await?;
         }
         DevnetAction::Pause => {
             pause_devnet(&context).await?;
@@ -169,15 +262,47 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
             bake,
             profile,
             no_pull,
+            bare,
         } => {
             let mut context_with_profile =
                 DevnetContext::new_with_profile(context.config, profile)?;
             if no_pull {
                 context_with_profile.without_pull();
             }
-            restart_devnet(reset, bake, &context_with_profile).await?;
+            restart_devnet(reset, bake, &context_with_profile, bare).await?;
         }
         DevnetAction::Status => {
+            // Multi-node Devnet
+            let node_1_status =
+                get_docker_container_status(&constants::containers::node_name(1)).await?;
+            if node_1_status != ContainerStatus::NotExisting {
+                // if node-0 exists, then we have a local node
+                let no_local = get_docker_container_status(&constants::containers::node_name(0))
+                    .await?
+                    != ContainerStatus::NotExisting;
+
+                // get the number of nodes by checking existing containers
+                let mut node_count = 1;
+                while get_docker_container_status(&constants::containers::node_name(node_count))
+                    .await?
+                    != ContainerStatus::NotExisting
+                {
+                    node_count += 1;
+                }
+
+                log_info(&format!(
+                    "Detected multi-node devnet with {} nodes",
+                    node_count
+                ));
+
+                // Create a context with multi-node config
+                let mut multi_node_context = context;
+                let multi_node = MultiNodeConfig::new(node_count, no_local);
+                multi_node_context.with_multi_node(multi_node);
+                check_devnet_status(&multi_node_context).await?;
+                return Ok(());
+            }
+
             check_devnet_status(&context).await?;
         }
         DevnetAction::Fork { endpoint } => {
@@ -192,8 +317,20 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
         DevnetAction::Env => {
             print_devnet_env_vars(&context.config)?;
         }
-        DevnetAction::Logs { service } => {
-            logs_devnet(&service).await?;
+        DevnetAction::Logs { service, all } => {
+            if all {
+                logs_all_nodes().await?;
+            } else {
+                let service_name = service.unwrap_or_else(|| "node".to_string());
+                logs_devnet(&service_name).await?;
+            }
+        }
+        DevnetAction::Join {
+            dry_run,
+            release,
+            extra_args,
+        } => {
+            join_devnet(dry_run, release, extra_args).await?;
         }
     }
 
@@ -233,11 +370,43 @@ async fn logs_devnet(service: &str) -> HylixResult<()> {
 
 /// Check the status of the local devnet
 async fn check_devnet_status(context: &DevnetContext) -> HylixResult<()> {
-    for container in CONTAINERS {
+    let multi_node = context.multi_node.is_some();
+
+    if multi_node {
+        log_info("Checking status of multi-node devnet...");
+    } else {
+        log_info("Checking status of single-node devnet...");
+    }
+
+    let containers = if multi_node {
+        let mut all_containers = Vec::new();
+        let multi_node_config = context.multi_node.as_ref().unwrap();
+        let start_index = if multi_node_config.has_local_node {
+            1
+        } else {
+            0
+        };
+        for i in start_index..multi_node_config.total_nodes {
+            all_containers.push(constants::containers::node_name(i));
+        }
+        all_containers.extend_from_slice(&[
+            constants::containers::POSTGRES.to_string(),
+            constants::containers::INDEXER.to_string(),
+            constants::containers::REGISTRY.to_string(),
+            constants::containers::REGISTRY_UI.to_string(),
+            constants::containers::WALLET.to_string(),
+            constants::containers::WALLET_UI.to_string(),
+        ]);
+        all_containers
+    } else {
+        CONTAINERS.to_vec().iter().map(|s| s.to_string()).collect()
+    };
+
+    for container in &containers {
         check_docker_container(context, container).await?;
     }
 
-    let is_running = check_docker_container(context, constants::containers::NODE).await?
+    let is_running = check_docker_container(context, &containers[0]).await?
         == ContainerStatus::Running
         && is_devnet_responding(context).await?;
 
@@ -281,6 +450,10 @@ async fn check_devnet_status(context: &DevnetContext) -> HylixResult<()> {
     } else {
         log_warning("Devnet is not running");
     }
+
+    if multi_node {
+        print_multi_node_status(context)?;
+    }
     Ok(())
 }
 
@@ -308,7 +481,7 @@ async fn get_docker_container_status(container_name: &str) -> HylixResult<Contai
 
     // First check if container exists at all (running or stopped)
     let output = Command::new("docker")
-        .args(["ps", "-a", "-q", "-f", &format!("name={container_name}")])
+        .args(["ps", "-a", "-q", "-f", &format!("name=^{container_name}$")])
         .output()
         .await
         .map_err(|e| HylixError::process(format!("Failed to check Docker container: {e}")))?;
@@ -366,7 +539,12 @@ async fn start_container(
 }
 
 /// Start the local devnet
-async fn start_devnet(reset: bool, bake: bool, context: &DevnetContext) -> HylixResult<()> {
+async fn start_devnet(
+    reset: bool,
+    bake: bool,
+    context: &DevnetContext,
+    bare: bool,
+) -> HylixResult<()> {
     // Check required dependencies before starting
     check_required_dependencies()?;
 
@@ -383,16 +561,28 @@ async fn start_devnet(reset: bool, bake: bool, context: &DevnetContext) -> Hylix
     log_success("[2/5] Local node started");
 
     // Start indexer
-    start_indexer(&executor, context).await?;
-    log_success("[3/5] Indexer started");
+    if bare {
+        log_warning("[3/5] Skipping indexer in bare mode");
+    } else {
+        start_indexer(&executor, context).await?;
+        log_success("[3/5] Indexer started");
+    }
 
     // Start registry
-    start_registry(&executor, context).await?;
-    log_success("[4/5] Registry started");
+    if bare {
+        log_warning("[4/5] Skipping registry in bare mode");
+    } else {
+        start_registry(&executor, context).await?;
+        log_success("[4/5] Registry started");
+    }
 
     // Setup wallet app
-    start_wallet_app(&executor, context).await?;
-    log_success("[5/5] Wallet app started");
+    if bare {
+        log_warning("[5/5] Skipping wallet app in bare mode");
+    } else {
+        start_wallet_app(&executor, context).await?;
+        log_success("[5/5] Wallet app started");
+    }
 
     check_devnet_status(context).await?;
 
@@ -472,9 +662,14 @@ async fn stop_devnet(_context: &DevnetContext) -> HylixResult<()> {
 }
 
 /// Restart the local devnet
-async fn restart_devnet(reset: bool, bake: bool, context: &DevnetContext) -> HylixResult<()> {
+async fn restart_devnet(
+    reset: bool,
+    bake: bool,
+    context: &DevnetContext,
+    bare: bool,
+) -> HylixResult<()> {
     stop_devnet(context).await?;
-    start_devnet(reset, bake, context).await?;
+    start_devnet(reset, bake, context, bare).await?;
     Ok(())
 }
 
@@ -518,7 +713,7 @@ async fn reset_devnet_state(_context: &DevnetContext) -> HylixResult<()> {
 }
 
 /// Create the docker network
-async fn create_docker_network(executor: &ProgressExecutor) -> HylixResult<()> {
+async fn create_docker_network(executor: &ProgressExecutor) -> HylixResult<String> {
     let success = executor
         .execute_command(
             "Creating docker network...",
@@ -528,6 +723,20 @@ async fn create_docker_network(executor: &ProgressExecutor) -> HylixResult<()> {
         )
         .await?;
 
+    let subnet = Command::new("docker")
+        .args([
+            "network",
+            "inspect",
+            "-f",
+            "{{(index .IPAM.Config 0).Subnet}}",
+            constants::networks::DEVNET,
+        ])
+        .output()
+        .map_err(|e| HylixError::process(format!("Failed to get Docker network subnet: {e}")))?
+        .stdout;
+
+    let subnet = String::from_utf8_lossy(&subnet).trim().to_string();
+
     if !success {
         return Err(HylixError::process(
             "Failed to create Docker network".to_string(),
@@ -536,7 +745,7 @@ async fn create_docker_network(executor: &ProgressExecutor) -> HylixResult<()> {
 
     executor.clear()?;
 
-    Ok(())
+    Ok(subnet)
 }
 
 /// Start the local node
@@ -570,6 +779,18 @@ async fn start_local_node(executor: &ProgressExecutor, context: &DevnetContext) 
 async fn start_wallet_app(executor: &ProgressExecutor, context: &DevnetContext) -> HylixResult<()> {
     let image = &context.config.devnet.wallet_server_image;
 
+    let (node_name, ports) = if context.multi_node.is_some() {
+        (
+            constants::containers::node_name(1),
+            NodePorts::for_docker_node(1, &context.config.devnet),
+        )
+    } else {
+        (
+            constants::containers::NODE.to_string(),
+            NodePorts::for_docker_node(0, &context.config.devnet),
+        )
+    };
+
     let env_builder = EnvBuilder::new()
         .set(
             constants::env_vars::RISC0_DEV_MODE,
@@ -577,7 +798,7 @@ async fn start_wallet_app(executor: &ProgressExecutor, context: &DevnetContext) 
         )
         .set(
             constants::env_vars::HYLI_NODE_URL,
-            &format!("http://{}:4321", constants::containers::NODE),
+            &format!("http://{node_name}:{}", ports.rest),
         )
         .set(
             constants::env_vars::HYLI_INDEXER_URL,
@@ -585,7 +806,7 @@ async fn start_wallet_app(executor: &ProgressExecutor, context: &DevnetContext) 
         )
         .set(
             constants::env_vars::HYLI_DA_READ_FROM,
-            &format!("{}:4141", constants::containers::NODE),
+            &format!("{node_name}:{}", ports.da),
         )
         .set(
             constants::env_vars::HYLI_REGISTRY_URL,
@@ -721,6 +942,18 @@ async fn start_indexer(executor: &ProgressExecutor, context: &DevnetContext) -> 
 
     start_postgres_server(executor, context).await?;
 
+    let (node_name, ports) = if context.multi_node.is_some() {
+        (
+            constants::containers::node_name(1),
+            NodePorts::for_docker_node(1, &context.config.devnet),
+        )
+    } else {
+        (
+            constants::containers::NODE.to_string(),
+            NodePorts::for_docker_node(0, &context.config.devnet),
+        )
+    };
+
     let env_builder = EnvBuilder::new()
         .set(constants::env_vars::HYLI_RUN_INDEXER, "true")
         .set(
@@ -732,7 +965,7 @@ async fn start_indexer(executor: &ProgressExecutor, context: &DevnetContext) -> 
         )
         .set(
             constants::env_vars::HYLI_DA_READ_FROM,
-            &format!("{}:4141", constants::containers::NODE),
+            &format!("{node_name}:{}", ports.da),
         )
         .rust_log(&context.config.devnet.node_rust_log);
 
@@ -782,7 +1015,28 @@ async fn stop_indexer(pb: &indicatif::ProgressBar) -> HylixResult<()> {
 
 /// Stop the local node
 async fn stop_local_node(pb: &indicatif::ProgressBar) -> HylixResult<()> {
-    stop_and_remove_container(pb, constants::containers::NODE, "Hyli node").await
+    // Stop single-node container if it exists
+    if get_docker_container_status(constants::containers::NODE).await?
+        != ContainerStatus::NotExisting
+    {
+        log_info(&format!(
+            "test: {:?}",
+            get_docker_container_status(constants::containers::NODE).await?
+        ));
+        stop_and_remove_container(pb, constants::containers::NODE, "Hyli node").await?;
+    }
+
+    // Stop multi-node containers if they exist
+    for i in 0..=100 {
+        let name = constants::containers::node_name(i);
+        if get_docker_container_status(&name).await? != ContainerStatus::NotExisting {
+            stop_and_remove_container(pb, &name, &format!("node-{}", i)).await?;
+        } else if i > 0 {
+            break; // No more nodes
+        }
+    }
+
+    Ok(())
 }
 
 /// Remove the docker network
@@ -1041,6 +1295,588 @@ fn print_devnet_env_vars(config: &HylixConfig) -> HylixResult<()> {
     println!("#   source <(hy devnet env)");
     println!("#   echo $HYLI_NODE_URL");
     println!("#   curl $HYLI_NODE_URL/swagger-ui");
+
+    Ok(())
+}
+
+// ============================================================================
+// Multi-node devnet functions
+// ============================================================================
+
+/// Port configuration for a node in multi-node setup
+#[derive(Debug, Clone)]
+pub struct NodePorts {
+    pub rest: u16,
+    pub da: u16,
+    pub p2p: u16,
+    pub admin: u16,
+}
+
+impl NodePorts {
+    fn for_docker_node(index: u32, base_config: &crate::config::DevnetConfig) -> Self {
+        Self {
+            rest: base_config.node_port + (index * 1000) as u16,
+            da: base_config.da_port + (index * 1010) as u16,
+            p2p: 1231 + (index * 1000) as u16,
+            admin: 1111 + (index * 1111) as u16,
+        }
+    }
+
+    fn for_local_node(base_config: &crate::config::DevnetConfig) -> Self {
+        // Local node uses port 0 offsets (before Docker nodes)
+        Self {
+            rest: base_config.node_port, // 4321
+            da: base_config.da_port,     // 4141
+            p2p: 1231,
+            admin: 1111,
+        }
+    }
+}
+
+/// Get the node ID for a given index
+pub fn get_node_id(index: u32) -> String {
+    format!("node-{}", index)
+}
+
+/// Generate stakers configuration for genesis
+fn generate_stakers_config(total_nodes: u32, has_local_node: bool) -> String {
+    let mut stakers = Vec::new();
+
+    // Add Docker nodes
+    let docker_start = if has_local_node { 1 } else { 0 };
+    for i in docker_start..total_nodes {
+        let node_id = if has_local_node && i == 0 {
+            constants::containers::NODE_LOCAL.to_string()
+        } else {
+            get_node_id(i)
+        };
+        stakers.push(format!("\"{}\"=100", node_id));
+    }
+
+    // Add local node if enabled
+    if has_local_node {
+        stakers.insert(0, format!("\"{}\"=100", constants::containers::NODE_LOCAL));
+    }
+
+    stakers.join(",")
+}
+
+/// Generate the list of peer addresses for a node
+fn generate_peers_for_node(
+    node_index: u32,
+    total_nodes: u32,
+    has_local_node: bool,
+    base_config: &crate::config::DevnetConfig,
+) -> String {
+    let mut peers = Vec::new();
+
+    // Add all other nodes as peers
+    for i in 0..total_nodes {
+        if i == node_index {
+            continue; // Skip self
+        }
+
+        let ports = if has_local_node && i == 0 {
+            NodePorts::for_local_node(base_config)
+        } else {
+            NodePorts::for_docker_node(i, base_config)
+        };
+
+        let node_name = if has_local_node && i == 0 {
+            constants::containers::DOCKER_HOST_NAME.to_string()
+        } else if has_local_node && node_index == 0 {
+            // Local node connecting to Docker exposed ports
+            "127.0.0.1".to_string()
+        } else {
+            // Docker node connecting to other Docker nodes
+            constants::containers::node_name(i)
+        };
+
+        peers.push(format!("{node_name}:{}", ports.p2p));
+    }
+
+    peers.join(",")
+}
+
+/// Start multi-node devnet
+async fn start_multi_node_devnet(
+    reset: bool,
+    bake: bool,
+    context: &DevnetContext,
+    bare: bool,
+) -> HylixResult<()> {
+    let multi_node = context
+        .multi_node
+        .as_ref()
+        .ok_or_else(|| HylixError::devnet("Multi-node configuration not set"))?;
+
+    log_info(&format!(
+        "Starting multi-node devnet with {} validators...",
+        multi_node.total_nodes
+    ));
+
+    if multi_node.has_local_node {
+        log_info(&format!(
+            "  {} Docker nodes + 1 local node (node-local)",
+            multi_node.docker_nodes
+        ));
+    } else {
+        log_info(&format!("  {} Docker nodes", multi_node.docker_nodes));
+    }
+
+    // Check required dependencies
+    check_required_dependencies()?;
+
+    let executor = ProgressExecutor::new();
+
+    if reset {
+        reset_multi_node_state(context).await?;
+    }
+
+    // Create Docker network
+    let subnet = create_docker_network(&executor).await?;
+    log_success("[1/6] Docker network created");
+
+    // Start all Docker nodes
+    start_multi_node_nodes(&executor, context, subnet).await?;
+    log_success(&format!(
+        "[2/6] Started {} Docker nodes",
+        multi_node.docker_nodes
+    ));
+
+    // Generate local node configuration if needed
+    if multi_node.has_local_node {
+        generate_local_node_config(context)?;
+        log_success("[3/6] Local node configuration generated");
+    } else {
+        log_info("[3/6] Skipped local node configuration (--no-local)");
+    }
+
+    // Start indexer (connected to first Docker node)
+    if bare {
+        log_warning("[4/6] Skipping indexer in bare mode");
+    } else {
+        start_indexer(&executor, context).await?;
+        log_success("[4/6] Indexer started");
+    }
+
+    // Start registry
+    if bare {
+        log_warning("[5/6] Skipping registry in bare mode");
+    } else {
+        start_registry(&executor, context).await?;
+        log_success("[5/6] Registry started");
+    }
+
+    // Start wallet app
+    if bare {
+        log_warning("[5/6] Skipping wallet app in bare mode");
+    } else {
+        start_wallet_app(&executor, context).await?;
+        log_success("[5/6] Wallet started");
+    }
+
+    // Print status
+    check_devnet_status(context).await?;
+
+    if multi_node.has_local_node {
+        println!();
+        log_info("Local node ready to join. Start it with:");
+        println!();
+        println!("   {}", console::style("hy devnet join").green().bold());
+        println!();
+        log_info("Or with cargo for debugging:");
+        println!();
+        let config_path = get_local_node_config_path()?;
+        println!(
+            "   {}",
+            console::style(format!(
+                "cargo run -p hyli -- --config-file {}",
+                config_path.display()
+            ))
+            .green()
+        );
+        println!();
+        log_warning("Consensus will start once the local node connects.");
+    }
+
+    if bake {
+        // Wait for consensus to start before baking
+        if multi_node.has_local_node {
+            log_info("Waiting for local node to join before baking...");
+            let pb = executor.add_task("Waiting for consensus to start...");
+            wait_for_block_height(&pb, context, 2).await?;
+            pb.finish_and_clear();
+        }
+        bake_devnet(&executor, context).await?;
+    }
+
+    executor.clear()?;
+    log_success("Multi-node devnet is up!");
+
+    Ok(())
+}
+
+/// Start Docker nodes for multi-node setup
+async fn start_multi_node_nodes(
+    executor: &ProgressExecutor,
+    context: &DevnetContext,
+    subnet: String,
+) -> HylixResult<()> {
+    let multi_node = context.multi_node.as_ref().unwrap();
+    let image = &context.config.devnet.node_image;
+
+    for i in 0..multi_node.docker_nodes {
+        let node_index = if multi_node.has_local_node { i + 1 } else { i };
+        let node_id = get_node_id(node_index);
+        let container_name = constants::containers::node_name(node_index);
+        let ports = NodePorts::for_docker_node(node_index, &context.config.devnet);
+
+        let peers = generate_peers_for_node(
+            node_index,
+            multi_node.total_nodes,
+            multi_node.has_local_node,
+            &context.config.devnet,
+        );
+
+        let ip = format!(
+            "{}.{}",
+            subnet.split('.').take(3).collect::<Vec<&str>>().join("."),
+            10 + node_index
+        );
+
+        let env_builder = EnvBuilder::new()
+            .risc0_dev_mode()
+            .sp1_prover_mock()
+            .with_ports(&ip, &ports)
+            .set(constants::env_vars::HYLI_RUN_INDEXER, "false")
+            .set(constants::env_vars::HYLI_RUN_EXPLORER, "false")
+            .set(constants::env_vars::HYLI_ID, &node_id)
+            .set(constants::env_vars::HYLI_P2P__PEERS, &peers)
+            .set(constants::env_vars::HYLI_CONSENSUS__SOLO, "false")
+            .set(constants::env_vars::HYLI_CONSENSUS__SLOT_DURATION, "1000")
+            .genesis_stakers(multi_node.total_nodes, multi_node.has_local_node)
+            .rust_log(&context.config.devnet.node_rust_log);
+
+        let spec = ContainerSpec::new(&container_name, image)
+            .ip(&ip)
+            .port(ports.rest, ports.rest)
+            .port(ports.p2p, ports.p2p)
+            .port(ports.da, ports.da)
+            .port(ports.admin, ports.admin)
+            .env_builder(env_builder)
+            .custom_env(context.config.devnet.container_env.node.clone());
+
+        ContainerManager::start_container(executor, spec, context.pull).await?;
+
+        log_info(&format!(
+            "  Started {} at {} (REST: {}, P2P: {}, DA: {}, Admin: {})",
+            container_name, ip, ports.rest, ports.p2p, ports.da, ports.admin
+        ));
+    }
+
+    // Wait for first Docker node to be ready
+    if multi_node.docker_nodes > 0 && !multi_node.has_local_node {
+        let pb = executor.add_task("Waiting for nodes to be ready...");
+        wait_for_block_height(&pb, context, 2).await?;
+        pb.finish_and_clear();
+    }
+
+    Ok(())
+}
+
+/// Generate configuration file for the local node
+fn generate_local_node_config(context: &DevnetContext) -> HylixResult<()> {
+    let multi_node = context.multi_node.as_ref().unwrap();
+    let config_dir = get_local_node_config_dir()?;
+    std::fs::create_dir_all(&config_dir)?;
+
+    let config_path = config_dir.join("config.toml");
+    let ports = NodePorts::for_local_node(&context.config.devnet);
+
+    let peers = generate_peers_for_node(
+        0, // Local node is index 0
+        multi_node.total_nodes,
+        true,
+        &context.config.devnet,
+    );
+
+    let stakers = generate_stakers_config(multi_node.total_nodes, true);
+
+    let host_ip = Command::new("docker")
+        .args([
+            "inspect",
+            "-f",
+            "{{(index .IPAM.Config 0).Gateway}}",
+            constants::networks::DEVNET,
+        ])
+        .output()
+        .map_err(|e| HylixError::process(format!("Failed to get Docker host IP: {e}")))?
+        .stdout;
+    let host_ip = String::from_utf8_lossy(&host_ip).trim().to_string();
+
+    // Generate TOML configuration
+    let config_content = format!(
+        r#"# Auto-generated configuration for local node in multi-node devnet
+# Generated by: hy devnet up --nodes {}
+
+id = "{}"
+data_directory = "data_node_local"
+
+# REST API
+run_rest_server = true
+rest_server_port = {}
+
+# DA Server
+da_server_port = {}
+da_public_address = "{host_ip}:{}"
+
+# Indexer (disabled - using shared indexer)
+run_indexer = false
+run_explorer = false
+
+[p2p]
+mode = "FullValidator"
+public_address = "{host_ip}:{}"
+server_port = {}
+peers = [{}]
+
+[consensus]
+solo = false
+slot_duration = 1000
+genesis_timestamp = {}
+
+[genesis]
+stakers = {{ {} }}
+"#,
+        multi_node.total_nodes,
+        constants::containers::NODE_LOCAL,
+        ports.rest,
+        ports.da,
+        ports.da,
+        ports.p2p,
+        ports.p2p,
+        peers
+            .split(',')
+            .map(|p| format!("\"{}\"", p))
+            .collect::<Vec<_>>()
+            .join(", "),
+        multi_node.genesis_timestamp,
+        stakers.replace(',', ", ").replace('=', " = "),
+    );
+
+    std::fs::write(&config_path, config_content)?;
+
+    log_info(&format!(
+        "Local node configuration written to: {}",
+        config_path.display()
+    ));
+
+    Ok(())
+}
+
+/// Get the directory for local node configuration
+fn get_local_node_config_dir() -> HylixResult<PathBuf> {
+    let config_dir =
+        dirs::config_dir().ok_or_else(|| HylixError::config("Could not find config directory"))?;
+    Ok(config_dir.join("hylix").join("devnet").join("node-local"))
+}
+
+/// Get the path to the local node configuration file
+fn get_local_node_config_path() -> HylixResult<PathBuf> {
+    Ok(get_local_node_config_dir()?.join("config.toml"))
+}
+
+/// Join the multi-node devnet with the local node
+async fn join_devnet(dry_run: bool, release: bool, extra_args: Vec<String>) -> HylixResult<()> {
+    let config_path = get_local_node_config_path()?;
+
+    if !config_path.exists() {
+        return Err(HylixError::devnet(format!(
+            "Local node configuration not found at {}.\n\
+             Please start a multi-node devnet first with: hy devnet up --nodes <N>",
+            config_path.display()
+        )));
+    }
+
+    let mut args = vec!["run", "-p", "hyli"];
+
+    if release {
+        args.push("--release");
+    }
+
+    args.push("--");
+    args.push("--config-file");
+    let config_path_str = config_path.to_string_lossy().to_string();
+
+    // Build the command string for display
+    let mut display_args = args.clone();
+    display_args.push(&config_path_str);
+    for arg in &extra_args {
+        display_args.push(arg);
+    }
+
+    log_info(&format!(
+        "{}",
+        console::style(format!("$ cargo {}", display_args.join(" "))).green()
+    ));
+
+    if dry_run {
+        println!();
+        log_info("Run this command to start the local node.");
+        return Ok(());
+    }
+
+    let config = HylixConfig::load()?;
+    let env_builder = EnvBuilder::new()
+        .risc0_dev_mode()
+        .sp1_prover_mock()
+        .rust_log(&config.devnet.node_rust_log);
+
+    args.push(&config_path_str);
+    for arg in &extra_args {
+        args.push(arg);
+    }
+
+    let mut backend = env_builder
+        .into_tokio_command("cargo")
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .args(&args)
+        .spawn()
+        .map_err(|e| HylixError::backend(format!("Failed to start local node: {e}")))?;
+
+    log_success("Local node started!");
+    log_info("Press Ctrl+C to stop.");
+
+    match backend.wait().await {
+        Ok(status) => {
+            if status.success() {
+                log_info("Local node stopped gracefully");
+            } else {
+                log_error(&format!("Local node exited with error: {status}"));
+            }
+        }
+        Err(e) => {
+            return Err(HylixError::backend(format!(
+                "Error waiting for local node: {e}"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Follow logs of all nodes
+async fn logs_all_nodes() -> HylixResult<()> {
+    // Check if we're in multi-node mode by looking for node-1 container
+    let node1_status = get_docker_container_status(&constants::containers::node_name(1)).await?;
+
+    if node1_status == ContainerStatus::NotExisting {
+        return Err(HylixError::devnet(
+            "No multi-node devnet running. Use 'hy devnet logs <service>' for single-node.",
+        ));
+    }
+
+    log_info("Following logs of all Docker nodes...");
+    log_info("Use Ctrl+C to stop");
+
+    // Find all running node containers
+    let mut containers = Vec::new();
+    for i in 1..=10 {
+        // Check up to 10 nodes
+        let name = constants::containers::node_name(i);
+        let status = get_docker_container_status(&name).await?;
+        if status == ContainerStatus::Running {
+            containers.push(name);
+        } else {
+            break;
+        }
+    }
+
+    if containers.is_empty() {
+        return Err(HylixError::devnet("No node containers are running"));
+    }
+
+    // Use docker logs with --follow for all containers
+    // We'll use a simple approach: follow the first container
+    // For a more sophisticated approach, we'd need to multiplex the logs
+    log_info(&format!("Following logs of: {}", containers.join(", ")));
+    log_info("Tip: Use 'hy devnet logs node-N' to follow a specific node");
+
+    // Follow the first node's logs
+    let container = &containers[0];
+    log_info(&format!(
+        "{}",
+        console::style(format!("$ docker logs -f {container}")).green()
+    ));
+
+    tokio::process::Command::new("docker")
+        .args(["logs", "-f", container])
+        .status()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to get logs: {e}")))?;
+
+    Ok(())
+}
+
+/// Reset multi-node devnet state
+async fn reset_multi_node_state(context: &DevnetContext) -> HylixResult<()> {
+    let pb = create_progress_bar_with_msg("Resetting multi-node devnet state...");
+
+    // Stop and remove all node containers
+    for i in 1..=10 {
+        let name = constants::containers::node_name(i);
+        if get_docker_container_status(&name).await? != ContainerStatus::NotExisting {
+            stop_and_remove_container(&pb, &name, &format!("node-{}", i)).await?;
+        } else {
+            break;
+        }
+    }
+
+    // Also clean single-node container if it exists
+    if get_docker_container_status(constants::containers::NODE).await?
+        != ContainerStatus::NotExisting
+    {
+        stop_and_remove_container(&pb, constants::containers::NODE, "single node").await?;
+    }
+
+    // Clean local node config
+    let config_dir = get_local_node_config_dir()?;
+    if config_dir.exists() {
+        std::fs::remove_dir_all(&config_dir)?;
+        log_info("Removed local node configuration");
+    }
+
+    pb.finish_and_clear();
+
+    // Also reset indexer, wallet, etc.
+    reset_devnet_state(context).await?;
+
+    Ok(())
+}
+
+/// Print multi-node devnet status
+fn print_multi_node_status(context: &DevnetContext) -> HylixResult<()> {
+    let multi_node = context.multi_node.as_ref().unwrap();
+
+    log_info("Nodes:");
+    for i in 0..multi_node.docker_nodes {
+        let node_index = if multi_node.has_local_node { i + 1 } else { i };
+        let ports = NodePorts::for_docker_node(node_index, &context.config.devnet);
+        println!(
+            "  ● node-{}       docker   REST: {}   P2P: {}",
+            node_index, ports.rest, ports.p2p
+        );
+    }
+
+    if multi_node.has_local_node {
+        let ports = NodePorts::for_local_node(&context.config.devnet);
+        println!(
+            "  ○ node-local   local    REST: {}   P2P: {}",
+            ports.rest, ports.p2p
+        );
+    }
 
     Ok(())
 }

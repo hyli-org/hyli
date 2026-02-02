@@ -8,6 +8,7 @@ pub struct ContainerSpec {
     image: String,
     network: String,
     ports: Vec<(u16, u16)>,
+    ip: Option<String>,
     env_builder: EnvBuilder,
     custom_env: Vec<String>,
     args: Vec<String>,
@@ -23,6 +24,7 @@ impl ContainerSpec {
             env_builder: EnvBuilder::new(),
             custom_env: Vec::new(),
             args: Vec::new(),
+            ip: None,
         }
     }
 
@@ -33,6 +35,11 @@ impl ContainerSpec {
 
     pub fn env_builder(mut self, builder: EnvBuilder) -> Self {
         self.env_builder = builder;
+        self
+    }
+
+    pub fn ip(mut self, ip: &str) -> Self {
+        self.ip = Some(ip.to_string());
         self
     }
 
@@ -52,18 +59,22 @@ impl ContainerSpec {
     }
 
     fn build_run_args(&self) -> Vec<String> {
-        let mut args = vec![
-            "run".to_string(),
-            "-d".to_string(),
-            "--network".to_string(),
-            self.network.clone(),
-            "--name".to_string(),
-            self.name.clone(),
-        ];
+        let mut args = vec!["run".to_string(), "-d".to_string()];
+
+        args.push("--network".to_string());
+        args.push(self.network.clone());
+
+        args.push("--name".to_string());
+        args.push(self.name.clone());
 
         for (host, container) in &self.ports {
             args.push("-p".to_string());
             args.push(format!("{}:{}", host, container));
+        }
+
+        if let Some(ip) = &self.ip {
+            args.push("--ip".to_string());
+            args.push(ip.clone());
         }
 
         args.extend(self.env_builder.to_docker_args());
@@ -72,6 +83,9 @@ impl ContainerSpec {
             args.push("-e".to_string());
             args.push(env_var.clone());
         }
+
+        args.push("--add-host".to_string());
+        args.push("host.docker.internal:host-gateway".to_string());
 
         args.push(self.image.clone());
         args.extend(self.args.clone());
