@@ -233,6 +233,32 @@ pub async fn common_main(
     // Capture node start timestamp for use across all modules
     let start_timestamp = TimestampMsClock::now();
 
+    #[cfg(feature = "monitoring")]
+    {
+        let my_meter = global_meter_or_panic();
+        let alloc_metric = my_meter.u64_gauge("malloc_allocated_size").build();
+        let alloc_metric2 = my_meter.u64_gauge("malloc_allocations").build();
+        let latency_metric = my_meter.u64_histogram("tokio_latency").build();
+        // Measure the event loop latency
+        // Bit of a noisey hack, but it's indicative.
+        tokio::spawn(async move {
+            let mut latency = tokio::time::Instant::now();
+            loop {
+                latency_metric.record(latency.elapsed().as_millis() as u64 - 250, &[]);
+                latency = tokio::time::Instant::now();
+                tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
+            }
+        });
+        tokio::spawn(async move {
+            loop {
+                let metrics = alloc_metrics::global_metrics();
+                alloc_metric.record(metrics.allocated_bytes as u64, &[]);
+                alloc_metric2.record(metrics.allocations as u64, &[]);
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            }
+        });
+    }
+
     let build_api_ctx = Arc::new(BuildApiContextInner {
         router: Mutex::new(Some(Router::new())),
         openapi: Mutex::new(ApiDoc::openapi()),
