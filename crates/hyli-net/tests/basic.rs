@@ -36,8 +36,8 @@ macro_rules! turmoil_simple {
         paste::paste! {
         #[test_log::test]
             fn [<turmoil_p2p_ $nb _nodes_ $simulation _ $seed >]() -> anyhow::Result<()> {
-                tracing::info!("Starting test {} with seed {}", stringify!([<turmoil_ $simulation _ $seed >]), $seed);
                 init_test_meter_provider();
+                tracing::info!("Starting test {} with seed {}", stringify!([<turmoil_ $simulation _ $seed >]), $seed);
                 let mut sim = hyli_net::turmoil::Builder::new()
                     .simulation_duration(Duration::from_secs(50))
                     .tick_duration(Duration::from_millis(50))
