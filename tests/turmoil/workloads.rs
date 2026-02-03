@@ -68,7 +68,9 @@ pub async fn submit_10_contracts(node: TurmoilHost) -> anyhow::Result<()> {
 /// Submit 10 contracts aligned with the sequential chaos phases.
 /// Phase schedule matches simulation_chaos_sequential_failures:
 /// warmup (3s), phase1 (6s), phase2 (6s), phase3 (5s), phase4 (restart).
-pub async fn submit_10_contracts_phase_aligned(node: TurmoilHost) -> anyhow::Result<()> {
+pub async fn submit_10_contracts_sequential_failures_phase_aligned(
+    node: TurmoilHost,
+) -> anyhow::Result<()> {
     let client_with_retries = node.client.retry_15times_1000ms();
     let client_no_retry = node.client.with_retry(0, Duration::from_millis(0));
 
@@ -110,6 +112,89 @@ pub async fn submit_10_contracts_phase_aligned(node: TurmoilHost) -> anyhow::Res
     } else {
         // Keep other nodes alive through all phases.
         tokio::time::sleep(Duration::from_secs(25)).await;
+    }
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
+    for i in 1..=10 {
+        let name = format!("contract-{}", i);
+        let mut attempts = 0;
+        loop {
+            if tokio::time::Instant::now() >= deadline {
+                bail!("Timed out waiting for contract {}", name);
+            }
+
+            match client_no_retry.get_contract(name.clone().into()).await {
+                Ok(contract) => {
+                    assert_eq!(contract.contract_name.0, name.as_str());
+                    break;
+                }
+                Err(e) => {
+                    attempts += 1;
+                    warn!("Retrying get_contract {} attempt {}: {}", name, attempts, e);
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// **Test**
+///
+/// Submit 10 contracts aligned with the memory pressure cycles.
+/// Phase schedule matches simulation_chaos_memory_pressure:
+/// warmup (5s), then 3 cycles of hold (4s) + release (2s).
+pub async fn submit_10_contracts_memory_pressure_phase_aligned(
+    node: TurmoilHost,
+) -> anyhow::Result<()> {
+    let client_with_retries = node.client.retry_15times_1000ms();
+    let client_no_retry = node.client.with_retry(0, Duration::from_millis(0));
+
+    _ = wait_height(&client_with_retries, 1).await;
+
+    if node.conf.id == "node-1" {
+        // Warmup window.
+        tokio::time::sleep(Duration::from_secs(5)).await;
+
+        // Cycle 1 (hold 4s): send 4 contracts.
+        for i in 1..=4 {
+            let tx = make_register_contract_tx(format!("contract-{}", i).into());
+            _ = log_error!(
+                client_with_retries.send_tx_blob(tx).await,
+                "Sending tx blob (cycle 1)"
+            );
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+
+        // Release window 1 (2s).
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Cycle 2 (hold 4s): send 3 contracts.
+        for i in 5..=7 {
+            let tx = make_register_contract_tx(format!("contract-{}", i).into());
+            _ = log_error!(
+                client_with_retries.send_tx_blob(tx).await,
+                "Sending tx blob (cycle 2)"
+            );
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+
+        // Release window 2 (2s).
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Cycle 3 (hold 4s): send 3 contracts.
+        for i in 8..=10 {
+            let tx = make_register_contract_tx(format!("contract-{}", i).into());
+            _ = log_error!(
+                client_with_retries.send_tx_blob(tx).await,
+                "Sending tx blob (cycle 3)"
+            );
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    } else {
+        // Keep other nodes alive through all cycles.
+        tokio::time::sleep(Duration::from_secs(30)).await;
     }
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);

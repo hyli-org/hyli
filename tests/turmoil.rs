@@ -64,7 +64,8 @@ use message_drop::{
 use node_lifecycle::{simulation_one_more_node, simulation_restart_node};
 use partition::{simulation_hold, simulation_partition, simulation_timeout_split_view};
 use workloads::{
-    submit_10_contracts, submit_10_contracts_phase_aligned, submit_heavy_load,
+    submit_10_contracts, submit_10_contracts_memory_pressure_phase_aligned,
+    submit_10_contracts_sequential_failures_phase_aligned, submit_heavy_load,
     timeout_split_view_recovery,
 };
 
@@ -260,12 +261,12 @@ turmoil_simple!(
 turmoil_simple!(
     871..=880,
     simulation_chaos_memory_pressure,
-    submit_10_contracts
+    submit_10_contracts_memory_pressure_phase_aligned
 );
 turmoil_simple!(
     881..=890,
     simulation_chaos_sequential_failures,
-    submit_10_contracts_phase_aligned
+    submit_10_contracts_sequential_failures_phase_aligned
 );
 
 // =============================================================================
