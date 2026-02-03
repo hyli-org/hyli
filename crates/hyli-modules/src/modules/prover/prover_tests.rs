@@ -139,7 +139,6 @@ async fn new_buffering_auto_prover(
         tx_working_window_size: max_txs_per_proof,
     });
 
-    hyli_turmoil_shims::init_test_meter_provider();
     let bus = SharedMessageBus::new();
     TestAutoProver::build(bus.new_handle(), ctx).await
 }

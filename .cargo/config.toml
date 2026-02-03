@@ -1,2 +1,5 @@
 [alias]
 ntest = "nextest run --workspace"
+
+[env]
+CARGO_AUTO_INIT_OTLP_GLOBAL_METER = "1"
