@@ -667,13 +667,11 @@ impl DataAvailability {
                     block_height, socket_addr
                 );
                 // Send immediately - this is inserted next in the send queue
-                if let Err(e) = server
-                    .send(
-                        socket_addr.to_string(),
-                        DataAvailabilityEvent::SignedBlock(block),
-                        vec![],
-                    )
-                {
+                if let Err(e) = server.send(
+                    socket_addr.to_string(),
+                    DataAvailabilityEvent::SignedBlock(block),
+                    vec![],
+                ) {
                     warn!(
                         "📦 Error while responding to block request at height {} for {}: {:#}. Dropping socket.",
                         block_height, socket_addr, e
@@ -688,13 +686,11 @@ impl DataAvailability {
                     "📦 Block at height {} not found in storage, sending BlockNotFound to {}",
                     block_height, socket_addr
                 );
-                if let Err(e) = server
-                    .send(
-                        socket_addr.to_string(),
-                        DataAvailabilityEvent::BlockNotFound(block_height),
-                        vec![],
-                    )
-                {
+                if let Err(e) = server.send(
+                    socket_addr.to_string(),
+                    DataAvailabilityEvent::BlockNotFound(block_height),
+                    vec![],
+                ) {
                     warn!(
                         "📦 Error while responding BlockNotFound at height {} for {}: {:#}. Dropping socket.",
                         block_height, socket_addr, e
@@ -708,13 +704,11 @@ impl DataAvailability {
                     "📦 Error retrieving block at height {}: {:#}",
                     block_height, e
                 );
-                if let Err(e) = server
-                    .send(
-                        socket_addr.to_string(),
-                        DataAvailabilityEvent::BlockNotFound(block_height),
-                        vec![],
-                    )
-                {
+                if let Err(e) = server.send(
+                    socket_addr.to_string(),
+                    DataAvailabilityEvent::BlockNotFound(block_height),
+                    vec![],
+                ) {
                     warn!(
                         "📦 Error while responding BlockNotFound at height {} for {}: {:#}. Dropping socket.",
                         block_height, socket_addr, e
