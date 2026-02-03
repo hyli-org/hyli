@@ -96,3 +96,94 @@ pub async fn timeout_split_view_recovery(node: TurmoilHost) -> anyhow::Result<()
 
     Ok(())
 }
+
+/// **Test**
+///
+/// Submit many contracts continuously to create heavy load.
+/// This workload is designed to stress test the system under chaos conditions.
+pub async fn submit_heavy_load(node: TurmoilHost) -> anyhow::Result<()> {
+    let client_with_retries = node.client.retry_15times_1000ms();
+    let client_no_retry = node.client.with_retry(0, Duration::from_millis(0));
+
+    _ = wait_height(&client_with_retries, 1).await;
+
+    // All nodes submit transactions to create load
+    let node_num: u32 = node
+        .conf
+        .id
+        .strip_prefix("node-")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    let tx_count = 50;
+    let base_id = node_num * 1000;
+
+    tracing::info!(
+        "Heavy load: {} will submit {} transactions",
+        node.conf.id,
+        tx_count
+    );
+
+    // Submit transactions in batches
+    for i in 0..tx_count {
+        let tx_id = base_id + i;
+        let tx = make_register_contract_tx(format!("heavy-contract-{}", tx_id).into());
+
+        match client_no_retry.send_tx_blob(tx).await {
+            Ok(_) => {}
+            Err(e) => {
+                warn!("Heavy load: failed to submit tx {}: {}", tx_id, e);
+            }
+        }
+
+        // Small delay to avoid overwhelming the node
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    tracing::info!(
+        "Heavy load: {} finished submitting transactions",
+        node.conf.id
+    );
+
+    // Wait for some transactions to be processed
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    let mut verified_count = 0;
+    let target_verifications = 10;
+
+    for i in 0..target_verifications {
+        let tx_id = base_id + i;
+        let name = format!("heavy-contract-{}", tx_id);
+
+        loop {
+            if tokio::time::Instant::now() >= deadline {
+                tracing::warn!(
+                    "Heavy load: {} only verified {}/{} contracts before timeout",
+                    node.conf.id,
+                    verified_count,
+                    target_verifications
+                );
+                break;
+            }
+
+            match client_no_retry.get_contract(name.clone().into()).await {
+                Ok(contract) => {
+                    assert_eq!(contract.contract_name.0, name.as_str());
+                    verified_count += 1;
+                    break;
+                }
+                Err(_) => {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            }
+        }
+    }
+
+    tracing::info!(
+        "Heavy load: {} verified {}/{} contracts",
+        node.conf.id,
+        verified_count,
+        target_verifications
+    );
+
+    Ok(())
+}

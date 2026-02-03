@@ -41,9 +41,13 @@ use crate::fixtures::turmoil::TurmoilCtx;
 
 // Re-export simulations for use in test macros
 use chaos::{
-    simulation_chaos_crash_one_node_restart, simulation_chaos_crash_three_nodes_same_time,
+    simulation_chaos_asymmetric_partition, simulation_chaos_cascading_failure,
+    simulation_chaos_clock_skew, simulation_chaos_crash_one_node_restart,
+    simulation_chaos_crash_three_nodes_same_time, simulation_chaos_flapping_network,
     simulation_chaos_full_outage, simulation_chaos_graceful_shutdown_all_nodes,
-    simulation_chaos_quorum_loss,
+    simulation_chaos_heavy_load_during_partition, simulation_chaos_memory_pressure,
+    simulation_chaos_quorum_loss, simulation_chaos_sequential_failures,
+    simulation_chaos_slow_leader,
 };
 use corruption::{
     simulation_corrupt_consensus_messages, simulation_corrupt_mempool_messages,
@@ -59,7 +63,7 @@ use message_drop::{
 };
 use node_lifecycle::{simulation_one_more_node, simulation_restart_node};
 use partition::{simulation_hold, simulation_partition, simulation_timeout_split_view};
-use workloads::{submit_10_contracts, timeout_split_view_recovery};
+use workloads::{submit_10_contracts, submit_heavy_load, timeout_split_view_recovery};
 
 use common::{assert_converged, assert_converged_with_one_block_height_tolerance};
 
@@ -226,6 +230,38 @@ turmoil_simple!(
 turmoil_simple!(
     801..=810,
     simulation_chaos_crash_three_nodes_same_time,
+    submit_10_contracts
+);
+turmoil_simple!(
+    811..=820,
+    simulation_chaos_cascading_failure,
+    submit_10_contracts
+);
+turmoil_simple!(
+    821..=830,
+    simulation_chaos_flapping_network,
+    submit_10_contracts
+);
+turmoil_simple!(
+    831..=840,
+    simulation_chaos_asymmetric_partition,
+    submit_10_contracts
+);
+turmoil_simple!(841..=850, simulation_chaos_slow_leader, submit_10_contracts);
+turmoil_simple!(851..=860, simulation_chaos_clock_skew, submit_10_contracts);
+turmoil_simple!(
+    861..=870,
+    simulation_chaos_heavy_load_during_partition,
+    submit_heavy_load
+);
+turmoil_simple!(
+    871..=880,
+    simulation_chaos_memory_pressure,
+    submit_10_contracts
+);
+turmoil_simple!(
+    881..=890,
+    simulation_chaos_sequential_failures,
     submit_10_contracts
 );
 

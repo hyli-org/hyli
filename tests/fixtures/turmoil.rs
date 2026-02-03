@@ -29,6 +29,7 @@ use crate::fixtures::test_helpers::ConfMaker;
 use hyli::consensus::ConsensusNetMessage;
 use hyli::mempool::MempoolNetMessage;
 use hyli::p2p::network::{MsgWithHeader, NetMessage};
+use hyli_modules::telemetry::init_prometheus_registry_meter_provider;
 
 pub struct NetMessageInterceptor {
     _guard: hyli_net::tcp::intercept::MessageHookGuard,
@@ -117,10 +118,11 @@ impl TurmoilHost {
         let crypto = Arc::new(BlstCrypto::new(&self.conf.id).context("Creating crypto")?);
 
         // Initialize metrics before creating the bus
-        let registry = hyli::entrypoint::init_metrics(&self.conf.id);
+        let registry =
+            init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
         // Create the bus after metrics initialization
-        let bus = SharedMessageBus::new(BusMetrics::global(self.conf.id.clone()));
+        let bus = SharedMessageBus::new(BusMetrics::global());
 
         // Store the bus handle for later access
         let _ = self.bus.set(bus.new_handle());
