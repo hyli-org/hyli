@@ -268,7 +268,7 @@ impl NodeIntegrationCtx {
             start_timestamp: hyli_model::utils::TimestampMs(1000000),
         };
 
-        let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
+        let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
         Self::build_module::<Mempool>(&mut handler, &ctx, ctx.clone(), &mut mocks).await?;
         Self::build_module::<DisseminationManager>(&mut handler, &ctx, ctx.clone(), &mut mocks)
