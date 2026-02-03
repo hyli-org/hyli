@@ -387,7 +387,7 @@ where
                         continue;
                     }
                     self.metrics.ping(public_addr, canal.clone());
-                    if let Err(e) = self.tcp_server.ping(socket.socket_addr.clone()).await {
+                    if let Err(e) = self.tcp_server.ping(socket.socket_addr.clone()) {
                         debug!("Error pinging peer {}: {:?}", socket.socket_addr, e);
                         self.mark_socket_poisoned(&socket.socket_addr);
                         let _ = self.try_start_connection_for_peer(&pubkey, canal.clone());
@@ -609,7 +609,6 @@ where
                                 ))),
                                 vec![],
                             )
-                            .await
                         {
                             self.metrics.handshake_error(
                                 v.msg.p2p_public_address.clone(),
@@ -984,7 +983,7 @@ where
                 ))),
                 vec![],
             )
-            .await?;
+            ?;
 
         self.metrics.handshake_hello_emitted(public_addr, canal);
 
@@ -1058,7 +1057,6 @@ where
         if let Err(e) = self
             .tcp_server
             .send(socket_addr.clone(), P2PTcpMessage::Data(msg), headers)
-            .await
         {
             self.metrics
                 .message_send_error(peer_p2p_addr.clone(), canal.clone());
@@ -1178,7 +1176,7 @@ where
                 headers,
                 message_label,
             )
-            .await;
+            ;
         self.metrics
             .broadcast_targets(canal.clone(), peer_addr_to_pubkey.len() as u64);
         self.metrics
@@ -1827,7 +1825,7 @@ pub mod tests {
         let send_errors = p2p_server1
             .tcp_server
             .raw_send_parallel(vec![socket_addr], vec![255], vec![], "raw")
-            .await;
+            ;
         assert!(send_errors.is_empty(), "Expected raw send to succeed");
 
         // Server2 should see the decode error and attempt to reconnect.
