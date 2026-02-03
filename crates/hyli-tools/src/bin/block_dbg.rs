@@ -18,7 +18,7 @@ use hyli_modules::modules::{
     prover::{AutoProver, AutoProverCtx},
 };
 use hyli_modules::{
-    bus::{SharedMessageBus, metrics::BusMetrics},
+    bus::SharedMessageBus,
     module_bus_client, module_handle_messages,
     modules::{
         BuildApiContextInner, Module, ModulesHandler,
@@ -103,6 +103,8 @@ async fn main() -> Result<()> {
         .with_default_directive(LevelFilter::INFO.into())
         .from_env()?;
 
+    hyli_turmoil_shims::init_test_meter_provider();
+
     // Buffer writer for TUI
     struct BufferWriter {
         buffer: Arc<Mutex<Vec<u8>>>,
@@ -151,7 +153,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting block debugger");
 
-    let bus = SharedMessageBus::new(BusMetrics::global());
+    let bus = SharedMessageBus::new();
 
     tracing::info!("Setting up modules");
 
@@ -169,7 +171,7 @@ async fn main() -> Result<()> {
         .unwrap_or(false);
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus, data_dir.clone()).await;
+    let mut handler = ModulesHandler::new(&bus, data_dir.clone())?;
 
     if !has_blocks {
         handler

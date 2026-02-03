@@ -417,7 +417,7 @@ async fn setup_decode_error_host(peer: String, peers: Vec<String>) -> Result<(),
                         let errors = p2p
                             .tcp_server
                             .raw_send_parallel(vec![socket], vec![255], vec![], "raw")
-                            .await;
+                            ;
                         assert!(errors.is_empty(), "Expected raw send to succeed");
                         sent_error = true;
                     }
@@ -530,7 +530,7 @@ async fn setup_poisoned_socket_host(
                         let errors = p2p
                             .tcp_server
                             .raw_send_parallel(vec![socket], vec![255], vec![], "raw")
-                            .await;
+                            ;
                         assert!(errors.is_empty(), "Expected raw send to succeed");
                         sent_error = true;
                         sent_error_at = Some(tokio::time::Instant::now());

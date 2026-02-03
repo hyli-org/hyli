@@ -622,9 +622,10 @@ impl DataAvailability {
             if let Ok(Some(signed_block)) = self.blocks.get(&hash) {
                 // Errors will be handled when sending new blocks, ignore here.
                 if server
-                    .try_send(
+                    .send(
                         peer_ip.clone(),
                         DataAvailabilityEvent::SignedBlock(signed_block),
+                        vec![],
                     )
                     .is_ok()
                 {
@@ -666,13 +667,20 @@ impl DataAvailability {
                     block_height, socket_addr
                 );
                 // Send immediately - this is inserted next in the send queue
-                server
+                if let Err(e) = server
                     .send(
                         socket_addr.to_string(),
                         DataAvailabilityEvent::SignedBlock(block),
                         vec![],
                     )
-                    .await?;
+                {
+                    warn!(
+                        "📦 Error while responding to block request at height {} for {}: {:#}. Dropping socket.",
+                        block_height, socket_addr, e
+                    );
+                    server.drop_peer_stream(socket_addr.to_string());
+                    return Ok(());
+                }
             }
             Ok(None) => {
                 // Block not in storage - this is a gap
@@ -680,26 +688,40 @@ impl DataAvailability {
                     "📦 Block at height {} not found in storage, sending BlockNotFound to {}",
                     block_height, socket_addr
                 );
-                server
+                if let Err(e) = server
                     .send(
                         socket_addr.to_string(),
                         DataAvailabilityEvent::BlockNotFound(block_height),
                         vec![],
                     )
-                    .await?;
+                {
+                    warn!(
+                        "📦 Error while responding BlockNotFound at height {} for {}: {:#}. Dropping socket.",
+                        block_height, socket_addr, e
+                    );
+                    server.drop_peer_stream(socket_addr.to_string());
+                    return Ok(());
+                }
             }
             Err(e) => {
                 error!(
                     "📦 Error retrieving block at height {}: {:#}",
                     block_height, e
                 );
-                server
+                if let Err(e) = server
                     .send(
                         socket_addr.to_string(),
                         DataAvailabilityEvent::BlockNotFound(block_height),
                         vec![],
                     )
-                    .await?;
+                {
+                    warn!(
+                        "📦 Error while responding BlockNotFound at height {} for {}: {:#}. Dropping socket.",
+                        block_height, socket_addr, e
+                    );
+                    server.drop_peer_stream(socket_addr.to_string());
+                    return Ok(());
+                }
             }
         }
 
@@ -739,9 +761,7 @@ impl DataAvailability {
         evt: MempoolStatusEvent,
         tcp_server: &mut DataAvailabilityServer,
     ) {
-        let errors = tcp_server
-            .broadcast(DataAvailabilityEvent::MempoolStatusEvent(evt))
-            .await;
+        let errors = tcp_server.broadcast(DataAvailabilityEvent::MempoolStatusEvent(evt));
 
         for (peer, error) in errors {
             warn!("Error while broadcasting mempool status event {:#}", error);
@@ -890,9 +910,7 @@ impl DataAvailability {
 
         // TODO: use retain once async closures are supported ?
         //
-        let errors = tcp_server
-            .broadcast(DataAvailabilityEvent::SignedBlock(block.clone()))
-            .await;
+        let errors = tcp_server.broadcast(DataAvailabilityEvent::SignedBlock(block.clone()));
 
         for (peer, error) in errors {
             warn!(
@@ -1046,10 +1064,8 @@ pub mod tests {
             .await
             .unwrap();
 
-        let bus = super::DABusClient::new_from_bus(crate::bus::SharedMessageBus::new(
-            crate::bus::metrics::BusMetrics::global(),
-        ))
-        .await;
+        hyli_turmoil_shims::init_test_meter_provider();
+        let bus = super::DABusClient::new_from_bus(crate::bus::SharedMessageBus::new()).await;
         let mut da = super::DataAvailability {
             config: Default::default(),
             bus,
@@ -1089,8 +1105,8 @@ pub mod tests {
         let tmpdir = tempfile::tempdir().unwrap().keep();
         let blocks = Blocks::new(&tmpdir).unwrap();
 
-        let global_bus =
-            crate::bus::SharedMessageBus::new(crate::bus::metrics::BusMetrics::global());
+        hyli_turmoil_shims::init_test_meter_provider();
+        let global_bus = crate::bus::SharedMessageBus::new();
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
         let mut block_sender = TestBusClient::new_from_bus(global_bus).await;
 
@@ -1299,16 +1315,15 @@ pub mod tests {
 
     #[test_log::test(tokio::test)]
     async fn test_da_catchup() {
-        let sender_global_bus =
-            crate::bus::SharedMessageBus::new(crate::bus::metrics::BusMetrics::global());
+        hyli_turmoil_shims::init_test_meter_provider();
+        let sender_global_bus = crate::bus::SharedMessageBus::new();
         let mut block_sender = TestBusClient::new_from_bus(sender_global_bus.new_handle()).await;
         let mut da_sender = DataAvailabilityTestCtx::new(sender_global_bus).await;
         let mut server = DataAvailabilityServer::start(7890, "DaServer")
             .await
             .unwrap();
 
-        let receiver_global_bus =
-            crate::bus::SharedMessageBus::new(crate::bus::metrics::BusMetrics::global());
+        let receiver_global_bus = crate::bus::SharedMessageBus::new();
         let mut da_receiver = DataAvailabilityTestCtx::new(receiver_global_bus).await;
         da_receiver.da.catchupper.policy = Some(DaCatchupPolicy {
             floor: None,
@@ -1448,16 +1463,15 @@ pub mod tests {
 
     #[test_log::test(tokio::test)]
     async fn test_da_fast_catchup() {
-        let sender_global_bus =
-            crate::bus::SharedMessageBus::new(crate::bus::metrics::BusMetrics::global());
+        hyli_turmoil_shims::init_test_meter_provider();
+        let sender_global_bus = crate::bus::SharedMessageBus::new();
         let mut block_sender = TestBusClient::new_from_bus(sender_global_bus.new_handle()).await;
         let mut da_sender = DataAvailabilityTestCtx::new(sender_global_bus).await;
         let mut server = DataAvailabilityServer::start(7891, "DaServer")
             .await
             .unwrap();
 
-        let receiver_global_bus =
-            crate::bus::SharedMessageBus::new(crate::bus::metrics::BusMetrics::global());
+        let receiver_global_bus = crate::bus::SharedMessageBus::new();
         let mut da_receiver = DataAvailabilityTestCtx::new(receiver_global_bus).await;
         da_receiver.da.catchupper.policy = Some(DaCatchupPolicy {
             floor: Some(BlockHeight(8)),
@@ -1567,8 +1581,8 @@ pub mod tests {
         let tmpdir = tempfile::tempdir().unwrap().keep();
         let mut blocks_storage = Blocks::new(&tmpdir).unwrap();
 
-        let global_bus =
-            crate::bus::SharedMessageBus::new(crate::bus::metrics::BusMetrics::global());
+        hyli_turmoil_shims::init_test_meter_provider();
+        let global_bus = crate::bus::SharedMessageBus::new();
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
 
         let mut config: Conf = Conf::new(vec![], None, None).unwrap();

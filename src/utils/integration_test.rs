@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::mempool::dissemination::DisseminationManager;
 use crate::{
-    bus::{bus_client, metrics::BusMetrics, BusClientReceiver, SharedMessageBus},
+    bus::{bus_client, BusClientReceiver, SharedMessageBus},
     consensus::Consensus,
     data_availability::DataAvailability,
     explorer::Explorer,
@@ -98,7 +98,7 @@ pub struct NodeIntegrationCtxBuilder {
 impl NodeIntegrationCtxBuilder {
     pub async fn new() -> Self {
         let tmpdir = tempfile::tempdir().unwrap();
-        let bus = SharedMessageBus::new(BusMetrics::global());
+        let bus = SharedMessageBus::new();
         let mut conf = Conf::new(
             vec![],
             tmpdir.path().to_str().map(|s| s.to_owned()),
@@ -268,7 +268,7 @@ impl NodeIntegrationCtx {
             start_timestamp: hyli_model::utils::TimestampMs(1000000),
         };
 
-        let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
+        let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
         Self::build_module::<Mempool>(&mut handler, &ctx, ctx.clone(), &mut mocks).await?;
         Self::build_module::<DisseminationManager>(&mut handler, &ctx, ctx.clone(), &mut mocks)

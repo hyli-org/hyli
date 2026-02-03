@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used, reason = "Fail on misconfiguration")]
 
 use crate::{
-    bus::{metrics::BusMetrics, SharedMessageBus},
+    bus::SharedMessageBus,
     consensus::Consensus,
     data_availability::DataAvailability,
     explorer::Explorer,
@@ -217,7 +217,12 @@ pub async fn common_main(
     bus: SharedMessageBus,
     registry: Registry,
 ) -> Result<ModulesHandler> {
-    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
+    // Init global metrics meter we expose as an endpoint.
+    let registry =
+        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
+
+    let bus = SharedMessageBus::new();
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
     // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.
     // Handle this configuration rewrite before we print anything.
@@ -321,8 +326,6 @@ pub async fn common_main(
             );
         }
     }
-
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
     if config.run_indexer {
         handler
