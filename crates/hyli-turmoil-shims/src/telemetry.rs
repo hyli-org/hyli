@@ -77,6 +77,12 @@ mod imp {
             panic!("global meter provider is not initialized");
         }
 
+        #[cfg(test)]
+        fn is_test_process() -> bool {
+            true
+        }
+
+        #[cfg(not(test))]
         fn is_test_process() -> bool {
             std::env::var("RUST_TEST_THREADS").is_ok()
                 || std::env::var("NEXTEST_EXECUTION").is_ok()
