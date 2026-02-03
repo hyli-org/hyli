@@ -333,7 +333,7 @@ impl Consensus {
             return Ok(());
         }
         match self.bft_round_state.state_tag {
-            StateTag::Follower => {
+            StateTag::Leader | StateTag::Follower => {
                 if self
                     .bft_round_state
                     .current_proposal
@@ -360,14 +360,6 @@ impl Consensus {
             }
             StateTag::Joining => {
                 self.on_commit_while_joining(commit_quorum_certificate, proposal_hash_hint)
-            }
-            _ => {
-                debug!(
-                    sender = %sender,
-                    proposal_hash = %proposal_hash_hint,
-                    "Commit message received while not follower. Ignoring."
-                );
-                Ok(())
             }
         }
     }
@@ -1590,5 +1582,39 @@ mod tests {
             } => assert_eq!(hash, missing_parent),
             other => panic!("expected SyncRequest, got {:?}", other),
         }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn leader_accepts_commit_for_next_slot() {
+        let crypto = BlstCrypto::new("leader-commit").unwrap();
+        let mut ctx = ConsensusTestCtx::new("leader-commit", crypto.clone()).await;
+        ctx.add_trusted_validator(&ctx.pubkey());
+
+        ctx.consensus.bft_round_state.state_tag = StateTag::Leader;
+        ctx.consensus.bft_round_state.slot = 5;
+        ctx.consensus.bft_round_state.view = 1;
+        ctx.consensus.bft_round_state.parent_hash = ConsensusProposalHash("parent".into());
+
+        let proposal = ConsensusProposal {
+            slot: 5,
+            parent_hash: ctx.consensus.bft_round_state.parent_hash.clone(),
+            cut: ctx.consensus.bft_round_state.parent_cut.clone(),
+            ..ConsensusProposal::default()
+        };
+        ctx.consensus.store.bft_round_state.current_proposal = Some(proposal.clone());
+
+        let commit_qc = QuorumCertificate(
+            agg_sig(&crypto, (proposal.hashed(), ConfirmAckMarker)),
+            ConfirmAckMarker,
+        );
+
+        ctx.consensus
+            .on_commit(ctx.pubkey(), commit_qc, proposal.hashed())
+            .expect("leader should accept commit and advance");
+
+        assert_eq!(ctx.consensus.bft_round_state.slot, 6);
+        assert_eq!(ctx.consensus.bft_round_state.view, 0);
+        assert_eq!(ctx.consensus.bft_round_state.parent_hash, proposal.hashed());
+        assert!(ctx.consensus.bft_round_state.current_proposal.is_none());
     }
 }
