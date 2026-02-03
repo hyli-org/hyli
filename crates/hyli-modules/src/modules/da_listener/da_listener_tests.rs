@@ -1,5 +1,4 @@
 use super::*;
-use crate::bus::metrics::BusMetrics;
 use crate::modules::block_processor::BusOnlyProcessor;
 use crate::node_state::test::craft_signed_block;
 use crate::utils::da_codec::DataAvailabilityServer;
@@ -30,7 +29,8 @@ fn create_test_config_with_read_from(
 async fn create_test_listener(
     config: DAListenerConf<BusOnlyProcessor>,
 ) -> Result<SignedDAListener<BusOnlyProcessor>> {
-    let bus = SharedMessageBus::new(BusMetrics::global());
+    hyli_turmoil_shims::init_test_meter_provider();
+    let bus = SharedMessageBus::new();
     SignedDAListener::build(bus.new_handle(), config).await
 }
 

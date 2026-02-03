@@ -26,11 +26,13 @@ pub use hyli_model::LaneBytesSize;
 
 #[derive(Clone)]
 pub struct LanesStorage {
-    pub lanes_tip: Arc<RwLock<BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>>>,
+    lanes_tip: Arc<RwLock<BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>>>,
     db: Database,
-    pub by_hash_metadata: Keyspace,
-    pub by_hash_data: Keyspace,
-    pub dp_proofs: Keyspace,
+    by_hash_metadata: Keyspace,
+    by_hash_data: Keyspace,
+    dp_proofs: Keyspace,
+    // Used by the shared storage to know when it can drop this handle.
+    ref_token: Arc<()>,
 }
 
 static SHARED_LANES: OnceLock<Mutex<HashMap<PathBuf, LanesStorage>>> = OnceLock::new();
@@ -50,6 +52,10 @@ pub fn shared_lanes_storage(path: &Path) -> Result<LanesStorage> {
         );
         return Ok(existing.clone());
     }
+
+    // Drop cached storages that are only held by this map (ref_count == 1).
+    // This allowes closing opened files and avoid breaking OS limits during tests.
+    guard.retain(|_, storage| storage.ref_count() > 1);
 
     tracing::debug!(
         "Creating new shared lanes storage at {}",
@@ -90,15 +96,13 @@ fn load_lanes_tip(path: &Path) -> BTreeMap<LaneId, (DataProposalHash, LaneBytesS
 }
 
 impl LanesStorage {
+    fn ref_count(&self) -> usize {
+        Arc::strong_count(&self.ref_token)
+    }
+
     /// Create another set of handles to share the same storage and lane tip view.
     pub fn new_handle(&self) -> LanesStorage {
-        LanesStorage {
-            lanes_tip: Arc::clone(&self.lanes_tip),
-            db: self.db.clone(),
-            by_hash_metadata: self.by_hash_metadata.clone(),
-            by_hash_data: self.by_hash_data.clone(),
-            dp_proofs: self.dp_proofs.clone(),
-        }
+        self.clone()
     }
 
     pub fn lane_tips_snapshot(&self) -> BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)> {
@@ -158,7 +162,20 @@ impl LanesStorage {
             by_hash_metadata,
             by_hash_data,
             dp_proofs,
+            ref_token: Arc::new(()),
         })
+    }
+
+    #[cfg(test)]
+    pub fn put_metadata_only(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+        metadata: LaneEntryMetadata,
+    ) -> Result<()> {
+        Ok(self
+            .by_hash_metadata
+            .insert(format!("{lane_id}:{dp_hash}"), borsh::to_vec(&metadata)?)?)
     }
 }
 

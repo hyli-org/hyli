@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 
 use hyli_modules::{
-    bus::{SharedMessageBus, metrics::BusMetrics},
+    bus::SharedMessageBus,
     modules::{
         ModulesHandler,
         block_processor::BusOnlyProcessor,
@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
 
     let _ = init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
-    let bus = SharedMessageBus::new(BusMetrics::global());
+    let bus = SharedMessageBus::new();
 
     tracing::info!("Setting up modules");
 

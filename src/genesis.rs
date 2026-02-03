@@ -758,6 +758,7 @@ mod tests {
     }
 
     async fn new(config: Conf) -> (Genesis, TestGenesisBusClient) {
+        hyli_turmoil_shims::init_test_meter_provider();
         let shared_bus = SharedMessageBus::default();
         let bus = GenesisBusClient::new_from_bus(shared_bus.new_handle()).await;
         let test_bus = TestGenesisBusClient::new_from_bus(shared_bus.new_handle()).await;

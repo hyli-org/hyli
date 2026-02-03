@@ -44,7 +44,7 @@ static SHARED_LANES: OnceLock<Mutex<HashMap<PathBuf, LanesStorage>>> = OnceLock:
 
 /// Shared handle between mempool (read/write) and dissemination (read-only),
 /// keyed by `config.data_dir` to allow multiple nodes in one process.
-pub fn shared_lanes_storage(path: &Path) -> Result<LanesStorage> {
+pub async fn shared_lanes_storage(path: &Path) -> Result<LanesStorage> {
     let registry = SHARED_LANES.get_or_init(|| Mutex::new(HashMap::new()));
     let mut guard = registry
         .lock()
