@@ -11,9 +11,8 @@ pub mod utils;
 pub use hyli_turmoil_shims::tokio_select_biased;
 pub mod telemetry {
     pub use hyli_turmoil_shims::{
-        encode_registry_text, global_meter_or_panic, global_meter_provider_or_panic,
-        init_global_meter_provider, init_prometheus_registry_meter_provider,
-        init_test_meter_provider,
+        encode_registry_text, global_meter_or_panic, init_global_meter_provider,
+        init_prometheus_registry_meter_provider, init_test_meter_provider,
     };
     pub use opentelemetry::{
         metrics::{Counter, Gauge, Histogram, Meter, MeterProvider},

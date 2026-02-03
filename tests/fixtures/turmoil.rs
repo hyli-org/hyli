@@ -14,6 +14,8 @@ use hyli_net::net::Sim;
 use hyli_net::tcp::intercept::{set_message_hook_scoped, MessageAction};
 use hyli_net::tcp::{decode_tcp_payload, P2PTcpMessage};
 use hyli_turmoil_shims::rng::set_deterministic_seed;
+use hyli_turmoil_shims::{init_turmoil_test_tracing, register_host_meter_provider};
+use opentelemetry_sdk::metrics::SdkMeterProvider;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tempfile::TempDir;
 use tokio::sync::Mutex;
@@ -28,6 +30,14 @@ use hyli::p2p::network::{MsgWithHeader, NetMessage};
 
 pub struct NetMessageInterceptor {
     _guard: hyli_net::tcp::intercept::MessageHookGuard,
+}
+
+struct MeterProviderShutdownGuard(Arc<SdkMeterProvider>);
+
+impl Drop for MeterProviderShutdownGuard {
+    fn drop(&mut self) {
+        let _ = self.0.shutdown();
+    }
 }
 
 pub fn install_net_message_dropper<F>(mut should_drop: F) -> NetMessageInterceptor
@@ -190,6 +200,7 @@ impl TurmoilCtx {
         seed: u64,
         sim: &mut Sim<'_>,
     ) -> Result<TurmoilCtx> {
+        let _tracing_guard = init_turmoil_test_tracing();
         std::env::set_var("RISC0_DEV_MODE", "1");
 
         let seed_guard = set_deterministic_seed(seed);
@@ -237,13 +248,23 @@ impl TurmoilCtx {
         let turmoil_node = nodes.pop().unwrap();
         {
             let id = turmoil_node.conf.id.clone();
+            let host_name = id.clone();
             let cloned = Arc::new(Mutex::new(turmoil_node.clone())); // Permet de partager la variable
 
             let f = {
                 let cloned = Arc::clone(&cloned); // Clonage pour éviter de déplacer
+                let host_name = host_name.clone();
                 move || {
                     let cloned = Arc::clone(&cloned);
+                    let host_name = host_name.clone();
                     async move {
+                        eprintln!("[turmoil] starting host task for {}", host_name);
+                        let provider = Arc::new(SdkMeterProvider::default());
+                        let _provider_guard = MeterProviderShutdownGuard(provider.clone());
+                        let provider = provider
+                            as Arc<dyn hyli_modules::telemetry::MeterProvider + Send + Sync>;
+                        register_host_meter_provider(host_name, provider);
+                        let _ = hyli_turmoil_shims::global_meter_or_panic();
                         let node = cloned.lock().await; // Accès mutable au nœud
                         _ = node.start().await;
                         Ok(())
@@ -255,13 +276,23 @@ impl TurmoilCtx {
         }
         while let Some(turmoil_node) = nodes.pop() {
             let id = turmoil_node.conf.id.clone();
+            let host_name = id.clone();
             let cloned = Arc::new(Mutex::new(turmoil_node.clone())); // Permet de partager la variable
 
             let f = {
                 let cloned = Arc::clone(&cloned); // Clonage pour éviter de déplacer
+                let host_name = host_name.clone();
                 move || {
                     let cloned = Arc::clone(&cloned);
+                    let host_name = host_name.clone();
                     async move {
+                        eprintln!("[turmoil] starting host task for {}", host_name);
+                        let provider = Arc::new(SdkMeterProvider::default());
+                        let _provider_guard = MeterProviderShutdownGuard(provider.clone());
+                        let provider = provider
+                            as Arc<dyn hyli_modules::telemetry::MeterProvider + Send + Sync>;
+                        register_host_meter_provider(host_name, provider);
+                        let _ = hyli_turmoil_shims::global_meter_or_panic();
                         let node = cloned.lock().await; // Accès mutable au nœud
                         _ = node.start().await;
                         Ok(())
