@@ -1,7 +1,6 @@
 use std::{
     any::type_name,
     collections::{HashMap, HashSet},
-    ffi::OsStr,
     fs,
     future::Future,
     io::{BufWriter, Write},
@@ -445,20 +444,8 @@ impl ModulesHandler {
                 Err(_) => true,
             }
         } else {
-            // No manifest → back up only if there are other files
-            let mut has_other_files = false;
-
-            if let Ok(entries) = fs::read_dir(&data_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.file_name() != Some(OsStr::new(CHECKSUMS_MANIFEST)) {
-                        has_other_files = true;
-                        break;
-                    }
-                }
-            }
-
-            has_other_files
+            // No manifest → back up
+            true
         };
 
         if should_backup {
