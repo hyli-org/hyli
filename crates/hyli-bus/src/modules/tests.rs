@@ -292,7 +292,7 @@ async fn test_shutdown_timeout_skips_manifest_and_fails_to_load() {
     let _checksum = TestModule::<usize>::save_on_disk(&data_dir, &file_path, &test_struct).unwrap();
 
     let shared_bus = SharedMessageBus::new();
-    let mut handler = ModulesHandler::new(&shared_bus, data_dir.clone()).await;
+    let mut handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
 
     handler.start_modules().await.unwrap();
@@ -324,13 +324,11 @@ async fn test_shutdown_timeout_skips_manifest_and_fails_to_load() {
         "Manifest should not be written when shutdown times out"
     );
 
-    let result: Result<Option<TestStruct>> =
-        TestModule::<usize>::load_from_disk(&data_dir, &file_path);
-    let err = result.unwrap_err();
+    let result: Option<TestStruct> =
+        TestModule::<usize>::load_from_disk(&data_dir, &file_path).unwrap();
     assert!(
-        err.downcast_ref::<super::PersistenceError>()
-            .is_some_and(|e| matches!(e, super::PersistenceError::FileNotInManifest(_))),
-        "Should error when file is not in manifest"
+        result.is_none(),
+        "Should return None when file is not in manifest"
     );
 }
 #[test_log::test(tokio::test)]
