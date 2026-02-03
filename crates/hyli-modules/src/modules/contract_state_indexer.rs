@@ -345,7 +345,6 @@ mod tests {
             api: Default::default(),
         };
 
-        hyli_turmoil_shims::init_test_meter_provider();
         ContractStateIndexer::<MockState>::build(SharedMessageBus::new(), ctx)
             .await
             .unwrap()

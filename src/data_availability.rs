@@ -1058,7 +1058,6 @@ pub mod tests {
             .await
             .unwrap();
 
-        hyli_turmoil_shims::init_test_meter_provider();
         let bus = super::DABusClient::new_from_bus(crate::bus::SharedMessageBus::new()).await;
         let mut da = super::DataAvailability {
             config: Default::default(),
@@ -1099,7 +1098,6 @@ pub mod tests {
         let tmpdir = tempfile::tempdir().unwrap().keep();
         let blocks = Blocks::new(&tmpdir).unwrap();
 
-        hyli_turmoil_shims::init_test_meter_provider();
         let global_bus = crate::bus::SharedMessageBus::new();
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
         let mut block_sender = TestBusClient::new_from_bus(global_bus).await;
@@ -1309,7 +1307,6 @@ pub mod tests {
 
     #[test_log::test(tokio::test)]
     async fn test_da_catchup() {
-        hyli_turmoil_shims::init_test_meter_provider();
         let sender_global_bus = crate::bus::SharedMessageBus::new();
         let mut block_sender = TestBusClient::new_from_bus(sender_global_bus.new_handle()).await;
         let mut da_sender = DataAvailabilityTestCtx::new(sender_global_bus).await;
@@ -1457,7 +1454,6 @@ pub mod tests {
 
     #[test_log::test(tokio::test)]
     async fn test_da_fast_catchup() {
-        hyli_turmoil_shims::init_test_meter_provider();
         let sender_global_bus = crate::bus::SharedMessageBus::new();
         let mut block_sender = TestBusClient::new_from_bus(sender_global_bus.new_handle()).await;
         let mut da_sender = DataAvailabilityTestCtx::new(sender_global_bus).await;
@@ -1575,7 +1571,6 @@ pub mod tests {
         let tmpdir = tempfile::tempdir().unwrap().keep();
         let mut blocks_storage = Blocks::new(&tmpdir).unwrap();
 
-        hyli_turmoil_shims::init_test_meter_provider();
         let global_bus = crate::bus::SharedMessageBus::new();
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
 
