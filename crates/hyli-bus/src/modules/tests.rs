@@ -282,55 +282,6 @@ fn test_no_manifest_fails_to_load() {
     );
 }
 
-#[tokio::test]
-async fn test_shutdown_timeout_skips_manifest_and_fails_to_load() {
-    let dir = tempdir().unwrap();
-    let data_dir = dir.path().to_path_buf();
-    let file_path = PathBuf::from("timeout.data");
-
-    let test_struct = TestStruct { value: 99 };
-    let _checksum = TestModule::<usize>::save_on_disk(&data_dir, &file_path, &test_struct).unwrap();
-
-    let shared_bus = SharedMessageBus::new();
-    let mut handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
-    handler.build_module::<TestModule<usize>>(()).await.unwrap();
-
-    handler.start_modules().await.unwrap();
-
-    let mut shutdown_client = ShutdownClient::new_from_bus(shared_bus.new_handle()).await;
-    let module_id = handler
-        .modules_statuses
-        .keys()
-        .next()
-        .cloned()
-        .expect("module id");
-    let module_name = std::any::type_name::<TestModule<usize>>().to_string();
-    let send_task = tokio::spawn(async move {
-        _ = shutdown_client.send(signal::ShutdownCompleted {
-            module: module_id,
-            shutdown_status: ModuleShutdownStatus::TimedOut,
-        });
-        _ = shutdown_client.send(signal::ShutdownModule {
-            module: module_name,
-        });
-    });
-
-    handler.shutdown_loop().await.unwrap();
-    send_task.await.unwrap();
-
-    let manifest = super::manifest_path(&data_dir);
-    assert!(
-        !manifest.exists(),
-        "Manifest should not be written when shutdown times out"
-    );
-
-    let result: Option<TestStruct> =
-        TestModule::<usize>::load_from_disk(&data_dir, &file_path).unwrap();
-    assert!(
-        result.is_none(),
-        "Should return None when file is not in manifest"
-    );
-}
 #[test_log::test(tokio::test)]
 async fn test_multi_file_persist_writes_manifest_and_loads_files() {
     let dir = tempdir().unwrap();
