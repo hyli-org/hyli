@@ -251,7 +251,6 @@ async fn common_main(
                 alloc_metric2.record(metrics.allocations as u64, &[]);
                 tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
             }
-            .unwrap()
         });
     }
 

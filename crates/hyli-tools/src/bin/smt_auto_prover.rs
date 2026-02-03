@@ -9,7 +9,7 @@ use client_sdk::{
 use hyli_contract_sdk::api::NodeInfo;
 use hyli_modules::telemetry::init_prometheus_registry_meter_provider;
 use hyli_modules::{
-    bus::{SharedMessageBus, metrics::BusMetrics},
+    bus::SharedMessageBus,
     modules::{
         BuildApiContextInner, ModulesHandler,
         admin::{AdminApi, AdminApiRunContext},
