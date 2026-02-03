@@ -598,18 +598,15 @@ where
                 match self.create_signed_node_connection_data() {
                     Ok(verack) => {
                         // Send Verack response
-                        if let Err(e) = self
-                            .tcp_server
-                            .send(
-                                socket_addr.clone(),
-                                P2PTcpMessage::<Msg>::Handshake(Handshake::Verack((
-                                    canal.clone(),
-                                    verack,
-                                    timestamp.clone(),
-                                ))),
-                                vec![],
-                            )
-                        {
+                        if let Err(e) = self.tcp_server.send(
+                            socket_addr.clone(),
+                            P2PTcpMessage::<Msg>::Handshake(Handshake::Verack((
+                                canal.clone(),
+                                verack,
+                                timestamp.clone(),
+                            ))),
+                            vec![],
+                        ) {
                             self.metrics.handshake_error(
                                 v.msg.p2p_public_address.clone(),
                                 canal.clone(),
@@ -973,17 +970,15 @@ where
 
         self.tcp_server
             .setup_client(socket_addr.clone(), tcp_client);
-        self.tcp_server
-            .send(
-                socket_addr.clone(),
-                P2PTcpMessage::<Msg>::Handshake(Handshake::Hello((
-                    canal.clone(),
-                    signed_node_connection_data.clone(),
-                    timestamp,
-                ))),
-                vec![],
-            )
-            ?;
+        self.tcp_server.send(
+            socket_addr.clone(),
+            P2PTcpMessage::<Msg>::Handshake(Handshake::Hello((
+                canal.clone(),
+                signed_node_connection_data.clone(),
+                timestamp,
+            ))),
+            vec![],
+        )?;
 
         self.metrics.handshake_hello_emitted(public_addr, canal);
 
@@ -1168,15 +1163,12 @@ where
             })
             .collect();
 
-        let res = self
-            .tcp_server
-            .raw_send_parallel(
-                peer_addr_to_pubkey.keys().cloned().collect(),
-                msg,
-                headers,
-                message_label,
-            )
-            ;
+        let res = self.tcp_server.raw_send_parallel(
+            peer_addr_to_pubkey.keys().cloned().collect(),
+            msg,
+            headers,
+            message_label,
+        );
         self.metrics
             .broadcast_targets(canal.clone(), peer_addr_to_pubkey.len() as u64);
         self.metrics
@@ -1822,10 +1814,10 @@ pub mod tests {
         assert_eq!(connected.len(), 1, "Expected a single client socket");
         let socket_addr = connected.first().cloned().unwrap();
 
-        let send_errors = p2p_server1
-            .tcp_server
-            .raw_send_parallel(vec![socket_addr], vec![255], vec![], "raw")
-            ;
+        let send_errors =
+            p2p_server1
+                .tcp_server
+                .raw_send_parallel(vec![socket_addr], vec![255], vec![], "raw");
         assert!(send_errors.is_empty(), "Expected raw send to succeed");
 
         // Server2 should see the decode error and attempt to reconnect.
