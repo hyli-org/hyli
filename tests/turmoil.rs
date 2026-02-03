@@ -63,7 +63,10 @@ use message_drop::{
 };
 use node_lifecycle::{simulation_one_more_node, simulation_restart_node};
 use partition::{simulation_hold, simulation_partition, simulation_timeout_split_view};
-use workloads::{submit_10_contracts, submit_heavy_load, timeout_split_view_recovery};
+use workloads::{
+    submit_10_contracts, submit_10_contracts_phase_aligned, submit_heavy_load,
+    timeout_split_view_recovery,
+};
 
 use common::{assert_converged, assert_converged_with_one_block_height_tolerance};
 
@@ -262,7 +265,7 @@ turmoil_simple!(
 turmoil_simple!(
     881..=890,
     simulation_chaos_sequential_failures,
-    submit_10_contracts
+    submit_10_contracts_phase_aligned
 );
 
 // =============================================================================
