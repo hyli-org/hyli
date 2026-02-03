@@ -29,7 +29,6 @@ fn create_test_config_with_read_from(
 async fn create_test_listener(
     config: DAListenerConf<BusOnlyProcessor>,
 ) -> Result<SignedDAListener<BusOnlyProcessor>> {
-    hyli_turmoil_shims::init_test_meter_provider();
     let bus = SharedMessageBus::new();
     SignedDAListener::build(bus.new_handle(), config).await
 }

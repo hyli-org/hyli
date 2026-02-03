@@ -1051,7 +1051,6 @@ pub mod test {
         }
 
         pub async fn new(name: &str, crypto: BlstCrypto) -> Self {
-            hyli_turmoil_shims::init_test_meter_provider();
             let shared_bus = SharedMessageBus::new();
             let out_receiver = get_receiver::<OutboundMessage>(&shared_bus).await;
             let event_receiver = get_receiver::<ConsensusEvent>(&shared_bus).await;
