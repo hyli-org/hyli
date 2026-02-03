@@ -193,7 +193,7 @@ pub async fn main_loop(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> 
     // Init global metrics meter we expose as an endpoint
     let registry =
         init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
-    let bus = SharedMessageBus::new(BusMetrics::global());
+    let bus = SharedMessageBus::new();
     let mut handler = common_main(config, crypto, bus, registry).await?;
     handler.exit_loop().await?;
 
@@ -204,7 +204,7 @@ pub async fn main_process(config: conf::Conf, crypto: Option<SharedBlstCrypto>) 
     // Init global metrics meter we expose as an endpoint
     let registry =
         init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
-    let bus = SharedMessageBus::new(BusMetrics::global());
+    let bus = SharedMessageBus::new();
     let mut handler = common_main(config, crypto, bus, registry).await?;
     handler.exit_process().await?;
 
@@ -217,11 +217,6 @@ pub async fn common_main(
     bus: SharedMessageBus,
     registry: Registry,
 ) -> Result<ModulesHandler> {
-    // Init global metrics meter we expose as an endpoint.
-    let registry =
-        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
-
-    let bus = SharedMessageBus::new();
     let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
     // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.

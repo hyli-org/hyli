@@ -8,11 +8,7 @@ use std::time::Duration;
 use anyhow::Context;
 use bytes::Bytes;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
-use hyli::{
-    bus::{metrics::BusMetrics, SharedMessageBus},
-    entrypoint::common_main,
-    utils::conf::Conf,
-};
+use hyli::{bus::SharedMessageBus, entrypoint::common_main, utils::conf::Conf};
 use hyli_crypto::BlstCrypto;
 use hyli_net::net::Sim;
 use hyli_net::tcp::intercept::{set_message_hook_scoped, MessageAction};
@@ -122,7 +118,7 @@ impl TurmoilHost {
             init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
         // Create the bus after metrics initialization
-        let bus = SharedMessageBus::new(BusMetrics::global());
+        let bus = SharedMessageBus::new();
 
         // Store the bus handle for later access
         let _ = self.bus.set(bus.new_handle());
