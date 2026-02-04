@@ -26,9 +26,15 @@ name = "rate_limiter_proxy"
 path = "src/bin/rate_limiter_proxy.rs"
 required-features = ["rate-proxy"]
 
+[[bin]]
+name = "chaos_monkey"
+path = "src/bin/chaos_monkey.rs"
+
 [dependencies]
 hyli-contract-sdk = { workspace = true }
 client-sdk = { workspace = true, features = ["rest"] }
+hyli-net = { workspace = true }
+hyli-crypto = { workspace = true }
 hyli-modules = { workspace = true }
 hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 hyli-model = { workspace = true }
@@ -46,6 +52,7 @@ tracing-subscriber = { workspace = true }
 sha2 = { workspace = true }
 borsh = { workspace = true }
 serde_json = { workspace = true }
+rand = { workspace = true }
 
 # needs to match workspace
 
