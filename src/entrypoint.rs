@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used, reason = "Fail on misconfiguration")]
 
 use crate::{
-    bus::{metrics::BusMetrics, SharedMessageBus},
+    bus::SharedMessageBus,
     consensus::Consensus,
     data_availability::DataAvailability,
     explorer::Explorer,
@@ -207,7 +207,12 @@ async fn common_main(
     mut config: conf::Conf,
     crypto: Option<SharedBlstCrypto>,
 ) -> Result<ModulesHandler> {
-    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
+    // Init global metrics meter we expose as an endpoint.
+    let registry =
+        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
+
+    let bus = SharedMessageBus::new();
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
     // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.
     // Handle this configuration rewrite before we print anything.
@@ -222,10 +227,6 @@ async fn common_main(
 
     // Capture node start timestamp for use across all modules
     let start_timestamp = TimestampMsClock::now();
-
-    // Init global metrics meter we expose as an endpoint
-    let registry =
-        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
     #[cfg(feature = "monitoring")]
     {
@@ -252,8 +253,6 @@ async fn common_main(
             }
         });
     }
-
-    let bus = SharedMessageBus::new(BusMetrics::global());
 
     let build_api_ctx = Arc::new(BuildApiContextInner {
         router: Mutex::new(Some(Router::new())),
@@ -317,8 +316,6 @@ async fn common_main(
             );
         }
     }
-
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
     if config.run_indexer {
         handler

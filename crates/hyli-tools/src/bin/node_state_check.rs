@@ -10,7 +10,7 @@ use hyli_contract_sdk::BlockHeight;
 use hyli_modules::module_handle_messages;
 use hyli_modules::modules::{Module, module_bus_client};
 use hyli_modules::{
-    bus::{SharedMessageBus, metrics::BusMetrics},
+    bus::SharedMessageBus,
     modules::{
         ModulesHandler, block_processor::BusOnlyProcessor, da_listener::DAListenerConf,
         da_listener::SignedDAListener,
@@ -35,12 +35,12 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting Node State Check with config: {:?}", config);
 
-    let bus = SharedMessageBus::new(BusMetrics::global());
+    let bus = SharedMessageBus::new();
 
     tracing::info!("Setting up modules");
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
     handler
         .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {

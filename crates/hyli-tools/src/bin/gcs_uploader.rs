@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 
 use hyli_modules::{
-    bus::{SharedMessageBus, metrics::BusMetrics},
+    bus::SharedMessageBus,
     modules::{
         ModulesHandler,
         block_processor::BusOnlyProcessor,
@@ -41,12 +41,12 @@ async fn main() -> Result<()> {
 
     let _ = init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
-    let bus = SharedMessageBus::new(BusMetrics::global());
+    let bus = SharedMessageBus::new();
 
     tracing::info!("Setting up modules");
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
     let upload_start =
         GcsUploader::get_last_uploaded_block(&config.gcs, &config.data_directory).await?;

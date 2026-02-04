@@ -271,7 +271,6 @@ mod tests {
     use utoipa::openapi::OpenApi;
 
     use super::*;
-    use crate::bus::metrics::BusMetrics;
     use crate::bus::SharedMessageBus;
     use crate::node_state::NodeState;
     use std::collections::BTreeMap;
@@ -346,7 +345,7 @@ mod tests {
             api: Default::default(),
         };
 
-        ContractStateIndexer::<MockState>::build(SharedMessageBus::new(BusMetrics::global()), ctx)
+        ContractStateIndexer::<MockState>::build(SharedMessageBus::new(), ctx)
             .await
             .unwrap()
     }
