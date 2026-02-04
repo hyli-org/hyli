@@ -3,7 +3,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     future::Future,
-    io::{BufWriter, Write},
+    io::{BufWriter, ErrorKind, Write},
     path::{Path, PathBuf},
     pin::Pin,
     time::Duration,
@@ -27,6 +27,22 @@ pub use crate::utils::checksums::{
 const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const MODULE_ID_SEPARATOR: char = '#';
 const PERSISTENCE_FAILURES_LOG: &str = "persistence_failures.log";
+
+#[cfg(target_os = "linux")]
+fn is_mount_point(path: &Path) -> Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::metadata(path)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| Error::msg("data_dir has no parent"))?;
+    let parent_meta = fs::metadata(parent)?;
+    Ok(meta.dev() != parent_meta.dev())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_mount_point(_path: &Path) -> Result<bool> {
+    Ok(false)
+}
 
 pub type ModulePersistOutput = Vec<(PathBuf, u32)>;
 
@@ -428,9 +444,21 @@ impl ModulesHandler {
             module_shutdown_order: Vec::new(),
         };
 
-        // Ensure data_dir exists
-        if !data_dir.exists() {
-            fs::create_dir_all(&data_dir).context("Failed to create data directory")?;
+        // Try to read the directory
+        let mut entries = match fs::read_dir(&data_dir) {
+            Ok(it) => it,
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                fs::create_dir_all(&data_dir).context("Failed to create data directory")?;
+                return Ok(module_handler);
+            }
+            Err(e) => {
+                bail!("Failed to read data_dir {}: {}", data_dir.display(), e);
+            }
+        };
+
+        // Directory exists — check emptiness
+        if entries.next().is_none() {
+            // If empty, nothing to do
             return Ok(module_handler);
         }
 
@@ -449,6 +477,14 @@ impl ModulesHandler {
         };
 
         if should_backup {
+            if is_mount_point(&data_dir)? {
+                bail!(
+                    "Cannot back up data_dir because it is a mount point: {}. Use a subdirectory (e.g. {}), or empty the directory manually.",
+                    data_dir.display(),
+                    data_dir.join("node").display()
+                );
+            }
+
             // Generate a backup directory name using a timestamp
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
