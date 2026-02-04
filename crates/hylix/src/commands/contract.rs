@@ -1,16 +1,18 @@
 use crate::commands::devnet::DevnetContext;
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{
-    create_progress_bar, execute_command_with_progress, log_info, log_success, log_warning,
-};
+use crate::logging::{log_info, log_success, log_warning, ProgressExecutor};
 use client_sdk::rest_client::NodeApiClient;
 use std::time::Duration;
 
 /// Contract action enumeration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::Subcommand)]
 pub enum ContractAction {
     /// Delete a contract
-    Delete { name: String },
+    #[command(alias = "d")]
+    Delete {
+        /// Contract name
+        name: String,
+    },
 }
 
 /// Execute the `hy contract` command
@@ -40,31 +42,24 @@ async fn delete_contract(contract_name: &str) -> HylixResult<()> {
 
     log_info(&format!("Deleting contract '{contract_name}'..."));
 
-    // Create a multi-progress bar for the command execution
-    let mpb = indicatif::MultiProgress::new();
-    let pb = mpb.add(create_progress_bar());
-    pb.set_message(format!("Deleting contract {contract_name}..."));
+    // Create a progress executor for the command execution
+    let executor = ProgressExecutor::new();
+    let success = executor
+        .execute_command(
+            format!("Delete contract {contract_name}"),
+            "npx",
+            &[
+                "--yes",
+                "hyli-wallet-cli",
+                "delete_contract",
+                contract_name,
+                crate::constants::passwords::DEFAULT,
+            ],
+            None,
+        )
+        .await?;
 
-    // Execute the delete_contract command
-    let task_name = format!("Delete contract {contract_name}");
-    let success = execute_command_with_progress(
-        &mpb,
-        &task_name,
-        "npx",
-        &[
-            "--yes",
-            "hyli-wallet-cli",
-            "delete_contract",
-            contract_name,
-            "hylisecure",
-        ],
-        None,
-    )
-    .await?;
-
-    // Clear progress bars
-    mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
+    executor.clear()?;
 
     if !success {
         log_warning(&format!(
@@ -73,7 +68,8 @@ async fn delete_contract(contract_name: &str) -> HylixResult<()> {
         log_warning(&format!(
             "Command was: {}",
             console::style(format!(
-                "npx hyli-wallet-cli delete_contract {contract_name} hylisecure"
+                "npx hyli-wallet-cli delete_contract {contract_name} {}",
+                crate::constants::passwords::DEFAULT
             ))
             .green()
         ));

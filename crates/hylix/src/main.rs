@@ -3,9 +3,15 @@ use color_eyre::Result;
 
 mod commands;
 mod config;
+mod constants;
+mod docker;
+mod env_builder;
 mod error;
 mod logging;
+mod process;
+mod validation;
 
+use commands::{config::ConfigAction, contract::ContractAction, devnet::DevnetAction};
 use config::BackendType as ConfigBackendType;
 use hylix::logging::log_error;
 
@@ -105,98 +111,6 @@ enum Commands {
     },
 }
 
-#[derive(Subcommand)]
-enum DevnetAction {
-    /// Start the local devnet
-    #[command(alias = "u")]
-    Up {
-        /// Reset to fresh state
-        #[arg(long)]
-        reset: bool,
-        /// Create and fund test accounts after starting devnet
-        #[arg(long)]
-        bake: bool,
-        /// Profile to use for baking (e.g., --profile=bobalice)
-        #[arg(long, value_name = "PROFILE")]
-        profile: Option<String>,
-        /// No pull docker images (use existing local)
-        #[arg(long)]
-        no_pull: bool,
-    },
-    /// Stop the local devnet
-    #[command(alias = "d")]
-    Down,
-    /// Pause the local devnet
-    #[command(alias = "p")]
-    Pause,
-    /// Check the status of the local devnet
-    #[command(alias = "ps")]
-    Status,
-    /// Restart the local devnet
-    #[command(alias = "r")]
-    Restart {
-        /// Reset to fresh state
-        #[arg(long)]
-        reset: bool,
-        /// Create and fund test accounts after restarting devnet
-        #[arg(long)]
-        bake: bool,
-        /// Profile to use for baking (e.g., --profile=bobalice)
-        #[arg(long, value_name = "PROFILE")]
-        profile: Option<String>,
-        /// No pull docker images (use existing local)
-        #[arg(long)]
-        no_pull: bool,
-    },
-    /// Create and fund test accounts
-    #[command(alias = "b")]
-    Bake {
-        /// Profile to use for baking
-        profile: Option<String>,
-    },
-    /// Fork a running network
-    #[command(alias = "f")]
-    Fork {
-        /// Network endpoint to fork
-        endpoint: String,
-    },
-    /// Print environment variables for sourcing in bash
-    #[command(alias = "e")]
-    Env,
-    /// Follow logs of a devnet service
-    #[command(alias = "l")]
-    Logs {
-        /// Service to follow logs for
-        service: String,
-    },
-}
-
-#[derive(Subcommand)]
-enum ConfigAction {
-    /// Display current configuration
-    Show,
-    /// Edit configuration values
-    #[command(alias = "set")]
-    Edit {
-        /// Configuration key to edit (e.g., "default_backend", "devnet.node_port")
-        key: String,
-        /// New value for the configuration key
-        value: String,
-    },
-    /// Reset configuration to defaults
-    Reset,
-}
-
-#[derive(Subcommand)]
-enum ContractAction {
-    /// Delete a contract
-    #[command(alias = "d")]
-    Delete {
-        /// Contract name
-        name: String,
-    },
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize error handling
@@ -223,61 +137,10 @@ async fn main() -> Result<()> {
             watch,
             extra_args,
         } => commands::run::execute(testnet, watch, extra_args).await,
-        Commands::Devnet { action } => {
-            let devnet_action = match action {
-                DevnetAction::Up {
-                    reset,
-                    bake,
-                    profile,
-                    no_pull,
-                } => commands::devnet::DevnetAction::Up {
-                    reset,
-                    bake,
-                    profile,
-                    no_pull,
-                },
-                DevnetAction::Down => commands::devnet::DevnetAction::Down,
-                DevnetAction::Pause => commands::devnet::DevnetAction::Pause,
-                DevnetAction::Restart {
-                    reset,
-                    bake,
-                    profile,
-                    no_pull,
-                } => commands::devnet::DevnetAction::Restart {
-                    reset,
-                    bake,
-                    profile,
-                    no_pull,
-                },
-                DevnetAction::Status => commands::devnet::DevnetAction::Status,
-                DevnetAction::Fork { endpoint } => {
-                    commands::devnet::DevnetAction::Fork { endpoint }
-                }
-                DevnetAction::Bake { profile } => commands::devnet::DevnetAction::Bake { profile },
-                DevnetAction::Env => commands::devnet::DevnetAction::Env,
-                DevnetAction::Logs { service } => commands::devnet::DevnetAction::Logs { service },
-            };
-            commands::devnet::execute(devnet_action).await
-        }
+        Commands::Devnet { action } => commands::devnet::execute(action).await,
         Commands::Clean => commands::clean::execute().await,
-        Commands::Config { action } => {
-            let config_action = match action {
-                ConfigAction::Show => commands::config::ConfigAction::Show,
-                ConfigAction::Edit { key, value } => {
-                    commands::config::ConfigAction::Edit { key, value }
-                }
-                ConfigAction::Reset => commands::config::ConfigAction::Reset,
-            };
-            commands::config::execute(config_action).await
-        }
-        Commands::Contract { action } => {
-            let contract_action = match action {
-                ContractAction::Delete { name } => {
-                    commands::contract::ContractAction::Delete { name }
-                }
-            };
-            commands::contract::execute(contract_action).await
-        }
+        Commands::Config { action } => commands::config::execute(action).await,
+        Commands::Contract { action } => commands::contract::execute(action).await,
     };
 
     if let Err(err) = result {

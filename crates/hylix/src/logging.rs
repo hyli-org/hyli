@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{borrow::Cow, time::Duration};
 
 use tracing_subscriber::{fmt, prelude::*, EnvFilter, Registry};
 
@@ -219,5 +219,50 @@ pub fn log_info(message: &str) {
         println!("{} {}", console::style("ℹ").blue(), message);
     } else {
         println!("ℹ {message}");
+    }
+}
+
+/// Progress executor for multiple tasks
+pub struct ProgressExecutor {
+    mpb: indicatif::MultiProgress,
+}
+
+impl ProgressExecutor {
+    pub fn new() -> Self {
+        Self {
+            mpb: indicatif::MultiProgress::new(),
+        }
+    }
+
+    pub fn add_task<S: Into<Cow<'static, str>>>(&self, message: S) -> indicatif::ProgressBar {
+        let pb = self.mpb.add(create_progress_bar());
+        pb.set_message(message);
+        pb
+    }
+
+    pub async fn execute_command<S: Into<Cow<'static, str>>>(
+        &self,
+        message: S,
+        program: &str,
+        args: &[&str],
+        current_dir: Option<&str>,
+    ) -> HylixResult<bool> {
+        let _pb = self.add_task(message);
+
+        let command_name = format!("{} {}", program, args.join(" "));
+
+        execute_command_with_progress(&self.mpb, &command_name, program, args, current_dir).await
+    }
+
+    pub fn clear(&self) -> HylixResult<()> {
+        self.mpb
+            .clear()
+            .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))
+    }
+}
+
+impl Default for ProgressExecutor {
+    fn default() -> Self {
+        Self::new()
     }
 }

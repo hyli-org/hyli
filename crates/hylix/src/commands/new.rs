@@ -1,6 +1,6 @@
 use crate::config::BackendType;
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{create_progress_bar_with_msg, log_info, log_success, log_warning};
+use crate::logging::{log_info, log_success, log_warning, ProgressExecutor};
 use std::path::Path;
 use std::process::Command;
 
@@ -31,27 +31,31 @@ pub async fn execute(project_name: String, backend: Option<BackendType>) -> Hyli
 
     log_info(&format!("Using backend: {backend_type:?}"));
 
+    let executor = ProgressExecutor::new();
+
     // Clone the scaffold repository
-    let pb = create_progress_bar_with_msg("Cloning scaffold repository...");
+    let pb = executor.add_task("Cloning scaffold repository...");
     clone_scaffold(&project_name).await?;
-    pb.finish_with_message("Scaffold cloned successfully");
+    drop(pb);
+    log_success("Scaffold cloned successfully");
 
     // Setup project for the chosen backend
-    let pb = create_progress_bar_with_msg("Setting up project structure...");
+    let pb = executor.add_task("Setting up project structure...");
     setup_backend(&project_name, &backend_type).await?;
-    pb.finish_with_message("Project structure configured");
+    drop(pb);
+    log_success("Project structure configured");
 
     // Initialize git repository
-    let pb = create_progress_bar_with_msg("Initializing git repository...");
+    let pb = executor.add_task("Initializing git repository...");
     init_git_repo(&project_name)?;
-    pb.finish_with_message("Git repository initialized");
+    drop(pb);
+    log_success("Git repository initialized");
 
     log_success(&format!("Project '{project_name}' created successfully!"));
     log_info("Next steps:");
     log_info(&format!("  cd {project_name}"));
-    log_info("  hy build");
-    log_info("  hy devnet");
-    log_info("  hy test");
+    log_info("  hy devnet up");
+    log_info("  hy run");
 
     Ok(())
 }
@@ -127,7 +131,6 @@ async fn setup_sp1_backend(_project_name: &str) -> HylixResult<()> {
     // - Updating Cargo.toml with SP1 dependencies
     // - Setting up SP1-specific build configuration
     // - Creating SP1-specific contract templates
-    log_info("Setting up SP1 backend configuration... (not yet implemented)");
 
     // Placeholder implementation
     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -142,7 +145,6 @@ async fn setup_risc0_backend(_project_name: &str) -> HylixResult<()> {
     // - Updating Cargo.toml with Risc0 dependencies
     // - Setting up Risc0-specific build configuration
     // - Creating Risc0-specific contract templates
-    log_info("Setting up Risc0 backend configuration... (not yet implemented)");
 
     // Placeholder implementation
     std::thread::sleep(std::time::Duration::from_millis(500));
