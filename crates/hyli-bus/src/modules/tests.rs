@@ -779,6 +779,33 @@ async fn test_new_creates_fresh_data_dir() {
 }
 
 #[tokio::test]
+async fn test_new_with_existing_empty_dir_does_not_backup() {
+    let dir = tempdir().unwrap();
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+
+    // Ensure directory is empty
+    assert!(std::fs::read_dir(&data_dir).unwrap().next().is_none());
+
+    let shared_bus = SharedMessageBus::new();
+
+    let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
+
+    // Original data_dir should still exist
+    assert!(data_dir.exists());
+
+    // No backup should have been created
+    let parent = data_dir.parent().unwrap();
+    let entries: Vec<_> = std::fs::read_dir(parent)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().contains("backup"))
+        .collect();
+
+    assert_eq!(entries.len(), 0, "Should not have created any backup");
+}
+
+#[tokio::test]
 async fn test_new_empty_manifest_without_state_files_backs_up() {
     let dir = tempdir().unwrap();
     let data_dir = dir.path().join("data");

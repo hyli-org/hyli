@@ -3,7 +3,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     future::Future,
-    io::{BufWriter, Write},
+    io::{BufWriter, ErrorKind, Write},
     path::{Path, PathBuf},
     pin::Pin,
     time::Duration,
@@ -428,9 +428,21 @@ impl ModulesHandler {
             module_shutdown_order: Vec::new(),
         };
 
-        // Ensure data_dir exists
-        if !data_dir.exists() {
-            fs::create_dir_all(&data_dir).context("Failed to create data directory")?;
+        // Try to read the directory
+        let mut entries = match fs::read_dir(&data_dir) {
+            Ok(it) => it,
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                fs::create_dir_all(&data_dir).context("Failed to create data directory")?;
+                return Ok(module_handler);
+            }
+            Err(e) => {
+                bail!("Failed to read data_dir {}: {}", data_dir.display(), e);
+            }
+        };
+
+        // Directory exists — check emptiness
+        if entries.next().is_none() {
+            // If empty, nothing to do
             return Ok(module_handler);
         }
 
