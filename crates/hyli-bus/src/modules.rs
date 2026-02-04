@@ -28,6 +28,22 @@ const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const MODULE_ID_SEPARATOR: char = '#';
 const PERSISTENCE_FAILURES_LOG: &str = "persistence_failures.log";
 
+#[cfg(target_os = "linux")]
+fn is_mount_point(path: &Path) -> Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::metadata(path)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| Error::msg("data_dir has no parent"))?;
+    let parent_meta = fs::metadata(parent)?;
+    Ok(meta.dev() != parent_meta.dev())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_mount_point(_path: &Path) -> Result<bool> {
+    Ok(false)
+}
+
 pub type ModulePersistOutput = Vec<(PathBuf, u32)>;
 
 /// Module trait to define startup dependencies
@@ -461,6 +477,14 @@ impl ModulesHandler {
         };
 
         if should_backup {
+            if is_mount_point(&data_dir)? {
+                bail!(
+                    "Cannot back up data_dir because it is a mount point: {}. Use a subdirectory (e.g. {}), or empty the directory manually.",
+                    data_dir.display(),
+                    data_dir.join("node").display()
+                );
+            }
+
             // Generate a backup directory name using a timestamp
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
