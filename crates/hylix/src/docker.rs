@@ -303,3 +303,197 @@ fn subnets_overlap(ip1: u32, prefix1: u8, ip2: u32, prefix2: u8) -> bool {
 
     (ip1 & mask) == (ip2 & mask)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_subnet_valid() {
+        // Test valid subnet parsing
+        assert_eq!(
+            parse_subnet("10.89.0.0/24"),
+            Some((0x0A590000, 24)) // 10.89.0.0 = 0x0A590000
+        );
+
+        assert_eq!(
+            parse_subnet("172.18.5.0/24"),
+            Some((0xAC120500, 24)) // 172.18.5.0 = 0xAC120500
+        );
+
+        assert_eq!(
+            parse_subnet("192.168.1.0/24"),
+            Some((0xC0A80100, 24)) // 192.168.1.0 = 0xC0A80100
+        );
+
+        assert_eq!(
+            parse_subnet("10.0.0.0/16"),
+            Some((0x0A000000, 16)) // 10.0.0.0 = 0x0A000000
+        );
+    }
+
+    #[test]
+    fn test_parse_subnet_invalid() {
+        // Test invalid subnet formats
+        assert_eq!(parse_subnet(""), None);
+        assert_eq!(parse_subnet("10.89.0.0"), None); // Missing prefix
+        assert_eq!(parse_subnet("10.89.0.0/"), None); // Empty prefix
+        assert_eq!(parse_subnet("10.89.0.0/abc"), None); // Invalid prefix
+        assert_eq!(parse_subnet("10.89.0/24"), None); // Incomplete IP
+        assert_eq!(parse_subnet("10.89.0.0.0/24"), None); // Too many octets
+        assert_eq!(parse_subnet("256.0.0.0/24"), None); // Invalid octet
+        assert_eq!(parse_subnet("10.89.-1.0/24"), None); // Negative octet
+    }
+
+    #[test]
+    fn test_subnets_overlap_same_network() {
+        // Same subnet should overlap
+        let (ip1, prefix1) = parse_subnet("10.89.0.0/24").unwrap();
+        let (ip2, prefix2) = parse_subnet("10.89.0.0/24").unwrap();
+        assert!(subnets_overlap(ip1, prefix1, ip2, prefix2));
+    }
+
+    #[test]
+    fn test_subnets_overlap_within_larger() {
+        // 10.89.5.0/24 is within 10.89.0.0/16
+        let (ip1, prefix1) = parse_subnet("10.89.5.0/24").unwrap();
+        let (ip2, prefix2) = parse_subnet("10.89.0.0/16").unwrap();
+        assert!(subnets_overlap(ip1, prefix1, ip2, prefix2));
+
+        // Reverse order should also work
+        assert!(subnets_overlap(ip2, prefix2, ip1, prefix1));
+    }
+
+    #[test]
+    fn test_subnets_overlap_adjacent_no_overlap() {
+        // Adjacent /24 subnets should not overlap
+        let (ip1, prefix1) = parse_subnet("10.89.0.0/24").unwrap();
+        let (ip2, prefix2) = parse_subnet("10.89.1.0/24").unwrap();
+        assert!(!subnets_overlap(ip1, prefix1, ip2, prefix2));
+    }
+
+    #[test]
+    fn test_subnets_overlap_different_networks() {
+        // Completely different networks should not overlap
+        let (ip1, prefix1) = parse_subnet("10.89.0.0/24").unwrap();
+        let (ip2, prefix2) = parse_subnet("172.18.0.0/24").unwrap();
+        assert!(!subnets_overlap(ip1, prefix1, ip2, prefix2));
+
+        let (ip1, prefix1) = parse_subnet("192.168.1.0/24").unwrap();
+        let (ip2, prefix2) = parse_subnet("192.168.2.0/24").unwrap();
+        assert!(!subnets_overlap(ip1, prefix1, ip2, prefix2));
+    }
+
+    #[test]
+    fn test_subnets_overlap_same_range_different_prefix() {
+        // 10.89.0.0/16 and 10.89.0.0/24 overlap (second is within first)
+        let (ip1, prefix1) = parse_subnet("10.89.0.0/16").unwrap();
+        let (ip2, prefix2) = parse_subnet("10.89.0.0/24").unwrap();
+        assert!(subnets_overlap(ip1, prefix1, ip2, prefix2));
+
+        // 10.89.128.0/24 is within 10.89.0.0/16
+        let (ip1, prefix1) = parse_subnet("10.89.0.0/16").unwrap();
+        let (ip2, prefix2) = parse_subnet("10.89.128.0/24").unwrap();
+        assert!(subnets_overlap(ip1, prefix1, ip2, prefix2));
+
+        // 10.90.0.0/24 is NOT within 10.89.0.0/16
+        let (ip1, prefix1) = parse_subnet("10.89.0.0/16").unwrap();
+        let (ip2, prefix2) = parse_subnet("10.90.0.0/24").unwrap();
+        assert!(!subnets_overlap(ip1, prefix1, ip2, prefix2));
+    }
+
+    #[test]
+    fn test_subnet_conflicts_no_existing() {
+        // No conflict when there are no existing subnets
+        let existing = vec![];
+        assert!(!subnet_conflicts("10.89.0.0/24", &existing));
+    }
+
+    #[test]
+    fn test_subnet_conflicts_exact_match() {
+        // Conflict with exact same subnet
+        let existing = vec!["10.89.0.0/24".to_string()];
+        assert!(subnet_conflicts("10.89.0.0/24", &existing));
+    }
+
+    #[test]
+    fn test_subnet_conflicts_within_existing() {
+        // Conflict when candidate is within existing subnet
+        let existing = vec!["10.89.0.0/16".to_string()];
+        assert!(subnet_conflicts("10.89.5.0/24", &existing));
+        assert!(subnet_conflicts("10.89.128.0/24", &existing));
+    }
+
+    #[test]
+    fn test_subnet_conflicts_contains_existing() {
+        // Conflict when candidate contains existing subnet
+        let existing = vec!["10.89.5.0/24".to_string()];
+        assert!(subnet_conflicts("10.89.0.0/16", &existing));
+    }
+
+    #[test]
+    fn test_subnet_conflicts_no_overlap() {
+        // No conflict with non-overlapping subnets
+        let existing = vec![
+            "10.88.0.0/24".to_string(),
+            "10.90.0.0/24".to_string(),
+            "172.18.0.0/24".to_string(),
+        ];
+        assert!(!subnet_conflicts("10.89.0.0/24", &existing));
+    }
+
+    #[test]
+    fn test_subnet_conflicts_adjacent() {
+        // No conflict with adjacent subnets
+        let existing = vec!["10.89.0.0/24".to_string(), "10.89.2.0/24".to_string()];
+        assert!(!subnet_conflicts("10.89.1.0/24", &existing));
+    }
+
+    #[test]
+    fn test_subnet_conflicts_multiple_existing() {
+        // Test with multiple existing subnets
+        let existing = vec![
+            "10.89.0.0/24".to_string(),
+            "172.18.0.0/16".to_string(),
+            "192.168.1.0/24".to_string(),
+        ];
+
+        // Should conflict with each existing subnet
+        assert!(subnet_conflicts("10.89.0.0/24", &existing));
+        assert!(subnet_conflicts("172.18.5.0/24", &existing));
+        assert!(subnet_conflicts("192.168.1.0/24", &existing));
+
+        // Should not conflict
+        assert!(!subnet_conflicts("10.90.0.0/24", &existing));
+        assert!(!subnet_conflicts("192.168.2.0/24", &existing));
+    }
+
+    #[test]
+    fn test_subnet_conflicts_invalid_candidate() {
+        // Invalid candidate should be considered a conflict
+        let existing = vec!["10.89.0.0/24".to_string()];
+        assert!(subnet_conflicts("invalid", &existing));
+        assert!(subnet_conflicts("10.89.0.0", &existing));
+    }
+
+    #[test]
+    fn test_subnet_conflicts_invalid_existing() {
+        // Invalid existing subnets should be ignored
+        let existing = vec!["invalid".to_string(), "10.89.0.0".to_string()];
+        assert!(!subnet_conflicts("10.90.0.0/24", &existing));
+    }
+
+    #[test]
+    fn test_subnet_conflicts_edge_cases() {
+        // Test edge cases with /8 and /32
+        let existing = vec!["10.0.0.0/8".to_string()];
+        assert!(subnet_conflicts("10.89.0.0/24", &existing));
+        assert!(subnet_conflicts("10.255.255.0/24", &existing));
+        assert!(!subnet_conflicts("11.0.0.0/24", &existing));
+
+        let existing = vec!["192.168.1.1/32".to_string()];
+        assert!(subnet_conflicts("192.168.1.1/32", &existing));
+        assert!(!subnet_conflicts("192.168.1.2/32", &existing));
+        assert!(subnet_conflicts("192.168.1.0/24", &existing));
+    }
+}
