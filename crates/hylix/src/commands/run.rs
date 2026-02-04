@@ -1,6 +1,8 @@
 use crate::config::HylixConfig;
+use crate::env_builder::EnvBuilder;
 use crate::error::{HylixError, HylixResult};
 use crate::logging::{log_error, log_info, log_success};
+use crate::validation::{validate_project, ValidationLevel};
 use std::process::Command;
 
 /// Execute the `hy run` command
@@ -18,7 +20,7 @@ pub async fn execute(testnet: bool, watch: bool, extra_args: Vec<String>) -> Hyl
     let config = HylixConfig::load()?;
 
     // Check if we're in a valid project directory
-    validate_project_directory()?;
+    validate_project(ValidationLevel::Run)?;
 
     // Check if devnet is running if not in testnet
     if !testnet && !crate::commands::devnet::is_devnet_responding(&config.clone().into()).await? {
@@ -39,17 +41,6 @@ pub async fn execute(testnet: bool, watch: bool, extra_args: Vec<String>) -> Hyl
     Ok(())
 }
 
-/// Validate that we're in a valid project directory
-fn validate_project_directory() -> HylixResult<()> {
-    if !std::path::Path::new("server").exists() {
-        return Err(HylixError::project(
-            "No 'server' directory found. Are you in a Hylix project directory?",
-        ));
-    }
-
-    Ok(())
-}
-
 /// Run the backend service
 pub async fn run_backend(
     testnet: bool,
@@ -58,7 +49,13 @@ pub async fn run_backend(
     extra_args: &[String],
 ) -> HylixResult<tokio::process::Child> {
     let server_port = config.run.server_port.to_string();
-    let mut args = vec!["run", "--bin", "server", "-F", "nonreproducible"];
+    let mut args = vec![
+        "run",
+        "--bin",
+        "server",
+        "-F",
+        crate::constants::features::NONREPRODUCIBLE,
+    ];
     args.extend(config.build.extra_flags.iter().map(String::as_str));
     args.extend(["--", "--server-port", &server_port]);
     if config.build.release {
@@ -82,26 +79,8 @@ pub async fn run_backend(
         console::style(&format!("$ cargo {}", args.join(" "))).green()
     ));
 
-    let backend = tokio::process::Command::new("cargo")
-        .env("RISC0_DEV_MODE", "1")
-        .env("SP1_PROVER", "mock")
-        .env(
-            "HYLI_NODE_URL",
-            format!("http://localhost:{}", config.devnet.node_port),
-        )
-        .env(
-            "HYLI_INDEXER_URL",
-            format!("http://localhost:{}", config.devnet.indexer_port),
-        )
-        .env(
-            "HYLI_DA_READ_FROM",
-            format!("localhost:{}", config.devnet.da_port),
-        )
-        .env(
-            "HYLI_REGISTRY_URL",
-            format!("http://localhost:{}", config.devnet.registry_server_port),
-        )
-        .env("HYLI_REGISTRY_API_KEY", "dev")
+    let backend = EnvBuilder::for_devnet(config)
+        .into_tokio_command("cargo")
         .stdout(if print_logs {
             std::process::Stdio::inherit()
         } else {
@@ -171,28 +150,9 @@ async fn run_with_watch(testnet: bool, config: &crate::config::HylixConfig) -> H
         args.push("--testnet");
     }
 
-    let mut backend = Command::new("cargo")
-        .env("RISC0_DEV_MODE", "1")
-        .env("SP1_PROVER", "mock")
-        .env(
-            "HYLI_NODE_URL",
-            format!("http://localhost:{}", config.devnet.node_port),
-        )
-        .env(
-            "HYLI_INDEXER_URL",
-            format!("http://localhost:{}", config.devnet.indexer_port),
-        )
-        .env(
-            "HYLI_DA_READ_FROM",
-            format!("localhost:{}", config.devnet.da_port),
-        )
-        .env(
-            "HYLI_DATABASE_URL",
-            format!(
-                "postgresql://postgres:postgres@localhost:{}",
-                config.devnet.postgres_port
-            ),
-        )
+    let mut backend = EnvBuilder::for_devnet(config)
+        .hyli_database_url(&config.devnet.postgres_port)
+        .into_std_command("cargo")
         .args(&args)
         .spawn()
         .map_err(|e| HylixError::backend(format!("Failed to start backend with watch: {e}")))?;
