@@ -1,6 +1,5 @@
 use crate::commands::bake::bake_devnet;
 use crate::config::HylixConfig;
-use crate::constants;
 use crate::docker::{ContainerManager, ContainerSpec};
 use crate::env_builder::EnvBuilder;
 use crate::error::{HylixError, HylixResult};
@@ -8,6 +7,7 @@ use crate::logging::{
     create_progress_bar, create_progress_bar_with_msg, log_error, log_info, log_success,
     log_warning, ProgressExecutor,
 };
+use crate::{constants, docker};
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use std::path::PathBuf;
 use std::process::Command;
@@ -634,29 +634,39 @@ async fn pause_devnet(_context: &DevnetContext) -> HylixResult<()> {
 
 /// Stop the local devnet
 async fn stop_devnet(_context: &DevnetContext) -> HylixResult<()> {
-    let pb = create_progress_bar_with_msg("Stopping local devnet...");
+    let executor = ProgressExecutor::new();
 
     // Stop wallet app
-    pb.set_message("Stopping wallet app...");
+    let pb = executor.add_task("Stopping wallet app...");
     stop_wallet_app(&pb).await?;
+    drop(pb);
+    log_success("Wallet app stopped");
 
     // Stop registry
-    pb.set_message("Stopping registry...");
+    let pb = executor.add_task("Stopping registry...");
     stop_registry(&pb).await?;
+    drop(pb);
+    log_success("Registry stopped");
 
     // Stop indexer
-    pb.set_message("Stopping indexer...");
+    let pb = executor.add_task("Stopping indexer...");
     stop_indexer(&pb).await?;
+    drop(pb);
+    log_success("Indexer stopped");
 
     // Stop local node
-    pb.set_message("Stopping local node...");
+    let pb = executor.add_task("Stopping local node...");
     stop_local_node(&pb).await?;
+    drop(pb);
+    log_success("Local node stopped");
 
     // Remove docker network
-    pb.set_message("Removing docker network...");
+    let pb = executor.add_task("Removing docker network...");
     remove_docker_network(&pb).await?;
+    drop(pb);
+    log_success("Docker network removed");
 
-    pb.finish_and_clear();
+    executor.clear()?;
     log_success("Local devnet stopped successfully!");
     Ok(())
 }
@@ -714,28 +724,23 @@ async fn reset_devnet_state(_context: &DevnetContext) -> HylixResult<()> {
 
 /// Create the docker network
 async fn create_docker_network(executor: &ProgressExecutor) -> HylixResult<String> {
+    // Find an available subnet
+    let subnet = docker::find_available_subnet().await?;
+
     let success = executor
         .execute_command(
             "Creating docker network...",
             "docker",
-            &["network", "create", constants::networks::DEVNET],
+            &[
+                "network",
+                "create",
+                "--subnet",
+                &subnet,
+                constants::networks::DEVNET,
+            ],
             None,
         )
         .await?;
-
-    let subnet = Command::new("docker")
-        .args([
-            "network",
-            "inspect",
-            "-f",
-            "{{(index .IPAM.Config 0).Subnet}}",
-            constants::networks::DEVNET,
-        ])
-        .output()
-        .map_err(|e| HylixError::process(format!("Failed to get Docker network subnet: {e}")))?
-        .stdout;
-
-    let subnet = String::from_utf8_lossy(&subnet).trim().to_string();
 
     if !success {
         return Err(HylixError::process(
@@ -1043,6 +1048,23 @@ async fn stop_local_node(pb: &indicatif::ProgressBar) -> HylixResult<()> {
 async fn remove_docker_network(pb: &indicatif::ProgressBar) -> HylixResult<()> {
     use tokio::process::Command;
 
+    // If network does not exist, skip
+    let output = Command::new("docker")
+        .args([
+            "network",
+            "ls",
+            "-q",
+            "-f",
+            &format!("name=^{}", constants::networks::DEVNET),
+        ])
+        .output()
+        .await
+        .map_err(|e| HylixError::process(format!("Failed to check Docker networks: {e}")))?;
+    if output.stdout.is_empty() {
+        pb.set_message("Docker network does not exist, skipping...");
+        return Ok(());
+    }
+
     pb.set_message("Removing docker network...");
     let output = Command::new("docker")
         .args(["network", "rm", constants::networks::DEVNET])
@@ -1139,6 +1161,12 @@ async fn stop_and_remove_container(
     display_name: &str,
 ) -> HylixResult<()> {
     use tokio::process::Command;
+
+    // If container does not exist, skip
+    if get_docker_container_status(container_name).await? == ContainerStatus::NotExisting {
+        pb.set_message(format!("{display_name} does not exist, skipping..."));
+        return Ok(());
+    }
 
     // Stop the container
     pb.set_message(format!("Stopping {display_name}..."));
