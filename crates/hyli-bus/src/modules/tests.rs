@@ -397,7 +397,6 @@ async fn test_multi_file_persist_writes_manifest_and_loads_files() {
 #[tokio::test]
 async fn test_build_module() {
     let dir = tempdir().unwrap();
-    hyli_turmoil_shims::init_test_meter_provider();
     let shared_bus = SharedMessageBus::new();
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
@@ -407,7 +406,6 @@ async fn test_build_module() {
 #[tokio::test]
 async fn test_add_module() {
     let dir = tempdir().unwrap();
-    hyli_turmoil_shims::init_test_meter_provider();
     let shared_bus = SharedMessageBus::new();
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
     let module = TestModule {
@@ -422,7 +420,6 @@ async fn test_add_module() {
 #[tokio::test]
 async fn test_start_modules() {
     let dir = tempdir().unwrap();
-    hyli_turmoil_shims::init_test_meter_provider();
     let shared_bus = SharedMessageBus::new();
     let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
@@ -449,7 +446,6 @@ async fn test_start_modules() {
 #[tokio::test]
 async fn test_start_stop_modules_in_order() {
     let dir = tempdir().unwrap();
-    hyli_turmoil_shims::init_test_meter_provider();
     let shared_bus = SharedMessageBus::new();
     let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
@@ -493,7 +489,6 @@ async fn test_start_stop_modules_in_order() {
 #[tokio::test]
 async fn test_shutdown_duplicate_modules() {
     let dir = tempdir().unwrap();
-    hyli_turmoil_shims::init_test_meter_provider();
     let shared_bus = SharedMessageBus::new();
     let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
@@ -519,7 +514,6 @@ async fn test_shutdown_duplicate_modules() {
 #[tokio::test]
 async fn test_shutdown_modules_exactly_once() {
     let dir = tempdir().unwrap();
-    hyli_turmoil_shims::init_test_meter_provider();
     let shared_bus = SharedMessageBus::new();
     let mut cancellation_counter_receiver = get_receiver::<usize>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
@@ -588,7 +582,6 @@ async fn test_shutdown_modules_exactly_once() {
 #[tokio::test]
 async fn test_shutdown_all_modules_if_one_fails() {
     let dir = tempdir().unwrap();
-    hyli_turmoil_shims::init_test_meter_provider();
     let shared_bus = SharedMessageBus::new();
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
@@ -646,7 +639,6 @@ async fn test_shutdown_all_modules_if_one_fails() {
 #[tokio::test]
 async fn test_shutdown_all_modules_if_one_module_panics() {
     let dir = tempdir().unwrap();
-    hyli_turmoil_shims::init_test_meter_provider();
     let shared_bus = SharedMessageBus::new();
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
     let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;

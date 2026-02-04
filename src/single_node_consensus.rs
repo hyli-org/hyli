@@ -268,7 +268,6 @@ mod tests {
     impl TestContext {
         pub async fn new(name: &str) -> Self {
             let crypto = BlstCrypto::new(name).unwrap();
-            hyli_turmoil_shims::init_test_meter_provider();
             let shared_bus = SharedMessageBus::new();
             let conf = Arc::new(Conf::default());
             let store = SingleNodeConsensusStore::default();

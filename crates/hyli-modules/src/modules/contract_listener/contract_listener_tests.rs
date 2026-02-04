@@ -355,7 +355,6 @@ async fn emits_new_tx_on_notifications() -> Result<()> {
     } = setup_pg().await?;
     let contract = ContractName("contract_1".to_string());
 
-    hyli_turmoil_shims::init_test_meter_provider();
     let bus = SharedMessageBus::new();
     let mut receiver: tokio::sync::broadcast::Receiver<
         crate::bus::BusEnvelope<ContractListenerEvent>,
@@ -413,7 +412,6 @@ async fn dispatches_unprocessed_blocks_on_startup() -> Result<()> {
     let (settled_tx_hash, _) = insert_settled_tx(&pool, &contract, 1).await?;
     let (sequenced_tx_hash, _) = insert_sequenced_tx(&pool, &contract, 2).await?;
 
-    hyli_turmoil_shims::init_test_meter_provider();
     let bus = SharedMessageBus::new();
     let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
     let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
@@ -482,7 +480,6 @@ async fn emits_status_updates_for_same_tx_and_new_txs() -> Result<()> {
     } = setup_pg().await?;
     let contract = ContractName("contract_1".to_string());
 
-    hyli_turmoil_shims::init_test_meter_provider();
     let bus = SharedMessageBus::new();
     let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
     let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
@@ -583,7 +580,6 @@ async fn emits_sequenced_events_within_same_block_by_index() -> Result<()> {
     } = setup_pg().await?;
     let contract = ContractName("contract_1".to_string());
 
-    hyli_turmoil_shims::init_test_meter_provider();
     let bus = SharedMessageBus::new();
     let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
     let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
@@ -642,7 +638,6 @@ async fn emits_settled_events_within_same_block_by_index() -> Result<()> {
     } = setup_pg().await?;
     let contract = ContractName("contract_1".to_string());
 
-    hyli_turmoil_shims::init_test_meter_provider();
     let bus = SharedMessageBus::new();
     let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
     let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
@@ -701,7 +696,6 @@ async fn emits_settled_update_below_last_seen_height() -> Result<()> {
     } = setup_pg().await?;
     let contract = ContractName("contract_1".to_string());
 
-    hyli_turmoil_shims::init_test_meter_provider();
     let bus = SharedMessageBus::new();
     let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
     let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;

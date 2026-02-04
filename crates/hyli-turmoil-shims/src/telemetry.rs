@@ -30,9 +30,9 @@ mod imp {
 
         pub fn global_meter_provider_or_panic() -> Arc<dyn MeterProvider + Send + Sync> {
             THREAD_METER_PROVIDER.with(|cell| {
-                cell.borrow()
-                    .clone()
-                    .unwrap_or_else(|| panic!("global meter provider is not initialized"))
+                cell.borrow().clone().unwrap_or_else(|| {
+                    panic!("OTLP meter accessed but global meter provider is not initialized")
+                })
             })
         }
     }
@@ -74,14 +74,43 @@ mod imp {
                     .clone();
             }
 
-            panic!("global meter provider is not initialized");
+            panic!("OTLP meter accessed but global meter provider is not initialized");
         }
 
+        #[cfg(test)]
         fn is_test_process() -> bool {
-            std::env::var("RUST_TEST_THREADS").is_ok()
+            true
+        }
+
+        #[cfg(not(test))]
+        fn is_test_process() -> bool {
+            let auto_init_env = std::env::var("CARGO_AUTO_INIT_OTLP_GLOBAL_METER").ok();
+            let auto_init_enabled = match auto_init_env.as_deref() {
+                Some("0") | Some("false") | Some("FALSE") | Some("False") => false,
+                Some(_) => true,
+                None => false,
+            };
+            let is_test_env = cfg!(test)
+                || std::env::var("RUST_TEST_THREADS").is_ok()
                 || std::env::var("NEXTEST_EXECUTION").is_ok()
-                || std::env::var("NEXTEST").is_ok()
-                || std::env::args().any(|arg| arg.starts_with("--test-threads"))
+                || std::env::args().any(|arg| arg.starts_with("--test-threads"));
+            let is_test = is_test_env || auto_init_enabled;
+
+            if auto_init_enabled {
+                eprintln!(
+                    "[hyli-turmoil-shims] warning: OTLP meter auto-init enabled via \
+CARGO_AUTO_INIT_OTLP_GLOBAL_METER; initialize the global meter provider explicitly \
+if this is unexpected"
+                );
+            } else if is_test_env {
+                eprintln!(
+                    "[hyli-turmoil-shims] warning: OTLP meter auto-init enabled due to \
+test environment detection; initialize the global meter provider explicitly in tests \
+if this is unexpected"
+                );
+            }
+
+            is_test
         }
     }
 

@@ -29,7 +29,6 @@ use hyli_crypto::BlstCrypto;
 use hyli_modules::bus::BusReceiver;
 use hyli_modules::modules::BuildApiContextInner;
 use hyli_modules::modules::Module;
-use hyli_turmoil_shims::init_test_meter_provider;
 use std::path::{Path, PathBuf};
 use tokio::sync::broadcast::error::TryRecvError;
 use utils::TimestampMs;
@@ -116,7 +115,6 @@ impl MempoolTestCtx {
 
     pub async fn new(name: &str) -> Self {
         let crypto = BlstCrypto::new(name).unwrap();
-        init_test_meter_provider();
         let shared_bus = SharedMessageBus::new();
         Self::new_with_shared_bus(name, &shared_bus, crypto).await
     }
