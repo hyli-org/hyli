@@ -3,7 +3,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     future::Future,
-    io::{BufWriter, Write},
+    io::{BufWriter, ErrorKind, Write},
     path::{Path, PathBuf},
     pin::Pin,
     time::Duration,
@@ -15,7 +15,7 @@ use crate::{
 };
 use anyhow::{bail, Context, Error, Result};
 use rand::{distr::Alphanumeric, Rng};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::utils::checksums::{self, ChecksumReader, ChecksumWriter};
 use crate::utils::deterministic_rng::deterministic_rng;
@@ -26,6 +26,23 @@ pub use crate::utils::checksums::{
 
 const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const MODULE_ID_SEPARATOR: char = '#';
+const PERSISTENCE_FAILURES_LOG: &str = "persistence_failures.log";
+
+#[cfg(target_os = "linux")]
+fn is_mount_point(path: &Path) -> Result<bool> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::metadata(path)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| Error::msg("data_dir has no parent"))?;
+    let parent_meta = fs::metadata(parent)?;
+    Ok(meta.dev() != parent_meta.dev())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_mount_point(_path: &Path) -> Result<bool> {
+    Ok(false)
+}
 
 pub type ModulePersistOutput = Vec<(PathBuf, u32)>;
 
@@ -417,16 +434,82 @@ pub enum ModuleStatus {
 }
 
 impl ModulesHandler {
-    pub async fn new(shared_bus: &SharedMessageBus, data_dir: PathBuf) -> ModulesHandler {
+    pub fn new(shared_bus: &SharedMessageBus, data_dir: PathBuf) -> Result<ModulesHandler> {
         let shared_message_bus = shared_bus.new_handle();
-
-        ModulesHandler {
+        let module_handler = ModulesHandler {
             bus: shared_message_bus,
             modules: vec![],
-            data_dir,
+            data_dir: data_dir.clone(),
             modules_statuses: HashMap::new(),
             module_shutdown_order: Vec::new(),
+        };
+
+        // Try to read the directory
+        let mut entries = match fs::read_dir(&data_dir) {
+            Ok(it) => it,
+            Err(e) if e.kind() == ErrorKind::NotFound => {
+                fs::create_dir_all(&data_dir).context("Failed to create data directory")?;
+                return Ok(module_handler);
+            }
+            Err(e) => {
+                bail!("Failed to read data_dir {}: {}", data_dir.display(), e);
+            }
+        };
+
+        // Directory exists — check emptiness
+        if entries.next().is_none() {
+            // If empty, nothing to do
+            return Ok(module_handler);
         }
+
+        let manifest_file = manifest_path(&data_dir);
+
+        // Decide whether the directory should be backed up
+        let should_backup = if manifest_file.exists() {
+            // Manifest exists → invalid if empty
+            match fs::read_to_string(&manifest_file) {
+                Ok(content) => content.trim().is_empty(),
+                Err(_) => true,
+            }
+        } else {
+            // No manifest → back up
+            true
+        };
+
+        if should_backup {
+            if is_mount_point(&data_dir)? {
+                bail!(
+                    "Cannot back up data_dir because it is a mount point: {}. Use a subdirectory (e.g. {}), or empty the directory manually.",
+                    data_dir.display(),
+                    data_dir.join("node").display()
+                );
+            }
+
+            // Generate a backup directory name using a timestamp
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis();
+
+            let backup_dir = data_dir.with_extension(format!("backup_{timestamp}"));
+
+            log_warn!(
+                fs::rename(&data_dir, &backup_dir),
+                "Moving data_dir to backup location"
+            )
+            .context("Failed to move data_dir to backup location")?;
+
+            warn!(
+                "Moved data_dir without valid manifest to backup: {} -> {}",
+                data_dir.display(),
+                backup_dir.display()
+            );
+
+            // Recreate an empty data_dir
+            fs::create_dir_all(&data_dir).context("Failed to recreate data_dir")?;
+        }
+
+        Ok(module_handler)
     }
 
     pub async fn start_modules(&mut self) -> Result<()> {
@@ -596,6 +679,31 @@ impl ModulesHandler {
             .collect();
         let has_shutdown_errors =
             !timed_out_modules.is_empty() || !persistence_failed_modules.is_empty();
+
+        if has_shutdown_errors {
+            let log_path = self.data_dir.join(PERSISTENCE_FAILURES_LOG);
+            if let Ok(mut file) = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+            {
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                for module in &timed_out_modules {
+                    _ = writeln!(file, "{timestamp} timed_out {module}");
+                }
+                for module in &persistence_failed_modules {
+                    _ = writeln!(file, "{timestamp} persistence_failed {module}");
+                }
+            } else {
+                warn!(
+                    "Failed to open persistence failure log at {}",
+                    log_path.display()
+                );
+            }
+        }
 
         let persisted_entries: ModulePersistOutput = self
             .modules_statuses
