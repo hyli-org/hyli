@@ -125,6 +125,10 @@ data_directory = "data_node_local"
 run_rest_server = true
 rest_server_port = {}
 
+# ADMIN API
+run_admin_server = true
+admin_server_port = {}
+
 # DA Server
 da_server_port = {}
 da_public_address = "{host_ip}:{}"
@@ -146,10 +150,16 @@ genesis_timestamp = {}
 
 [genesis]
 stakers = {{ {} }}
+
+[websocket]
+enabled = true
+server_port = 8888
+
 "#,
         multi_node.total_nodes,
         constants::containers::NODE_LOCAL,
         ports.rest,
+        ports.admin,
         ports.da,
         ports.da,
         ports.p2p,
