@@ -124,8 +124,7 @@ impl TestProcess {
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
 
-        conf.data_directory = tmpdir.path().join("data");
-        std::fs::create_dir_all(&conf.data_directory).unwrap();
+        conf.data_directory = tmpdir.path().to_path_buf();
         // Serialize the configuration to a file
         let conf_file = tmpdir.path().join("config.toml");
 
