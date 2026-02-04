@@ -976,7 +976,7 @@ pub mod test {
 
     use super::*;
     use crate::{
-        bus::{dont_use_this::get_receiver, metrics::BusMetrics, SharedMessageBus},
+        bus::{dont_use_this::get_receiver, SharedMessageBus},
         p2p::network::NetMessage,
         //tests::autobahn_testing::*,
         //tests::autobahn_testing_macros::*,
@@ -1041,7 +1041,7 @@ pub mod test {
             let bus = ConsensusBusClient::new_from_bus(shared_bus.new_handle()).await;
 
             Consensus {
-                metrics: ConsensusMetrics::global("id".to_string()),
+                metrics: ConsensusMetrics::global(),
                 bus,
                 file: None,
                 store,
@@ -1051,7 +1051,7 @@ pub mod test {
         }
 
         pub async fn new(name: &str, crypto: BlstCrypto) -> Self {
-            let shared_bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
+            let shared_bus = SharedMessageBus::new();
             let out_receiver = get_receiver::<OutboundMessage>(&shared_bus).await;
             let event_receiver = get_receiver::<ConsensusEvent>(&shared_bus).await;
             let p2p_receiver = get_receiver::<P2PCommand>(&shared_bus).await;
@@ -2115,7 +2115,7 @@ pub mod test {
             panic!("Expected a GenesisBlock event");
         };
 
-        let block = NodeState::create("test".to_string(), "test")
+        let block = NodeState::create("test")
             .handle_signed_block(signed_block)
             .unwrap();
 

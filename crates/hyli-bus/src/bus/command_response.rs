@@ -3,8 +3,8 @@ use std::time::Duration;
 
 use anyhow::bail;
 use anyhow::Result;
-use opentelemetry::InstrumentationScope;
-use opentelemetry::KeyValue;
+use hyli_turmoil_shims::global_meter_or_panic;
+use opentelemetry::{metrics::Histogram, KeyValue};
 use tokio::sync::Mutex;
 
 use crate::bus::{BusClientSender, BusMessage, BusReceiver};
@@ -116,13 +116,12 @@ where
 }
 
 pub struct EventLoopMetrics {
-    latency: opentelemetry::metrics::Histogram<u64>,
+    latency: Histogram<u64>,
 }
 
 impl EventLoopMetrics {
-    pub fn global(node_name: String) -> EventLoopMetrics {
-        let scope = InstrumentationScope::builder(node_name).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+    pub fn global() -> EventLoopMetrics {
+        let my_meter = global_meter_or_panic();
 
         EventLoopMetrics {
             latency: my_meter.u64_histogram("event_loop_latency").build(),
@@ -146,7 +145,7 @@ pub mod handle_messages_helpers {
         Pick::<BusMetrics>::get_mut(_bus).receive::<Msg, Client>();
     }
     pub fn setup_metrics<T>(_t: &T) -> EventLoopMetrics {
-        EventLoopMetrics::global(BusMetrics::simplified_name::<T>())
+        EventLoopMetrics::global()
     }
 }
 
@@ -174,7 +173,7 @@ macro_rules! handle_messages {
         // Safety: this is disjoint.
         let $index = unsafe { &mut *Pick::<$crate::bus::BusReceiver<$crate::bus::command_response::Query<$command, $response>>>::splitting_get_mut(&mut $bus) };
         $crate::utils::static_type_map::paste::paste! {
-        let [<branch_ $index>] = [opentelemetry::KeyValue::new("branch", $crate::bus::metrics::BusMetrics::simplified_name::<$crate::bus::command_response::Query<$command, $response>>())];
+        let [<branch_ $index>] = [$crate::KeyValue::new("branch", $crate::bus::metrics::BusMetrics::simplified_name::<$crate::bus::command_response::Query<$command, $response>>())];
         $crate::handle_messages! {
             $(processed $bind = $fut $(, if $cond)? => $handle,)*
             processed Ok(_raw_query) = #[allow(clippy::macro_metavars_in_unsafe)] $index.recv() => {
@@ -219,7 +218,7 @@ macro_rules! handle_messages {
         // Safety: this is disjoint.
         let $index = unsafe { &mut *Pick::<$crate::bus::BusReceiver<$message>>::splitting_get_mut(&mut $bus) };
         $crate::utils::static_type_map::paste::paste! {
-        let [<branch_ $index>] = [opentelemetry::KeyValue::new("branch", $crate::bus::metrics::BusMetrics::simplified_name::<$message>())];
+        let [<branch_ $index>] = [$crate::KeyValue::new("branch", $crate::bus::metrics::BusMetrics::simplified_name::<$message>())];
         $crate::handle_messages! {
             $(processed $bind = $fut $(, if $cond)? => $handle,)*
             processed Ok(mut __envelope) = $index.recv() => {
@@ -249,7 +248,7 @@ macro_rules! handle_messages {
         $($rest:tt)*
     ) => {
         $crate::utils::static_type_map::paste::paste! {
-        let [<branch_ $index>] = [opentelemetry::KeyValue::new("branch", stringify!($fut2))];
+        let [<branch_ $index>] = [$crate::KeyValue::new("branch", stringify!($fut2))];
         $crate::handle_messages! {
             $(processed $bind = $fut $(, if $cond)? => $handle,)*
             processed $bind2 = $fut2 $(, if $cond2)? => {

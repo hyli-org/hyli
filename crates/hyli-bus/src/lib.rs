@@ -9,6 +9,8 @@ pub mod bus;
 pub mod modules;
 pub mod utils;
 
+pub use opentelemetry::KeyValue;
+
 // Re-export commonly used types and functions
 pub use bus::{
     BusClientReceiver, BusClientSender, BusEnvelope, BusMessage, BusReceiver, BusSender,

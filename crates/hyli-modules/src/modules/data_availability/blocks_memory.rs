@@ -39,6 +39,16 @@ impl Blocks {
         Ok(self.data.get(block_hash).cloned())
     }
 
+    pub fn get_by_height(&self, height: BlockHeight) -> Result<Option<SignedBlock>> {
+        let Ok(index) = self
+            .data
+            .binary_search_by(|_, block| block.height().0.cmp(&height.0))
+        else {
+            return Ok(None);
+        };
+        Ok(self.data.get_index(index).map(|(_, block)| block.clone()))
+    }
+
     pub fn contains(&mut self, block_hash: &ConsensusProposalHash) -> bool {
         self.data.contains_key(block_hash)
     }

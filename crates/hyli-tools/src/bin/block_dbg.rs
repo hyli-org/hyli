@@ -18,7 +18,7 @@ use hyli_modules::modules::{
     prover::{AutoProver, AutoProverCtx},
 };
 use hyli_modules::{
-    bus::{SharedMessageBus, metrics::BusMetrics},
+    bus::SharedMessageBus,
     module_bus_client, module_handle_messages,
     modules::{
         BuildApiContextInner, Module, ModulesHandler,
@@ -103,6 +103,8 @@ async fn main() -> Result<()> {
         .with_default_directive(LevelFilter::INFO.into())
         .from_env()?;
 
+    hyli_turmoil_shims::init_test_meter_provider();
+
     // Buffer writer for TUI
     struct BufferWriter {
         buffer: Arc<Mutex<Vec<u8>>>,
@@ -151,7 +153,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting block debugger");
 
-    let bus = SharedMessageBus::new(BusMetrics::global("debug".to_string()));
+    let bus = SharedMessageBus::new();
 
     tracing::info!("Setting up modules");
 
@@ -178,6 +180,7 @@ async fn main() -> Result<()> {
                 da_read_from: "localhost:4141".to_string(),
                 start_block: Some(BlockHeight(0)),
                 timeout_client_secs: 10,
+                da_fallback_addresses: vec![],
                 processor_config: (),
             })
             .await?;
@@ -520,7 +523,7 @@ impl BlockDbg {
                                         tracing::info!("Processing blocks up to height {}", target_height);
 
                                         // Process blocks in order
-                                        ui_state.node_state = Some(NodeState::create("block_dbg".to_string(), "block_dbg"));
+                                        ui_state.node_state = Some(NodeState::create("block_dbg"));
                                         ui_state.tx_status.clear();
                                         let outputs = ui_state.blocks.iter().filter_map(|(block, _)|
                                                 if block.consensus_proposal.slot <= target_height {

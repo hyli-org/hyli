@@ -6,10 +6,12 @@ use std::time::Duration;
 
 use hyli_net::tcp::intercept::{set_message_hook_scoped, MessageAction};
 use hyli_net::tcp::{decode_tcp_payload, tcp_client::TcpClient, tcp_server::TcpServer, TcpEvent};
+use hyli_turmoil_shims::init_test_meter_provider;
 use sdk::{DataProposal, Transaction};
 
 #[test_log::test]
 fn turmoil_drop_mempool_data_proposals() -> anyhow::Result<()> {
+    init_test_meter_provider();
     let mut sim = hyli_net::turmoil::Builder::new()
         .simulation_duration(Duration::from_secs(5))
         .tick_duration(Duration::from_millis(50))

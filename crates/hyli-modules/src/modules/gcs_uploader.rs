@@ -53,7 +53,7 @@ pub struct GcsUploaderCtx {
     pub gcs_config: GCSConf,
     pub data_directory: PathBuf,
     pub node_name: String,
-    pub last_uploaded_height: BlockHeight,
+    pub last_uploaded_height: Option<BlockHeight>,
     pub genesis_timestamp_folder: String,
 }
 
@@ -73,7 +73,7 @@ struct GenesisTimestampStore {
 
 #[derive(Debug, Clone)]
 pub struct GcsUploadStart {
-    pub last_uploaded_height: BlockHeight,
+    pub last_uploaded_height: Option<BlockHeight>,
     pub genesis_timestamp_folder: String,
     pub start_height: BlockHeight,
 }
@@ -88,8 +88,10 @@ impl Module for GcsUploader {
         let gcs_client = Storage::builder().build().await?;
 
         // Initialize metrics
-        let metrics = GcsUploaderMetrics::global(ctx.node_name.clone(), "gcs_uploader");
-        metrics.record_success(ctx.last_uploaded_height);
+        let metrics = GcsUploaderMetrics::global("gcs_uploader");
+        if let Some(height) = ctx.last_uploaded_height {
+            metrics.record_success(height);
+        }
 
         // Initialize semaphore with configured max (default to 100 if 0)
         let max_concurrent = if ctx.gcs_config.max_concurrent_uploads == 0 {
@@ -189,15 +191,19 @@ impl GcsUploader {
                         self.ctx.genesis_timestamp_folder,
                         last_uploaded + 1
                     );
-                    self.ctx.last_uploaded_height = BlockHeight(last_uploaded);
+                    self.ctx.last_uploaded_height = Some(BlockHeight(last_uploaded));
                     return Ok(());
                 }
             }
         }
 
-        if block_height <= self.ctx.last_uploaded_height {
+        if self
+            .ctx
+            .last_uploaded_height
+            .is_some_and(|h| block_height <= h)
+        {
             debug!(
-                "Block {} already uploaded (last uploaded: {}), skipping",
+                "Block {} already uploaded (last uploaded: {:?}), skipping",
                 block_height, self.ctx.last_uploaded_height
             );
             return Ok(());
@@ -205,7 +211,7 @@ impl GcsUploader {
 
         self.upload_block_parallel(block_height, block);
 
-        self.ctx.last_uploaded_height = block_height;
+        self.ctx.last_uploaded_height = Some(block_height);
 
         Ok(())
     }
@@ -352,7 +358,7 @@ impl GcsUploader {
         else {
             info!("No genesis timestamp on disk, starting from block 0");
             return Ok(GcsUploadStart {
-                last_uploaded_height: BlockHeight(0),
+                last_uploaded_height: None,
                 genesis_timestamp_folder: "none".to_string(),
                 start_height: BlockHeight(0),
             });
@@ -370,7 +376,7 @@ impl GcsUploader {
                 info!("Found last uploaded block in GCS: {}", last_height);
                 let last_uploaded_height = BlockHeight(last_height);
                 Ok(GcsUploadStart {
-                    last_uploaded_height,
+                    last_uploaded_height: Some(last_uploaded_height),
                     genesis_timestamp_folder,
                     start_height: last_uploaded_height + 1,
                 })
@@ -381,7 +387,7 @@ impl GcsUploader {
                     genesis_timestamp_folder
                 );
                 Ok(GcsUploadStart {
-                    last_uploaded_height: BlockHeight(0),
+                    last_uploaded_height: None,
                     genesis_timestamp_folder,
                     start_height: BlockHeight(0),
                 })

@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used, reason = "Fail on misconfiguration")]
 
 use crate::{
-    bus::{metrics::BusMetrics, SharedMessageBus},
+    bus::SharedMessageBus,
     consensus::Consensus,
     data_availability::DataAvailability,
     explorer::Explorer,
@@ -22,6 +22,9 @@ use anyhow::{bail, Context, Result};
 use axum::Router;
 use hydentity::Hydentity;
 use hyli_crypto::SharedBlstCrypto;
+#[cfg(feature = "monitoring")]
+use hyli_modules::telemetry::global_meter_or_panic;
+use hyli_modules::telemetry::init_prometheus_registry_meter_provider;
 use hyli_modules::{
     log_error,
     modules::{
@@ -43,7 +46,6 @@ use hyli_modules::{
 };
 use hyli_net::clock::TimestampMsClock;
 use hyllar::Hyllar;
-use prometheus::Registry;
 use smt_token::account::AccountSMT;
 use std::{
     fs::{self, File},
@@ -221,23 +223,13 @@ async fn common_main(
     // Capture node start timestamp for use across all modules
     let start_timestamp = TimestampMsClock::now();
 
-    let registry = Registry::new();
     // Init global metrics meter we expose as an endpoint
-    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-        .with_reader(
-            opentelemetry_prometheus::exporter()
-                .with_registry(registry.clone())
-                .build()
-                .context("starting prometheus exporter")?,
-        )
-        .build();
-
-    opentelemetry::global::set_meter_provider(provider.clone());
+    let registry =
+        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
     #[cfg(feature = "monitoring")]
     {
-        let scope = opentelemetry::InstrumentationScope::builder(config.id.clone()).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+        let my_meter = global_meter_or_panic();
         let alloc_metric = my_meter.u64_gauge("malloc_allocated_size").build();
         let alloc_metric2 = my_meter.u64_gauge("malloc_allocations").build();
         let latency_metric = my_meter.u64_histogram("tokio_latency").build();
@@ -261,7 +253,7 @@ async fn common_main(
         });
     }
 
-    let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
+    let bus = SharedMessageBus::new();
 
     let build_api_ctx = Arc::new(BuildApiContextInner {
         router: Mutex::new(Some(Router::new())),
@@ -436,6 +428,7 @@ async fn common_main(
                 da_read_from: config.da_read_from.clone(),
                 start_block: None,
                 timeout_client_secs: config.da_timeout_client_secs,
+                da_fallback_addresses: config.da_fallback_addresses.clone(),
                 processor_config: (),
             })
             .await?;

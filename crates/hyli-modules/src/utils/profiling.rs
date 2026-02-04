@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use opentelemetry::KeyValue;
+use crate::KeyValue;
 
 pub trait LatencyMetricSink {
     fn latency(&self, latency: u64, labels: &[KeyValue]);

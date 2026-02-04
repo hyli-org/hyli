@@ -1,8 +1,5 @@
 use hyli_model::LaneId;
-use opentelemetry::{
-    metrics::{Counter, Gauge},
-    InstrumentationScope, KeyValue,
-};
+use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 
 use crate::model::ValidatorPublicKey;
 
@@ -29,9 +26,8 @@ pub struct MempoolMetrics {
 }
 
 impl MempoolMetrics {
-    pub fn global(node_name: String) -> MempoolMetrics {
-        let scope = InstrumentationScope::builder(node_name).build();
-        let my_meter = opentelemetry::global::meter_with_scope(scope);
+    pub fn global() -> MempoolMetrics {
+        let my_meter = global_meter_or_panic();
 
         let mempool = "mempool";
 

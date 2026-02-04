@@ -10,7 +10,7 @@ use hyli_contract_sdk::BlockHeight;
 use hyli_modules::module_handle_messages;
 use hyli_modules::modules::{Module, module_bus_client};
 use hyli_modules::{
-    bus::{SharedMessageBus, metrics::BusMetrics},
+    bus::SharedMessageBus,
     modules::{
         ModulesHandler, block_processor::BusOnlyProcessor, da_listener::DAListenerConf,
         da_listener::SignedDAListener,
@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting Node State Check with config: {:?}", config);
 
-    let bus = SharedMessageBus::new(BusMetrics::global("node_state_check".to_string()));
+    let bus = SharedMessageBus::new();
 
     tracing::info!("Setting up modules");
 
@@ -48,6 +48,7 @@ async fn main() -> Result<()> {
             da_read_from: config.da_read_from.clone(),
             start_block: Some(BlockHeight(0)),
             timeout_client_secs: 10,
+            da_fallback_addresses: vec![],
             processor_config: (),
         })
         .await?;
@@ -157,7 +158,7 @@ impl Module for NodeStateCheck {
 
 impl NodeStateCheck {
     pub async fn start(&mut self) -> Result<()> {
-        let mut node_state = NodeState::create("node_state_check".to_string(), "node_state_check");
+        let mut node_state = NodeState::create("node_state_check");
         module_handle_messages! {
             on_self self,
             listen<DataEvent> event => {

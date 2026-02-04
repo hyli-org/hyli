@@ -117,10 +117,10 @@ impl SharedMessageBus {
         }
     }
 
-    pub fn new(metrics: BusMetrics) -> Self {
+    pub fn new() -> Self {
         Self {
             channels: Arc::new(Mutex::new(AnyMap::new())),
-            metrics,
+            metrics: BusMetrics::global(),
         }
     }
 
@@ -157,7 +157,7 @@ pub mod dont_use_this {
 
 impl Default for SharedMessageBus {
     fn default() -> Self {
-        Self::new(BusMetrics::global("default".to_string()))
+        Self::new()
     }
 }
 

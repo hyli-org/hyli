@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::*;
-use crate::bus::metrics::BusMetrics;
 use crate::bus::SharedMessageBus;
 use crate::mempool::dissemination::DisseminationManager;
 use crate::mempool::storage::LaneEntryMetadata;
@@ -80,7 +79,7 @@ impl MempoolTestCtx {
                 file: None,
                 conf: SharedConf::default(),
                 crypto: Arc::new(crypto),
-                metrics: MempoolMetrics::global("id".to_string()),
+                metrics: MempoolMetrics::global(),
                 lanes,
                 inner: MempoolStore::default(),
             },
@@ -116,7 +115,7 @@ impl MempoolTestCtx {
 
     pub async fn new(name: &str) -> Self {
         let crypto = BlstCrypto::new(name).unwrap();
-        let shared_bus = SharedMessageBus::new(BusMetrics::global("global".to_string()));
+        let shared_bus = SharedMessageBus::new();
         Self::new_with_shared_bus(name, &shared_bus, crypto).await
     }
 
@@ -1269,8 +1268,7 @@ async fn test_sync_request_not_satisfied_by_metadata_only() -> Result<()> {
     };
     ctx.mempool
         .lanes
-        .by_hash_metadata
-        .insert(format!("{lane_id}:{dp_hash}"), borsh::to_vec(&metadata)?)?;
+        .put_metadata_only(&lane_id, &dp_hash, metadata)?;
 
     ctx.dissemination_manager
         .on_event(DisseminationEvent::SyncRequestNeeded {

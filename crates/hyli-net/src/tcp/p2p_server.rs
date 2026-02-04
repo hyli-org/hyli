@@ -152,7 +152,7 @@ where
         Ok(Self {
             crypto,
             node_id: node_id.clone(),
-            metrics: P2PMetrics::global(node_id.clone()),
+            metrics: P2PMetrics::global(),
             connecting: HashMap::default(),
             max_frame_length,
             node_p2p_public_address,
@@ -387,7 +387,7 @@ where
                         continue;
                     }
                     self.metrics.ping(public_addr, canal.clone());
-                    if let Err(e) = self.tcp_server.ping(socket.socket_addr.clone()).await {
+                    if let Err(e) = self.tcp_server.ping(socket.socket_addr.clone()) {
                         debug!("Error pinging peer {}: {:?}", socket.socket_addr, e);
                         self.mark_socket_poisoned(&socket.socket_addr);
                         let _ = self.try_start_connection_for_peer(&pubkey, canal.clone());
@@ -598,19 +598,15 @@ where
                 match self.create_signed_node_connection_data() {
                     Ok(verack) => {
                         // Send Verack response
-                        if let Err(e) = self
-                            .tcp_server
-                            .send(
-                                socket_addr.clone(),
-                                P2PTcpMessage::<Msg>::Handshake(Handshake::Verack((
-                                    canal.clone(),
-                                    verack,
-                                    timestamp.clone(),
-                                ))),
-                                vec![],
-                            )
-                            .await
-                        {
+                        if let Err(e) = self.tcp_server.send(
+                            socket_addr.clone(),
+                            P2PTcpMessage::<Msg>::Handshake(Handshake::Verack((
+                                canal.clone(),
+                                verack,
+                                timestamp.clone(),
+                            ))),
+                            vec![],
+                        ) {
                             self.metrics.handshake_error(
                                 v.msg.p2p_public_address.clone(),
                                 canal.clone(),
@@ -974,17 +970,15 @@ where
 
         self.tcp_server
             .setup_client(socket_addr.clone(), tcp_client);
-        self.tcp_server
-            .send(
-                socket_addr.clone(),
-                P2PTcpMessage::<Msg>::Handshake(Handshake::Hello((
-                    canal.clone(),
-                    signed_node_connection_data.clone(),
-                    timestamp,
-                ))),
-                vec![],
-            )
-            .await?;
+        self.tcp_server.send(
+            socket_addr.clone(),
+            P2PTcpMessage::<Msg>::Handshake(Handshake::Hello((
+                canal.clone(),
+                signed_node_connection_data.clone(),
+                timestamp,
+            ))),
+            vec![],
+        )?;
 
         self.metrics.handshake_hello_emitted(public_addr, canal);
 
@@ -1058,7 +1052,6 @@ where
         if let Err(e) = self
             .tcp_server
             .send(socket_addr.clone(), P2PTcpMessage::Data(msg), headers)
-            .await
         {
             self.metrics
                 .message_send_error(peer_p2p_addr.clone(), canal.clone());
@@ -1170,15 +1163,12 @@ where
             })
             .collect();
 
-        let res = self
-            .tcp_server
-            .raw_send_parallel(
-                peer_addr_to_pubkey.keys().cloned().collect(),
-                msg,
-                headers,
-                message_label,
-            )
-            .await;
+        let res = self.tcp_server.raw_send_parallel(
+            peer_addr_to_pubkey.keys().cloned().collect(),
+            msg,
+            headers,
+            message_label,
+        );
         self.metrics
             .broadcast_targets(canal.clone(), peer_addr_to_pubkey.len() as u64);
         self.metrics
@@ -1224,24 +1214,14 @@ where
 #[cfg(test)]
 pub mod tests {
     use std::collections::HashSet;
-    use std::sync::{Arc, OnceLock};
 
     use anyhow::Result;
     use borsh::{BorshDeserialize, BorshSerialize};
     use hyli_crypto::BlstCrypto;
-    use opentelemetry::KeyValue;
-    use opentelemetry_sdk::metrics::{
-        data::{self, Sum},
-        reader::MetricReader,
-        ManualReader, SdkMeterProvider,
-    };
-    use opentelemetry_sdk::Resource;
     use tokio::net::TcpListener;
 
     use crate::clock::TimestampMsClock;
-    use crate::tcp::{
-        p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent, TcpMessageLabel,
-    };
+    use crate::tcp::{p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent};
 
     use super::P2PTcpEvent;
 
@@ -1347,219 +1327,6 @@ pub mod tests {
                 }
             }
         }
-    }
-
-    #[derive(Clone, Debug)]
-    struct TestReader {
-        inner: Arc<ManualReader>,
-    }
-
-    impl MetricReader for TestReader {
-        fn register_pipeline(
-            &self,
-            pipeline: std::sync::Weak<opentelemetry_sdk::metrics::Pipeline>,
-        ) {
-            self.inner.register_pipeline(pipeline);
-        }
-
-        fn collect(
-            &self,
-            rm: &mut data::ResourceMetrics,
-        ) -> opentelemetry_sdk::metrics::MetricResult<()> {
-            self.inner.collect(rm)
-        }
-
-        fn force_flush(&self) -> opentelemetry_sdk::error::OTelSdkResult {
-            self.inner.force_flush()
-        }
-
-        fn shutdown(&self) -> opentelemetry_sdk::error::OTelSdkResult {
-            self.inner.shutdown()
-        }
-
-        fn temporality(
-            &self,
-            kind: opentelemetry_sdk::metrics::InstrumentKind,
-        ) -> opentelemetry_sdk::metrics::Temporality {
-            self.inner.temporality(kind)
-        }
-    }
-
-    struct TestMetrics {
-        reader: TestReader,
-        _provider: SdkMeterProvider,
-    }
-
-    static TEST_METRICS: OnceLock<TestMetrics> = OnceLock::new();
-
-    fn test_metrics() -> &'static TestMetrics {
-        TEST_METRICS.get_or_init(|| {
-            let reader = TestReader {
-                inner: Arc::new(ManualReader::builder().build()),
-            };
-            let provider = SdkMeterProvider::builder()
-                .with_reader(reader.clone())
-                .build();
-            opentelemetry::global::set_meter_provider(provider.clone());
-            TestMetrics {
-                reader,
-                _provider: provider,
-            }
-        })
-    }
-
-    fn attrs_match(expected: &[KeyValue], actual: &[KeyValue]) -> bool {
-        expected.iter().all(|expect| {
-            actual
-                .iter()
-                .any(|kv| kv.key == expect.key && kv.value == expect.value)
-        })
-    }
-
-    fn sum_metric_u64(
-        reader: &TestReader,
-        scope_name: &str,
-        metric_name: &str,
-        expected_attrs: &[KeyValue],
-    ) -> u64 {
-        let mut rm = data::ResourceMetrics {
-            resource: Resource::builder().build(),
-            scope_metrics: Vec::new(),
-        };
-        reader.collect(&mut rm).expect("collect metrics");
-
-        rm.scope_metrics
-            .into_iter()
-            .filter(|scope_metrics| scope_metrics.scope.name() == scope_name)
-            .flat_map(|scope_metrics| scope_metrics.metrics)
-            .filter(|metric| metric.name == metric_name)
-            .flat_map(|metric| {
-                metric
-                    .data
-                    .as_any()
-                    .downcast_ref::<Sum<u64>>()
-                    .expect("sum metric")
-                    .data_points
-                    .iter()
-                    .filter(|data_point| attrs_match(expected_attrs, &data_point.attributes))
-                    .map(|data_point| data_point.value)
-                    .collect::<Vec<_>>()
-            })
-            .sum()
-    }
-
-    async fn connect_single_canal(
-        p2p_server1: &mut P2PServer<TestMessage>,
-        p2p_server2: &mut P2PServer<TestMessage>,
-        port2: u16,
-        canal: Canal,
-    ) -> Result<()> {
-        p2p_server1.try_start_connection(format!("127.0.0.1:{port2}"), canal);
-        receive_and_handle_event!(
-            p2p_server1,
-            P2PTcpEvent::HandShakeTcpClient(_, _, _),
-            "Expected HandShake TCP Client connection"
-        );
-        receive_and_handle_event!(
-            p2p_server2,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                socket_addr: _,
-                data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
-                ..
-            }),
-            "Expected HandShake Hello message"
-        );
-        receive_and_handle_event!(
-            p2p_server1,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                socket_addr: _,
-                data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
-                ..
-            }),
-            "Expected HandShake Verack"
-        );
-        Ok(())
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn p2p_metrics_broadcast_counts_tx_rx() -> Result<()> {
-        let metrics = test_metrics();
-        let ((_, mut p2p_server1), (port2, mut p2p_server2)) = setup_p2p_server_pair().await?;
-        let canal = Canal::new("A");
-
-        connect_single_canal(&mut p2p_server1, &mut p2p_server2, port2, canal.clone()).await?;
-
-        p2p_server1.broadcast(TestMessage("hello".to_string()), canal.clone());
-
-        let evt = loop {
-            p2p_server1.listen_next().await;
-            if let Ok(evt) = receive_event(&mut p2p_server2, "Should be a TestMessage event").await
-            {
-                break evt;
-            }
-        };
-        p2p_server2.handle_p2p_tcp_event(evt).await?;
-
-        let tx_attrs = [
-            KeyValue::new("direction", "tx"),
-            KeyValue::new("result", "ok"),
-            KeyValue::new("canal", "A"),
-        ];
-        let rx_attrs = [
-            KeyValue::new("direction", "rx"),
-            KeyValue::new("result", "ok"),
-            KeyValue::new("canal", "A"),
-        ];
-
-        let tx_count = sum_metric_u64(&metrics.reader, "node1", "p2p_server_message", &tx_attrs);
-        let rx_count = sum_metric_u64(&metrics.reader, "node2", "p2p_server_message", &rx_attrs);
-
-        assert!(tx_count >= 1, "expected tx count >= 1, got {tx_count}");
-        assert!(rx_count >= 1, "expected rx count >= 1, got {rx_count}");
-        Ok(())
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn p2p_metrics_broadcast_send_error_counted() -> Result<()> {
-        let metrics = test_metrics();
-        let ((_, mut p2p_server1), (port2, mut p2p_server2)) = setup_p2p_server_pair().await?;
-        let canal = Canal::new("A");
-
-        connect_single_canal(&mut p2p_server1, &mut p2p_server2, port2, canal.clone()).await?;
-
-        let peer_pubkey = p2p_server1.peers.keys().next().cloned().unwrap();
-        let socket_addr = p2p_server1
-            .find_socket_addr(&canal, &peer_pubkey)
-            .cloned()
-            .unwrap();
-        p2p_server1.tcp_server.drop_peer_stream(socket_addr);
-
-        let message = TestMessage("boom".to_string());
-        let message_label = message.message_label();
-        let msg = borsh::to_vec(&P2PTcpMessage::Data(message))?;
-        let send_errors = p2p_server1
-            .actually_send_to(
-                HashSet::from_iter(vec![peer_pubkey]),
-                &canal,
-                msg,
-                vec![],
-                message_label,
-            )
-            .await;
-        assert!(!send_errors.is_empty(), "expected broadcast send errors");
-
-        let err_attrs = [
-            KeyValue::new("direction", "tx"),
-            KeyValue::new("result", "error"),
-            KeyValue::new("canal", "A"),
-        ];
-        let err_count = sum_metric_u64(&metrics.reader, "node1", "p2p_server_message", &err_attrs);
-
-        assert!(
-            err_count >= 1,
-            "expected tx error count >= 1, got {err_count}"
-        );
-        Ok(())
     }
 
     #[test_log::test(tokio::test)]
@@ -2047,10 +1814,10 @@ pub mod tests {
         assert_eq!(connected.len(), 1, "Expected a single client socket");
         let socket_addr = connected.first().cloned().unwrap();
 
-        let send_errors = p2p_server1
-            .tcp_server
-            .raw_send_parallel(vec![socket_addr], vec![255], vec![], "raw")
-            .await;
+        let send_errors =
+            p2p_server1
+                .tcp_server
+                .raw_send_parallel(vec![socket_addr], vec![255], vec![], "raw");
         assert!(send_errors.is_empty(), "Expected raw send to succeed");
 
         // Server2 should see the decode error and attempt to reconnect.

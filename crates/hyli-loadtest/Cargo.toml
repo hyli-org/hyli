@@ -15,6 +15,7 @@ hyllar = { workspace = true, features = ["client"] }
 hydentity = { workspace = true, features = ["client"] }
 hyli-contracts = { workspace = true }
 hyli-contract-sdk = { workspace = true, features = ["tracing"] }
+hyli-modules = { workspace = true }
 client-sdk = { workspace = true, features = ["rest", "risc0"] }
 anyhow = { workspace = true }
 borsh = { workspace = true }

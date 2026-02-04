@@ -13,6 +13,7 @@ use hyli_net::{
         Canal, P2PTcpMessage, TcpMessageLabel,
     },
 };
+use hyli_turmoil_shims::init_test_meter_provider;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
 #[derive(Clone, Debug, borsh::BorshDeserialize, borsh::BorshSerialize)]
@@ -35,6 +36,7 @@ macro_rules! turmoil_simple {
         paste::paste! {
         #[test_log::test]
             fn [<turmoil_p2p_ $nb _nodes_ $simulation _ $seed >]() -> anyhow::Result<()> {
+                init_test_meter_provider();
                 tracing::info!("Starting test {} with seed {}", stringify!([<turmoil_ $simulation _ $seed >]), $seed);
                 let mut sim = hyli_net::turmoil::Builder::new()
                     .simulation_duration(Duration::from_secs(50))
@@ -415,7 +417,7 @@ async fn setup_decode_error_host(peer: String, peers: Vec<String>) -> Result<(),
                         let errors = p2p
                             .tcp_server
                             .raw_send_parallel(vec![socket], vec![255], vec![], "raw")
-                            .await;
+                            ;
                         assert!(errors.is_empty(), "Expected raw send to succeed");
                         sent_error = true;
                     }
@@ -528,7 +530,7 @@ async fn setup_poisoned_socket_host(
                         let errors = p2p
                             .tcp_server
                             .raw_send_parallel(vec![socket], vec![255], vec![], "raw")
-                            .await;
+                            ;
                         assert!(errors.is_empty(), "Expected raw send to succeed");
                         sent_error = true;
                         sent_error_at = Some(tokio::time::Instant::now());
