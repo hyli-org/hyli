@@ -9,7 +9,7 @@ use client_sdk::{
 use hyli_contract_sdk::api::NodeInfo;
 use hyli_modules::telemetry::init_prometheus_registry_meter_provider;
 use hyli_modules::{
-    bus::SharedMessageBus,
+    bus::{SharedMessageBus, metrics::BusMetrics},
     modules::{
         BuildApiContextInner, ModulesHandler,
         admin::{AdminApi, AdminApiRunContext},
@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
     });
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
     hyli_registry::upload_elf(
         smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF,

@@ -282,14 +282,68 @@ fn test_no_manifest_fails_to_load() {
     );
 }
 
+#[tokio::test]
+async fn test_shutdown_timeout_skips_manifest_and_fails_to_load() {
+    let dir = tempdir().unwrap();
+    let data_dir = dir.path().to_path_buf();
+    let file_path = PathBuf::from("timeout.data");
+
+    let test_struct = TestStruct { value: 99 };
+    let _checksum = TestModule::<usize>::save_on_disk(&data_dir, &file_path, &test_struct).unwrap();
+
+    hyli_turmoil_shims::init_test_meter_provider();
+    let shared_bus = SharedMessageBus::new();
+    let mut handler = ModulesHandler::new(&shared_bus, data_dir.clone()).await;
+    handler.build_module::<TestModule<usize>>(()).await.unwrap();
+
+    handler.start_modules().await.unwrap();
+
+    let mut shutdown_client = ShutdownClient::new_from_bus(shared_bus.new_handle()).await;
+    let module_id = handler
+        .modules_statuses
+        .keys()
+        .next()
+        .cloned()
+        .expect("module id");
+    let module_name = std::any::type_name::<TestModule<usize>>().to_string();
+    let send_task = tokio::spawn(async move {
+        _ = shutdown_client.send(signal::ShutdownCompleted {
+            module: module_id,
+            shutdown_status: ModuleShutdownStatus::TimedOut,
+        });
+        _ = shutdown_client.send(signal::ShutdownModule {
+            module: module_name,
+        });
+    });
+
+    handler.shutdown_loop().await.unwrap();
+    send_task.await.unwrap();
+
+    let manifest = super::manifest_path(&data_dir);
+    assert!(
+        !manifest.exists(),
+        "Manifest should not be written when shutdown times out"
+    );
+
+    let result: Result<Option<TestStruct>> =
+        TestModule::<usize>::load_from_disk(&data_dir, &file_path);
+    let err = result.unwrap_err();
+    assert!(
+        err.downcast_ref::<super::PersistenceError>()
+            .is_some_and(|e| matches!(e, super::PersistenceError::FileNotInManifest(_))),
+        "Should error when file is not in manifest"
+    );
+}
+
 #[test_log::test(tokio::test)]
 async fn test_multi_file_persist_writes_manifest_and_loads_files() {
     let dir = tempdir().unwrap();
     let data_dir = dir.path().to_path_buf();
     let (first_path, second_path) = multi_persist_paths();
 
+    hyli_turmoil_shims::init_test_meter_provider();
     let shared_bus = SharedMessageBus::new();
-    let mut handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
+    let mut handler = ModulesHandler::new(&shared_bus, data_dir.clone()).await;
     handler
         .build_module::<MultiPersistModule>(MultiPersistCtx {
             data_dir: data_dir.clone(),
@@ -344,7 +398,7 @@ async fn test_multi_file_persist_writes_manifest_and_loads_files() {
 async fn test_build_module() {
     let dir = tempdir().unwrap();
     let shared_bus = SharedMessageBus::new();
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
     assert_eq!(handler.modules.len(), 1);
 }
@@ -353,7 +407,7 @@ async fn test_build_module() {
 async fn test_add_module() {
     let dir = tempdir().unwrap();
     let shared_bus = SharedMessageBus::new();
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
     let module = TestModule {
         bus: TestBusClient::new_from_bus(shared_bus.new_handle()).await,
         _field: 2_usize,
@@ -369,7 +423,7 @@ async fn test_start_modules() {
     let shared_bus = SharedMessageBus::new();
     let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
 
     _ = handler.start_modules().await;
@@ -395,7 +449,7 @@ async fn test_start_stop_modules_in_order() {
     let shared_bus = SharedMessageBus::new();
     let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
 
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
     handler
@@ -438,7 +492,7 @@ async fn test_shutdown_duplicate_modules() {
     let shared_bus = SharedMessageBus::new();
     let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
 
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
@@ -463,7 +517,7 @@ async fn test_shutdown_modules_exactly_once() {
     let shared_bus = SharedMessageBus::new();
     let mut cancellation_counter_receiver = get_receiver::<usize>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
 
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
     handler
@@ -530,7 +584,7 @@ async fn test_shutdown_all_modules_if_one_fails() {
     let dir = tempdir().unwrap();
     let shared_bus = SharedMessageBus::new();
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
 
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
     handler
@@ -587,7 +641,7 @@ async fn test_shutdown_all_modules_if_one_module_panics() {
     let dir = tempdir().unwrap();
     let shared_bus = SharedMessageBus::new();
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).await;
 
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
     handler
@@ -632,177 +686,4 @@ async fn test_shutdown_all_modules_if_one_module_panics() {
         .unwrap()
         .module
         .starts_with(std::any::type_name::<TestModule<usize>>()));
-}
-
-// Tests for ModulesHandler::new() backup logic
-
-#[tokio::test]
-async fn test_new_with_missing_manifest_backs_up_state_files() {
-    let dir = tempdir().unwrap();
-    let data_dir = dir.path().join("data");
-    std::fs::create_dir_all(&data_dir).unwrap();
-
-    // Create module state files without manifest
-    let node_state_path = data_dir.join(files::NODE_STATE_BIN);
-    let consensus_path = data_dir.join(files::CONSENSUS_BIN);
-    std::fs::write(&node_state_path, b"fake node state data").unwrap();
-    std::fs::write(&consensus_path, b"fake consensus data").unwrap();
-
-    let shared_bus = SharedMessageBus::new();
-
-    // This should back up the directory
-    let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
-
-    // Original data_dir should exist (recreated)
-    assert!(data_dir.exists());
-
-    // State files should not exist in the new data_dir
-    assert!(!node_state_path.exists());
-    assert!(!consensus_path.exists());
-
-    // A backup directory should exist
-    let parent = data_dir.parent().unwrap();
-    let entries: Vec<_> = std::fs::read_dir(parent)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("data.backup_"))
-        .collect();
-
-    assert_eq!(entries.len(), 1, "Should have created exactly one backup");
-
-    // Verify backup contains the original files
-    let backup_dir = entries[0].path();
-    assert!(backup_dir.join(files::NODE_STATE_BIN).exists());
-    assert!(backup_dir.join(files::CONSENSUS_BIN).exists());
-}
-
-#[tokio::test]
-async fn test_new_with_empty_manifest_backs_up_state_files() {
-    let dir = tempdir().unwrap();
-    let data_dir = dir.path().join("data");
-    std::fs::create_dir_all(&data_dir).unwrap();
-
-    // Create module state files
-    let node_state_path = data_dir.join(files::NODE_STATE_BIN);
-    std::fs::write(&node_state_path, b"fake node state data").unwrap();
-
-    // Create empty manifest
-    let manifest_path = super::manifest_path(&data_dir);
-    std::fs::write(&manifest_path, "   \n  \n").unwrap(); // Only whitespace
-
-    let shared_bus = SharedMessageBus::new();
-
-    // This should back up the directory because manifest is effectively empty
-    let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
-
-    // Original data_dir should exist (recreated)
-    assert!(data_dir.exists());
-
-    // State file should not exist in the new data_dir
-    assert!(!node_state_path.exists());
-
-    // A backup directory should exist
-    let parent = data_dir.parent().unwrap();
-    let entries: Vec<_> = std::fs::read_dir(parent)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("data.backup_"))
-        .collect();
-
-    assert_eq!(entries.len(), 1, "Should have created exactly one backup");
-}
-
-#[tokio::test]
-async fn test_new_with_valid_manifest_does_not_backup() {
-    let dir = tempdir().unwrap();
-    let data_dir = dir.path().join("data");
-    std::fs::create_dir_all(&data_dir).unwrap();
-
-    // Create module state files
-    let node_state_path = data_dir.join(files::NODE_STATE_BIN);
-    std::fs::write(&node_state_path, b"fake node state data").unwrap();
-
-    // Create valid (non-empty) manifest
-    let manifest_path = super::manifest_path(&data_dir);
-    std::fs::write(&manifest_path, "12345678 node_state.bin\n").unwrap();
-
-    let shared_bus = SharedMessageBus::new();
-
-    // This should NOT back up because manifest is valid
-    let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
-
-    // Original data_dir should exist
-    assert!(data_dir.exists());
-
-    // State file should still be there
-    assert!(node_state_path.exists());
-
-    // Manifest should still be there
-    assert!(manifest_path.exists());
-
-    // No backup directory should exist
-    let parent = data_dir.parent().unwrap();
-    let entries: Vec<_> = std::fs::read_dir(parent)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("data.backup_"))
-        .collect();
-
-    assert_eq!(entries.len(), 0, "Should not have created any backup");
-}
-
-#[tokio::test]
-async fn test_new_creates_fresh_data_dir() {
-    let dir = tempdir().unwrap();
-    let data_dir = dir.path().join("fresh_data");
-
-    // data_dir doesn't exist yet
-    assert!(!data_dir.exists());
-
-    let shared_bus = SharedMessageBus::new();
-
-    let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
-
-    // data_dir should now exist
-    assert!(data_dir.exists());
-    assert!(data_dir.is_dir());
-
-    // No backup should have been created
-    let parent = data_dir.parent().unwrap();
-    let entries: Vec<_> = std::fs::read_dir(parent)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().contains("backup"))
-        .collect();
-
-    assert_eq!(entries.len(), 0, "Should not have created any backup");
-}
-
-#[tokio::test]
-async fn test_new_empty_manifest_without_state_files_backs_up() {
-    let dir = tempdir().unwrap();
-    let data_dir = dir.path().join("data");
-    std::fs::create_dir_all(&data_dir).unwrap();
-
-    // Create empty manifest but NO state files
-    let manifest_path = super::manifest_path(&data_dir);
-    std::fs::write(&manifest_path, "\n").unwrap();
-
-    let shared_bus = SharedMessageBus::new();
-
-    // This should back up because an empty manifest is invalid even without state files
-    let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
-
-    // Original data_dir should exist (recreated)
-    assert!(data_dir.exists());
-
-    // A backup directory should exist
-    let parent = data_dir.parent().unwrap();
-    let entries: Vec<_> = std::fs::read_dir(parent)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("data.backup_"))
-        .collect();
-
-    assert_eq!(entries.len(), 1, "Should have created exactly one backup");
 }

@@ -15,7 +15,7 @@ use crate::{
 };
 use anyhow::{bail, Context, Error, Result};
 use rand::{distr::Alphanumeric, Rng};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::utils::checksums::{self, ChecksumReader, ChecksumWriter};
 use crate::utils::deterministic_rng::deterministic_rng;
@@ -26,7 +26,6 @@ pub use crate::utils::checksums::{
 
 const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const MODULE_ID_SEPARATOR: char = '#';
-const PERSISTENCE_FAILURES_LOG: &str = "persistence_failures.log";
 
 pub type ModulePersistOutput = Vec<(PathBuf, u32)>;
 
@@ -418,62 +417,16 @@ pub enum ModuleStatus {
 }
 
 impl ModulesHandler {
-    pub fn new(shared_bus: &SharedMessageBus, data_dir: PathBuf) -> Result<ModulesHandler> {
+    pub async fn new(shared_bus: &SharedMessageBus, data_dir: PathBuf) -> ModulesHandler {
         let shared_message_bus = shared_bus.new_handle();
-        let module_handler = ModulesHandler {
+
+        ModulesHandler {
             bus: shared_message_bus,
             modules: vec![],
-            data_dir: data_dir.clone(),
+            data_dir,
             modules_statuses: HashMap::new(),
             module_shutdown_order: Vec::new(),
-        };
-
-        // Ensure data_dir exists
-        if !data_dir.exists() {
-            fs::create_dir_all(&data_dir).context("Failed to create data directory")?;
-            return Ok(module_handler);
         }
-
-        let manifest_file = manifest_path(&data_dir);
-
-        // Decide whether the directory should be backed up
-        let should_backup = if manifest_file.exists() {
-            // Manifest exists → invalid if empty
-            match fs::read_to_string(&manifest_file) {
-                Ok(content) => content.trim().is_empty(),
-                Err(_) => true,
-            }
-        } else {
-            // No manifest → back up
-            true
-        };
-
-        if should_backup {
-            // Generate a backup directory name using a timestamp
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis();
-
-            let backup_dir = data_dir.with_extension(format!("backup_{timestamp}"));
-
-            log_warn!(
-                fs::rename(&data_dir, &backup_dir),
-                "Moving data_dir to backup location"
-            )
-            .context("Failed to move data_dir to backup location")?;
-
-            warn!(
-                "Moved data_dir without valid manifest to backup: {} -> {}",
-                data_dir.display(),
-                backup_dir.display()
-            );
-
-            // Recreate an empty data_dir
-            fs::create_dir_all(&data_dir).context("Failed to recreate data_dir")?;
-        }
-
-        Ok(module_handler)
     }
 
     pub async fn start_modules(&mut self) -> Result<()> {
@@ -643,31 +596,6 @@ impl ModulesHandler {
             .collect();
         let has_shutdown_errors =
             !timed_out_modules.is_empty() || !persistence_failed_modules.is_empty();
-
-        if has_shutdown_errors {
-            let log_path = self.data_dir.join(PERSISTENCE_FAILURES_LOG);
-            if let Ok(mut file) = fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&log_path)
-            {
-                let timestamp = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis();
-                for module in &timed_out_modules {
-                    _ = writeln!(file, "{timestamp} timed_out {module}");
-                }
-                for module in &persistence_failed_modules {
-                    _ = writeln!(file, "{timestamp} persistence_failed {module}");
-                }
-            } else {
-                warn!(
-                    "Failed to open persistence failure log at {}",
-                    log_path.display()
-                );
-            }
-        }
 
         let persisted_entries: ModulePersistOutput = self
             .modules_statuses
