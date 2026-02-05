@@ -1183,6 +1183,66 @@ async fn test_fill_holes_from_storage_resolves_pending_hole() -> Result<()> {
 }
 
 #[test_log::test(tokio::test)]
+async fn test_buc_correctly_filled_via_async_verify_tx_path() -> Result<()> {
+    let mut ctx = MempoolTestCtx::new("mempool").await;
+
+    // Simulate a DP received and hashed before its parent exists locally.
+    let peer_crypto = BlstCrypto::new("peer").unwrap();
+    let lane_id = LaneId::new(peer_crypto.validator_pubkey().clone());
+    ctx.add_trusted_validator(peer_crypto.validator_pubkey())
+        .await;
+
+    let register_tx = make_register_contract_tx(ContractName::new("test1"));
+    let dp_parent = DataProposal::new_root(lane_id.clone(), vec![register_tx.clone()]);
+    let dp_child = DataProposal::new(dp_parent.hashed(), vec![register_tx]);
+
+    let parent_vote = peer_crypto.sign((
+        dp_parent.hashed(),
+        LaneBytesSize(dp_parent.estimate_size() as u64),
+    ))?;
+    ctx.mempool
+        .on_hashed_data_proposal(&lane_id, dp_parent.clone(), parent_vote)?;
+
+    ctx.handle_processed_data_proposals().await;
+
+    ctx.process_cut_with_dp(
+        peer_crypto.validator_pubkey(),
+        &dp_parent.hashed(),
+        LaneBytesSize(dp_parent.estimate_size() as u64),
+        4,
+    )
+    .await?;
+
+    ctx.process_cut_with_dp(
+        peer_crypto.validator_pubkey(),
+        &dp_child.hashed(),
+        LaneBytesSize(dp_parent.estimate_size() as u64 + dp_child.estimate_size() as u64),
+        5,
+    )
+    .await?;
+
+    ctx.mempool.on_processed_data_proposal(
+        lane_id.clone(),
+        DataProposalVerdict::Vote,
+        dp_child.clone(),
+    )?;
+
+    ctx.process_cut_with_dp(
+        peer_crypto.validator_pubkey(),
+        &dp_child.hashed(),
+        LaneBytesSize(dp_parent.estimate_size() as u64 + dp_child.estimate_size() as u64),
+        6,
+    )
+    .await?;
+
+    assert!(ctx.mempool_event_receiver.try_recv().is_ok());
+    assert!(ctx.mempool_event_receiver.try_recv().is_ok());
+    assert!(ctx.mempool_event_receiver.try_recv().is_ok());
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
 async fn test_sync_request_single_dp() -> Result<()> {
     let mut ctx = MempoolTestCtx::new("mempool").await;
     let lane_id = ctx.mempool.own_lane_id().clone();
@@ -1245,52 +1305,156 @@ async fn test_sync_request_single_dp() -> Result<()> {
 }
 
 #[test_log::test(tokio::test)]
-async fn test_sync_request_not_satisfied_by_metadata_only() -> Result<()> {
+async fn test_sync_request_advances_when_tip_already_present() -> Result<()> {
     let mut ctx = MempoolTestCtx::new("mempool").await;
-    let lane_id = ctx.mempool.own_lane_id();
 
     // Add a peer so we can send a sync request.
-    let crypto2 = BlstCrypto::new("2").unwrap();
-    ctx.add_trusted_validator(crypto2.validator_pubkey()).await;
+    let peer_crypto = BlstCrypto::new("peer").unwrap();
+    ctx.add_trusted_validator(peer_crypto.validator_pubkey())
+        .await;
 
-    let register_tx = make_register_contract_tx(ContractName::new("test1"));
-    let dp = ctx.create_data_proposal(None, std::slice::from_ref(&register_tx));
-    let dp_hash = dp.hashed();
-    let cumul_size = LaneBytesSize(dp.estimate_size() as u64);
+    let lane_id = LaneId::new(peer_crypto.validator_pubkey().clone());
+    let crypto = ctx.mempool.crypto.clone();
 
-    // Insert metadata only (no data) to mimic the race: metadata visible, data missing.
-    let signatures = vec![ctx.mempool.crypto.sign((dp_hash.clone(), cumul_size))?];
-    let metadata = LaneEntryMetadata {
-        parent_data_proposal_hash: DataProposalParent::LaneRoot(lane_id.clone()),
-        cumul_size,
-        signatures,
-        cached_poda: None,
-    };
+    // Create a chain of 3 DataProposals and store them locally.
+    let dp1 = DataProposal::new_root(lane_id.clone(), vec![]);
+    let dp1_hash = dp1.hashed();
     ctx.mempool
         .lanes
-        .put_metadata_only(&lane_id, &dp_hash, metadata)?;
+        .store_data_proposal(&crypto, &lane_id, dp1.clone())?;
 
+    let dp2 = DataProposal::new(dp1_hash.clone(), vec![]);
+    let dp2_hash = dp2.hashed();
+    ctx.mempool
+        .lanes
+        .store_data_proposal(&crypto, &lane_id, dp2.clone())?;
+
+    let dp3 = DataProposal::new(dp2_hash.clone(), vec![]);
+    let dp3_hash = dp3.hashed();
+    ctx.mempool
+        .lanes
+        .store_data_proposal(&crypto, &lane_id, dp3.clone())?;
+
+    // Simulate the race: only the tip (dp3) remains locally.
+    ctx.mempool.lanes.remove_lane_entry(&lane_id, &dp1_hash);
+    ctx.mempool.lanes.remove_lane_entry(&lane_id, &dp2_hash);
+    assert!(!ctx.mempool.lanes.contains(&lane_id, &dp1_hash));
+    assert!(!ctx.mempool.lanes.contains(&lane_id, &dp2_hash));
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp3_hash));
+
+    // Request the full interval up to dp3 via dissemination.
     ctx.dissemination_manager
         .on_event(DisseminationEvent::SyncRequestNeeded {
             lane_id: lane_id.clone(),
             from: None,
-            to: Some(dp_hash.clone()),
+            to: Some(dp3_hash.clone()),
         })
         .await?;
-    ctx.dissemination_manager
-        .process_sync_requests_and_replies_for_test()
-        .await?;
 
-    let sent = ctx
-        .assert_send(crypto2.validator_pubkey(), "SyncRequest")
-        .await;
-    match sent.msg {
-        MempoolNetMessage::SyncRequest(req_lane_id, _from, to) => {
+    ctx.process_sync().await?;
+
+    // We should send a SyncRequest for dp2 (parent of dp3), not drop the request.
+    match ctx
+        .assert_send(peer_crypto.validator_pubkey(), "SyncRequest")
+        .await
+        .msg
+    {
+        MempoolNetMessage::SyncRequest(req_lane_id, from, to) => {
             assert_eq!(req_lane_id, lane_id);
-            assert_eq!(to, Some(dp_hash));
+            assert_eq!(from, None);
+            assert_eq!(to, Some(dp2_hash));
         }
         other => panic!("Expected SyncRequest message, got {other:?}"),
     }
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_processed_dp_stored_when_tip_is_itself_after_clean() -> Result<()> {
+    let mut ctx = MempoolTestCtx::new("mempool").await;
+
+    let lane_id = ctx.own_lane();
+    let tx = make_register_contract_tx(ContractName::new("dp2-tip"));
+
+    // DP1 is stored and becomes tip.
+    let dp1 = ctx.create_data_proposal(None, std::slice::from_ref(&tx));
+    ctx.process_new_data_proposal(dp1.clone())?;
+    let dp1_hash = dp1.hashed();
+
+    // DP2 is created (processing will finish later).
+    let dp2 = ctx.create_data_proposal(Some(dp1_hash.clone()), std::slice::from_ref(&tx));
+    let dp2_hash = dp2.hashed();
+
+    // Simulate a CCP that cleans the lane and updates tip to DP2 (unknown locally).
+    let cut = vec![(
+        lane_id.clone(),
+        dp2_hash.clone(),
+        LaneBytesSize((dp1.estimate_size() + dp2.estimate_size()) as u64),
+        PoDA::default(),
+    )];
+    ctx.mempool.clean_and_update_lanes(&cut, &None)?;
+
+    assert_eq!(
+        ctx.mempool.lanes.get_lane_hash_tip(&lane_id),
+        Some(dp2_hash.clone())
+    );
+    assert!(!ctx.mempool.lanes.contains(&lane_id, &dp1_hash));
+
+    // When processing finishes, DP2 is stored even though its parent is missing.
+    ctx.mempool.on_processed_data_proposal(
+        lane_id.clone(),
+        DataProposalVerdict::Vote,
+        dp2.clone(),
+    )?;
+
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp2_hash));
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_processed_dp_fails_when_tip_moved_past_it() -> Result<()> {
+    let mut ctx = MempoolTestCtx::new("mempool").await;
+
+    let lane_id = ctx.own_lane();
+    let tx = make_register_contract_tx(ContractName::new("dp3-tip"));
+
+    // DP1 is stored and becomes tip.
+    let dp1 = ctx.create_data_proposal(None, std::slice::from_ref(&tx));
+    ctx.process_new_data_proposal(dp1.clone())?;
+    let dp1_hash = dp1.hashed();
+
+    // DP2 (processing will finish later).
+    let dp2 = ctx.create_data_proposal(Some(dp1_hash.clone()), std::slice::from_ref(&tx));
+    let dp2_hash = dp2.hashed();
+
+    // DP3 is on top of DP2.
+    let dp3 = ctx.create_data_proposal(Some(dp2_hash.clone()), std::slice::from_ref(&tx));
+    let dp3_hash = dp3.hashed();
+
+    // Simulate a CCP that cleans the lane and updates tip to DP3 (unknown locally).
+    let cut = vec![(
+        lane_id.clone(),
+        dp3_hash.clone(),
+        LaneBytesSize((dp1.estimate_size() + dp2.estimate_size() + dp3.estimate_size()) as u64),
+        PoDA::default(),
+    )];
+    ctx.mempool.clean_and_update_lanes(&cut, &None)?;
+
+    assert_eq!(
+        ctx.mempool.lanes.get_lane_hash_tip(&lane_id),
+        Some(dp3_hash.clone())
+    );
+    assert!(!ctx.mempool.lanes.contains(&lane_id, &dp1_hash));
+
+    // Processing DP2 now should fail because tip moved past it.
+    assert!(ctx
+        .mempool
+        .on_processed_data_proposal(lane_id.clone(), DataProposalVerdict::Vote, dp2.clone())
+        .is_err());
+
+    assert!(!ctx.mempool.lanes.contains(&lane_id, &dp2_hash));
 
     Ok(())
 }
