@@ -295,8 +295,8 @@ impl super::Mempool {
         };
         lanes.put_no_verification(lane_id.clone(), (metadata, data_proposal))?;
         debug!(
-            "Filled hole for lane {} in BUC(slot: {})",
-            lane_id, buc.ccp.consensus_proposal.slot
+            "Filled hole {} for lane {} in BUC (slot: {})",
+            dp_hash, lane_id, buc.ccp.consensus_proposal.slot
         );
 
         // Compute the next hole top
@@ -315,8 +315,10 @@ impl super::Mempool {
                         from_lane_id == lane_id && from_dp_hash == parent_hash
                     })
                 }) {
+                    debug!("Hole in lane {} is filled.", lane_id);
                     None
                 } else {
+                    debug!("Next hole in lane {}: {}", lane_id, parent_hash);
                     Some((parent_hash.clone(), LaneBytesSize(new_lane_size)))
                 }
             }
