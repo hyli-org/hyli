@@ -1,5 +1,0 @@
-global:
-  scrape_interval: 15s # Intervalle de scrape par défaut
-
-# Prometheus scraping is deprecated. Hyli now exports metrics via OTLP.
-scrape_configs: []
