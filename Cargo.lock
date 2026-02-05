@@ -5792,6 +5792,7 @@ dependencies = [
  "hyper-util",
  "notify",
  "ratatui",
+ "rustls 0.23.36",
  "serde",
  "serde_json",
  "sha2",
