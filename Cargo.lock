@@ -6003,7 +6003,6 @@ dependencies = [
  "hyli-contracts",
  "hyli-hydentity",
  "hyli-hyllar",
- "hyli-modules",
  "rand 0.9.2",
  "tokio",
  "tracing",
