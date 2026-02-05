@@ -121,20 +121,67 @@ impl<P: BlockProcessor + 'static> Module for SignedDAListener<P> {
 }
 
 impl<P: BlockProcessor + 'static> SignedDAListener<P> {
-    async fn start_client(&self, block_height: BlockHeight) -> Result<DataAvailabilityClient> {
-        let mut client = DataAvailabilityClient::connect_with_opts(
-            "signed_da_listener".to_string(),
-            Some(1024 * 1024 * 1024),
-            self.config.da_read_from.clone(),
-        )
-        .await?;
+    fn get_da_address(&self) -> &str {
+        if self.current_da_index == 0 {
+            &self.config.da_read_from
+        } else {
+            &self.config.da_fallback_addresses[self.current_da_index - 1]
+        }
+    }
 
-        client
-            .send(DataAvailabilityRequest::StreamFromHeight(block_height))
-            .await?;
-        self.tcp_client_metrics.start(block_height.0);
+    fn advance_da_index(&mut self) {
+        self.current_da_index =
+            (self.current_da_index + 1) % (self.config.da_fallback_addresses.len() + 1);
+    }
 
-        Ok(client)
+    async fn start_client(&mut self, block_height: BlockHeight) -> Result<DataAvailabilityClient> {
+        const MAX_ROUNDS: usize = 3;
+        let total_servers = self.config.da_fallback_addresses.len() + 1;
+        let start_index = self.current_da_index;
+        let mut rounds_completed = 0;
+
+        loop {
+            let da_address = self.get_da_address();
+
+            match DataAvailabilityClient::connect_with_opts(
+                "signed_da_listener".to_string(),
+                Some(1024 * 1024 * 1024),
+                da_address.to_string(),
+            )
+            .await
+            {
+                Ok(mut client) => {
+                    client
+                        .send(DataAvailabilityRequest::StreamFromHeight(block_height))
+                        .await?;
+                    self.tcp_client_metrics.start(block_height.0);
+                    return Ok(client);
+                }
+                Err(e) => {
+                    warn!(
+                        "📦 Failed to connect to DA server {}: {}. Trying next...",
+                        da_address, e
+                    );
+                    self.advance_da_index();
+
+                    // Check if we've completed a full round through all servers
+                    if self.current_da_index == start_index {
+                        rounds_completed += 1;
+                        if rounds_completed >= MAX_ROUNDS {
+                            return Err(anyhow::anyhow!(
+                                "Failed to connect to any DA server after {} rounds through all {} servers",
+                                MAX_ROUNDS,
+                                total_servers
+                            ));
+                        }
+                        warn!(
+                            "📦 Completed round {}/{} through all DA servers, retrying...",
+                            rounds_completed, MAX_ROUNDS
+                        );
+                    }
+                }
+            }
+        }
     }
 
     async fn process_block(&mut self, block: SignedBlock) -> Result<()> {
@@ -251,32 +298,9 @@ impl<P: BlockProcessor + 'static> SignedDAListener<P> {
         &mut self,
         client: &mut DataAvailabilityClient,
     ) -> Result<()> {
-        self.current_da_index =
-            (self.current_da_index + 1) % (self.config.da_fallback_addresses.len() + 1);
-
-        let da_address = if self.current_da_index == 0 {
-            &self.config.da_read_from
-        } else {
-            &self.config.da_fallback_addresses[self.current_da_index - 1]
-        };
-
-        warn!("📦 Switching to DA server: {}", da_address);
-
-        // Reconnect to the server
-        *client = DataAvailabilityClient::connect_with_opts(
-            "signed_da_listener".to_string(),
-            Some(1024 * 1024 * 1024),
-            da_address.clone(),
-        )
-        .await?;
-
-        // Start streaming from current block
-        client
-            .send(DataAvailabilityRequest::StreamFromHeight(
-                self.current_block,
-            ))
-            .await?;
-
+        self.advance_da_index();
+        warn!("📦 Switching to DA server: {}", self.get_da_address());
+        *client = self.start_client(self.current_block).await?;
         Ok(())
     }
 
