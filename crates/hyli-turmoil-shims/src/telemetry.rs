@@ -1,10 +1,6 @@
 use std::sync::Arc;
 
 use opentelemetry::metrics::{Meter, MeterProvider};
-use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::metrics::periodic_reader_with_async_runtime::PeriodicReader;
-use opentelemetry_sdk::metrics::{MetricResult, SdkMeterProvider};
-use opentelemetry_sdk::{runtime, Resource};
 
 mod imp {
     use super::{Meter, MeterProvider};
@@ -131,30 +127,4 @@ pub use imp::{global_meter_or_panic, global_meter_provider_or_panic, init_global
 
 pub fn init_test_meter_provider() -> Arc<dyn MeterProvider + Send + Sync> {
     init_global_meter_provider(opentelemetry_sdk::metrics::SdkMeterProvider::default())
-}
-
-pub fn init_otlp_meter_provider(
-    endpoint: String,
-    service_name: String,
-    push_interval: Option<std::time::Duration>,
-) -> MetricResult<()> {
-    let exporter = opentelemetry_otlp::MetricExporter::builder()
-        .with_tonic()
-        .with_endpoint(endpoint)
-        .build()?;
-
-    // Use the Tokio runtime so periodic exports follow the simulation clock under turmoil.
-    let mut reader_builder = PeriodicReader::builder(exporter, runtime::Tokio);
-    if let Some(interval) = push_interval {
-        reader_builder = reader_builder.with_interval(interval);
-    }
-    let reader = reader_builder.build();
-    let provider = SdkMeterProvider::builder()
-        .with_reader(reader)
-        .with_resource(Resource::builder().with_service_name(service_name).build())
-        .build();
-
-    init_global_meter_provider(provider);
-
-    Ok(())
 }
