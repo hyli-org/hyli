@@ -1132,6 +1132,14 @@ pub mod test {
             self.consensus.bft_round_state.slot
         }
 
+        pub fn view(&self) -> u64 {
+            self.consensus.bft_round_state.view
+        }
+
+        pub fn current_proposal(&self) -> Option<ConsensusProposal> {
+            self.consensus.bft_round_state.current_proposal.clone()
+        }
+
         pub async fn timeout(nodes: &mut [&mut ConsensusTestCtx]) {
             for n in nodes {
                 n.consensus
