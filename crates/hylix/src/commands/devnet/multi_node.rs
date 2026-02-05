@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::commands::bake::bake_devnet;
 use crate::constants;
 use crate::docker::ContainerSpec;
@@ -210,7 +212,26 @@ async fn start_multi_node_nodes(
 }
 
 /// Join the multi-node devnet with the local node
-pub async fn join_devnet(dry_run: bool, release: bool, extra_args: Vec<String>) -> HylixResult<()> {
+pub async fn join_devnet(
+    dry_run: bool,
+    resume: bool,
+    release: bool,
+    extra_args: Vec<String>,
+) -> HylixResult<()> {
+    if !resume {
+        // delete data_node_local directory if it exists
+        let data_dir = PathBuf::from("data_node_local");
+        if data_dir.exists() {
+            log_info("Cleaning up any existing local data_node_local/ before joining...");
+            std::fs::remove_dir_all(&data_dir)?;
+        }
+        log_info("If you want to keep the existing local node state, you can use '--resume' flag to join without resetting local data.");
+        log_info(&format!(
+            "{}",
+            console::style("$ hy devnet join --resume").green()
+        ));
+    }
+
     let config_path = get_local_node_config_path()?;
 
     if !config_path.exists() {

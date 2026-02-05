@@ -115,6 +115,9 @@ pub enum DevnetAction {
         /// Build in release mode
         #[arg(long)]
         release: bool,
+        /// Resume with existing data_node_local/ instead of resetting
+        #[arg(long)]
+        resume: bool,
         /// Additional arguments to pass to the hyli binary
         #[arg(last = true)]
         extra_args: Vec<String>,
@@ -247,8 +250,9 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
             dry_run,
             release,
             extra_args,
+            resume,
         } => {
-            join_devnet(dry_run, release, extra_args).await?;
+            join_devnet(dry_run, resume, release, extra_args).await?;
         }
     }
 
