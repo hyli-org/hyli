@@ -36,6 +36,7 @@ mod workloads;
 use std::time::Duration;
 
 use crate::fixtures::turmoil::TurmoilCtx;
+use hyli_turmoil_shims::init_test_meter_provider;
 
 // Re-export simulations for use in test macros
 use corruption::{
@@ -61,6 +62,7 @@ macro_rules! turmoil_simple {
         paste::paste! {
         #[test_log::test]
             fn [<turmoil_ $simulation _ $seed _ $test>]() -> anyhow::Result<()> {
+                init_test_meter_provider();
                 tracing::info!("Starting test {} with seed {}", stringify!([<turmoil_ $simulation _ $seed _ $test>]), $seed);
                 let mut sim = hyli_net::turmoil::Builder::new()
                     .simulation_duration(Duration::from_secs(120))
@@ -110,6 +112,7 @@ macro_rules! turmoil_simple_flaky {
         #[test_log::test]
         #[ignore = "flaky"]
             fn [<turmoil_ $simulation _ $seed _ $test>]() -> anyhow::Result<()> {
+                init_test_meter_provider();
                 tracing::info!("Starting test {} with seed {}", stringify!([<turmoil_ $simulation _ $seed _ $test>]), $seed);
                 let mut sim = hyli_net::turmoil::Builder::new()
                     .simulation_duration(Duration::from_secs(120))
