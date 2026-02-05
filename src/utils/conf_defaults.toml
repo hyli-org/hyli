@@ -7,7 +7,6 @@ data_directory = "data_node"
 
 # Fast Cachup mode
 run_fast_catchup = false
-fast_catchup_override = true
 fast_catchup_backfill = false
 fast_catchup_from = "127.0.0.1:43222"
 
