@@ -297,12 +297,11 @@ impl<P: BlockProcessor + 'static> SignedDAListener<P> {
 
     async fn switch_to_next_da_server(
         &mut self,
-        client: &mut DataAvailabilityClient,
-    ) -> Result<()> {
+        block_height: BlockHeight,
+    ) -> Result<DataAvailabilityClient> {
         self.advance_da_index();
         warn!("📦 Switching to DA server: {}", self.get_da_address());
-        *client = self.start_client(self.current_block).await?;
-        Ok(())
+        self.start_client(block_height).await
     }
 
     async fn check_block_request_timeouts(
@@ -360,7 +359,7 @@ impl<P: BlockProcessor + 'static> SignedDAListener<P> {
                         height, state.retry_count
                     );
 
-                    self.switch_to_next_da_server(client).await?;
+                    *client = self.switch_to_next_da_server(self.current_block).await?;
                 } else {
                     warn!(
                         "📦 Block request for height {} timed out (attempt {}). Retrying.",
@@ -400,7 +399,7 @@ impl<P: BlockProcessor + 'static> SignedDAListener<P> {
 
         // Try fallback DA servers
         if !self.config.da_fallback_addresses.is_empty() {
-            self.switch_to_next_da_server(client).await?;
+            *client = self.switch_to_next_da_server(self.current_block).await?;
 
             // Re-request the block
             self.request_specific_block(height);
