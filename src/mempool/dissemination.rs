@@ -453,14 +453,29 @@ impl DisseminationManager {
         let mut to_send = Vec::new();
 
         for (key, request) in self.pending_sync_requests.iter_mut() {
-            match self.lanes.get_dp_by_hash(&request.lane_id, &request.to) {
-                Ok(Some(_)) => {
-                    debug!(
-                        "🟢 Dropping pending SyncRequest for lane {} to {}: DP already present",
-                        request.lane_id, request.to
-                    );
-                    completed.push(key.clone());
-                    continue;
+            // NB: this assumes metadata-dp storage is equivalent, which it should be.
+            match self
+                .lanes
+                .get_metadata_by_hash(&request.lane_id, &request.to)
+            {
+                Ok(Some(lem)) => {
+                    // Check if we reached from
+                    if lem.parent_data_proposal_hash.dp_hash() == request.from.as_ref() {
+                        debug!(
+                            "🟢 Dropping pending SyncRequest for lane {} to {}: DP already present",
+                            request.lane_id, request.to
+                        );
+                        completed.push(key.clone());
+                        continue;
+                    } else {
+                        match lem.parent_data_proposal_hash.dp_hash() {
+                            Some(dp_hash) => {
+                                debug!("Updating SyncRequest to {:?}-{} as {} is present", request.from, dp_hash, request.to);
+                                request.to = dp_hash.clone();
+                            },
+                            None => warn!("Malformed syncRequest - 'to' {} has no parent but 'from' {:?} is a DP", request.to, request.from),
+                        }
+                    }
                 }
                 Ok(None) => {}
                 Err(err) => {
