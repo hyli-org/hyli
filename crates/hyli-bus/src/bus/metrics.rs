@@ -69,48 +69,25 @@ impl BusMetrics {
         (TypeId::of::<Msg>(), TypeId::of::<Client>())
     }
 
-    fn get_or_insert_labels<Msg: 'static, Client: 'static>(&mut self, key: &(TypeId, TypeId)) {
-        self.labels.entry(*key).or_insert_with(|| {
-            [
-                KeyValue::new("msg", BusMetrics::simplify_type_name(type_name::<Msg>())),
-                KeyValue::new(
-                    "client_id",
-                    BusMetrics::simplify_type_name(type_name::<Client>()),
-                ),
-            ]
-        });
-    }
-
-    fn get_or_insert_labels_with_client_name<Msg: 'static, Client: 'static>(&mut self, key: &(TypeId, TypeId)) {
-        self.labels.entry(*key).or_insert_with(|| {
+    pub fn send<Msg: 'static, Client: 'static>(&mut self) {
+        let key = self.get_key::<Msg, Client>();
+        self.labels.entry(key).or_insert_with(|| {
             [
                 KeyValue::new("msg", BusMetrics::simplify_type_name(type_name::<Msg>())),
                 KeyValue::new("client_id", self.client_name.clone()),
             ]
         });
-    }
-
-    pub fn send<Msg: 'static, Client: 'static>(&mut self) {
-        let key = self.get_key::<Msg, Client>();
-        self.get_or_insert_labels::<Msg, Client>(&key);
-        self.send.add(1, self.labels.get(&key).unwrap());
-    }
-
-    pub fn send_with_client_name<Msg: 'static, Client: 'static>(&mut self) {
-        let key = self.get_key::<Msg, Client>();
-        self.get_or_insert_labels_with_client_name::<Msg, Client>(&key);
         self.send.add(1, self.labels.get(&key).unwrap());
     }
 
     pub fn receive<Msg: 'static, Client: 'static>(&mut self) {
         let key = self.get_key::<Msg, Client>();
-        self.get_or_insert_labels::<Msg, Client>(&key);
-        self.receive.add(1, self.labels.get(&key).unwrap());
-    }
-
-    pub fn receive_with_client_name<Msg: 'static, Client: 'static>(&mut self) {
-        let key = self.get_key::<Msg, Client>();
-        self.get_or_insert_labels_with_client_name::<Msg, Client>(&key);
+        self.labels.entry(key).or_insert_with(|| {
+            [
+                KeyValue::new("msg", BusMetrics::simplify_type_name(type_name::<Msg>())),
+                KeyValue::new("client_id", self.client_name.clone()),
+            ]
+        });
         self.receive.add(1, self.labels.get(&key).unwrap());
     }
 
