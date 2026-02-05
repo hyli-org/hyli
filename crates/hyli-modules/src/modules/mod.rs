@@ -23,6 +23,7 @@ pub mod gcs_uploader;
 pub mod gcs_uploader_metrics;
 #[cfg(feature = "db")]
 pub mod indexer;
+#[cfg(feature = "db")]
 pub mod prover;
 pub mod prover_metrics;
 pub mod rest;
