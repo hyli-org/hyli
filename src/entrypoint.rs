@@ -206,10 +206,6 @@ async fn common_main(
     mut config: conf::Conf,
     crypto: Option<SharedBlstCrypto>,
 ) -> Result<ModulesHandler> {
-    // Init global metrics meter we expose as an endpoint.
-    let registry =
-        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
-
     let bus = SharedMessageBus::new();
     let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 

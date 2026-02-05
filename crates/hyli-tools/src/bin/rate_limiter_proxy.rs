@@ -4,7 +4,7 @@ use axum::{
     body::Body,
     extract::{Request, State},
     http::{HeaderValue, StatusCode, Uri},
-    response::{IntoResponse, Response},
+    response::Response,
     routing::{get, post},
 };
 use chrono::{Local, NaiveDate};

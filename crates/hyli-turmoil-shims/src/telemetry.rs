@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
 use opentelemetry::metrics::{Meter, MeterProvider};
+use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::metrics::periodic_reader_with_async_runtime::PeriodicReader;
 use opentelemetry_sdk::metrics::{MetricResult, SdkMeterProvider};
 use opentelemetry_sdk::{runtime, Resource};
-use opentelemetry_otlp::WithExportConfig;
 
 mod imp {
     use super::{Meter, MeterProvider};

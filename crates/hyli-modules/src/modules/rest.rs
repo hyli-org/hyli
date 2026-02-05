@@ -99,9 +99,7 @@ impl Module for RestApi {
             Router::new()
                 .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ctx.openapi))
                 .route("/v1/info", get(get_info))
-                .with_state(RouterState {
-                    info: ctx.info,
-                }),
+                .with_state(RouterState { info: ctx.info }),
         );
         let app = app
             .layer(CatchPanicLayer::custom(handle_panic))
