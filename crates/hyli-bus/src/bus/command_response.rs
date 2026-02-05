@@ -142,7 +142,7 @@ pub mod handle_messages_helpers {
     pub fn receive_bus_metrics<Msg: 'static, Client: Pick<BusMetrics> + 'static>(
         _bus: &mut Client,
     ) {
-        Pick::<BusMetrics>::get_mut(_bus).receive::<Msg, Client>();
+        Pick::<BusMetrics>::get_mut(_bus).receive_with_client_name::<Msg, Client>();
     }
     pub fn setup_metrics<T>(_t: &T) -> EventLoopMetrics {
         EventLoopMetrics::global()

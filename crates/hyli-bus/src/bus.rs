@@ -207,7 +207,9 @@ macro_rules! bus_client {
         impl $(< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $name $(< $( $lt ),+ >)? {
             pub async fn new_from_bus(bus: $crate::bus::SharedMessageBus) -> $name $(< $( $lt ),+ >)? {
                 $name::new(
-                    bus.metrics.clone(),
+                    bus.metrics
+                        .clone()
+                        .with_client_name($crate::bus::metrics::BusMetrics::simplified_name::<Self>()),
                     $($crate::bus::dont_use_this::get_sender::<$sender>(&bus).await,)*
                     $($crate::bus::dont_use_this::get_receiver::<$receiver>(&bus).await,)*
                 )
@@ -238,7 +240,7 @@ where
             if Pick::<BusSender<Msg>>::get(self).len() >= <Msg as BusMessage>::CAPACITY_IF_WAITING {
                 anyhow::bail!("Channel is full, cannot send message");
             }
-            Pick::<BusMetrics>::get_mut(self).send::<Msg, Client>();
+            Pick::<BusMetrics>::get_mut(self).send_with_client_name::<Msg, Client>();
             Pick::<BusSender<Msg>>::get(self)
                 .send(BusEnvelope::from_message(message))
                 // Error is always "channel closed" so let's replace that
@@ -258,7 +260,7 @@ where
             if Pick::<BusSender<Msg>>::get(self).len() >= <Msg as BusMessage>::CAPACITY_IF_WAITING {
                 anyhow::bail!("Channel is full, cannot send message");
             }
-            Pick::<BusMetrics>::get_mut(self).send::<Msg, Client>();
+            Pick::<BusMetrics>::get_mut(self).send_with_client_name::<Msg, Client>();
             Pick::<BusSender<Msg>>::get(self)
                 .send(BusEnvelope {
                     message,
@@ -294,7 +296,7 @@ where
                     i += 1;
                     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 } else {
-                    Pick::<BusMetrics>::get_mut(self).send::<Msg, Client>();
+                    Pick::<BusMetrics>::get_mut(self).send_with_client_name::<Msg, Client>();
                     break Pick::<BusSender<Msg>>::get(self)
                         .send(BusEnvelope::from_message(message))
                         .map(|_| ())
@@ -315,7 +317,7 @@ where
         &mut self,
     ) -> impl std::future::Future<Output = Result<Msg, tokio::sync::broadcast::error::RecvError>> + Send
     {
-        Pick::<BusMetrics>::get_mut(self).receive::<Msg, Client>();
+        Pick::<BusMetrics>::get_mut(self).receive_with_client_name::<Msg, Client>();
         async move {
             let envelope = Pick::<BusReceiver<Msg>>::get_mut(self).recv().await?;
             Ok(envelope.into_message())
@@ -323,7 +325,7 @@ where
     }
 
     fn try_recv(&mut self) -> Result<Msg, tokio::sync::broadcast::error::TryRecvError> {
-        Pick::<BusMetrics>::get_mut(self).receive::<Msg, Client>();
+        Pick::<BusMetrics>::get_mut(self).receive_with_client_name::<Msg, Client>();
         let envelope = Pick::<BusReceiver<Msg>>::get_mut(self).try_recv()?;
         Ok(envelope.into_message())
     }
