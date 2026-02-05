@@ -2,11 +2,12 @@
 
 // Pick one of the two implementations
 use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
-use hyli_modules::utils::da_codec::{DataAvailabilityClient, DataAvailabilityServer};
+use hyli_modules::utils::da_codec::DataAvailabilityServer;
 //use hyli_modules::modules::data_availability::blocks_memory::Blocks;
 use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
+use hyli_modules::modules::da_listener::{DaStreamPoll, SignedDaStream};
 use hyli_net::tcp::TcpEvent;
 use tokio::task::JoinHandle;
 
@@ -25,10 +26,7 @@ use std::{
     collections::{BTreeSet, HashMap, VecDeque},
     time::Duration,
 };
-use tokio::{
-    task::JoinSet,
-    time::{sleep_until, Instant},
-};
+use tokio::task::JoinSet;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::model::SharedRunContext;
@@ -212,8 +210,16 @@ impl DaCatchupper {
         }
     }
 
-    pub fn choose_random_peer(&self) -> Option<String> {
-        self.peers.choose(&mut deterministic_rng()).cloned()
+    pub fn choose_random_peer(&self) -> Option<(String, Vec<String>)> {
+        let primary = self.peers.choose(&mut deterministic_rng()).cloned()?;
+        let mut ordered = Vec::with_capacity(self.peers.len());
+        ordered.push(primary.clone());
+        for peer in &self.peers {
+            if peer != &primary {
+                ordered.push(peer.clone());
+            }
+        }
+        Some((primary, ordered))
     }
 
     pub fn init_catchup(
@@ -254,7 +260,7 @@ impl DaCatchupper {
             return Ok(());
         }
 
-        let Some(peer) = self.choose_random_peer() else {
+        let Some((peer, peers)) = self.choose_random_peer() else {
             warn!("No peers available for catchup, cannot proceed");
             return Ok(());
         };
@@ -266,7 +272,7 @@ impl DaCatchupper {
 
         self.status = Some((
             Self::start_task(
-                peer,
+                peers,
                 self.da_max_frame_length,
                 from_height,
                 sender.clone(),
@@ -312,7 +318,7 @@ impl DaCatchupper {
             return Ok(());
         };
 
-        let Some(peer) = self.choose_random_peer() else {
+        let Some((peer, peers)) = self.choose_random_peer() else {
             warn!("No peers available for catchup, cannot proceed");
 
             return Ok(());
@@ -341,7 +347,7 @@ impl DaCatchupper {
 
             self.metrics.restart(&peer, from.0);
             let new_task = Self::start_task(
-                peer,
+                peers,
                 self.da_max_frame_length,
                 from,
                 sender.clone(),
@@ -360,79 +366,90 @@ impl DaCatchupper {
     }
 
     fn start_task(
-        peer: String,
+        peers: Vec<String>,
         da_max_frame_length: usize,
         start_height: BlockHeight,
         sender: tokio::sync::mpsc::Sender<SignedBlock>,
         metrics: DaCatchupMetrics,
     ) -> JoinHandle<anyhow::Result<()>> {
+        let peer_label = peers
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
         info!(
             "Starting catchup from height {} on peer {}",
-            start_height, peer
+            start_height, peer_label
         );
 
-        metrics.start(&peer, start_height.0);
+        metrics.start(&peer_label, start_height.0);
 
         tokio::spawn(async move {
-            let mut client = log_error!(
-                DataAvailabilityClient::connect_with_opts(
-                    "catchupper".to_string(),
-                    Some(da_max_frame_length),
-                    peer.clone(),
-                )
-                .await,
-                "Error occurred setting up the DA listener"
-            )?;
-
-            client
-                .send(DataAvailabilityRequest::StreamFromHeight(start_height))
-                .await?;
-
             let timeout_duration = std::env::var("HYLI_DA_SLEEP_TIMEOUT")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .map(Duration::from_secs)
                 .unwrap_or_else(|| Duration::from_secs(10));
-            let mut deadline = Instant::now() + timeout_duration;
+
+            let mut stream = SignedDaStream::new(
+                "catchupper",
+                Some(da_max_frame_length),
+                peers,
+                start_height,
+                timeout_duration,
+            );
+            let mut client = log_error!(
+                stream.start_client().await,
+                "Error occurred setting up the DA listener"
+            )?;
+
+            let mut timeout_check_interval = tokio::time::interval(Duration::from_secs(1));
 
             loop {
-                let sleep = sleep_until(deadline);
-                tokio::pin!(sleep);
-
-                hyli_turmoil_shims::tokio_select_biased! {
-                    _ = &mut sleep => {
-                        warn!("Timeout expired while waiting for block.");
-                        metrics.timeout(&peer);
-                        break;
+                tokio::select! {
+                    _ = timeout_check_interval.tick() => {
+                        log_error!(stream.check_block_request_timeouts(&mut client).await, "Checking block request timeouts")?;
+                        let pending = stream.pending_block_requests();
+                        for height in pending {
+                            if let Err(e) = client.send(DataAvailabilityRequest::BlockRequest(height)).await {
+                                error!("Failed to send block request for height {}: {}", height, e);
+                            }
+                        }
                     }
-                    received = client.recv() => {
-                        match received {
-                            None => {
-                                metrics.stream_closed(&peer);
-                                break;
+                    poll = stream.listen_next(&mut client, |event| matches!(event, DataAvailabilityEvent::SignedBlock(_))) => {
+                        match poll {
+                            DaStreamPoll::Timeout => {
+                                warn!("Timeout expired while waiting for block.");
+                                metrics.timeout(&peer_label);
                             }
-                            Some(DataAvailabilityEvent::SignedBlock(block)) => {
-                                info!(
-                                    "📦 Received block (height {}) from stream",
-                                    block.consensus_proposal.slot
-                                );
+                            DaStreamPoll::StreamClosed => {
+                                metrics.stream_closed(&peer_label);
+                            }
+                            DaStreamPoll::Event(event) => match event {
+                                DataAvailabilityEvent::SignedBlock(block) => {
+                                    let blocks = stream.on_signed_block(block).await?;
+                                    for block in blocks {
+                                        info!(
+                                            "📦 Received block (height {}) from stream",
+                                            block.consensus_proposal.slot
+                                        );
 
-                                if let Err(e) = sender.send(block).await {
-                                    tracing::error!("Error while sending block over channel: {:#}", e);
-                                    break;
+                                        if let Err(e) = sender.send(block).await {
+                                            tracing::error!("Error while sending block over channel: {:#}", e);
+                                            return Ok(());
+                                        }
+                                    }
                                 }
-
-                                // Reset the timeout ONLY when a block is received
-                                deadline = Instant::now() + timeout_duration;
-                            }
-                            Some(_) => {
-                                tracing::trace!("Dropped received message in catchup task");
-                            }
+                                DataAvailabilityEvent::BlockNotFound(height) => {
+                                    log_error!(stream.handle_block_not_found(height, &mut client).await, "Handling BlockNotFound")?;
+                                }
+                                _ => {
+                                    tracing::trace!("Dropped received message in catchup task");
+                                }
+                            },
                         }
                     }
                 }
             }
-            Ok(())
         })
     }
 }
