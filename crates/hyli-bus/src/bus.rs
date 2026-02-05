@@ -209,7 +209,7 @@ macro_rules! bus_client {
                 $name::new(
                     bus.metrics
                         .clone()
-                        .with_client_name($crate::bus::metrics::BusMetrics::simplified_name::<Self>()),
+                        .with_client_name(stringify!($name).to_string()),
                     $($crate::bus::dont_use_this::get_sender::<$sender>(&bus).await,)*
                     $($crate::bus::dont_use_this::get_receiver::<$receiver>(&bus).await,)*
                 )
