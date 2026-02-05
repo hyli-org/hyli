@@ -151,6 +151,7 @@ impl<P: BlockProcessor + 'static> SignedDAListener<P> {
             .await
             {
                 Ok(mut client) => {
+                    info!("📦 Connected to DA server {}", da_address);
                     client
                         .send(DataAvailabilityRequest::StreamFromHeight(block_height))
                         .await?;

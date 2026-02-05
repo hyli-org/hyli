@@ -6,6 +6,7 @@ data_directory = "data"
 
 # URL to connect to
 da_read_from = "localhost:4141"
+da_fallback_addresses = ["localhost:5151", "localhost:6161", "localhost:7171"]
 
 [gcs]
 # GCS bucket info
