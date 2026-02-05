@@ -200,7 +200,6 @@ pub async fn main_loop(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> 
 }
 
 pub async fn main_process(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> Result<()> {
-    // Init global metrics meter we expose as an endpoint
     let registry =
         init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
     let bus = SharedMessageBus::new();
