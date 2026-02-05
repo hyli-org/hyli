@@ -219,17 +219,19 @@ pub async fn join_devnet(
     extra_args: Vec<String>,
 ) -> HylixResult<()> {
     if !resume {
-        // delete data_node_local directory if it exists
+        // don't join if local data already exists to avoid accidentally wiping state
         let data_dir = PathBuf::from("data_node_local");
         if data_dir.exists() {
-            log_info("Cleaning up any existing local data_node_local/ before joining...");
-            std::fs::remove_dir_all(&data_dir)?;
+            log_warning("Existing local node data directory found at 'data_node_local'. Either remove it or use '--resume' to keep existing state.");
+
+            log_info(&format!(
+                "{}",
+                console::style("$ hy devnet join --resume").green()
+            ));
+            return Err(HylixError::devnet(
+                "Local node data directory already exists.",
+            ));
         }
-        log_info("If you want to keep the existing local node state, you can use '--resume' flag to join without resetting local data.");
-        log_info(&format!(
-            "{}",
-            console::style("$ hy devnet join --resume").green()
-        ));
     }
 
     let config_path = get_local_node_config_path()?;
