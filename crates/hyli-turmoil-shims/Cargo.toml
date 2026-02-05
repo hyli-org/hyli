@@ -15,15 +15,10 @@ turmoil = { workspace = true, optional = true }
 borsh = { workspace = true }
 opentelemetry = { workspace = true, optional = true }
 opentelemetry_sdk = { workspace = true, optional = true, features = ["rt-tokio", "experimental_metrics_periodicreader_with_async_runtime"] }
-opentelemetry-otlp = { workspace = true, optional = true, features = ["grpc-tonic", "metrics"] }
 
 [features]
 turmoil = ["dep:turmoil"]
 otlp = [
   "dep:opentelemetry",
   "dep:opentelemetry_sdk",
-  "dep:opentelemetry-otlp",
 ]
-
-[package.metadata.cargo-machete]
-ignored = ["turmoil"]
