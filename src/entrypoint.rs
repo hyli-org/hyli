@@ -189,24 +189,26 @@ pub fn welcome_message(conf: &conf::Conf) {
 }
 
 pub async fn main_loop(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> Result<()> {
-    let mut handler = common_main(config, crypto).await?;
+    let bus = SharedMessageBus::new();
+    let mut handler = common_main(config, crypto, bus).await?;
     handler.exit_loop().await?;
 
     Ok(())
 }
 
 pub async fn main_process(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> Result<()> {
-    let mut handler = common_main(config, crypto).await?;
+    let bus = SharedMessageBus::new();
+    let mut handler = common_main(config, crypto, bus).await?;
     handler.exit_process().await?;
 
     Ok(())
 }
 
-async fn common_main(
+pub async fn common_main(
     mut config: conf::Conf,
     crypto: Option<SharedBlstCrypto>,
+    bus: SharedMessageBus,
 ) -> Result<ModulesHandler> {
-    let bus = SharedMessageBus::new();
     let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
     // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.

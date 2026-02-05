@@ -1536,6 +1536,99 @@ async fn autobahn_missed_confirm_and_commit_messages() {
 }
 
 #[test_log::test(tokio::test)]
+async fn leader_receives_commit_for_next_slot() {
+    let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
+
+    ConsensusTestCtx::setup_for_round(
+        &mut [
+            &mut node0.consensus_ctx,
+            &mut node1.consensus_ctx,
+            &mut node2.consensus_ctx,
+            &mut node3.consensus_ctx,
+        ],
+        5,
+        0,
+    );
+
+    node0
+        .start_round_with_cut_from_mempool(TimestampMs(1000))
+        .await;
+
+    broadcast! {
+        description: "Prepare",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Prepare(..)
+    };
+
+    send! {
+        description: "PrepareVote",
+        from: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx], to: node0.consensus_ctx,
+        message_matches: ConsensusNetMessage::PrepareVote(_)
+    };
+
+    broadcast! {
+        description: "Confirm",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Confirm(..)
+    };
+
+    send! {
+        description: "ConfirmAck",
+        from: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx], to: node0.consensus_ctx,
+        message_matches: ConsensusNetMessage::ConfirmAck(_)
+    };
+
+    let commit_msg = broadcast! {
+        description: "Commit",
+        from: node0.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::Commit(..)
+    };
+
+    ConsensusTestCtx::timeout(&mut [
+        &mut node1.consensus_ctx,
+        &mut node2.consensus_ctx,
+        &mut node3.consensus_ctx,
+    ])
+    .await;
+
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node1.consensus_ctx, to: [node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node2.consensus_ctx, to: [node1.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+    broadcast! {
+        description: "Follower - Timeout",
+        from: node3.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx],
+        message_matches: ConsensusNetMessage::Timeout(..)
+    };
+
+    // Node1 is next leader (slot 5 + view 1 = 6 % 4 = 1)
+    node1
+        .start_round_with_cut_from_mempool(TimestampMs(2000))
+        .await;
+
+    broadcast! {
+        description: "Leader - Prepare (view 1)",
+        from: node1.consensus_ctx, to: [node0.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Prepare(..)
+    };
+
+    node1
+        .consensus_ctx
+        .handle_msg(&commit_msg, "Leader receives commit for next slot")
+        .await;
+
+    assert_eq!(node1.consensus_ctx.slot(), 6);
+    assert_eq!(node1.consensus_ctx.view(), 0);
+    assert!(node1.consensus_ctx.current_proposal().is_none());
+}
+
+#[test_log::test(tokio::test)]
 async fn autobahn_got_timed_out_during_sync() {
     // node1 is 2nd leader but got disconnected
     let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
