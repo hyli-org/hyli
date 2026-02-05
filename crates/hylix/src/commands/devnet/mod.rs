@@ -9,8 +9,8 @@ mod single_node;
 mod status;
 mod utils;
 
-pub use context::{DevnetContext, MultiNodeConfig, NodePorts};
 pub use config::get_node_id;
+pub use context::{DevnetContext, MultiNodeConfig, NodePorts};
 pub use utils::is_devnet_responding;
 
 use crate::commands::bake::bake_devnet;

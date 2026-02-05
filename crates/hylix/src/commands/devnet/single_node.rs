@@ -3,13 +3,13 @@ use crate::constants;
 use crate::error::HylixResult;
 use crate::logging::{log_info, log_success, log_warning, ProgressExecutor};
 
+use super::containers::{get_docker_container_status, stop_and_remove_container, ContainerStatus};
 use super::context::DevnetContext;
 use super::network::{create_docker_network, remove_docker_network};
 use super::services::{start_indexer, start_local_node, start_registry, start_wallet_app};
 use super::services::{stop_indexer, stop_registry, stop_wallet_app};
 use super::status::check_devnet_status;
 use super::utils::check_required_dependencies;
-use super::containers::{get_docker_container_status, stop_and_remove_container, ContainerStatus};
 
 /// Start the local devnet
 pub async fn start_devnet(

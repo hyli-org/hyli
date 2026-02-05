@@ -8,10 +8,13 @@ use crate::logging::{
 };
 
 use super::config::{
-    generate_local_node_config, generate_peers_for_node,
-    get_local_node_config_dir, get_local_node_config_path, get_node_id,
+    generate_local_node_config, generate_peers_for_node, get_local_node_config_dir,
+    get_local_node_config_path, get_node_id,
 };
-use super::containers::{get_docker_container_status, start_managed_container, stop_and_remove_container, ContainerStatus};
+use super::containers::{
+    get_docker_container_status, start_managed_container, stop_and_remove_container,
+    ContainerStatus,
+};
 use super::context::{DevnetContext, NodePorts};
 use super::network::create_docker_network;
 use super::services::{start_indexer, start_registry, start_wallet_app};
@@ -207,11 +210,7 @@ async fn start_multi_node_nodes(
 }
 
 /// Join the multi-node devnet with the local node
-pub async fn join_devnet(
-    dry_run: bool,
-    release: bool,
-    extra_args: Vec<String>,
-) -> HylixResult<()> {
+pub async fn join_devnet(dry_run: bool, release: bool, extra_args: Vec<String>) -> HylixResult<()> {
     let config_path = get_local_node_config_path()?;
 
     if !config_path.exists() {
