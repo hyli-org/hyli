@@ -25,7 +25,7 @@ pub async fn submit_10_contracts(node: TurmoilHost) -> anyhow::Result<()> {
     _ = wait_height(&client_with_retries, 1).await;
 
     if node.conf.id == "node-1" {
-        for i in 1..10 {
+        for i in 1..=10 {
             tokio::time::sleep(Duration::from_secs(1)).await;
             let tx = make_register_contract_tx(format!("contract-{}", i).into());
 
@@ -39,7 +39,7 @@ pub async fn submit_10_contracts(node: TurmoilHost) -> anyhow::Result<()> {
     }
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(90);
-    for i in 1..10 {
+    for i in 1..=10 {
         let name = format!("contract-{}", i);
         let mut attempts = 0;
         loop {

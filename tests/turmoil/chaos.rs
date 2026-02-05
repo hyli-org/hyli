@@ -9,11 +9,13 @@ use std::sync::{
 };
 use std::time::Duration;
 
+use client_sdk::rest_client::NodeApiClient;
 use hyli::bus::{bus_client, BusClientSender};
 use hyli::rest::RestApi;
 use hyli_modules::modules::signal::ShutdownModule;
 use hyli_net::net::Sim;
 use rand::seq::SliceRandom;
+use tokio::sync::Mutex;
 
 use crate::fixtures::turmoil::{
     hold_all_links, hold_node, release_all_links, release_node, TurmoilCtx,
@@ -540,37 +542,94 @@ pub fn simulation_chaos_asymmetric_partition(
 pub fn simulation_chaos_slow_leader(ctx: &mut TurmoilCtx, sim: &mut Sim<'_>) -> anyhow::Result<()> {
     let warmup = Duration::from_secs(5);
     let slow_duration = Duration::from_secs(ctx.random_between(10, 20));
-    let target_node = ctx.random_id();
+    let leader_id = Arc::new(Mutex::new(None::<String>));
+    let leader_ready = Arc::new(AtomicBool::new(false));
+    let mut leader_lookup_started = false;
 
     let mut slowdown_applied = false;
     let mut restored = false;
 
-    tracing::info!("Chaos: will slow down node {}", target_node);
+    tracing::info!("Chaos: will slow down the current leader");
 
     loop {
         let finished = sim.step().map_err(|s| anyhow::anyhow!(s.to_string()))?;
         let now = sim.elapsed();
 
+        if !leader_lookup_started {
+            let nodes = ctx.nodes.clone();
+            let leader_id = Arc::clone(&leader_id);
+            let leader_ready = Arc::clone(&leader_ready);
+            sim.client("resolve-leader", async move {
+                let client = nodes
+                    .first()
+                    .expect("at least one node")
+                    .client
+                    .retry_15times_1000ms();
+
+                let mut resolved = None::<String>;
+                for _ in 0..30 {
+                    if let Ok(info) = client.get_consensus_info().await {
+                        let leader_pk = info.round_leader;
+                        for node in nodes.iter() {
+                            if let Ok(node_info) = node.client.get_node_info().await {
+                                if node_info.pubkey.as_ref() == Some(&leader_pk) {
+                                    resolved = Some(node_info.id);
+                                    break;
+                                }
+                            }
+                        }
+                        if resolved.is_some() {
+                            break;
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+
+                if resolved.is_none() {
+                    tracing::warn!("Chaos: failed to resolve leader from consensus info");
+                }
+
+                *leader_id.lock().await = resolved;
+                leader_ready.store(true, Ordering::SeqCst);
+                Ok(())
+            });
+            leader_lookup_started = true;
+        }
+
         if !slowdown_applied && now > warmup {
-            tracing::info!(
-                "Chaos: applying high latency to {} for {}s",
-                target_node,
-                slow_duration.as_secs()
-            );
-            for other_node in ctx
-                .nodes
-                .clone()
-                .iter()
-                .filter(|n| n.conf.id != target_node)
-            {
-                let slowness = Duration::from_millis(ctx.random_between(500, 1500));
-                sim.set_link_latency(target_node.clone(), other_node.conf.id.clone(), slowness);
-                sim.set_link_latency(other_node.conf.id.clone(), target_node.clone(), slowness);
+            if leader_ready.load(Ordering::SeqCst) {
+                let target_node = leader_id.try_lock().ok().and_then(|guard| guard.clone());
+                let Some(target_node) = target_node else {
+                    return Err(anyhow::anyhow!(
+                        "failed to resolve leader before applying slowdown"
+                    ));
+                };
+
+                tracing::info!(
+                    "Chaos: applying high latency to leader {} for {}s",
+                    target_node,
+                    slow_duration.as_secs()
+                );
+                for other_node in ctx
+                    .nodes
+                    .clone()
+                    .iter()
+                    .filter(|n| n.conf.id != target_node)
+                {
+                    let slowness = Duration::from_millis(ctx.random_between(500, 1500));
+                    sim.set_link_latency(target_node.clone(), other_node.conf.id.clone(), slowness);
+                    sim.set_link_latency(other_node.conf.id.clone(), target_node.clone(), slowness);
+                }
+                slowdown_applied = true;
             }
-            slowdown_applied = true;
         }
 
         if slowdown_applied && !restored && now > warmup + slow_duration {
+            let target_node = leader_id
+                .try_lock()
+                .ok()
+                .and_then(|guard| guard.clone())
+                .unwrap_or_else(|| "unknown-leader".to_string());
             tracing::info!("Chaos: restoring normal latency to {}", target_node);
             for other_node in ctx
                 .nodes
