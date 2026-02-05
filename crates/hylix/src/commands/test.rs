@@ -5,7 +5,7 @@ use crate::commands;
 use crate::commands::devnet::DevnetAction;
 use crate::error::{HylixError, HylixResult};
 use crate::logging::{
-    create_progress_bar, create_progress_bar_with_msg, log_error, log_info, log_success,
+    create_progress_bar_with_msg, log_error, log_info, log_success, ProgressExecutor,
 };
 
 /// Execute the `hy test` command
@@ -23,7 +23,7 @@ pub async fn execute(
     }
 
     // Check if we're in a valid project directory
-    validate_project_directory()?;
+    crate::validation::validate_project(crate::validation::ValidationLevel::Test)?;
 
     let config = crate::config::HylixConfig::load()?;
 
@@ -70,27 +70,6 @@ pub async fn execute(
     Ok(())
 }
 
-/// Validate that we're in a valid project directory
-fn validate_project_directory() -> HylixResult<()> {
-    if !std::path::Path::new("contracts").exists() {
-        return Err(HylixError::project(
-            "No 'contracts' directory found. Are you in a Hylix project directory?",
-        ));
-    }
-
-    if !std::path::Path::new("server").exists() {
-        return Err(HylixError::project(
-            "No 'server' directory found. Are you in a Hylix project directory?",
-        ));
-    }
-
-    if !std::path::Path::new("tests").exists() {
-        log_info("No 'tests' directory found, running unit tests only");
-    }
-
-    Ok(())
-}
-
 /// Start devnet if not already running
 async fn start_devnet_if_needed() -> HylixResult<()> {
     commands::devnet::execute(DevnetAction::Up {
@@ -117,9 +96,9 @@ async fn start_backend(
     // Check if the backend is running by loop-polling /_health
     let mut attempts = 0;
     const MAX_ATTEMPTS: u32 = 50;
-    let mpb = indicatif::MultiProgress::new();
-    let pb = mpb.add(create_progress_bar());
-    let pb2 = mpb.add(create_progress_bar());
+    let executor = ProgressExecutor::new();
+    let pb = executor.add_task("Waiting for backend to start...");
+    let pb2 = executor.add_task("");
     while !is_backend_running(config, &pb2).await {
         attempts += 1;
         pb.set_message(format!(
@@ -149,8 +128,7 @@ async fn start_backend(
             }
         }
     }
-    mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
+    executor.clear()?;
 
     log_success("Backend is ready to accept requests");
     Ok(backend)

@@ -167,6 +167,8 @@ pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) ->
 
     let endpoint =
         std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".to_string());
+
+    // Initialize the OTLP meter provider globally so that metrics can be emitted
     init_otlp_meter_provider(endpoint.clone(), node_name.clone())
         .context("starting OTLP metrics exporter")?;
 

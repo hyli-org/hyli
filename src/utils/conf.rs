@@ -169,8 +169,6 @@ pub struct Conf {
 
     // FastCatchup option, from the admin API of a running node.
     pub run_fast_catchup: bool,
-    /// If false, skip fast catchup if there are already files present. If true, always fast-catchup on startup.
-    pub fast_catchup_override: bool,
     /// Whether to also download older blocks after catchup.
     pub fast_catchup_backfill: bool,
     /// IP address to use for fast catchup
@@ -217,6 +215,8 @@ pub struct Conf {
     pub da_read_from: String,
     /// Timeout for DA client requests, in seconds, before it tries to reconnect to stream blocks
     pub da_timeout_client_secs: u64,
+    /// Fallback DA server addresses for block requests when blocks are missing
+    pub da_fallback_addresses: Vec<String>,
 
     /// Websocket configuration
     pub websocket: NodeWebSocketConfig,

@@ -1,22 +1,15 @@
 use crate::commands::bake::bake_devnet;
 use crate::config::HylixConfig;
+use crate::constants;
+use crate::docker::{ContainerManager, ContainerSpec};
+use crate::env_builder::EnvBuilder;
 use crate::error::{HylixError, HylixResult};
 use crate::logging::{
-    create_progress_bar, create_progress_bar_with_msg, execute_command_with_progress, log_error,
-    log_info, log_success, log_warning,
+    create_progress_bar, create_progress_bar_with_msg, log_error, log_info, log_success,
+    log_warning, ProgressExecutor,
 };
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use std::time::Duration;
-
-/// Helper function to build Docker environment variable arguments
-fn build_env_args(env_vars: &[String]) -> Vec<String> {
-    let mut args = Vec::new();
-    for env_var in env_vars {
-        args.push("-e".to_string());
-        args.push(env_var.clone());
-    }
-    args
-}
 
 /// Container status enum
 #[derive(Debug, Clone, PartialEq)]
@@ -27,31 +20,68 @@ enum ContainerStatus {
 }
 
 /// Devnet action enum
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, clap::Subcommand)]
 pub enum DevnetAction {
+    /// Start the local devnet
+    #[command(alias = "u")]
     Up {
+        /// Reset to fresh state
+        #[arg(long)]
         reset: bool,
+        /// Create and fund test accounts after starting devnet
+        #[arg(long)]
         bake: bool,
+        /// Profile to use for baking (e.g., --profile=bobalice)
+        #[arg(long, value_name = "PROFILE")]
         profile: Option<String>,
+        /// No pull docker images (use existing local)
+        #[arg(long)]
         no_pull: bool,
     },
+    /// Stop the local devnet
+    #[command(alias = "d")]
     Down,
+    /// Pause the local devnet
+    #[command(alias = "p")]
     Pause,
+    /// Check the status of the local devnet
+    #[command(alias = "ps")]
+    Status,
+    /// Restart the local devnet
+    #[command(alias = "r")]
     Restart {
+        /// Reset to fresh state
+        #[arg(long)]
         reset: bool,
+        /// Create and fund test accounts after restarting devnet
+        #[arg(long)]
         bake: bool,
+        /// Profile to use for baking (e.g., --profile=bobalice)
+        #[arg(long, value_name = "PROFILE")]
         profile: Option<String>,
+        /// No pull docker images (use existing local)
+        #[arg(long)]
         no_pull: bool,
     },
-    Status,
+    /// Create and fund test accounts
+    #[command(alias = "b")]
+    Bake {
+        /// Profile to use for baking
+        profile: Option<String>,
+    },
+    /// Fork a running network
+    #[command(alias = "f")]
     Fork {
+        /// Network endpoint to fork
         endpoint: String,
     },
-    Bake {
-        profile: Option<String>,
-    },
+    /// Print environment variables for sourcing in bash
+    #[command(alias = "e")]
     Env,
+    /// Follow logs of a devnet service
+    #[command(alias = "l")]
     Logs {
+        /// Service to follow logs for
         service: String,
     },
 }
@@ -70,15 +100,7 @@ impl From<HylixConfig> for DevnetContext {
     }
 }
 
-const CONTAINERS: [&str; 7] = [
-    "hyli-devnet-node",
-    "hyli-devnet-postgres",
-    "hyli-devnet-indexer",
-    "hyli-devnet-wallet",
-    "hyli-devnet-wallet-ui",
-    "hyli-devnet-registry",
-    "hyli-devnet-registry-ui",
-];
+const CONTAINERS: [&str; 7] = constants::containers::ALL;
 
 impl DevnetContext {
     /// Create a new DevnetContext
@@ -163,7 +185,9 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
         }
         DevnetAction::Bake { profile } => {
             let context_with_profile = DevnetContext::new_with_profile(context.config, profile)?;
-            bake_devnet(&indicatif::MultiProgress::new(), &context_with_profile).await?;
+            let executor = ProgressExecutor::new();
+            bake_devnet(&executor, &context_with_profile).await?;
+            executor.clear()?;
         }
         DevnetAction::Env => {
             print_devnet_env_vars(&context.config)?;
@@ -178,7 +202,7 @@ pub async fn execute(action: DevnetAction) -> HylixResult<()> {
 
 /// Logs the local devnet
 async fn logs_devnet(service: &str) -> HylixResult<()> {
-    let container = format!("hyli-devnet-{service}");
+    let container = format!("{}-{service}", constants::networks::DEVNET);
 
     log_info(&format!("Following logs for {container}"));
     log_info("Use Ctrl+C to stop following logs");
@@ -213,7 +237,7 @@ async fn check_devnet_status(context: &DevnetContext) -> HylixResult<()> {
         check_docker_container(context, container).await?;
     }
 
-    let is_running = check_docker_container(context, "hyli-devnet-node").await?
+    let is_running = check_docker_container(context, constants::containers::NODE).await?
         == ContainerStatus::Running
         && is_devnet_responding(context).await?;
 
@@ -308,31 +332,29 @@ async fn get_docker_container_status(container_name: &str) -> HylixResult<Contai
 }
 
 async fn start_containers(context: &DevnetContext) -> HylixResult<()> {
-    let mpb = indicatif::MultiProgress::new();
+    let executor = ProgressExecutor::new();
     for container in CONTAINERS {
         if get_docker_container_status(container).await? == ContainerStatus::Stopped {
-            start_container(&mpb, context, container).await?;
+            start_container(&executor, context, container).await?;
         }
     }
+    executor.clear()?;
     Ok(())
 }
 
 async fn start_container(
-    mpb: &indicatif::MultiProgress,
+    executor: &ProgressExecutor,
     _context: &DevnetContext,
     container_name: &str,
 ) -> HylixResult<()> {
-    let pb = mpb.add(create_progress_bar());
-    pb.set_message(format!("Starting container {container_name}"));
-    let success = execute_command_with_progress(
-        mpb,
-        "docker start",
-        "docker",
-        &["start", container_name],
-        None,
-    )
-    .await?;
-    pb.finish_and_clear();
+    let success = executor
+        .execute_command(
+            format!("Starting container {container_name}"),
+            "docker",
+            &["start", container_name],
+            None,
+        )
+        .await?;
     if success {
         log_success(&format!("Started container {container_name}"));
     } else {
@@ -348,34 +370,34 @@ async fn start_devnet(reset: bool, bake: bool, context: &DevnetContext) -> Hylix
     // Check required dependencies before starting
     check_required_dependencies()?;
 
-    let mpb = indicatif::MultiProgress::new();
+    let executor = ProgressExecutor::new();
     if reset {
         reset_devnet_state(context).await?;
     }
 
-    create_docker_network(&mpb).await?;
+    create_docker_network(&executor).await?;
     log_success("[1/5] Docker network created");
 
     // Start the local node
-    start_local_node(&mpb, context).await?;
+    start_local_node(&executor, context).await?;
     log_success("[2/5] Local node started");
 
     // Start indexer
-    start_indexer(&mpb, context).await?;
+    start_indexer(&executor, context).await?;
     log_success("[3/5] Indexer started");
 
     // Start registry
-    start_registry(&mpb, context).await?;
+    start_registry(&executor, context).await?;
     log_success("[4/5] Registry started");
 
     // Setup wallet app
-    start_wallet_app(&mpb, context).await?;
+    start_wallet_app(&executor, context).await?;
     log_success("[5/5] Wallet app started");
 
     check_devnet_status(context).await?;
 
     if bake {
-        bake_devnet(&mpb, context).await?;
+        bake_devnet(&executor, context).await?;
     } else {
         log_warning("Skipping test account creation and funding");
         log_info(
@@ -394,30 +416,27 @@ async fn start_devnet(reset: bool, bake: bool, context: &DevnetContext) -> Hylix
         );
     }
 
+    executor.clear()?;
     Ok(())
 }
 
 /// Pause the local devnet
 async fn pause_devnet(_context: &DevnetContext) -> HylixResult<()> {
-    let mpb = indicatif::MultiProgress::new();
-    let pb = mpb.add(create_progress_bar());
-    let pb2 = mpb.add(create_progress_bar());
-    pb.set_message("Pausing local devnet...");
+    let executor = ProgressExecutor::new();
+    let _pb = executor.add_task("Pausing local devnet...");
     for container in CONTAINERS {
         if get_docker_container_status(container).await? == ContainerStatus::Running {
-            pb2.set_message(format!("Stopping container {container}"));
-            execute_command_with_progress(
-                &mpb,
-                "docker stop",
-                "docker",
-                &["stop", container],
-                None,
-            )
-            .await?;
+            executor
+                .execute_command(
+                    format!("Stopping container {container}"),
+                    "docker",
+                    &["stop", container],
+                    None,
+                )
+                .await?;
         }
     }
-    mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
+    executor.clear()?;
     log_success("Local devnet paused successfully!");
     log_info("Use `hy devnet up` to resume the local devnet");
     Ok(())
@@ -499,18 +518,15 @@ async fn reset_devnet_state(_context: &DevnetContext) -> HylixResult<()> {
 }
 
 /// Create the docker network
-async fn create_docker_network(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
-    let pb = mpb.add(create_progress_bar());
-    pb.set_message("Creating docker network...");
-
-    let success = execute_command_with_progress(
-        mpb,
-        "docker network create",
-        "docker",
-        &["network", "create", "hyli-devnet"],
-        None,
-    )
-    .await?;
+async fn create_docker_network(executor: &ProgressExecutor) -> HylixResult<()> {
+    let success = executor
+        .execute_command(
+            "Creating docker network...",
+            "docker",
+            &["network", "create", constants::networks::DEVNET],
+            None,
+        )
+        .await?;
 
     if !success {
         return Err(HylixError::process(
@@ -518,450 +534,215 @@ async fn create_docker_network(mpb: &indicatif::MultiProgress) -> HylixResult<()
         ));
     }
 
-    mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
+    executor.clear()?;
 
     Ok(())
 }
 
 /// Start the local node
-async fn start_local_node(
-    mpb: &indicatif::MultiProgress,
-    context: &DevnetContext,
-) -> HylixResult<()> {
+async fn start_local_node(executor: &ProgressExecutor, context: &DevnetContext) -> HylixResult<()> {
     let image = &context.config.devnet.node_image;
 
-    if context.pull {
-        pull_docker_image(mpb, image).await?;
-    }
-    let pb = mpb.add(create_progress_bar());
-    pb.set_message("Starting Hyli node with Docker...");
+    let env_builder = EnvBuilder::new()
+        .risc0_dev_mode()
+        .sp1_prover_mock()
+        .set(constants::env_vars::HYLI_RUN_INDEXER, "false")
+        .set(constants::env_vars::HYLI_RUN_EXPLORER, "false")
+        .rust_log(&context.config.devnet.node_rust_log);
 
-    // Build base arguments
-    let mut args: Vec<String> = vec![
-        "run",
-        "-d",
-        "--network",
-        "hyli-devnet",
-        "--name",
-        "hyli-devnet-node",
-        "-p",
-        &format!("{}:4321", context.config.devnet.node_port),
-        "-p",
-        &format!("{}:4141", context.config.devnet.da_port),
-        "-e",
-        "RISC0_DEV_MODE=true",
-        "-e",
-        "SP1_PROVER=mock",
-        "-e",
-        "HYLI_RUN_INDEXER=false",
-        "-e",
-        "HYLI_RUN_EXPLORER=false",
-        "-e",
-        &format!("RUST_LOG={}", context.config.devnet.node_rust_log),
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+    let spec = ContainerSpec::new(constants::containers::NODE, image)
+        .port(context.config.devnet.node_port, 4321)
+        .port(context.config.devnet.da_port, 4141)
+        .env_builder(env_builder)
+        .custom_env(context.config.devnet.container_env.node.clone());
 
-    // Add custom environment variables if configured
-    args.extend(build_env_args(&context.config.devnet.container_env.node));
-
-    args.push(image.to_string());
-
-    let success = execute_command_with_progress(
-        mpb,
-        "docker run",
-        "docker",
-        &args.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
-        None,
-    )
-    .await?;
-
-    if success {
-        pb.set_message("Hyli node started successfully");
-    } else {
-        return Err(HylixError::process(
-            "Failed to start Docker container".to_string(),
-        ));
-    }
+    ContainerManager::start_container(executor, spec, context.pull).await?;
 
     // Wait for the node to be ready by checking block height
-    pb.set_message("Waiting for node to be ready...");
+    let pb = executor.add_task("Waiting for node to be ready...");
     wait_for_block_height(&pb, context, 2).await?;
-
-    mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
+    pb.finish_and_clear();
 
     Ok(())
 }
 
 /// Setup wallet app
-async fn start_wallet_app(
-    mpb: &indicatif::MultiProgress,
-    context: &DevnetContext,
-) -> HylixResult<()> {
-    use tokio::process::Command;
-
+async fn start_wallet_app(executor: &ProgressExecutor, context: &DevnetContext) -> HylixResult<()> {
     let image = &context.config.devnet.wallet_server_image;
 
-    if context.pull {
-        pull_docker_image(mpb, image).await?;
-    }
+    let env_builder = EnvBuilder::new()
+        .set(
+            constants::env_vars::RISC0_DEV_MODE,
+            constants::env_values::RISC0_DEV_MODE_TRUE,
+        )
+        .set(
+            constants::env_vars::HYLI_NODE_URL,
+            &format!("http://{}:4321", constants::containers::NODE),
+        )
+        .set(
+            constants::env_vars::HYLI_INDEXER_URL,
+            &format!("http://{}:4321", constants::containers::INDEXER),
+        )
+        .set(
+            constants::env_vars::HYLI_DA_READ_FROM,
+            &format!("{}:4141", constants::containers::NODE),
+        )
+        .set(
+            constants::env_vars::HYLI_REGISTRY_URL,
+            &format!(
+                "http://{}:{}",
+                constants::containers::REGISTRY,
+                context.config.devnet.registry_server_port
+            ),
+        )
+        .set(
+            constants::env_vars::HYLI_REGISTRY_API_KEY,
+            constants::env_values::REGISTRY_API_KEY_DEV,
+        );
 
-    let pb = mpb.add(create_progress_bar());
-    pb.set_message("Starting wallet app...");
+    let spec = ContainerSpec::new(constants::containers::WALLET, image)
+        .port(context.config.devnet.wallet_api_port, 4000)
+        .env_builder(env_builder)
+        .custom_env(context.config.devnet.container_env.wallet_server.clone())
+        .args(vec![
+            "/app/server".to_string(),
+            "-m".to_string(),
+            "-w".to_string(),
+            "-a".to_string(),
+        ]);
 
-    let mut args: Vec<String> = [
-        "run",
-        "-d",
-        "--network=hyli-devnet",
-        "--name",
-        "hyli-devnet-wallet",
-        "-p",
-        &format!("{}:4000", context.config.devnet.wallet_api_port),
-        "-e",
-        "RISC0_DEV_MODE=true",
-        "-e",
-        "HYLI_NODE_URL=http://hyli-devnet-node:4321",
-        "-e",
-        "HYLI_INDEXER_URL=http://hyli-devnet-indexer:4321",
-        "-e",
-        "HYLI_DA_READ_FROM=hyli-devnet-node:4141",
-        "-e",
-        &format!(
-            "HYLI_REGISTRY_URL=http://hyli-devnet-registry:{}",
-            context.config.devnet.registry_server_port
-        ),
-        "-e",
-        "HYLI_REGISTRY_API_KEY=dev",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+    ContainerManager::start_container(executor, spec, context.pull).await?;
 
-    args.extend(build_env_args(
-        &context.config.devnet.container_env.wallet_server,
-    ));
-
-    args.extend(vec![
-        image.to_string(),
-        "/app/server".to_string(),
-        "-m".to_string(),
-        "-w".to_string(),
-        "-a".to_string(),
-    ]);
-
-    let output = Command::new("docker")
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {e}")))?;
-
-    if !output.status.success() {
-        log_warning(&format!(
-            "Error: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    } else {
-        pb.set_message("Hyli wallet app started successfully");
-    }
-
-    start_wallet_ui(mpb, context).await
+    start_wallet_ui(executor, context).await
 }
 
-async fn start_wallet_ui(
-    mpb: &indicatif::MultiProgress,
-    context: &DevnetContext,
-) -> HylixResult<()> {
-    use tokio::process::Command;
-
+async fn start_wallet_ui(executor: &ProgressExecutor, context: &DevnetContext) -> HylixResult<()> {
     let image = &context.config.devnet.wallet_ui_image;
 
-    if context.pull {
-        pull_docker_image(mpb, image).await?;
-    }
-    let pb = mpb.add(create_progress_bar());
-    pb.set_message("Starting wallet UI...");
+    let env_builder = EnvBuilder::new()
+        .set(
+            "NODE_BASE_URL",
+            &format!("http://localhost:{}", context.config.devnet.node_port),
+        )
+        .set(
+            "WALLET_SERVER_BASE_URL",
+            &format!("http://localhost:{}", context.config.devnet.wallet_api_port),
+        )
+        .set(
+            "WALLET_WS_URL",
+            &format!("ws://localhost:{}", context.config.devnet.wallet_ws_port),
+        )
+        .set(
+            "INDEXER_BASE_URL",
+            &format!("http://localhost:{}", context.config.devnet.indexer_port),
+        )
+        .set("TX_EXPLORER_URL", "https://explorer.hyli.org/");
 
-    let mut args: Vec<String> = [
-        "run",
-        "-d",
-        "--network=hyli-devnet",
-        "--name",
-        "hyli-devnet-wallet-ui",
-        "-e",
-        &format!(
-            "NODE_BASE_URL=http://localhost:{}",
-            context.config.devnet.node_port
-        ),
-        "-e",
-        &format!(
-            "WALLET_SERVER_BASE_URL=http://localhost:{}",
-            context.config.devnet.wallet_api_port
-        ),
-        "-e",
-        &format!(
-            "WALLET_WS_URL=ws://localhost:{}",
-            context.config.devnet.wallet_ws_port
-        ),
-        "-e",
-        &format!(
-            "INDEXER_BASE_URL=http://localhost:{}",
-            context.config.devnet.indexer_port
-        ),
-        "-e",
-        "TX_EXPLORER_URL=https://explorer.hyli.org/",
-        "-p",
-        &format!("{}:80", context.config.devnet.wallet_ui_port),
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+    let spec = ContainerSpec::new(constants::containers::WALLET_UI, image)
+        .port(context.config.devnet.wallet_ui_port, 80)
+        .env_builder(env_builder)
+        .custom_env(context.config.devnet.container_env.wallet_ui.clone());
 
-    args.extend(build_env_args(
-        &context.config.devnet.container_env.wallet_ui,
-    ));
-
-    args.extend(vec![image.to_string()]);
-
-    let output = Command::new("docker")
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {e}")))?;
-
-    if !output.status.success() {
-        log_warning(&format!(
-            "Error: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    } else {
-        pb.set_message("Hyli wallet UI started successfully");
-    }
-
-    mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
+    ContainerManager::start_container(executor, spec, context.pull).await?;
 
     Ok(())
 }
 
 /// Start the registry app
-async fn start_registry(
-    mpb: &indicatif::MultiProgress,
-    context: &DevnetContext,
-) -> HylixResult<()> {
-    use tokio::process::Command;
-
+async fn start_registry(executor: &ProgressExecutor, context: &DevnetContext) -> HylixResult<()> {
     let image = &context.config.devnet.registry_server_image;
 
-    if context.pull {
-        pull_docker_image(mpb, image).await?;
-    }
+    let env_builder = EnvBuilder::new().set(
+        constants::env_vars::HYLI_REGISTRY_API_KEY,
+        constants::env_values::REGISTRY_API_KEY_DEV,
+    );
 
-    let pb = mpb.add(create_progress_bar());
-    pb.set_message("Starting registry server...");
+    let spec = ContainerSpec::new(constants::containers::REGISTRY, image)
+        .port(context.config.devnet.registry_server_port, 9003)
+        .env_builder(env_builder)
+        .custom_env(context.config.devnet.container_env.registry_server.clone())
+        .arg("/app/server".to_string());
 
-    let mut args: Vec<String> = [
-        "run",
-        "-d",
-        "--network=hyli-devnet",
-        "--name",
-        "hyli-devnet-registry",
-        "-p",
-        &format!("{}:9003", context.config.devnet.registry_server_port),
-        "-e",
-        "HYLI_REGISTRY_API_KEY=dev",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+    ContainerManager::start_container(executor, spec, context.pull).await?;
 
-    args.extend(build_env_args(
-        &context.config.devnet.container_env.registry_server,
-    ));
-
-    args.extend(vec![image.to_string(), "/app/server".to_string()]);
-
-    let output = Command::new("docker")
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {e}")))?;
-
-    if !output.status.success() {
-        log_warning(&format!(
-            "Error: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    } else {
-        pb.set_message("Hyli registry server started successfully");
-    }
-
-    start_registry_ui(mpb, context).await
+    start_registry_ui(executor, context).await
 }
 
 async fn start_registry_ui(
-    mpb: &indicatif::MultiProgress,
+    executor: &ProgressExecutor,
     context: &DevnetContext,
 ) -> HylixResult<()> {
-    use tokio::process::Command;
-
     let image = &context.config.devnet.registry_ui_image;
 
-    let pb = mpb.add(create_progress_bar());
-    pb.set_message("Starting registry UI...");
-
-    let args: Vec<String> = [
-        "run",
-        "-d",
-        "--network=hyli-devnet",
-        "--name",
-        "hyli-devnet-registry-ui",
-        "-e",
+    let env_builder = EnvBuilder::new().set(
+        "REGISTRY_SERVER_BASE_URL",
         &format!(
-            "REGISTRY_SERVER_BASE_URL=http://localhost:{}",
+            "http://localhost:{}",
             context.config.devnet.registry_server_port
         ),
-        "-p",
-        &format!("{}:80", context.config.devnet.registry_ui_port),
-        image,
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+    );
 
-    let output = Command::new("docker")
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {e}")))?;
+    let spec = ContainerSpec::new(constants::containers::REGISTRY_UI, image)
+        .port(context.config.devnet.registry_ui_port, 80)
+        .env_builder(env_builder);
 
-    if !output.status.success() {
-        log_warning(&format!(
-            "Error: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    } else {
-        pb.set_message("Hyli registry UI started successfully");
-    }
-
-    mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
+    ContainerManager::start_container(executor, spec, context.pull).await?;
 
     Ok(())
 }
 
 /// Start the postgres server
 async fn start_postgres_server(
-    mpb: &indicatif::MultiProgress,
+    executor: &ProgressExecutor,
     context: &DevnetContext,
 ) -> HylixResult<()> {
-    use tokio::process::Command;
+    let env_builder = EnvBuilder::new()
+        .set("POSTGRES_USER", "postgres")
+        .set("POSTGRES_PASSWORD", "postgres")
+        .set("POSTGRES_DB", "hyli_indexer");
 
-    if context.pull {
-        pull_docker_image(mpb, "postgres:17").await?;
-    }
-    let pb = mpb.add(create_progress_bar());
-    pb.set_message("Starting postgres server...");
+    let spec = ContainerSpec::new(constants::containers::POSTGRES, constants::images::POSTGRES)
+        .port(context.config.devnet.postgres_port, 5432)
+        .env_builder(env_builder)
+        .custom_env(context.config.devnet.container_env.postgres.clone());
 
-    let mut args: Vec<String> = [
-        "run",
-        "-d",
-        "--network=hyli-devnet",
-        "--name",
-        "hyli-devnet-postgres",
-        "-p",
-        &format!("{}:5432", context.config.devnet.postgres_port),
-        "-e",
-        "POSTGRES_USER=postgres",
-        "-e",
-        "POSTGRES_PASSWORD=postgres",
-        "-e",
-        "POSTGRES_DB=hyli_indexer",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+    ContainerManager::start_container(executor, spec, context.pull).await?;
 
-    args.extend(build_env_args(
-        &context.config.devnet.container_env.postgres,
-    ));
-
-    args.extend(vec!["postgres:17".to_string()]);
-
-    let output = Command::new("docker")
-        .args(&args)
-        .output()
-        .await
-        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {e}")))?;
-
-    if !output.status.success() {
-        log_warning(&format!(
-            "Error: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    } else {
-        pb.set_message("Hyli postgres server started successfully");
-    }
-
+    let pb = executor.add_task("Waiting for postgres server to be ready...");
     wait_for_postgres_server(&pb).await?;
+    pb.finish_and_clear();
 
     Ok(())
 }
 
 /// Start the indexer
-async fn start_indexer(mpb: &indicatif::MultiProgress, context: &DevnetContext) -> HylixResult<()> {
-    use std::process::Command;
-
+async fn start_indexer(executor: &ProgressExecutor, context: &DevnetContext) -> HylixResult<()> {
     let image = &context.config.devnet.node_image;
 
-    start_postgres_server(mpb, context).await?;
+    start_postgres_server(executor, context).await?;
 
-    let pb = mpb.add(create_progress_bar());
-    pb.set_message("Starting Hyli indexer...");
+    let env_builder = EnvBuilder::new()
+        .set(constants::env_vars::HYLI_RUN_INDEXER, "true")
+        .set(
+            constants::env_vars::HYLI_DATABASE_URL,
+            &format!(
+                "postgresql://postgres:postgres@{}:5432/hyli_indexer",
+                constants::containers::POSTGRES
+            ),
+        )
+        .set(
+            constants::env_vars::HYLI_DA_READ_FROM,
+            &format!("{}:4141", constants::containers::NODE),
+        )
+        .rust_log(&context.config.devnet.node_rust_log);
 
-    let mut args: Vec<String> = [
-        "run",
-        "-d",
-        "--network=hyli-devnet",
-        "--name",
-        "hyli-devnet-indexer",
-        "-e",
-        "HYLI_RUN_INDEXER=true",
-        "-e",
-        "HYLI_DATABASE_URL=postgresql://postgres:postgres@hyli-devnet-postgres:5432/hyli_indexer",
-        "-e",
-        "HYLI_DA_READ_FROM=hyli-devnet-node:4141",
-        "-e",
-        &format!("RUST_LOG={}", context.config.devnet.node_rust_log),
-        "-p",
-        &format!("{}:4321", context.config.devnet.indexer_port),
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+    let spec = ContainerSpec::new(constants::containers::INDEXER, image)
+        .port(context.config.devnet.indexer_port, 4321)
+        .env_builder(env_builder)
+        .custom_env(context.config.devnet.container_env.indexer.clone())
+        .arg("/hyli/indexer".to_string());
 
-    args.extend(build_env_args(&context.config.devnet.container_env.indexer));
-
-    args.extend(vec![image.to_string(), "/hyli/indexer".to_string()]);
-
-    let output = Command::new("docker")
-        .args(&args)
-        .output()
-        .map_err(|e| HylixError::process(format!("Failed to start Docker container: {e}")))?;
-
-    if !output.status.success() {
-        log_warning(&format!(
-            "Error: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    } else {
-        pb.set_message("Hyli indexer started successfully");
-    }
-
-    mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
+    ContainerManager::start_container(executor, spec, context.pull).await?;
 
     Ok(())
 }
@@ -969,10 +750,10 @@ async fn start_indexer(mpb: &indicatif::MultiProgress, context: &DevnetContext) 
 /// Stop the wallet app
 async fn stop_wallet_app(pb: &indicatif::ProgressBar) -> HylixResult<()> {
     // Stop and remove wallet app
-    stop_and_remove_container(pb, "hyli-devnet-wallet", "Hyli wallet app").await?;
+    stop_and_remove_container(pb, constants::containers::WALLET, "Hyli wallet app").await?;
 
     // Stop and remove wallet UI
-    stop_and_remove_container(pb, "hyli-devnet-wallet-ui", "Hyli wallet UI").await?;
+    stop_and_remove_container(pb, constants::containers::WALLET_UI, "Hyli wallet UI").await?;
 
     Ok(())
 }
@@ -980,10 +761,10 @@ async fn stop_wallet_app(pb: &indicatif::ProgressBar) -> HylixResult<()> {
 /// Stop the registry
 async fn stop_registry(pb: &indicatif::ProgressBar) -> HylixResult<()> {
     // Stop and remove registry server
-    stop_and_remove_container(pb, "hyli-devnet-registry", "Hyli registry server").await?;
+    stop_and_remove_container(pb, constants::containers::REGISTRY, "Hyli registry server").await?;
 
     // Stop and remove registry UI
-    stop_and_remove_container(pb, "hyli-devnet-registry-ui", "Hyli registry UI").await?;
+    stop_and_remove_container(pb, constants::containers::REGISTRY_UI, "Hyli registry UI").await?;
 
     Ok(())
 }
@@ -991,17 +772,17 @@ async fn stop_registry(pb: &indicatif::ProgressBar) -> HylixResult<()> {
 /// Stop the indexer
 async fn stop_indexer(pb: &indicatif::ProgressBar) -> HylixResult<()> {
     // Stop and remove indexer
-    stop_and_remove_container(pb, "hyli-devnet-indexer", "Hyli indexer").await?;
+    stop_and_remove_container(pb, constants::containers::INDEXER, "Hyli indexer").await?;
 
     // Stop and remove postgres server
-    stop_and_remove_container(pb, "hyli-devnet-postgres", "Hyli postgres server").await?;
+    stop_and_remove_container(pb, constants::containers::POSTGRES, "Hyli postgres server").await?;
 
     Ok(())
 }
 
 /// Stop the local node
 async fn stop_local_node(pb: &indicatif::ProgressBar) -> HylixResult<()> {
-    stop_and_remove_container(pb, "hyli-devnet-node", "Hyli node").await
+    stop_and_remove_container(pb, constants::containers::NODE, "Hyli node").await
 }
 
 /// Remove the docker network
@@ -1010,7 +791,7 @@ async fn remove_docker_network(pb: &indicatif::ProgressBar) -> HylixResult<()> {
 
     pb.set_message("Removing docker network...");
     let output = Command::new("docker")
-        .args(["network", "rm", "hyli-devnet"])
+        .args(["network", "rm", constants::networks::DEVNET])
         .output()
         .await
         .map_err(|e| HylixError::process(format!("Failed to remove Docker network: {e}")))?;
@@ -1076,7 +857,7 @@ async fn wait_for_postgres_server(pb: &indicatif::ProgressBar) -> HylixResult<()
     while attempts < max_attempts {
         pb.set_message("Waiting for postgres server to be ready...");
         let mut output = tokio::process::Command::new("docker")
-            .args(["exec", "-it", "hyli-devnet-postgres", "pg_isready"])
+            .args(["exec", "-it", constants::containers::POSTGRES, "pg_isready"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
@@ -1095,39 +876,6 @@ async fn wait_for_postgres_server(pb: &indicatif::ProgressBar) -> HylixResult<()
     Err(HylixError::devnet(
         "Postgres server did not become ready in time",
     ))
-}
-
-/// Pull docker image
-async fn pull_docker_image(mpb: &indicatif::MultiProgress, image: &str) -> HylixResult<()> {
-    let pb = mpb.add(create_progress_bar());
-    pb.set_message(format!("Pulling docker image: {image}"));
-
-    let success =
-        execute_command_with_progress(mpb, "docker pull", "docker", &["pull", image], None).await?;
-
-    if !success {
-        // Check if the image already exists locally
-        pb.set_message(format!(
-            "Failed to pull image {image}, checking if it exists locally..."
-        ));
-
-        let output = tokio::process::Command::new("docker")
-            .args(["images", "-q", image])
-            .output()
-            .await?;
-
-        if !output.status.success() || output.stdout.is_empty() {
-            return Err(HylixError::process(
-                "Failed to pull Docker image and it does not exist locally".to_string(),
-            ));
-        }
-        log_info(&format!("Using existing local image: {image}"));
-    }
-
-    mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
-
-    Ok(())
 }
 
 /// Stop and remove a Docker container
@@ -1218,23 +966,34 @@ fn print_devnet_env_vars(config: &HylixConfig) -> HylixResult<()> {
 
     // Node and DA endpoints
     println!(
-        "export HYLI_NODE_URL=\"http://localhost:{}\"",
+        "export {}=\"http://localhost:{}\"",
+        constants::env_vars::HYLI_NODE_URL,
         devnet.node_port
     );
-    println!("export HYLI_DA_READ_FROM=\"localhost:{}\"", devnet.da_port);
+    println!(
+        "export {}=\"localhost:{}\"",
+        constants::env_vars::HYLI_DA_READ_FROM,
+        devnet.da_port
+    );
 
     // Indexer endpoint
     println!(
-        "export HYLI_INDEXER_URL=\"http://localhost:{}\"",
+        "export {}=\"http://localhost:{}\"",
+        constants::env_vars::HYLI_INDEXER_URL,
         devnet.indexer_port
     );
 
     // Registry endpoints
     println!(
-        "export HYLI_REGISTRY_URL=\"http://localhost:{}\"",
+        "export {}=\"http://localhost:{}\"",
+        constants::env_vars::HYLI_REGISTRY_URL,
         devnet.registry_server_port
     );
-    println!("export HYLI_REGISTRY_API_KEY=\"dev\"");
+    println!(
+        "export {}=\"{}\"",
+        constants::env_vars::HYLI_REGISTRY_API_KEY,
+        constants::env_values::REGISTRY_API_KEY_DEV
+    );
     println!(
         "export HYLI_REGISTRY_UI_URL=\"http://localhost:{}\"",
         devnet.registry_ui_port
@@ -1256,17 +1015,26 @@ fn print_devnet_env_vars(config: &HylixConfig) -> HylixResult<()> {
 
     // Database endpoint
     println!(
-        "export HYLI_DATABASE_URL=\"postgresql://postgres:postgres@localhost:{}\"",
+        "export {}=\"postgresql://postgres:postgres@localhost:{}\"",
+        constants::env_vars::HYLI_DATABASE_URL,
         devnet.postgres_port
     );
 
     // Explorer URL
-    println!("export HYLI_EXPLORER_URL=\"https://explorer.hyli.org/?network=localhost&indexer={}&node={}&wallet={}\"", 
+    println!("export HYLI_EXPLORER_URL=\"https://explorer.hyli.org/?network=localhost&indexer={}&node={}&wallet={}\"",
              devnet.indexer_port, devnet.node_port, devnet.wallet_api_port);
 
     // Development mode flags
-    println!("export RISC0_DEV_MODE=\"1\"");
-    println!("export SP1_PROVER=\"mock\"");
+    println!(
+        "export {}=\"{}\"",
+        constants::env_vars::RISC0_DEV_MODE,
+        constants::env_values::RISC0_DEV_MODE_ONE
+    );
+    println!(
+        "export {}=\"{}\"",
+        constants::env_vars::SP1_PROVER,
+        constants::env_values::SP1_PROVER_MOCK
+    );
 
     println!();
     println!("# Usage examples:");

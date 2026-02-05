@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use clap::Parser;
 
 use hyli_modules::{
-    bus::{SharedMessageBus, metrics::BusMetrics},
+    bus::SharedMessageBus,
     modules::{
         ModulesHandler,
         block_processor::BusOnlyProcessor,
@@ -14,6 +14,7 @@ use hyli_modules::{
     },
     utils::logger::setup_tracing,
 };
+use hyli_turmoil_shims::init_prometheus_registry_meter_provider;
 use serde::{Deserialize, Serialize};
 
 #[derive(Parser, Debug)]
@@ -38,12 +39,14 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting GCS block uploader");
 
-    let bus = SharedMessageBus::new(BusMetrics::global());
+    let _ = init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
+
+    let bus = SharedMessageBus::new();
 
     tracing::info!("Setting up modules");
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
     let upload_start =
         GcsUploader::get_last_uploaded_block(&config.gcs, &config.data_directory).await?;
@@ -54,6 +57,7 @@ async fn main() -> Result<()> {
             da_read_from: config.da_read_from.clone(),
             start_block: Some(upload_start.start_height),
             timeout_client_secs: 10,
+            da_fallback_addresses: vec![],
             processor_config: (),
         })
         .await?;

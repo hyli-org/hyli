@@ -8,7 +8,7 @@ use client_sdk::{
 };
 use hyli_contract_sdk::api::NodeInfo;
 use hyli_modules::{
-    bus::{SharedMessageBus, metrics::BusMetrics},
+    bus::SharedMessageBus,
     modules::{
         BuildApiContextInner, ModulesHandler,
         admin::{AdminApi, AdminApiRunContext},
@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting smt auto prover");
 
-    let bus = SharedMessageBus::new(BusMetrics::global());
+    let bus = SharedMessageBus::new();
 
     tracing::info!("Setting up modules");
 
@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
     });
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
     hyli_registry::upload_elf(
         smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF,
@@ -90,6 +90,7 @@ async fn main() -> Result<()> {
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
             timeout_client_secs: 10,
+            da_fallback_addresses: vec![],
             processor_config: (),
         })
         .await?;

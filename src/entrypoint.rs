@@ -1,7 +1,7 @@
 #![allow(clippy::expect_used, reason = "Fail on misconfiguration")]
 
 use crate::{
-    bus::{metrics::BusMetrics, SharedMessageBus},
+    bus::SharedMessageBus,
     consensus::Consensus,
     data_availability::DataAvailability,
     explorer::Explorer,
@@ -206,7 +206,12 @@ async fn common_main(
     mut config: conf::Conf,
     crypto: Option<SharedBlstCrypto>,
 ) -> Result<ModulesHandler> {
-    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
+    // Init global metrics meter we expose as an endpoint.
+    let registry =
+        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
+
+    let bus = SharedMessageBus::new();
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
     // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.
     // Handle this configuration rewrite before we print anything.
@@ -248,8 +253,6 @@ async fn common_main(
         });
     }
 
-    let bus = SharedMessageBus::new(BusMetrics::global());
-
     let build_api_ctx = Arc::new(BuildApiContextInner {
         router: Mutex::new(Some(Router::new())),
         openapi: Mutex::new(ApiDoc::openapi()),
@@ -263,7 +266,7 @@ async fn common_main(
         let node_state_path = config.data_directory.join(NODE_STATE_BIN);
 
         // Check states exist and skip catchup if so
-        if config.fast_catchup_override || !consensus_path.exists() || !node_state_path.exists() {
+        if !consensus_path.exists() || !node_state_path.exists() {
             let catchup_from = config.fast_catchup_from.clone();
             info!("Catching up from {} with trust", catchup_from);
 
@@ -312,8 +315,6 @@ async fn common_main(
             );
         }
     }
-
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
     if config.run_indexer {
         handler
@@ -423,6 +424,7 @@ async fn common_main(
                 da_read_from: config.da_read_from.clone(),
                 start_block: None,
                 timeout_client_secs: config.da_timeout_client_secs,
+                da_fallback_addresses: config.da_fallback_addresses.clone(),
                 processor_config: (),
             })
             .await?;

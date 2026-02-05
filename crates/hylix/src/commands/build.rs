@@ -1,6 +1,7 @@
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{create_progress_bar, execute_command_with_progress, log_info, log_success};
-use std::process::Command;
+use crate::logging::{log_info, log_success, ProgressExecutor};
+use crate::process::execute_and_check;
+use crate::validation::{validate_project, ValidationLevel};
 
 /// Execute the `hy build` command
 pub async fn execute(clean: bool, frontend: bool) -> HylixResult<()> {
@@ -12,41 +13,26 @@ pub async fn execute(clean: bool, frontend: bool) -> HylixResult<()> {
     }
 
     // Check if we're in a valid project directory
-    validate_project_directory()?;
+    validate_project(ValidationLevel::Build)?;
 
     // Build contracts
-    let mpb = indicatif::MultiProgress::new();
-    build_contracts(&mpb).await?;
+    let executor = ProgressExecutor::new();
+    build_contracts(&executor).await?;
     log_success("Contracts built successfully");
 
     // Build server
-    build_server(&mpb).await?;
+    build_server(&executor).await?;
     log_success("Server built successfully");
 
     // Build frontend (if exists)
     if frontend && std::path::Path::new("front").exists() {
-        build_frontend(&mpb).await?;
+        build_frontend(&executor).await?;
         log_success("Frontend built successfully");
     }
 
+    executor.clear()?;
+
     log_success("Build completed successfully!");
-    Ok(())
-}
-
-/// Validate that we're in a valid project directory
-fn validate_project_directory() -> HylixResult<()> {
-    if !std::path::Path::new("contracts").exists() {
-        return Err(HylixError::project(
-            "No 'contracts' directory found. Are you in a Hylix project directory?",
-        ));
-    }
-
-    if !std::path::Path::new("server").exists() {
-        return Err(HylixError::project(
-            "No 'server' directory found. Are you in a Hylix project directory?",
-        ));
-    }
-
     Ok(())
 }
 
@@ -54,147 +40,130 @@ fn validate_project_directory() -> HylixResult<()> {
 async fn clean_build_artifacts() -> HylixResult<()> {
     // Clean contracts
     if std::path::Path::new("contracts").exists() {
-        let output = Command::new("cargo")
-            .current_dir("contracts")
-            .args(["clean"])
-            .output()
-            .map_err(|e| HylixError::build(format!("Failed to clean contracts: {e}")))?;
-
-        if !output.status.success() {
-            let error_msg = String::from_utf8_lossy(&output.stderr);
-            return Err(HylixError::build(format!(
-                "Failed to clean contracts: {error_msg}"
-            )));
-        }
+        execute_and_check(
+            "cargo",
+            &["clean"],
+            Some("contracts"),
+            "Failed to clean contracts",
+        )
+        .await?;
     }
 
     // Clean server
     if std::path::Path::new("server").exists() {
-        let output = Command::new("cargo")
-            .current_dir("server")
-            .args(["clean"])
-            .output()
-            .map_err(|e| HylixError::build(format!("Failed to clean server: {e}")))?;
-
-        if !output.status.success() {
-            let error_msg = String::from_utf8_lossy(&output.stderr);
-            return Err(HylixError::build(format!(
-                "Failed to clean server: {error_msg}"
-            )));
-        }
+        execute_and_check(
+            "cargo",
+            &["clean"],
+            Some("server"),
+            "Failed to clean server",
+        )
+        .await?;
     }
 
     // Clean frontend
-    if std::path::Path::new("front").exists() {
-        let output = Command::new("bun")
-            .current_dir("front")
-            .args(["run", "clean"])
-            .output()
-            .map_err(|e| HylixError::build(format!("Failed to clean frontend: {e}")))?;
-
-        if !output.status.success() {
-            // Frontend clean might not be implemented, that's okay
-            log_info("Frontend clean command not available, skipping...");
-        }
+    if std::path::Path::new("front").exists()
+        && execute_and_check(
+            "bun",
+            &["run", "clean"],
+            Some("front"),
+            "Failed to clean frontend",
+        )
+        .await
+        .is_err()
+    {
+        // Frontend clean might not be implemented, that's okay
+        log_info("Frontend clean command not available, skipping...");
     }
 
     Ok(())
 }
 
 /// Build contracts
-async fn build_contracts(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
-    let pb = mpb.add(create_progress_bar());
-    pb.set_message("Building contracts...");
-
-    let success = execute_command_with_progress(
-        mpb,
-        "cargo build -p contracts --features nonreproducible",
-        "cargo",
-        &["build", "-p", "contracts", "--features", "nonreproducible"],
-        None,
-    )
-    .await?;
+async fn build_contracts(executor: &ProgressExecutor) -> HylixResult<()> {
+    let success = executor
+        .execute_command(
+            "Building contracts...",
+            "cargo",
+            &[
+                "build",
+                "-p",
+                "contracts",
+                "--features",
+                crate::constants::features::NONREPRODUCIBLE,
+            ],
+            None,
+        )
+        .await?;
 
     if !success {
         return Err(HylixError::build("Failed to build contracts".to_string()));
-    } else {
-        pb.set_message("Contracts built successfully");
     }
 
-    mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
+    executor.clear()?;
 
     Ok(())
 }
 
 /// Build server
-async fn build_server(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
-    let pb = mpb.add(create_progress_bar());
-    pb.set_message("Building server...");
-
-    let success = execute_command_with_progress(
-        mpb,
-        "cargo build -p server --features nonreproducible",
-        "cargo",
-        &["build", "-p", "server", "--features", "nonreproducible"],
-        None,
-    )
-    .await?;
+async fn build_server(executor: &ProgressExecutor) -> HylixResult<()> {
+    let success = executor
+        .execute_command(
+            "Building server...",
+            "cargo",
+            &[
+                "build",
+                "-p",
+                "server",
+                "--features",
+                crate::constants::features::NONREPRODUCIBLE,
+            ],
+            None,
+        )
+        .await?;
 
     if !success {
         return Err(HylixError::build("Failed to build server".to_string()));
-    } else {
-        pb.set_message("Server built successfully");
     }
 
-    mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
+    executor.clear()?;
 
     Ok(())
 }
 
 /// Build frontend
-async fn build_frontend(mpb: &indicatif::MultiProgress) -> HylixResult<()> {
+async fn build_frontend(executor: &ProgressExecutor) -> HylixResult<()> {
     // Check if bun is available
     if which::which("bun").is_err() {
         log_info("Bun not found, skipping frontend build");
         return Ok(());
     }
 
-    let pb = mpb.add(create_progress_bar());
-    pb.set_message("Building frontend...");
-
     // bun install
-    let success =
-        execute_command_with_progress(mpb, "bun install", "bun", &["install"], Some("front"))
-            .await?;
+    let success = executor
+        .execute_command(
+            "Installing frontend dependencies",
+            "bun",
+            &["install"],
+            Some("front"),
+        )
+        .await?;
 
     if !success {
         return Err(HylixError::build(
             "Failed to install frontend dependencies".to_string(),
         ));
-    } else {
-        pb.set_message("Frontend dependencies installed successfully");
     }
 
     // bun run build
-    let success = execute_command_with_progress(
-        mpb,
-        "bun run build",
-        "bun",
-        &["run", "build"],
-        Some("front"),
-    )
-    .await?;
+    let success = executor
+        .execute_command("Building frontend", "bun", &["run", "build"], Some("front"))
+        .await?;
 
     if !success {
         return Err(HylixError::build("Failed to build frontend".to_string()));
-    } else {
-        pb.set_message("Frontend built successfully");
     }
 
-    mpb.clear()
-        .map_err(|e| HylixError::process(format!("Failed to clear progress bars: {e}")))?;
+    executor.clear()?;
 
     Ok(())
 }
