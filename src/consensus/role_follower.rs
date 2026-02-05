@@ -1617,4 +1617,52 @@ mod tests {
         assert_eq!(ctx.consensus.bft_round_state.parent_hash, proposal.hashed());
         assert!(ctx.consensus.bft_round_state.current_proposal.is_none());
     }
+
+    #[test_log::test(tokio::test)]
+    async fn leader_fast_forwards_on_prepare_with_commit_for_previous_slot() {
+        let crypto = BlstCrypto::new("leader-prepare-commit").unwrap();
+        let mut ctx = ConsensusTestCtx::new("leader-prepare-commit", crypto.clone()).await;
+        ctx.add_trusted_validator(&ctx.pubkey());
+
+        ctx.consensus.bft_round_state.state_tag = StateTag::Leader;
+        ctx.consensus.bft_round_state.slot = 5;
+        ctx.consensus.bft_round_state.view = 1;
+        ctx.consensus.bft_round_state.parent_hash = ConsensusProposalHash("parent".into());
+
+        let current_proposal = ConsensusProposal {
+            slot: 5,
+            parent_hash: ctx.consensus.bft_round_state.parent_hash.clone(),
+            cut: ctx.consensus.bft_round_state.parent_cut.clone(),
+            ..ConsensusProposal::default()
+        };
+        ctx.consensus.store.bft_round_state.current_proposal = Some(current_proposal.clone());
+
+        let prepare_for_next = ConsensusProposal {
+            slot: 6,
+            parent_hash: current_proposal.hashed(),
+            cut: current_proposal.cut.clone(),
+            ..ConsensusProposal::default()
+        };
+
+        let commit_qc = QuorumCertificate(
+            agg_sig(&crypto, (current_proposal.hashed(), ConfirmAckMarker)),
+            ConfirmAckMarker,
+        );
+
+        ctx.consensus
+            .on_prepare(
+                ctx.pubkey(),
+                prepare_for_next,
+                Ticket::CommitQC(commit_qc),
+                0,
+            )
+            .expect("leader should fast-forward on prepare with commit QC");
+
+        assert_eq!(ctx.consensus.bft_round_state.slot, 6);
+        assert_eq!(ctx.consensus.bft_round_state.view, 0);
+        assert_eq!(
+            ctx.consensus.bft_round_state.parent_hash,
+            current_proposal.hashed()
+        );
+    }
 }

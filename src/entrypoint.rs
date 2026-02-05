@@ -271,7 +271,7 @@ pub async fn common_main(
         let node_state_path = config.data_directory.join(NODE_STATE_BIN);
 
         // Check states exist and skip catchup if so
-        if config.fast_catchup_override || !consensus_path.exists() || !node_state_path.exists() {
+        if !consensus_path.exists() || !node_state_path.exists() {
             let catchup_from = config.fast_catchup_from.clone();
             info!("Catching up from {} with trust", catchup_from);
 
