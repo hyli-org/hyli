@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
             da_read_from: config.da_read_from.clone(),
             start_block: Some(upload_start.start_height),
             timeout_client_secs: 10,
-            da_fallback_addresses: vec![],
+            da_fallback_addresses: config.da_fallback_addresses.clone(),
             processor_config: (),
         })
         .await?;
@@ -98,6 +98,9 @@ pub struct Conf {
 
     /// URL to connect to.
     pub da_read_from: String,
+
+    /// DA fallback addresses to connect to if the main DA endpoint is unavailable.
+    pub da_fallback_addresses: Vec<String>,
 
     pub gcs: GCSConf,
 }
