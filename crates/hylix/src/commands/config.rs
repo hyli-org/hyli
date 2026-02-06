@@ -1,4 +1,6 @@
-use crate::config::{BackendType, HylixConfig};
+use crate::config::{
+    BackendType, BuildConfig, ContainerEnvConfig, DevnetConfig, HylixConfig, RunConfig, TestConfig,
+};
 use crate::error::HylixResult;
 use crate::logging::{log_info, log_success};
 use std::path::PathBuf;
@@ -40,102 +42,182 @@ pub async fn execute(action: ConfigAction) -> HylixResult<()> {
 
 /// Display the configuration in a readable format
 fn display_config(config: &HylixConfig) -> HylixResult<()> {
-    println!("\n📋 Hylix Configuration");
-    println!("{}", "=".repeat(50));
+    const W: usize = 34;
+
+    // Destructure everything so the compiler errors if a field is added but not displayed.
+    let HylixConfig {
+        version: _,
+        default_backend,
+        scaffold_repo,
+        bake_profile,
+        devnet:
+            DevnetConfig {
+                node_image,
+                wallet_server_image,
+                wallet_ui_image,
+                registry_server_image,
+                registry_ui_image,
+                node_port,
+                da_port,
+                node_rust_log,
+                wallet_api_port,
+                wallet_ws_port,
+                wallet_ui_port,
+                indexer_port,
+                postgres_port,
+                registry_server_port,
+                registry_ui_port,
+                auto_start,
+                container_env:
+                    ContainerEnvConfig {
+                        node: env_node,
+                        indexer: env_indexer,
+                        wallet_server: env_wallet_server,
+                        wallet_ui: env_wallet_ui,
+                        postgres: env_postgres,
+                        registry_server: env_registry_server,
+                    },
+            },
+        build:
+            BuildConfig {
+                release,
+                jobs,
+                extra_flags,
+            },
+        test:
+            TestConfig {
+                print_server_logs,
+                clean_server_data: test_clean,
+            },
+        run:
+            RunConfig {
+                clean_server_data: run_clean,
+                server_port,
+            },
+    } = config;
+
+    println!("\n Hylix Configuration");
+    println!("{}", "=".repeat(60));
+    println!(" Edit any value with: hy config edit <key> <value>\n");
 
     // General settings
-    println!("\n🔧 General Settings:");
-    println!("  Default Backend: {:?}", config.default_backend);
-    println!("  Scaffold Repository: {}", config.scaffold_repo);
-    println!("  Bake Profile: {}", config.bake_profile);
+    println!(" General Settings:");
+    println!("  {:W$} = {default_backend:?}", "default_backend");
+    println!("  {:W$} = {scaffold_repo}", "scaffold_repo");
+    println!("  {:W$} = {bake_profile}", "bake_profile");
 
     // Devnet configuration
-    println!("\n🌐 Devnet Configuration:");
-    println!("  Node Image: {}", config.devnet.node_image);
+    println!("\n Devnet Configuration:");
+    println!("  {:W$} = {node_image}", "devnet.node_image");
     println!(
-        "  Wallet Server Image: {}",
-        config.devnet.wallet_server_image
+        "  {:W$} = {wallet_server_image}",
+        "devnet.wallet_server_image"
     );
-    println!("  Wallet UI Image: {}", config.devnet.wallet_ui_image);
-    println!("  Node Port: {}", config.devnet.node_port);
-    println!("  DA Port: {}", config.devnet.da_port);
-    println!("  Indexer Port: {}", config.devnet.indexer_port);
-    println!("  Postgres Port: {}", config.devnet.postgres_port);
-    println!("  Wallet API Port: {}", config.devnet.wallet_api_port);
-    println!("  Wallet WS Port: {}", config.devnet.wallet_ws_port);
-    println!("  Wallet UI Port: {}", config.devnet.wallet_ui_port);
-    println!("  Auto Start: {}", config.devnet.auto_start);
+    println!("  {:W$} = {wallet_ui_image}", "devnet.wallet_ui_image");
+    println!(
+        "  {:W$} = {registry_server_image}",
+        "devnet.registry_server_image"
+    );
+    println!("  {:W$} = {registry_ui_image}", "devnet.registry_ui_image");
+    println!("  {:W$} = {node_rust_log}", "devnet.node_rust_log");
+    println!("  {:W$} = {node_port}", "devnet.node_port");
+    println!("  {:W$} = {da_port}", "devnet.da_port");
+    println!("  {:W$} = {indexer_port}", "devnet.indexer_port");
+    println!("  {:W$} = {postgres_port}", "devnet.postgres_port");
+    println!("  {:W$} = {wallet_api_port}", "devnet.wallet_api_port");
+    println!("  {:W$} = {wallet_ws_port}", "devnet.wallet_ws_port");
+    println!("  {:W$} = {wallet_ui_port}", "devnet.wallet_ui_port");
+    println!(
+        "  {:W$} = {registry_server_port}",
+        "devnet.registry_server_port"
+    );
+    println!("  {:W$} = {registry_ui_port}", "devnet.registry_ui_port");
+    println!("  {:W$} = {auto_start}", "devnet.auto_start");
 
     // Build configuration
-    println!("\n🔨 Build Configuration:");
-    println!("  Release Mode: {}", config.build.release);
-    if let Some(jobs) = config.build.jobs {
-        println!("  Parallel Jobs: {jobs}");
-    }
-    if !config.build.extra_flags.is_empty() {
-        println!("  Extra Flags: {}", config.build.extra_flags.join(" "));
+    println!("\n Build Configuration:");
+    println!("  {:W$} = {release}", "build.release");
+    println!(
+        "  {:W$} = {}",
+        "build.jobs",
+        match jobs {
+            Some(j) => j.to_string(),
+            None => "(unset)".to_string(),
+        }
+    );
+    if !extra_flags.is_empty() {
+        println!("  {:W$} = {}", "build.extra_flags", extra_flags.join(" "));
     }
 
-    // Container environment variables
-    if !config.devnet.container_env.node.is_empty()
-        || !config.devnet.container_env.indexer.is_empty()
-        || !config.devnet.container_env.wallet_server.is_empty()
-        || !config.devnet.container_env.wallet_ui.is_empty()
-        || !config.devnet.container_env.postgres.is_empty()
-    {
-        println!("\n🐳 Container Environment Variables:");
-        if !config.devnet.container_env.node.is_empty() {
-            println!("  Node: {}", config.devnet.container_env.node.join(", "));
-        }
-        if !config.devnet.container_env.indexer.is_empty() {
+    // Container environment variables (read-only, edited via TOML)
+    let has_env = !env_node.is_empty()
+        || !env_indexer.is_empty()
+        || !env_wallet_server.is_empty()
+        || !env_wallet_ui.is_empty()
+        || !env_postgres.is_empty()
+        || !env_registry_server.is_empty();
+    if has_env {
+        println!("\n Container Environment Variables (edit in config.toml):");
+        if !env_node.is_empty() {
             println!(
-                "  Indexer: {}",
-                config.devnet.container_env.indexer.join(", ")
+                "  {:W$} = {}",
+                "devnet.container_env.node",
+                env_node.join(", ")
             );
         }
-        if !config.devnet.container_env.wallet_server.is_empty() {
+        if !env_indexer.is_empty() {
             println!(
-                "  Wallet Server: {}",
-                config.devnet.container_env.wallet_server.join(", ")
+                "  {:W$} = {}",
+                "devnet.container_env.indexer",
+                env_indexer.join(", ")
             );
         }
-        if !config.devnet.container_env.wallet_ui.is_empty() {
+        if !env_wallet_server.is_empty() {
             println!(
-                "  Wallet UI: {}",
-                config.devnet.container_env.wallet_ui.join(", ")
+                "  {:W$} = {}",
+                "devnet.container_env.wallet_server",
+                env_wallet_server.join(", ")
             );
         }
-        if !config.devnet.container_env.postgres.is_empty() {
+        if !env_wallet_ui.is_empty() {
             println!(
-                "  Postgres: {}",
-                config.devnet.container_env.postgres.join(", ")
+                "  {:W$} = {}",
+                "devnet.container_env.wallet_ui",
+                env_wallet_ui.join(", ")
+            );
+        }
+        if !env_postgres.is_empty() {
+            println!(
+                "  {:W$} = {}",
+                "devnet.container_env.postgres",
+                env_postgres.join(", ")
+            );
+        }
+        if !env_registry_server.is_empty() {
+            println!(
+                "  {:W$} = {}",
+                "devnet.container_env.registry_server",
+                env_registry_server.join(", ")
             );
         }
     }
 
     // Test configuration
-    println!("\n🧪 Test Configuration:");
-    println!("  Print Server Logs: {}", config.test.print_server_logs);
-    println!("  Clean Server Data: {}", config.test.clean_server_data);
+    println!("\n Test Configuration:");
+    println!("  {:W$} = {print_server_logs}", "test.print_server_logs");
+    println!("  {:W$} = {test_clean}", "test.clean_server_data");
 
     // Run configuration
-    println!("\n🏃 Run Configuration:");
-    println!("  Clean Server Data: {}", config.run.clean_server_data);
-    println!("  Server Port: {}", config.run.server_port);
+    println!("\n Run Configuration:");
+    println!("  {:W$} = {run_clean}", "run.clean_server_data");
+    println!("  {:W$} = {server_port}", "run.server_port");
 
     // Configuration file path
     if let Ok(config_path) = get_config_path() {
-        println!("\n📁 Configuration File:");
-        println!("  Path: {}", config_path.display());
+        println!("\n Config file: {}", config_path.display());
     }
 
-    println!("\n{}", "=".repeat(50));
-    println!("\n💡 Usage Examples:");
-    println!("  hy config edit default_backend risc0");
-    println!("  hy config edit devnet.node_port 4321");
-    println!("  hy config edit build.release true");
-    println!("  hy config reset");
-
+    println!();
     Ok(())
 }
 
@@ -211,6 +293,12 @@ fn set_config_value(config: &mut HylixConfig, key: &str, value: &str) -> HylixRe
         "devnet.wallet_ui_image" => {
             config.devnet.wallet_ui_image = value.to_string();
         }
+        "devnet.registry_server_image" => {
+            config.devnet.registry_server_image = value.to_string();
+        }
+        "devnet.registry_ui_image" => {
+            config.devnet.registry_ui_image = value.to_string();
+        }
         "devnet.node_port" => {
             config.devnet.node_port = value
                 .parse()
@@ -243,6 +331,16 @@ fn set_config_value(config: &mut HylixConfig, key: &str, value: &str) -> HylixRe
         }
         "devnet.wallet_ui_port" => {
             config.devnet.wallet_ui_port = value
+                .parse()
+                .map_err(|_| crate::error::HylixError::config("Invalid port number"))?;
+        }
+        "devnet.registry_server_port" => {
+            config.devnet.registry_server_port = value
+                .parse()
+                .map_err(|_| crate::error::HylixError::config("Invalid port number"))?;
+        }
+        "devnet.registry_ui_port" => {
+            config.devnet.registry_ui_port = value
                 .parse()
                 .map_err(|_| crate::error::HylixError::config("Invalid port number"))?;
         }

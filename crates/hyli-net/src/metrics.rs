@@ -390,6 +390,8 @@ impl P2PMetrics {
 #[derive(Clone)]
 pub struct TcpServerMetrics {
     peers: Gauge<u64>,
+    event_loop_message_received: Counter<u64>,
+    event_loop_message_sent: Counter<u64>,
     message_received: Counter<u64>,
     message_received_bytes: Counter<u64>,
     message_emitted: Counter<u64>,
@@ -406,6 +408,12 @@ impl TcpServerMetrics {
         let my_meter = global_meter_or_panic();
         TcpServerMetrics {
             peers: my_meter.u64_gauge("tcp_server_peers").build(),
+            event_loop_message_received: my_meter
+                .u64_counter("tcp_server_event_loop_message_received")
+                .build(),
+            event_loop_message_sent: my_meter
+                .u64_counter("tcp_server_event_loop_message_sent")
+                .build(),
             message_received: my_meter.u64_counter("tcp_server_message_received").build(),
             message_received_bytes: my_meter
                 .u64_counter("tcp_server_message_received_bytes")
@@ -428,6 +436,16 @@ impl TcpServerMetrics {
 
     pub fn peers_snapshot(&self, nb: u64) {
         self.peers.record(nb, &self.server_name_label);
+    }
+
+    pub fn event_loop_message_received(&self, message_type: &str) {
+        let labels = self.labels_with_message_type(message_type);
+        self.event_loop_message_received.add(1, &labels);
+    }
+
+    pub fn event_loop_message_sent(&self, message_type: &str) {
+        let labels = self.labels_with_message_type(message_type);
+        self.event_loop_message_sent.add(1, &labels);
     }
 
     fn labels_with_message_type(&self, message_type: &str) -> Vec<KeyValue> {
