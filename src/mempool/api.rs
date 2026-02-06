@@ -1,15 +1,15 @@
 use anyhow::anyhow;
 use axum::{
+    Json, Router,
     extract::{Multipart, Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json, Router,
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_contract_sdk::TxHash;
 use hyli_model::{
-    api::APIRegisterContract, verifiers::validate_program_id, ContractName, ProgramId,
-    RegisterContractAction, StructuredBlobData, Verifier,
+    ContractName, ProgramId, RegisterContractAction, StructuredBlobData, Verifier,
+    api::APIRegisterContract, verifiers::validate_program_id,
 };
 use hyli_modules::{
     bus::{BusMessage, SharedMessageBus},
@@ -22,7 +22,7 @@ use utoipa::OpenApi;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::{
-    bus::{bus_client, metrics::BusMetrics, BusClientSender},
+    bus::{BusClientSender, bus_client, metrics::BusMetrics},
     model::{BlobTransaction, Hashed, LaneSuffix, ProofTransaction, Transaction, TransactionData},
     rest::AppError,
 };
@@ -294,7 +294,7 @@ async fn send_proof_transaction_multipart_inner(
     state: RouterState,
     multipart: &mut Multipart,
     lane_suffix: Option<LaneSuffix>,
-) -> Result<impl IntoResponse, AppError> {
+) -> Result<impl IntoResponse + use<>, AppError> {
     let payload = parse_proof_transaction_multipart(multipart).await?;
 
     info!("Got proof transaction {} (multipart)", payload.hashed());
