@@ -46,6 +46,7 @@ tracing-subscriber = { workspace = true }
 sha2 = { workspace = true }
 borsh = { workspace = true }
 serde_json = { workspace = true }
+rustls = { workspace = true, features = ["aws-lc-rs"] }
 
 # needs to match workspace
 
