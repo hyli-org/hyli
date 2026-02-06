@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -12,9 +12,7 @@ use hyli_modules::{
     modules::{
         BuildApiContextInner, ModulesHandler,
         admin::{AdminApi, AdminApiRunContext},
-        block_processor::NodeStateBlockProcessor,
-        da_listener::DAListenerConf,
-        da_listener::SignedDAListener,
+        contract_listener::{ContractListener, ContractListenerConf},
         prover::{AutoProver, AutoProverCtx},
         rest::{ApiDoc, RestApi, RestApiRunContext, Router},
     },
@@ -65,33 +63,33 @@ async fn main() -> Result<()> {
     )
     .await?;
 
+    let auto_prover_ctx = Arc::new(AutoProverCtx {
+        data_directory: config.data_directory.clone(),
+        prover: Arc::new(Risc0Prover::new(
+            smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF.to_vec(),
+            smt_token::client::tx_executor_handler::metadata::PROGRAM_ID,
+        )),
+        contract_name: config.contract_name.clone().into(),
+        node: node_client.clone(),
+        api: Some(build_api_ctx.clone()),
+        default_state: Default::default(),
+        tx_buffer_size: config.tx_buffer_size,
+        max_txs_per_proof: config.max_txs_per_proof,
+        tx_working_window_size: config.tx_working_window_size,
+        idle_flush_interval: Duration::from_secs(config.idle_flush_interval_secs),
+    });
+
     handler
-        .build_module::<AutoProver<SmtTokenProvableState, Risc0Prover>>(Arc::new(AutoProverCtx {
-            data_directory: config.data_directory.clone(),
-            prover: Arc::new(Risc0Prover::new(
-                smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF.to_vec(),
-                smt_token::client::tx_executor_handler::metadata::PROGRAM_ID,
-            )),
-            contract_name: config.contract_name.clone().into(),
-            node: node_client.clone(),
-            api: Some(build_api_ctx.clone()),
-            default_state: Default::default(),
-            buffer_blocks: config.buffer_blocks,
-            max_txs_per_proof: config.max_txs_per_proof,
-            tx_working_window_size: config.tx_working_window_size,
-        }))
+        .build_module::<AutoProver<SmtTokenProvableState, Risc0Prover>>(auto_prover_ctx)
         .await?;
 
-    // Use SignedDAListener with NodeStateBlockProcessor to guarantee atomic persistence
-    // of both NodeState and block height, avoiding potential data loss from bus messaging gap
     handler
-        .build_module::<SignedDAListener<NodeStateBlockProcessor>>(DAListenerConf {
-            start_block: None,
+        .build_module::<ContractListener>(ContractListenerConf {
+            database_url: config.database_url.clone(),
             data_directory: config.data_directory.clone(),
-            da_read_from: config.da_read_from.clone(),
-            timeout_client_secs: 10,
-            da_fallback_addresses: vec![],
-            processor_config: (),
+            contracts: HashSet::from([config.contract_name.clone().into()]),
+            poll_interval: Duration::from_secs(config.contract_listener_poll_interval_secs),
+            replay_settled_from_start: true,
         })
         .await?;
 
@@ -154,13 +152,17 @@ struct Conf {
 
     /// URL to connect to.
     pub da_read_from: String,
+    pub database_url: String,
 
-    pub buffer_blocks: u32,
+    pub tx_buffer_size: usize,
     pub max_txs_per_proof: usize,
     pub tx_working_window_size: usize,
 
     /// Contract name to prove
     pub contract_name: String,
+
+    pub contract_listener_poll_interval_secs: u64,
+    pub idle_flush_interval_secs: u64,
 
     pub rest_server_port: u16,
     pub rest_server_max_body_size: usize,

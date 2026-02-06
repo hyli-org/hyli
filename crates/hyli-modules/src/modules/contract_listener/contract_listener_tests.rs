@@ -10,7 +10,7 @@ use crate::{
     },
 };
 use anyhow::Result;
-use hyli_model::{api::TransactionStatusDb, BlobIndex, BlockHeight, ContractName, LaneId, TxHash};
+use hyli_model::{api::TransactionStatusDb, BlockHeight, ContractName, LaneId, TxHash};
 use sdk::{BlockHash, ConsensusProposalHash};
 use sqlx::{postgres::PgPoolOptions, types::chrono::Utc, PgPool};
 use tempfile::tempdir;
@@ -88,7 +88,13 @@ async fn drain_event(
 ) -> Result<ContractListenerEvent> {
     loop {
         match receiver.recv().await {
-            Ok(msg) => return Ok(msg.into_message()),
+            Ok(msg) => {
+                let event = msg.into_message();
+                if matches!(event, ContractListenerEvent::BackfillComplete(_)) {
+                    continue;
+                }
+                return Ok(event);
+            }
             Err(RecvError::Lagged(skipped)) => {
                 warn!("contract_listener test: receiver lagged by {skipped} messages");
             }
@@ -108,27 +114,33 @@ async fn expect_event(
         loop {
             let event = drain_event(receiver).await?;
             match event {
-                ContractListenerEvent::SequencedTx(seen_hash, _blobs, ctx) => {
+                ContractListenerEvent::SequencedTx(tx_data) => {
+                    let seen_hash = &tx_data.tx_id.1;
                     if expected_status == TransactionStatusDb::Sequenced
-                        && &seen_hash == expected_hash
-                        && ctx.block_height == expected_height
+                        && seen_hash == expected_hash
+                        && tx_data.tx_ctx.block_height == expected_height
                     {
                         return Ok(());
                     }
-                    seen.push(format!("sequenced:{}:{}", seen_hash, ctx.block_height.0));
+                    seen.push(format!(
+                        "sequenced:{}:{}",
+                        seen_hash, tx_data.tx_ctx.block_height.0
+                    ));
                 }
-                ContractListenerEvent::SettledTx(seen_hash, _blobs, ctx, status) => {
-                    if &seen_hash == expected_hash
-                        && ctx.block_height == expected_height
-                        && status == expected_status
+                ContractListenerEvent::SettledTx(tx_data) => {
+                    let seen_hash = &tx_data.tx_id.1;
+                    if seen_hash == expected_hash
+                        && tx_data.tx_ctx.block_height == expected_height
+                        && tx_data.status == expected_status
                     {
                         return Ok(());
                     }
                     seen.push(format!(
                         "settled:{}:{}:{:?}",
-                        seen_hash, ctx.block_height.0, status
+                        seen_hash, tx_data.tx_ctx.block_height.0, tx_data.status
                     ));
                 }
+                ContractListenerEvent::BackfillComplete(_) => {}
             }
         }
     })
@@ -328,20 +340,33 @@ async fn expect_no_event(
     receiver: &mut Receiver<BusEnvelope<ContractListenerEvent>>,
     duration: Duration,
 ) -> Result<()> {
-    match timeout(duration, receiver.recv()).await {
-        Ok(Ok(msg)) => {
-            let event = msg.into_message();
-            let label = match event {
-                ContractListenerEvent::SequencedTx(_, _, _) => "sequenced",
-                ContractListenerEvent::SettledTx(_, _, _, _) => "settled",
-            };
-            anyhow::bail!("unexpected {label} event");
+    let deadline = tokio::time::Instant::now() + duration;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Ok(());
         }
-        Ok(Err(RecvError::Lagged(skipped))) => {
-            anyhow::bail!("unexpected lagged by {skipped} events")
+        match timeout(remaining, receiver.recv()).await {
+            Ok(Ok(msg)) => {
+                let event = msg.into_message();
+                match event {
+                    ContractListenerEvent::BackfillComplete(_) => {
+                        continue;
+                    }
+                    ContractListenerEvent::SequencedTx(_) => {
+                        anyhow::bail!("unexpected sequenced event")
+                    }
+                    ContractListenerEvent::SettledTx(_) => {
+                        anyhow::bail!("unexpected settled event")
+                    }
+                }
+            }
+            Ok(Err(RecvError::Lagged(skipped))) => {
+                anyhow::bail!("unexpected lagged by {skipped} events")
+            }
+            Ok(Err(RecvError::Closed)) => anyhow::bail!("receiver closed"),
+            Err(_) => return Ok(()),
         }
-        Ok(Err(RecvError::Closed)) => anyhow::bail!("receiver closed"),
-        Err(_) => Ok(()),
     }
 }
 
@@ -367,6 +392,7 @@ async fn emits_new_tx_on_notifications() -> Result<()> {
         data_directory: data_dir.path().to_path_buf(),
         contracts: HashSet::from([contract.clone()]),
         poll_interval: Duration::from_secs(5),
+        replay_settled_from_start: false,
     };
 
     let mut module = ContractListener::build(bus.new_handle(), conf).await?;
@@ -377,9 +403,14 @@ async fn emits_new_tx_on_notifications() -> Result<()> {
 
     let event = drain_event(&mut receiver).await?;
     let (seen_hash, blobs, ctx) = match event {
-        ContractListenerEvent::SequencedTx(seen_hash, blobs, ctx) => (seen_hash, blobs, ctx),
-        ContractListenerEvent::SettledTx(_, _, _, _) => {
+        ContractListenerEvent::SequencedTx(tx_data) => {
+            (tx_data.tx_id.1, tx_data.tx.blobs.clone(), tx_data.tx_ctx)
+        }
+        ContractListenerEvent::SettledTx(_) => {
             anyhow::bail!("unexpected settled event for sequenced notification")
+        }
+        ContractListenerEvent::BackfillComplete(_) => {
+            anyhow::bail!("unexpected backfill complete event for sequenced notification")
         }
     };
 
@@ -387,8 +418,7 @@ async fn emits_new_tx_on_notifications() -> Result<()> {
     assert_eq!(ctx.block_hash, block_hash);
     assert_eq!(ctx.block_height, BlockHeight(2));
     assert_eq!(blobs.len(), 1);
-    assert_eq!(blobs[0].0, BlobIndex(0));
-    assert_eq!(blobs[0].1.contract_name, contract);
+    assert_eq!(blobs[0].contract_name, contract);
 
     shutdown
         .send(ShutdownModule {
@@ -422,6 +452,7 @@ async fn dispatches_unprocessed_blocks_on_startup() -> Result<()> {
         data_directory: data_dir.path().to_path_buf(),
         contracts: HashSet::from([contract.clone()]),
         poll_interval: Duration::from_secs(5),
+        replay_settled_from_start: false,
     };
 
     let mut module = ContractListener::build(bus.new_handle(), conf).await?;
@@ -437,23 +468,22 @@ async fn dispatches_unprocessed_blocks_on_startup() -> Result<()> {
 
     for event in events {
         match event {
-            ContractListenerEvent::SequencedTx(seen_hash, blobs, ctx) => {
-                assert_eq!(seen_hash, sequenced_tx_hash);
-                assert_eq!(ctx.block_height, BlockHeight(2));
-                assert_eq!(blobs.len(), 1);
-                assert_eq!(blobs[0].0, BlobIndex(0));
-                assert_eq!(blobs[0].1.contract_name, contract);
+            ContractListenerEvent::SequencedTx(tx_data) => {
+                assert_eq!(tx_data.tx_id.1, sequenced_tx_hash);
+                assert_eq!(tx_data.tx_ctx.block_height, BlockHeight(2));
+                assert_eq!(tx_data.tx.blobs.len(), 1);
+                assert_eq!(tx_data.tx.blobs[0].contract_name, contract);
                 saw_sequenced = true;
             }
-            ContractListenerEvent::SettledTx(seen_hash, blobs, ctx, status) => {
-                assert_eq!(status, TransactionStatusDb::Success);
-                assert_eq!(seen_hash, settled_tx_hash);
-                assert_eq!(ctx.block_height, BlockHeight(1));
-                assert_eq!(blobs.len(), 1);
-                assert_eq!(blobs[0].0, BlobIndex(0));
-                assert_eq!(blobs[0].1.contract_name, contract);
+            ContractListenerEvent::SettledTx(tx_data) => {
+                assert_eq!(tx_data.status, TransactionStatusDb::Success);
+                assert_eq!(tx_data.tx_id.1, settled_tx_hash);
+                assert_eq!(tx_data.tx_ctx.block_height, BlockHeight(1));
+                assert_eq!(tx_data.tx.blobs.len(), 1);
+                assert_eq!(tx_data.tx.blobs[0].contract_name, contract);
                 saw_settled = true;
             }
+            ContractListenerEvent::BackfillComplete(_) => {}
         }
     }
 
@@ -490,6 +520,7 @@ async fn emits_status_updates_for_same_tx_and_new_txs() -> Result<()> {
         data_directory: data_dir.path().to_path_buf(),
         contracts: HashSet::from([contract.clone()]),
         poll_interval: Duration::from_secs(5),
+        replay_settled_from_start: false,
     };
 
     let mut module = ContractListener::build(bus.new_handle(), conf).await?;
@@ -590,6 +621,7 @@ async fn emits_sequenced_events_within_same_block_by_index() -> Result<()> {
         data_directory: data_dir.path().to_path_buf(),
         contracts: HashSet::from([contract.clone()]),
         poll_interval: Duration::from_secs(5),
+        replay_settled_from_start: false,
     };
 
     let mut module = ContractListener::build(bus.new_handle(), conf).await?;
@@ -648,6 +680,7 @@ async fn emits_settled_events_within_same_block_by_index() -> Result<()> {
         data_directory: data_dir.path().to_path_buf(),
         contracts: HashSet::from([contract.clone()]),
         poll_interval: Duration::from_secs(5),
+        replay_settled_from_start: false,
     };
 
     let mut module = ContractListener::build(bus.new_handle(), conf).await?;
@@ -706,6 +739,7 @@ async fn emits_settled_update_below_last_seen_height() -> Result<()> {
         data_directory: data_dir.path().to_path_buf(),
         contracts: HashSet::from([contract.clone()]),
         poll_interval: Duration::from_secs(5),
+        replay_settled_from_start: false,
     };
 
     let mut module = ContractListener::build(bus.new_handle(), conf).await?;
