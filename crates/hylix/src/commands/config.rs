@@ -109,9 +109,15 @@ fn display_config(config: &HylixConfig) -> HylixResult<()> {
     // Devnet configuration
     println!("\n Devnet Configuration:");
     println!("  {:W$} = {node_image}", "devnet.node_image");
-    println!("  {:W$} = {wallet_server_image}", "devnet.wallet_server_image");
+    println!(
+        "  {:W$} = {wallet_server_image}",
+        "devnet.wallet_server_image"
+    );
     println!("  {:W$} = {wallet_ui_image}", "devnet.wallet_ui_image");
-    println!("  {:W$} = {registry_server_image}", "devnet.registry_server_image");
+    println!(
+        "  {:W$} = {registry_server_image}",
+        "devnet.registry_server_image"
+    );
     println!("  {:W$} = {registry_ui_image}", "devnet.registry_ui_image");
     println!("  {:W$} = {node_rust_log}", "devnet.node_rust_log");
     println!("  {:W$} = {node_port}", "devnet.node_port");
@@ -121,7 +127,10 @@ fn display_config(config: &HylixConfig) -> HylixResult<()> {
     println!("  {:W$} = {wallet_api_port}", "devnet.wallet_api_port");
     println!("  {:W$} = {wallet_ws_port}", "devnet.wallet_ws_port");
     println!("  {:W$} = {wallet_ui_port}", "devnet.wallet_ui_port");
-    println!("  {:W$} = {registry_server_port}", "devnet.registry_server_port");
+    println!(
+        "  {:W$} = {registry_server_port}",
+        "devnet.registry_server_port"
+    );
     println!("  {:W$} = {registry_ui_port}", "devnet.registry_ui_port");
     println!("  {:W$} = {auto_start}", "devnet.auto_start");
 
@@ -137,11 +146,7 @@ fn display_config(config: &HylixConfig) -> HylixResult<()> {
         }
     );
     if !extra_flags.is_empty() {
-        println!(
-            "  {:W$} = {}",
-            "build.extra_flags",
-            extra_flags.join(" ")
-        );
+        println!("  {:W$} = {}", "build.extra_flags", extra_flags.join(" "));
     }
 
     // Container environment variables (read-only, edited via TOML)
@@ -154,22 +159,46 @@ fn display_config(config: &HylixConfig) -> HylixResult<()> {
     if has_env {
         println!("\n Container Environment Variables (edit in config.toml):");
         if !env_node.is_empty() {
-            println!("  {:W$} = {}", "devnet.container_env.node", env_node.join(", "));
+            println!(
+                "  {:W$} = {}",
+                "devnet.container_env.node",
+                env_node.join(", ")
+            );
         }
         if !env_indexer.is_empty() {
-            println!("  {:W$} = {}", "devnet.container_env.indexer", env_indexer.join(", "));
+            println!(
+                "  {:W$} = {}",
+                "devnet.container_env.indexer",
+                env_indexer.join(", ")
+            );
         }
         if !env_wallet_server.is_empty() {
-            println!("  {:W$} = {}", "devnet.container_env.wallet_server", env_wallet_server.join(", "));
+            println!(
+                "  {:W$} = {}",
+                "devnet.container_env.wallet_server",
+                env_wallet_server.join(", ")
+            );
         }
         if !env_wallet_ui.is_empty() {
-            println!("  {:W$} = {}", "devnet.container_env.wallet_ui", env_wallet_ui.join(", "));
+            println!(
+                "  {:W$} = {}",
+                "devnet.container_env.wallet_ui",
+                env_wallet_ui.join(", ")
+            );
         }
         if !env_postgres.is_empty() {
-            println!("  {:W$} = {}", "devnet.container_env.postgres", env_postgres.join(", "));
+            println!(
+                "  {:W$} = {}",
+                "devnet.container_env.postgres",
+                env_postgres.join(", ")
+            );
         }
         if !env_registry_server.is_empty() {
-            println!("  {:W$} = {}", "devnet.container_env.registry_server", env_registry_server.join(", "));
+            println!(
+                "  {:W$} = {}",
+                "devnet.container_env.registry_server",
+                env_registry_server.join(", ")
+            );
         }
     }
 
