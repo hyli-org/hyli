@@ -153,6 +153,11 @@ pub mod dont_use_this {
     ) -> BusReceiver<M> {
         bus.receiver::<M>().await
     }
+
+    // why isn't this in the stdlib
+    pub fn get_type_name<T: Any>(_: &T) -> &'static str {
+        std::any::type_name::<T>()
+    }
 }
 
 impl Default for SharedMessageBus {
