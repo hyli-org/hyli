@@ -24,8 +24,27 @@ pub struct Args {
 /// Use dhat to profile memory usage
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() {
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(6)
+        .disable_lifo_slot()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(err) => {
+            eprintln!("Failed to build tokio runtime: {err}");
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(err) = rt.block_on(inner_main()) {
+        eprintln!("indexer failed: {err:#}");
+        std::process::exit(1);
+    }
+}
+
+async fn inner_main() -> Result<()> {
     #[cfg(feature = "dhat")]
     let _profiler = {
         tracing::info!("Running with dhat memory profiler");
