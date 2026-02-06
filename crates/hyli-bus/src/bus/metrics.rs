@@ -13,6 +13,7 @@ pub struct BusMetrics {
     labels: HashMap<(TypeId, TypeId), [KeyValue; 2]>,
     send: Counter<u64>,
     receive: Counter<u64>,
+    client_name: String,
 }
 
 #[allow(clippy::unwrap_used, clippy::expect_used)]
@@ -24,6 +25,7 @@ impl BusMetrics {
             labels: HashMap::new(),
             send: my_meter.u64_counter("bus_send").build(),
             receive: my_meter.u64_counter("bus_receive").build(),
+            client_name: String::new(),
         }
     }
 
@@ -67,31 +69,34 @@ impl BusMetrics {
         (TypeId::of::<Msg>(), TypeId::of::<Client>())
     }
 
-    fn get_or_insert_labels<Msg: 'static, Client: 'static>(&mut self, key: &(TypeId, TypeId)) {
-        self.labels.entry(*key).or_insert_with(|| {
-            [
-                KeyValue::new("msg", BusMetrics::simplify_type_name(type_name::<Msg>())),
-                KeyValue::new(
-                    "client_id",
-                    BusMetrics::simplify_type_name(type_name::<Client>()),
-                ),
-            ]
-        });
-    }
-
     pub fn send<Msg: 'static, Client: 'static>(&mut self) {
         let key = self.get_key::<Msg, Client>();
-        self.get_or_insert_labels::<Msg, Client>(&key);
+        self.labels.entry(key).or_insert_with(|| {
+            [
+                KeyValue::new("msg", BusMetrics::simplify_type_name(type_name::<Msg>())),
+                KeyValue::new("client_id", self.client_name.clone()),
+            ]
+        });
         self.send.add(1, self.labels.get(&key).unwrap());
     }
 
     pub fn receive<Msg: 'static, Client: 'static>(&mut self) {
         let key = self.get_key::<Msg, Client>();
-        self.get_or_insert_labels::<Msg, Client>(&key);
+        self.labels.entry(key).or_insert_with(|| {
+            [
+                KeyValue::new("msg", BusMetrics::simplify_type_name(type_name::<Msg>())),
+                KeyValue::new("client_id", self.client_name.clone()),
+            ]
+        });
         self.receive.add(1, self.labels.get(&key).unwrap());
     }
 
     pub fn simplified_name<T>() -> String {
         BusMetrics::simplify_type_name(type_name::<T>())
+    }
+
+    pub fn with_client_name(mut self, client_name: String) -> Self {
+        self.client_name = client_name;
+        self
     }
 }
