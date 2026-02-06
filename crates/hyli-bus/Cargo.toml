@@ -31,7 +31,7 @@ tokio = { workspace = true, features = ["full", "tracing"] }
 opentelemetry = { workspace = true }
 opentelemetry-otlp = { workspace = true, optional = true }
 tracing-opentelemetry = { workspace = true, optional = true }
-opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true, features = ["rt-tokio", "experimental_metrics_periodicreader_with_async_runtime"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

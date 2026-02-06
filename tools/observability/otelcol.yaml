@@ -1,0 +1,26 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+  # VictoriaMetrics expects cumulative temporality; convert delta -> cumulative if your SDK emits delta.
+  deltatocumulative:
+    max_stale: 5m
+
+exporters:
+  otlphttp/victoriametrics:
+    metrics_endpoint: http://victoriametrics:8428/opentelemetry/v1/metrics
+    encoding: proto
+    compression: gzip
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [deltatocumulative, batch]
+      exporters: [otlphttp/victoriametrics]

@@ -1,6 +1,5 @@
 //! Public API for interacting with the node.
 
-use crate::telemetry::{encode_registry_text, Registry};
 use crate::{
     bus::SharedMessageBus, log_error, module_bus_client, module_handle_messages, modules::Module,
 };
@@ -36,7 +35,6 @@ pub struct RestApiRunContext {
     pub port: u16,
     pub info: NodeInfo,
     pub router: Router,
-    pub registry: Registry,
     pub max_body_size: usize,
     pub openapi: utoipa::openapi::OpenApi,
 }
@@ -53,19 +51,14 @@ impl RestApiRunContext {
             port,
             info,
             router,
-            registry: Registry::new(),
             max_body_size,
             openapi,
         }
-    }
-    pub fn with_registry(self, registry: Registry) -> Self {
-        Self { registry, ..self }
     }
 }
 
 pub struct RouterState {
     info: NodeInfo,
-    registry: Registry,
 }
 
 pub struct RestApi {
@@ -106,11 +99,7 @@ impl Module for RestApi {
             Router::new()
                 .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ctx.openapi))
                 .route("/v1/info", get(get_info))
-                .route("/v1/metrics", get(get_metrics))
-                .with_state(RouterState {
-                    info: ctx.info,
-                    registry: ctx.registry,
-                }),
+                .with_state(RouterState { info: ctx.info }),
         );
         let app = app
             .layer(CatchPanicLayer::custom(handle_panic))
@@ -145,7 +134,7 @@ pub async fn request_logger(req: Request<Body>, next: Next) -> impl IntoResponse
 
     // Debug log for metrics and health endpoints, info for others
     let path = uri.path();
-    if path.starts_with("/v1/metrics") || path == "/_health" || path.starts_with("/v1/info") {
+    if path == "/_health" || path.starts_with("/v1/info") {
         tracing::debug!(
             "[{}] {} - {} ({} μs)",
             method,
@@ -205,10 +194,6 @@ pub async fn get_info(State(state): State<RouterState>) -> Result<impl IntoRespo
     Ok(Json(state.info))
 }
 
-pub async fn get_metrics(State(s): State<RouterState>) -> Result<impl IntoResponse, AppError> {
-    encode_registry_text(&s.registry).map_err(Into::into)
-}
-
 impl RestApi {
     pub async fn serve(&mut self) -> Result<()> {
         info!(
@@ -261,7 +246,6 @@ impl Clone for RouterState {
     fn clone(&self) -> Self {
         Self {
             info: self.info.clone(),
-            registry: self.registry.clone(),
         }
     }
 }

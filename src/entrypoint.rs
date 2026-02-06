@@ -24,7 +24,6 @@ use hydentity::Hydentity;
 use hyli_crypto::SharedBlstCrypto;
 #[cfg(feature = "monitoring")]
 use hyli_modules::telemetry::global_meter_or_panic;
-use hyli_modules::telemetry::{init_prometheus_registry_meter_provider, Registry};
 use hyli_modules::{
     log_error,
     modules::{
@@ -190,20 +189,16 @@ pub fn welcome_message(conf: &conf::Conf) {
 }
 
 pub async fn main_loop(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> Result<()> {
-    let registry =
-        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
     let bus = SharedMessageBus::new();
-    let mut handler = common_main(config, crypto, bus, registry).await?;
+    let mut handler = common_main(config, crypto, bus).await?;
     handler.exit_loop().await?;
 
     Ok(())
 }
 
 pub async fn main_process(config: conf::Conf, crypto: Option<SharedBlstCrypto>) -> Result<()> {
-    let registry =
-        init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
     let bus = SharedMessageBus::new();
-    let mut handler = common_main(config, crypto, bus, registry).await?;
+    let mut handler = common_main(config, crypto, bus).await?;
     handler.exit_process().await?;
 
     Ok(())
@@ -213,7 +208,6 @@ pub async fn common_main(
     mut config: conf::Conf,
     crypto: Option<SharedBlstCrypto>,
     bus: SharedMessageBus,
-    registry: Registry,
 ) -> Result<ModulesHandler> {
     let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
 
@@ -461,20 +455,17 @@ pub async fn common_main(
             .clone();
 
         handler
-            .build_module::<RestApi>(
-                RestApiRunContext::new(
-                    config.rest_server_port,
-                    NodeInfo {
-                        id: config.id.clone(),
-                        pubkey: crypto.as_ref().map(|c| c.validator_pubkey()).cloned(),
-                        da_address: config.da_public_address.clone(),
-                    },
-                    router.clone(),
-                    config.rest_server_max_body_size,
-                    openapi,
-                )
-                .with_registry(registry),
-            )
+            .build_module::<RestApi>(RestApiRunContext::new(
+                config.rest_server_port,
+                NodeInfo {
+                    id: config.id.clone(),
+                    pubkey: crypto.as_ref().map(|c| c.validator_pubkey()).cloned(),
+                    da_address: config.da_public_address.clone(),
+                },
+                router.clone(),
+                config.rest_server_max_body_size,
+                openapi,
+            ))
             .await?;
     }
 

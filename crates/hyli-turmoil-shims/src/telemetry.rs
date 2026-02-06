@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use opentelemetry::metrics::{Meter, MeterProvider};
-use prometheus::Registry;
 
 mod imp {
     use super::{Meter, MeterProvider};
@@ -128,29 +127,4 @@ pub use imp::{global_meter_or_panic, global_meter_provider_or_panic, init_global
 
 pub fn init_test_meter_provider() -> Arc<dyn MeterProvider + Send + Sync> {
     init_global_meter_provider(opentelemetry_sdk::metrics::SdkMeterProvider::default())
-}
-
-pub fn init_prometheus_registry_meter_provider(
-) -> opentelemetry_sdk::metrics::MetricResult<Registry> {
-    let registry = Registry::new();
-    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-        .with_reader(
-            opentelemetry_prometheus::exporter()
-                .with_registry(registry.clone())
-                .build()?,
-        )
-        .build();
-
-    init_global_meter_provider(provider);
-
-    Ok(registry)
-}
-
-pub fn encode_registry_text(registry: &Registry) -> prometheus::Result<String> {
-    use prometheus::{Encoder, TextEncoder};
-
-    let mut buffer = Vec::new();
-    let encoder = TextEncoder::new();
-    encoder.encode(&registry.gather(), &mut buffer)?;
-    String::from_utf8(buffer).map_err(|err| prometheus::Error::Msg(err.to_string()))
 }

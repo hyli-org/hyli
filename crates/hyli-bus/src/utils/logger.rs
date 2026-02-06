@@ -1,10 +1,45 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 #[cfg(feature = "instrumentation")]
 use opentelemetry::trace::TracerProvider;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Registry;
 use tracing_subscriber::{layer::SubscriberExt, registry::LookupSpan, EnvFilter, Layer};
+
+#[cfg(feature = "instrumentation")]
+mod otlp_metrics {
+    use hyli_turmoil_shims::init_global_meter_provider;
+    use opentelemetry_otlp::WithExportConfig;
+    use opentelemetry_sdk::metrics::periodic_reader_with_async_runtime::PeriodicReader;
+    use opentelemetry_sdk::metrics::{MetricResult, SdkMeterProvider};
+    use opentelemetry_sdk::{runtime, Resource};
+
+    pub fn init(
+        endpoint: String,
+        service_name: String,
+        push_interval: Option<std::time::Duration>,
+    ) -> MetricResult<()> {
+        let exporter = opentelemetry_otlp::MetricExporter::builder()
+            .with_tonic()
+            .with_endpoint(endpoint)
+            .build()?;
+
+        // Use the Tokio runtime so periodic exports follow the simulation clock under turmoil.
+        let mut reader_builder = PeriodicReader::builder(exporter, runtime::Tokio);
+        if let Some(interval) = push_interval {
+            reader_builder = reader_builder.with_interval(interval);
+        }
+        let reader = reader_builder.build();
+        let provider = SdkMeterProvider::builder()
+            .with_reader(reader)
+            .with_resource(Resource::builder().with_service_name(service_name).build())
+            .build();
+
+        init_global_meter_provider(provider);
+
+        Ok(())
+    }
+}
 
 // Direct logging macros
 /// Macro designed to log warnings
@@ -164,6 +199,19 @@ pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) ->
         filter = filter.add_directive("risc0_zkvm=warn".parse()?);
     }
 
+    let endpoint =
+        std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".to_string());
+    let push_interval = std::env::var("OTLP_METRICS_PUSH_INTERVAL_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(std::time::Duration::from_secs);
+    // Initialize the OTLP meter provider globally so that metrics can be emitted.
+    #[cfg(feature = "instrumentation")]
+    {
+        otlp_metrics::init(endpoint.clone(), node_name.clone(), push_interval)
+            .context("starting OTLP metrics exporter")?;
+    }
+
     // Can't use match inline because these are different return types
     let mode = match log_format {
         "json" => TracingMode::Json,
@@ -187,9 +235,6 @@ pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) ->
     #[cfg(feature = "instrumentation")]
     if tracing_enabled {
         use opentelemetry_sdk::propagation::TraceContextPropagator;
-
-        let endpoint =
-            std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".to_string());
 
         opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
 
