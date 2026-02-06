@@ -1,5 +1,6 @@
+use crate::commands::devnet::{get_node_id, NodePorts};
 use crate::config::HylixConfig;
-use crate::constants::{env_values, env_vars};
+use crate::constants::{self, env_values, env_vars};
 use std::collections::HashMap;
 use std::ffi::OsStr;
 
@@ -23,6 +24,37 @@ impl EnvBuilder {
             .hyli_da_read_from(&config.devnet.da_port)
             .hyli_registry_url(&config.devnet.registry_server_port)
             .hyli_registry_api_key_dev()
+    }
+
+    pub fn with_ports(self, ip: &str, ports: &NodePorts) -> Self {
+        self.set(
+            constants::env_vars::HYLI_P2P__ADDRESS,
+            &format!("localhost:{}", ports.p2p),
+        )
+        .set(
+            constants::env_vars::HYLI_P2P__SERVER_PORT,
+            &ports.p2p.to_string(),
+        )
+        .set(
+            constants::env_vars::HYLI_REST_SERVER_PORT,
+            &ports.rest.to_string(),
+        )
+        .set(
+            constants::env_vars::HYLI_DA_SERVER_PORT,
+            &ports.da.to_string(),
+        )
+        .set(
+            constants::env_vars::HYLI_ADMIN_SERVER_PORT,
+            &ports.admin.to_string(),
+        )
+        .set(
+            constants::env_vars::HYLI_DA_PUBLIC_ADDRESS,
+            format!("{}:{}", ip, ports.da).as_str(),
+        )
+        .set(
+            constants::env_vars::HYLI_P2P_PUBLIC_ADDRESS,
+            format!("{}:{}", ip, ports.p2p).as_str(),
+        )
     }
 
     pub fn risc0_dev_mode(self) -> Self {
@@ -78,6 +110,22 @@ impl EnvBuilder {
 
     pub fn set(mut self, key: &str, value: &str) -> Self {
         self.vars.insert(key.to_string(), value.to_string());
+        self
+    }
+
+    pub fn genesis_stakers(mut self, total_nodes: u32, has_local_node: bool) -> Self {
+        // Set individual staker env vars for all nodes in the network
+        for j in 0..total_nodes {
+            let staker_node_id = if has_local_node && j == 0 {
+                constants::containers::NODE_LOCAL.to_string()
+            } else {
+                get_node_id(j)
+            };
+            self = self.set(
+                &format!("HYLI_GENESIS__STAKERS__{}", staker_node_id),
+                "1000",
+            )
+        }
         self
     }
 
