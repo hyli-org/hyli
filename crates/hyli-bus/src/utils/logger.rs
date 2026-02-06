@@ -2,9 +2,9 @@ use anyhow::Result;
 #[cfg(feature = "instrumentation")]
 use opentelemetry::trace::TracerProvider;
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::Registry;
-use tracing_subscriber::{layer::SubscriberExt, registry::LookupSpan, EnvFilter, Layer};
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, registry::LookupSpan};
 
 // Direct logging macros
 /// Macro designed to log warnings
@@ -132,6 +132,7 @@ pub fn setup_tracing(log_format: &str, node_name: String) -> Result<()> {
 
 /// Setup tracing - stdout subscriber
 /// stdout defaults to INFO to INFO even if RUST_LOG is set to e.g. debug
+/// SAFETY: This function should be called early in main, before any threads are spawned, to ensure that the environment variable is set for all threads and subprocesses.
 #[cfg_attr(not(feature = "instrumentation"), allow(unused_variables))]
 pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) -> Result<()> {
     let mut filter = EnvFilter::builder()
@@ -157,11 +158,15 @@ pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) ->
         filter = filter.add_directive("opentelemetry_sdk=warn".parse()?);
     }
     if !var.contains("risc0_zkvm") {
-        std::env::set_var(
-            "RUST_LOG",
-            format!("{var},risc0_zkvm=warn,risc0_circuit_rv32im=warn,risc0_binfmt=warn"),
-        );
-        filter = filter.add_directive("risc0_zkvm=warn".parse()?);
+        // SAFETY: called before any threads are spawned (early in main).
+        // Needed because risc0 spawns subprocesses that inherit RUST_LOG.
+        unsafe {
+            std::env::set_var(
+                "RUST_LOG",
+                format!("{var},risc0_zkvm=warn,risc0_circuit_rv32im=warn,risc0_binfmt=warn"),
+            );
+            filter = filter.add_directive("risc0_zkvm=warn".parse()?);
+        }
     }
 
     // Can't use match inline because these are different return types
@@ -215,7 +220,7 @@ where
     S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 {
     use opentelemetry_otlp::{SpanExporter, WithExportConfig};
-    use opentelemetry_sdk::{trace::SdkTracerProvider, Resource};
+    use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
 
     let exporter = SpanExporter::builder()
         .with_tonic()

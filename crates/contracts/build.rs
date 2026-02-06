@@ -15,7 +15,9 @@ fn main() {}
     ))
 ))]
 fn main() {
-    compile_error!("When the 'build' feature is enabled, at least one of the following features must also be enabled: all, amm, hydentity, hyllar, smt-token, staking, risc0-recursion, uuid-tld.");
+    compile_error!(
+        "When the 'build' feature is enabled, at least one of the following features must also be enabled: all, amm, hydentity, hyllar, smt-token, staking, risc0-recursion, uuid-tld."
+    );
 }
 
 #[cfg(all(
@@ -63,12 +65,14 @@ fn main() {
 
     // clippy in workspace mode sets this, which interferes with the guest VM. Clear it temporarily.
     let env_wrapper = std::env::var("RUSTC_WORKSPACE_WRAPPER");
-    std::env::set_var("RUSTC_WORKSPACE_WRAPPER", "");
+    unsafe {
+        std::env::set_var("RUSTC_WORKSPACE_WRAPPER", "");
+    }
 
     println!("cargo:rerun-if-changed=build.rs");
 
     use risc0_build::{
-        build_package, get_package, DockerOptionsBuilder, GuestListEntry, GuestOptionsBuilder,
+        DockerOptionsBuilder, GuestListEntry, GuestOptionsBuilder, build_package, get_package,
     };
     use std::io::Write;
 
@@ -149,5 +153,7 @@ fn main() {
             .expect("failed to write program ID");
     });
     // }
-    std::env::set_var("RUSTC_WORKSPACE_WRAPPER", env_wrapper.unwrap_or_default());
+    unsafe {
+        std::env::set_var("RUSTC_WORKSPACE_WRAPPER", env_wrapper.unwrap_or_default());
+    }
 }

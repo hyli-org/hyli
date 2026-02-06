@@ -39,7 +39,7 @@ resolver = "2"
 
 [workspace.package]
 version = "0.14.0"
-edition = "2021"
+edition = "2024"
 homepage = "https://hyli.org/"
 repository = "https://github.com/hyli-org/hyli/"
 rust-version = "1.93"
