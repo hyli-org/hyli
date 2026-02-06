@@ -207,7 +207,9 @@ macro_rules! bus_client {
         impl $(< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $name $(< $( $lt ),+ >)? {
             pub async fn new_from_bus(bus: $crate::bus::SharedMessageBus) -> $name $(< $( $lt ),+ >)? {
                 $name::new(
-                    bus.metrics.clone(),
+                    bus.metrics
+                        .clone()
+                        .with_client_name(stringify!($name).to_string()),
                     $($crate::bus::dont_use_this::get_sender::<$sender>(&bus).await,)*
                     $($crate::bus::dont_use_this::get_receiver::<$receiver>(&bus).await,)*
                 )
