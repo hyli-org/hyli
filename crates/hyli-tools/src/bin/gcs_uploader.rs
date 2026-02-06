@@ -27,6 +27,13 @@ pub type SharedConf = Arc<GcsUploaderCtx>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install the default crypto provider for rustls
+    // This is required because rustls 0.23.x cannot automatically determine
+    // which crypto provider to use when both aws-lc-rs and ring are present
+    rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .map_err(|_| anyhow::anyhow!("Failed to install default crypto provider"))?;
+
     let args = Args::parse();
     let config = Conf::new(args.config_file).context("reading config file")?;
 
@@ -54,7 +61,7 @@ async fn main() -> Result<()> {
             da_read_from: config.da_read_from.clone(),
             start_block: Some(upload_start.start_height),
             timeout_client_secs: 10,
-            da_fallback_addresses: vec![],
+            da_fallback_addresses: config.da_fallback_addresses.clone(),
             processor_config: (),
         })
         .await?;
@@ -88,6 +95,9 @@ pub struct Conf {
 
     /// URL to connect to.
     pub da_read_from: String,
+
+    /// DA fallback addresses to connect to if the main DA endpoint is unavailable.
+    pub da_fallback_addresses: Vec<String>,
 
     pub gcs: GCSConf,
 }

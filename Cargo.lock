@@ -5790,6 +5790,7 @@ dependencies = [
  "hyper-util",
  "notify",
  "ratatui",
+ "rustls 0.23.36",
  "serde",
  "serde_json",
  "sha2",
@@ -5862,7 +5863,7 @@ dependencies = [
 
 [[package]]
 name = "hylix"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "clap",

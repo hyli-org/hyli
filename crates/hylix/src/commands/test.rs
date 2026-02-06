@@ -77,6 +77,9 @@ async fn start_devnet_if_needed() -> HylixResult<()> {
         bake: true,
         profile: None,
         no_pull: false,
+        nodes: None,
+        no_local: false,
+        bare: false,
     })
     .await
 }
