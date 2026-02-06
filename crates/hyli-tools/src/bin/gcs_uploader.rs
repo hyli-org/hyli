@@ -116,7 +116,10 @@ impl Conf {
             .add_source(
                 config::Environment::with_prefix("hyli")
                     .separator("__")
-                    .prefix_separator("_"),
+                    .prefix_separator("_")
+                    .list_separator(",")
+                    .with_list_parse_key("da_fallback_addresses")
+                    .try_parsing(true),
             )
             .build()?
             .try_deserialize()?;
