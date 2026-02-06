@@ -55,10 +55,10 @@ static GLOBAL_ALLOC: alloc_track::AllocTrack<std::alloc::System> = alloc_track::
 
 // We have some modules that have long-ish tasks, but for now we won't bother giving them
 // their own runtime, so to avoid contention we keep a safe number of worker threads
-// #[tokio::main(worker_threads = 6)]
 fn main() {
     eprintln!("Building tokio runtime with LIFO slot disabled");
     let rt = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(6)
         .disable_lifo_slot()
         .enable_all()
         .build()
