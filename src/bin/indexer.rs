@@ -25,7 +25,6 @@ pub struct Args {
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
 fn main() {
-    eprintln!("Building tokio runtime with LIFO slot disabled");
     let rt = match tokio::runtime::Builder::new_multi_thread()
         .worker_threads(6)
         .disable_lifo_slot()
