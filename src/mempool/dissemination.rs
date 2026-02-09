@@ -205,7 +205,8 @@ impl Module for DisseminationManager {
 
     async fn build(bus: hyli_modules::bus::SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus = DisseminationBusClient::new_from_bus(bus.new_handle()).await;
-        let lanes = shared_lanes_storage(&ctx.config.data_directory)?;
+        let mut lanes = shared_lanes_storage(&ctx.config.data_directory)?;
+        lanes.set_metrics_context(ctx.config.id.clone());
 
         Ok(DisseminationManager {
             bus,

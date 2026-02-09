@@ -39,7 +39,8 @@ impl Module for DataAvailability {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> anyhow::Result<Self> {
         let bus = DABusClient::new_from_bus(bus.new_handle()).await;
 
-        let blocks = Blocks::new(&ctx.config.data_directory.join("data_availability.db"))?;
+        let mut blocks = Blocks::new(&ctx.config.data_directory.join("data_availability.db"))?;
+        blocks.set_metrics_context(ctx.config.id.clone());
         let highest_block = blocks.highest();
 
         // When fast catchup is enabled, we load the node state from disk to load blocks
@@ -491,6 +492,8 @@ impl DataAvailability {
         let mut catchup_joinset: JoinSet<(String, usize)> = tokio::task::JoinSet::new();
         let mut catchup_task_checker_ticker =
             tokio::time::interval(std::time::Duration::from_millis(5000));
+        let mut storage_metrics_ticker =
+            tokio::time::interval(std::time::Duration::from_secs(30));
 
         module_handle_messages! {
             on_self self,
@@ -595,6 +598,10 @@ impl DataAvailability {
                 let highest_block = self.blocks.highest();
                 _ = log_error!(self.catchupper.manage_catchup(highest_block, &catchup_block_sender), "Catchup transition after tick");
 
+            }
+
+            _ = storage_metrics_ticker.tick() => {
+                self.blocks.record_metrics();
             }
         };
 

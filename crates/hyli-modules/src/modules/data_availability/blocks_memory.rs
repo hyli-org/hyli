@@ -25,6 +25,8 @@ impl Blocks {
         Ok(())
     }
 
+    pub fn record_metrics(&self) {}
+
     pub fn put(&mut self, data: SignedBlock) -> Result<()> {
         let block_hash = data.hashed();
         if self.contains(&block_hash) {

@@ -9,6 +9,7 @@ use async_stream::try_stream;
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slice};
 use futures::Stream;
 use hyli_model::{LaneId, ProofData, TxHash};
+use hyli_modules::utils::fjall_metrics::FjallMetrics;
 use tracing::{info, warn};
 
 use crate::{
@@ -31,6 +32,7 @@ pub struct LanesStorage {
     by_hash_metadata: Keyspace,
     by_hash_data: Keyspace,
     dp_proofs: Keyspace,
+    metrics: FjallMetrics,
     // Used by the shared storage to know when it can drop this handle.
     ref_token: Arc<()>,
 }
@@ -118,6 +120,16 @@ impl LanesStorage {
         self.lanes_tip.read().unwrap()
     }
 
+    pub fn record_metrics(&self) {
+        self.metrics.record_db(&self.db);
+        self.metrics
+            .record_keyspace("dp_metadata", &self.by_hash_metadata);
+        self.metrics
+            .record_keyspace("dp_data", &self.by_hash_data);
+        self.metrics
+            .record_keyspace("dp_proofs", &self.dp_proofs);
+    }
+
     pub fn new(
         path: &Path,
         lanes_tip: BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>,
@@ -162,8 +174,13 @@ impl LanesStorage {
             by_hash_metadata,
             by_hash_data,
             dp_proofs,
+            metrics: FjallMetrics::global("mempool", "unknown", "mempool"),
             ref_token: Arc::new(()),
         })
+    }
+
+    pub fn set_metrics_context(&mut self, node_id: impl Into<String>) {
+        self.metrics = FjallMetrics::global("mempool", node_id, "mempool");
     }
 
     #[cfg(test)]

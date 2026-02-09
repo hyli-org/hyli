@@ -3,6 +3,7 @@ use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slic
 use sdk::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock};
 use std::{fmt::Debug, path::Path};
 use tracing::{debug, info, trace};
+use crate::utils::fjall_metrics::FjallMetrics;
 
 struct FjallHashKey(ConsensusProposalHash);
 struct FjallHeightKey([u8; 8]);
@@ -51,6 +52,7 @@ pub struct Blocks {
     db: Database,
     by_hash: Keyspace,
     by_height: Keyspace,
+    metrics: FjallMetrics,
 }
 
 impl Blocks {
@@ -59,6 +61,7 @@ impl Blocks {
             db: self.db.clone(),
             by_hash: self.by_hash.clone(),
             by_height: self.by_height.clone(),
+            metrics: self.metrics.clone(),
         }
     }
 
@@ -95,7 +98,12 @@ impl Blocks {
             db,
             by_hash,
             by_height,
+            metrics: FjallMetrics::global("data_availability", "unknown", "data_availability.db"),
         })
+    }
+
+    pub fn set_metrics_context(&mut self, node_id: impl Into<String>) {
+        self.metrics = FjallMetrics::global("data_availability", node_id, "data_availability.db");
     }
 
     pub fn is_empty(&self) -> bool {
@@ -106,6 +114,12 @@ impl Blocks {
         self.db
             .persist(fjall::PersistMode::Buffer)
             .map_err(Into::into)
+    }
+
+    pub fn record_metrics(&self) {
+        self.metrics.record_db(&self.db);
+        self.metrics.record_keyspace("by_hash", &self.by_hash);
+        self.metrics.record_keyspace("by_height", &self.by_height);
     }
 
     pub fn put(&mut self, block: SignedBlock) -> Result<()> {
