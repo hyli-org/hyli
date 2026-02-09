@@ -168,7 +168,6 @@ impl P2P {
                     }
                 };
             }
-
             p2p_tcp_event = p2p_server.listen_next() => {
                 if let Ok(Some(p2p_server_event)) = log_warn!(p2p_server.handle_p2p_tcp_event(p2p_tcp_event).await, "Handling P2PTcpEvent") {
                     match p2p_server_event {

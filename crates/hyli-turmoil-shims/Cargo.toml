@@ -14,18 +14,11 @@ tokio = { workspace = true, features = ["rt-multi-thread"] }
 turmoil = { workspace = true, optional = true }
 borsh = { workspace = true }
 opentelemetry = { workspace = true, optional = true }
-opentelemetry_sdk = { workspace = true, optional = true }
-opentelemetry-prometheus = { workspace = true, optional = true }
-prometheus = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true, features = ["rt-tokio", "experimental_metrics_periodicreader_with_async_runtime"] }
 
 [features]
 turmoil = ["dep:turmoil"]
 otlp = [
   "dep:opentelemetry",
   "dep:opentelemetry_sdk",
-  "dep:opentelemetry-prometheus",
-  "dep:prometheus",
 ]
-
-[package.metadata.cargo-machete]
-ignored = ["turmoil"]

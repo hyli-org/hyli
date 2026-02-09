@@ -170,7 +170,11 @@ where
                     let queued = self.pool_receiver.len();
                     if let Some(msg) = message.as_ref() {
                         match msg.as_ref() {
-                            TcpEvent::Message { socket_addr, .. } => trace!(pool = %self.pool_name, "TcpServer event queue: message for {} ({} remaining)", socket_addr, queued),
+                            TcpEvent::Message { socket_addr, data, .. } => {
+                                self.metrics
+                                    .event_loop_message_received(data.message_label());
+                                trace!(pool = %self.pool_name, "TcpServer event queue: message for {} ({} remaining)", socket_addr, queued)
+                            }
                             TcpEvent::Closed { socket_addr } => trace!(pool = %self.pool_name, "TcpServer event queue: closed for {} ({} remaining)", socket_addr, queued),
                             TcpEvent::Error { socket_addr, error } => trace!(pool = %self.pool_name, "TcpServer event queue: error for {}: {} ({} remaining)", socket_addr, error, queued),
                         }
@@ -231,6 +235,8 @@ where
                         e
                     ),
                 );
+            } else {
+                self.metrics.event_loop_message_sent(message_label);
             }
         }
         errors
@@ -273,6 +279,8 @@ where
                         e
                     ),
                 );
+            } else {
+                self.metrics.event_loop_message_sent(message_label);
             }
         }
 
@@ -312,7 +320,9 @@ where
                     socket_addr,
                     e
                 )
-            })
+            })?;
+        self.metrics.event_loop_message_sent(message_label);
+        Ok(())
     }
 
     pub fn ping(&mut self, socket_addr: String) -> anyhow::Result<()> {

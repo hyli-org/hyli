@@ -55,8 +55,26 @@ static GLOBAL_ALLOC: alloc_track::AllocTrack<std::alloc::System> = alloc_track::
 
 // We have some modules that have long-ish tasks, but for now we won't bother giving them
 // their own runtime, so to avoid contention we keep a safe number of worker threads
-#[tokio::main(worker_threads = 6)]
-async fn main() -> Result<()> {
+fn main() {
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(6)
+        .disable_lifo_slot()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(err) => {
+            eprintln!("Failed to build tokio runtime: {err}");
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(err) = rt.block_on(inner_main()) {
+        eprintln!("hyli failed: {err:#}");
+        std::process::exit(1);
+    }
+}
+async fn inner_main() -> Result<()> {
     #[cfg(feature = "dhat")]
     let _profiler = {
         info!("Running with dhat memory profiler");

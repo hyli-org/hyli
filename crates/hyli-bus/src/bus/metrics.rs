@@ -99,4 +99,8 @@ impl BusMetrics {
         self.client_name = client_name;
         self
     }
+
+    pub fn client_name(&self) -> KeyValue {
+        KeyValue::new("client_id", self.client_name.clone())
+    }
 }
