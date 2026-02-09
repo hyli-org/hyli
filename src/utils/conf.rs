@@ -171,8 +171,8 @@ pub struct Conf {
     pub run_fast_catchup: bool,
     /// Whether to also download older blocks after catchup.
     pub fast_catchup_backfill: bool,
-    /// IP address to use for fast catchup
-    pub fast_catchup_from: String,
+    /// Admin API addresses of peers to use for fast catchup (tried in order with fallback)
+    pub fast_catchup_peers: Vec<String>,
 
     // Validator options
     /// Consensus configuration
@@ -250,6 +250,7 @@ impl Conf {
                     .list_separator(",")
                     .with_list_parse_key("p2p.peers") // Parse this key into Vec<String>
                     .with_list_parse_key("own_lanes.suffixes")
+                    .with_list_parse_key("fast_catchup_peers")
                     .try_parsing(true),
             )
             .set_override_option("data_directory", data_directory)?

@@ -265,15 +265,32 @@ pub async fn common_main(
 
         // Check states exist and skip catchup if so
         if !consensus_path.exists() || !node_state_path.exists() {
-            let catchup_from = config.fast_catchup_from.clone();
-            info!("Catching up from {} with trust", catchup_from);
+            if config.fast_catchup_peers.is_empty() {
+                bail!("Fast catchup enabled but no peers configured in fast_catchup_peers");
+            }
 
-            let client = NodeAdminApiClient::new(catchup_from.clone())?;
+            let mut catchup_response = None;
+            for peer in &config.fast_catchup_peers {
+                info!("Attempting fast catchup from {} with trust", peer);
+                match NodeAdminApiClient::new(peer.clone()) {
+                    Ok(client) => match client.get_catchup_store().await {
+                        Ok(response) => {
+                            info!("Successfully caught up from {}", peer);
+                            catchup_response = Some(response);
+                            break;
+                        }
+                        Err(e) => {
+                            error!("Failed to catch up from {}: {:?}", peer, e);
+                        }
+                    },
+                    Err(e) => {
+                        error!("Failed to create client for {}: {:?}", peer, e);
+                    }
+                }
+            }
 
-            let catchup_response = client
-                .get_catchup_store()
-                .await
-                .context("Getting catchup data")?;
+            let catchup_response =
+                catchup_response.context("Fast catchup failed: no peer responded successfully")?;
 
             node_state_override =
                 borsh::from_slice(catchup_response.node_state_store.as_slice()).ok();
