@@ -1,9 +1,9 @@
 use anyhow::anyhow;
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
-    Json, Router,
 };
 use client_sdk::contract_indexer::AppError;
 use sdk::{api::APINodeContract, *};
@@ -13,10 +13,9 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::{
     bus::{
-        bus_client,
+        SharedMessageBus, bus_client,
         command_response::{CmdRespClient, Query},
         metrics::BusMetrics,
-        SharedMessageBus,
     },
     modules::signal::ShutdownModule,
     node_state::module::{QueryBlockHeight, QueryUnsettledTx, QueryUnsettledTxCount},
@@ -96,13 +95,13 @@ pub async fn get_contract(
             },
         })),
         err => {
-            if let Err(e) = err.as_ref() {
-                if e.to_string().contains("Contract not found") {
-                    return Err(AppError(
-                        StatusCode::NOT_FOUND,
-                        anyhow!("Contract {} not found", name_clone),
-                    ));
-                }
+            if let Err(e) = err.as_ref()
+                && e.to_string().contains("Contract not found")
+            {
+                return Err(AppError(
+                    StatusCode::NOT_FOUND,
+                    anyhow!("Contract {} not found", name_clone),
+                ));
             }
             error!("{:?}", err);
 
@@ -138,13 +137,13 @@ pub async fn get_contract_settled_height(
     {
         Ok(contract) => Ok(Json::<BlockHeight>(contract)),
         err => {
-            if let Err(e) = err.as_ref() {
-                if e.to_string().contains("Contract not found") {
-                    return Err(AppError(
-                        StatusCode::NOT_FOUND,
-                        anyhow!("Contract {} not found", name_clone),
-                    ));
-                }
+            if let Err(e) = err.as_ref()
+                && e.to_string().contains("Contract not found")
+            {
+                return Err(AppError(
+                    StatusCode::NOT_FOUND,
+                    anyhow!("Contract {} not found", name_clone),
+                ));
             }
             error!("{:?}", err);
 

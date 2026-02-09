@@ -1,10 +1,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::bail;
 use anyhow::Result;
+use anyhow::bail;
 use hyli_turmoil_shims::global_meter_or_panic;
-use opentelemetry::{metrics::Histogram, KeyValue};
+use opentelemetry::{KeyValue, metrics::Histogram};
 use tokio::sync::Mutex;
 
 use crate::bus::{BusClientSender, BusMessage, BusReceiver};
@@ -305,7 +305,7 @@ pub use handle_messages;
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::bus::{bus_client, SharedMessageBus};
+    use crate::bus::{SharedMessageBus, bus_client};
 
     bus_client!(
         struct TestBusClient {

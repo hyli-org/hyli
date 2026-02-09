@@ -1,4 +1,4 @@
-use crate::commands::devnet::{get_node_id, NodePorts};
+use crate::commands::devnet::{NodePorts, get_node_id};
 use crate::config::HylixConfig;
 use crate::constants::{self, env_values, env_vars};
 use std::collections::HashMap;

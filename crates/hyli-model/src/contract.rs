@@ -6,7 +6,7 @@ use std::{
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
-use crate::{utils::TimestampMs, LaneId};
+use crate::{LaneId, utils::TimestampMs};
 
 #[derive(
     Serialize,

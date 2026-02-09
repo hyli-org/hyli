@@ -1,8 +1,8 @@
-use rand::{rng, rngs::StdRng, SeedableRng};
+use rand::{SeedableRng, rng, rngs::StdRng};
 #[cfg(feature = "turmoil")]
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
     OnceLock,
+    atomic::{AtomicU64, Ordering},
 };
 
 #[cfg(feature = "turmoil")]

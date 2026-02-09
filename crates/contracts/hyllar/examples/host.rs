@@ -2,7 +2,7 @@ use client_sdk::helpers::risc0::Risc0Prover;
 use hyli_hyllar::client::tx_executor_handler::metadata::PROGRAM_ID;
 use hyli_hyllar::erc20::ERC20;
 use hyli_hyllar::{
-    client::tx_executor_handler::metadata::HYLLAR_ELF, Hyllar, HyllarAction, FAUCET_ID,
+    FAUCET_ID, Hyllar, HyllarAction, client::tx_executor_handler::metadata::HYLLAR_ELF,
 };
 use sdk::{BlobIndex, Calldata, ContractAction, TxHash};
 

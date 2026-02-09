@@ -1,4 +1,4 @@
-use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge};
+use hyli_modules::telemetry::{Counter, Gauge, global_meter_or_panic};
 
 #[repr(u64)]
 #[derive(Clone, Copy)]

@@ -1,7 +1,7 @@
 use crate::error::HylixResult;
 use crate::logging::{log_info, log_success};
 use crate::process::execute_and_check;
-use crate::validation::{validate_project, ValidationLevel};
+use crate::validation::{ValidationLevel, validate_project};
 use std::path::Path;
 
 /// Execute the `hy clean` command

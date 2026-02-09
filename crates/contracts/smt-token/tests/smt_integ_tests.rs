@@ -1,5 +1,5 @@
 use client_sdk::tests::assert_handle;
-use hyli_smt_token::{account::AccountSMT, SmtTokenAction, FAUCET_ID};
+use hyli_smt_token::{FAUCET_ID, SmtTokenAction, account::AccountSMT};
 use sdk::{BlobIndex, BlobTransaction, ContractAction};
 
 #[test]
@@ -8,12 +8,14 @@ fn e2e_test_transfer() {
 
     let tx = BlobTransaction::new(
         sdk::Identity("identityTest".into()),
-        vec![SmtTokenAction::Transfer {
-            sender: FAUCET_ID.into(),
-            recipient: "recipient".into(),
-            amount: 100,
-        }
-        .as_blob("testContract".into(), None, None)],
+        vec![
+            SmtTokenAction::Transfer {
+                sender: FAUCET_ID.into(),
+                recipient: "recipient".into(),
+                amount: 100,
+            }
+            .as_blob("testContract".into(), None, None),
+        ],
     );
 
     assert_handle(&mut contract1, &tx, BlobIndex(0));

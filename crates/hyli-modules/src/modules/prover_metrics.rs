@@ -1,4 +1,4 @@
-use crate::telemetry::{global_meter_or_panic, Counter, Gauge, Histogram, KeyValue};
+use crate::telemetry::{Counter, Gauge, Histogram, KeyValue, global_meter_or_panic};
 use client_sdk::helpers::ProverInfo;
 
 #[derive(Debug, Clone)]

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sdk::{
-    api::{APIBlock, APITransaction, TransactionTypeDb},
     Hashed, NodeStateEvent, TransactionData,
+    api::{APIBlock, APITransaction, TransactionTypeDb},
 };
 use serde::Serialize;
 

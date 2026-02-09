@@ -4,13 +4,13 @@
 //! for reproducibility and fine-grained control.
 
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
     Arc,
+    atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
 
 use client_sdk::rest_client::NodeApiClient;
-use hyli::bus::{bus_client, BusClientSender};
+use hyli::bus::{BusClientSender, bus_client};
 use hyli::rest::RestApi;
 use hyli_modules::modules::signal::ShutdownModule;
 use hyli_net::net::Sim;
@@ -18,7 +18,7 @@ use rand::seq::SliceRandom;
 use tokio::sync::Mutex;
 
 use crate::fixtures::turmoil::{
-    hold_all_links, hold_node, release_all_links, release_node, TurmoilCtx,
+    TurmoilCtx, hold_all_links, hold_node, release_all_links, release_node,
 };
 
 bus_client! {

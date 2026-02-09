@@ -2,7 +2,7 @@
 
 // Re-export core module system from hyli-bus
 pub use hyli_bus::module_bus_client;
-pub use hyli_bus::modules::{files, signal, Module, ModulesHandler, ShutdownClient};
+pub use hyli_bus::modules::{Module, ModulesHandler, ShutdownClient, files, signal};
 
 use axum::Router;
 

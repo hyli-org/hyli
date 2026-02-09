@@ -337,13 +337,13 @@ impl ConfigMigration for LegacyMigration {
 
             // Add node_rust_log field if devnet section exists
             if let Some(devnet) = table.get_mut("devnet") {
-                if let Some(devnet_table) = devnet.as_table_mut() {
-                    if !devnet_table.contains_key("node_rust_log") {
-                        devnet_table.insert(
-                            "node_rust_log".to_string(),
-                            toml::Value::String("info".to_string()),
-                        );
-                    }
+                if let Some(devnet_table) = devnet.as_table_mut()
+                    && !devnet_table.contains_key("node_rust_log")
+                {
+                    devnet_table.insert(
+                        "node_rust_log".to_string(),
+                        toml::Value::String("info".to_string()),
+                    );
                 }
             } else {
                 log_error("Devnet section not found in configuration");
@@ -382,57 +382,50 @@ impl ConfigMigration for Migration0_6_0 {
             );
 
             // Add registry fields to devnet section
-            if let Some(devnet) = table.get_mut("devnet") {
-                if let Some(devnet_table) = devnet.as_table_mut() {
-                    // Add registry_server_image if missing
-                    if !devnet_table.contains_key("registry_server_image") {
-                        devnet_table.insert(
-                            "registry_server_image".to_string(),
-                            toml::Value::String(
-                                "ghcr.io/hyli-org/hyli-registry/zkvm-registry-server:latest"
-                                    .to_string(),
-                            ),
-                        );
-                    }
-                    // Add registry_ui_image if missing
-                    if !devnet_table.contains_key("registry_ui_image") {
-                        devnet_table.insert(
-                            "registry_ui_image".to_string(),
-                            toml::Value::String(
-                                "ghcr.io/hyli-org/hyli-registry/zkvm-registry-ui:latest"
-                                    .to_string(),
-                            ),
-                        );
-                    }
-                    // Add registry_server_port if missing
-                    if !devnet_table.contains_key("registry_server_port") {
-                        devnet_table.insert(
-                            "registry_server_port".to_string(),
-                            toml::Value::Integer(9003),
-                        );
-                    }
-                    // Add registry_ui_port if missing
-                    if !devnet_table.contains_key("registry_ui_port") {
-                        devnet_table
-                            .insert("registry_ui_port".to_string(), toml::Value::Integer(8082));
-                    }
+            if let Some(devnet) = table.get_mut("devnet")
+                && let Some(devnet_table) = devnet.as_table_mut()
+            {
+                // Add registry_server_image if missing
+                if !devnet_table.contains_key("registry_server_image") {
+                    devnet_table.insert(
+                        "registry_server_image".to_string(),
+                        toml::Value::String(
+                            "ghcr.io/hyli-org/hyli-registry/zkvm-registry-server:latest"
+                                .to_string(),
+                        ),
+                    );
+                }
+                // Add registry_ui_image if missing
+                if !devnet_table.contains_key("registry_ui_image") {
+                    devnet_table.insert(
+                        "registry_ui_image".to_string(),
+                        toml::Value::String(
+                            "ghcr.io/hyli-org/hyli-registry/zkvm-registry-ui:latest".to_string(),
+                        ),
+                    );
+                }
+                // Add registry_server_port if missing
+                if !devnet_table.contains_key("registry_server_port") {
+                    devnet_table.insert(
+                        "registry_server_port".to_string(),
+                        toml::Value::Integer(9003),
+                    );
+                }
+                // Add registry_ui_port if missing
+                if !devnet_table.contains_key("registry_ui_port") {
+                    devnet_table.insert("registry_ui_port".to_string(), toml::Value::Integer(8082));
                 }
             }
 
             // Add registry_server to container_env if it exists
-            if let Some(devnet) = table.get_mut("devnet") {
-                if let Some(devnet_table) = devnet.as_table_mut() {
-                    if let Some(container_env) = devnet_table.get_mut("container_env") {
-                        if let Some(container_env_table) = container_env.as_table_mut() {
-                            if !container_env_table.contains_key("registry_server") {
-                                container_env_table.insert(
-                                    "registry_server".to_string(),
-                                    toml::Value::Array(vec![]),
-                                );
-                            }
-                        }
-                    }
-                }
+            if let Some(devnet) = table.get_mut("devnet")
+                && let Some(devnet_table) = devnet.as_table_mut()
+                && let Some(container_env) = devnet_table.get_mut("container_env")
+                && let Some(container_env_table) = container_env.as_table_mut()
+                && !container_env_table.contains_key("registry_server")
+            {
+                container_env_table
+                    .insert("registry_server".to_string(), toml::Value::Array(vec![]));
             }
         }
 

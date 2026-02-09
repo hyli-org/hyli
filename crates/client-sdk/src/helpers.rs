@@ -203,8 +203,8 @@ pub mod risc0 {
 pub mod sp1 {
     use sdk::ProofMetadata;
     use sp1_sdk::{
-        network::builder::NetworkProverBuilder, EnvProver, NetworkProver, ProverClient,
-        SP1ProvingKey, SP1Stdin,
+        EnvProver, NetworkProver, ProverClient, SP1ProvingKey, SP1Stdin,
+        network::builder::NetworkProverBuilder,
     };
 
     use super::*;

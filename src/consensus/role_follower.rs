@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::collections::BTreeMap;
 use tracing::{debug, info, trace, warn};
@@ -16,9 +16,8 @@ use crate::{
 
 use hyli_crypto::BlstCrypto;
 use hyli_model::{
-    utils::TimestampMs, AggregateSignature, ConsensusProposal, ConsensusProposalHash,
-    ConsensusStakingAction, Cut, LaneBytesSize, LaneId, SignedByValidator, ValidatorCandidacy,
-    View,
+    AggregateSignature, ConsensusProposal, ConsensusProposalHash, ConsensusStakingAction, Cut,
+    LaneBytesSize, LaneId, SignedByValidator, ValidatorCandidacy, View, utils::TimestampMs,
 };
 use hyli_modules::utils::ring_buffer_map::RingBufferMap;
 
@@ -571,18 +570,18 @@ impl Consensus {
 
         // Validity check: if we are processing a new Prepare, the ticket must be
         // either a NilProposal or the PrepareQC must match.
-        if let Some(consensus_proposal) = consensus_proposal {
-            if let TCKind::PrepareQC((_, cp)) = tc_kind_data {
-                if cp != consensus_proposal {
-                    debug!("Timeout Certificate does not match consensus proposal. Expected {}, got {}",
-                        cp.hashed(),
-                        consensus_proposal.hashed()
-                    );
-                    return Err(TicketVerificationError::Invalid);
-                }
-            }
-            // Not processing a new prepare so we can accept either type of ticket.
+        if let Some(consensus_proposal) = consensus_proposal
+            && let TCKind::PrepareQC((_, cp)) = tc_kind_data
+            && cp != consensus_proposal
+        {
+            debug!(
+                "Timeout Certificate does not match consensus proposal. Expected {}, got {}",
+                cp.hashed(),
+                consensus_proposal.hashed()
+            );
+            return Err(TicketVerificationError::Invalid);
         }
+        // Not processing a new prepare so we can accept either type of ticket.
 
         tracing::debug!(
             "Slot info service: TC for slot {} view {}, bft round state slot {} {}, current proposal slot {:?}",
@@ -590,7 +589,10 @@ impl Consensus {
             tc_view,
             self.bft_round_state.slot,
             self.bft_round_state.view,
-            self.bft_round_state.current_proposal.as_ref().map(|cp| cp.slot),
+            self.bft_round_state
+                .current_proposal
+                .as_ref()
+                .map(|cp| cp.slot),
         );
 
         if tc_slot == self.bft_round_state.slot {
@@ -624,8 +626,7 @@ impl Consensus {
                 } else if self.bft_round_state.view > tc_view {
                     debug!(
                         "Timeout Certificate slot {tc_slot} view {tc_view} is not correct for current slot {} view {}",
-                        self.bft_round_state.slot,
-                        self.bft_round_state.view,
+                        self.bft_round_state.slot, self.bft_round_state.view,
                     );
                     return Err(TicketVerificationError::Invalid);
                 }
@@ -696,7 +697,9 @@ impl Consensus {
                 tc_cp.parent_hash.clone()
             }
             _ => {
-                debug!("Cannot verify TC for next slot {tc_slot} view {tc_view}, no local prepare / different local prepare");
+                debug!(
+                    "Cannot verify TC for next slot {tc_slot} view {tc_view}, no local prepare / different local prepare"
+                );
                 return Err(TicketVerificationError::Unverifiable);
             }
         };
@@ -707,7 +710,9 @@ impl Consensus {
         // but we would need to revert if there is an error, so that sounds annoying for now.
         // Let's just assert that our current proposal wouldn't change staking (it generally won't).
         if self.current_proposal_changes_voting_power() {
-            debug!("Timeout Certificate slot {tc_slot} view {tc_view} is for the next slot, and current proposal changes voting power");
+            debug!(
+                "Timeout Certificate slot {tc_slot} view {tc_view} is for the next slot, and current proposal changes voting power"
+            );
             return Err(TicketVerificationError::Unverifiable);
         }
 
@@ -919,10 +924,10 @@ impl Consensus {
             // - we have already received the commit message for this ticket, so we already processed the QC.
             // - we haven't, so we process it right away
             // - the CQC is invalid and we just ignore it.
-            if let Some(qc) = &self.bft_round_state.follower.buffered_quorum_certificate {
-                if qc == &commit_qc {
-                    return Ok(());
-                }
+            if let Some(qc) = &self.bft_round_state.follower.buffered_quorum_certificate
+                && qc == &commit_qc
+            {
+                return Ok(());
             }
 
             // Edge case: we have already committed a different CQC for the CP
@@ -1075,8 +1080,8 @@ impl BufferedPrepares {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bus::dont_use_this::get_receiver;
     use crate::bus::SharedMessageBus;
+    use crate::bus::dont_use_this::get_receiver;
     use crate::consensus::test::ConsensusTestCtx;
     use crate::consensus::*;
     use crate::p2p::network::{MsgWithHeader, NetMessage, OutboundMessage};
@@ -1558,12 +1563,13 @@ mod tests {
         );
 
         // The prepare should be buffered.
-        assert!(ctx
-            .consensus
-            .bft_round_state
-            .follower
-            .buffered_prepares
-            .contains(&incoming_prepare.hashed()));
+        assert!(
+            ctx.consensus
+                .bft_round_state
+                .follower
+                .buffered_prepares
+                .contains(&incoming_prepare.hashed())
+        );
 
         // And a SyncRequest for the missing parent should be sent to the sender.
         let outbound = ctx

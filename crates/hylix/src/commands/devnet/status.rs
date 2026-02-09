@@ -3,7 +3,7 @@ use crate::error::HylixResult;
 use crate::logging::{log_info, log_success, log_warning};
 use client_sdk::rest_client::NodeApiClient;
 
-use super::containers::{check_docker_container, ContainerStatus};
+use super::containers::{ContainerStatus, check_docker_container};
 use super::context::{DevnetContext, NodePorts};
 use super::utils::is_devnet_responding;
 

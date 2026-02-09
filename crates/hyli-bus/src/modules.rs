@@ -13,15 +13,15 @@ use crate::{
     bus::{BusClientReceiver, BusClientSender, SharedMessageBus},
     bus_client, handle_messages, log_error, log_warn,
 };
-use anyhow::{bail, Context, Error, Result};
-use rand::{distr::Alphanumeric, Rng};
+use anyhow::{Context, Error, Result, bail};
+use rand::{Rng, distr::Alphanumeric};
 use tracing::{debug, info, warn};
 
 use crate::utils::checksums::{self, ChecksumReader, ChecksumWriter};
 use crate::utils::deterministic_rng::deterministic_rng;
 
 pub use crate::utils::checksums::{
-    format_checksum, manifest_path, write_manifest, PersistenceError, CHECKSUMS_MANIFEST,
+    CHECKSUMS_MANIFEST, PersistenceError, format_checksum, manifest_path, write_manifest,
 };
 
 const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -91,13 +91,13 @@ where
                         return Ok(None);
                     }
                     Err(e) => {
-                        return Err(e).with_context(|| format!("Module {}", type_name::<S>()))
+                        return Err(e).with_context(|| format!("Module {}", type_name::<S>()));
                     }
                 }
             }
             Err(e) => {
                 return Err(PersistenceError::IoError(e))
-                    .with_context(|| format!("Module {}", type_name::<S>()))
+                    .with_context(|| format!("Module {}", type_name::<S>()));
             }
         };
 
@@ -546,11 +546,10 @@ impl ModulesHandler {
                     loop {
                         if let Ok(signal::ShutdownModule { module: modname }) =
                             shutdown_client2.recv().await
+                            && modname == module_name
                         {
-                            if modname == module_name {
-                                tokio::time::sleep(MODULE_SHUTDOWN_TIMEOUT).await;
-                                break;
-                            }
+                            tokio::time::sleep(MODULE_SHUTDOWN_TIMEOUT).await;
+                            break;
                         }
                     }
                 });

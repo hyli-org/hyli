@@ -7,8 +7,8 @@ use crate::{
     explorer::Explorer,
     genesis::Genesis,
     indexer::Indexer,
-    mempool::{dissemination::DisseminationManager, Mempool},
-    model::{api::NodeInfo, SharedRunContext},
+    mempool::{Mempool, dissemination::DisseminationManager},
+    model::{SharedRunContext, api::NodeInfo},
     p2p::P2P,
     rest::{ApiDoc, RestApi, RestApiRunContext},
     single_node_consensus::SingleNodeConsensus,
@@ -18,7 +18,7 @@ use crate::{
         modules::ModulesHandler,
     },
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use axum::Router;
 use hydentity::Hydentity;
 use hyli_crypto::SharedBlstCrypto;
@@ -27,6 +27,7 @@ use hyli_modules::telemetry::global_meter_or_panic;
 use hyli_modules::{
     log_error,
     modules::{
+        BuildApiContextInner,
         admin::{AdminApi, AdminApiRunContext, NodeAdminApiClient},
         block_processor::BusOnlyProcessor,
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
@@ -35,11 +36,10 @@ use hyli_modules::{
         da_listener::SignedDAListener,
         files::{CONSENSUS_BIN, NODE_STATE_BIN},
         websocket::WebSocketModule,
-        BuildApiContextInner,
     },
     node_state::{
-        module::{NodeStateCtx, NodeStateModule},
         NodeStateStore,
+        module::{NodeStateCtx, NodeStateModule},
     },
     utils::db::use_fresh_db,
 };
@@ -54,7 +54,7 @@ use std::{
 };
 use testcontainers_modules::{
     postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
+    testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner},
 };
 use tracing::{error, info};
 use utoipa::OpenApi;
@@ -106,14 +106,14 @@ impl Drop for RunPg {
 
 fn mask_postgres_uri(uri: &str) -> String {
     // On cherche le prefix postgres://user:pass@...
-    if let Some(start) = uri.find("://") {
-        if let Some(at) = uri[start + 3..].find('@') {
-            let creds_part = &uri[start + 3..start + 3 + at];
-            if let Some(colon) = creds_part.find(':') {
-                let user = &creds_part[..colon];
-                let rest = &uri[start + 3 + at..]; // tout après @
-                return format!("postgres://{}:{}{}", user, "*****", rest);
-            }
+    if let Some(start) = uri.find("://")
+        && let Some(at) = uri[start + 3..].find('@')
+    {
+        let creds_part = &uri[start + 3..start + 3 + at];
+        if let Some(colon) = creds_part.find(':') {
+            let user = &creds_part[..colon];
+            let rest = &uri[start + 3 + at..]; // tout après @
+            return format!("postgres://{}:{}{}", user, "*****", rest);
         }
     }
     uri.to_string() // fallback : renvoyer tel quel si pas reconnu
@@ -123,11 +123,7 @@ pub fn welcome_message(conf: &conf::Conf) {
     let version = env!("CARGO_PKG_VERSION");
 
     let check_or_cross = |val: bool| {
-        if val {
-            "✔"
-        } else {
-            "✘"
-        }
+        if val { "✔" } else { "✘" }
     };
 
     tracing::info!(

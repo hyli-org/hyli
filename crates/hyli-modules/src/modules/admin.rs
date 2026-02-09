@@ -1,19 +1,19 @@
 //! Public API for interacting with the node.
 
 use crate::{
-    bus::{command_response::CmdRespClient, BusClientSender, SharedMessageBus},
+    bus::{BusClientSender, SharedMessageBus, command_response::CmdRespClient},
     log_error, module_bus_client, module_handle_messages,
     modules::Module,
 };
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 pub use axum::Router;
 use axum::{
+    Json,
     body::Bytes,
     extract::{DefaultBodyLimit, Path, State},
-    http::{header, StatusCode},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json,
 };
 use hyli_net::http::HttpClient;
 use sdk::*;

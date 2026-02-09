@@ -9,12 +9,12 @@ use crate::{
     mempool::QueryNewCut,
     model::{Cut, Hashed, ValidatorPublicKey},
     p2p::{
-        network::{MsgWithHeader, OutboundMessage},
         P2PCommand,
+        network::{MsgWithHeader, OutboundMessage},
     },
     utils::conf::SharedConf,
 };
-use anyhow::{anyhow, bail, Context, Error, Result};
+use anyhow::{Context, Error, Result, anyhow, bail};
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_crypto::BlstCrypto;
 use hyli_crypto::SharedBlstCrypto;
@@ -31,7 +31,7 @@ use role_follower::FollowerState;
 use role_leader::LeaderState;
 use role_timeout::TimeoutRoleState;
 use serde::{Deserialize, Serialize};
-use staking::state::{Staking, MIN_STAKE};
+use staking::state::{MIN_STAKE, Staking};
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::time::Duration;
@@ -969,14 +969,14 @@ pub mod test {
     use hyli_modules::{
         bus::BusEnvelope,
         handle_messages,
-        node_state::{module::NodeStateModule, NodeState},
+        node_state::{NodeState, module::NodeStateModule},
     };
     use std::{future::Future, pin::Pin, sync::Arc};
     use tracing::warn;
 
     use super::*;
     use crate::{
-        bus::{dont_use_this::get_receiver, SharedMessageBus},
+        bus::{SharedMessageBus, dont_use_this::get_receiver},
         p2p::network::NetMessage,
         //tests::autobahn_testing::*,
         //tests::autobahn_testing_macros::*,

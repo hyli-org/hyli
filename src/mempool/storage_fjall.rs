@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex, OnceLock, RwLock},
 };
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use async_stream::try_stream;
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slice};
 use futures::Stream;
@@ -18,8 +18,8 @@ use crate::{
 use hyli_modules::log_warn;
 
 use super::{
-    storage::{EntryOrMissingHash, LaneEntryMetadata, Storage},
     ValidatorDAG,
+    storage::{EntryOrMissingHash, LaneEntryMetadata, Storage},
 };
 
 pub use hyli_model::LaneBytesSize;
@@ -254,23 +254,23 @@ impl Storage for LanesStorage {
         &mut self,
         lane_id: LaneId,
     ) -> Result<Option<(DataProposalHash, (LaneEntryMetadata, DataProposal))>> {
-        if let Some(lane_hash_tip) = self.get_lane_hash_tip(&lane_id) {
-            if let Some(lane_entry) = self.get_metadata_by_hash(&lane_id, &lane_hash_tip)? {
-                self.by_hash_metadata
-                    .remove(format!("{lane_id}:{lane_hash_tip}"))?;
-                // Check if have the data locally after regardless - if we don't, print an error but delete metadata anyways for consistency.
-                let Some(dp) = self.get_dp_by_hash(&lane_id, &lane_hash_tip)? else {
-                    bail!(
-                        "Can't find DP data {} for lane {} where metadata could be found",
-                        lane_hash_tip,
-                        lane_id
-                    );
-                };
-                self.by_hash_data
-                    .remove(format!("{lane_id}:{lane_hash_tip}"))?;
-                self.update_lane_tip(lane_id, lane_hash_tip.clone(), lane_entry.cumul_size);
-                return Ok(Some((lane_hash_tip, (lane_entry, dp))));
-            }
+        if let Some(lane_hash_tip) = self.get_lane_hash_tip(&lane_id)
+            && let Some(lane_entry) = self.get_metadata_by_hash(&lane_id, &lane_hash_tip)?
+        {
+            self.by_hash_metadata
+                .remove(format!("{lane_id}:{lane_hash_tip}"))?;
+            // Check if have the data locally after regardless - if we don't, print an error but delete metadata anyways for consistency.
+            let Some(dp) = self.get_dp_by_hash(&lane_id, &lane_hash_tip)? else {
+                bail!(
+                    "Can't find DP data {} for lane {} where metadata could be found",
+                    lane_hash_tip,
+                    lane_id
+                );
+            };
+            self.by_hash_data
+                .remove(format!("{lane_id}:{lane_hash_tip}"))?;
+            self.update_lane_tip(lane_id, lane_hash_tip.clone(), lane_entry.cumul_size);
+            return Ok(Some((lane_hash_tip, (lane_entry, dp))));
         }
         Ok(None)
     }

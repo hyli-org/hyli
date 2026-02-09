@@ -13,7 +13,7 @@ use client_sdk::{rest_client::NodeApiClient, transaction_builder::ProvableBlobTx
 use hyli_model::api::APINodeContract;
 use testcontainers_modules::{
     postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
+    testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner},
 };
 use tracing::info;
 
@@ -27,9 +27,9 @@ use hyli_contract_sdk::{
 };
 use hyli_net::net::bind_tcp_listener;
 
-use crate::fixtures::test_helpers::{wait_height_timeout, IndexerOrNodeHttpClient};
+use crate::fixtures::test_helpers::{IndexerOrNodeHttpClient, wait_height_timeout};
 
-use super::test_helpers::{self, wait_height, wait_indexer_height, ConfMaker};
+use super::test_helpers::{self, ConfMaker, wait_height, wait_indexer_height};
 
 pub trait E2EContract {
     fn verifier() -> Verifier;
@@ -96,8 +96,11 @@ impl E2ECtx {
     }
 
     pub async fn new_single(slot_duration_ms: u64) -> Result<E2ECtx> {
-        std::env::set_var("RISC0_DEV_MODE", "1");
-        std::env::set_var("RUN_HYLLAR2_CSI", "1");
+        // SAFETY: Called at test setup before any concurrent access to these env vars.
+        unsafe {
+            std::env::set_var("RISC0_DEV_MODE", "1");
+            std::env::set_var("RUN_HYLLAR2_CSI", "1");
+        }
 
         let mut conf_maker = ConfMaker::default();
         conf_maker.default.consensus.slot_duration = Duration::from_millis(slot_duration_ms);
@@ -130,8 +133,11 @@ impl E2ECtx {
     }
 
     pub async fn new_single_with_indexer(slot_duration_ms: u64) -> Result<E2ECtx> {
-        std::env::set_var("RISC0_DEV_MODE", "1");
-        std::env::set_var("RUN_HYLLAR2_CSI", "1");
+        // SAFETY: Called at test setup before any concurrent access to these env vars.
+        unsafe {
+            std::env::set_var("RISC0_DEV_MODE", "1");
+            std::env::set_var("RUN_HYLLAR2_CSI", "1");
+        }
 
         let pg = Self::init().await;
 
@@ -189,8 +195,11 @@ impl E2ECtx {
         })
     }
     pub async fn new_multi(count: usize, slot_duration_ms: u64) -> Result<E2ECtx> {
-        std::env::set_var("RISC0_DEV_MODE", "1");
-        std::env::set_var("RUN_HYLLAR2_CSI", "1");
+        // SAFETY: Called at test setup before any concurrent access to these env vars.
+        unsafe {
+            std::env::set_var("RISC0_DEV_MODE", "1");
+            std::env::set_var("RUN_HYLLAR2_CSI", "1");
+        }
 
         let mut conf_maker = ConfMaker::default();
         conf_maker.default.consensus.slot_duration = Duration::from_millis(slot_duration_ms);
@@ -277,8 +286,11 @@ impl E2ECtx {
         slot_duration_ms: u64,
         timestamp_checks: TimestampCheck,
     ) -> Result<E2ECtx> {
-        std::env::set_var("RISC0_DEV_MODE", "1");
-        std::env::set_var("RUN_HYLLAR2_CSI", "1");
+        // SAFETY: Called at test setup before any concurrent access to these env vars.
+        unsafe {
+            std::env::set_var("RISC0_DEV_MODE", "1");
+            std::env::set_var("RUN_HYLLAR2_CSI", "1");
+        }
 
         let pg = Self::init().await;
 
@@ -394,14 +406,16 @@ impl E2ECtx {
     {
         let tx = BlobTransaction::new(
             sender.clone(),
-            vec![RegisterContractAction {
-                verifier: Contract::verifier(),
-                program_id: Contract::program_id(),
-                state_commitment: Contract::state_commitment(),
-                contract_name: name.into(),
-                ..Default::default()
-            }
-            .as_blob("hyli".into())],
+            vec![
+                RegisterContractAction {
+                    verifier: Contract::verifier(),
+                    program_id: Contract::program_id(),
+                    state_commitment: Contract::state_commitment(),
+                    contract_name: name.into(),
+                    ..Default::default()
+                }
+                .as_blob("hyli".into()),
+            ],
         );
 
         assert_ok!(self.client().send_tx_blob(tx).await);

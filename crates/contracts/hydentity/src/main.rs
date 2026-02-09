@@ -6,8 +6,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 use hyli_hydentity::Hydentity;
 use sdk::{
-    guest::{execute, GuestEnv, Risc0Env},
     Calldata,
+    guest::{GuestEnv, Risc0Env, execute},
 };
 
 risc0_zkvm::guest::entry!(main);

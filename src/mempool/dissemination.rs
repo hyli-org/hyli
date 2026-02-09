@@ -3,10 +3,10 @@
 
 use std::{collections::HashSet, time::Duration};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use futures::StreamExt;
 use hyli_model::{
-    utils::TimestampMs, DataProposalHash, LaneBytesSize, LaneId, NodeStateEvent, ValidatorPublicKey,
+    DataProposalHash, LaneBytesSize, LaneId, NodeStateEvent, ValidatorPublicKey, utils::TimestampMs,
 };
 use hyli_modules::{
     log_error, log_warn, module_bus_client, module_handle_messages, modules::Module,
@@ -26,10 +26,10 @@ use crate::{
 use hyli_turmoil_shims::collections::HashMap;
 
 use super::{
+    LanesStorage, MempoolNetMessage,
     metrics::MempoolMetrics,
     shared_lanes_storage,
     storage::{LaneEntryMetadata, MetadataOrMissingHash, Storage},
-    LanesStorage, MempoolNetMessage,
 };
 
 use crate::model::SharedRunContext;
@@ -259,8 +259,7 @@ impl DisseminationManager {
                 self.owned_lanes.insert(lane_id.clone());
                 trace!(
                     "NewDpCreated for lane {} with hash {}",
-                    lane_id,
-                    data_proposal_hash
+                    lane_id, data_proposal_hash
                 );
             }
             DisseminationEvent::DpStored {
@@ -280,8 +279,7 @@ impl DisseminationManager {
                 } else {
                     trace!(
                         "ℹ️ DpStored for lane {} dp {} (not owned, skipping dissemination)",
-                        lane_id,
-                        data_proposal_hash
+                        lane_id, data_proposal_hash
                     );
                 }
             }
@@ -346,9 +344,7 @@ impl DisseminationManager {
                 );
                 trace!(
                     "👀 Recorded ObservedHas for voter {} on dp {} lane {}",
-                    voter,
-                    data_proposal_hash,
-                    lane_id
+                    voter, data_proposal_hash, lane_id
                 );
             }
             DisseminationEvent::SyncRequestIn {
@@ -470,10 +466,16 @@ impl DisseminationManager {
                     } else {
                         match lem.parent_data_proposal_hash.dp_hash() {
                             Some(dp_hash) => {
-                                debug!("Updating SyncRequest to {:?}-{} as {} is present", request.from, dp_hash, request.to);
+                                debug!(
+                                    "Updating SyncRequest to {:?}-{} as {} is present",
+                                    request.from, dp_hash, request.to
+                                );
                                 request.to = dp_hash.clone();
-                            },
-                            None => warn!("Malformed syncRequest - 'to' {} has no parent but 'from' {:?} is a DP", request.to, request.from),
+                            }
+                            None => warn!(
+                                "Malformed syncRequest - 'to' {} has no parent but 'from' {:?} is a DP",
+                                request.to, request.from
+                            ),
                         }
                     }
                 }
@@ -618,8 +620,7 @@ impl DisseminationManager {
             let Some(metadata) = self.lanes.get_metadata_by_hash(&lane_id, &dp_hash)? else {
                 trace!(
                     "Missing metadata while preparing SyncReply for DP Hash: {} lane {}, skipping",
-                    &dp_hash,
-                    &lane_id
+                    &dp_hash, &lane_id
                 );
                 continue;
             };
@@ -644,20 +645,19 @@ impl DisseminationManager {
                         data_proposal,
                     ));
 
-                if let Ok(signed_reply) = signed_reply {
-                    if log_error!(
+                if let Ok(signed_reply) = signed_reply
+                    && log_error!(
                         self.bus
                             .send(OutboundMessage::send(validator.clone(), signed_reply)),
                         "Sending MempoolNetMessage::SyncReply msg on the bus"
                     )
                     .is_ok()
-                    {
-                        debug!("Sent reply for DP Hash: {} to: {}", &dp_hash, &validator);
-                        self.metrics.mempool_sync_processed(&lane_id, &validator);
-                        self.record_dp_sent(&lane_id, &dp_hash, &validator);
-                        self.mark_weak_has(&lane_id, &dp_hash, &validator);
-                        send_succeeded = true;
-                    }
+                {
+                    debug!("Sent reply for DP Hash: {} to: {}", &dp_hash, &validator);
+                    self.metrics.mempool_sync_processed(&lane_id, &validator);
+                    self.record_dp_sent(&lane_id, &dp_hash, &validator);
+                    self.mark_weak_has(&lane_id, &dp_hash, &validator);
+                    send_succeeded = true;
                 }
             }
 
@@ -694,8 +694,7 @@ impl DisseminationManager {
             {
                 trace!(
                     "ℹ️ Retaining dp {} in lane {} because not all peers have Weak/Strong/Observed",
-                    dp_hash,
-                    lane_id
+                    dp_hash, lane_id
                 );
                 continue;
             }
@@ -815,8 +814,7 @@ impl DisseminationManager {
     ) -> Result<bool> {
         trace!(
             "Rebroadcasting DataProposal {} in lane {}",
-            dp_hash,
-            lane_id
+            dp_hash, lane_id
         );
         let there_are_other_validators = !self.staking.is_bonded(self.crypto.validator_pubkey())
             || self.staking.bonded().len() >= 2;

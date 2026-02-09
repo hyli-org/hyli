@@ -5,7 +5,7 @@ use client_sdk::tcp_client::{TcpApiServer, TcpServerMessage};
 use hyli_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
-    modules::{module_bus_client, Module},
+    modules::{Module, module_bus_client},
 };
 use hyli_net::tcp::TcpEvent;
 use tracing::{info, warn};

@@ -2,7 +2,7 @@
 //!
 //! This example demonstrates how to use the Hylix CLI programmatically.
 
-use hylix::{config::ContainerEnvConfig, BackendType, HylixConfig};
+use hylix::{BackendType, HylixConfig, config::ContainerEnvConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

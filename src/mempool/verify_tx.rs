@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use hyli_model::{DataProposalHash, DataSized, LaneBytesSize, LaneId};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace, warn};
@@ -309,8 +309,7 @@ impl super::Mempool {
                 let last_known_hash = self.lanes.get_lane_hash_tip(lane_id);
                 warn!(
                     "DataProposal ({dp_hash}) cannot be handled because it creates a fork: last dp hash {:?} while proposed {:?}",
-                    last_known_hash,
-                    data_proposal.parent_data_proposal_hash
+                    last_known_hash, data_proposal.parent_data_proposal_hash
                 );
                 Ok((DataProposalVerdict::Refuse, None))
             }
@@ -370,12 +369,17 @@ impl super::Mempool {
                                 if local_program_ids.len() != proof_tx.proven_blobs.len()
                                     || !data_matches
                                 {
-                                    warn!("Refusing DataProposal: incorrect HyliOutput in proof transaction");
+                                    warn!(
+                                        "Refusing DataProposal: incorrect HyliOutput in proof transaction"
+                                    );
                                     return DataProposalVerdict::Refuse;
                                 }
                             }
                             Err(e) => {
-                                warn!("Refusing DataProposal: invalid recursive proof transaction: {}", e);
+                                warn!(
+                                    "Refusing DataProposal: invalid recursive proof transaction: {}",
+                                    e
+                                );
                                 return DataProposalVerdict::Refuse;
                             }
                         }
@@ -389,7 +393,9 @@ impl super::Mempool {
                                             output != hyli_output
                                         })
                                 {
-                                    warn!("Refusing DataProposal: incorrect HyliOutput in proof transaction");
+                                    warn!(
+                                        "Refusing DataProposal: incorrect HyliOutput in proof transaction"
+                                    );
                                     return DataProposalVerdict::Refuse;
                                 }
                             }
@@ -438,8 +444,8 @@ pub mod test {
     use super::*;
     use crate::{
         mempool::{
-            tests::{make_register_contract_tx, MempoolTestCtx},
             MempoolNetMessage,
+            tests::{MempoolTestCtx, make_register_contract_tx},
         },
         p2p::network::HeaderSigner,
     };
@@ -488,11 +494,12 @@ pub mod test {
             .store_data_proposal(&ctx.mempool.crypto, &lane_id2, dp2.clone())
             .unwrap();
 
-        assert!(ctx
-            .mempool
-            .lanes
-            .store_data_proposal(&ctx.mempool.crypto, &lane_id2, dp2)
-            .is_err());
+        assert!(
+            ctx.mempool
+                .lanes
+                .store_data_proposal(&ctx.mempool.crypto, &lane_id2, dp2)
+                .is_err()
+        );
 
         let dp2_fork = DataProposal::new(
             dp.hashed(),

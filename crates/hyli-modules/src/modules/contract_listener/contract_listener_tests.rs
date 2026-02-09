@@ -1,26 +1,26 @@
 use std::{collections::HashSet, time::Duration};
 
 use crate::{
-    bus::{dont_use_this::get_receiver, BusClientSender, BusEnvelope, SharedMessageBus},
+    bus::{BusClientSender, BusEnvelope, SharedMessageBus, dont_use_this::get_receiver},
     modules::{
+        Module, ShutdownClient,
         contract_listener::{ContractListener, ContractListenerConf, ContractListenerEvent},
         indexer::MIGRATOR,
         signal::ShutdownModule,
-        Module, ShutdownClient,
     },
 };
 use anyhow::Result;
-use hyli_model::{api::TransactionStatusDb, BlobIndex, BlockHeight, ContractName, LaneId, TxHash};
+use hyli_model::{BlobIndex, BlockHeight, ContractName, LaneId, TxHash, api::TransactionStatusDb};
 use sdk::{BlockHash, ConsensusProposalHash};
-use sqlx::{postgres::PgPoolOptions, types::chrono::Utc, PgPool};
+use sqlx::{PgPool, postgres::PgPoolOptions, types::chrono::Utc};
 use tempfile::tempdir;
 use testcontainers_modules::{
     postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
+    testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner},
 };
 
 use tokio::{
-    sync::broadcast::{error::RecvError, Receiver},
+    sync::broadcast::{Receiver, error::RecvError},
     time::timeout,
 };
 use tracing::warn;

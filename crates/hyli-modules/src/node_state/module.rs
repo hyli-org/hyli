@@ -3,11 +3,11 @@
 use super::metrics::NodeStateMetrics;
 use super::{NodeState, NodeStateStore};
 use crate::bus::SharedMessageBus;
-use crate::bus::{command_response::Query, BusClientSender};
+use crate::bus::{BusClientSender, command_response::Query};
 use crate::module_handle_messages;
 use crate::modules::admin::{QueryNodeStateStore, QueryNodeStateStoreResponse};
 use crate::modules::files::NODE_STATE_BIN;
-use crate::modules::{module_bus_client, Module, SharedBuildApiCtx};
+use crate::modules::{Module, SharedBuildApiCtx, module_bus_client};
 use crate::{log_error, log_warn};
 use anyhow::Result;
 use hyli_bus::modules::ModulePersistOutput;
@@ -64,10 +64,10 @@ impl Module for NodeStateModule {
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let api = super::api::api(bus.new_handle(), &ctx).await;
-        if let Ok(mut guard) = ctx.api.router.lock() {
-            if let Some(router) = guard.take() {
-                guard.replace(router.nest("/v1/", api));
-            }
+        if let Ok(mut guard) = ctx.api.router.lock()
+            && let Some(router) = guard.take()
+        {
+            guard.replace(router.nest("/v1/", api));
         }
         let metrics = NodeStateMetrics::global("node_state");
 

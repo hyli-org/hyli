@@ -3,7 +3,7 @@ use assertables::assert_ok;
 use std::time::Duration;
 use tracing::info;
 
-use crate::bus::{bus_client, BusClientSender};
+use crate::bus::{BusClientSender, bus_client};
 use crate::mempool::api::RestApiMessage;
 use crate::model::*;
 use crate::utils::conf::OwnLaneConf;
@@ -82,15 +82,17 @@ async fn impl_test_mempool_multi_lane() -> Result<()> {
 
     let contract_tx = BlobTransaction::new(
         "hyli@hyli",
-        vec![RegisterContractAction {
-            verifier: Verifier("test".into()),
-            program_id: ProgramId(vec![1, 2, 3]),
-            state_commitment: StateCommitment(vec![1, 2, 3]),
-            contract_name: contract_name.clone(),
-            timeout_window: None,
-            constructor_metadata: None,
-        }
-        .as_blob(ContractName::new("hyli"))],
+        vec![
+            RegisterContractAction {
+                verifier: Verifier("test".into()),
+                program_id: ProgramId(vec![1, 2, 3]),
+                state_commitment: StateCommitment(vec![1, 2, 3]),
+                contract_name: contract_name.clone(),
+                timeout_window: None,
+                constructor_metadata: None,
+            }
+            .as_blob(ContractName::new("hyli")),
+        ],
     );
 
     node_client.send(RestApiMessage::NewTx {

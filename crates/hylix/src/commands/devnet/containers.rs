@@ -1,5 +1,5 @@
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{log_error, log_success, log_warning, ProgressExecutor};
+use crate::logging::{ProgressExecutor, log_error, log_success, log_warning};
 use crate::{constants, docker::ContainerSpec};
 
 use super::context::DevnetContext;

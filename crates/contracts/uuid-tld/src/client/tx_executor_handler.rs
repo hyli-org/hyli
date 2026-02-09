@@ -1,4 +1,4 @@
-use crate::{client::tx_executor_handler::metadata::PROGRAM_ID, UuidTld};
+use crate::{UuidTld, client::tx_executor_handler::metadata::PROGRAM_ID};
 use client_sdk::{
     helpers::risc0::Risc0Prover,
     transaction_builder::{
@@ -6,7 +6,7 @@ use client_sdk::{
         TxExecutorHandlerResult,
     },
 };
-use sdk::{utils::as_hyli_output, Blob, Calldata, ContractName, StateCommitment, ZkContract};
+use sdk::{Blob, Calldata, ContractName, StateCommitment, ZkContract, utils::as_hyli_output};
 
 pub mod metadata {
     pub const UUID_TLD_ELF: &[u8] = include_bytes!("../../uuid-tld.img");

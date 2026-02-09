@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::Result;
 use borsh::{BorshDeserialize, BorshSerialize};
-use sdk::{info, BlockHeight, Identity, LaneBytesSize, LaneId, ValidatorPublicKey};
+use sdk::{BlockHeight, Identity, LaneBytesSize, LaneId, ValidatorPublicKey, info};
 use serde::{Deserialize, Serialize};
 
 use crate::fees::Fees;

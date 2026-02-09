@@ -1,24 +1,24 @@
 use std::sync::Arc;
 
-use crate::{identity_provider::IdentityVerification, AccountInfo, Hydentity, HydentityAction};
-use anyhow::{anyhow, Context, Result};
+use crate::{AccountInfo, Hydentity, HydentityAction, identity_provider::IdentityVerification};
+use anyhow::{Context, Result, anyhow};
 use client_sdk::contract_indexer::{
-    axum::Router,
-    utoipa::openapi::OpenApi,
-    utoipa_axum::{router::OpenApiRouter, routes},
-    ContractHandler, ContractHandlerStore,
-};
-use client_sdk::contract_indexer::{
+    AppError,
     axum::{
+        Json,
         extract::{Path, State},
         http::StatusCode,
         response::IntoResponse,
-        Json,
     },
     utoipa::{self, ToSchema},
-    AppError,
 };
-use sdk::{error, info, Blob, BlobIndex, BlobTransaction, Identity, TxContext};
+use client_sdk::contract_indexer::{
+    ContractHandler, ContractHandlerStore,
+    axum::Router,
+    utoipa::openapi::OpenApi,
+    utoipa_axum::{router::OpenApiRouter, routes},
+};
+use sdk::{Blob, BlobIndex, BlobTransaction, Identity, TxContext, error, info};
 use serde::Serialize;
 
 use client_sdk::contract_indexer::axum;

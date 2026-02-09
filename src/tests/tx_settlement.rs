@@ -1,12 +1,12 @@
 use client_sdk::rest_client::{IndexerApiHttpClient, NodeApiClient, NodeApiHttpClient};
 use hyli_model::{
-    api::APIRegisterContract, BlobTransaction, ContractName, Hashed, OnchainEffect, ProgramId,
-    ProofData, ProofTransaction, RegisterContractAction, RegisterContractEffect, StateCommitment,
+    BlobTransaction, ContractName, Hashed, OnchainEffect, ProgramId, ProofData, ProofTransaction,
+    RegisterContractAction, RegisterContractEffect, StateCommitment, api::APIRegisterContract,
 };
 use hyli_modules::node_state::test::make_hyli_output_with_state;
 use testcontainers_modules::{
     postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ImageExt},
+    testcontainers::{ImageExt, runners::AsyncRunner},
 };
 use tracing::info;
 
@@ -419,14 +419,16 @@ async fn test_contract_upgrade() -> Result<()> {
     // Send contract update transaction
     let b2 = BlobTransaction::new(
         "toto@c1.hyli",
-        vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![7, 7, 7]),
-            state_commitment: StateCommitment(vec![3, 3, 3]),
-            contract_name: "c1.hyli".into(),
-            ..Default::default()
-        }
-        .as_blob("c1.hyli".into())],
+        vec![
+            RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![7, 7, 7]),
+                state_commitment: StateCommitment(vec![3, 3, 3]),
+                contract_name: "c1.hyli".into(),
+                ..Default::default()
+            }
+            .as_blob("c1.hyli".into()),
+        ],
     );
     client.send_tx_blob(b2.clone()).await.unwrap();
 

@@ -15,7 +15,7 @@ pub mod telemetry {
         init_test_meter_provider,
     };
     pub use opentelemetry::{
-        metrics::{Counter, Gauge, Histogram, Meter, MeterProvider},
         KeyValue,
+        metrics::{Counter, Gauge, Histogram, Meter, MeterProvider},
     };
 }

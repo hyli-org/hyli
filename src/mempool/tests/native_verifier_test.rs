@@ -10,7 +10,7 @@ use sha3::Digest;
 use tracing::info;
 
 use crate::{
-    bus::{bus_client, BusClientReceiver, BusClientSender},
+    bus::{BusClientReceiver, BusClientSender, bus_client},
     mempool::api::RestApiMessage,
     model::verifiers::{BlstSignatureBlob, ShaBlob},
     rest::RestApi,

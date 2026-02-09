@@ -1,9 +1,9 @@
 use super::{BlockPagination, ExplorerApiState};
 use api::APIBlock;
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
-    Json,
 };
 use sqlx::types::chrono::NaiveDateTime;
 

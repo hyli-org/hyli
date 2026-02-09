@@ -2,7 +2,7 @@ use crate::config::HylixConfig;
 use crate::env_builder::EnvBuilder;
 use crate::error::{HylixError, HylixResult};
 use crate::logging::{log_error, log_info, log_success};
-use crate::validation::{validate_project, ValidationLevel};
+use crate::validation::{ValidationLevel, validate_project};
 use std::process::Command;
 
 /// Execute the `hy run` command
@@ -98,7 +98,9 @@ pub async fn run_backend(
     log_success("Backend started successfully!");
     log_info("Backend is running. Press Ctrl+C to stop.");
     if !print_logs {
-        log_info("Backend logs will not be printed to console. They will be saved to a file in the working directory.");
+        log_info(
+            "Backend logs will not be printed to console. They will be saved to a file in the working directory.",
+        );
         log_info(&format!(
             "You can change this with `{}`.",
             console::style("hy config edit test.print_server_logs true").green()

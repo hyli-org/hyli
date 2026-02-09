@@ -1,14 +1,14 @@
-use std::sync::atomic::AtomicI32;
 use std::sync::Arc;
+use std::sync::atomic::AtomicI32;
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use assertables::assert_ok;
 use hyli_contract_sdk::{Blob, BlobData, HyliOutput, Identity, ProgramId, StateCommitment};
 use tracing::info;
 
 use crate::bus::command_response::Query;
-use crate::bus::{bus_client, BusClientReceiver, BusClientSender};
+use crate::bus::{BusClientReceiver, BusClientSender, bus_client};
 use crate::consensus::ConsensusEvent;
 use crate::genesis::{Genesis, GenesisEvent};
 use crate::mempool::api::RestApiMessage;
@@ -55,18 +55,22 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
             lane_id.clone(),
             vec![DataProposal::new_root(
                 lane_id,
-                vec![BlobTransaction::new(
-                    "test@hyli",
-                    vec![RegisterContractAction {
-                        verifier: "test-slow".into(),
-                        program_id: ProgramId(vec![]),
-                        state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                        contract_name: contract_name.clone(),
-                        ..Default::default()
-                    }
-                    .as_blob("hyli".into())],
-                )
-                .into()],
+                vec![
+                    BlobTransaction::new(
+                        "test@hyli",
+                        vec![
+                            RegisterContractAction {
+                                verifier: "test-slow".into(),
+                                program_id: ProgramId(vec![]),
+                                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                                contract_name: contract_name.clone(),
+                                ..Default::default()
+                            }
+                            .as_blob("hyli".into()),
+                        ],
+                    )
+                    .into(),
+                ],
             )],
         )],
         certificate: AggregateSignature::default(),

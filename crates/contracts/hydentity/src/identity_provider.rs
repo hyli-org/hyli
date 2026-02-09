@@ -13,7 +13,7 @@ pub trait IdentityVerification {
     ///
     /// * `Result<(), &'static str>` - `Ok(())` if the registration was successful, or an error message on failure.
     fn register_identity(&mut self, account: &str, private_input: &str)
-        -> Result<(), &'static str>;
+    -> Result<(), &'static str>;
 
     /// Verifies if an account's identity matches the provided identity information and increase
     /// nonce by +1.

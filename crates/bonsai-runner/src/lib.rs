@@ -3,12 +3,13 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use bonsai_sdk::non_blocking::Client;
 use borsh::BorshSerialize;
 use boundless_market::{
+    Deployment, GuestEnvBuilder,
     alloy::{
-        primitives::{utils::parse_ether, Uint},
+        primitives::{Uint, utils::parse_ether},
         signers::local::PrivateKeySigner,
         transports::http::reqwest::Url,
     },
@@ -16,9 +17,8 @@ use boundless_market::{
     contracts::Offer,
     deployments::NamedChain,
     storage::{StandardUploader, StorageUploader, StorageUploaderConfig, StorageUploaderType},
-    Deployment, GuestEnvBuilder,
 };
-use risc0_zkvm::{compute_image_id, default_executor, sha::Digestible, Receipt};
+use risc0_zkvm::{Receipt, compute_image_id, default_executor, sha::Digestible};
 use tracing::info;
 
 #[allow(dead_code)]
@@ -111,10 +111,11 @@ pub async fn run_boundless(elf: &[u8], input_data: Vec<u8>) -> Result<ProofResul
 
     let mut deployment = Deployment::from_chain_id(chain_id);
 
-    if let Some(dep) = deployment.as_mut() {
-        if dep.market_chain_id.unwrap() == NamedChain::Base as u64 && chain_id == 84532 {
-            dep.market_chain_id = Some(NamedChain::BaseSepolia as u64);
-        }
+    if let Some(dep) = deployment.as_mut()
+        && dep.market_chain_id.unwrap() == NamedChain::Base as u64
+        && chain_id == 84532
+    {
+        dep.market_chain_id = Some(NamedChain::BaseSepolia as u64);
     }
 
     // Create a Boundless client from the provided parameters.

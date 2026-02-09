@@ -1,7 +1,7 @@
 use hyli_turmoil_shims::global_meter_or_panic;
 use opentelemetry::{
-    metrics::{Counter, Gauge, Histogram},
     KeyValue,
+    metrics::{Counter, Gauge, Histogram},
 };
 
 use crate::tcp::Canal;

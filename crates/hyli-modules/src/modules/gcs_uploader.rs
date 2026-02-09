@@ -2,7 +2,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
 use chrono;
@@ -14,7 +14,7 @@ use tokio::task::JoinSet;
 use tracing::{debug, error, info, warn};
 
 use crate::bus::{BusMessage, SharedMessageBus};
-use crate::modules::{gcs_uploader_metrics::GcsUploaderMetrics, Module};
+use crate::modules::{Module, gcs_uploader_metrics::GcsUploaderMetrics};
 use crate::{log_error, module_bus_client, module_handle_messages};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -184,16 +184,15 @@ impl GcsUploader {
                 &self.ctx.genesis_timestamp_folder,
             )
             .await?
+                && last_uploaded > 0
             {
-                if last_uploaded > 0 {
-                    info!(
-                        "Blocks for timestamp folder {} already exists, skipping uploads; will resume at {}",
-                        self.ctx.genesis_timestamp_folder,
-                        last_uploaded + 1
-                    );
-                    self.ctx.last_uploaded_height = Some(BlockHeight(last_uploaded));
-                    return Ok(());
-                }
+                info!(
+                    "Blocks for timestamp folder {} already exists, skipping uploads; will resume at {}",
+                    self.ctx.genesis_timestamp_folder,
+                    last_uploaded + 1
+                );
+                self.ctx.last_uploaded_height = Some(BlockHeight(last_uploaded));
+                return Ok(());
             }
         }
 
@@ -439,12 +438,11 @@ impl GcsUploader {
             for object in response.objects {
                 // Object name format: "{prefix}/{timestamp}/block_{height}.bin"
                 let object_name: String = object.name;
-                if let Some(name) = object_name.as_str().strip_prefix(block_prefix) {
-                    if let Some(height_str) = name.strip_suffix(".bin") {
-                        if let Ok(height) = height_str.parse::<u64>() {
-                            heights.push(height);
-                        }
-                    }
+                if let Some(name) = object_name.as_str().strip_prefix(block_prefix)
+                    && let Some(height_str) = name.strip_suffix(".bin")
+                    && let Ok(height) = height_str.parse::<u64>()
+                {
+                    heights.push(height);
                 }
             }
 

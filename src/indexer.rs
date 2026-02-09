@@ -16,13 +16,13 @@ use hyli_modules::{
 use hyli_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
-    modules::{gcs_uploader::GCSRequest, module_bus_client, Module, SharedBuildApiCtx},
-    node_state::{module::NodeStateModule, NodeState, NodeStateCallback, NodeStateStore, TxEvent},
+    modules::{Module, SharedBuildApiCtx, gcs_uploader::GCSRequest, module_bus_client},
+    node_state::{NodeState, NodeStateCallback, NodeStateStore, TxEvent, module::NodeStateModule},
 };
 use hyli_net::clock::TimestampMsClock;
 use serde::Serialize;
 use sqlx::{
-    postgres::PgPoolOptions, Acquire, PgConnection, PgPool, Pool, Postgres, QueryBuilder, Row,
+    Acquire, PgConnection, PgPool, Pool, Postgres, QueryBuilder, Row, postgres::PgPoolOptions,
 };
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -750,8 +750,8 @@ impl Indexer {
                 .drain(..std::cmp::min(batch_size, self.handler_store.txs.len()))
                 .collect::<Vec<_>>();
             let mut query_builder = QueryBuilder::<Postgres>::new(
-                    "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) VALUES ",
-                );
+                "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) VALUES ",
+            );
             let mut query_builder_ctx = QueryBuilder::<Postgres>::new(
                 "INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name) VALUES ",
             );

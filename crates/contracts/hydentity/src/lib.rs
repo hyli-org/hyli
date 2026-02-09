@@ -1,7 +1,7 @@
 use anyhow::Context;
 use borsh::{BorshDeserialize, BorshSerialize};
 use identity_provider::IdentityVerification;
-use sdk::{utils::parse_raw_calldata, Blob, Calldata, ContractAction, ContractName};
+use sdk::{Blob, Calldata, ContractAction, ContractName, utils::parse_raw_calldata};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -230,21 +230,31 @@ mod tests {
 
         hydentity.register_identity(id, private_input).unwrap();
 
-        assert!(hydentity
-            .verify_identity(account, 1, private_input)
-            .is_err());
-        assert!(hydentity
-            .verify_identity(account, 0, private_input)
-            .unwrap());
-        assert!(hydentity
-            .verify_identity(account, 0, private_input)
-            .is_err()); // Same is wrong as nonce increased
-        assert!(hydentity
-            .verify_identity(account, 1, private_input)
-            .unwrap());
-        assert!(hydentity
-            .verify_identity("nonexistent_account", 0, private_input)
-            .is_err());
+        assert!(
+            hydentity
+                .verify_identity(account, 1, private_input)
+                .is_err()
+        );
+        assert!(
+            hydentity
+                .verify_identity(account, 0, private_input)
+                .unwrap()
+        );
+        assert!(
+            hydentity
+                .verify_identity(account, 0, private_input)
+                .is_err()
+        ); // Same is wrong as nonce increased
+        assert!(
+            hydentity
+                .verify_identity(account, 1, private_input)
+                .unwrap()
+        );
+        assert!(
+            hydentity
+                .verify_identity("nonexistent_account", 0, private_input)
+                .is_err()
+        );
     }
 
     #[test]

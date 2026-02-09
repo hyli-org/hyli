@@ -4,15 +4,15 @@ use std::{
     sync::{Arc, Mutex, OnceLock, RwLock},
 };
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use async_stream::try_stream;
 use futures::Stream;
 use hyli_model::{LaneBytesSize, LaneId, ProofData, TxHash};
 use tracing::{info, warn};
 
 use super::{
-    storage::{EntryOrMissingHash, LaneEntryMetadata, Storage},
     ValidatorDAG,
+    storage::{EntryOrMissingHash, LaneEntryMetadata, Storage},
 };
 use crate::{
     mempool::storage::MetadataOrMissingHash,

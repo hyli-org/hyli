@@ -268,7 +268,7 @@ fn set_config_value(config: &mut HylixConfig, key: &str, value: &str) -> HylixRe
                 _ => {
                     return Err(crate::error::HylixError::config(
                         "Invalid backend type. Must be 'sp1' or 'risc0'",
-                    ))
+                    ));
                 }
             };
             config.default_backend = backend;

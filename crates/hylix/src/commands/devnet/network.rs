@@ -1,6 +1,6 @@
 use crate::constants;
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{log_warning, ProgressExecutor};
+use crate::logging::{ProgressExecutor, log_warning};
 
 /// Create the docker network
 pub async fn create_docker_network(executor: &ProgressExecutor) -> HylixResult<String> {

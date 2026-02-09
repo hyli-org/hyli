@@ -4,12 +4,12 @@ use std::time::Duration;
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
 use crate::bus::{BusClientSender, BusMessage, SharedMessageBus};
-use crate::modules::signal::shutdown_aware_timeout;
 use crate::modules::SharedBuildApiCtx;
+use crate::modules::signal::shutdown_aware_timeout;
 use crate::{log_error, module_bus_client, module_handle_messages, modules::Module};
-use anyhow::{anyhow, bail, Context, Result};
-use axum::extract::State;
+use anyhow::{Context, Result, anyhow, bail};
 use axum::Router;
+use axum::extract::State;
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::rest_client::NodeApiClient;
 use client_sdk::{helpers::ClientSdkProver, transaction_builder::TxExecutorHandler};
@@ -156,17 +156,17 @@ where
         let router_state = Arc::new(Mutex::new(RouterData::default()));
         if let Some(api) = &ctx.api {
             use axum::routing::get;
-            if let Ok(mut guard) = api.router.lock() {
-                if let Some(router) = guard.take() {
-                    guard.replace(
-                        router.nest(
-                            "/v1/prover",
-                            Router::new()
-                                .route("/ready", get(is_ready))
-                                .with_state(router_state.clone()),
-                        ),
-                    );
-                }
+            if let Ok(mut guard) = api.router.lock()
+                && let Some(router) = guard.take()
+            {
+                guard.replace(
+                    router.nest(
+                        "/v1/prover",
+                        Router::new()
+                            .route("/ready", get(is_ready))
+                            .with_state(router_state.clone()),
+                    ),
+                );
             }
         }
 
@@ -430,8 +430,9 @@ where
                             "This is likely a bug in the prover, please report it to the Hyli team."
                         );
                         anyhow::bail!(
-                          "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
-                          self.catching_up_state, final_state
+                            "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
+                            self.catching_up_state,
+                            final_state
                         );
                     }
                 }
@@ -605,7 +606,8 @@ where
                     );
                     bail!(
                         "Contract state in store does not match the one onchain. Onchain: {:?}, Store: {:?}",
-                        last_contract_state, prover_state
+                        last_contract_state,
+                        prover_state
                     );
                 }
             } else {
@@ -1089,18 +1091,18 @@ where
             }
 
             if let Some(next_program_id) = updated_program_id {
-                if let Some(commitment_metadata) = initial_commitment_metadata.take() {
-                    if !calldatas.is_empty() {
-                        let batch_id = self.store.batch_id;
-                        self.store.batch_id += 1;
-                        self.spawn_proof_for_batch(
-                            &current_program_id,
-                            commitment_metadata,
-                            std::mem::take(&mut calldatas),
-                            batch_id,
-                            join_handles,
-                        )?;
-                    }
+                if let Some(commitment_metadata) = initial_commitment_metadata.take()
+                    && !calldatas.is_empty()
+                {
+                    let batch_id = self.store.batch_id;
+                    self.store.batch_id += 1;
+                    self.spawn_proof_for_batch(
+                        &current_program_id,
+                        commitment_metadata,
+                        std::mem::take(&mut calldatas),
+                        batch_id,
+                        join_handles,
+                    )?;
                 }
                 current_program_id = next_program_id;
             }
@@ -1247,7 +1249,9 @@ where
                         } else {
                             match node_client.send_tx_proof(tx).await {
                                 Ok(tx_hash) => {
-                                    info!("✅ Proved {len} txs in {elapsed:?}, Batch id: {batch_id}, Proof TX hash: {tx_hash}");
+                                    info!(
+                                        "✅ Proved {len} txs in {elapsed:?}, Batch id: {batch_id}, Proof TX hash: {tx_hash}"
+                                    );
                                 }
                                 Err(e) => {
                                     error!("Failed to send proof: {e:#}");

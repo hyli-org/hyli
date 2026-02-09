@@ -111,12 +111,16 @@ async fn test_gap_detection_creates_pending_requests() {
     listener.process_block(create_test_block(3)).await.unwrap();
 
     // Should have requested blocks 1 and 2
-    assert!(listener
-        .pending_block_requests
-        .contains_key(&BlockHeight(1)));
-    assert!(listener
-        .pending_block_requests
-        .contains_key(&BlockHeight(2)));
+    assert!(
+        listener
+            .pending_block_requests
+            .contains_key(&BlockHeight(1))
+    );
+    assert!(
+        listener
+            .pending_block_requests
+            .contains_key(&BlockHeight(2))
+    );
     assert_eq!(listener.pending_block_requests.len(), 2);
 }
 
@@ -139,15 +143,19 @@ async fn test_pending_request_cleared_on_block_arrival() {
     listener.process_block(create_test_block(0)).await.unwrap();
     listener.process_block(create_test_block(2)).await.unwrap();
 
-    assert!(listener
-        .pending_block_requests
-        .contains_key(&BlockHeight(1)));
+    assert!(
+        listener
+            .pending_block_requests
+            .contains_key(&BlockHeight(1))
+    );
 
     listener.process_block(create_test_block(1)).await.unwrap();
 
-    assert!(!listener
-        .pending_block_requests
-        .contains_key(&BlockHeight(1)));
+    assert!(
+        !listener
+            .pending_block_requests
+            .contains_key(&BlockHeight(1))
+    );
 }
 
 #[tokio::test]
@@ -161,9 +169,11 @@ async fn test_processing_next_frame_signed_block() {
     listener.request_specific_block(BlockHeight(0));
     listener.processing_next_frame(event).await.unwrap();
 
-    assert!(!listener
-        .pending_block_requests
-        .contains_key(&BlockHeight(0)));
+    assert!(
+        !listener
+            .pending_block_requests
+            .contains_key(&BlockHeight(0))
+    );
     assert_eq!(listener.current_block, BlockHeight(1));
 }
 
@@ -202,9 +212,11 @@ async fn test_handle_block_not_found_switches_to_fallback() {
 
     // Create a pending request for block 5
     listener.request_specific_block(BlockHeight(5));
-    assert!(listener
-        .pending_block_requests
-        .contains_key(&BlockHeight(5)));
+    assert!(
+        listener
+            .pending_block_requests
+            .contains_key(&BlockHeight(5))
+    );
     assert_eq!(listener.current_da_index, 0);
 
     // Simulate receiving BlockNotFound from main server
@@ -218,9 +230,11 @@ async fn test_handle_block_not_found_switches_to_fallback() {
     assert_eq!(listener.current_da_index, 1);
 
     // Verify: block was re-requested (new pending request created)
-    assert!(listener
-        .pending_block_requests
-        .contains_key(&BlockHeight(5)));
+    assert!(
+        listener
+            .pending_block_requests
+            .contains_key(&BlockHeight(5))
+    );
 }
 
 #[tokio::test]

@@ -21,14 +21,14 @@ use crate::{
     metrics::TcpServerMetrics,
     net::TcpListener,
     tcp::{
-        decode_tcp_payload, framed_stream, to_tcp_message, to_tcp_message_with_headers,
         FramedStream, TcpData, TcpHeaders, TcpMessage, TcpMessageLabel, TcpOutboundMessage,
+        decode_tcp_payload, framed_stream, to_tcp_message, to_tcp_message_with_headers,
     },
 };
 use hyli_turmoil_shims::collections::HashMap;
 use tracing::{debug, error, trace, warn};
 
-use super::{tcp_client::TcpClient, SocketStream, TcpEvent};
+use super::{SocketStream, TcpEvent, tcp_client::TcpClient};
 
 type TcpSender = SplitSink<FramedStream, Bytes>;
 type TcpReceiver = SplitStream<FramedStream>;
@@ -663,7 +663,7 @@ pub mod tests {
 
     use super::TcpServer;
     use crate::tcp::{
-        tcp_client::TcpClient, tcp_server::peer_label_or_addr, to_tcp_message, TcpEvent, TcpMessage,
+        TcpEvent, TcpMessage, tcp_client::TcpClient, tcp_server::peer_label_or_addr, to_tcp_message,
     };
     use anyhow::Result;
     use bytes::Bytes;
@@ -923,7 +923,9 @@ pub mod tests {
         client_relaxed.send(vec![0b_0; 89]).await?;
 
         let received_data = server.listen_next().await;
-        assert!(received_data.is_some_and(|tcp_event| matches!(tcp_event, TcpEvent::Closed { .. })));
+        assert!(
+            received_data.is_some_and(|tcp_event| matches!(tcp_event, TcpEvent::Closed { .. }))
+        );
 
         Ok(())
     }

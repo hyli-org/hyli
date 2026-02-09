@@ -12,7 +12,7 @@ use std::{
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
 use sdk::{
-    hyli_model_utils::TimestampMs, DataAvailabilityEvent, DataAvailabilityRequest, DataProposal,
+    DataAvailabilityEvent, DataAvailabilityRequest, DataProposal, hyli_model_utils::TimestampMs,
 };
 use strum_macros::IntoStaticStr;
 use tokio::task::JoinHandle;

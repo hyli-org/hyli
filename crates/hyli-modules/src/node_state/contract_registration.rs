@@ -1,5 +1,5 @@
-use anyhow::{bail, Result};
-use sdk::{verifiers::validate_program_id, ContractName, ProgramId, StateCommitment, Verifier};
+use anyhow::{Result, bail};
+use sdk::{ContractName, ProgramId, StateCommitment, Verifier, verifiers::validate_program_id};
 
 /// Check that the contract name is:
 /// - a valid subdomain of the owner contract name.

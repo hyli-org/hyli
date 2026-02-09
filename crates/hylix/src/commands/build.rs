@@ -1,7 +1,7 @@
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{log_info, log_success, ProgressExecutor};
+use crate::logging::{ProgressExecutor, log_info, log_success};
 use crate::process::execute_and_check;
-use crate::validation::{validate_project, ValidationLevel};
+use crate::validation::{ValidationLevel, validate_project};
 
 /// Execute the `hy build` command
 pub async fn execute(clean: bool, frontend: bool) -> HylixResult<()> {

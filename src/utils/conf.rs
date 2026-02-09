@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use config::{Config, Environment, File};
 use hyli_modules::modules::websocket::WebSocketConfig;
 use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
 use serde_with::DurationMilliSeconds;
+use serde_with::serde_as;
 use std::{collections::HashMap, fmt::Debug, path::PathBuf, sync::Arc, time::Duration};
 use strum_macros::IntoStaticStr;
 
@@ -292,7 +292,8 @@ mod tests {
         let conf = Conf::new(vec![], None, None).unwrap();
         assert_eq!(conf.da_public_address, "127.0.0.1:4141");
         // All single underscores as there is no nesting.
-        std::env::set_var("HYLI_DA_PUBLIC_ADDRESS", "127.0.0.1:9090");
+        // SAFETY: This test is run in a single thread and no other code reads this env var concurrently.
+        unsafe { std::env::set_var("HYLI_DA_PUBLIC_ADDRESS", "127.0.0.1:9090") };
         let conf = Conf::new(vec![], None, None).unwrap();
         assert_eq!(conf.da_public_address, "127.0.0.1:9090");
     }
@@ -301,7 +302,8 @@ mod tests {
         let conf = Conf::new(vec![], None, None).unwrap();
         assert_eq!(conf.p2p.public_address, "127.0.0.1:1231");
         // Note the double underscore
-        std::env::set_var("HYLI_P2P__PUBLIC_ADDRESS", "127.0.0.1:9090");
+        // SAFETY: This test is run in a single thread and no other code reads this env var concurrently.
+        unsafe { std::env::set_var("HYLI_P2P__PUBLIC_ADDRESS", "127.0.0.1:9090") };
         let conf = Conf::new(vec![], None, None).unwrap();
         assert_eq!(conf.p2p.public_address, "127.0.0.1:9090");
     }

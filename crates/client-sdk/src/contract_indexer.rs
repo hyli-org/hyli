@@ -4,9 +4,9 @@ use tokio::sync::RwLock;
 use tracing::{debug, error};
 
 use axum::{
+    Router,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Router,
 };
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::*;

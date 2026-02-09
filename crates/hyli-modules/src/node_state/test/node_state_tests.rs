@@ -15,7 +15,7 @@ use crate::{
         test::contract_registration_tests::make_register_hyli_wallet_identity_tx,
     },
 };
-use ::secp256k1::{ecdsa::Signature, rand, Message, PublicKey, Secp256k1, SecretKey};
+use ::secp256k1::{Message, PublicKey, Secp256k1, SecretKey, ecdsa::Signature, rand};
 use sha2::Digest;
 
 use super::*;
@@ -739,10 +739,12 @@ async fn settle_with_multiple_state_reads() {
             StatefulEvent::SettledTx(_) | StatefulEvent::FailedTx(_) | StatefulEvent::TimedOutTx(_)
         )
     }));
-    assert!(state
-        .unsettled_transactions
-        .get(&blob_tx.hashed())
-        .is_some());
+    assert!(
+        state
+            .unsettled_transactions
+            .get(&blob_tx.hashed())
+            .is_some()
+    );
 
     let mut ho = make_hyli_output(blob_tx.clone(), BlobIndex(0));
     // Now correct state reads (some redundant ones to validate that this works)
@@ -1489,15 +1491,19 @@ async fn test_panic_on_ordered_tx_map_remove_after_failed_tx() {
     assert!(state.unsettled_transactions.get(&blob_tx_id_2).is_none());
 
     // Verify that blob_tx_2 is not in the tx_order for either contract B or C
-    assert!(!state
-        .unsettled_transactions
-        .get_tx_order(&contract_b)
-        .unwrap()
-        .contains(&blob_tx_id_2));
-    assert!(state
-        .unsettled_transactions
-        .get_tx_order(&contract_c)
-        .is_none());
+    assert!(
+        !state
+            .unsettled_transactions
+            .get_tx_order(&contract_b)
+            .unwrap()
+            .contains(&blob_tx_id_2)
+    );
+    assert!(
+        state
+            .unsettled_transactions
+            .get_tx_order(&contract_c)
+            .is_none()
+    );
 
     // Verify that blob_tx_0 has been removed becaused it was settled as first
     assert!(state.unsettled_transactions.get(&blob_tx_id_0).is_none());
@@ -1700,10 +1706,12 @@ async fn test_failure_proof_must_wait_for_previous_blobs() {
 
     // Verify the transaction is still unsettled
     assert_eq!(state.unsettled_transactions.len(), 1);
-    assert!(state
-        .unsettled_transactions
-        .get(&blob_tx.hashed())
-        .is_some());
+    assert!(
+        state
+            .unsettled_transactions
+            .get(&blob_tx.hashed())
+            .is_some()
+    );
 
     // Submit the success proof in block 3
     let block_3 = state.craft_block_and_handle(3, vec![proof_tx_success.into()]);

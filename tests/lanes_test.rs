@@ -8,13 +8,13 @@ use client_sdk::{
 };
 use fixtures::{ctx::E2ECtx, test_helpers::send_transaction};
 use hydentity::{
-    client::tx_executor_handler::{register_identity, verify_identity},
     Hydentity,
+    client::tx_executor_handler::{register_identity, verify_identity},
 };
 use hyli::genesis::States;
 use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID, STAKING_ELF, STAKING_ID};
-use hyli_model::{api::APIRegisterContract, ContractName, Identity, ProgramId, StateCommitment};
-use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
+use hyli_model::{ContractName, Identity, ProgramId, StateCommitment, api::APIRegisterContract};
+use hyllar::{FAUCET_ID, Hyllar, client::tx_executor_handler::transfer};
 use staking::{
     client::tx_executor_handler::{delegate, deposit_for_fees, stake},
     state::Staking,

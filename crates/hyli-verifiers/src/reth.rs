@@ -3,9 +3,9 @@ use std::sync::Arc;
 use alloy_consensus::Header;
 use alloy_eips::eip2718::Encodable2718;
 use alloy_genesis::{ChainConfig, Genesis};
-use alloy_primitives::{keccak256, B256};
+use alloy_primitives::{B256, keccak256};
 use alloy_rlp::decode_exact;
-use anyhow::{anyhow, bail, Context, Error};
+use anyhow::{Context, Error, anyhow, bail};
 use borsh::de::BorshDeserialize;
 use hyli_model::{
     Blob, Calldata, ContractName, HyliOutput, ProgramId, ProofData, StateCommitment,
@@ -15,7 +15,7 @@ use k256::ecdsa::SigningKey;
 use reth_ethereum::{chainspec::ChainSpec, evm::EthEvmConfig};
 use reth_ethereum_primitives::{Block, EthereumReceipt};
 use reth_primitives_traits::{Block as BlockTrait, SignerRecoverable};
-use reth_stateless::{validation::stateless_validation, StatelessInput, UncompressedPublicKey};
+use reth_stateless::{StatelessInput, UncompressedPublicKey, validation::stateless_validation};
 use serde_json::{self, Map, Value};
 
 pub fn verify(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutput>, Error> {
@@ -628,9 +628,10 @@ mod tests {
         };
         let err = validate_blob_matches_block(&bad_calldata, &stateless_input, &program_id)
             .expect_err("validation should fail when caller-derived program id mismatches");
-        assert!(err
-            .to_string()
-            .contains("program id does not match derived caller program id"));
+        assert!(
+            err.to_string()
+                .contains("program id does not match derived caller program id")
+        );
     }
 
     #[test]

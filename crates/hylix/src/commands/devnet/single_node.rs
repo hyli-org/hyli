@@ -1,9 +1,9 @@
 use crate::commands::bake::bake_devnet;
 use crate::constants;
 use crate::error::HylixResult;
-use crate::logging::{log_info, log_success, log_warning, ProgressExecutor};
+use crate::logging::{ProgressExecutor, log_info, log_success, log_warning};
 
-use super::containers::{get_docker_container_status, stop_and_remove_container, ContainerStatus};
+use super::containers::{ContainerStatus, get_docker_container_status, stop_and_remove_container};
 use super::context::DevnetContext;
 use super::network::{create_docker_network, remove_docker_network};
 use super::services::{start_indexer, start_local_node, start_registry, start_wallet_app};

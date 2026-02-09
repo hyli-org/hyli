@@ -1,8 +1,8 @@
-use axum::{extract::Json, http::StatusCode, response::IntoResponse, routing::post, Router};
+use axum::{Router, extract::Json, http::StatusCode, response::IntoResponse, routing::post};
 use risc0_zkvm::Receipt;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fs, sync::Arc};
-use tracing::{info, Level};
+use tracing::{Level, info};
 
 #[derive(Deserialize)]
 struct ProveRequest {

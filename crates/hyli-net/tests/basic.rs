@@ -9,12 +9,12 @@ use hyli_net::{
     clock::TimestampMsClock,
     net::Sim,
     tcp::{
-        p2p_server::{P2PServer, P2PTimeouts},
         Canal, P2PTcpMessage, TcpMessageLabel,
+        p2p_server::{P2PServer, P2PTimeouts},
     },
 };
 use hyli_turmoil_shims::init_test_meter_provider;
-use rand::{rngs::StdRng, RngCore, SeedableRng};
+use rand::{RngCore, SeedableRng, rngs::StdRng};
 
 #[derive(Clone, Debug, borsh::BorshDeserialize, borsh::BorshSerialize)]
 pub struct Msg(usize);

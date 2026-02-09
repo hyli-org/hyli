@@ -10,7 +10,7 @@ struct FjallValue(Vec<u8>);
 
 impl AsRef<[u8]> for FjallHashKey {
     fn as_ref(&self) -> &[u8] {
-        self.0 .0.as_slice()
+        self.0.0.as_slice()
     }
 }
 

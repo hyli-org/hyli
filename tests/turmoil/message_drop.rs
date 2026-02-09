@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use hyli::mempool::MempoolNetMessage;
 use hyli_net::net::Sim;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
-use crate::fixtures::turmoil::{install_net_message_dropper, TurmoilCtx};
+use crate::fixtures::turmoil::{TurmoilCtx, install_net_message_dropper};
 
 /// **Simulation**
 ///

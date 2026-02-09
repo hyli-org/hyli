@@ -8,10 +8,10 @@ use tracing::{info, warn};
 
 use crate::{
     bus::{BusClientSender, SharedMessageBus},
-    modules::{module_bus_client, Module},
+    modules::{Module, module_bus_client},
     node_state::{
-        metrics::NodeStateMetrics, module::NodeStateEvent, module::NodeStateModule, NodeState,
-        NodeStateStore,
+        NodeState, NodeStateStore, metrics::NodeStateMetrics, module::NodeStateEvent,
+        module::NodeStateModule,
     },
 };
 

@@ -128,7 +128,7 @@ impl Hashed<HyliOutputHash> for HyliOutput {
         hasher.update(self.identity.0.as_bytes());
         hasher.update(self.index.0.to_le_bytes());
         for blob in &self.blobs {
-            hasher.update(blob.0 .0.to_le_bytes());
+            hasher.update(blob.0.0.to_le_bytes());
             hasher.update(blob.1.contract_name.0.as_bytes());
             hasher.update(blob.1.data.0.as_slice());
         }

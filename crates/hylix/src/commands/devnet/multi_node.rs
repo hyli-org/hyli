@@ -6,7 +6,7 @@ use crate::docker::ContainerSpec;
 use crate::env_builder::EnvBuilder;
 use crate::error::{HylixError, HylixResult};
 use crate::logging::{
-    create_progress_bar_with_msg, log_info, log_success, log_warning, ProgressExecutor,
+    ProgressExecutor, create_progress_bar_with_msg, log_info, log_success, log_warning,
 };
 
 use super::config::{
@@ -14,8 +14,8 @@ use super::config::{
     get_local_node_config_path, get_node_id,
 };
 use super::containers::{
-    get_docker_container_status, start_managed_container, stop_and_remove_container,
-    ContainerStatus,
+    ContainerStatus, get_docker_container_status, start_managed_container,
+    stop_and_remove_container,
 };
 use super::context::{DevnetContext, NodePorts};
 use super::network::create_docker_network;
@@ -222,7 +222,9 @@ pub async fn join_devnet(
         // don't join if local data already exists to avoid accidentally wiping state
         let data_dir = PathBuf::from("data_node_local");
         if data_dir.exists() {
-            log_warning("Existing local node data directory found at 'data_node_local'. Either remove it or use '--resume' to keep existing state.");
+            log_warning(
+                "Existing local node data directory found at 'data_node_local'. Either remove it or use '--resume' to keep existing state.",
+            );
 
             log_info(&format!(
                 "{}",

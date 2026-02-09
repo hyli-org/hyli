@@ -1,4 +1,4 @@
-use crate::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
+use crate::telemetry::{Counter, Gauge, KeyValue, global_meter_or_panic};
 
 #[derive(Debug, Clone)]
 pub struct DaTcpClientMetrics {

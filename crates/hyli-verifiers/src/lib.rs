@@ -1,7 +1,7 @@
 use std::fmt::Write;
 use std::io::Read;
 
-use anyhow::{bail, Context, Error};
+use anyhow::{Context, Error, bail};
 use hyli_model::{HyliOutput, ProgramId, ProofData, Verifier};
 use rand::Rng;
 
@@ -36,7 +36,7 @@ pub fn verify(
 #[cfg(feature = "cairo-m")]
 pub mod cairo_m {
     use super::*;
-    use cairo_m_prover::{verifier::verify_cairo_m, Proof};
+    use cairo_m_prover::{Proof, verifier::verify_cairo_m};
     use serde::{Deserialize, Serialize};
     use stwo_prover::core::vcs::blake2_merkle::{Blake2sMerkleChannel, Blake2sMerkleHasher};
 

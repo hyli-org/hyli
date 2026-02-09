@@ -1,7 +1,7 @@
 use std::io::Read;
 
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt, util::SubscriberInitExt};
 
 fn main() -> std::io::Result<()> {
     // setup tracing

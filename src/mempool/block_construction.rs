@@ -10,10 +10,10 @@ use futures::StreamExt;
 use hyli_modules::{log_error, log_warn};
 
 use super::{
-    storage::{LaneEntryMetadata, MetadataOrMissingHash, Storage},
     DisseminationEvent, ValidatorDAG,
+    storage::{LaneEntryMetadata, MetadataOrMissingHash, Storage},
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use borsh::{BorshDeserialize, BorshSerialize};
 use tracing::{debug, error, trace, warn};
 
@@ -349,18 +349,17 @@ impl super::Mempool {
     pub(super) async fn try_to_send_full_signed_blocks(&mut self) -> Result<()> {
         let length = self.blocks_under_contruction.len();
         for _ in 0..length {
-            if let Some(mut block_under_contruction) = self.blocks_under_contruction.pop_front() {
-                if log_warn!(
+            if let Some(mut block_under_contruction) = self.blocks_under_contruction.pop_front()
+                && log_warn!(
                     self.build_signed_block_and_emit(&mut block_under_contruction)
                         .await,
                     "Processing queued committedConsensusProposal"
                 )
                 .is_err()
-                {
-                    // if failure, we push the ccp at the end
-                    self.blocks_under_contruction
-                        .push_back(block_under_contruction);
-                }
+            {
+                // if failure, we push the ccp at the end
+                self.blocks_under_contruction
+                    .push_back(block_under_contruction);
             }
         }
 
@@ -376,8 +375,7 @@ impl super::Mempool {
     ) -> Result<bool> {
         trace!(
             "Materializing holes for BUC(slot: {}, parent: {})",
-            buc.ccp.consensus_proposal.slot,
-            buc.ccp.consensus_proposal.parent_hash
+            buc.ccp.consensus_proposal.slot, buc.ccp.consensus_proposal.parent_hash
         );
         debug!(
             "Materializing holes for Block Under Construction {} from parent hash {}",
@@ -573,7 +571,10 @@ impl super::Mempool {
             if last_buc.consensus_proposal.slot >= ccp.consensus_proposal.slot {
                 let last_buc_slot = last_buc.consensus_proposal.slot;
                 self.last_ccp = Some(last_buc);
-                error!("CommitConsensusProposal is older than the last processed CCP slot {} should be higher than {}, not updating last_ccp", last_buc_slot, ccp.consensus_proposal.slot);
+                error!(
+                    "CommitConsensusProposal is older than the last processed CCP slot {} should be higher than {}, not updating last_ccp",
+                    last_buc_slot, ccp.consensus_proposal.slot
+                );
                 return;
             }
 
@@ -598,7 +599,10 @@ impl super::Mempool {
                     });
             } else {
                 // CCP slot received is way higher, then just store it
-                warn!("Could not create an interval, because incoming ccp slot {} should be {}+1 (last_ccp)", ccp.consensus_proposal.slot, last_buc.consensus_proposal.slot);
+                warn!(
+                    "Could not create an interval, because incoming ccp slot {} should be {}+1 (last_ccp)",
+                    ccp.consensus_proposal.slot, last_buc.consensus_proposal.slot
+                );
             }
         }
         // No last ccp

@@ -1,6 +1,6 @@
 use crate::config::BackendType;
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{log_info, log_success, log_warning, ProgressExecutor};
+use crate::logging::{ProgressExecutor, log_info, log_success, log_warning};
 use std::path::Path;
 use std::process::Command;
 

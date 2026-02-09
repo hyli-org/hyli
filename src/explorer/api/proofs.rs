@@ -1,9 +1,9 @@
 use super::{BlockPagination, ExplorerApiState, TransactionDb};
 use api::APITransaction;
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
-    Json,
 };
 use hyli_model::{api::APIProofDetails, utils::TimestampMs};
 use sqlx::FromRow;

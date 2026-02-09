@@ -1,5 +1,5 @@
 use alloc::string::String;
-use hyli_model::{verifiers::Secp256k1Blob, BlobIndex, Calldata, ContractName};
+use hyli_model::{BlobIndex, Calldata, ContractName, verifiers::Secp256k1Blob};
 use sha2::{Digest, Sha256};
 
 /// This struct allows to check the existence of a secp256k1 blob in the calldata.

@@ -186,16 +186,18 @@ mod tests {
                 LaneBytesSize(1),
                 AggregateSignature::default(),
             )],
-            staking_actions: vec![SignedByValidator::<ValidatorCandidacy> {
-                msg: ValidatorCandidacy {
-                    peer_address: "peer".to_string(),
-                },
-                signature: ValidatorSignature {
-                    signature: Signature(vec![1, 2, 3]),
-                    validator: ValidatorPublicKey(vec![1, 2, 3]),
-                },
-            }
-            .into()],
+            staking_actions: vec![
+                SignedByValidator::<ValidatorCandidacy> {
+                    msg: ValidatorCandidacy {
+                        peer_address: "peer".to_string(),
+                    },
+                    signature: ValidatorSignature {
+                        signature: Signature(vec![1, 2, 3]),
+                        validator: ValidatorPublicKey(vec![1, 2, 3]),
+                    },
+                }
+                .into(),
+            ],
             timestamp: TimestampMs(1),
             parent_hash: b"parent".into(),
         };
@@ -210,16 +212,18 @@ mod tests {
                     validators: vec![ValidatorPublicKey(vec![1, 2, 3])],
                 },
             )],
-            staking_actions: vec![SignedByValidator::<ValidatorCandidacy> {
-                msg: ValidatorCandidacy {
-                    peer_address: "different".to_string(),
-                },
-                signature: ValidatorSignature {
-                    signature: Signature(vec![3, 4, 5]),
-                    validator: ValidatorPublicKey(vec![3, 4, 5]),
-                },
-            }
-            .into()],
+            staking_actions: vec![
+                SignedByValidator::<ValidatorCandidacy> {
+                    msg: ValidatorCandidacy {
+                        peer_address: "different".to_string(),
+                    },
+                    signature: ValidatorSignature {
+                        signature: Signature(vec![3, 4, 5]),
+                        validator: ValidatorPublicKey(vec![3, 4, 5]),
+                    },
+                }
+                .into(),
+            ],
             timestamp: TimestampMs(1),
             parent_hash: b"parent".into(),
         };

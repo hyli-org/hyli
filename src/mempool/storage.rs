@@ -120,11 +120,11 @@ pub trait Storage {
 
         loop {
             // We stop once the currently examined DP is the one from the committed cut.
-            if let Some((_, prev_hash, prev_size, prev_poda)) = previous_committed_car {
-                if current == *prev_hash {
-                    trace!("Found matching previous committed CAR: {prev_hash}");
-                    return Ok(Some((prev_hash.clone(), *prev_size, prev_poda.clone())));
-                }
+            if let Some((_, prev_hash, prev_size, prev_poda)) = previous_committed_car
+                && current == *prev_hash
+            {
+                trace!("Found matching previous committed CAR: {prev_hash}");
+                return Ok(Some((prev_hash.clone(), *prev_size, prev_poda.clone())));
             }
 
             // This DP is on top of the current cut, does it have a CAR or should we fetch its parent?
@@ -166,7 +166,9 @@ pub trait Storage {
                         return Ok(Some((current, le.cumul_size, poda.signature)));
                     }
                     Err(e) => {
-                        error!("Could not aggregate signatures for lane {lane_id} and DP {current}: {e}");
+                        error!(
+                            "Could not aggregate signatures for lane {lane_id} and DP {current}: {e}"
+                        );
                         return Ok(None);
                     }
                 }

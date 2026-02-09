@@ -1,10 +1,10 @@
 //! Event bus used for messaging across components asynchronously.
 
 use crate::utils::static_type_map::Pick;
-use anymap::{any::Any, Map};
+use anymap::{Map, any::Any};
 use metrics::BusMetrics;
 use std::{any::type_name, sync::Arc};
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{Mutex, broadcast};
 #[cfg(feature = "instrumentation")]
 pub use tracing_opentelemetry::OpenTelemetrySpanExt;
 

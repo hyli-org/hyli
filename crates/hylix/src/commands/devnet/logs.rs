@@ -3,7 +3,7 @@ use crate::error::{HylixError, HylixResult};
 use crate::logging::{create_progress_bar, log_info};
 use std::time::Duration;
 
-use super::containers::{get_docker_container_status, ContainerStatus};
+use super::containers::{ContainerStatus, get_docker_container_status};
 
 /// Logs the local devnet
 pub async fn logs_devnet(service: &str) -> HylixResult<()> {

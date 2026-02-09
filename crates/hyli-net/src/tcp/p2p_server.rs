@@ -1,9 +1,9 @@
 use std::{cmp::Ordering, collections::HashSet, sync::Arc, task::Poll, time::Duration};
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_crypto::BlstCrypto;
-use sdk::{hyli_model_utils::TimestampMs, SignedByValidator, ValidatorPublicKey};
+use sdk::{SignedByValidator, ValidatorPublicKey, hyli_model_utils::TimestampMs};
 use tokio::{
     task::{AbortHandle, JoinSet},
     time::Interval,
@@ -14,13 +14,13 @@ use crate::{
     clock::TimestampMsClock,
     metrics::P2PMetrics,
     ordered_join_set::OrderedJoinSet,
-    tcp::{tcp_client::TcpClient, Handshake, TcpHeaders, TcpMessageLabel},
+    tcp::{Handshake, TcpHeaders, TcpMessageLabel, tcp_client::TcpClient},
 };
 use hyli_turmoil_shims::collections::HashMap;
 
 use super::{
-    tcp_server::{TcpServer, TcpServerOptions},
     Canal, NodeConnectionData, P2PTcpMessage, TcpEvent,
+    tcp_server::{TcpServer, TcpServerOptions},
 };
 
 #[derive(Clone, Debug)]
@@ -302,11 +302,7 @@ where
                         self.metrics.message_received(peer_p2p_addr, canal.clone());
                         trace!(
                             "P2P recv data (node={}, peer={} ({}), canal={}, socket_addr={})",
-                            self.node_id,
-                            peer_name,
-                            peer_pubkey,
-                            canal,
-                            socket_addr
+                            self.node_id, peer_name, peer_pubkey, canal, socket_addr
                         );
                     } else {
                         self.metrics
@@ -319,8 +315,7 @@ where
                             .unknown_peer("rx", unknown_canal, "unknown_peer");
                         trace!(
                             "P2P recv data (node={}, peer=unknown, socket_addr={})",
-                            self.node_id,
-                            socket_addr
+                            self.node_id, socket_addr
                         );
                     }
                     Ok(Some(P2PServerEvent::P2PMessage { msg, headers }))
@@ -448,12 +443,11 @@ where
     fn mark_socket_poisoned(&mut self, socket_addr: &String) {
         if let Some((pubkey, canal, _peer_name, _peer_p2p_addr)) =
             self.resolve_peer_context_from_socket_addr(socket_addr)
+            && let Some(peer_socket) = self.get_socket_mut(&canal, &pubkey)
         {
-            if let Some(peer_socket) = self.get_socket_mut(&canal, &pubkey) {
-                peer_socket.poisoned_at = Some(TimestampMsClock::now());
-                self.metrics
-                    .poison_marked(pubkey.to_string(), canal.clone());
-            }
+            peer_socket.poisoned_at = Some(TimestampMsClock::now());
+            self.metrics
+                .poison_marked(pubkey.to_string(), canal.clone());
         }
     }
 
@@ -490,9 +484,7 @@ where
         if let Some((peer_pubkey, canal, peer_name, _)) = peer_ctx {
             trace!(
                 "Will retry connection to peer {} canal {} after error {}",
-                peer_name,
-                canal,
-                socket_addr
+                peer_name, canal, socket_addr
             );
             if let Err(e) = self.try_start_connection_for_peer(&peer_pubkey, canal.clone()) {
                 self.metrics
@@ -544,9 +536,7 @@ where
         if let Some((peer_pubkey, canal, peer_name, _)) = peer_ctx {
             trace!(
                 "Will retry connection to peer {} canal {} after close {}",
-                peer_name,
-                canal,
-                socket_addr
+                peer_name, canal, socket_addr
             );
             if let Err(e) = self.try_start_connection_for_peer(&peer_pubkey, canal.clone()) {
                 self.metrics
@@ -740,12 +730,7 @@ where
 
             trace!(
                 "Peer {} ({}) canal {} on node {} -> dropping socket_addr={} keeping socket_addr={}",
-                v.msg.name,
-                peer_pubkey,
-                canal,
-                self.node_id,
-                socket_to_drop,
-                kept_socket_addr
+                v.msg.name, peer_pubkey, canal, self.node_id, socket_to_drop, kept_socket_addr
             );
             self.tcp_server.set_peer_label(&kept_socket_addr, label);
             if socket_to_drop != kept_socket_addr {
@@ -806,18 +791,18 @@ where
 
     #[cfg(test)]
     pub fn remove_peer(&mut self, peer_pubkey: &ValidatorPublicKey, canal: Canal) {
-        if let Some(peer_info) = self.peers.get_mut(peer_pubkey) {
-            if let Some(removed) = peer_info.canals.remove(&canal) {
-                self.tcp_server
-                    .drop_peer_stream(removed.socket_addr.clone());
-                let peers_on_canal = self
-                    .peers
-                    .values()
-                    .filter(|info| info.canals.contains_key(&canal))
-                    .count() as u64;
-                self.metrics
-                    .peers_canal_snapshot(canal.clone(), peers_on_canal);
-            }
+        if let Some(peer_info) = self.peers.get_mut(peer_pubkey)
+            && let Some(removed) = peer_info.canals.remove(&canal)
+        {
+            self.tcp_server
+                .drop_peer_stream(removed.socket_addr.clone());
+            let peers_on_canal = self
+                .peers
+                .values()
+                .filter(|info| info.canals.contains_key(&canal))
+                .count() as u64;
+            self.metrics
+                .peers_canal_snapshot(canal.clone(), peers_on_canal);
         }
     }
 
@@ -1028,22 +1013,22 @@ where
 
         let message_label = msg.message_label();
         let headers = crate::tcp::headers_from_span();
-        if let Some(jobs) = self.canal_jobs.get_mut(&canal) {
-            if !jobs.is_empty() {
-                jobs.spawn(async move {
+        if let Some(jobs) = self.canal_jobs.get_mut(&canal)
+            && !jobs.is_empty()
+        {
+            jobs.spawn(async move {
+                (
+                    HashSet::from_iter(std::iter::once(validator_pub_key)),
                     (
-                        HashSet::from_iter(std::iter::once(validator_pub_key)),
-                        (
-                            borsh::to_vec(&P2PTcpMessage::Data(msg)),
-                            headers,
-                            message_label,
-                        ),
-                    )
-                });
-                self.metrics
-                    .canal_jobs_snapshot(canal.clone(), jobs.len() as u64);
-                return Ok(());
-            }
+                        borsh::to_vec(&P2PTcpMessage::Data(msg)),
+                        headers,
+                        message_label,
+                    ),
+                )
+            });
+            self.metrics
+                .canal_jobs_snapshot(canal.clone(), jobs.len() as u64);
+            return Ok(());
         }
 
         let peer_name = peer.node_connection_data.name.clone();
@@ -1221,7 +1206,7 @@ pub mod tests {
     use tokio::net::TcpListener;
 
     use crate::clock::TimestampMsClock;
-    use crate::tcp::{p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent};
+    use crate::tcp::{Canal, Handshake, P2PTcpMessage, TcpEvent, p2p_server::P2PServer};
 
     use super::P2PTcpEvent;
 

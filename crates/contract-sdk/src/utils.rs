@@ -1,7 +1,7 @@
 use crate::{
+    Identity, StructuredBlobData,
     alloc::string::{String, ToString},
     caller::ExecutionContext,
-    Identity, StructuredBlobData,
 };
 use alloc::{format, vec};
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -148,7 +148,7 @@ pub fn as_hyli_output(
     res: &mut crate::RunResult,
 ) -> HyliOutput {
     match res {
-        Ok((ref mut program_output, execution_context, ref mut onchain_effects)) => {
+        Ok((program_output, execution_context, onchain_effects)) => {
             if !execution_context.callees_blobs.is_empty() {
                 return fail(
                     calldata,

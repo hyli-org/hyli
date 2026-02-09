@@ -4,7 +4,7 @@ use client_sdk::{
     helpers::risc0::Risc0Prover,
     transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutorBuilder, TxExecutorHandler},
 };
-use sdk::{utils::as_hyli_output, Blob, Calldata, ContractName, StateCommitment, ZkContract};
+use sdk::{Blob, Calldata, ContractName, StateCommitment, ZkContract, utils::as_hyli_output};
 
 pub mod metadata {
     pub const HYDENTITY_ELF: &[u8] = include_bytes!("../../hydentity.img");

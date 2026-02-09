@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use client_sdk::transaction_builder::ProvableBlobTx;
 use hydentity::{
-    client::tx_executor_handler::{register_identity, verify_identity},
     Hydentity, HydentityAction,
+    client::tx_executor_handler::{register_identity, verify_identity},
 };
 
 pub const HYLI_WALLET: &str = "wallet";
@@ -40,14 +40,16 @@ pub fn make_update_tx_with_registration(
 ) -> BlobTransaction {
     BlobTransaction::new(
         sender,
-        vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
-            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-            contract_name: name,
-            ..Default::default()
-        }
-        .as_blob(tld)],
+        vec![
+            RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: name,
+                ..Default::default()
+            }
+            .as_blob(tld),
+        ],
     )
 }
 
@@ -113,27 +115,31 @@ async fn test_register_contract_failure() {
     // "hyli" blob alone should not be able to register with metadata
     let mut register_6 = BlobTransaction::new(
         "hyli@hyli",
-        vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
-            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-            contract_name: "register_6".into(),
-            constructor_metadata: Some(vec![1]),
-            ..Default::default()
-        }
-        .as_blob("hyli".into())],
+        vec![
+            RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: "register_6".into(),
+                constructor_metadata: Some(vec![1]),
+                ..Default::default()
+            }
+            .as_blob("hyli".into()),
+        ],
     );
     // if the "hyli" blob is not here, should not be able to register
     let mut register_7 = BlobTransaction::new(
         "hyli@hyli",
-        vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
-            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-            contract_name: "register_7".into(),
-            ..Default::default()
-        }
-        .as_blob("register_7".into())],
+        vec![
+            RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: "register_7".into(),
+                ..Default::default()
+            }
+            .as_blob("register_7".into()),
+        ],
     );
     let register_good =
         make_register_tx_with_constructor("hyli@hyli".into(), "hyli".into(), "c1.hyli".into());
@@ -516,9 +522,11 @@ async fn test_register_contract_and_delete_hyli() {
 
     assert!(!state.contracts.contains_key(&ContractName::new("c1")));
     assert!(!state.contracts.contains_key(&ContractName::new("c2.hyli")));
-    assert!(!state
-        .contracts
-        .contains_key(&ContractName::new("sub.c2.hyli")));
+    assert!(
+        !state
+            .contracts
+            .contains_key(&ContractName::new("sub.c2.hyli"))
+    );
     assert_eq!(state.contracts.len(), 2);
 }
 
@@ -908,10 +916,12 @@ async fn test_unknown_contract_and_delete_cleanup() {
     assert!(state.unsettled_transactions.get(&blob_tx1_hash).is_none());
     assert!(state.unsettled_transactions.get(&blob_tx2_hash).is_none());
     assert!(state.unsettled_transactions.get(&blob_tx3_hash).is_none());
-    assert!(state
-        .unsettled_transactions
-        .get_next_unsettled_tx(&"to_delete".into())
-        .is_none());
+    assert!(
+        state
+            .unsettled_transactions
+            .get_next_unsettled_tx(&"to_delete".into())
+            .is_none()
+    );
 }
 
 #[test_log::test(tokio::test)]
@@ -1648,11 +1658,13 @@ async fn test_multiple_update_attempts_helper(tld_name: &str, contract_name: &st
     // UpdateProgramId only via contract with side effect
     let update_program_id_contract_side_effect = BlobTransaction::new(
         format!("user@{contract_name}"),
-        vec![UpdateContractProgramIdAction {
-            contract_name: contract_name.into(),
-            program_id: ProgramId(vec![]),
-        }
-        .as_blob(contract_name.into())],
+        vec![
+            UpdateContractProgramIdAction {
+                contract_name: contract_name.into(),
+                program_id: ProgramId(vec![]),
+            }
+            .as_blob(contract_name.into()),
+        ],
     );
 
     all_txs.extend(vec![
@@ -1702,12 +1714,16 @@ async fn test_multiple_update_attempts_helper(tld_name: &str, contract_name: &st
     );
 
     // Verify successful transactions
-    assert!(block_proofs
-        .successful_txs()
-        .contains(&update_program_id_tld_only.hashed()));
-    assert!(block_proofs
-        .successful_txs()
-        .contains(&update_program_id_contract_side_effect.hashed()));
+    assert!(
+        block_proofs
+            .successful_txs()
+            .contains(&update_program_id_tld_only.hashed())
+    );
+    assert!(
+        block_proofs
+            .successful_txs()
+            .contains(&update_program_id_contract_side_effect.hashed())
+    );
 }
 
 #[test_log::test(tokio::test)]

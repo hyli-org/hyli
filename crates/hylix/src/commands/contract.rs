@@ -1,6 +1,6 @@
 use crate::commands::devnet::DevnetContext;
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{log_info, log_success, log_warning, ProgressExecutor};
+use crate::logging::{ProgressExecutor, log_info, log_success, log_warning};
 use client_sdk::rest_client::NodeApiClient;
 use std::time::Duration;
 
