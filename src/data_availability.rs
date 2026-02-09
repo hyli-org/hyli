@@ -987,6 +987,7 @@ impl DataAvailability {
         catchup_joinset: &mut JoinSet<(String, usize)>,
         peer_ip: &str,
     ) -> Result<()> {
+        let range_start = std::time::Instant::now();
         // Collect all blocks from start_height to current highest
         let processed_block_hashes: VecDeque<_> = self
             .blocks
@@ -999,6 +1000,8 @@ impl DataAvailability {
             )
             .filter_map(|item| item.ok())
             .collect();
+        self.blocks
+            .record_op("range_collect", "by_height", range_start.elapsed());
 
         info!(
             "Starting stream to peer {} from height {} ({} blocks queued)",

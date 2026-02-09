@@ -1,4 +1,4 @@
-use crate::telemetry::{global_meter_or_panic, Gauge, KeyValue};
+use crate::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 use fjall::{Database, Keyspace};
 
 #[derive(Debug, Clone)]
@@ -26,6 +26,7 @@ pub struct FjallMetrics {
     keyspace_data_block_io_bytes: Gauge<u64>,
     keyspace_index_block_io_bytes: Gauge<u64>,
     keyspace_filter_block_io_bytes: Gauge<u64>,
+    op_time_micros: Counter<u64>,
 }
 
 impl FjallMetrics {
@@ -89,6 +90,7 @@ impl FjallMetrics {
             keyspace_filter_block_io_bytes: meter
                 .u64_gauge("fjall_keyspace_filter_block_io_bytes")
                 .build(),
+            op_time_micros: meter.u64_counter("fjall_op_time_micros").build(),
         }
     }
 
@@ -151,5 +153,16 @@ impl FjallMetrics {
             .record(metrics.index_block_io(), &labels);
         self.keyspace_filter_block_io_bytes
             .record(metrics.filter_block_io(), &labels);
+    }
+
+    pub fn record_op(&self, op: &'static str, keyspace: &'static str, micros: u64) {
+        let labels = [
+            KeyValue::new("module", self.module_name.clone()),
+            KeyValue::new("node_id", self.node_id.clone()),
+            KeyValue::new("db", self.db_name.clone()),
+            KeyValue::new("keyspace", keyspace),
+            KeyValue::new("op", op),
+        ];
+        self.op_time_micros.add(micros, &labels);
     }
 }
