@@ -1,5 +1,5 @@
 use super::ExplorerApiState;
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{Json, extract::State, http::StatusCode};
 use hyli_model::api::{NetworkStats, ProofStat};
 
 use hyli_modules::log_error;

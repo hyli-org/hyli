@@ -1,6 +1,6 @@
 use hyllar::HyllarAction;
 use sdk::{
-    utils::parse_calldata, BlobIndex, Calldata, IndexedBlobs, RunResult, StakingAction, ZkContract,
+    BlobIndex, Calldata, IndexedBlobs, RunResult, StakingAction, ZkContract, utils::parse_calldata,
 };
 use sha2::{Digest, Sha256};
 use state::Staking;
@@ -44,17 +44,17 @@ impl ZkContract for Staking {
     fn commit(&self) -> sdk::StateCommitment {
         let mut hasher = Sha256::new();
         for s in self.stakes.iter() {
-            hasher.update(&s.0 .0);
+            hasher.update(&s.0.0);
             hasher.update(s.1.to_le_bytes());
         }
         for d in self.delegations.iter() {
-            hasher.update(&d.0 .0);
+            hasher.update(&d.0.0);
             for i in d.1 {
                 hasher.update(&i.0);
             }
         }
         for r in self.rewarded.iter() {
-            hasher.update(&r.0 .0);
+            hasher.update(&r.0.0);
             for i in r.1 {
                 hasher.update(i.0.to_le_bytes());
             }

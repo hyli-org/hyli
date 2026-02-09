@@ -2,11 +2,10 @@ use anyhow::Error;
 use clap::{Parser, Subcommand};
 use hydentity::Hydentity;
 use hyli_loadtest::{
-    generate, generate_blobs_txs, generate_proof_txs, load_blob_txs, load_proof_txs,
+    States, generate, generate_blobs_txs, generate_proof_txs, load_blob_txs, load_proof_txs,
     long_running_test, send, send_blob_txs, send_massive_blob, send_proof_txs, setup, setup_hyllar,
-    States,
 };
-use tracing::{info, Level};
+use tracing::{Level, info};
 
 /// A cli to interact with hyli node
 #[derive(Debug, Parser)] // requires `derive` feature

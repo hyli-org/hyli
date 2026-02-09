@@ -195,8 +195,10 @@ pub fn print_devnet_env_vars(config: &HylixConfig) -> HylixResult<()> {
     );
 
     // Explorer URL
-    println!("export HYLI_EXPLORER_URL=\"https://explorer.hyli.org/?network=localhost&indexer={}&node={}&wallet={}\"",
-             devnet.indexer_port, devnet.node_port, devnet.wallet_api_port);
+    println!(
+        "export HYLI_EXPLORER_URL=\"https://explorer.hyli.org/?network=localhost&indexer={}&node={}&wallet={}\"",
+        devnet.indexer_port, devnet.node_port, devnet.wallet_api_port
+    );
 
     // Development mode flags
     println!(

@@ -1,12 +1,12 @@
 use std::{
-    any::{type_name, TypeId},
+    any::{TypeId, type_name},
     collections::HashMap,
 };
 
 use hyli_turmoil_shims::global_meter_or_panic;
-use opentelemetry::{metrics::Counter, KeyValue};
+use opentelemetry::{KeyValue, metrics::Counter};
 use quote::ToTokens;
-use syn::{parse_str, Type};
+use syn::{Type, parse_str};
 
 #[derive(Debug, Clone)]
 pub struct BusMetrics {

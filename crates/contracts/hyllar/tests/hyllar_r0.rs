@@ -1,6 +1,6 @@
 use core::str;
 
-use hyli_hyllar::{Hyllar, HyllarAction, FAUCET_ID};
+use hyli_hyllar::{FAUCET_ID, Hyllar, HyllarAction};
 use sdk::{BlobIndex, Calldata, ContractAction, ContractName, HyliOutput, TxHash};
 
 fn execute(inputs: (Vec<u8>, Vec<Calldata>)) -> Vec<HyliOutput> {
@@ -35,12 +35,14 @@ fn execute_transfer_from() {
             tx_hash: TxHash::default(),
             tx_ctx: None,
             private_input: vec![],
-            blobs: vec![HyllarAction::TransferFrom {
-                owner: FAUCET_ID.into(),
-                recipient: "amm".into(),
-                amount: 100,
-            }
-            .as_blob(ContractName::new("hyllar"), None, None)]
+            blobs: vec![
+                HyllarAction::TransferFrom {
+                    owner: FAUCET_ID.into(),
+                    recipient: "amm".into(),
+                    amount: 100,
+                }
+                .as_blob(ContractName::new("hyllar"), None, None),
+            ]
             .into(),
             tx_blob_count: 1,
             index: BlobIndex(0),

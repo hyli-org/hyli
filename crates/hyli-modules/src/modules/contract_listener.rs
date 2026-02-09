@@ -9,7 +9,7 @@ use hyli_model::{BlockHeight, ContractName, TxHash};
 use indexmap::IndexMap;
 use sdk::api::TransactionStatusDb;
 use sdk::{
-    Blob, BlobData, BlobIndex, BlockHash, IndexedBlobs, LaneId, TxContext, HYLI_TESTNET_CHAIN_ID,
+    Blob, BlobData, BlobIndex, BlockHash, HYLI_TESTNET_CHAIN_ID, IndexedBlobs, LaneId, TxContext,
 };
 use sqlx::postgres::{PgListener, PgPoolOptions, PgRow};
 use sqlx::{PgPool, Row};

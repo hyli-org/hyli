@@ -7,9 +7,9 @@ use strum::IntoDiscriminant;
 use utoipa::ToSchema;
 
 use crate::{
-    utils::TimestampMs, BlockHash, BlockHeight, ConsensusProposalHash, ContractName,
-    DataProposalHash, Identity, LaneBytesSize, LaneId, ProgramId, StateCommitment, TimeoutWindow,
-    Transaction, TransactionKind, TxHash, ValidatorPublicKey, Verifier,
+    BlockHash, BlockHeight, ConsensusProposalHash, ContractName, DataProposalHash, Identity,
+    LaneBytesSize, LaneId, ProgramId, StateCommitment, TimeoutWindow, Transaction, TransactionKind,
+    TxHash, ValidatorPublicKey, Verifier, utils::TimestampMs,
 };
 
 #[derive(Clone, Serialize, Deserialize, Debug, ToSchema)]

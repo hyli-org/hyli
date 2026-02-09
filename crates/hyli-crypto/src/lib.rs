@@ -30,7 +30,7 @@
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context, Error, Result};
+use anyhow::{Context, Error, Result, anyhow, bail};
 use blst::min_pk::{
     AggregatePublicKey, AggregateSignature as BlstAggregateSignature, PublicKey, SecretKey,
     Signature as BlstSignature,
@@ -60,8 +60,8 @@ impl BlstCrypto {
     #[cfg(not(test))]
     pub fn new(validator_name: &str) -> Result<Self> {
         let sk = Self::load_from_env().or_else(|err| {
-            if let Ok(use_keyring) = std::env::var("HYLI_USE_KEYRING") {
-                if use_keyring == "true" {
+            if let Ok(use_keyring) = std::env::var("HYLI_USE_KEYRING")
+                && use_keyring == "true" {
                     #[cfg(feature = "keyring")]
                     {
                         return Self::load_from_keyring(validator_name);
@@ -71,7 +71,6 @@ impl BlstCrypto {
                         return Err(anyhow!("HYLI_USE_KEYRING is set to true but the keyring feature is not enabled. Please enable it with --features keyring"));
                     }
                 }
-            }
             println!("---------------------- 🚨 SECURITY 🚨  ------------------------------ ");
             println!();
             println!("WARN SAFETY: Could not load secret from env: '{err}' and HYLI_USE_KEYRING != true, generating secret from validator name.");

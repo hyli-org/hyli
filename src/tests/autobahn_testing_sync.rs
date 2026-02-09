@@ -1,4 +1,4 @@
-use crate::consensus::{test::ConsensusTestCtx, ConsensusNetMessage};
+use crate::consensus::{ConsensusNetMessage, test::ConsensusTestCtx};
 use crate::mempool::tests::make_register_contract_tx;
 use hyli_crypto::BlstCrypto;
 use hyli_model::utils::TimestampMs;

@@ -14,12 +14,12 @@ mod e2e_hyllar {
         transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
     };
     use hydentity::{
-        client::tx_executor_handler::{register_identity, verify_identity},
         Hydentity,
+        client::tx_executor_handler::{register_identity, verify_identity},
     };
     use hyli_contract_sdk::{Blob, Calldata, ContractName, HyliOutput};
     use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
-    use hyllar::{client::tx_executor_handler::transfer, erc20::ERC20, Hyllar, FAUCET_ID};
+    use hyllar::{FAUCET_ID, Hyllar, client::tx_executor_handler::transfer, erc20::ERC20};
 
     use super::*;
 

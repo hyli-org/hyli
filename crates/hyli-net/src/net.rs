@@ -3,8 +3,8 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::ops::Deref;
 use std::task::Poll;
 
-use axum::extract::connect_info::{Connected, IntoMakeServiceWithConnectInfo, ResponseFuture};
 use axum::extract::ConnectInfo;
+use axum::extract::connect_info::{Connected, IntoMakeServiceWithConnectInfo, ResponseFuture};
 use axum::middleware::AddExtension;
 use axum::serve::{IncomingStream, Listener};
 #[cfg(not(feature = "turmoil"))]

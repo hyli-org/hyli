@@ -1,13 +1,13 @@
 //! State required for participation in consensus by the node.
 
-use anyhow::{bail, Error, Result};
+use anyhow::{Error, Result, bail};
 use borsh::{BorshDeserialize, BorshSerialize};
 use contract_registration::validate_contract_registration_metadata;
 use contract_registration::{validate_contract_name_tld, validate_state_commitment_size};
 use hyli_tld::validate_hyli_contract_blobs;
 use metrics::NodeStateMetrics;
 use ordered_tx_map::OrderedTxMap;
-use sdk::verifiers::{NativeVerifiers, NATIVE_VERIFIERS_CONTRACT_LIST};
+use sdk::verifiers::{NATIVE_VERIFIERS_CONTRACT_LIST, NativeVerifiers};
 use sdk::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -818,8 +818,8 @@ impl<'any> NodeStateProcessing<'any> {
                 // Sanity check: a contract state cannot be in RegisterWithConstructor as it would mean the constructor blob has not been sent
                 if let ContractStatus::RegisterWithConstructor(_) = contract_status {
                     let msg = format!(
-                            "Contract '{contract_name}' is in RegisterWithConstructor state at settlement end; constructor blob missing.",
-                        );
+                        "Contract '{contract_name}' is in RegisterWithConstructor state at settlement end; constructor blob missing.",
+                    );
                     debug!("{msg}");
                     callback.on_event(&TxEvent::TxError(&unsettled_tx.tx_id, &msg));
                     return SettlementResult {
@@ -831,8 +831,8 @@ impl<'any> NodeStateProcessing<'any> {
                 // Sanity check: a contract state cannot be in WaitingDeletion as it would mean the deletion blob has not been sent
                 if let ContractStatus::WaitingDeletion = contract_status {
                     let msg = format!(
-                            "Contract '{contract_name}' is in WaitingDeletion state at settlement end; deletion blob missing.",
-                        );
+                        "Contract '{contract_name}' is in WaitingDeletion state at settlement end; deletion blob missing.",
+                    );
                     debug!("{msg}");
                     callback.on_event(&TxEvent::TxError(&unsettled_tx.tx_id, &msg));
                     return SettlementResult {
@@ -1058,8 +1058,8 @@ impl<'any> NodeStateProcessing<'any> {
             }
             SettlementStatus::NotReadyToSettle | SettlementStatus::TryingToSettle => {
                 unreachable!(
-                        "Settlement status should not be NotReadyToSettle nor TryingToSettle when trying to settle a blob tx"
-                    );
+                    "Settlement status should not be NotReadyToSettle nor TryingToSettle when trying to settle a blob tx"
+                );
             }
             SettlementStatus::SettleAsSuccess => {
                 // We can move on to settle the TX
@@ -1262,14 +1262,14 @@ impl<'any> NodeStateProcessing<'any> {
             )
         }
 
-        if let Some(tx_ctx) = &hyli_output.tx_ctx {
-            if *tx_ctx != *unsettled_tx.tx_context {
-                bail!(
-                    "Proof tx_context '{:?}' does not correspond to BlobTx tx_context '{:?}'.",
-                    tx_ctx,
-                    unsettled_tx.tx_context
-                )
-            }
+        if let Some(tx_ctx) = &hyli_output.tx_ctx
+            && *tx_ctx != *unsettled_tx.tx_context
+        {
+            bail!(
+                "Proof tx_context '{:?}' does not correspond to BlobTx tx_context '{:?}'.",
+                tx_ctx,
+                unsettled_tx.tx_context
+            )
         }
 
         // blob_hash verification
@@ -1324,40 +1324,40 @@ impl<'any> NodeStateProcessing<'any> {
         let contract_name = &blob.contract_name;
 
         // Handle native verifiers
-        if let Some(contract) = contracts.get(contract_name) {
-            if let Ok(verifier) = TryInto::<NativeVerifiers>::try_into(&contract.verifier) {
-                tracing::trace!(
-                    "Processing native verifier blob for contract {}",
-                    contract_name
-                );
+        if let Some(contract) = contracts.get(contract_name)
+            && let Ok(verifier) = TryInto::<NativeVerifiers>::try_into(&contract.verifier)
+        {
+            tracing::trace!(
+                "Processing native verifier blob for contract {}",
+                contract_name
+            );
 
-                let (identity, success) = match verify_native_impl(blob, &verifier) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return BlobProcessingResult::ProvenFailure(format!(
-                            "Native blob verification failed: {e:?}"
-                        ));
-                    }
-                };
-
-                // Identity verification
-                if unsettled_tx.tx.identity != identity {
+            let (identity, success) = match verify_native_impl(blob, &verifier) {
+                Ok(v) => v,
+                Err(e) => {
                     return BlobProcessingResult::ProvenFailure(format!(
-                        "NativeVerifier identity '{}' does not correspond to BlobTx identity '{}'.",
-                        identity, unsettled_tx.tx.identity,
+                        "Native blob verification failed: {e:?}"
                     ));
                 }
+            };
 
-                if !success {
-                    return BlobProcessingResult::ProvenFailure(
-                        "Native verifier execution failed".to_string(),
-                    );
-                }
-
-                tracing::trace!("NativeVerifier Settlement - OK blob");
-                // Native verifiers don't change state, so we return success without updating contract_changes
-                return BlobProcessingResult::Success;
+            // Identity verification
+            if unsettled_tx.tx.identity != identity {
+                return BlobProcessingResult::ProvenFailure(format!(
+                    "NativeVerifier identity '{}' does not correspond to BlobTx identity '{}'.",
+                    identity, unsettled_tx.tx.identity,
+                ));
             }
+
+            if !success {
+                return BlobProcessingResult::ProvenFailure(
+                    "Native verifier execution failed".to_string(),
+                );
+            }
+
+            tracing::trace!("NativeVerifier Settlement - OK blob");
+            // Native verifiers don't change state, so we return success without updating contract_changes
+            return BlobProcessingResult::Success;
         }
 
         // Handle special contract operations for the "hyli" contract
@@ -1399,7 +1399,9 @@ impl<'any> NodeStateProcessing<'any> {
             if current_status == &mut ContractStatus::WaitingDeletion {
                 if !blob.data.0.is_empty() {
                     // Non-empty blob is not a valid deletion
-                    return BlobProcessingResult::ProvenFailure(format!("Trying to settle a blob for the deleted contract {contract_name:?} with non-empty data."));
+                    return BlobProcessingResult::ProvenFailure(format!(
+                        "Trying to settle a blob for the deleted contract {contract_name:?} with non-empty data."
+                    ));
                 }
 
                 *current_status = ContractStatus::Deleted;
@@ -1419,7 +1421,9 @@ impl<'any> NodeStateProcessing<'any> {
             // if all previous blobs have been proven (i.e. setttlement status still at TryingToSettle)
             // and none of them generate an OnChainEffect, Tx should fail
             if settlement_status == &SettlementStatus::TryingToSettle {
-                return BlobProcessingResult::ProvenFailure(format!("Trying to settle a blob for an unknown and unregistered contract {contract_name:?}"));
+                return BlobProcessingResult::ProvenFailure(format!(
+                    "Trying to settle a blob for an unknown and unregistered contract {contract_name:?}"
+                ));
             }
         }
 

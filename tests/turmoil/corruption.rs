@@ -5,11 +5,11 @@
 
 use bytes::Bytes;
 use hyli_net::net::Sim;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::fixtures::turmoil::{
-    install_consensus_message_corrupter, install_mempool_message_corrupter,
-    install_net_message_corrupter, TurmoilCtx,
+    TurmoilCtx, install_consensus_message_corrupter, install_mempool_message_corrupter,
+    install_net_message_corrupter,
 };
 
 fn corrupt_random_bytes(

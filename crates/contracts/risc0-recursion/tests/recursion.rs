@@ -2,7 +2,7 @@ use client_sdk::{
     contract_states,
     transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
 };
-use hydentity::{client::tx_executor_handler::register_identity, Hydentity};
+use hydentity::{Hydentity, client::tx_executor_handler::register_identity};
 use hyli_risc0_recursion::ProofInput;
 use sdk::{Blob, Calldata, ContractName, HyliOutput};
 
@@ -13,7 +13,8 @@ contract_states!(
 );
 #[test_log::test(tokio::test)]
 async fn test_recursion() {
-    std::env::set_var("RISC0_DEV_MODE", "1");
+    // SAFETY: This test is the only one setting this env var and runs before any concurrent access.
+    unsafe { std::env::set_var("RISC0_DEV_MODE", "1") };
 
     let mut executor = TxExecutorBuilder::new(States {
         hydentity: Hydentity::default(),

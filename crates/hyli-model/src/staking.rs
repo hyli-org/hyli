@@ -1,7 +1,7 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{
-    de::{self, Visitor},
     Deserialize, Serialize,
+    de::{self, Visitor},
 };
 #[cfg(feature = "full")]
 use sha3::Digest;

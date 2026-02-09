@@ -10,13 +10,13 @@ use client_sdk::tcp_client::TcpServerMessage;
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use tracing::warn;
 
-use super::{api::RestApiMessage, MempoolNetMessage, QueryNewCut};
+use super::{MempoolNetMessage, QueryNewCut, api::RestApiMessage};
 
 use crate::model::SharedRunContext;
 
 use super::{
-    api, mempool_bus_client::MempoolBusClient, metrics::MempoolMetrics, shared_lanes_storage,
-    Mempool, MempoolStore,
+    Mempool, MempoolStore, api, mempool_bus_client::MempoolBusClient, metrics::MempoolMetrics,
+    shared_lanes_storage,
 };
 
 use anyhow::Result;
@@ -27,10 +27,10 @@ impl Module for Mempool {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let metrics = MempoolMetrics::global();
         let api = api::api(&bus, &ctx.api).await;
-        if let Ok(mut guard) = ctx.api.router.lock() {
-            if let Some(router) = guard.take() {
-                guard.replace(router.nest("/v1/", api));
-            }
+        if let Ok(mut guard) = ctx.api.router.lock()
+            && let Some(router) = guard.take()
+        {
+            guard.replace(router.nest("/v1/", api));
         }
         let bus = MempoolBusClient::new_from_bus(bus.new_handle()).await;
 
@@ -98,12 +98,11 @@ impl Module for Mempool {
                 self.handle_querynewcut(staking)
             }
             Some(event) = self.inner.processing_dps.join_next() => {
-                if let Ok(event) = log_error!(event, "Processing DPs from JoinSet") {
-                    if let Ok(event) = log_error!(event, "Error in running task") {
+                if let Ok(event) = log_error!(event, "Processing DPs from JoinSet")
+                    && let Ok(event) = log_error!(event, "Error in running task") {
                         let _ = log_error!(self.handle_internal_event(event).await,
                             "Handling InternalMempoolEvent in Mempool");
                     }
-                }
             }
             // own_lane.rs code below
             Some(result) = self.inner.processing_txs.join_next() => {

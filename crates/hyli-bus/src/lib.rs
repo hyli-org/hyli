@@ -14,7 +14,7 @@ pub use opentelemetry::KeyValue;
 // Re-export commonly used types and functions
 pub use bus::{
     BusClientReceiver, BusClientSender, BusEnvelope, BusMessage, BusReceiver, BusSender,
-    SharedMessageBus, DEFAULT_CAPACITY, LOW_CAPACITY,
+    DEFAULT_CAPACITY, LOW_CAPACITY, SharedMessageBus,
 };
 pub use modules::{Module, ModulesHandler, ShutdownClient};
 

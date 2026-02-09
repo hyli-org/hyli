@@ -4,8 +4,8 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use rand::Rng;
 use rand_seeder::SipHasher;
 use sdk::{
-    info, utils::parse_raw_calldata, Blob, BlobData, BlobIndex, Calldata, ContractAction,
-    ContractName, OnchainEffect, RegisterContractAction, RunResult, ZkContract,
+    Blob, BlobData, BlobIndex, Calldata, ContractAction, ContractName, OnchainEffect,
+    RegisterContractAction, RunResult, ZkContract, info, utils::parse_raw_calldata,
 };
 use uuid::Uuid;
 

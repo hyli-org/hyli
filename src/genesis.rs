@@ -13,8 +13,8 @@ use client_sdk::{
     },
 };
 use hydentity::{
-    client::tx_executor_handler::{register_identity, verify_identity},
     Hydentity,
+    client::tx_executor_handler::{register_identity, verify_identity},
 };
 use hyli_bus::{module_handle_messages, modules::ModulePersistOutput};
 use hyli_contract_sdk::{
@@ -26,9 +26,9 @@ use hyli_modules::{
     handle_messages, module_bus_client,
     modules::Module,
 };
-use hyllar::{client::tx_executor_handler::transfer, Hyllar, FAUCET_ID};
+use hyllar::{FAUCET_ID, Hyllar, client::tx_executor_handler::transfer};
 use serde::{Deserialize, Serialize};
-use smt_token::{account::AccountSMT, SmtTokenAction};
+use smt_token::{SmtTokenAction, account::AccountSMT};
 use staking::{
     client::tx_executor_handler::{delegate, deposit_for_fees, stake},
     state::Staking,

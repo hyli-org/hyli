@@ -1,4 +1,4 @@
-use crate::tcp::{tcp_client::TcpClient, tcp_server::TcpServer, TcpMessageLabel};
+use crate::tcp::{TcpMessageLabel, tcp_client::TcpClient, tcp_server::TcpServer};
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::Transaction;
 use strum_macros::IntoStaticStr;

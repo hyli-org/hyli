@@ -5,7 +5,7 @@ use crate::commands;
 use crate::commands::devnet::DevnetAction;
 use crate::error::{HylixError, HylixResult};
 use crate::logging::{
-    create_progress_bar_with_msg, log_error, log_info, log_success, ProgressExecutor,
+    ProgressExecutor, create_progress_bar_with_msg, log_error, log_info, log_success,
 };
 
 /// Execute the `hy test` command

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::mempool::dissemination::DisseminationManager;
 use crate::{
-    bus::{bus_client, BusClientReceiver, SharedMessageBus},
+    bus::{BusClientReceiver, SharedMessageBus, bus_client},
     consensus::Consensus,
     data_availability::DataAvailability,
     explorer::Explorer,
@@ -21,12 +21,12 @@ use crate::{
     tcp_server::TcpServer,
     utils::conf::Conf,
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use axum::Router;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli_crypto::BlstCrypto;
-use hyli_model::{api::NodeInfo, TxHash};
 use hyli_model::{NodeStateEvent, StatefulEvent, TxId};
+use hyli_model::{TxHash, api::NodeInfo};
 use hyli_modules::node_state::module::NodeStateModule;
 use hyli_modules::{
     module_bus_client, module_handle_messages,
@@ -219,7 +219,9 @@ impl Drop for NodeIntegrationCtx {
                 break;
             }
             if start_time.elapsed().as_secs() > 5 {
-                panic!("Node shutdown took too long - you probably need a multi-threaded tokio runtime");
+                panic!(
+                    "Node shutdown took too long - you probably need a multi-threaded tokio runtime"
+                );
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }

@@ -7,8 +7,8 @@ use sha3::{Digest, Sha3_256};
 use strum::IntoDiscriminant;
 use strum_macros::{EnumDiscriminants, IntoStaticStr};
 use utoipa::{
-    openapi::{ArrayBuilder, ObjectBuilder, RefOr, Schema},
     PartialSchema, ToSchema,
+    openapi::{ArrayBuilder, ObjectBuilder, RefOr, Schema},
 };
 
 use crate::{api::APIRegisterContract, *};
@@ -313,7 +313,10 @@ impl BlobTransaction {
     pub fn validate_identity(&self) -> Result<(), anyhow::Error> {
         // Checks that there is a blob that proves the identity
         let Some((identity, identity_contract_name)) = self.identity.0.rsplit_once("@") else {
-            anyhow::bail!("Transaction identity {} is not correctly formed. It should be in the form <id>@<contract_id_name>", self.identity.0);
+            anyhow::bail!(
+                "Transaction identity {} is not correctly formed. It should be in the form <id>@<contract_id_name>",
+                self.identity.0
+            );
         };
 
         if identity.is_empty() || identity_contract_name.is_empty() {
@@ -341,17 +344,19 @@ impl BlobTransaction {
 
 impl From<APIRegisterContract> for BlobTransaction {
     fn from(payload: APIRegisterContract) -> Self {
-        let mut blobs = vec![RegisterContractAction {
-            verifier: payload.verifier,
-            program_id: payload.program_id,
-            state_commitment: payload.state_commitment,
-            contract_name: payload.contract_name.clone(),
-            timeout_window: payload
-                .timeout_window
-                .map(|(a, b)| TimeoutWindow::timeout(BlockHeight(a), BlockHeight(b))),
-            constructor_metadata: payload.constructor_metadata.clone(),
-        }
-        .as_blob("hyli".into())];
+        let mut blobs = vec![
+            RegisterContractAction {
+                verifier: payload.verifier,
+                program_id: payload.program_id,
+                state_commitment: payload.state_commitment,
+                contract_name: payload.contract_name.clone(),
+                timeout_window: payload
+                    .timeout_window
+                    .map(|(a, b)| TimeoutWindow::timeout(BlockHeight(a), BlockHeight(b))),
+                constructor_metadata: payload.constructor_metadata.clone(),
+            }
+            .as_blob("hyli".into()),
+        ];
 
         if let Some(constructor_metadata) = &payload.constructor_metadata {
             blobs.push(Blob {

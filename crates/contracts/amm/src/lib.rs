@@ -337,10 +337,12 @@ mod tests {
 
         let result = state.verify_swap(("token1".to_string(), "token2".to_string()), 0, 50);
         assert!(result.is_err());
-        assert!(result
-            .err()
-            .unwrap()
-            .contains("Invalid swap: expected to receive"));
+        assert!(
+            result
+                .err()
+                .unwrap()
+                .contains("Invalid swap: expected to receive")
+        );
     }
 
     #[test]

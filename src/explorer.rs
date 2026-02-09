@@ -7,13 +7,13 @@ use anyhow::{Context, Result};
 use api::*;
 use axum::extract::ws::Message;
 use axum::{
+    Router,
     extract::{
-        ws::{WebSocket, WebSocketUpgrade},
         Path, State,
+        ws::{WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
     routing::get,
-    Router,
 };
 use futures::{SinkExt, StreamExt};
 use hyli_model::api::{
@@ -26,11 +26,11 @@ use hyli_modules::modules::indexer::MIGRATOR;
 use hyli_modules::{
     bus::SharedMessageBus,
     module_handle_messages,
-    modules::{module_bus_client, Module, SharedBuildApiCtx},
+    modules::{Module, SharedBuildApiCtx, module_bus_client},
 };
 use hyli_net::logged_task::logged_task;
 use sqlx::Row;
-use sqlx::{postgres::PgPoolOptions, PgPool, Pool, Postgres};
+use sqlx::{PgPool, Pool, Postgres, postgres::PgPoolOptions};
 use std::collections::HashMap;
 use tokio::select;
 use tokio::sync::{broadcast, mpsc};
@@ -113,11 +113,11 @@ impl Module for Explorer {
             tracing::error!("Failed to add OpenAPI for Indexer");
         }
 
-        if let Ok(mut guard) = ctx.1.router.lock() {
-            if let Some(router) = guard.take() {
-                guard.replace(router.nest("/v1/indexer", explorer.api(Some(&ctx.1))));
-                return Ok(explorer);
-            }
+        if let Ok(mut guard) = ctx.1.router.lock()
+            && let Some(router) = guard.take()
+        {
+            guard.replace(router.nest("/v1/indexer", explorer.api(Some(&ctx.1))));
+            return Ok(explorer);
         }
 
         anyhow::bail!("context router should be available");
@@ -155,11 +155,10 @@ impl Explorer {
                                     match maybe_transaction {
                                         Ok(transaction) => {
                                             if let Ok(json) = log_error!(serde_json::to_vec(&transaction),
-                                                "Serialize transaction to JSON") {
-                                                if ws_tx.send(Message::Binary(json.into())).await.is_err() {
+                                                "Serialize transaction to JSON")
+                                                && ws_tx.send(Message::Binary(json.into())).await.is_err() {
                                                     break;
                                                 }
-                                            }
                                         }
                                         _ => break,
                                     }
@@ -239,10 +238,10 @@ impl Explorer {
             .routes(routes!(api::get_contract_history))
             .split_for_parts();
 
-        if let Some(ctx) = ctx {
-            if let Ok(mut o) = ctx.openapi.lock() {
-                *o = o.clone().nest("/v1/indexer", api);
-            }
+        if let Some(ctx) = ctx
+            && let Ok(mut o) = ctx.openapi.lock()
+        {
+            *o = o.clone().nest("/v1/indexer", api);
         }
 
         router.with_state(self.state.clone())

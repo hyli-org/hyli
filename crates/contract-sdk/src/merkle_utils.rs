@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use sha2::{Digest, Sha256};
-use sparse_merkle_tree::{merge::MergeValue, traits::Hasher, MerkleProof, H256};
+use sparse_merkle_tree::{H256, MerkleProof, merge::MergeValue, traits::Hasher};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BorshableMerkleProof(pub MerkleProof);

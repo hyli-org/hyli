@@ -1,19 +1,19 @@
 //! Public API for interacting with the node.
 
-use crate::telemetry::{encode_registry_text, Registry};
+use crate::telemetry::{Registry, encode_registry_text};
 use crate::{
     bus::SharedMessageBus, log_error, module_bus_client, module_handle_messages, modules::Module,
 };
 use anyhow::{Context, Result};
 pub use axum::Router;
 use axum::{
+    Json,
     body::Body,
     extract::{DefaultBodyLimit, State},
-    http::{header, Request, Response, StatusCode},
+    http::{Request, Response, StatusCode, header},
     middleware::Next,
     response::IntoResponse,
     routing::get,
-    Json,
 };
 use sdk::{api::NodeInfo, *};
 use tokio::time::Instant;

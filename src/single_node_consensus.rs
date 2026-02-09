@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crate::bus::command_response::CmdRespClient;
 use crate::bus::BusClientSender;
+use crate::bus::command_response::CmdRespClient;
 use crate::consensus::ConfirmAckMarker;
 use crate::consensus::{CommittedConsensusProposal, ConsensusEvent, QueryConsensusInfo};
 use crate::genesis::GenesisEvent;
@@ -14,14 +14,14 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_bus::modules::ModulePersistOutput;
 use hyli_crypto::SharedBlstCrypto;
 use hyli_model::utils::TimestampMs;
-use hyli_modules::bus::command_response::Query;
 use hyli_modules::bus::SharedMessageBus;
+use hyli_modules::bus::command_response::Query;
 use hyli_modules::module_handle_messages;
+use hyli_modules::modules::Module;
 use hyli_modules::modules::admin::{
     QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse,
 };
 use hyli_modules::modules::module_bus_client;
-use hyli_modules::modules::Module;
 use hyli_net::clock::TimestampMsClock;
 use staking::state::Staking;
 use tracing::{debug, warn};
@@ -76,10 +76,10 @@ impl Module for SingleNodeConsensus {
             };
 
         let api = super::consensus::api::api(&bus, &ctx).await;
-        if let Ok(mut guard) = ctx.api.router.lock() {
-            if let Some(router) = guard.take() {
-                guard.replace(router.nest("/v1/consensus", api));
-            }
+        if let Ok(mut guard) = ctx.api.router.lock()
+            && let Some(router) = guard.take()
+        {
+            guard.replace(router.nest("/v1/consensus", api));
         }
 
         let bus = SingleNodeConsensusBusClient::new_from_bus(bus.new_handle()).await;
@@ -142,13 +142,13 @@ impl SingleNodeConsensus {
             }
             self.store.has_done_genesis = true;
             // Save the genesis block to disk
-            if let Some(file) = &self.file {
-                if let Err(e) = Self::save_on_disk(&self.config.data_directory, file, &self.store) {
-                    warn!(
-                        "Failed to save consensus single node storage on disk: {}",
-                        e
-                    );
-                }
+            if let Some(file) = &self.file
+                && let Err(e) = Self::save_on_disk(&self.config.data_directory, file, &self.store)
+            {
+                warn!(
+                    "Failed to save consensus single node storage on disk: {}",
+                    e
+                );
             }
             tracing::trace!("Genesis block done");
         }
@@ -242,7 +242,7 @@ impl SingleNodeConsensus {
 mod tests {
     use super::*;
     use crate::bus::dont_use_this::get_receiver;
-    use crate::bus::{bus_client, SharedMessageBus};
+    use crate::bus::{SharedMessageBus, bus_client};
     use crate::utils::conf::Conf;
     use anyhow::Result;
     use hyli_crypto::BlstCrypto;

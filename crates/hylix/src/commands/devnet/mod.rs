@@ -17,9 +17,9 @@ use crate::commands::bake::bake_devnet;
 use crate::config::HylixConfig;
 use crate::constants;
 use crate::error::{HylixError, HylixResult};
-use crate::logging::{log_info, ProgressExecutor};
+use crate::logging::{ProgressExecutor, log_info};
 
-use containers::{get_docker_container_status, start_containers, ContainerStatus};
+use containers::{ContainerStatus, get_docker_container_status, start_containers};
 use logs::{logs_all_nodes, logs_devnet};
 use multi_node::{join_devnet, start_multi_node_devnet};
 use single_node::{fork_devnet, pause_devnet, restart_devnet, start_devnet, stop_devnet};

@@ -5,7 +5,7 @@ use client_sdk::{
 };
 use hyllar::HyllarAction;
 use sdk::{
-    utils::as_hyli_output, Blob, BlobIndex, Calldata, ContractName, StateCommitment, ZkContract,
+    Blob, BlobIndex, Calldata, ContractName, StateCommitment, ZkContract, utils::as_hyli_output,
 };
 
 use crate::{Amm, AmmAction};

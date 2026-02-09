@@ -4,7 +4,7 @@
 use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
 use hyli_modules::utils::da_codec::{DataAvailabilityClient, DataAvailabilityServer};
 //use hyli_modules::modules::data_availability::blocks_memory::Blocks;
-use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
+use hyli_modules::telemetry::{Counter, Gauge, KeyValue, global_meter_or_panic};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::TcpEvent;
@@ -27,7 +27,7 @@ use std::{
 };
 use tokio::{
     task::JoinSet,
-    time::{sleep_until, Instant},
+    time::{Instant, sleep_until},
 };
 use tracing::{debug, error, info, trace, warn};
 
@@ -1017,8 +1017,8 @@ pub mod tests {
     #![allow(clippy::indexing_slicing)]
     use std::{collections::HashMap, time::Duration};
 
-    use super::module_bus_client;
     use super::Blocks;
+    use super::module_bus_client;
     use crate::data_availability::DaCatchupPolicy;
     use crate::{
         bus::BusClientSender,
@@ -1028,8 +1028,8 @@ pub mod tests {
     };
     use anyhow::Result;
     use hyli_modules::log_error;
-    use hyli_modules::node_state::module::NodeStateBusClient;
     use hyli_modules::node_state::NodeState;
+    use hyli_modules::node_state::module::NodeStateBusClient;
     use hyli_modules::utils::da_codec::DataAvailabilityClient;
     use hyli_modules::utils::da_codec::DataAvailabilityServer;
     use hyli_net::tcp::TcpEvent;
@@ -1343,10 +1343,9 @@ pub mod tests {
                 if let Ok(Some(
                     TcpEvent::Closed { socket_addr } | TcpEvent::Error { socket_addr, .. },
                 )) = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await
+                    && socket_addr == dropped_addr
                 {
-                    if socket_addr == dropped_addr {
-                        server.drop_peer_stream(socket_addr);
-                    }
+                    server.drop_peer_stream(socket_addr);
                 }
             }
         }
@@ -1362,13 +1361,11 @@ pub mod tests {
                     server.connected_clients()
                 );
             }
-            if let Ok(Some(
-                TcpEvent::Closed { socket_addr } | TcpEvent::Error { socket_addr, .. },
-            )) = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await
+            if let Ok(Some(TcpEvent::Closed { socket_addr } | TcpEvent::Error { socket_addr, .. })) =
+                tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await
+                && socket_addr != last_addr
             {
-                if socket_addr != last_addr {
-                    server.drop_peer_stream(socket_addr);
-                }
+                server.drop_peer_stream(socket_addr);
             }
         }
     }

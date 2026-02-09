@@ -233,9 +233,11 @@ mod tests {
         assert_eq!(token.balance_of(FAUCET_ID).unwrap(), TOTAL_SUPPLY - 500);
         assert_eq!(token.balance_of("recipient").unwrap(), 500);
 
-        assert!(token
-            .transfer(FAUCET_ID, "recipient", TOTAL_SUPPLY)
-            .is_err());
+        assert!(
+            token
+                .transfer(FAUCET_ID, "recipient", TOTAL_SUPPLY)
+                .is_err()
+        );
     }
 
     #[test]
@@ -253,9 +255,11 @@ mod tests {
 
         assert!(token.approve(FAUCET_ID, "spender", 300).is_ok());
 
-        assert!(token
-            .transfer_from(FAUCET_ID, "spender", "recipient", 200)
-            .is_ok());
+        assert!(
+            token
+                .transfer_from(FAUCET_ID, "spender", "recipient", 200)
+                .is_ok()
+        );
         assert_eq!(token.balance_of(FAUCET_ID).unwrap(), TOTAL_SUPPLY - 200);
         assert_eq!(token.balance_of("recipient").unwrap(), 200);
         assert_eq!(token.allowance(FAUCET_ID, "spender").unwrap(), 100);
@@ -287,9 +291,11 @@ mod tests {
         let mut token = Hyllar::default();
 
         // Approve an allowance for the spender
-        assert!(token
-            .approve(FAUCET_ID, "spender", TOTAL_SUPPLY + 1000)
-            .is_ok());
+        assert!(
+            token
+                .approve(FAUCET_ID, "spender", TOTAL_SUPPLY + 1000)
+                .is_ok()
+        );
 
         // Attempt to transfer more than the sender's balance
         let result = token.transfer_from(FAUCET_ID, "spender", "recipient", TOTAL_SUPPLY + 1);

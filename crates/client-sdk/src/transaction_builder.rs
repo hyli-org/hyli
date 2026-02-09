@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use sdk::{
     Blob, BlobIndex, BlobTransaction, Calldata, Contract, ContractAction, ContractName, Hashed,
     HyliOutput, Identity, ProofTransaction, StateCommitment, TxContext,

@@ -5,9 +5,9 @@ use anyhow::{Context, Result};
 use axum::http;
 use bytes::Buf;
 use http_body_util::BodyExt;
-use hyper::{body::Incoming, client::conn::http1, Method, Request, Response, Uri};
+use hyper::{Method, Request, Response, Uri, body::Incoming, client::conn::http1};
 use hyper_util::rt::TokioIo;
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use tracing::{error, warn};
 
 pub enum ContentType {

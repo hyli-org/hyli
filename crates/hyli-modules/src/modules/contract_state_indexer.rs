@@ -3,7 +3,7 @@ use crate::{
     log_debug, log_error, module_bus_client, module_handle_messages,
     modules::Module,
 };
-use anyhow::{anyhow, bail, Context, Error, Result};
+use anyhow::{Context, Error, Result, anyhow, bail};
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::contract_indexer::{ContractHandler, ContractStateStore};
 use hyli_bus::modules::ModulePersistOutput;
@@ -95,13 +95,13 @@ where
                 .nest(format!("/v1/indexer/contract/{}", ctx.contract_name), api);
         }
 
-        if let Ok(mut guard) = ctx.api.router.lock() {
-            if let Some(router) = guard.take() {
-                guard.replace(router.nest(
-                    format!("/v1/indexer/contract/{}", ctx.contract_name).as_str(),
-                    nested,
-                ));
-            }
+        if let Ok(mut guard) = ctx.api.router.lock()
+            && let Some(router) = guard.take()
+        {
+            guard.replace(router.nest(
+                format!("/v1/indexer/contract/{}", ctx.contract_name).as_str(),
+                nested,
+            ));
         }
 
         Ok(ContractStateIndexer {
@@ -176,13 +176,13 @@ where
             }
 
             let event = handler(state, &tx.tx, BlobIndex(index), tx_ctx.clone())?;
-            if TypeId::of::<Event>() != TypeId::of::<()>() {
-                if let Some(event) = event {
-                    let _ = log_debug!(
-                        self.bus.send(CSIBusEvent { event }),
-                        "Sending CSI bus event"
-                    );
-                }
+            if TypeId::of::<Event>() != TypeId::of::<()>()
+                && let Some(event) = event
+            {
+                let _ = log_debug!(
+                    self.bus.send(CSIBusEvent { event }),
+                    "Sending CSI bus event"
+                );
             }
         }
         Ok(())
@@ -250,7 +250,10 @@ where
                 let previous_state = contract.state.clone();
                 let state = State::construct_state(&self.contract_name, contract, metadata)?;
                 if previous_state != state.get_state_commitment() {
-                    bail!("Rebuilt contract '{}' state commitment does not match the one in the register effect", self.contract_name);
+                    bail!(
+                        "Rebuilt contract '{}' state commitment does not match the one in the register effect",
+                        self.contract_name
+                    );
                 }
                 tracing::warn!(cn = %self.contract_name, "📝 Contract '{}' re-built initial state", self.contract_name);
                 store.state = Some(state);

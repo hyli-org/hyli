@@ -1,8 +1,8 @@
 use crate::node_state::{
-    contract_registration::validate_contract_registration_metadata, ContractStatus,
-    ModifiedContractData, ModifiedContractFields, NodeStateProcessing,
+    ContractStatus, ModifiedContractData, ModifiedContractFields, NodeStateProcessing,
+    contract_registration::validate_contract_registration_metadata,
 };
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use borsh::BorshDeserialize;
 use sdk::*;
 use std::collections::{BTreeMap, HashMap};

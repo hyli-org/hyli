@@ -8,12 +8,12 @@ use std::{
 use anyhow::{Context, Result};
 use hyli_net::http::HttpClient;
 use sdk::{
+    BlobIndex, BlobTransaction, BlockHash, BlockHeight, ConsensusInfo, Contract, ContractName,
+    ProofTransaction, TxHash, TxId, UnsettledBlobTransaction, ValidatorPublicKey,
     api::{
         APIBlob, APIBlock, APIContract, APINodeContract, APIRegisterContract, APIStaking,
         APITransaction, NodeInfo, TransactionStatusDb, TransactionWithBlobs,
     },
-    BlobIndex, BlobTransaction, BlockHash, BlockHeight, ConsensusInfo, Contract, ContractName,
-    ProofTransaction, TxHash, TxId, UnsettledBlobTransaction, ValidatorPublicKey,
 };
 
 #[derive(Clone)]
@@ -402,7 +402,7 @@ impl DerefMut for NodeApiHttpClient {
 
 #[allow(dead_code)]
 pub mod test {
-    use sdk::{hyli_model_utils::TimestampMs, Hashed, TimeoutWindow};
+    use sdk::{Hashed, TimeoutWindow, hyli_model_utils::TimestampMs};
 
     use super::*;
     use std::sync::{Arc, Mutex};

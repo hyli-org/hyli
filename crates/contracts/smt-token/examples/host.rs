@@ -2,13 +2,13 @@ use std::collections::BTreeMap;
 
 use client_sdk::helpers::risc0::Risc0Prover;
 use hyli_smt_token::{
+    SmtTokenAction, SmtTokenContract,
     account::{Account, AccountSMT},
     client::tx_executor_handler::metadata::{PROGRAM_ID, SMT_TOKEN_ELF},
-    SmtTokenAction, SmtTokenContract,
 };
 use sdk::{
-    merkle_utils::BorshableMerkleProof, BlobIndex, Calldata, ContractAction, Identity,
-    StateCommitment, TxHash,
+    BlobIndex, Calldata, ContractAction, Identity, StateCommitment, TxHash,
+    merkle_utils::BorshableMerkleProof,
 };
 
 #[tokio::main]

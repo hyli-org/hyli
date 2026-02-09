@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use rand::{distr::Alphanumeric, Rng};
+use rand::{Rng, distr::Alphanumeric};
 use tracing::info;
 
 use crate::utils::deterministic_rng::deterministic_rng;

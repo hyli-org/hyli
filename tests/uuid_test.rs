@@ -10,8 +10,8 @@ use client_sdk::{
 use fixtures::ctx::{E2EContract, E2ECtx};
 
 use hydentity::{
-    client::tx_executor_handler::{register_identity, verify_identity},
     Hydentity,
+    client::tx_executor_handler::{register_identity, verify_identity},
 };
 use hyli::mempool::verifiers::verify_proof;
 use hyli_contract_sdk::{
@@ -46,7 +46,8 @@ impl E2EContract for UuidContract {
 
 #[test_log::test(tokio::test)]
 async fn test_uuid_registration() {
-    std::env::set_var("RISC0_DEV_MODE", "1");
+    // SAFETY: Called at test setup before any concurrent access to this env var.
+    unsafe { std::env::set_var("RISC0_DEV_MODE", "1") };
 
     let ctx = E2ECtx::new_multi_with_indexer(2, 500).await.unwrap();
     ctx.register_contract::<UuidContract>("hyli@hyli".into(), "uuid")

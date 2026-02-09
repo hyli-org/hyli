@@ -13,8 +13,8 @@ mod e2e_consensus {
     use client_sdk::rest_client::NodeApiClient;
     use client_sdk::transaction_builder::{ProvableBlobTx, TxExecutor, TxExecutorBuilder};
     use fixtures::test_helpers::send_transaction;
-    use hydentity::client::tx_executor_handler::{register_identity, verify_identity};
     use hydentity::Hydentity;
+    use hydentity::client::tx_executor_handler::{register_identity, verify_identity};
     use hyli::genesis::States;
     use hyli_contract_sdk::Identity;
     use hyli_contract_sdk::ZkContract;
@@ -24,7 +24,7 @@ mod e2e_consensus {
     use hyli_model::{ContractName, StateCommitment, TxHash};
     use hyllar::client::tx_executor_handler::transfer;
     use hyllar::erc20::ERC20;
-    use hyllar::{Hyllar, FAUCET_ID};
+    use hyllar::{FAUCET_ID, Hyllar};
     use staking::client::tx_executor_handler::{delegate, stake};
     use staking::state::Staking;
     use tracing::{info, warn};

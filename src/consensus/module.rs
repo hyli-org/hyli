@@ -2,14 +2,14 @@ use anyhow::Result;
 use hyli_bus::modules::ModulePersistOutput;
 use hyli_modules::{
     bus::SharedMessageBus,
-    modules::{files::CONSENSUS_BIN, Module},
+    modules::{Module, files::CONSENSUS_BIN},
 };
 use std::path::PathBuf;
 use tracing::warn;
 
 use super::{
-    api, consensus_bus_client::ConsensusBusClient, metrics::ConsensusMetrics, Consensus,
-    ConsensusStore,
+    Consensus, ConsensusStore, api, consensus_bus_client::ConsensusBusClient,
+    metrics::ConsensusMetrics,
 };
 use crate::model::SharedRunContext;
 
@@ -35,10 +35,10 @@ impl Module for Consensus {
         let metrics = ConsensusMetrics::global();
 
         let api = api::api(&bus, &ctx).await;
-        if let Ok(mut guard) = ctx.api.router.lock() {
-            if let Some(router) = guard.take() {
-                guard.replace(router.nest("/v1/consensus", api));
-            }
+        if let Ok(mut guard) = ctx.api.router.lock()
+            && let Some(router) = guard.take()
+        {
+            guard.replace(router.nest("/v1/consensus", api));
         }
         let bus = ConsensusBusClient::new_from_bus(bus.new_handle()).await;
 

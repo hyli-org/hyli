@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::{collections::HashSet, time::Duration};
 use tracing::{debug, info, trace, warn};
@@ -8,7 +8,7 @@ use crate::{
     consensus::role_follower::TicketVerificationError,
     model::{Slot, View},
 };
-use hyli_model::{utils::TimestampMs, ConsensusProposalHash, Hashed, Signed, SignedByValidator};
+use hyli_model::{ConsensusProposalHash, Hashed, Signed, SignedByValidator, utils::TimestampMs};
 use hyli_net::clock::TimestampMsClock;
 
 #[derive(Debug, BorshSerialize, BorshDeserialize, Default)]
@@ -68,10 +68,10 @@ pub(super) struct TimeoutRoleState {
 
 impl TimeoutRoleState {
     pub(super) fn update_highest_seen_prepare_qc(&mut self, slot: Slot, qc: PrepareQC) -> bool {
-        if let Some((s, _)) = &self.highest_seen_prepare_qc {
-            if slot < *s {
-                return false;
-            }
+        if let Some((s, _)) = &self.highest_seen_prepare_qc
+            && slot < *s
+        {
+            return false;
         }
         self.highest_seen_prepare_qc = Some((slot, qc));
         true
@@ -232,20 +232,18 @@ impl Consensus {
         if sender != *self.crypto.validator_pubkey()
             && received_slot == &self.bft_round_state.slot
             && received_view < &self.bft_round_state.view
-        {
-            if let Some((timeout_qc, tc_kind)) =
+            && let Some((timeout_qc, tc_kind)) =
                 self.cached_timeout_certificate(*received_slot, *received_view)
-            {
-                self.send_net_message(
-                    sender,
-                    ConsensusNetMessage::TimeoutCertificate(
-                        timeout_qc,
-                        tc_kind,
-                        *received_slot,
-                        *received_view,
-                    ),
-                )?;
-            }
+        {
+            self.send_net_message(
+                sender,
+                ConsensusNetMessage::TimeoutCertificate(
+                    timeout_qc,
+                    tc_kind,
+                    *received_slot,
+                    *received_view,
+                ),
+            )?;
         }
 
         if received_slot < &self.bft_round_state.slot {
@@ -447,7 +445,9 @@ impl Consensus {
                     // Simple case - we will aggregate a 'nil' certificate. We need 2f+1 NIL signed messages
                     // In principle we can't be here unless they're all NIL.
                     if !matches!(received_tk, TimeoutKind::NilProposal(_)) {
-                        bail!("Received timeout message with PrepareQC, but highest seen PrepareQC is not for this slot");
+                        bail!(
+                            "Received timeout message with PrepareQC, but highest seen PrepareQC is not for this slot"
+                        );
                     }
                     // Ergo, this should successfully aggregate.
                     let nil_quorum = QuorumCertificate(

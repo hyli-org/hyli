@@ -9,8 +9,8 @@ use client_sdk::transaction_builder::{
     ProvableBlobTx, StateUpdater, TxExecutor, TxExecutorBuilder, TxExecutorHandler,
 };
 use client_sdk::{contract_states, transaction_builder};
-use hydentity::client::tx_executor_handler::{register_identity, verify_identity};
 use hydentity::Hydentity;
+use hydentity::client::tx_executor_handler::{register_identity, verify_identity};
 use hyli_contract_sdk::{
     Blob, BlobData, BlobTransaction, BlockHeight, Calldata, ContractName, Hashed, HyliOutput,
     Identity, RegisterContractAction, StateCommitment, TimeoutWindow, Transaction, TxHash,
@@ -19,7 +19,7 @@ use hyli_contract_sdk::{
 use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
 use hyllar::client::tx_executor_handler::transfer;
 use hyllar::erc20::ERC20;
-use hyllar::{Hyllar, FAUCET_ID};
+use hyllar::{FAUCET_ID, Hyllar};
 use rand::Rng;
 use tokio::task::JoinSet;
 use tracing::{debug, info};
@@ -135,14 +135,16 @@ pub async fn setup_hyllar(users: u32) -> Result<Hyllar> {
 pub async fn setup(hyllar: Hyllar, url: String, verifier: String) -> Result<()> {
     let tx = BlobTransaction::new(
         Identity::new("hyli@hyli"),
-        vec![RegisterContractAction {
-            contract_name: "hyllar_test".into(),
-            verifier: verifier.into(),
-            program_id: hyli_contracts::HYLLAR_ID.to_vec().into(),
-            state_commitment: hyllar.commit(),
-            ..Default::default()
-        }
-        .as_blob("hyli".into())],
+        vec![
+            RegisterContractAction {
+                contract_name: "hyllar_test".into(),
+                verifier: verifier.into(),
+                program_id: hyli_contracts::HYLLAR_ID.to_vec().into(),
+                state_commitment: hyllar.commit(),
+                ..Default::default()
+            }
+            .as_blob("hyli".into()),
+        ],
     );
 
     let mut client = TcpApiClient::connect("loadtest_client".to_string(), url)
@@ -579,15 +581,17 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
 pub async fn send_massive_blob(users: u32, url: String) -> Result<()> {
     let tx = BlobTransaction::new(
         Identity::new("hyli@hyli"),
-        vec![RegisterContractAction {
-            contract_name: "massive_blob_test".into(),
-            verifier: "test".into(),
-            program_id: hyli_contracts::HYLLAR_ID.to_vec().into(),
-            state_commitment: StateCommitment(vec![1]),
-            timeout_window: Some(TimeoutWindow::timeout(BlockHeight(2), BlockHeight(2))),
-            ..Default::default()
-        }
-        .as_blob("hyli".into())],
+        vec![
+            RegisterContractAction {
+                contract_name: "massive_blob_test".into(),
+                verifier: "test".into(),
+                program_id: hyli_contracts::HYLLAR_ID.to_vec().into(),
+                state_commitment: StateCommitment(vec![1]),
+                timeout_window: Some(TimeoutWindow::timeout(BlockHeight(2), BlockHeight(2))),
+                ..Default::default()
+            }
+            .as_blob("hyli".into()),
+        ],
     );
 
     let mut client = TcpApiClient::connect("loadtest_client".to_string(), url.clone())

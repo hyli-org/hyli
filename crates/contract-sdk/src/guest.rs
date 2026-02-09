@@ -60,7 +60,7 @@ use alloc::vec::Vec;
 use borsh::BorshDeserialize;
 use hyli_model::Calldata;
 
-use crate::{utils::as_hyli_output, HyliOutput};
+use crate::{HyliOutput, utils::as_hyli_output};
 use crate::{RunResult, TransactionalZkContract, ZkContract};
 
 pub trait GuestEnv {

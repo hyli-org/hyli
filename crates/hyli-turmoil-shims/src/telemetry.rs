@@ -130,8 +130,8 @@ pub fn init_test_meter_provider() -> Arc<dyn MeterProvider + Send + Sync> {
     init_global_meter_provider(opentelemetry_sdk::metrics::SdkMeterProvider::default())
 }
 
-pub fn init_prometheus_registry_meter_provider(
-) -> opentelemetry_sdk::metrics::MetricResult<Registry> {
+pub fn init_prometheus_registry_meter_provider()
+-> opentelemetry_sdk::metrics::MetricResult<Registry> {
     let registry = Registry::new();
     let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
         .with_reader(

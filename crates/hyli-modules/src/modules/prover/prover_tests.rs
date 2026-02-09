@@ -1,12 +1,12 @@
 use crate::node_state::{
-    test::{make_hyli_output_with_state, new_node_state, new_proof_tx},
     NodeState,
+    test::{make_hyli_output_with_state, new_node_state, new_proof_tx},
 };
 
 use super::*;
 use client_sdk::helpers::test::TxExecutorTestProver;
 use client_sdk::rest_client::test::NodeApiMockClient;
-use rand::{rng, Rng};
+use rand::{Rng, rng};
 use sdk::*;
 use std::sync::Arc;
 use tempfile::tempdir;
@@ -1251,8 +1251,8 @@ async fn test_auto_prover_artificial_middle_blob_failure_buffering() -> Result<(
     Ok(())
 }
 
-async fn scenario_auto_prover_artificial_middle_blob_failure_setup(
-) -> (NodeState, Arc<NodeApiMockClient>) {
+async fn scenario_auto_prover_artificial_middle_blob_failure_setup()
+-> (NodeState, Arc<NodeApiMockClient>) {
     let mut node_state = new_node_state().await;
     let api_client = NodeApiMockClient::new();
 
@@ -1454,14 +1454,18 @@ async fn test_auto_prover_early_fail_while_buffered() -> Result<()> {
     // Should settle the final TX
     tracing::info!("✨ Block 14");
     let block = node_state.craft_new_block_and_handle(14, proofs);
-    assert!(block
-        .stateful_events
-        .events
-        .iter()
-        .any(|(tx_id, event)| matches!(event, StatefulEvent::SettledTx(_)) && tx_id.1 == hash));
-    assert!(node_state
-        .get_earliest_unsettled_height(&ContractName::new("test"))
-        .is_none(),);
+    assert!(
+        block
+            .stateful_events
+            .events
+            .iter()
+            .any(|(tx_id, event)| matches!(event, StatefulEvent::SettledTx(_)) && tx_id.1 == hash)
+    );
+    assert!(
+        node_state
+            .get_earliest_unsettled_height(&ContractName::new("test"))
+            .is_none(),
+    );
 
     Ok(())
 }
@@ -1509,10 +1513,10 @@ async fn test_auto_prover_catchup_mixed_pending_and_failures() -> Result<()> {
                 .events
                 .iter()
                 .find_map(|(tx_id, ev)| {
-                    if tx_id.1 == tx.hashed() {
-                        if let StatefulEvent::SequencedTx(tx, ctx) = ev {
-                            return Some((tx_id.clone(), tx.clone(), ctx.clone()));
-                        }
+                    if tx_id.1 == tx.hashed()
+                        && let StatefulEvent::SequencedTx(tx, ctx) = ev
+                    {
+                        return Some((tx_id.clone(), tx.clone(), ctx.clone()));
                     }
                     None
                 })

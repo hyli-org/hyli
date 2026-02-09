@@ -1,6 +1,6 @@
 use std::{borrow::Cow, time::Duration};
 
-use tracing_subscriber::{fmt, prelude::*, EnvFilter, Registry};
+use tracing_subscriber::{EnvFilter, Registry, fmt, prelude::*};
 
 use crate::{error::HylixError, error::HylixResult};
 

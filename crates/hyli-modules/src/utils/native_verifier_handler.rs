@@ -1,6 +1,6 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::transaction_builder::TxExecutorHandler;
-use sdk::{verifiers::NativeVerifiers, StateCommitment};
+use sdk::{StateCommitment, verifiers::NativeVerifiers};
 
 use crate::node_state::native_verifiers::verify;
 

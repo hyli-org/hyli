@@ -4,8 +4,8 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
-use hyli_net::tcp::intercept::{set_message_hook_scoped, MessageAction};
-use hyli_net::tcp::{decode_tcp_payload, tcp_client::TcpClient, tcp_server::TcpServer, TcpEvent};
+use hyli_net::tcp::intercept::{MessageAction, set_message_hook_scoped};
+use hyli_net::tcp::{TcpEvent, decode_tcp_payload, tcp_client::TcpClient, tcp_server::TcpServer};
 use hyli_turmoil_shims::init_test_meter_provider;
 use sdk::{DataProposal, Transaction};
 

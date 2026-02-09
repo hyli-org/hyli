@@ -1,7 +1,7 @@
 //! Mempool logic & pending transaction management.
 
 use crate::{
-    bus::{command_response::Query, BusClientSender},
+    bus::{BusClientSender, command_response::Query},
     consensus::{CommittedConsensusProposal, ConsensusEvent},
     genesis::GenesisEvent,
     model::*,
@@ -10,7 +10,7 @@ use crate::{
     },
     utils::{conf::SharedConf, serialize::BorshableIndexMap},
 };
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use api::RestApiMessage;
 use block_construction::BlockUnderConstruction;
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -37,7 +37,7 @@ use verify_tx::DataProposalVerdict;
 // Pick one of the two implementations by changing the re-export below.
 // pub use storage_memory::{shared_lanes_storage, LanesStorage};
 use hyli_crypto::BlstCrypto;
-pub use storage_fjall::{shared_lanes_storage, LanesStorage};
+pub use storage_fjall::{LanesStorage, shared_lanes_storage};
 use strum_macros::IntoStaticStr;
 use tracing::{debug, info};
 

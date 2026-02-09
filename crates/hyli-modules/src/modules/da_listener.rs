@@ -15,8 +15,8 @@ use crate::log_error;
 use crate::{
     bus::SharedMessageBus,
     modules::{
-        block_processor::BlockProcessor, da_listener_metrics::DaTcpClientMetrics,
-        data_availability::blocks_fjall::Blocks, Module,
+        Module, block_processor::BlockProcessor, da_listener_metrics::DaTcpClientMetrics,
+        data_availability::blocks_fjall::Blocks,
     },
     node_state::module::NodeStateModule,
     utils::da_codec::DataAvailabilityClient,
@@ -248,10 +248,10 @@ impl<P: BlockProcessor + 'static> SignedDAListener<P> {
     }
 
     async fn process_buffered_blocks(&mut self) -> Result<()> {
-        if let Some((height, _)) = self.block_buffer.first_key_value() {
-            if *height > self.current_block {
-                return Ok(());
-            }
+        if let Some((height, _)) = self.block_buffer.first_key_value()
+            && *height > self.current_block
+        {
+            return Ok(());
         }
 
         while let Some((height, block)) = self.block_buffer.pop_first() {
@@ -432,14 +432,11 @@ impl<P: BlockProcessor + 'static> SignedDAListener<P> {
             entries.sort_by_key(|e| e.file_name());
             for entry in entries {
                 let path = entry.path();
-                if path.extension().map(|e| e == "bin").unwrap_or(false) {
-                    if let Ok(bytes) = std::fs::read(&path) {
-                        if let Ok((block, tx_count)) =
-                            borsh::from_slice::<(SignedBlock, usize)>(&bytes)
-                        {
-                            blocks.push((block, tx_count));
-                        }
-                    }
+                if path.extension().map(|e| e == "bin").unwrap_or(false)
+                    && let Ok(bytes) = std::fs::read(&path)
+                    && let Ok((block, tx_count)) = borsh::from_slice::<(SignedBlock, usize)>(&bytes)
+                {
+                    blocks.push((block, tx_count));
                 }
                 yield_now().await; // Yield to allow other tasks to run
             }

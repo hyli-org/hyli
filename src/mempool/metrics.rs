@@ -1,5 +1,5 @@
 use hyli_model::LaneId;
-use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
+use hyli_modules::telemetry::{Counter, Gauge, KeyValue, global_meter_or_panic};
 
 use crate::model::ValidatorPublicKey;
 

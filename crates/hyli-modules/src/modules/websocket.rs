@@ -4,24 +4,24 @@ use std::{collections::HashMap, sync::Arc};
 use crate::bus::{BusClientSender, BusMessage, SharedMessageBus};
 use crate::modules::Module;
 use crate::{log_warn, module_bus_client, module_handle_messages};
-use anyhow::{anyhow, Context, Error, Result};
+use anyhow::{Context, Error, Result, anyhow};
 use axum::extract::ConnectInfo;
 use axum::{
+    Router,
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::StatusCode,
     response::IntoResponse,
     routing::get,
-    Router,
 };
 use futures::{
     sink::SinkExt,
     stream::{SplitSink, SplitStream, StreamExt},
 };
 use hyli_net::net::{HyliNetIntoMakeServiceWithconnectInfo, HyliNetSocketAddr};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::{sync::Mutex, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};

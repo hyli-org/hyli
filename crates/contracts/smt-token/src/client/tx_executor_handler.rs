@@ -1,22 +1,22 @@
 use std::collections::{BTreeMap, HashMap};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use client_sdk::transaction_builder::{ProvableBlobTx, TxExecutorHandler};
 use sdk::{
+    Calldata, ContractName, HyliOutput, Identity, StateCommitment, StructuredBlob,
     merkle_utils::BorshableMerkleProof,
     utils::{as_hyli_output, parse_calldata},
-    Calldata, ContractName, HyliOutput, Identity, StateCommitment, StructuredBlob,
 };
 
 pub mod metadata {
     pub const SMT_TOKEN_ELF: &[u8] = include_bytes!("../../smt-token.img");
     pub const PROGRAM_ID: [u8; 32] = sdk::str_to_u8(include_str!("../../smt-token.txt"));
 }
-use sparse_merkle_tree::{traits::StoreReadOps, SparseMerkleTree};
+use sparse_merkle_tree::{SparseMerkleTree, traits::StoreReadOps};
 
 use crate::{
-    account::{Account, AccountSMT},
     SmtTokenAction, SmtTokenContract,
+    account::{Account, AccountSMT},
 };
 
 pub type SmtTokenProvableState = AccountSMT;

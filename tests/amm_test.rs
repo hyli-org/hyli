@@ -10,8 +10,8 @@ use anyhow::Result;
 
 mod e2e_amm {
     use amm::{
-        client::tx_executor_handler::{new_pair, swap},
         Amm,
+        client::tx_executor_handler::{new_pair, swap},
     };
 
     use client_sdk::{
@@ -21,16 +21,16 @@ mod e2e_amm {
     };
     use fixtures::proofs::generate_recursive_proof;
     use hydentity::{
-        client::tx_executor_handler::{register_identity, verify_identity},
         Hydentity,
+        client::tx_executor_handler::{register_identity, verify_identity},
     };
     use hyli_contract_sdk::{Blob, Calldata, ContractName, HyliOutput};
     use hyli_contracts::{AMM_ELF, AMM_ID, HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
     use hyli_model::api::TransactionStatusDb;
     use hyllar::{
+        FAUCET_ID, Hyllar,
         client::tx_executor_handler::{approve, transfer},
         erc20::ERC20,
-        Hyllar, FAUCET_ID,
     };
 
     use crate::fixtures::contracts::{AmmTestContract, HyllarTestContract};
@@ -203,10 +203,9 @@ mod e2e_amm {
                 .indexer_client()
                 .get_transaction_with_hash(&tx_hash)
                 .await
+                && tx.transaction_status == TransactionStatusDb::Success
             {
-                if tx.transaction_status == TransactionStatusDb::Success {
-                    break;
-                }
+                break;
             }
             tries += 1;
             if tries >= 10 {

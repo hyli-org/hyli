@@ -7,13 +7,13 @@ use futures::{SinkExt, StreamExt};
 use sdk::hyli_model_utils::TimestampMs;
 
 use crate::{clock::TimestampMsClock, metrics::TcpClientMetrics, net::TcpStream};
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use tracing::{debug, info, trace, warn};
 
 #[cfg(feature = "turmoil")]
 use super::intercept;
 use super::{
-    decode_tcp_payload, framed_stream, to_tcp_message, FramedStream, TcpMessage, TcpMessageLabel,
+    FramedStream, TcpMessage, TcpMessageLabel, decode_tcp_payload, framed_stream, to_tcp_message,
 };
 
 type TcpSender = SplitSink<FramedStream, Bytes>;

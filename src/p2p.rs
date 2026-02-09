@@ -6,27 +6,27 @@ use crate::{
     bus::BusClientSender, consensus::ConsensusNetMessage, mempool::MempoolNetMessage,
     model::SharedRunContext, utils::conf::SharedConf,
 };
-use anyhow::{bail, Context, Error, Result};
+use anyhow::{Context, Error, Result, bail};
 use hyli_crypto::{BlstCrypto, SharedBlstCrypto};
-use hyli_model::{utils::TimestampMs, BlockHeight, NodeStateEvent, ValidatorPublicKey};
-use hyli_modules::telemetry::{global_meter_or_panic, Histogram, KeyValue};
+use hyli_model::{BlockHeight, NodeStateEvent, ValidatorPublicKey, utils::TimestampMs};
+use hyli_modules::telemetry::{Histogram, KeyValue, global_meter_or_panic};
 use hyli_modules::{
     bus::{BusMessage, SharedMessageBus},
     log_warn, module_handle_messages,
-    modules::{module_bus_client, Module},
+    modules::{Module, module_bus_client},
     utils::tracing::extract,
 };
 use hyli_net::{
     clock::TimestampMsClock,
     tcp::{
-        p2p_server::{P2PServer, P2PServerEvent, P2PTimeouts},
         Canal, TcpHeaders,
+        p2p_server::{P2PServer, P2PServerEvent, P2PTimeouts},
     },
 };
 use network::{
     IntoHeaderSignableData, MsgHeader, MsgWithHeader, NetMessage, OutboundMessage, PeerEvent,
 };
-use tracing::{info, trace, warn, Instrument};
+use tracing::{Instrument, info, trace, warn};
 
 pub mod network;
 

@@ -14,12 +14,12 @@ mod e2e_smt_token {
         transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
     };
     use hydentity::{
-        client::tx_executor_handler::{register_identity, verify_identity},
         Hydentity,
+        client::tx_executor_handler::{register_identity, verify_identity},
     };
     use hyli_contract_sdk::{Blob, Calldata, ContractName, HyliOutput};
     use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, SMT_TOKEN_ELF, SMT_TOKEN_ID};
-    use smt_token::{client::tx_executor_handler::SmtTokenProvableState, FAUCET_ID};
+    use smt_token::{FAUCET_ID, client::tx_executor_handler::SmtTokenProvableState};
 
     use super::*;
 

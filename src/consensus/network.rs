@@ -1,6 +1,6 @@
 use borsh::{
-    io::{self, Read, Write},
     BorshDeserialize, BorshSerialize,
+    io::{self, Read, Write},
 };
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
@@ -466,11 +466,11 @@ impl IntoHeaderSignableData for ConsensusNetMessage {
             ConsensusNetMessage::Prepare(cp, t, v) => {
                 borsh::to_vec(&(cp.hashed(), t, v)).unwrap_or_default()
             }
-            ConsensusNetMessage::PrepareVote(pv) => pv.msg.0 .0.clone(),
+            ConsensusNetMessage::PrepareVote(pv) => pv.msg.0.0.clone(),
             ConsensusNetMessage::Confirm(qc, cph) => {
                 borsh::to_vec(&(&qc.signature, cph)).unwrap_or_default()
             }
-            ConsensusNetMessage::ConfirmAck(ca) => ca.msg.0 .0.clone(),
+            ConsensusNetMessage::ConfirmAck(ca) => ca.msg.0.0.clone(),
             ConsensusNetMessage::Commit(qc, cph) => borsh::to_vec(&(qc, cph)).unwrap_or_default(),
             ConsensusNetMessage::Timeout((SignedByValidator { signature, .. }, tk)) => match tk {
                 TimeoutKind::NilProposal(..) => borsh::to_vec(signature),

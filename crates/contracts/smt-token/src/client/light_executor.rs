@@ -1,12 +1,12 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::light_executor::{
-    parse_structured_blob_from_tx, LightContractExecutor, LightExecutorOutput,
+    LightContractExecutor, LightExecutorOutput, parse_structured_blob_from_tx,
 };
 use sdk::{BlobIndex, BlobTransaction, Identity, TxContext};
 use std::collections::{BTreeMap, HashMap};
 
-use crate::{account::Account, SmtTokenAction, FAUCET_ID, TOTAL_SUPPLY};
+use crate::{FAUCET_ID, SmtTokenAction, TOTAL_SUPPLY, account::Account};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct LightSmtExecutor {
@@ -196,7 +196,7 @@ impl LightSmtExecutor {
 #[cfg(test)]
 mod tests {
     use hyli_smt_token::client::light_executor::LightSmtExecutor;
-    use hyli_smt_token::{SmtTokenAction, FAUCET_ID, TOTAL_SUPPLY};
+    use hyli_smt_token::{FAUCET_ID, SmtTokenAction, TOTAL_SUPPLY};
     use sdk::Identity;
 
     fn identity(name: &str) -> Identity {

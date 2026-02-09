@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_modules::bus::BusEnvelope;
 use std::collections::HashSet;
@@ -9,7 +9,7 @@ use crate::{
     mempool::QueryNewCut,
     model::{Hashed, ValidatorPublicKey},
 };
-use hyli_model::{utils::TimestampMs, ConsensusProposal, ConsensusStakingAction};
+use hyli_model::{ConsensusProposal, ConsensusStakingAction, utils::TimestampMs};
 use staking::state::MIN_STAKE;
 use tracing::{debug, error, trace};
 

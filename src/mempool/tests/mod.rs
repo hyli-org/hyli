@@ -296,9 +296,9 @@ impl MempoolTestCtx {
                     if let NetMessage::MempoolMessage(msg) = msg {
                         if validator_id != to {
                             panic!(
-                            "{description}: Send message was sent to {validator_id} instead of {}",
-                            to
-                        );
+                                "{description}: Send message was sent to {validator_id} instead of {}",
+                                to
+                            );
                         }
 
                         msg
@@ -350,12 +350,16 @@ impl MempoolTestCtx {
                     if let NetMessage::MempoolMessage(msg) = net_msg {
                         msg
                     } else {
-                        println!("{description}: Mempool OutboundMessage message is missing, found {net_msg}");
+                        println!(
+                            "{description}: Mempool OutboundMessage message is missing, found {net_msg}"
+                        );
                         self.assert_broadcast(description.as_str()).await
                     }
                 }
                 _ => {
-                    println!("{description}: Broadcast OutboundMessage message is missing, found {rec:?}");
+                    println!(
+                        "{description}: Broadcast OutboundMessage message is missing, found {rec:?}"
+                    );
                     self.assert_broadcast(description.as_str()).await
                 }
             }
@@ -563,14 +567,16 @@ pub fn create_data_vote(
 pub fn make_register_contract_tx(name: ContractName) -> Transaction {
     BlobTransaction::new(
         "hyli@hyli",
-        vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![]),
-            state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-            contract_name: name,
-            ..Default::default()
-        }
-        .as_blob("hyli".into())],
+        vec![
+            RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: name,
+                ..Default::default()
+            }
+            .as_blob("hyli".into()),
+        ],
     )
     .into()
 }
@@ -858,22 +864,24 @@ async fn test_sync_reply_buffered_without_buc() -> Result<()> {
     // Sync reply arrives before BUC exists -> buffer it.
     let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
         lane_id.clone(),
-        vec![ctx
-            .mempool
-            .crypto
-            .sign((dp1.hashed(), cumul_size1))
-            .expect("should sign")],
+        vec![
+            ctx.mempool
+                .crypto
+                .sign((dp1.hashed(), cumul_size1))
+                .expect("should sign"),
+        ],
         dp1.clone(),
     ))?;
     let handle = ctx.mempool.handle_net_message(signed_msg).await;
     assert_ok!(handle, "Should handle net message");
-    assert!(ctx
-        .mempool
-        .inner
-        .buffered_entries
-        .get(&lane_id)
-        .and_then(|m| m.get(&dp1.hashed()))
-        .is_some());
+    assert!(
+        ctx.mempool
+            .inner
+            .buffered_entries
+            .get(&lane_id)
+            .and_then(|m| m.get(&dp1.hashed()))
+            .is_some()
+    );
     assert!(!ctx.mempool.lanes.contains(&lane_id, &dp1.hashed()));
 
     Ok(())
@@ -925,11 +933,12 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
     for (dp, size) in [(dp1.clone(), cumul_size1), (dp2.clone(), cumul_size2)] {
         let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
             lane_id.clone(),
-            vec![ctx
-                .mempool
-                .crypto
-                .sign((dp.hashed(), size))
-                .expect("should sign")],
+            vec![
+                ctx.mempool
+                    .crypto
+                    .sign((dp.hashed(), size))
+                    .expect("should sign"),
+            ],
             dp,
         ))?;
         let handle = ctx.mempool.handle_net_message(signed_msg).await;
@@ -940,11 +949,12 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
     let other_size = LaneBytesSize(dp_other.estimate_size() as u64);
     let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
         lane_id.clone(),
-        vec![ctx
-            .mempool
-            .crypto
-            .sign((dp_other.hashed(), other_size))
-            .expect("should sign")],
+        vec![
+            ctx.mempool
+                .crypto
+                .sign((dp_other.hashed(), other_size))
+                .expect("should sign"),
+        ],
         dp_other.clone(),
     ))?;
     let handle = ctx.mempool.handle_net_message(signed_msg).await;
@@ -971,11 +981,12 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
     // Reply for dp3 should store dp3 and leave buffered entries intact.
     let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
         lane_id.clone(),
-        vec![ctx
-            .mempool
-            .crypto
-            .sign((dp3.hashed(), cumul_size3))
-            .expect("should sign")],
+        vec![
+            ctx.mempool
+                .crypto
+                .sign((dp3.hashed(), cumul_size3))
+                .expect("should sign"),
+        ],
         dp3.clone(),
     ))?;
     let handle = ctx.mempool.handle_net_message(signed_msg).await;
@@ -1018,13 +1029,14 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
     assert!(buffered.contains_key(&dp_other.hashed()));
 
     // Unrelated buffered entry remains.
-    assert!(ctx
-        .mempool
-        .inner
-        .buffered_entries
-        .get(&lane_id)
-        .and_then(|m| m.get(&dp_other.hashed()))
-        .is_some());
+    assert!(
+        ctx.mempool
+            .inner
+            .buffered_entries
+            .get(&lane_id)
+            .and_then(|m| m.get(&dp_other.hashed()))
+            .is_some()
+    );
 
     Ok(())
 }
@@ -1058,11 +1070,12 @@ async fn test_sync_reply_materialize_holes_consumes_buffered_latest_cut() -> Res
     ] {
         let signed_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncReply(
             lane_id.clone(),
-            vec![ctx
-                .mempool
-                .crypto
-                .sign((dp.hashed(), size))
-                .expect("should sign")],
+            vec![
+                ctx.mempool
+                    .crypto
+                    .sign((dp.hashed(), size))
+                    .expect("should sign"),
+            ],
             dp,
         ))?;
         let handle = ctx.mempool.handle_net_message(signed_msg).await;
@@ -1449,10 +1462,11 @@ async fn test_processed_dp_fails_when_tip_moved_past_it() -> Result<()> {
     assert!(!ctx.mempool.lanes.contains(&lane_id, &dp1_hash));
 
     // Processing DP2 now should fail because tip moved past it.
-    assert!(ctx
-        .mempool
-        .on_processed_data_proposal(lane_id.clone(), DataProposalVerdict::Vote, dp2.clone())
-        .is_err());
+    assert!(
+        ctx.mempool
+            .on_processed_data_proposal(lane_id.clone(), DataProposalVerdict::Vote, dp2.clone())
+            .is_err()
+    );
 
     assert!(!ctx.mempool.lanes.contains(&lane_id, &dp2_hash));
 

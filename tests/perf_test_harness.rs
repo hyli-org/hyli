@@ -69,7 +69,8 @@ async fn setup_4_nodes_catchup() -> Result<()> {
 #[ignore = "This is intended to easily start a few nodes locally for devs"]
 #[test_log::test(tokio::test)]
 async fn custom_setup() -> Result<()> {
-    std::env::set_var("RISC0_DEV_MODE", "1");
+    // SAFETY: Called at test setup before any concurrent access to this env var.
+    unsafe { std::env::set_var("RISC0_DEV_MODE", "1") };
 
     let mut conf_maker = ConfMaker::default();
     conf_maker.default.consensus.slot_duration = Duration::from_millis(1000);

@@ -1,12 +1,12 @@
-use rand::{rng, rngs::StdRng, SeedableRng};
+use rand::{SeedableRng, rng, rngs::StdRng};
 
 #[cfg(feature = "turmoil")]
 mod turmoil_seed {
-    use rand::{rngs::StdRng, SeedableRng};
+    use rand::{SeedableRng, rngs::StdRng};
     use std::cell::{Cell, RefCell};
     use std::sync::{
-        atomic::{AtomicU64, Ordering},
         Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
     };
 
     const SEED_ENV: &str = "HYLI_TURMOIL_SEED";
@@ -88,7 +88,7 @@ mod turmoil_seed {
 }
 
 #[cfg(feature = "turmoil")]
-pub use turmoil_seed::{set_deterministic_seed, DeterministicSeedGuard};
+pub use turmoil_seed::{DeterministicSeedGuard, set_deterministic_seed};
 
 /// Returns a reproducible RNG when `HYLI_TURMOIL_SEED` is set, otherwise a fresh RNG.
 pub fn deterministic_rng() -> StdRng {

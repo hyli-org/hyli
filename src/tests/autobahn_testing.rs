@@ -2,16 +2,16 @@
 
 use super::autobahn_testing_macros::*;
 use crate::{
-    bus::{bus_client, command_response::Query, dont_use_this::get_receiver, SharedMessageBus},
+    bus::{SharedMessageBus, bus_client, command_response::Query, dont_use_this::get_receiver},
     consensus::{
-        test::ConsensusTestCtx, ConsensusEvent, ConsensusNetMessage, TCKind, Ticket, TimeoutKind,
+        ConsensusEvent, ConsensusNetMessage, TCKind, Ticket, TimeoutKind, test::ConsensusTestCtx,
     },
     mempool::{
-        tests::{make_register_contract_tx, MempoolTestCtx},
         MempoolNetMessage, QueryNewCut,
+        tests::{MempoolTestCtx, make_register_contract_tx},
     },
     model::*,
-    p2p::{network::OutboundMessage, P2PCommand},
+    p2p::{P2PCommand, network::OutboundMessage},
 };
 use assertables::assert_matches;
 use futures::future::join_all;
@@ -19,7 +19,7 @@ use hyli_crypto::BlstCrypto;
 use hyli_model::utils::TimestampMs;
 use hyli_modules::handle_messages;
 use hyli_modules::{
-    bus::{dont_use_this::get_sender, BusEnvelope},
+    bus::{BusEnvelope, dont_use_this::get_sender},
     node_state::NodeState,
 };
 use tracing::info;
@@ -380,7 +380,7 @@ async fn mempool_votes_before_data_proposal() {
             node.mempool_ctx
                 .last_lane_entry(&lane_id)
                 .0
-                 .0
+                .0
                 .signatures
                 .len(),
             n
