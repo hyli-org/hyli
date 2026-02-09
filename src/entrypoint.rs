@@ -289,8 +289,8 @@ pub async fn common_main(
                 }
             }
 
-            let catchup_response = catchup_response
-                .context("Fast catchup failed: no peer responded successfully")?;
+            let catchup_response =
+                catchup_response.context("Fast catchup failed: no peer responded successfully")?;
 
             node_state_override =
                 borsh::from_slice(catchup_response.node_state_store.as_slice()).ok();
