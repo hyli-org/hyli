@@ -12,7 +12,7 @@ mod otlp_metrics {
     use opentelemetry_otlp::WithExportConfig;
     use opentelemetry_sdk::metrics::periodic_reader_with_async_runtime::PeriodicReader;
     use opentelemetry_sdk::metrics::{MetricResult, SdkMeterProvider};
-    use opentelemetry_sdk::{runtime, Resource};
+    use opentelemetry_sdk::{Resource, runtime};
 
     pub fn init(
         endpoint: String,
