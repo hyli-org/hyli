@@ -4,7 +4,10 @@ use std::time::Duration;
 use anyhow::bail;
 use anyhow::Result;
 use hyli_turmoil_shims::global_meter_or_panic;
-use opentelemetry::{metrics::Histogram, KeyValue};
+use opentelemetry::{
+    metrics::{Gauge, Histogram},
+    KeyValue,
+};
 use tokio::sync::Mutex;
 
 use crate::bus::{BusClientSender, BusMessage, BusReceiver};
@@ -117,6 +120,7 @@ where
 
 pub struct EventLoopMetrics {
     latency: Histogram<u64>,
+    branch: Gauge<u64>,
 }
 
 impl EventLoopMetrics {
@@ -125,7 +129,12 @@ impl EventLoopMetrics {
 
         EventLoopMetrics {
             latency: my_meter.u64_histogram("event_loop_latency").build(),
+            branch: my_meter.u64_gauge("event_loop_branch_gauge").build(),
         }
+    }
+
+    pub fn record_branch(&self, branch_index: u64) {
+        self.branch.record(branch_index, &[]);
     }
 }
 impl LatencyMetricSink for EventLoopMetrics {
@@ -159,13 +168,13 @@ macro_rules! handle_messages {
         use $crate::bus::command_response::handle_messages_helpers::{receive_bus_metrics, setup_metrics};
         let event_loop_metrics = setup_metrics(&$bus);
         $crate::handle_messages! {
-            metrics(event_loop_metrics) bus($bus) index(bus_receiver) $($rest)*
+            metrics(event_loop_metrics) bus($bus) index(bus_receiver) branch_index(0u64) $($rest)*
         }
     };
 
     (
         $(processed $bind:pat = $fut:expr $(, if $cond:expr)? => $handle:block,)*
-        metrics($metrics:expr) bus($bus:expr) index($index:ident) $(,)?
+        metrics($metrics:expr) bus($bus:expr) index($index:ident) branch_index($branch_index:expr) $(,)?
         command_response<$command:ty, $response:ty> $res:pat $(, span($ctx:ident))? => $handler:block
         $($rest:tt)*
     ) => {
@@ -183,6 +192,7 @@ macro_rules! handle_messages {
         $crate::handle_messages! {
             $(processed $bind = $fut $(, if $cond)? => $handle,)*
             processed Ok(_raw_query) = #[allow(clippy::macro_metavars_in_unsafe)] $index.recv() => {
+                $metrics.record_branch($branch_index);
                 receive_bus_metrics::<$crate::bus::command_response::Query<$command, $response>,_>(&mut $bus);
                 let _latency = $crate::utils::profiling::LatencyTimer::new(&$metrics, &[<branch_ $index>]);
                 $(
@@ -210,14 +220,14 @@ macro_rules! handle_messages {
                     tracing::error!("Query already answered");
                 }
             },
-            metrics($metrics) bus($bus) index([<$index a>]) $($rest)*
+            metrics($metrics) bus($bus) index([<$index a>]) branch_index($branch_index + 1u64) $($rest)*
         }
         }
     };
 
     (
         $(processed $bind:pat = $fut:expr $(, if $cond:expr)? => $handle:block,)*
-        metrics($metrics:expr) bus($bus:expr) index($index:ident) $(,)?
+        metrics($metrics:expr) bus($bus:expr) index($index:ident) branch_index($branch_index:expr) $(,)?
         listen<$message:ty> $res:pat $(, span($ctx:ident))? => $handler:block
         $($rest:tt)*
     ) => {
@@ -234,6 +244,7 @@ macro_rules! handle_messages {
         $crate::handle_messages! {
             $(processed $bind = $fut $(, if $cond)? => $handle,)*
             processed Ok(mut __envelope) = $index.recv() => {
+                $metrics.record_branch($branch_index);
                 receive_bus_metrics::<$message, _>(&mut $bus);
                 let _latency = $crate::utils::profiling::LatencyTimer::new(&$metrics, &[<branch_ $index>]);
                 $(
@@ -245,7 +256,7 @@ macro_rules! handle_messages {
                 let $res = __envelope.into_message();
                 $handler
             },
-            metrics($metrics) bus($bus) index([<$index a>]) $($rest)*
+            metrics($metrics) bus($bus) index([<$index a>]) branch_index($branch_index + 1u64) $($rest)*
         }
         }
 
@@ -255,7 +266,7 @@ macro_rules! handle_messages {
     // Process default tokio case (only with blocks - no expressions for parsing)
     (
         $(processed $bind:pat = $fut:expr $(, if $cond:expr)? => $handle:block,)*
-        metrics($metrics:expr) bus($bus:expr) index($index:ident) $(,)?
+        metrics($metrics:expr) bus($bus:expr) index($index:ident) branch_index($branch_index:expr) $(,)?
         $bind2:pat = $fut2:expr $(, if $cond2:expr)? => $handler:block
         $($rest:tt)*
     ) => {
@@ -267,10 +278,11 @@ macro_rules! handle_messages {
         $crate::handle_messages! {
             $(processed $bind = $fut $(, if $cond)? => $handle,)*
             processed $bind2 = $fut2 $(, if $cond2)? => {
+                $metrics.record_branch($branch_index);
                 let _latency = $crate::utils::profiling::LatencyTimer::new(&$metrics, &[<branch_ $index>]);
                 $handler
             },
-            metrics($metrics) bus($bus) index([<$index b>])
+            metrics($metrics) bus($bus) index([<$index b>]) branch_index($branch_index + 1u64)
             $($rest)*
         }
         }
@@ -279,7 +291,7 @@ macro_rules! handle_messages {
     // Print all processed items in the tokio select
     (
         $(processed $bind:pat = $fut:expr $(, if $cond:expr)? => $handle:block,)*
-        metrics($metrics:expr) bus($bus:expr) index($index:ident) $(,)?
+        metrics($metrics:expr) bus($bus:expr) index($index:ident) branch_index($_branch_index:expr) $(,)?
     ) => {
         loop {
             // if false is necessary here so rust understands the loop can be broken
