@@ -43,14 +43,14 @@ async fn setup_4_nodes_catchup() -> Result<()> {
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
     conf.run_fast_catchup = true;
-    conf.fast_catchup_from = format!(
+    conf.fast_catchup_peers = vec![format!(
         "http://localhost:{}",
         ctx.nodes
             .first()
             .expect("Node 0 should exist")
             .conf
             .admin_server_port
-    );
+    )];
     conf.fast_catchup_backfill = true;
     // conf.consensus.timestamp_checks = TimestampCheck::Monotonic;
 

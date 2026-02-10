@@ -2,7 +2,7 @@
 
 use crate::{
     bus::SharedMessageBus,
-    consensus::Consensus,
+    consensus::{Consensus, ConsensusStore},
     data_availability::DataAvailability,
     explorer::Explorer,
     genesis::Genesis,
@@ -21,6 +21,7 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use axum::Router;
 use hydentity::Hydentity;
+use hyli_bus::modules::write_manifest;
 use hyli_crypto::SharedBlstCrypto;
 #[cfg(feature = "monitoring")]
 use hyli_modules::telemetry::global_meter_or_panic;
@@ -35,7 +36,7 @@ use hyli_modules::{
         da_listener::SignedDAListener,
         files::{CONSENSUS_BIN, NODE_STATE_BIN},
         websocket::WebSocketModule,
-        BuildApiContextInner,
+        BuildApiContextInner, Module,
     },
     node_state::{
         module::{NodeStateCtx, NodeStateModule},
@@ -47,8 +48,7 @@ use hyli_net::clock::TimestampMsClock;
 use hyllar::Hyllar;
 use smt_token::account::AccountSMT;
 use std::{
-    fs::{self, File},
-    io::Write,
+    fs,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -262,21 +262,42 @@ pub async fn common_main(
     if config.run_fast_catchup {
         let consensus_path = config.data_directory.join(CONSENSUS_BIN);
         let node_state_path = config.data_directory.join(NODE_STATE_BIN);
-
-        // Check states exist and skip catchup if so
+        // Check states exist and skip catchup if so.
         if !consensus_path.exists() || !node_state_path.exists() {
-            let catchup_from = config.fast_catchup_from.clone();
-            info!("Catching up from {} with trust", catchup_from);
+            if config.fast_catchup_peers.is_empty() {
+                bail!("Fast catchup enabled but no peers configured in fast_catchup_peers");
+            }
 
-            let client = NodeAdminApiClient::new(catchup_from.clone())?;
+            let mut catchup_response = None;
+            for peer in &config.fast_catchup_peers {
+                info!("Attempting fast catchup from {} with trust", peer);
+                match NodeAdminApiClient::new(peer.clone()) {
+                    Ok(client) => match client.get_catchup_store().await {
+                        Ok(response) => {
+                            info!("Successfully caught up from {}", peer);
+                            catchup_response = Some(response);
+                            break;
+                        }
+                        Err(e) => {
+                            error!("Failed to catch up from {}: {:?}", peer, e);
+                        }
+                    },
+                    Err(e) => {
+                        error!("Failed to create client for {}: {:?}", peer, e);
+                    }
+                }
+            }
 
-            let catchup_response = client
-                .get_catchup_store()
-                .await
-                .context("Getting catchup data")?;
+            let catchup_response =
+                catchup_response.context("Fast catchup failed: no peer responded successfully")?;
 
-            node_state_override =
-                borsh::from_slice(catchup_response.node_state_store.as_slice()).ok();
+            let consensus_store: ConsensusStore =
+                borsh::from_slice(catchup_response.consensus_store.as_slice())
+                    .context("Deserializing consensus catchup store")?;
+            let node_state_store: NodeStateStore =
+                borsh::from_slice(catchup_response.node_state_store.as_slice())
+                    .context("Deserializing node state catchup store")?;
+            node_state_override = Some(node_state_store.clone());
 
             if consensus_path.exists() {
                 _ = fs::remove_file(&consensus_path);
@@ -291,19 +312,34 @@ pub async fn common_main(
                 );
             }
 
-            _ = log_error!(
-                File::create(consensus_path)
-                    .and_then(|mut file| file.write_all(&catchup_response.consensus_store))
-                    .context("Writing consensus catchup store to disk"),
+            let consensus_checksum = log_error!(
+                Consensus::save_on_disk(
+                    &config.data_directory,
+                    CONSENSUS_BIN.as_ref(),
+                    &consensus_store
+                ),
                 "Saving consensus store"
-            );
+            )?;
 
-            _ = log_error!(
-                File::create(node_state_path)
-                    .and_then(|mut file| file.write_all(&catchup_response.node_state_store))
-                    .context("Writing node state catchup store to disk"),
+            let node_state_checksum = log_error!(
+                NodeStateModule::save_on_disk(
+                    &config.data_directory,
+                    NODE_STATE_BIN.as_ref(),
+                    &node_state_store,
+                ),
                 "Saving node state store"
-            );
+            )?;
+
+            log_error!(
+                write_manifest(
+                    &config.data_directory,
+                    &[
+                        (consensus_path, consensus_checksum),
+                        (node_state_path, node_state_checksum),
+                    ],
+                ),
+                "Writing checksum manifest for fast catchup stores"
+            )?;
         } else {
             info!(
                 "Skipping fast catchup, {} and {} already exist in {}",
