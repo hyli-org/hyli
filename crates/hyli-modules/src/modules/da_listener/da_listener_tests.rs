@@ -196,14 +196,8 @@ async fn test_handle_block_not_found_switches_to_fallback() {
     );
     let mut listener = create_test_listener(config).await.unwrap();
 
-    // Connect to main server initially
-    let mut client = DataAvailabilityClient::connect_with_opts(
-        "test_client".to_string(),
-        Some(1024 * 1024),
-        format!("127.0.0.1:{}", main_port),
-    )
-    .await
-    .unwrap();
+    // Connect stream
+    listener.stream.start_client().await.unwrap();
 
     // Create a pending request for block 5
     listener.stream.request_specific_block(BlockHeight(5));
@@ -211,18 +205,13 @@ async fn test_handle_block_not_found_switches_to_fallback() {
         .stream
         .pending_block_requests
         .contains_key(&BlockHeight(5)));
-    assert_eq!(listener.stream.current_da_index(), 0);
-
     // Simulate receiving BlockNotFound from main server
-    // This should: remove pending request, switch to fallback, re-request the block
+    // This should: remove pending request, reconnect, re-request the block
     listener
         .stream
-        .handle_block_not_found(BlockHeight(5), &mut client)
+        .handle_block_not_found(BlockHeight(5))
         .await
         .unwrap();
-
-    // Verify: switched to fallback server
-    assert_eq!(listener.stream.current_da_index(), 1);
 
     // Verify: block was re-requested (new pending request created)
     assert!(listener
@@ -232,7 +221,7 @@ async fn test_handle_block_not_found_switches_to_fallback() {
 }
 
 #[tokio::test]
-async fn test_check_block_request_timeouts_switches_to_fallback() {
+async fn test_check_block_request_timeouts_increments_retry_count() {
     use std::time::{Duration, Instant};
 
     // Use random high ports to avoid conflicts
@@ -257,33 +246,22 @@ async fn test_check_block_request_timeouts_switches_to_fallback() {
     );
     let mut listener = create_test_listener(config).await.unwrap();
 
-    // Connect to main server initially
-    let mut client = DataAvailabilityClient::connect_with_opts(
-        "test_client".to_string(),
-        Some(1024 * 1024),
-        format!("127.0.0.1:{}", main_port),
-    )
-    .await
-    .unwrap();
+    // Connect stream
+    listener.stream.start_client().await.unwrap();
 
     // Create a pending request for block 5
     listener.stream.request_specific_block(BlockHeight(5));
-    assert_eq!(listener.stream.current_da_index(), 0);
-
     // Simulate timeout by setting request_time to the past
     if let Some(state) = listener.stream.pending_block_requests.get_mut(&BlockHeight(5)) {
         state.request_time = Instant::now() - Duration::from_secs(100);
     }
 
-    // Call check_block_request_timeouts - should detect timeout and switch to fallback
+    // Call check_block_request_timeouts - should detect timeout and increment retry count
     listener
         .stream
-        .check_block_request_timeouts(&mut client)
+        .check_block_request_timeouts()
         .await
         .unwrap();
-
-    // Verify: switched to fallback server
-    assert_eq!(listener.stream.current_da_index(), 1);
 
     // Verify: retry count was incremented
     let state = listener

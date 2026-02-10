@@ -4,10 +4,10 @@
 use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
 use hyli_modules::utils::da_codec::DataAvailabilityServer;
 //use hyli_modules::modules::data_availability::blocks_memory::Blocks;
+use hyli_modules::modules::da_listener::{DaStreamPoll, SignedDaStream};
 use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
-use hyli_modules::modules::da_listener::{DaStreamPoll, SignedDaStream};
 use hyli_net::tcp::TcpEvent;
 use tokio::task::JoinHandle;
 
@@ -392,62 +392,48 @@ impl DaCatchupper {
 
             let mut stream = SignedDaStream::new(
                 "catchupper",
+                "catchupper",
                 Some(da_max_frame_length),
                 peers,
                 start_height,
                 timeout_duration,
             );
-            let mut client = log_error!(
+            log_error!(
                 stream.start_client().await,
                 "Error occurred setting up the DA listener"
             )?;
 
-            let mut timeout_check_interval = tokio::time::interval(Duration::from_secs(1));
-
             loop {
-                tokio::select! {
-                    _ = timeout_check_interval.tick() => {
-                        log_error!(stream.check_block_request_timeouts(&mut client).await, "Checking block request timeouts")?;
-                        let pending = stream.pending_block_requests();
-                        for height in pending {
-                            if let Err(e) = client.send(DataAvailabilityRequest::BlockRequest(height)).await {
-                                error!("Failed to send block request for height {}: {}", height, e);
-                            }
-                        }
+                match stream.listen_next().await? {
+                    DaStreamPoll::Timeout => {
+                        warn!("Timeout expired while waiting for block.");
+                        metrics.timeout(&peer_label);
                     }
-                    poll = stream.listen_next(&mut client, |event| matches!(event, DataAvailabilityEvent::SignedBlock(_))) => {
-                        match poll {
-                            DaStreamPoll::Timeout => {
-                                warn!("Timeout expired while waiting for block.");
-                                metrics.timeout(&peer_label);
-                            }
-                            DaStreamPoll::StreamClosed => {
-                                metrics.stream_closed(&peer_label);
-                            }
-                            DaStreamPoll::Event(event) => match event {
-                                DataAvailabilityEvent::SignedBlock(block) => {
-                                    let blocks = stream.on_signed_block(block).await?;
-                                    for block in blocks {
-                                        info!(
-                                            "📦 Received block (height {}) from stream",
-                                            block.consensus_proposal.slot
-                                        );
+                    DaStreamPoll::StreamClosed => {
+                        metrics.stream_closed(&peer_label);
+                    }
+                    DaStreamPoll::Event(event) => match event {
+                        DataAvailabilityEvent::SignedBlock(block) => {
+                            let blocks = stream.on_signed_block(block).await?;
+                            for block in blocks {
+                                info!(
+                                    "📦 Received block (height {}) from stream",
+                                    block.consensus_proposal.slot
+                                );
 
-                                        if let Err(e) = sender.send(block).await {
-                                            tracing::error!("Error while sending block over channel: {:#}", e);
-                                            return Ok(());
-                                        }
-                                    }
+                                if let Err(e) = sender.send(block).await {
+                                    tracing::error!(
+                                        "Error while sending block over channel: {:#}",
+                                        e
+                                    );
+                                    return Ok(());
                                 }
-                                DataAvailabilityEvent::BlockNotFound(height) => {
-                                    log_error!(stream.handle_block_not_found(height, &mut client).await, "Handling BlockNotFound")?;
-                                }
-                                _ => {
-                                    tracing::trace!("Dropped received message in catchup task");
-                                }
-                            },
+                            }
                         }
-                    }
+                        _ => {
+                            tracing::trace!("Dropped received message in catchup task");
+                        }
+                    },
                 }
             }
         })
