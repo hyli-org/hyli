@@ -210,8 +210,10 @@ impl DaCatchupper {
         }
     }
 
-    pub fn choose_random_peer(&self) -> Option<Vec<String>> {
-        let primary = self.peers.choose(&mut deterministic_rng()).cloned()?;
+    pub fn choose_random_peer(&self) -> Vec<String> {
+        let Some(primary) = self.peers.choose(&mut deterministic_rng()).cloned() else {
+            return vec![];
+        };
         let mut ordered = Vec::with_capacity(self.peers.len());
         ordered.push(primary.clone());
         for peer in &self.peers {
@@ -219,7 +221,7 @@ impl DaCatchupper {
                 ordered.push(peer.clone());
             }
         }
-        Some(ordered)
+        ordered
     }
 
     pub fn init_catchup(
@@ -260,13 +262,13 @@ impl DaCatchupper {
             return Ok(());
         }
 
-        let Some(peers) = self.choose_random_peer() else {
-            warn!("No peers available for catchup, cannot proceed");
+        let peers = self.choose_random_peer();
+        if peers.is_empty() {
+            info!("choose_random_peer returned no peers");
             return Ok(());
-        };
-        let peer = peers
-            .first()
-            .expect("choose_random_peer always returns at least one peer");
+        }
+        #[expect(clippy::unwrap_used, reason = "gated above")]
+        let peer = peers.first().unwrap();
 
         debug!(
             "Starting catchup from height {} to {:?} on peer {}",
@@ -321,14 +323,13 @@ impl DaCatchupper {
             return Ok(());
         };
 
-        let Some(peers) = self.choose_random_peer() else {
-            warn!("No peers available for catchup, cannot proceed");
-
+        let peers = self.choose_random_peer();
+        if peers.is_empty() {
+            info!("choose_random_peer returned no peers");
             return Ok(());
-        };
-        let peer = peers
-            .first()
-            .expect("choose_random_peer always returns at least one peer");
+        }
+        #[expect(clippy::unwrap_used, reason = "gated above")]
+        let peer = peers.first().unwrap();
 
         let Some((task, old_height)) = &mut self.status else {
             unreachable!("Status was already checked");

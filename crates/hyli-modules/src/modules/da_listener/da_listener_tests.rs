@@ -88,15 +88,27 @@ async fn test_buffered_block_processing() {
     let mut listener = create_test_listener(config).await.unwrap();
 
     // Send blocks out of order
-    listener.handle_signed_block(create_test_block(2)).await.unwrap();
-    listener.handle_signed_block(create_test_block(3)).await.unwrap();
+    listener
+        .handle_signed_block(create_test_block(2))
+        .await
+        .unwrap();
+    listener
+        .handle_signed_block(create_test_block(3))
+        .await
+        .unwrap();
 
     assert_eq!(listener.stream.current_block(), BlockHeight(0));
     assert_eq!(listener.stream.block_buffer.len(), 2);
 
     // Fill the gap
-    listener.handle_signed_block(create_test_block(0)).await.unwrap();
-    listener.handle_signed_block(create_test_block(1)).await.unwrap();
+    listener
+        .handle_signed_block(create_test_block(0))
+        .await
+        .unwrap();
+    listener
+        .handle_signed_block(create_test_block(1))
+        .await
+        .unwrap();
 
     assert_eq!(listener.stream.current_block(), BlockHeight(4));
     assert!(listener.stream.block_buffer.is_empty());
@@ -107,8 +119,14 @@ async fn test_gap_detection_creates_pending_requests() {
     let config = create_test_config(vec![]);
     let mut listener = create_test_listener(config).await.unwrap();
 
-    listener.handle_signed_block(create_test_block(0)).await.unwrap();
-    listener.handle_signed_block(create_test_block(3)).await.unwrap();
+    listener
+        .handle_signed_block(create_test_block(0))
+        .await
+        .unwrap();
+    listener
+        .handle_signed_block(create_test_block(3))
+        .await
+        .unwrap();
 
     // Should have requested blocks 1 and 2
     assert!(listener
@@ -138,15 +156,24 @@ async fn test_pending_request_cleared_on_block_arrival() {
     let config = create_test_config(vec![]);
     let mut listener = create_test_listener(config).await.unwrap();
 
-    listener.handle_signed_block(create_test_block(0)).await.unwrap();
-    listener.handle_signed_block(create_test_block(2)).await.unwrap();
+    listener
+        .handle_signed_block(create_test_block(0))
+        .await
+        .unwrap();
+    listener
+        .handle_signed_block(create_test_block(2))
+        .await
+        .unwrap();
 
     assert!(listener
         .stream
         .pending_block_requests
         .contains_key(&BlockHeight(1)));
 
-    listener.handle_signed_block(create_test_block(1)).await.unwrap();
+    listener
+        .handle_signed_block(create_test_block(1))
+        .await
+        .unwrap();
 
     assert!(!listener
         .stream
@@ -252,7 +279,11 @@ async fn test_check_block_request_timeouts_increments_retry_count() {
     // Create a pending request for block 5
     listener.stream.request_specific_block(BlockHeight(5));
     // Simulate timeout by setting request_time to the past
-    if let Some(state) = listener.stream.pending_block_requests.get_mut(&BlockHeight(5)) {
+    if let Some(state) = listener
+        .stream
+        .pending_block_requests
+        .get_mut(&BlockHeight(5))
+    {
         state.request_time = Instant::now() - Duration::from_secs(100);
     }
 
