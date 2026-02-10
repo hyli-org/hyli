@@ -1,7 +1,8 @@
+use crate::utils::fjall_metrics::FjallMetrics;
 use anyhow::{Context, Result};
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slice};
 use sdk::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock};
-use std::{fmt::Debug, path::Path};
+use std::{fmt::Debug, path::Path, time::Instant};
 use tracing::{debug, info, trace};
 
 struct FjallHashKey(ConsensusProposalHash);
@@ -51,6 +52,7 @@ pub struct Blocks {
     db: Database,
     by_hash: Keyspace,
     by_height: Keyspace,
+    metrics: FjallMetrics,
 }
 
 impl Blocks {
@@ -59,6 +61,7 @@ impl Blocks {
             db: self.db.clone(),
             by_hash: self.by_hash.clone(),
             by_height: self.by_height.clone(),
+            metrics: self.metrics.clone(),
         }
     }
 
@@ -95,7 +98,12 @@ impl Blocks {
             db,
             by_hash,
             by_height,
+            metrics: FjallMetrics::global("data_availability", "unknown", "data_availability.db"),
         })
+    }
+
+    pub fn set_metrics_context(&mut self, node_id: impl Into<String>) {
+        self.metrics = FjallMetrics::global("data_availability", node_id, "data_availability.db");
     }
 
     pub fn is_empty(&self) -> bool {
@@ -103,14 +111,26 @@ impl Blocks {
     }
 
     pub fn persist(&self) -> Result<()> {
-        self.db
+        let start = Instant::now();
+        let res = self
+            .db
             .persist(fjall::PersistMode::Buffer)
-            .map_err(Into::into)
+            .map_err(Into::into);
+        self.record_op("persist", "db", start.elapsed());
+        res
+    }
+
+    pub fn record_metrics(&self) {
+        self.metrics.record_db(&self.db);
+        self.metrics.record_keyspace("by_hash", &self.by_hash);
+        self.metrics.record_keyspace("by_height", &self.by_height);
     }
 
     pub fn put(&mut self, block: SignedBlock) -> Result<()> {
+        let start = Instant::now();
         let block_hash = block.hashed();
         if self.contains(&block_hash) {
+            self.record_op("put", "by_hash", start.elapsed());
             return Ok(());
         }
         trace!("📦 storing block in fjall {}", block.height());
@@ -122,18 +142,24 @@ impl Blocks {
             FjallHeightKey::new(block.height()).as_ref(),
             FjallValue::new_with_block_hash(&block.hashed())?.as_ref(),
         )?;
+        self.record_op("put", "by_hash", start.elapsed());
         Ok(())
     }
 
     pub fn get(&self, block_hash: &ConsensusProposalHash) -> Result<Option<SignedBlock>> {
+        let start = Instant::now();
         let item = self.by_hash.get(FjallHashKey(block_hash.clone()))?;
-        item.map(Self::decode_block).transpose()
+        let res = item.map(Self::decode_block).transpose();
+        self.record_op("get", "by_hash", start.elapsed());
+        res
     }
 
     pub fn get_by_height(&self, height: BlockHeight) -> Result<Option<SignedBlock>> {
+        let start = Instant::now();
         // First get the hash from by_height index
         let key = FjallHeightKey::new(height);
         let Some(hash_value) = self.by_height.get(key)? else {
+            self.record_op("get_by_height", "by_height", start.elapsed());
             return Ok(None);
         };
 
@@ -141,13 +167,29 @@ impl Blocks {
         let block_hash = Self::decode_block_hash(hash_value)?;
 
         // Get the actual block
-        self.get(&block_hash)
+        let res = self.get(&block_hash);
+        self.record_op("get_by_height", "by_height", start.elapsed());
+        res
     }
 
     pub fn contains(&self, block: &ConsensusProposalHash) -> bool {
-        self.by_hash
+        let start = Instant::now();
+        let res = self
+            .by_hash
             .contains_key(FjallHashKey(block.clone()))
-            .unwrap_or(false)
+            .unwrap_or(false);
+        self.record_op("contains", "by_hash", start.elapsed());
+        res
+    }
+
+    pub fn record_op(
+        &self,
+        op: &'static str,
+        keyspace: &'static str,
+        elapsed: std::time::Duration,
+    ) {
+        self.metrics
+            .record_op(op, keyspace, elapsed.as_micros() as u64);
     }
 
     /// Scan the whole by_height table and returns the first missing height

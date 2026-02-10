@@ -45,13 +45,16 @@ impl Module for Mempool {
             }
         };
 
+        let mut lanes = shared_lanes_storage(&ctx.config.data_directory)?;
+        lanes.set_metrics_context(ctx.config.id.clone());
+
         let mut mempool = Mempool {
             bus,
             file: Some(ctx.config.data_directory.clone()),
             conf: ctx.config.clone(),
             crypto: Arc::clone(&ctx.crypto),
             metrics,
-            lanes: shared_lanes_storage(&ctx.config.data_directory)?,
+            lanes,
             inner,
         };
         mempool.restore_inflight_work();
@@ -65,6 +68,7 @@ impl Module for Mempool {
         );
         let mut new_dp_timer = tokio::time::interval(tick_interval);
         new_dp_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut storage_metrics_ticker = tokio::time::interval(Duration::from_secs(30));
 
         // TODO: Recompute optimistic node_state for contract registrations.
         module_handle_messages! {
@@ -131,6 +135,9 @@ impl Module for Mempool {
             }
             _ = new_dp_timer.tick() => {
                 _  = log_error!(self.prepare_new_data_proposal(), "Try preparing a new data proposal on tick");
+            }
+            _ = storage_metrics_ticker.tick() => {
+                self.lanes.record_metrics();
             }
         };
 

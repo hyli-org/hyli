@@ -5,6 +5,7 @@ pub use hyli_bus::utils::{deterministic_rng, logger, profiling, static_type_map,
 pub mod da_codec;
 #[cfg(feature = "db")]
 pub mod db;
+pub mod fjall_metrics;
 pub mod native_verifier_handler;
 pub mod ring_buffer_map;
 pub mod tracing;
