@@ -248,6 +248,38 @@ async fn test_handle_block_not_found_switches_to_fallback() {
 }
 
 #[tokio::test]
+async fn test_handle_block_not_found_single_server_retries() {
+    // Use random high port to avoid conflicts
+    let main_port = 19300 + (std::process::id() % 100) as u16;
+
+    // Start mock DA server
+    let _main_server: DataAvailabilityServer =
+        DataAvailabilityServer::start(main_port, "test_main_da")
+            .await
+            .unwrap();
+
+    let config = create_test_config_with_read_from(format!("127.0.0.1:{}", main_port), vec![]);
+    let mut listener = create_test_listener(config).await.unwrap();
+    listener.stream.start_client().await.unwrap();
+
+    listener.stream.request_specific_block(BlockHeight(5));
+
+    // Single-server BlockNotFound should be treated as retryable up to max retries.
+    listener
+        .stream
+        .handle_block_not_found(BlockHeight(5))
+        .await
+        .unwrap();
+
+    let state = listener
+        .stream
+        .pending_block_requests
+        .get(&BlockHeight(5))
+        .unwrap();
+    assert_eq!(state.retry_count, 1);
+}
+
+#[tokio::test]
 async fn test_check_block_request_timeouts_increments_retry_count() {
     use std::time::{Duration, Instant};
 

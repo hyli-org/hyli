@@ -74,6 +74,7 @@ impl Module for DataAvailability {
             blocks,
             buffered_signed_blocks: BTreeSet::new(),
             catchupper: DaCatchupper::new(catchup_policy, ctx.config.da_max_frame_length),
+            allow_peer_catchup: false,
             peer_send_queues: HashMap::new(),
         })
     }
@@ -105,6 +106,8 @@ pub struct DataAvailability {
     buffered_signed_blocks: BTreeSet<SignedBlock>,
 
     catchupper: DaCatchupper,
+    // Gate peer-triggered catchup until genesis outcome is known.
+    allow_peer_catchup: bool,
 
     // Track blocks to send to each streaming peer (ensures ordering)
     peer_send_queues: HashMap<String, VecDeque<ConsensusProposalHash>>,
@@ -415,9 +418,12 @@ impl DaCatchupper {
                     DaStreamPoll::Timeout => {
                         warn!("Timeout expired while waiting for block.");
                         metrics.timeout(&peer_label);
+                        stream.reconnect("timeout").await?;
                     }
                     DaStreamPoll::StreamClosed => {
                         metrics.stream_closed(&peer_label);
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        stream.reconnect("stream_closed").await?;
                     }
                     DaStreamPoll::Event(event) => match event {
                         DataAvailabilityEvent::SignedBlock(block) => {
@@ -515,11 +521,28 @@ impl DataAvailability {
             }
 
             listen<GenesisEvent> cmd => {
-                if let GenesisEvent::GenesisBlock(signed_block) = cmd {
-                    debug!("🌱  Genesis block received with validators {:?}", signed_block.consensus_proposal.staking_actions.clone());
-                    _ = log_error!(self.handle_signed_block(signed_block, &mut server, &mut catchup_joinset).await.context("Handling Genesis block"),  "Handling GenesisBlock Event");
+                match cmd {
+                    GenesisEvent::GenesisBlock(signed_block) => {
+                        debug!("🌱  Genesis block received with validators {:?}", signed_block.consensus_proposal.staking_actions.clone());
+                        _ = log_error!(self.handle_signed_block(signed_block, &mut server, &mut catchup_joinset).await.context("Handling Genesis block"),  "Handling GenesisBlock Event");
+                    }
+                    GenesisEvent::NoGenesis => {
+                        self.allow_peer_catchup = true;
+                        _ = log_error!(
+                            self.catchupper.init_catchup(
+                                self.blocks.highest(),
+                                &catchup_block_sender,
+                            ),
+                            "Init catchup after NoGenesis"
+                        );
+                    }
                 }
-                else {
+            }
+
+            listen<PeerEvent> PeerEvent::NewPeer { da_address, .. } => {
+                self.catchupper.peers.push(da_address.clone());
+                info!("New peer {}", da_address);
+                if self.allow_peer_catchup {
                     _ = log_error!(
                         self.catchupper.init_catchup(
                             self.blocks.highest(),
@@ -527,19 +550,9 @@ impl DataAvailability {
                         ),
                         "Init catchup on new peer"
                     );
+                } else {
+                    debug!("Skipping catchup init on new peer while genesis path is unresolved");
                 }
-            }
-
-            listen<PeerEvent> PeerEvent::NewPeer { da_address, .. } => {
-                self.catchupper.peers.push(da_address.clone());
-                info!("New peer {}", da_address);
-                _ = log_error!(
-                    self.catchupper.init_catchup(
-                        self.blocks.highest(),
-                        &catchup_block_sender,
-                    ),
-                    "Init catchup on new peer"
-                );
             }
 
             _ = catchup_task_checker_ticker.tick(), if self.catchupper.need_to_tick() => {
@@ -1110,6 +1123,7 @@ pub mod tests {
                 blocks,
                 buffered_signed_blocks: Default::default(),
                 catchupper: Default::default(),
+                allow_peer_catchup: false,
                 peer_send_queues: HashMap::new(),
             };
 
@@ -1172,6 +1186,7 @@ pub mod tests {
             blocks,
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
+            allow_peer_catchup: false,
             peer_send_queues: HashMap::new(),
         };
         let mut block = SignedBlock::default();
@@ -1225,6 +1240,7 @@ pub mod tests {
             blocks,
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
+            allow_peer_catchup: false,
             peer_send_queues: HashMap::new(),
         };
 
@@ -1708,6 +1724,7 @@ pub mod tests {
             blocks: blocks_storage,
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
+            allow_peer_catchup: false,
             peer_send_queues: HashMap::new(),
         };
 
@@ -1855,6 +1872,7 @@ pub mod tests {
             blocks: blocks_storage,
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
+            allow_peer_catchup: false,
             peer_send_queues: HashMap::new(),
         };
 
