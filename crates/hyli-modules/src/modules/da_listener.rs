@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, VecDeque},
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -45,7 +45,426 @@ struct SignedDAListenerBusClient {
 struct BlockRequestState {
     request_time: Instant,
     retry_count: usize,
-    current_da_index: usize,
+}
+
+pub enum DaStreamPoll {
+    Event(DataAvailabilityEvent),
+    Timeout,
+    StreamClosed,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BlockNotFoundPolicy {
+    HandleInStream,
+    SurfaceEvent,
+}
+
+pub struct SignedDaStream {
+    client_id: String,
+    max_frame_length: Option<usize>,
+    addresses: Vec<String>,
+    client: Option<DataAvailabilityClient>,
+    tcp_client_metrics: DaTcpClientMetrics,
+    block_not_found_policy: BlockNotFoundPolicy,
+    timeout: Duration,
+    deadline: Instant,
+    block_request_check_deadline: Instant,
+    current_block: BlockHeight,
+    block_buffer: BTreeMap<BlockHeight, SignedBlock>,
+    pending_block_requests: HashMap<BlockHeight, BlockRequestState>,
+}
+
+impl SignedDaStream {
+    const MAX_CONNECT_ROUNDS: usize = 3;
+
+    pub fn new(
+        module_name: &'static str,
+        client_id: impl Into<String>,
+        max_frame_length: Option<usize>,
+        addresses: Vec<String>,
+        start_height: BlockHeight,
+        timeout: Duration,
+    ) -> Self {
+        SignedDaStream {
+            client_id: client_id.into(),
+            max_frame_length,
+            addresses,
+            client: None,
+            tcp_client_metrics: DaTcpClientMetrics::global(module_name),
+            block_not_found_policy: BlockNotFoundPolicy::HandleInStream,
+            timeout,
+            deadline: Instant::now() + timeout,
+            block_request_check_deadline: Instant::now() + Duration::from_secs(1),
+            current_block: start_height,
+            block_buffer: BTreeMap::new(),
+            pending_block_requests: HashMap::new(),
+        }
+    }
+
+    pub fn current_block(&self) -> BlockHeight {
+        self.current_block
+    }
+
+    pub fn set_block_not_found_policy(&mut self, policy: BlockNotFoundPolicy) {
+        self.block_not_found_policy = policy;
+    }
+
+    fn init_working_addresses(&self) -> VecDeque<String> {
+        self.addresses.iter().cloned().collect()
+    }
+
+    async fn try_connect_from_working_set(
+        &mut self,
+        working_addresses: &mut VecDeque<String>,
+    ) -> Result<Option<DataAvailabilityClient>> {
+        while let Some(da_address) = working_addresses.pop_front() {
+            match DataAvailabilityClient::connect_with_opts(
+                self.client_id.clone(),
+                self.max_frame_length,
+                da_address.clone(),
+            )
+            .await
+            {
+                Ok(mut client) => {
+                    info!("📦 Connected to DA server {}", da_address);
+                    client
+                        .send(DataAvailabilityRequest::StreamFromHeight(
+                            self.current_block,
+                        ))
+                        .await?;
+                    self.deadline = Instant::now() + self.timeout;
+                    return Ok(Some(client));
+                }
+                Err(e) => {
+                    warn!(
+                        "📦 Failed to connect to DA server {}: {}. Trying next...",
+                        da_address, e
+                    );
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    async fn send_request(&mut self, request: DataAvailabilityRequest) -> Result<()> {
+        let client = self
+            .client
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("DA client not initialized"))?;
+        client.send(request).await?;
+        Ok(())
+    }
+
+    /// Connect to a DA server and subscribe from `current_block`.
+    ///
+    /// For each round, initializes a working queue from all configured peers.
+    /// Failed peers are popped from the queue for that round. When the queue is
+    /// empty, a new round starts, up to `MAX_CONNECT_ROUNDS`.
+    pub async fn start_client(&mut self) -> Result<()> {
+        let total_servers = self.addresses.len();
+        if total_servers == 0 {
+            return Err(anyhow::anyhow!("No DA servers configured"));
+        }
+
+        let mut connect_round = 1;
+        let mut working_addresses = self.init_working_addresses();
+
+        loop {
+            if let Some(client) = self
+                .try_connect_from_working_set(&mut working_addresses)
+                .await?
+            {
+                self.client = Some(client);
+                return Ok(());
+            }
+
+            if connect_round >= Self::MAX_CONNECT_ROUNDS {
+                break;
+            }
+
+            warn!(
+                "📦 Completed round {}/{} through all DA servers, retrying...",
+                connect_round,
+                Self::MAX_CONNECT_ROUNDS
+            );
+            connect_round += 1;
+            working_addresses = self.init_working_addresses();
+        }
+
+        Err(anyhow::anyhow!(
+            "Failed to connect to any DA server after {} rounds through all {} servers",
+            Self::MAX_CONNECT_ROUNDS,
+            total_servers
+        ))
+    }
+
+    pub async fn start_client_with_metrics(&mut self) -> Result<()> {
+        self.start_client().await?;
+        self.tcp_client_metrics.start(self.current_block.0);
+        Ok(())
+    }
+
+    pub async fn reconnect(&mut self, reason: &'static str) -> Result<()> {
+        self.tcp_client_metrics.reconnect(reason);
+        self.start_client().await
+    }
+
+    pub async fn listen_next(&mut self) -> Result<DaStreamPoll> {
+        loop {
+            let now = Instant::now();
+            if now >= self.block_request_check_deadline {
+                self.block_request_check_deadline = now + Duration::from_secs(1);
+                if let Err(e) = self.check_block_request_timeouts().await {
+                    error!("Block request housekeeping failed: {}", e);
+                    return Err(e);
+                }
+            }
+
+            let now = Instant::now();
+            let next_wakeup = self.deadline.min(self.block_request_check_deadline);
+            let wait_duration = next_wakeup.saturating_duration_since(now);
+
+            let received = {
+                match self.client.as_mut() {
+                    Some(client) => tokio::time::timeout(wait_duration, client.recv()).await,
+                    None => return Ok(DaStreamPoll::StreamClosed),
+                }
+            };
+
+            let poll = match received {
+                Ok(Some(event)) => {
+                    self.deadline = Instant::now() + self.timeout;
+                    DaStreamPoll::Event(event)
+                }
+                Ok(None) => DaStreamPoll::StreamClosed,
+                Err(_) => {
+                    if Instant::now() >= self.deadline {
+                        DaStreamPoll::Timeout
+                    } else {
+                        continue;
+                    }
+                }
+            };
+
+            if let DaStreamPoll::Event(DataAvailabilityEvent::BlockNotFound(height)) = poll {
+                if matches!(
+                    self.block_not_found_policy,
+                    BlockNotFoundPolicy::HandleInStream
+                ) {
+                    if let Err(e) = self.handle_block_not_found(height).await {
+                        error!("Failed to handle BlockNotFound {}: {}", height, e);
+                        return Err(e);
+                    }
+                    continue;
+                }
+            }
+
+            return Ok(poll);
+        }
+    }
+
+    pub fn request_specific_block(&mut self, height: BlockHeight) {
+        if self.pending_block_requests.contains_key(&height) {
+            return; // Already requested
+        }
+
+        debug!("📦 Requesting specific block at height {}", height);
+
+        let state = BlockRequestState {
+            request_time: Instant::now(),
+            retry_count: 0,
+        };
+
+        self.pending_block_requests.insert(height, state);
+    }
+
+    async fn check_block_request_timeouts(&mut self) -> Result<()> {
+        let now = Instant::now();
+        let timeout_base_secs = 5;
+
+        let mut timed_out = Vec::new();
+        let mut failed_blocks = Vec::new();
+
+        for (&height, state) in &self.pending_block_requests {
+            let backoff_duration = Duration::from_secs(
+                timeout_base_secs * 2_u64.pow(state.retry_count as u32).min(60),
+            );
+
+            if now.duration_since(state.request_time) > backoff_duration {
+                timed_out.push(height);
+            }
+        }
+
+        for height in timed_out {
+            if let Some(mut state) = self.pending_block_requests.remove(&height) {
+                state.retry_count += 1;
+
+                let max_retries = self.addresses.len().max(1) * Self::MAX_CONNECT_ROUNDS;
+                if state.retry_count > max_retries {
+                    error!(
+                        "📦 Block {} unretrievable after {} retries across all DA servers. STOPPING.",
+                        height, state.retry_count
+                    );
+                    failed_blocks.push(height);
+                    continue;
+                }
+
+                warn!(
+                    "📦 Block request for height {} timed out (attempt {}). Retrying.",
+                    height, state.retry_count
+                );
+
+                state.request_time = now;
+                self.send_request(DataAvailabilityRequest::BlockRequest(height))
+                    .await?;
+
+                self.pending_block_requests.insert(height, state);
+            }
+        }
+
+        let pending = self
+            .pending_block_requests
+            .keys()
+            .copied()
+            .collect::<Vec<_>>();
+        for height in pending {
+            self.send_request(DataAvailabilityRequest::BlockRequest(height))
+                .await?;
+        }
+
+        if !failed_blocks.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Blocks {:?} are unretrievable from all DA servers",
+                failed_blocks
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub async fn handle_block_not_found(&mut self, height: BlockHeight) -> Result<()> {
+        error!("📦 Block {} not found at DA server", height);
+
+        self.pending_block_requests.remove(&height);
+
+        let has_fallbacks = self.addresses.len() > 1;
+        if has_fallbacks {
+            self.start_client().await?;
+
+            self.request_specific_block(height);
+            self.send_request(DataAvailabilityRequest::BlockRequest(height))
+                .await?;
+        } else {
+            error!(
+                "📦 Block {} is unretrievable and no fallback DA servers configured. STOPPING.",
+                height
+            );
+            return Err(anyhow::anyhow!(
+                "Block {} unretrievable from DA server and no fallbacks available",
+                height
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub async fn on_signed_block(&mut self, block: SignedBlock) -> Result<Vec<SignedBlock>> {
+        let block_height = block.height();
+        let mut output = Vec::new();
+        self.pending_block_requests.remove(&block_height);
+
+        match block_height.cmp(&self.current_block) {
+            std::cmp::Ordering::Less => {
+                warn!(
+                    "📦 Ignoring past block: {} {}",
+                    block.consensus_proposal.slot,
+                    block.consensus_proposal.hashed()
+                );
+            }
+            std::cmp::Ordering::Equal => {
+                if block_height.0.is_multiple_of(1000) {
+                    info!(
+                        "📦 Processing block: {} {}",
+                        block.consensus_proposal.slot,
+                        block.consensus_proposal.hashed()
+                    );
+                } else {
+                    debug!(
+                        "📦 Processing block: {} {}",
+                        block.consensus_proposal.slot,
+                        block.consensus_proposal.hashed()
+                    );
+                }
+
+                output.push(block);
+                self.current_block = block_height + 1;
+
+                let mut buffered = self.process_buffered_blocks().await?;
+                output.append(&mut buffered);
+            }
+            std::cmp::Ordering::Greater => {
+                if block_height > self.current_block {
+                    warn!(
+                        "📦 Gap detected! Expected {}, got {}. Requesting missing blocks.",
+                        self.current_block, block_height
+                    );
+                    for missing_height in self.current_block.0..block_height.0 {
+                        self.request_specific_block(BlockHeight(missing_height));
+                    }
+                }
+                debug!(
+                    "📦 Buffering future block: {} {}",
+                    block.consensus_proposal.slot,
+                    block.consensus_proposal.hashed()
+                );
+                self.block_buffer.insert(block_height, block);
+            }
+        }
+
+        Ok(output)
+    }
+
+    async fn process_buffered_blocks(&mut self) -> Result<Vec<SignedBlock>> {
+        let mut output = Vec::new();
+
+        if let Some((height, _)) = self.block_buffer.first_key_value() {
+            if *height > self.current_block {
+                return Ok(output);
+            }
+        }
+
+        while let Some((height, block)) = self.block_buffer.pop_first() {
+            if height == self.current_block {
+                debug!(
+                    "📦 Processing buffered block: {} {}",
+                    block.consensus_proposal.slot,
+                    block.consensus_proposal.hashed()
+                );
+                output.push(block);
+                self.current_block = height + 1;
+            } else {
+                info!(
+                    "📦 Wanted block {}, next buffered is {}, waiting.",
+                    self.current_block,
+                    block.height(),
+                );
+                _ = self.block_buffer.insert(height, block);
+                break;
+            }
+        }
+
+        Ok(output)
+    }
+
+    async fn ping(&mut self) -> Result<()> {
+        let client = self
+            .client
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("DA client not initialized"))?;
+        client.ping().await?;
+        Ok(())
+    }
 }
 
 /// Module that listens to the raw data availability stream and processes blocks
@@ -53,12 +472,7 @@ pub struct SignedDAListener<P: BlockProcessor> {
     config: DAListenerConf<P>,
     bus: SignedDAListenerBusClient,
     processor: P,
-    current_block: BlockHeight,
-    block_buffer: BTreeMap<BlockHeight, SignedBlock>,
-    tcp_client_metrics: DaTcpClientMetrics,
-    // New fields for block request handling
-    pending_block_requests: HashMap<BlockHeight, BlockRequestState>,
-    current_da_index: usize,
+    stream: SignedDaStream,
 }
 
 impl<P: BlockProcessor + 'static> Module for SignedDAListener<P> {
@@ -98,16 +512,22 @@ impl<P: BlockProcessor + 'static> Module for SignedDAListener<P> {
         )
         .await?;
         let bus = SignedDAListenerBusClient::new_from_bus(bus.new_handle()).await;
+        let mut addresses = vec![ctx.da_read_from.clone()];
+        addresses.extend(ctx.da_fallback_addresses.clone());
+        let stream = SignedDaStream::new(
+            "signed_da_listener",
+            "signed_da_listener",
+            Some(1024 * 1024 * 1024),
+            addresses,
+            current_block,
+            Duration::from_secs(ctx.timeout_client_secs),
+        );
 
         Ok(SignedDAListener {
             config: ctx,
             bus,
-            current_block,
             processor,
-            block_buffer: BTreeMap::new(),
-            tcp_client_metrics: DaTcpClientMetrics::global("signed_da_listener"),
-            pending_block_requests: HashMap::new(),
-            current_da_index: 0,
+            stream,
         })
     }
 
@@ -116,308 +536,20 @@ impl<P: BlockProcessor + 'static> Module for SignedDAListener<P> {
     }
 
     async fn persist(&mut self) -> Result<ModulePersistOutput> {
-        self.processor.persist(self.current_block).await
+        self.processor.persist(self.stream.current_block()).await
     }
 }
 
 impl<P: BlockProcessor + 'static> SignedDAListener<P> {
-    fn get_da_address(&self) -> &str {
-        if self.current_da_index == 0 {
-            &self.config.da_read_from
-        } else {
-            &self.config.da_fallback_addresses[self.current_da_index - 1]
-        }
+    async fn start_client(&mut self) -> Result<()> {
+        self.stream.start_client_with_metrics().await
     }
 
-    fn advance_da_index(&mut self) {
-        self.current_da_index =
-            (self.current_da_index + 1) % (self.config.da_fallback_addresses.len() + 1);
-    }
-
-    async fn start_client(&mut self, block_height: BlockHeight) -> Result<DataAvailabilityClient> {
-        const MAX_ROUNDS: usize = 3;
-        let total_servers = self.config.da_fallback_addresses.len() + 1;
-        let start_index = self.current_da_index;
-        let mut rounds_completed = 0;
-
-        loop {
-            let da_address = self.get_da_address();
-
-            match DataAvailabilityClient::connect_with_opts(
-                "signed_da_listener".to_string(),
-                Some(1024 * 1024 * 1024),
-                da_address.to_string(),
-            )
-            .await
-            {
-                Ok(mut client) => {
-                    info!("📦 Connected to DA server {}", da_address);
-                    client
-                        .send(DataAvailabilityRequest::StreamFromHeight(block_height))
-                        .await?;
-                    self.tcp_client_metrics.start(block_height.0);
-                    return Ok(client);
-                }
-                Err(e) => {
-                    warn!(
-                        "📦 Failed to connect to DA server {}: {}. Trying next...",
-                        da_address, e
-                    );
-                    self.advance_da_index();
-
-                    // Check if we've completed a full round through all servers
-                    if self.current_da_index == start_index {
-                        rounds_completed += 1;
-                        if rounds_completed >= MAX_ROUNDS {
-                            return Err(anyhow::anyhow!(
-                                "Failed to connect to any DA server after {} rounds through all {} servers",
-                                MAX_ROUNDS,
-                                total_servers
-                            ));
-                        }
-                        warn!(
-                            "📦 Completed round {}/{} through all DA servers, retrying...",
-                            rounds_completed, MAX_ROUNDS
-                        );
-                    }
-                }
-            }
+    async fn handle_signed_block(&mut self, block: SignedBlock) -> Result<()> {
+        let blocks = self.stream.on_signed_block(block).await?;
+        for block in blocks {
+            self.processor.process_block(block).await?;
         }
-    }
-
-    async fn process_block(&mut self, block: SignedBlock) -> Result<()> {
-        let block_height = block.height();
-
-        // If this is the next block we expect, process it immediately, otherwise buffer it
-        match block_height.cmp(&self.current_block) {
-            std::cmp::Ordering::Less => {
-                // Block is from the past, log and ignore
-                warn!(
-                    "📦 Ignoring past block: {} {}",
-                    block.consensus_proposal.slot,
-                    block.consensus_proposal.hashed()
-                );
-            }
-            std::cmp::Ordering::Equal => {
-                if block_height.0.is_multiple_of(1000) {
-                    info!(
-                        "📦 Processing block: {} {}",
-                        block.consensus_proposal.slot,
-                        block.consensus_proposal.hashed()
-                    );
-                } else {
-                    debug!(
-                        "📦 Processing block: {} {}",
-                        block.consensus_proposal.slot,
-                        block.consensus_proposal.hashed()
-                    );
-                }
-
-                // Remove from pending requests if it was requested
-                self.pending_block_requests.remove(&block_height);
-
-                self.processor.process_block(block).await?;
-
-                self.current_block = block_height + 1;
-
-                // Process any buffered blocks that are now in sequence
-                self.process_buffered_blocks().await?;
-            }
-            std::cmp::Ordering::Greater => {
-                // Gap detected! Request missing blocks
-                if block_height > self.current_block {
-                    warn!(
-                        "📦 Gap detected! Expected {}, got {}. Requesting missing blocks.",
-                        self.current_block, block_height
-                    );
-                    for missing_height in self.current_block.0..block_height.0 {
-                        self.request_specific_block(BlockHeight(missing_height));
-                    }
-                }
-                // Buffer the future block
-                debug!(
-                    "📦 Buffering future block: {} {}",
-                    block.consensus_proposal.slot,
-                    block.consensus_proposal.hashed()
-                );
-                self.block_buffer.insert(block_height, block);
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn process_buffered_blocks(&mut self) -> Result<()> {
-        if let Some((height, _)) = self.block_buffer.first_key_value() {
-            if *height > self.current_block {
-                return Ok(());
-            }
-        }
-
-        while let Some((height, block)) = self.block_buffer.pop_first() {
-            if height == self.current_block {
-                debug!(
-                    "📦 Processing buffered block: {} {}",
-                    block.consensus_proposal.slot,
-                    block.consensus_proposal.hashed()
-                );
-                self.processor.process_block(block).await?;
-                self.current_block = height + 1;
-            } else {
-                // In general, DA isn't guaranteed to send blocks in order.
-                info!(
-                    "📦 Wanted block {}, next buffered is {}, waiting.",
-                    self.current_block,
-                    block.height(),
-                );
-                // Put the block back
-                _ = self.block_buffer.insert(height, block);
-                break;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn request_specific_block(&mut self, height: BlockHeight) {
-        if self.pending_block_requests.contains_key(&height) {
-            return; // Already requested
-        }
-
-        debug!("📦 Requesting specific block at height {}", height);
-
-        let state = BlockRequestState {
-            request_time: Instant::now(),
-            retry_count: 0,
-            current_da_index: self.current_da_index,
-        };
-
-        self.pending_block_requests.insert(height, state);
-    }
-
-    async fn switch_to_next_da_server(
-        &mut self,
-        block_height: BlockHeight,
-    ) -> Result<DataAvailabilityClient> {
-        self.advance_da_index();
-        warn!("📦 Switching to DA server: {}", self.get_da_address());
-        self.start_client(block_height).await
-    }
-
-    async fn check_block_request_timeouts(
-        &mut self,
-        client: &mut DataAvailabilityClient,
-    ) -> Result<()> {
-        let now = Instant::now();
-        let timeout_base_secs = if self.config.da_fallback_addresses.is_empty() {
-            5 // Default timeout when no fallback addresses
-        } else {
-            self.config.da_fallback_addresses.len() as u64 * 5 // Longer timeout per fallback
-        };
-
-        let mut timed_out = Vec::new();
-        let mut failed_blocks = Vec::new();
-
-        for (&height, state) in &self.pending_block_requests {
-            // Exponential backoff: 5s, 10s, 20s, 40s, ...
-            let backoff_duration = Duration::from_secs(
-                timeout_base_secs * 2_u64.pow(state.retry_count as u32).min(60),
-            );
-
-            if now.duration_since(state.request_time) > backoff_duration {
-                timed_out.push(height);
-            }
-        }
-
-        for height in timed_out {
-            if let Some(mut state) = self.pending_block_requests.remove(&height) {
-                state.retry_count += 1;
-
-                // Check if we should try a fallback DA server
-                if !self.config.da_fallback_addresses.is_empty()
-                    && state.current_da_index == self.current_da_index
-                {
-                    // Try next DA server
-                    state.current_da_index = (state.current_da_index + 1)
-                        % (self.config.da_fallback_addresses.len() + 1);
-
-                    if state.current_da_index == 0 {
-                        // Back to main DA after trying all fallbacks
-                        // Check if we've exceeded max retries
-                        if state.retry_count > (self.config.da_fallback_addresses.len() + 1) * 3 {
-                            error!(
-                                "📦 Block {} unretrievable after {} retries across all DA servers. STOPPING.",
-                                height, state.retry_count
-                            );
-                            failed_blocks.push(height);
-                            continue;
-                        }
-                    }
-
-                    warn!(
-                        "📦 Block request for height {} timed out (attempt {}). Switching DA server.",
-                        height, state.retry_count
-                    );
-
-                    *client = self.switch_to_next_da_server(self.current_block).await?;
-                } else {
-                    warn!(
-                        "📦 Block request for height {} timed out (attempt {}). Retrying.",
-                        height, state.retry_count
-                    );
-                }
-
-                // Send the block request
-                state.request_time = now;
-                client
-                    .send(DataAvailabilityRequest::BlockRequest(height))
-                    .await?;
-
-                self.pending_block_requests.insert(height, state);
-            }
-        }
-
-        // If any blocks failed after all retries, return error to stop the module
-        if !failed_blocks.is_empty() {
-            return Err(anyhow::anyhow!(
-                "Blocks {:?} are unretrievable from all DA servers",
-                failed_blocks
-            ));
-        }
-
-        Ok(())
-    }
-
-    async fn handle_block_not_found(
-        &mut self,
-        height: BlockHeight,
-        client: &mut DataAvailabilityClient,
-    ) -> Result<()> {
-        error!("📦 Block {} not found at DA server", height);
-
-        self.pending_block_requests.remove(&height);
-
-        // Try fallback DA servers
-        if !self.config.da_fallback_addresses.is_empty() {
-            *client = self.switch_to_next_da_server(self.current_block).await?;
-
-            // Re-request the block
-            self.request_specific_block(height);
-            client
-                .send(DataAvailabilityRequest::BlockRequest(height))
-                .await?;
-        } else {
-            // No fallback servers available - fatal error
-            error!(
-                "📦 Block {} is unretrievable and no fallback DA servers configured. STOPPING.",
-                height
-            );
-            return Err(anyhow::anyhow!(
-                "Block {} unretrievable from DA server and no fallbacks available",
-                height
-            ));
-        }
-
         Ok(())
     }
 
@@ -443,12 +575,11 @@ impl<P: BlockProcessor + 'static> SignedDAListener<P> {
                 }
                 yield_now().await; // Yield to allow other tasks to run
             }
-            // Sort blocks by block_height (numeric order)
             blocks.sort_by_key(|b| b.0.consensus_proposal.slot);
 
             info!("Got {} blocks from folder. Processing...", blocks.len());
             for (block, _) in blocks {
-                self.process_block(block).await?;
+                self.handle_signed_block(block).await?;
             }
             module_handle_messages! {
                 on_self self,
@@ -461,60 +592,39 @@ impl<P: BlockProcessor + 'static> SignedDAListener<P> {
                 .collect::<Result<Vec<_>>>()?;
             for block_hash in block_hashes {
                 let block = blocks.get(&block_hash)?.unwrap();
-                self.process_block(block).await?;
+                self.handle_signed_block(block).await?;
             }
             module_handle_messages! {
                 on_self self,
             };
         } else {
-            let mut client = self.start_client(self.current_block).await?;
+            self.start_client().await?;
 
             info!(
                 "Starting DA client for signed blocks at block {}",
-                self.current_block
+                self.stream.current_block()
             );
-
-            let mut timeout_check_interval = tokio::time::interval(Duration::from_secs(1));
 
             module_handle_messages! {
                 on_self self,
-                _ = tokio::time::sleep(tokio::time::Duration::from_secs(self.config.timeout_client_secs)) => {
-                    warn!("No blocks received in the last {} seconds, restarting client", self.config.timeout_client_secs);
-                    self.tcp_client_metrics.reconnect("timeout");
-                    client = self.start_client(self.current_block).await?;
-                }
-                _ = timeout_check_interval.tick() => {
-                    // Check for timed-out block requests and send new requests
-                    log_error!(self.check_block_request_timeouts(&mut client).await, "Checking block request timeouts")?;
-
-                    // Send pending block requests that haven't been sent yet
-                    let pending: Vec<BlockHeight> = self.pending_block_requests.keys().copied().collect();
-                    for height in pending {
-                        if let Err(e) = client.send(DataAvailabilityRequest::BlockRequest(height)).await {
-                            error!("Failed to send block request for height {}: {}", height, e);
+                poll = self.stream.listen_next() => {
+                    let poll = poll?;
+                    match poll {
+                        DaStreamPoll::Timeout => {
+                            warn!("No blocks received in the last {} seconds, restarting client", self.config.timeout_client_secs);
+                            self.stream.reconnect("timeout").await?;
                         }
-                    }
-                }
-                frame = client.recv() => {
-                    if let Some(event) = frame {
-                        match &event {
-                            DataAvailabilityEvent::BlockNotFound(height) => {
-                                error!("📦 Block {} not found at DA server", height);
-                                log_error!(self.handle_block_not_found(*height, &mut client).await, "Handling BlockNotFound")?;
-                            },
-                            _ => { /* Handled below */}
+                        DaStreamPoll::StreamClosed => {
+                            warn!("DA stream connection lost. Reconnecting...");
+                            self.stream.reconnect("stream_closed").await?;
                         }
-
-                        let _ = log_error!(self.processing_next_frame(event).await, "Consuming da stream");
-                        if let Err(e) = client.ping().await {
-                            warn!("Ping failed: {}. Restarting client...", e);
-                            self.tcp_client_metrics.reconnect("ping_error");
-                            client = self.start_client(self.current_block).await?;
+                        DaStreamPoll::Event(event) => {
+                            let _ = log_error!(self.processing_next_frame(event).await, "Consuming da stream");
+                            if let Err(e) = self.stream.ping().await {
+                                warn!("Ping failed: {}. Restarting client...", e);
+                                self.stream.reconnect("ping_error").await?;
+                            }
                         }
-                    } else {
-                        warn!("DA stream connection lost. Reconnecting...");
-                        self.tcp_client_metrics.reconnect("stream_closed");
-                        client = self.start_client(self.current_block).await?;
                     }
                 }
             };
@@ -525,15 +635,12 @@ impl<P: BlockProcessor + 'static> SignedDAListener<P> {
     async fn processing_next_frame(&mut self, event: DataAvailabilityEvent) -> Result<()> {
         match event {
             DataAvailabilityEvent::SignedBlock(block) => {
-                self.pending_block_requests.remove(&block.height());
-                self.process_block(block).await?;
+                self.handle_signed_block(block).await?;
             }
             DataAvailabilityEvent::MempoolStatusEvent(status) => {
                 self.processor.process_mempool_status(status).await?;
             }
-            DataAvailabilityEvent::BlockNotFound(_) => {
-                // Already handled in the event loop
-            }
+            DataAvailabilityEvent::BlockNotFound(_) => {}
         }
 
         Ok(())

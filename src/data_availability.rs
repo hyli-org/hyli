@@ -2,8 +2,9 @@
 
 // Pick one of the two implementations
 use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
-use hyli_modules::utils::da_codec::{DataAvailabilityClient, DataAvailabilityServer};
+use hyli_modules::utils::da_codec::DataAvailabilityServer;
 //use hyli_modules::modules::data_availability::blocks_memory::Blocks;
+use hyli_modules::modules::da_listener::{DaStreamPoll, SignedDaStream};
 use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
@@ -25,10 +26,7 @@ use std::{
     collections::{BTreeSet, HashMap, VecDeque},
     time::Duration,
 };
-use tokio::{
-    task::JoinSet,
-    time::{sleep_until, Instant},
-};
+use tokio::task::JoinSet;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::model::SharedRunContext;
@@ -212,8 +210,18 @@ impl DaCatchupper {
         }
     }
 
-    pub fn choose_random_peer(&self) -> Option<String> {
-        self.peers.choose(&mut deterministic_rng()).cloned()
+    pub fn choose_random_peer(&self) -> Vec<String> {
+        let Some(primary) = self.peers.choose(&mut deterministic_rng()).cloned() else {
+            return vec![];
+        };
+        let mut ordered = Vec::with_capacity(self.peers.len());
+        ordered.push(primary.clone());
+        for peer in &self.peers {
+            if peer != &primary {
+                ordered.push(peer.clone());
+            }
+        }
+        ordered
     }
 
     pub fn init_catchup(
@@ -254,10 +262,13 @@ impl DaCatchupper {
             return Ok(());
         }
 
-        let Some(peer) = self.choose_random_peer() else {
-            warn!("No peers available for catchup, cannot proceed");
+        let peers = self.choose_random_peer();
+        if peers.is_empty() {
+            info!("choose_random_peer returned no peers");
             return Ok(());
-        };
+        }
+        #[expect(clippy::unwrap_used, reason = "gated above")]
+        let peer = peers.first().unwrap();
 
         debug!(
             "Starting catchup from height {} to {:?} on peer {}",
@@ -266,7 +277,7 @@ impl DaCatchupper {
 
         self.status = Some((
             Self::start_task(
-                peer,
+                peers,
                 self.da_max_frame_length,
                 from_height,
                 sender.clone(),
@@ -312,11 +323,13 @@ impl DaCatchupper {
             return Ok(());
         };
 
-        let Some(peer) = self.choose_random_peer() else {
-            warn!("No peers available for catchup, cannot proceed");
-
+        let peers = self.choose_random_peer();
+        if peers.is_empty() {
+            info!("choose_random_peer returned no peers");
             return Ok(());
-        };
+        }
+        #[expect(clippy::unwrap_used, reason = "gated above")]
+        let peer = peers.first().unwrap();
 
         let Some((task, old_height)) = &mut self.status else {
             unreachable!("Status was already checked");
@@ -339,9 +352,9 @@ impl DaCatchupper {
             );
             let from = processed_height.max(*old_height);
 
-            self.metrics.restart(&peer, from.0);
+            self.metrics.restart(peer, from.0);
             let new_task = Self::start_task(
-                peer,
+                peers,
                 self.da_max_frame_length,
                 from,
                 sender.clone(),
@@ -360,79 +373,76 @@ impl DaCatchupper {
     }
 
     fn start_task(
-        peer: String,
+        peers: Vec<String>,
         da_max_frame_length: usize,
         start_height: BlockHeight,
         sender: tokio::sync::mpsc::Sender<SignedBlock>,
         metrics: DaCatchupMetrics,
     ) -> JoinHandle<anyhow::Result<()>> {
+        let peer_label = peers
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
         info!(
             "Starting catchup from height {} on peer {}",
-            start_height, peer
+            start_height, peer_label
         );
 
-        metrics.start(&peer, start_height.0);
+        metrics.start(&peer_label, start_height.0);
 
         tokio::spawn(async move {
-            let mut client = log_error!(
-                DataAvailabilityClient::connect_with_opts(
-                    "catchupper".to_string(),
-                    Some(da_max_frame_length),
-                    peer.clone(),
-                )
-                .await,
-                "Error occurred setting up the DA listener"
-            )?;
-
-            client
-                .send(DataAvailabilityRequest::StreamFromHeight(start_height))
-                .await?;
-
             let timeout_duration = std::env::var("HYLI_DA_SLEEP_TIMEOUT")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .map(Duration::from_secs)
                 .unwrap_or_else(|| Duration::from_secs(10));
-            let mut deadline = Instant::now() + timeout_duration;
+
+            let mut stream = SignedDaStream::new(
+                "catchupper",
+                "catchupper",
+                Some(da_max_frame_length),
+                peers,
+                start_height,
+                timeout_duration,
+            );
+            log_error!(
+                stream.start_client().await,
+                "Error occurred setting up the DA listener"
+            )?;
 
             loop {
-                let sleep = sleep_until(deadline);
-                tokio::pin!(sleep);
-
-                hyli_turmoil_shims::tokio_select_biased! {
-                    _ = &mut sleep => {
+                match stream.listen_next().await? {
+                    DaStreamPoll::Timeout => {
                         warn!("Timeout expired while waiting for block.");
-                        metrics.timeout(&peer);
-                        break;
+                        metrics.timeout(&peer_label);
                     }
-                    received = client.recv() => {
-                        match received {
-                            None => {
-                                metrics.stream_closed(&peer);
-                                break;
-                            }
-                            Some(DataAvailabilityEvent::SignedBlock(block)) => {
+                    DaStreamPoll::StreamClosed => {
+                        metrics.stream_closed(&peer_label);
+                    }
+                    DaStreamPoll::Event(event) => match event {
+                        DataAvailabilityEvent::SignedBlock(block) => {
+                            let blocks = stream.on_signed_block(block).await?;
+                            for block in blocks {
                                 info!(
                                     "📦 Received block (height {}) from stream",
                                     block.consensus_proposal.slot
                                 );
 
                                 if let Err(e) = sender.send(block).await {
-                                    tracing::error!("Error while sending block over channel: {:#}", e);
-                                    break;
+                                    tracing::error!(
+                                        "Error while sending block over channel: {:#}",
+                                        e
+                                    );
+                                    return Ok(());
                                 }
-
-                                // Reset the timeout ONLY when a block is received
-                                deadline = Instant::now() + timeout_duration;
-                            }
-                            Some(_) => {
-                                tracing::trace!("Dropped received message in catchup task");
                             }
                         }
-                    }
+                        _ => {
+                            tracing::trace!("Dropped received message in catchup task");
+                        }
+                    },
                 }
             }
-            Ok(())
         })
     }
 }
