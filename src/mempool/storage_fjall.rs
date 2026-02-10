@@ -125,10 +125,8 @@ impl LanesStorage {
         self.metrics.record_db(&self.db);
         self.metrics
             .record_keyspace("dp_metadata", &self.by_hash_metadata);
-        self.metrics
-            .record_keyspace("dp_data", &self.by_hash_data);
-        self.metrics
-            .record_keyspace("dp_proofs", &self.dp_proofs);
+        self.metrics.record_keyspace("dp_data", &self.by_hash_data);
+        self.metrics.record_keyspace("dp_proofs", &self.dp_proofs);
     }
 
     pub fn new(
@@ -196,8 +194,11 @@ impl LanesStorage {
             .by_hash_metadata
             .insert(format!("{lane_id}:{dp_hash}"), borsh::to_vec(&metadata)?)
             .map_err(Into::into);
-        self.metrics
-            .record_op("put_metadata_only", "dp_metadata", start.elapsed().as_micros() as u64);
+        self.metrics.record_op(
+            "put_metadata_only",
+            "dp_metadata",
+            start.elapsed().as_micros() as u64,
+        );
         res
     }
 }
@@ -220,8 +221,11 @@ impl Storage for LanesStorage {
             .by_hash_metadata
             .contains_key(format!("{lane_id}:{dp_hash}"))
             .unwrap_or(false);
-        self.metrics
-            .record_op("contains", "dp_metadata", start.elapsed().as_micros() as u64);
+        self.metrics.record_op(
+            "contains",
+            "dp_metadata",
+            start.elapsed().as_micros() as u64,
+        );
         res
     }
 
@@ -238,8 +242,11 @@ impl Storage for LanesStorage {
             lane_id
         )?;
         let res = item.map(decode_metadata_from_item).transpose();
-        self.metrics
-            .record_op("get_metadata_by_hash", "dp_metadata", start.elapsed().as_micros() as u64);
+        self.metrics.record_op(
+            "get_metadata_by_hash",
+            "dp_metadata",
+            start.elapsed().as_micros() as u64,
+        );
         res
     }
 
@@ -255,18 +262,22 @@ impl Storage for LanesStorage {
             dp_hash,
             lane_id
         )?;
-        let res = item.map(|s| {
-            decode_data_proposal_from_item(s).map(|mut dp| {
-                // SAFETY: we trust our own fjall storage
-                unsafe {
-                    dp.unsafe_set_hash(dp_hash);
-                }
-                dp
+        let res = item
+            .map(|s| {
+                decode_data_proposal_from_item(s).map(|mut dp| {
+                    // SAFETY: we trust our own fjall storage
+                    unsafe {
+                        dp.unsafe_set_hash(dp_hash);
+                    }
+                    dp
+                })
             })
-        })
-        .transpose();
-        self.metrics
-            .record_op("get_dp_by_hash", "dp_data", start.elapsed().as_micros() as u64);
+            .transpose();
+        self.metrics.record_op(
+            "get_dp_by_hash",
+            "dp_data",
+            start.elapsed().as_micros() as u64,
+        );
         res
     }
 
@@ -285,8 +296,11 @@ impl Storage for LanesStorage {
         let res = item
             .map(|s| borsh::from_slice(&s).map_err(Into::into))
             .transpose();
-        self.metrics
-            .record_op("get_proofs_by_hash", "dp_proofs", start.elapsed().as_micros() as u64);
+        self.metrics.record_op(
+            "get_proofs_by_hash",
+            "dp_proofs",
+            start.elapsed().as_micros() as u64,
+        );
         res
     }
 
@@ -294,8 +308,11 @@ impl Storage for LanesStorage {
         let start = Instant::now();
         self.dp_proofs.remove(format!("{lane_id}:{dp_hash}"))?;
         // NOTE: Garbage collection is now automatic in fjall 3.0
-        self.metrics
-            .record_op("delete_proofs", "dp_proofs", start.elapsed().as_micros() as u64);
+        self.metrics.record_op(
+            "delete_proofs",
+            "dp_proofs",
+            start.elapsed().as_micros() as u64,
+        );
         Ok(())
     }
 
@@ -349,8 +366,11 @@ impl Storage for LanesStorage {
         batch.insert(&self.by_hash_data, key.clone(), data);
         batch.insert(&self.dp_proofs, key, proofs);
         let res = batch.commit().map_err(Into::into);
-        self.metrics
-            .record_op("put_no_verification", "batch", start.elapsed().as_micros() as u64);
+        self.metrics.record_op(
+            "put_no_verification",
+            "batch",
+            start.elapsed().as_micros() as u64,
+        );
         res
     }
 
@@ -399,8 +419,11 @@ impl Storage for LanesStorage {
         let signatures = lem.signatures.clone();
         self.by_hash_metadata
             .insert(key, encode_metadata_to_item(lem)?)?;
-        self.metrics
-            .record_op("add_signatures", "dp_metadata", start.elapsed().as_micros() as u64);
+        self.metrics.record_op(
+            "add_signatures",
+            "dp_metadata",
+            start.elapsed().as_micros() as u64,
+        );
         Ok(signatures)
     }
 
@@ -431,8 +454,11 @@ impl Storage for LanesStorage {
         lem.cached_poda = Some(poda);
         self.by_hash_metadata
             .insert(key, encode_metadata_to_item(lem)?)?;
-        self.metrics
-            .record_op("set_cached_poda", "dp_metadata", start.elapsed().as_micros() as u64);
+        self.metrics.record_op(
+            "set_cached_poda",
+            "dp_metadata",
+            start.elapsed().as_micros() as u64,
+        );
         Ok(())
     }
 

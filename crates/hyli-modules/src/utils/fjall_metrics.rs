@@ -7,18 +7,18 @@ pub struct FjallMetrics {
     node_id: String,
     db_name: String,
     // DB-level metrics.
-    db_outstanding_flushes: Gauge<u64>, // Flush tasks queued.
-    db_active_compactions: Gauge<u64>, // Compactions currently running.
-    db_compactions_completed: Gauge<u64>, // Compactions completed since start.
-    db_time_compacting_micros: Gauge<u64>, // Total time spent compacting.
-    db_journal_count: Gauge<u64>, // Journal files currently on disk.
+    db_outstanding_flushes: Gauge<u64>,      // Flush tasks queued.
+    db_active_compactions: Gauge<u64>,       // Compactions currently running.
+    db_compactions_completed: Gauge<u64>,    // Compactions completed since start.
+    db_time_compacting_micros: Gauge<u64>,   // Total time spent compacting.
+    db_journal_count: Gauge<u64>,            // Journal files currently on disk.
     db_journal_disk_space_bytes: Gauge<u64>, // Total journal disk usage.
-    db_disk_space_bytes: Gauge<u64>, // Total DB disk usage.
-    db_write_buffer_size_bytes: Gauge<u64>, // Memtable bytes (active + sealed).
+    db_disk_space_bytes: Gauge<u64>,         // Total DB disk usage.
+    db_write_buffer_size_bytes: Gauge<u64>,  // Memtable bytes (active + sealed).
 
     // Keyspace-level metrics (labelled by keyspace).
     keyspace_disk_space_bytes: Gauge<u64>, // Disk usage per keyspace.
-    keyspace_approx_len: Gauge<u64>, // Approximate item count.
+    keyspace_approx_len: Gauge<u64>,       // Approximate item count.
     keyspace_table_file_cache_hit_rate: Gauge<f64>, // FD cache hit rate.
     // Block types:
     // - Data blocks store the actual key/value entries.
@@ -28,9 +28,9 @@ pub struct FjallMetrics {
     keyspace_data_block_cache_hit_rate: Gauge<f64>, // Data block cache hit rate.
     keyspace_index_block_cache_hit_rate: Gauge<f64>, // Index block cache hit rate.
     keyspace_filter_block_cache_hit_rate: Gauge<f64>, // Filter block cache hit rate.
-    keyspace_filter_efficiency: Gauge<f64>, // Filter efficiency (IO avoided).
-    keyspace_block_io_bytes: Gauge<u64>, // Total block IO bytes.
-    keyspace_data_block_io_bytes: Gauge<u64>, // Data block IO bytes.
+    keyspace_filter_efficiency: Gauge<f64>,    // Filter efficiency (IO avoided).
+    keyspace_block_io_bytes: Gauge<u64>,       // Total block IO bytes.
+    keyspace_data_block_io_bytes: Gauge<u64>,  // Data block IO bytes.
     keyspace_index_block_io_bytes: Gauge<u64>, // Index block IO bytes.
     keyspace_filter_block_io_bytes: Gauge<u64>, // Filter block IO bytes.
 
@@ -51,23 +51,13 @@ impl FjallMetrics {
             db_name: db_name.into(),
             db_outstanding_flushes: meter.u64_gauge("fjall_outstanding_flushes").build(),
             db_active_compactions: meter.u64_gauge("fjall_active_compactions").build(),
-            db_compactions_completed: meter
-                .u64_gauge("fjall_compactions_completed")
-                .build(),
-            db_time_compacting_micros: meter
-                .u64_gauge("fjall_time_compacting_micros")
-                .build(),
+            db_compactions_completed: meter.u64_gauge("fjall_compactions_completed").build(),
+            db_time_compacting_micros: meter.u64_gauge("fjall_time_compacting_micros").build(),
             db_journal_count: meter.u64_gauge("fjall_journal_count").build(),
-            db_journal_disk_space_bytes: meter
-                .u64_gauge("fjall_journal_disk_space_bytes")
-                .build(),
+            db_journal_disk_space_bytes: meter.u64_gauge("fjall_journal_disk_space_bytes").build(),
             db_disk_space_bytes: meter.u64_gauge("fjall_db_disk_space_bytes").build(),
-            db_write_buffer_size_bytes: meter
-                .u64_gauge("fjall_write_buffer_size_bytes")
-                .build(),
-            keyspace_disk_space_bytes: meter
-                .u64_gauge("fjall_keyspace_disk_space_bytes")
-                .build(),
+            db_write_buffer_size_bytes: meter.u64_gauge("fjall_write_buffer_size_bytes").build(),
+            keyspace_disk_space_bytes: meter.u64_gauge("fjall_keyspace_disk_space_bytes").build(),
             keyspace_approx_len: meter.u64_gauge("fjall_keyspace_approx_len").build(),
             keyspace_table_file_cache_hit_rate: meter
                 .f64_gauge("fjall_keyspace_table_file_cache_hit_rate")
@@ -84,12 +74,8 @@ impl FjallMetrics {
             keyspace_filter_block_cache_hit_rate: meter
                 .f64_gauge("fjall_keyspace_filter_block_cache_hit_rate")
                 .build(),
-            keyspace_filter_efficiency: meter
-                .f64_gauge("fjall_keyspace_filter_efficiency")
-                .build(),
-            keyspace_block_io_bytes: meter
-                .u64_gauge("fjall_keyspace_block_io_bytes")
-                .build(),
+            keyspace_filter_efficiency: meter.f64_gauge("fjall_keyspace_filter_efficiency").build(),
+            keyspace_block_io_bytes: meter.u64_gauge("fjall_keyspace_block_io_bytes").build(),
             keyspace_data_block_io_bytes: meter
                 .u64_gauge("fjall_keyspace_data_block_io_bytes")
                 .build(),

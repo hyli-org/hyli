@@ -492,8 +492,7 @@ impl DataAvailability {
         let mut catchup_joinset: JoinSet<(String, usize)> = tokio::task::JoinSet::new();
         let mut catchup_task_checker_ticker =
             tokio::time::interval(std::time::Duration::from_millis(5000));
-        let mut storage_metrics_ticker =
-            tokio::time::interval(std::time::Duration::from_secs(30));
+        let mut storage_metrics_ticker = tokio::time::interval(std::time::Duration::from_secs(30));
 
         module_handle_messages! {
             on_self self,

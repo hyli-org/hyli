@@ -1,9 +1,9 @@
+use crate::utils::fjall_metrics::FjallMetrics;
 use anyhow::{Context, Result};
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slice};
 use sdk::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock};
 use std::{fmt::Debug, path::Path, time::Instant};
 use tracing::{debug, info, trace};
-use crate::utils::fjall_metrics::FjallMetrics;
 
 struct FjallHashKey(ConsensusProposalHash);
 struct FjallHeightKey([u8; 8]);
@@ -182,7 +182,12 @@ impl Blocks {
         res
     }
 
-    pub fn record_op(&self, op: &'static str, keyspace: &'static str, elapsed: std::time::Duration) {
+    pub fn record_op(
+        &self,
+        op: &'static str,
+        keyspace: &'static str,
+        elapsed: std::time::Duration,
+    ) {
         self.metrics
             .record_op(op, keyspace, elapsed.as_micros() as u64);
     }
