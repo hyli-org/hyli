@@ -210,7 +210,7 @@ impl DaCatchupper {
         }
     }
 
-    pub fn choose_random_peer(&self) -> Option<(String, Vec<String>)> {
+    pub fn choose_random_peer(&self) -> Option<Vec<String>> {
         let primary = self.peers.choose(&mut deterministic_rng()).cloned()?;
         let mut ordered = Vec::with_capacity(self.peers.len());
         ordered.push(primary.clone());
@@ -219,7 +219,7 @@ impl DaCatchupper {
                 ordered.push(peer.clone());
             }
         }
-        Some((primary, ordered))
+        Some(ordered)
     }
 
     pub fn init_catchup(
@@ -260,10 +260,13 @@ impl DaCatchupper {
             return Ok(());
         }
 
-        let Some((peer, peers)) = self.choose_random_peer() else {
+        let Some(peers) = self.choose_random_peer() else {
             warn!("No peers available for catchup, cannot proceed");
             return Ok(());
         };
+        let peer = peers
+            .first()
+            .expect("choose_random_peer always returns at least one peer");
 
         debug!(
             "Starting catchup from height {} to {:?} on peer {}",
@@ -318,11 +321,14 @@ impl DaCatchupper {
             return Ok(());
         };
 
-        let Some((peer, peers)) = self.choose_random_peer() else {
+        let Some(peers) = self.choose_random_peer() else {
             warn!("No peers available for catchup, cannot proceed");
 
             return Ok(());
         };
+        let peer = peers
+            .first()
+            .expect("choose_random_peer always returns at least one peer");
 
         let Some((task, old_height)) = &mut self.status else {
             unreachable!("Status was already checked");
@@ -345,7 +351,7 @@ impl DaCatchupper {
             );
             let from = processed_height.max(*old_height);
 
-            self.metrics.restart(&peer, from.0);
+            self.metrics.restart(peer, from.0);
             let new_task = Self::start_task(
                 peers,
                 self.da_max_frame_length,
