@@ -260,6 +260,22 @@ fn test_file_not_in_manifest_fails() {
 }
 
 #[test_log::test]
+fn test_missing_file_not_in_manifest_returns_none() {
+    let dir = tempdir().unwrap();
+    let data_dir = dir.path();
+    let missing_file_path = PathBuf::from("missing_file.data");
+
+    // Write manifest that does not contain the missing file.
+    let manifest_path = super::manifest_path(data_dir);
+    std::fs::write(&manifest_path, "00000001 other_file.data\n").unwrap();
+
+    // Missing file that is also not in manifest should be treated as optional state.
+    let result: Result<Option<TestStruct>> =
+        TestModule::<usize>::load_from_disk(data_dir, &missing_file_path);
+    assert!(result.unwrap().is_none());
+}
+
+#[test_log::test]
 fn test_no_manifest_fails_to_load() {
     let dir = tempdir().unwrap();
     let data_dir = dir.path();

@@ -90,6 +90,10 @@ where
                     Ok(None) => {
                         return Ok(None);
                     }
+                    Err(PersistenceError::FileNotInManifest(_)) => {
+                        // File is absent and not listed in manifest: treat as optional state.
+                        return Ok(None);
+                    }
                     Err(e) => {
                         return Err(e).with_context(|| format!("Module {}", type_name::<S>()))
                     }
