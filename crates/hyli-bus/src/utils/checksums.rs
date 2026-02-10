@@ -192,7 +192,7 @@ pub(crate) fn read_checksum_from_manifest(
         }
     }
 
-    // File not in manifest - this means file exists but wasn't in a successful shutdown
+    // File not in manifest.
     Err(PersistenceError::FileNotInManifest(data_dir.join(file)))
 }
 
