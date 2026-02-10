@@ -25,6 +25,7 @@ COPY --from=builder /usr/src/hyli/target/release/hyli-loadtest      ./
 COPY --from=builder /usr/src/hyli/target/release/gcs_uploader       ./
 COPY --from=builder /usr/src/hyli/target/release/smt_auto_prover    ./
 COPY --from=builder /usr/src/hyli/target/release/health_check       ./
+COPY --from=builder /usr/src/hyli/target/release/chaos_monkey       ./
 COPY --from=builder /usr/src/hyli/target/release/rate_limiter_proxy ./
 
 VOLUME /hyli/data
