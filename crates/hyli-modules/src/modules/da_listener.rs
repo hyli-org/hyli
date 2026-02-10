@@ -75,7 +75,12 @@ pub struct SignedDaStream {
 }
 
 impl SignedDaStream {
-    const MAX_CONNECT_ROUNDS: usize = 3;
+    const MAX_CONNECT_ROUNDS: usize = 5;
+    const BLOCK_REQUEST_RETRIES_PER_SERVER: usize = 10;
+
+    fn max_block_request_retries(&self) -> usize {
+        self.addresses.len().max(1) * Self::BLOCK_REQUEST_RETRIES_PER_SERVER
+    }
 
     pub fn new(
         module_name: &'static str,
@@ -300,7 +305,7 @@ impl SignedDaStream {
             if let Some(mut state) = self.pending_block_requests.remove(&height) {
                 state.retry_count += 1;
 
-                let max_retries = self.addresses.len().max(1) * Self::MAX_CONNECT_ROUNDS;
+                let max_retries = self.max_block_request_retries();
                 if state.retry_count > max_retries {
                     error!(
                         "📦 Block {} unretrievable after {} retries across all DA servers. STOPPING.",
@@ -344,27 +349,43 @@ impl SignedDaStream {
     }
 
     pub async fn handle_block_not_found(&mut self, height: BlockHeight) -> Result<()> {
-        error!("📦 Block {} not found at DA server", height);
+        let now = Instant::now();
+        let mut state = self
+            .pending_block_requests
+            .remove(&height)
+            .unwrap_or(BlockRequestState {
+                request_time: now,
+                retry_count: 0,
+            });
 
-        self.pending_block_requests.remove(&height);
-
-        let has_fallbacks = self.addresses.len() > 1;
-        if has_fallbacks {
-            self.start_client().await?;
-
-            self.request_specific_block(height);
-            self.send_request(DataAvailabilityRequest::BlockRequest(height))
-                .await?;
-        } else {
+        state.retry_count += 1;
+        let max_retries = self.max_block_request_retries();
+        if state.retry_count > max_retries {
             error!(
-                "📦 Block {} is unretrievable and no fallback DA servers configured. STOPPING.",
-                height
+                "📦 Block {} not found after {} attempts across configured DA servers. STOPPING.",
+                height, state.retry_count
             );
             return Err(anyhow::anyhow!(
-                "Block {} unretrievable from DA server and no fallbacks available",
-                height
+                "Block {} unretrievable after {} attempts",
+                height,
+                state.retry_count
             ));
         }
+
+        warn!(
+            "📦 Block {} not found at DA server (attempt {}/{}). Retrying.",
+            height, state.retry_count, max_retries
+        );
+
+        state.request_time = now;
+        self.pending_block_requests.insert(height, state);
+
+        if self.addresses.len() > 1 {
+            self.start_client().await?;
+        }
+
+        self.send_request(DataAvailabilityRequest::BlockRequest(height))
+            .await?;
 
         Ok(())
     }
@@ -615,7 +636,8 @@ impl<P: BlockProcessor + 'static> SignedDAListener<P> {
                             self.stream.reconnect("timeout").await?;
                         }
                         DaStreamPoll::StreamClosed => {
-                            warn!("DA stream connection lost. Reconnecting...");
+                            warn!("DA stream connection lost. Reconnecting after sleeping 1s...");
+                            tokio::time::sleep(Duration::from_secs(1)).await;
                             self.stream.reconnect("stream_closed").await?;
                         }
                         DaStreamPoll::Event(event) => {
