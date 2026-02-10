@@ -6,26 +6,35 @@ pub struct FjallMetrics {
     module_name: String,
     node_id: String,
     db_name: String,
-    db_outstanding_flushes: Gauge<u64>,
-    db_active_compactions: Gauge<u64>,
-    db_compactions_completed: Gauge<u64>,
-    db_time_compacting_micros: Gauge<u64>,
-    db_journal_count: Gauge<u64>,
-    db_journal_disk_space_bytes: Gauge<u64>,
-    db_disk_space_bytes: Gauge<u64>,
-    db_write_buffer_size_bytes: Gauge<u64>,
-    keyspace_disk_space_bytes: Gauge<u64>,
-    keyspace_approx_len: Gauge<u64>,
-    keyspace_table_file_cache_hit_rate: Gauge<f64>,
-    keyspace_block_cache_hit_rate: Gauge<f64>,
-    keyspace_data_block_cache_hit_rate: Gauge<f64>,
-    keyspace_index_block_cache_hit_rate: Gauge<f64>,
-    keyspace_filter_block_cache_hit_rate: Gauge<f64>,
-    keyspace_filter_efficiency: Gauge<f64>,
-    keyspace_block_io_bytes: Gauge<u64>,
-    keyspace_data_block_io_bytes: Gauge<u64>,
-    keyspace_index_block_io_bytes: Gauge<u64>,
-    keyspace_filter_block_io_bytes: Gauge<u64>,
+    // DB-level metrics.
+    db_outstanding_flushes: Gauge<u64>, // Flush tasks queued.
+    db_active_compactions: Gauge<u64>, // Compactions currently running.
+    db_compactions_completed: Gauge<u64>, // Compactions completed since start.
+    db_time_compacting_micros: Gauge<u64>, // Total time spent compacting.
+    db_journal_count: Gauge<u64>, // Journal files currently on disk.
+    db_journal_disk_space_bytes: Gauge<u64>, // Total journal disk usage.
+    db_disk_space_bytes: Gauge<u64>, // Total DB disk usage.
+    db_write_buffer_size_bytes: Gauge<u64>, // Memtable bytes (active + sealed).
+
+    // Keyspace-level metrics (labelled by keyspace).
+    keyspace_disk_space_bytes: Gauge<u64>, // Disk usage per keyspace.
+    keyspace_approx_len: Gauge<u64>, // Approximate item count.
+    keyspace_table_file_cache_hit_rate: Gauge<f64>, // FD cache hit rate.
+    // Block types:
+    // - Data blocks store the actual key/value entries.
+    // - Index blocks map key ranges to data-block locations.
+    // - Filter blocks (Bloom-like) allow fast "definitely not present" checks.
+    keyspace_block_cache_hit_rate: Gauge<f64>, // Aggregate block cache hit rate.
+    keyspace_data_block_cache_hit_rate: Gauge<f64>, // Data block cache hit rate.
+    keyspace_index_block_cache_hit_rate: Gauge<f64>, // Index block cache hit rate.
+    keyspace_filter_block_cache_hit_rate: Gauge<f64>, // Filter block cache hit rate.
+    keyspace_filter_efficiency: Gauge<f64>, // Filter efficiency (IO avoided).
+    keyspace_block_io_bytes: Gauge<u64>, // Total block IO bytes.
+    keyspace_data_block_io_bytes: Gauge<u64>, // Data block IO bytes.
+    keyspace_index_block_io_bytes: Gauge<u64>, // Index block IO bytes.
+    keyspace_filter_block_io_bytes: Gauge<u64>, // Filter block IO bytes.
+
+    // Operation timing totals (counter of elapsed microseconds).
     op_time_micros: Counter<u64>,
 }
 
