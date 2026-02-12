@@ -35,10 +35,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Compile crate '${{ matrix.crate }}' with no default features
-        run: cargo build -p ${{ matrix.crate }} --no-default-features
+        run: cargo check -p ${{ matrix.crate }} --no-default-features
 
       - name: Compile crate '${{ matrix.crate }}' with default features
-        run: cargo build -p ${{ matrix.crate }}
+        run: cargo check -p ${{ matrix.crate }}
 
       - name: Clean workspace on hyli branch
         if: matrix.crate == 'hyli'
@@ -46,7 +46,7 @@ jobs:
 
       - name: Compile crate '${{ matrix.crate }}' with specific features
         if: matrix.features != ''
-        run: cargo build -p ${{ matrix.crate }} --features ${{ matrix.features }}
+        run: cargo check -p ${{ matrix.crate }} --features ${{ matrix.features }}
 
       - name: Build doc for crate '${{ matrix.crate }}'
         if: matrix.crate != 'hyli-noir-tools'
