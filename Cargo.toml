@@ -121,7 +121,11 @@ once_cell = { version = "1.19.0", default-features = false }
 opentelemetry = { version = "0.28.0" }
 opentelemetry-prometheus = { version = "0.28.0" }
 opentelemetry_sdk = { version = "0.28.0" }
-opentelemetry-otlp = { version = "0.28.0", features = ["grpc-tonic", "trace", "metrics"] }
+opentelemetry-otlp = { version = "0.28.0", features = [
+  "grpc-tonic",
+  "trace",
+  "metrics",
+] }
 opentelemetry-http = { version = "0.28" }
 paste = { version = "1.0.15", default-features = false }
 prometheus = { version = "0.13.4" }
@@ -220,7 +224,7 @@ smt-token = { workspace = true, features = ["client"] }
 risc0-recursion = { workspace = true }
 hyli-verifiers = { workspace = true }
 hyli-contracts = { workspace = true }
-hyli-modules = { workspace = true, features = ["db"] }
+hyli-modules = { workspace = true, features = ["db", "fjall", "gcs"] }
 hyli-bus = { workspace = true }
 
 
