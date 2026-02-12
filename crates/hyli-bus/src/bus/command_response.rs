@@ -15,6 +15,8 @@ use crate::modules::signal::shutdown_aware_timeout;
 use crate::utils::profiling::LatencyMetricSink;
 use crate::utils::static_type_map::Pick;
 
+pub use hyli_turmoil_shims;
+
 pub const CLIENT_TIMEOUT_SECONDS: u64 = 10;
 
 #[derive(Clone, Debug)]
@@ -305,7 +307,7 @@ macro_rules! handle_messages {
             ];
             let _outer_latency =
                 $crate::utils::profiling::LatencyTimer::new(&$metrics, &_core_loop_labels);
-            hyli_turmoil_shims::tokio_select_biased! {
+            $crate::bus::command_response::hyli_turmoil_shims::tokio_select_biased! {
                 $($bind = $fut $(, if $cond)? => $handle,)*
             }
         }
