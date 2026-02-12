@@ -30,8 +30,10 @@ bincode = { workspace = true, optional = true }
 # Tcp feature
 tokio = { workspace = true, optional = true }
 
-# Indexer feature, these are re-exported
+# For AppError type
 axum = { workspace = true, optional = true }
+
+# Indexer feature, these are re-exported
 utoipa = { workspace = true, optional = true }
 utoipa-axum = { workspace = true, optional = true }
 
@@ -45,7 +47,8 @@ test-log = { workspace = true, features = [
 [features]
 turmoil = ["hyli-net/turmoil"]
 rest = []
-indexer = ["dep:utoipa", "dep:axum", "dep:utoipa-axum", "dep:tokio"]
+axum = ["dep:axum"]
+indexer = ["axum", "dep:utoipa", "dep:utoipa-axum", "dep:tokio"]
 risc0 = ["dep:risc0-zkvm", "dep:bonsai-runner"]
 sp1 = ["dep:sp1-sdk", "dep:bincode"]
 sp1-network = ["sp1", "sp1-sdk/network"]

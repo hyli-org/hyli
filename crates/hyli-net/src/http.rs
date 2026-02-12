@@ -10,6 +10,8 @@ use hyper_util::rt::TokioIo;
 use serde::{de::DeserializeOwned, Serialize};
 use tracing::{error, warn};
 
+pub use hyper::http::StatusCode;
+
 pub enum ContentType {
     Text,
     Json,

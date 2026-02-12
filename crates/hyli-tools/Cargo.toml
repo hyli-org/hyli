@@ -29,8 +29,8 @@ required-features = ["rate-proxy"]
 [dependencies]
 hyli-contract-sdk = { workspace = true }
 client-sdk = { workspace = true, features = ["rest"] }
-hyli-modules = { workspace = true, features = ["gcs"] }
-hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
+hyli-modules = { workspace = true, features = ["gcs", "rest", "indexer"] }
+hyli-turmoil-shims = { workspace = true, features = ["opentelemetry"] }
 hyli-model = { workspace = true }
 smt-token = { workspace = true, features = ["client"] }
 hyli-registry = { workspace = true }
