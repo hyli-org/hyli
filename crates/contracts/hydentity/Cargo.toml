@@ -27,17 +27,14 @@ borsh = { workspace = true, features = ["derive"] }
 hex = { workspace = true }
 
 risc0-zkvm = { workspace = true, optional = true, features = ['std'] }
-client-sdk = { workspace = true, features = [
-  "risc0",
-  "indexer",
-], optional = true }
+client-sdk = { workspace = true, features = ["risc0", "csi"], optional = true }
 sha2 = { workspace = true }
 
 [dev-dependencies]
 # Activate client in examples.
 sdk = { workspace = true, features = ["full-model", "tracing"] }
 hyli-hydentity = { path = ".", features = ["client"] }
-client-sdk = { workspace = true, features = ["risc0", "rest", "indexer"] }
+client-sdk = { workspace = true, features = ["risc0", "rest", "csi"] }
 
 clap = { workspace = true }
 tokio = { workspace = true }

@@ -23,7 +23,6 @@ use tracing::info;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-#[cfg(feature = "rest")]
 pub use client_sdk::rest_client as client;
 pub use client_sdk::AppError;
 
