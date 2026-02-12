@@ -1536,7 +1536,7 @@ pub mod tests {
                     .flat_map(|v| v.canals.values().map(|v2| v2.socket_addr.clone()))
                     .collect::<Vec<_>>()
             ),
-            HashSet::from_iter(p2p_server1.tcp_server.connected_clients())
+            HashSet::from_iter(p2p_server1.tcp_server.connected_clients().cloned())
         );
         assert_eq!(
             HashSet::<String>::from_iter(
@@ -1546,7 +1546,7 @@ pub mod tests {
                     .flat_map(|v| v.canals.values().map(|v2| v2.socket_addr.clone()))
                     .collect::<Vec<_>>()
             ),
-            HashSet::from_iter(p2p_server2.tcp_server.connected_clients())
+            HashSet::from_iter(p2p_server2.tcp_server.connected_clients().cloned())
         );
 
         // Both peers should have each other's ValidatorPublicKey in their maps
@@ -1810,9 +1810,9 @@ pub mod tests {
         assert_eq!(p2p_server1.peers.len(), 1);
         assert_eq!(p2p_server2.peers.len(), 1);
 
-        let connected = p2p_server1.tcp_server.connected_clients();
+        let mut connected = p2p_server1.tcp_server.connected_clients();
         assert_eq!(connected.len(), 1, "Expected a single client socket");
-        let socket_addr = connected.first().cloned().unwrap();
+        let socket_addr = connected.next().cloned().unwrap();
 
         let send_errors =
             p2p_server1

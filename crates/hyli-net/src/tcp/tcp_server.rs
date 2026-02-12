@@ -194,8 +194,10 @@ where
     }
 
     /// Adresses of currently connected clients (no health check)
-    pub fn connected_clients(&self) -> Vec<String> {
-        self.sockets.keys().cloned().collect::<Vec<String>>()
+    pub fn connected_clients(
+        &self,
+    ) -> impl Iterator<Item = &String> {
+        self.sockets.keys()
     }
 
     pub fn connected(&self, socket_addr: &str) -> bool {
@@ -705,7 +707,7 @@ pub mod tests {
             DataAvailabilityEvent::SignedBlock(Default::default())
         );
 
-        let client_socket_addr = server.connected_clients().first().unwrap().clone();
+        let client_socket_addr = server.connected_clients().next().unwrap().clone();
 
         server.ping(client_socket_addr)?;
 
@@ -774,7 +776,7 @@ pub mod tests {
         .await?;
         _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
 
-        let client1_addr = server.connected_clients().clone().first().unwrap().clone();
+        let client1_addr = server.connected_clients().next().unwrap().clone();
 
         let mut client2 = DAClient::connect(
             "me2".to_string(),
@@ -784,8 +786,7 @@ pub mod tests {
         _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
         let client2_addr = server
             .connected_clients()
-            .clone()
-            .into_iter()
+            .cloned()
             .rfind(|addr| addr != &client1_addr)
             .unwrap();
 
@@ -825,7 +826,7 @@ pub mod tests {
         )
         .await?;
         _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
-        let client1_addr = server.connected_clients().first().unwrap().clone();
+        let client1_addr = server.connected_clients().next().unwrap().clone();
 
         let mut client2 = DAClient::connect(
             "me2".to_string(),
@@ -835,8 +836,7 @@ pub mod tests {
         _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
         let client2_addr = server
             .connected_clients()
-            .clone()
-            .into_iter()
+            .cloned()
             .rfind(|addr| addr != &client1_addr)
             .unwrap();
 
@@ -968,7 +968,7 @@ pub mod tests {
         .await?;
         _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
 
-        let socket_addr = server.connected_clients().first().unwrap().clone();
+        let socket_addr = server.connected_clients().next().unwrap().clone();
         {
             let stored = server
                 .sockets

@@ -217,14 +217,14 @@ mod tests {
             client.socket_addr
         });
 
-        while server.connected_clients().is_empty() {
+        while server.connected_clients().len() == 0 {
             _ = tokio::time::timeout(Duration::from_millis(100), server.listen_next()).await;
         }
 
         let client_socket = client_socket.await?;
         assert_eq!(client_socket.port(), server_socket.port());
 
-        let clients = server.connected_clients();
+        let clients: Vec<String> = server.connected_clients().cloned().collect();
         assert_eq!(clients.len(), 1);
         assert_ne!(clients, vec![server_socket.to_string()]);
 
