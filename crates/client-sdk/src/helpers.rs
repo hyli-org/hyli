@@ -202,9 +202,9 @@ pub mod risc0 {
 #[cfg(feature = "sp1")]
 pub mod sp1 {
     use sdk::ProofMetadata;
-    use sp1_sdk::{EnvProver, ProverClient, SP1ProvingKey, SP1Stdin};
     #[cfg(feature = "sp1-network")]
     use sp1_sdk::{network::builder::NetworkProverBuilder, NetworkProver};
+    use sp1_sdk::{EnvProver, ProverClient, SP1ProvingKey, SP1Stdin};
 
     use super::*;
 
