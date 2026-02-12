@@ -81,8 +81,6 @@
 //! # }
 //! ```
 
-use std::ops::{Deref, DerefMut};
-
 use tokio::time::Instant;
 
 use borsh::{BorshDeserialize, BorshSerialize};
@@ -202,48 +200,9 @@ impl<M, Req, Res> TcpServerWithMiddleware<M, Req, Res>
 where
     Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
     Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel,
-    M: TcpServerMiddleware<Req, Res>,
 {
     pub fn new(inner: TcpServer<Req, Res>, middleware: M) -> Self {
         Self { inner, middleware }
-    }
-
-    pub fn inner(&self) -> &TcpServer<Req, Res> {
-        &self.inner
-    }
-
-    pub fn inner_mut(&mut self) -> &mut TcpServer<Req, Res> {
-        &mut self.inner
-    }
-
-    pub fn middleware(&self) -> &M {
-        &self.middleware
-    }
-
-    pub fn middleware_mut(&mut self) -> &mut M {
-        &mut self.middleware
-    }
-}
-
-impl<M, Req, Res> Deref for TcpServerWithMiddleware<M, Req, Res>
-where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel,
-{
-    type Target = TcpServer<Req, Res>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-impl<M, Req, Res> DerefMut for TcpServerWithMiddleware<M, Req, Res>
-where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel,
-{
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
     }
 }
 
@@ -272,16 +231,6 @@ where
         headers: TcpHeaders,
     ) -> anyhow::Result<()> {
         self.inner.send(socket_addr, msg, headers)
-    }
-
-    /// Queue a message for ordered, retrying delivery to a specific peer.
-    pub fn send(
-        &mut self,
-        socket_addr: String,
-        msg: Res,
-        headers: TcpHeaders,
-    ) -> anyhow::Result<()> {
-        self.enqueue(socket_addr, msg, headers)
     }
 
     /// Mark a peer as a streaming subscriber.

@@ -618,7 +618,7 @@ impl DataAvailability {
                     "📦 Found block at height {}, sending to {}",
                     block_height, socket_addr
                 );
-                if let Err(e) = server.send(
+                if let Err(e) = server.enqueue(
                     socket_addr.to_string(),
                     DataAvailabilityEvent::SignedBlock(block),
                     vec![],
@@ -634,7 +634,7 @@ impl DataAvailability {
                     "📦 Block at height {} not found in storage, sending BlockNotFound to {}",
                     block_height, socket_addr
                 );
-                if let Err(e) = server.send(
+                if let Err(e) = server.enqueue(
                     socket_addr.to_string(),
                     DataAvailabilityEvent::BlockNotFound(block_height),
                     vec![],
@@ -650,7 +650,7 @@ impl DataAvailability {
                     "📦 Error retrieving block at height {}: {:#}",
                     block_height, e
                 );
-                if let Err(e) = server.send(
+                if let Err(e) = server.enqueue(
                     socket_addr.to_string(),
                     DataAvailabilityEvent::BlockNotFound(block_height),
                     vec![],
