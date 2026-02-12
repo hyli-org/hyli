@@ -172,6 +172,13 @@ impl Blocks {
         res
     }
 
+    pub fn has_by_height(&self, height: BlockHeight) -> Result<bool> {
+        let start = Instant::now();
+        let res = self.by_height.contains_key(FjallHeightKey::new(height))?;
+        self.record_op("has_by_height", "by_height", start.elapsed());
+        Ok(res)
+    }
+
     pub fn contains(&self, block: &ConsensusProposalHash) -> bool {
         let start = Instant::now();
         let res = self
