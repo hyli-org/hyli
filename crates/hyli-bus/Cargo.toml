@@ -43,4 +43,4 @@ instrumentation = [
   "dep:tracing-opentelemetry",
   "dep:opentelemetry_sdk",
 ]
-turmoil = []
+turmoil = ["hyli-turmoil-shims/turmoil"]
