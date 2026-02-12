@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use axum::{debug_handler, extract::State, http::StatusCode, response::IntoResponse, Json, Router};
-use client_sdk::contract_indexer::AppError;
+use client_sdk::AppError;
 use hyli_model::api::APIStaking;
 use hyli_modules::{bus::SharedMessageBus, modules::signal::ShutdownModule};
 use staking::state::Staking;

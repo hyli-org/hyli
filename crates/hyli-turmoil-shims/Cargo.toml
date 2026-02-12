@@ -18,7 +18,10 @@ opentelemetry_sdk = { workspace = true, optional = true, features = ["rt-tokio",
 
 [features]
 turmoil = ["dep:turmoil"]
+# Lightweight: just the opentelemetry API types (Meter, Counter, etc.)
+opentelemetry = ["dep:opentelemetry"]
+# Full: adds opentelemetry_sdk for meter provider init and test helpers
 otlp = [
-  "dep:opentelemetry",
+  "opentelemetry",
   "dep:opentelemetry_sdk",
 ]

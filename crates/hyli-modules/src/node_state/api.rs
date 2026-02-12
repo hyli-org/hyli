@@ -5,7 +5,7 @@ use axum::{
     response::IntoResponse,
     Json, Router,
 };
-use client_sdk::contract_indexer::AppError;
+use client_sdk::AppError;
 use sdk::{api::APINodeContract, *};
 use tracing::error;
 use utoipa::OpenApi;

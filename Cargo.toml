@@ -53,9 +53,7 @@ client-sdk = { version = "0.14.0", default-features = false, path = "crates/clie
 hyli-net = { version = "0.14.0", default-features = false, path = "crates/hyli-net", package = "hyli-net" }
 hyli-model = { version = "0.14.0", default-features = false, path = "crates/hyli-model", package = "hyli-model" }
 hyli-crypto = { version = "0.14.0", default-features = false, path = "crates/hyli-crypto", package = "hyli-crypto" }
-hyli-turmoil-shims = { version = "0.14.0", default-features = false, path = "crates/hyli-turmoil-shims", package = "hyli-turmoil-shims", features = [
-  "otlp",
-] }
+hyli-turmoil-shims = { version = "0.14.0", default-features = false, path = "crates/hyli-turmoil-shims", package = "hyli-turmoil-shims" }
 hyli-verifiers = { version = "0.14.0", default-features = false, path = "crates/hyli-verifiers", package = "hyli-verifiers" }
 hyli-bus = { version = "0.14.0", default-features = false, path = "crates/hyli-bus", package = "hyli-bus" }
 risc0-recursion = { version = "0.14.0", default-features = false, path = "crates/contracts/risc0-recursion", package = "hyli-risc0-recursion" }
@@ -217,14 +215,14 @@ hyli-model = { workspace = true, default-features = false, features = [
   "sqlx",
 ] }
 hyli-crypto = { workspace = true }
-hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
+hyli-turmoil-shims = { workspace = true, features = ["opentelemetry"] }
 hydentity = { workspace = true, features = ["client"] }
 hyllar = { workspace = true, features = ["client"] }
 smt-token = { workspace = true, features = ["client"] }
 risc0-recursion = { workspace = true }
 hyli-verifiers = { workspace = true }
 hyli-contracts = { workspace = true }
-hyli-modules = { workspace = true, features = ["db", "fjall", "gcs"] }
+hyli-modules = { workspace = true, features = ["db", "fjall", "gcs", "rest", "indexer"] }
 hyli-bus = { workspace = true }
 
 
@@ -299,7 +297,9 @@ client-sdk = { workspace = true, default-features = false, features = [
 hyli-modules = { workspace = true, default-features = false, features = [
   "test",
   "db",
+  "otlp",
 ] }
+hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 
 assert_cmd = "2.0.17"
 axum-test = { version = "17.2.0" }

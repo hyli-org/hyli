@@ -3,12 +3,6 @@ use std::sync::Arc;
 use crate::{identity_provider::IdentityVerification, AccountInfo, Hydentity, HydentityAction};
 use anyhow::{anyhow, Context, Result};
 use client_sdk::contract_indexer::{
-    axum::Router,
-    utoipa::openapi::OpenApi,
-    utoipa_axum::{router::OpenApiRouter, routes},
-    ContractHandler, ContractHandlerStore,
-};
-use client_sdk::contract_indexer::{
     axum::{
         extract::{Path, State},
         http::StatusCode,
@@ -16,6 +10,14 @@ use client_sdk::contract_indexer::{
         Json,
     },
     utoipa::{self, ToSchema},
+};
+use client_sdk::{
+    contract_indexer::{
+        axum::Router,
+        utoipa::openapi::OpenApi,
+        utoipa_axum::{router::OpenApiRouter, routes},
+        ContractHandler, ContractHandlerStore,
+    },
     AppError,
 };
 use sdk::{error, info, Blob, BlobIndex, BlobTransaction, Identity, TxContext};

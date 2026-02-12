@@ -12,6 +12,7 @@ pub mod block_processor;
 pub mod bus_ws_connector;
 #[cfg(feature = "db")]
 pub mod contract_listener;
+#[cfg(feature = "indexer")]
 pub mod contract_state_indexer;
 pub mod da_listener;
 pub mod da_listener_metrics;
@@ -22,7 +23,9 @@ pub mod gcs_uploader;
 pub mod gcs_uploader_metrics;
 #[cfg(feature = "db")]
 pub mod indexer;
+#[cfg(feature = "rest")]
 pub mod prover;
+#[cfg(feature = "rest")]
 pub mod prover_metrics;
 pub mod rest;
 pub mod websocket;
