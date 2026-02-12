@@ -30,10 +30,8 @@ bincode = { workspace = true, optional = true }
 # Tcp feature
 tokio = { workspace = true, optional = true }
 
-# For AppError type
-axum = { workspace = true, optional = true }
-
 # Indexer feature, these are re-exported
+axum = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 utoipa-axum = { workspace = true, optional = true }
 
