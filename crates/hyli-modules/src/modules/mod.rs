@@ -16,7 +16,9 @@ pub mod contract_state_indexer;
 pub mod da_listener;
 pub mod da_listener_metrics;
 pub mod data_availability;
+#[cfg(feature = "gcs")]
 pub mod gcs_uploader;
+#[cfg(feature = "gcs")]
 pub mod gcs_uploader_metrics;
 #[cfg(feature = "db")]
 pub mod indexer;
