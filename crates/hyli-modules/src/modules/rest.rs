@@ -23,8 +23,9 @@ use tracing::info;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-pub use client_sdk::contract_indexer::AppError;
+#[cfg(feature = "rest")]
 pub use client_sdk::rest_client as client;
+pub use client_sdk::AppError;
 
 module_bus_client! {
     struct RestBusClient {
