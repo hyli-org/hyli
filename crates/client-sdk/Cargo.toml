@@ -23,9 +23,7 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 
 risc0-zkvm = { workspace = true, default-features = false, optional = true }
-sp1-sdk = { workspace = true, default-features = false, features = [
-  "network",
-], optional = true }
+sp1-sdk = { workspace = true, default-features = false, optional = true }
 bincode = { workspace = true, optional = true }
 
 
@@ -50,6 +48,7 @@ rest = []
 indexer = ["dep:utoipa", "dep:axum", "dep:utoipa-axum", "dep:tokio"]
 risc0 = ["dep:risc0-zkvm", "dep:bonsai-runner"]
 sp1 = ["dep:sp1-sdk", "dep:bincode"]
+sp1-network = ["sp1", "sp1-sdk/network"]
 instrumentation = ["hyli-net/instrumentation"]
 
 [package.metadata.docs.rs]

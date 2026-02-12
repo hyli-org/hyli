@@ -202,10 +202,9 @@ pub mod risc0 {
 #[cfg(feature = "sp1")]
 pub mod sp1 {
     use sdk::ProofMetadata;
-    use sp1_sdk::{
-        network::builder::NetworkProverBuilder, EnvProver, NetworkProver, ProverClient,
-        SP1ProvingKey, SP1Stdin,
-    };
+    use sp1_sdk::{EnvProver, ProverClient, SP1ProvingKey, SP1Stdin};
+    #[cfg(feature = "sp1-network")]
+    use sp1_sdk::{network::builder::NetworkProverBuilder, NetworkProver};
 
     use super::*;
 
@@ -216,37 +215,41 @@ pub mod sp1 {
 
     enum ProverType {
         Local(EnvProver),
+        #[cfg(feature = "sp1-network")]
         Network(Box<NetworkProver>),
     }
 
     impl SP1Prover {
         pub async fn new(pk: SP1ProvingKey) -> Self {
             let prover_type = std::env::var("SP1_PROVER").unwrap_or_default();
+            let wants_network = prover_type.eq_ignore_ascii_case("network");
 
-            match prover_type.to_lowercase().as_str() {
-                "network" => {
-                    // Setup the program for network proving
-                    let client = NetworkProverBuilder::default().build();
+            #[cfg(feature = "sp1-network")]
+            if wants_network {
+                // Setup the program for network proving
+                let client = NetworkProverBuilder::default().build();
 
-                    tracing::info!("Registering sp1 program on network");
-                    client
-                        .register_program(&pk.vk, &pk.elf)
-                        .await
-                        .expect("registering program");
+                tracing::info!("Registering sp1 program on network");
+                client
+                    .register_program(&pk.vk, &pk.elf)
+                    .await
+                    .expect("registering program");
 
-                    Self {
-                        pk,
-                        client: ProverType::Network(Box::new(client)),
-                    }
-                }
-                _ => {
-                    // Setup the program for local proving
-                    let client = ProverClient::from_env();
-                    Self {
-                        pk,
-                        client: ProverType::Local(client),
-                    }
-                }
+                return Self {
+                    pk,
+                    client: ProverType::Network(Box::new(client)),
+                };
+            }
+
+            if wants_network {
+                tracing::warn!("SP1_PROVER=network is set but `sp1-network` feature is disabled; falling back to local prover");
+            }
+
+            // Setup the program for local proving
+            let client = ProverClient::from_env();
+            Self {
+                pk,
+                client: ProverType::Local(client),
             }
         }
 
@@ -282,6 +285,7 @@ pub mod sp1 {
                         },
                     )
                 }
+                #[cfg(feature = "sp1-network")]
                 ProverType::Network(client) => {
                     let exec = client
                         .execute(&self.pk.elf, &stdin)
