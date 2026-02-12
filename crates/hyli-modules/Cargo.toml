@@ -55,7 +55,7 @@ indexmap = { workspace = true }
 
 # Native verifiers
 hyli-crypto = { workspace = true }
-hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
+hyli-turmoil-shims = { workspace = true, features = ["opentelemetry"] }
 secp256k1 = { workspace = true, features = ["rand"] }
 
 [dev-dependencies]
@@ -67,10 +67,12 @@ test-log = { workspace = true, features = ["color", "trace"] }
 hydentity = { workspace = true, features = ["client"] }
 testcontainers-modules = { workspace = true, features = ["postgres"] }
 sqlx = { workspace = true, features = ["runtime-tokio", "chrono"] }
+hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 
 [features]
 risc0 = ["client-sdk/risc0"]
 sp1 = ["client-sdk/sp1"]
+otlp = ["hyli-turmoil-shims/otlp"]
 turmoil = ["hyli-turmoil-shims/turmoil", "hyli-bus/turmoil"]
 test = ["dep:test-log"]
 fjall = ["dep:fjall"]

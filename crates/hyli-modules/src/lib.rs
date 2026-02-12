@@ -12,8 +12,9 @@ pub use hyli_turmoil_shims::tokio_select_biased;
 pub mod telemetry {
     pub use hyli_turmoil_shims::{
         global_meter_or_panic, global_meter_provider_or_panic, init_global_meter_provider,
-        init_test_meter_provider,
     };
+    #[cfg(feature = "otlp")]
+    pub use hyli_turmoil_shims::init_test_meter_provider;
     pub use opentelemetry::{
         metrics::{Counter, Gauge, Histogram, Meter, MeterProvider},
         KeyValue,
