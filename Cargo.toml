@@ -208,7 +208,7 @@ hyli-contract-sdk = { workspace = true, default-features = false, features = [
   "tracing",
 ] }
 staking = { workspace = true, default-features = false, features = ["client"] }
-client-sdk = { workspace = true, features = ["rest", "indexer"] }
+client-sdk = { workspace = true, features = ["rest", "csi"] }
 hyli-net = { workspace = true }
 hyli-model = { workspace = true, default-features = false, features = [
   "full",
@@ -222,7 +222,12 @@ smt-token = { workspace = true, features = ["client"] }
 risc0-recursion = { workspace = true }
 hyli-verifiers = { workspace = true }
 hyli-contracts = { workspace = true }
-hyli-modules = { workspace = true, features = ["db", "fjall", "gcs", "rest", "indexer"] }
+hyli-modules = { workspace = true, features = [
+  "db",
+  "fjall",
+  "gcs",
+  "indexer",
+] }
 hyli-bus = { workspace = true }
 
 

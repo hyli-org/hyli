@@ -46,7 +46,7 @@ test-log = { workspace = true, features = [
 turmoil = ["hyli-net/turmoil"]
 rest = []
 axum = ["dep:axum"]
-indexer = ["axum", "dep:utoipa", "dep:utoipa-axum", "dep:tokio"]
+csi = ["axum", "dep:utoipa", "dep:utoipa-axum", "dep:tokio"]
 registry = ["dep:hyli-registry"]
 risc0 = ["dep:risc0-zkvm", "dep:bonsai-runner", "registry"]
 sp1 = ["dep:sp1-sdk", "dep:bincode", "registry"]

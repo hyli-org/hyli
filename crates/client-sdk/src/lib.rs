@@ -25,7 +25,7 @@ where
     }
 }
 
-#[cfg(feature = "indexer")]
+#[cfg(feature = "csi")]
 pub mod contract_indexer;
 pub mod helpers;
 pub mod light_executor;
