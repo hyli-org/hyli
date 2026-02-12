@@ -43,13 +43,12 @@ axum = { workspace = true, features = ["ws"] }
 
 utoipa = { workspace = true }
 utoipa-axum = { workspace = true }
-utoipa-swagger-ui = { workspace = true, features = ["axum"] }
+utoipa-swagger-ui = { workspace = true, features = ["axum", "vendored"] }
 
 tower-http = { workspace = true, features = ["trace", "cors", "catch-panic"] }
 opentelemetry = { workspace = true }
 tracing-opentelemetry = { workspace = true, optional = true }
 opentelemetry-http = { workspace = true, optional = true }
-prometheus = { workspace = true }
 
 test-log = { workspace = true, features = ["color", "trace"], optional = true }
 indexmap = { workspace = true }

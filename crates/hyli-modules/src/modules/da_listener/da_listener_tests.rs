@@ -45,11 +45,11 @@ async fn test_in_order_block_processing() {
 
     for height in 0..5 {
         let block = create_test_block(height);
-        listener.process_block(block).await.unwrap();
-        assert_eq!(listener.current_block, BlockHeight(height + 1));
+        listener.handle_signed_block(block).await.unwrap();
+        assert_eq!(listener.stream.current_block(), BlockHeight(height + 1));
     }
 
-    assert!(listener.block_buffer.is_empty());
+    assert!(listener.stream.block_buffer.is_empty());
 }
 
 #[tokio::test]
@@ -58,11 +58,11 @@ async fn test_out_of_order_blocks_buffered() {
     let mut listener = create_test_listener(config).await.unwrap();
 
     let block3 = create_test_block(3);
-    listener.process_block(block3.clone()).await.unwrap();
+    listener.handle_signed_block(block3.clone()).await.unwrap();
 
-    assert_eq!(listener.current_block, BlockHeight(0));
-    assert_eq!(listener.block_buffer.len(), 1);
-    assert!(listener.block_buffer.contains_key(&BlockHeight(3)));
+    assert_eq!(listener.stream.current_block(), BlockHeight(0));
+    assert_eq!(listener.stream.block_buffer.len(), 1);
+    assert!(listener.stream.block_buffer.contains_key(&BlockHeight(3)));
 }
 
 #[tokio::test]
@@ -71,15 +71,15 @@ async fn test_past_blocks_ignored() {
     let mut listener = create_test_listener(config).await.unwrap();
 
     let block0 = create_test_block(0);
-    listener.process_block(block0).await.unwrap();
+    listener.handle_signed_block(block0).await.unwrap();
     let block1 = create_test_block(1);
-    listener.process_block(block1).await.unwrap();
-    assert_eq!(listener.current_block, BlockHeight(2));
+    listener.handle_signed_block(block1).await.unwrap();
+    assert_eq!(listener.stream.current_block(), BlockHeight(2));
 
     // Past block should be ignored
     let old_block = create_test_block(0);
-    listener.process_block(old_block).await.unwrap();
-    assert_eq!(listener.current_block, BlockHeight(2));
+    listener.handle_signed_block(old_block).await.unwrap();
+    assert_eq!(listener.stream.current_block(), BlockHeight(2));
 }
 
 #[tokio::test]
@@ -88,18 +88,30 @@ async fn test_buffered_block_processing() {
     let mut listener = create_test_listener(config).await.unwrap();
 
     // Send blocks out of order
-    listener.process_block(create_test_block(2)).await.unwrap();
-    listener.process_block(create_test_block(3)).await.unwrap();
+    listener
+        .handle_signed_block(create_test_block(2))
+        .await
+        .unwrap();
+    listener
+        .handle_signed_block(create_test_block(3))
+        .await
+        .unwrap();
 
-    assert_eq!(listener.current_block, BlockHeight(0));
-    assert_eq!(listener.block_buffer.len(), 2);
+    assert_eq!(listener.stream.current_block(), BlockHeight(0));
+    assert_eq!(listener.stream.block_buffer.len(), 2);
 
     // Fill the gap
-    listener.process_block(create_test_block(0)).await.unwrap();
-    listener.process_block(create_test_block(1)).await.unwrap();
+    listener
+        .handle_signed_block(create_test_block(0))
+        .await
+        .unwrap();
+    listener
+        .handle_signed_block(create_test_block(1))
+        .await
+        .unwrap();
 
-    assert_eq!(listener.current_block, BlockHeight(4));
-    assert!(listener.block_buffer.is_empty());
+    assert_eq!(listener.stream.current_block(), BlockHeight(4));
+    assert!(listener.stream.block_buffer.is_empty());
 }
 
 #[tokio::test]
@@ -107,17 +119,25 @@ async fn test_gap_detection_creates_pending_requests() {
     let config = create_test_config(vec![]);
     let mut listener = create_test_listener(config).await.unwrap();
 
-    listener.process_block(create_test_block(0)).await.unwrap();
-    listener.process_block(create_test_block(3)).await.unwrap();
+    listener
+        .handle_signed_block(create_test_block(0))
+        .await
+        .unwrap();
+    listener
+        .handle_signed_block(create_test_block(3))
+        .await
+        .unwrap();
 
     // Should have requested blocks 1 and 2
     assert!(listener
+        .stream
         .pending_block_requests
         .contains_key(&BlockHeight(1)));
     assert!(listener
+        .stream
         .pending_block_requests
         .contains_key(&BlockHeight(2)));
-    assert_eq!(listener.pending_block_requests.len(), 2);
+    assert_eq!(listener.stream.pending_block_requests.len(), 2);
 }
 
 #[tokio::test]
@@ -125,10 +145,10 @@ async fn test_no_duplicate_requests() {
     let config = create_test_config(vec![]);
     let mut listener = create_test_listener(config).await.unwrap();
 
-    listener.request_specific_block(BlockHeight(5));
-    listener.request_specific_block(BlockHeight(5));
+    listener.stream.request_specific_block(BlockHeight(5));
+    listener.stream.request_specific_block(BlockHeight(5));
 
-    assert_eq!(listener.pending_block_requests.len(), 1);
+    assert_eq!(listener.stream.pending_block_requests.len(), 1);
 }
 
 #[tokio::test]
@@ -136,16 +156,27 @@ async fn test_pending_request_cleared_on_block_arrival() {
     let config = create_test_config(vec![]);
     let mut listener = create_test_listener(config).await.unwrap();
 
-    listener.process_block(create_test_block(0)).await.unwrap();
-    listener.process_block(create_test_block(2)).await.unwrap();
+    listener
+        .handle_signed_block(create_test_block(0))
+        .await
+        .unwrap();
+    listener
+        .handle_signed_block(create_test_block(2))
+        .await
+        .unwrap();
 
     assert!(listener
+        .stream
         .pending_block_requests
         .contains_key(&BlockHeight(1)));
 
-    listener.process_block(create_test_block(1)).await.unwrap();
+    listener
+        .handle_signed_block(create_test_block(1))
+        .await
+        .unwrap();
 
     assert!(!listener
+        .stream
         .pending_block_requests
         .contains_key(&BlockHeight(1)));
 }
@@ -158,13 +189,14 @@ async fn test_processing_next_frame_signed_block() {
     let block = create_test_block(0);
     let event = DataAvailabilityEvent::SignedBlock(block.clone());
 
-    listener.request_specific_block(BlockHeight(0));
+    listener.stream.request_specific_block(BlockHeight(0));
     listener.processing_next_frame(event).await.unwrap();
 
     assert!(!listener
+        .stream
         .pending_block_requests
         .contains_key(&BlockHeight(0)));
-    assert_eq!(listener.current_block, BlockHeight(1));
+    assert_eq!(listener.stream.current_block(), BlockHeight(1));
 }
 
 #[tokio::test]
@@ -191,40 +223,32 @@ async fn test_handle_block_not_found_switches_to_fallback() {
     );
     let mut listener = create_test_listener(config).await.unwrap();
 
-    // Connect to main server initially
-    let mut client = DataAvailabilityClient::connect_with_opts(
-        "test_client".to_string(),
-        Some(1024 * 1024),
-        format!("127.0.0.1:{}", main_port),
-    )
-    .await
-    .unwrap();
+    // Connect stream
+    listener.stream.start_client().await.unwrap();
 
     // Create a pending request for block 5
-    listener.request_specific_block(BlockHeight(5));
+    listener.stream.request_specific_block(BlockHeight(5));
     assert!(listener
+        .stream
         .pending_block_requests
         .contains_key(&BlockHeight(5)));
-    assert_eq!(listener.current_da_index, 0);
-
     // Simulate receiving BlockNotFound from main server
-    // This should: remove pending request, switch to fallback, re-request the block
+    // This should: remove pending request, reconnect, re-request the block
     listener
-        .handle_block_not_found(BlockHeight(5), &mut client)
+        .stream
+        .handle_block_not_found(BlockHeight(5))
         .await
         .unwrap();
 
-    // Verify: switched to fallback server
-    assert_eq!(listener.current_da_index, 1);
-
     // Verify: block was re-requested (new pending request created)
     assert!(listener
+        .stream
         .pending_block_requests
         .contains_key(&BlockHeight(5)));
 }
 
 #[tokio::test]
-async fn test_check_block_request_timeouts_switches_to_fallback() {
+async fn test_check_block_request_timeouts_increments_retry_count() {
     use std::time::{Duration, Instant};
 
     // Use random high ports to avoid conflicts
@@ -249,35 +273,30 @@ async fn test_check_block_request_timeouts_switches_to_fallback() {
     );
     let mut listener = create_test_listener(config).await.unwrap();
 
-    // Connect to main server initially
-    let mut client = DataAvailabilityClient::connect_with_opts(
-        "test_client".to_string(),
-        Some(1024 * 1024),
-        format!("127.0.0.1:{}", main_port),
-    )
-    .await
-    .unwrap();
+    // Connect stream
+    listener.stream.start_client().await.unwrap();
 
     // Create a pending request for block 5
-    listener.request_specific_block(BlockHeight(5));
-    assert_eq!(listener.current_da_index, 0);
-
+    listener.stream.request_specific_block(BlockHeight(5));
     // Simulate timeout by setting request_time to the past
-    if let Some(state) = listener.pending_block_requests.get_mut(&BlockHeight(5)) {
+    if let Some(state) = listener
+        .stream
+        .pending_block_requests
+        .get_mut(&BlockHeight(5))
+    {
         state.request_time = Instant::now() - Duration::from_secs(100);
     }
 
-    // Call check_block_request_timeouts - should detect timeout and switch to fallback
+    // Call check_block_request_timeouts - should detect timeout and increment retry count
     listener
-        .check_block_request_timeouts(&mut client)
+        .stream
+        .check_block_request_timeouts()
         .await
         .unwrap();
 
-    // Verify: switched to fallback server
-    assert_eq!(listener.current_da_index, 1);
-
     // Verify: retry count was incremented
     let state = listener
+        .stream
         .pending_block_requests
         .get(&BlockHeight(5))
         .unwrap();

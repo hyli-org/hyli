@@ -25,6 +25,16 @@ impl Blocks {
         Ok(())
     }
 
+    pub fn record_metrics(&self) {}
+
+    pub fn record_op(
+        &self,
+        _op: &'static str,
+        _keyspace: &'static str,
+        _elapsed: std::time::Duration,
+    ) {
+    }
+
     pub fn put(&mut self, data: SignedBlock) -> Result<()> {
         let block_hash = data.hashed();
         if self.contains(&block_hash) {

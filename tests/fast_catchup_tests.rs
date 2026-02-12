@@ -26,14 +26,14 @@ mod e2e_fast_catchup {
         ctx.wait_height(5).await?;
 
         conf.run_fast_catchup = true;
-        conf.fast_catchup_from = format!(
+        conf.fast_catchup_peers = vec![format!(
             "http://localhost:{}",
             ctx.nodes
                 .first()
                 .expect("Node 0 should exist")
                 .conf
                 .admin_server_port
-        );
+        )];
         conf.fast_catchup_backfill = true;
 
         let process = test_helpers::TestProcess::new(assert_cmd::cargo::cargo_bin!("hyli"), conf);
@@ -60,14 +60,14 @@ mod e2e_fast_catchup {
         ctx.wait_height(5).await?;
 
         conf.run_fast_catchup = true;
-        conf.fast_catchup_from = format!(
+        conf.fast_catchup_peers = vec![format!(
             "http://localhost:{}",
             ctx.nodes
                 .first()
                 .expect("Node 0 should exist")
                 .conf
                 .admin_server_port
-        );
+        )];
         conf.fast_catchup_backfill = false;
 
         let process = test_helpers::TestProcess::new(assert_cmd::cargo::cargo_bin!("hyli"), conf);

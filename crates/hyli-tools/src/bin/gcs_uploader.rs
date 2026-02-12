@@ -14,7 +14,6 @@ use hyli_modules::{
     },
     utils::logger::setup_tracing,
 };
-use hyli_turmoil_shims::init_prometheus_registry_meter_provider;
 use serde::{Deserialize, Serialize};
 
 #[derive(Parser, Debug)]
@@ -45,8 +44,6 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
 
     tracing::info!("Starting GCS block uploader");
-
-    let _ = init_prometheus_registry_meter_provider().context("starting prometheus exporter")?;
 
     let bus = SharedMessageBus::new();
 
@@ -119,7 +116,10 @@ impl Conf {
             .add_source(
                 config::Environment::with_prefix("hyli")
                     .separator("__")
-                    .prefix_separator("_"),
+                    .prefix_separator("_")
+                    .list_separator(",")
+                    .with_list_parse_key("da_fallback_addresses")
+                    .try_parsing(true),
             )
             .build()?
             .try_deserialize()?;

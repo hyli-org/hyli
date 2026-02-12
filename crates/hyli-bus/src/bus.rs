@@ -153,6 +153,11 @@ pub mod dont_use_this {
     ) -> BusReceiver<M> {
         bus.receiver::<M>().await
     }
+
+    // why isn't this in the stdlib
+    pub fn get_type_name<T: Any>(_: &T) -> &'static str {
+        std::any::type_name::<T>()
+    }
 }
 
 impl Default for SharedMessageBus {
@@ -207,7 +212,9 @@ macro_rules! bus_client {
         impl $(< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? $name $(< $( $lt ),+ >)? {
             pub async fn new_from_bus(bus: $crate::bus::SharedMessageBus) -> $name $(< $( $lt ),+ >)? {
                 $name::new(
-                    bus.metrics.clone(),
+                    bus.metrics
+                        .clone()
+                        .with_client_name(stringify!($name).to_string()),
                     $($crate::bus::dont_use_this::get_sender::<$sender>(&bus).await,)*
                     $($crate::bus::dont_use_this::get_receiver::<$receiver>(&bus).await,)*
                 )

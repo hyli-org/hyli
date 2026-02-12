@@ -220,8 +220,6 @@ pub trait NodeApiClient {
 
     fn get_node_info(&self) -> Pin<Box<dyn Future<Output = Result<NodeInfo>> + Send + '_>>;
 
-    fn metrics(&self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>>;
-
     fn get_block_height(&self) -> Pin<Box<dyn Future<Output = Result<BlockHeight>> + Send + '_>>;
 
     fn get_contract(
@@ -328,15 +326,6 @@ impl NodeApiClient for NodeApiHttpClient {
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     fn get_node_info(&self) -> Pin<Box<dyn Future<Output = Result<NodeInfo>> + Send + '_>> {
         Box::pin(async move { self.get("v1/info").await.context("getting node info") })
-    }
-
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    fn metrics(&self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
-        Box::pin(async move {
-            self.get_str("v1/metrics")
-                .await
-                .context("getting node metrics")
-        })
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
@@ -521,10 +510,6 @@ pub mod test {
 
         fn get_node_info(&self) -> Pin<Box<dyn Future<Output = Result<NodeInfo>> + Send + '_>> {
             Box::pin(async move { Ok(self.node_info.lock().unwrap().clone()) })
-        }
-
-        fn metrics(&self) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
-            Box::pin(async move { Ok("mock metrics".to_string()) })
         }
 
         fn get_block_height(

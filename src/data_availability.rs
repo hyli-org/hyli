@@ -2,8 +2,9 @@
 
 // Pick one of the two implementations
 use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
-use hyli_modules::utils::da_codec::{DataAvailabilityClient, DataAvailabilityServer};
+use hyli_modules::utils::da_codec::DataAvailabilityServer;
 //use hyli_modules::modules::data_availability::blocks_memory::Blocks;
+use hyli_modules::modules::da_listener::{DaStreamPoll, SignedDaStream};
 use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
@@ -25,10 +26,7 @@ use std::{
     collections::{BTreeSet, HashMap, VecDeque},
     time::Duration,
 };
-use tokio::{
-    task::JoinSet,
-    time::{sleep_until, Instant},
-};
+use tokio::task::JoinSet;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::model::SharedRunContext;
@@ -39,7 +37,8 @@ impl Module for DataAvailability {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> anyhow::Result<Self> {
         let bus = DABusClient::new_from_bus(bus.new_handle()).await;
 
-        let blocks = Blocks::new(&ctx.config.data_directory.join("data_availability.db"))?;
+        let mut blocks = Blocks::new(&ctx.config.data_directory.join("data_availability.db"))?;
+        blocks.set_metrics_context(ctx.config.id.clone());
         let highest_block = blocks.highest();
 
         // When fast catchup is enabled, we load the node state from disk to load blocks
@@ -211,8 +210,18 @@ impl DaCatchupper {
         }
     }
 
-    pub fn choose_random_peer(&self) -> Option<String> {
-        self.peers.choose(&mut deterministic_rng()).cloned()
+    pub fn choose_random_peer(&self) -> Vec<String> {
+        let Some(primary) = self.peers.choose(&mut deterministic_rng()).cloned() else {
+            return vec![];
+        };
+        let mut ordered = Vec::with_capacity(self.peers.len());
+        ordered.push(primary.clone());
+        for peer in &self.peers {
+            if peer != &primary {
+                ordered.push(peer.clone());
+            }
+        }
+        ordered
     }
 
     pub fn init_catchup(
@@ -253,10 +262,13 @@ impl DaCatchupper {
             return Ok(());
         }
 
-        let Some(peer) = self.choose_random_peer() else {
-            warn!("No peers available for catchup, cannot proceed");
+        let peers = self.choose_random_peer();
+        if peers.is_empty() {
+            info!("choose_random_peer returned no peers");
             return Ok(());
-        };
+        }
+        #[expect(clippy::unwrap_used, reason = "gated above")]
+        let peer = peers.first().unwrap();
 
         debug!(
             "Starting catchup from height {} to {:?} on peer {}",
@@ -265,7 +277,7 @@ impl DaCatchupper {
 
         self.status = Some((
             Self::start_task(
-                peer,
+                peers,
                 self.da_max_frame_length,
                 from_height,
                 sender.clone(),
@@ -311,11 +323,13 @@ impl DaCatchupper {
             return Ok(());
         };
 
-        let Some(peer) = self.choose_random_peer() else {
-            warn!("No peers available for catchup, cannot proceed");
-
+        let peers = self.choose_random_peer();
+        if peers.is_empty() {
+            info!("choose_random_peer returned no peers");
             return Ok(());
-        };
+        }
+        #[expect(clippy::unwrap_used, reason = "gated above")]
+        let peer = peers.first().unwrap();
 
         let Some((task, old_height)) = &mut self.status else {
             unreachable!("Status was already checked");
@@ -338,9 +352,9 @@ impl DaCatchupper {
             );
             let from = processed_height.max(*old_height);
 
-            self.metrics.restart(&peer, from.0);
+            self.metrics.restart(peer, from.0);
             let new_task = Self::start_task(
-                peer,
+                peers,
                 self.da_max_frame_length,
                 from,
                 sender.clone(),
@@ -359,79 +373,76 @@ impl DaCatchupper {
     }
 
     fn start_task(
-        peer: String,
+        peers: Vec<String>,
         da_max_frame_length: usize,
         start_height: BlockHeight,
         sender: tokio::sync::mpsc::Sender<SignedBlock>,
         metrics: DaCatchupMetrics,
     ) -> JoinHandle<anyhow::Result<()>> {
+        let peer_label = peers
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
         info!(
             "Starting catchup from height {} on peer {}",
-            start_height, peer
+            start_height, peer_label
         );
 
-        metrics.start(&peer, start_height.0);
+        metrics.start(&peer_label, start_height.0);
 
         tokio::spawn(async move {
-            let mut client = log_error!(
-                DataAvailabilityClient::connect_with_opts(
-                    "catchupper".to_string(),
-                    Some(da_max_frame_length),
-                    peer.clone(),
-                )
-                .await,
-                "Error occurred setting up the DA listener"
-            )?;
-
-            client
-                .send(DataAvailabilityRequest::StreamFromHeight(start_height))
-                .await?;
-
             let timeout_duration = std::env::var("HYLI_DA_SLEEP_TIMEOUT")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
                 .map(Duration::from_secs)
                 .unwrap_or_else(|| Duration::from_secs(10));
-            let mut deadline = Instant::now() + timeout_duration;
+
+            let mut stream = SignedDaStream::new(
+                "catchupper",
+                "catchupper",
+                Some(da_max_frame_length),
+                peers,
+                start_height,
+                timeout_duration,
+            );
+            log_error!(
+                stream.start_client().await,
+                "Error occurred setting up the DA listener"
+            )?;
 
             loop {
-                let sleep = sleep_until(deadline);
-                tokio::pin!(sleep);
-
-                hyli_turmoil_shims::tokio_select_biased! {
-                    _ = &mut sleep => {
+                match stream.listen_next().await? {
+                    DaStreamPoll::Timeout => {
                         warn!("Timeout expired while waiting for block.");
-                        metrics.timeout(&peer);
-                        break;
+                        metrics.timeout(&peer_label);
                     }
-                    received = client.recv() => {
-                        match received {
-                            None => {
-                                metrics.stream_closed(&peer);
-                                break;
-                            }
-                            Some(DataAvailabilityEvent::SignedBlock(block)) => {
+                    DaStreamPoll::StreamClosed => {
+                        metrics.stream_closed(&peer_label);
+                    }
+                    DaStreamPoll::Event(event) => match event {
+                        DataAvailabilityEvent::SignedBlock(block) => {
+                            let blocks = stream.on_signed_block(block).await?;
+                            for block in blocks {
                                 info!(
                                     "📦 Received block (height {}) from stream",
                                     block.consensus_proposal.slot
                                 );
 
                                 if let Err(e) = sender.send(block).await {
-                                    tracing::error!("Error while sending block over channel: {:#}", e);
-                                    break;
+                                    tracing::error!(
+                                        "Error while sending block over channel: {:#}",
+                                        e
+                                    );
+                                    return Ok(());
                                 }
-
-                                // Reset the timeout ONLY when a block is received
-                                deadline = Instant::now() + timeout_duration;
-                            }
-                            Some(_) => {
-                                tracing::trace!("Dropped received message in catchup task");
                             }
                         }
-                    }
+                        _ => {
+                            tracing::trace!("Dropped received message in catchup task");
+                        }
+                    },
                 }
             }
-            Ok(())
         })
     }
 }
@@ -491,6 +502,7 @@ impl DataAvailability {
         let mut catchup_joinset: JoinSet<(String, usize)> = tokio::task::JoinSet::new();
         let mut catchup_task_checker_ticker =
             tokio::time::interval(std::time::Duration::from_millis(5000));
+        let mut storage_metrics_ticker = tokio::time::interval(std::time::Duration::from_secs(30));
 
         module_handle_messages! {
             on_self self,
@@ -595,6 +607,10 @@ impl DataAvailability {
                 let highest_block = self.blocks.highest();
                 _ = log_error!(self.catchupper.manage_catchup(highest_block, &catchup_block_sender), "Catchup transition after tick");
 
+            }
+
+            _ = storage_metrics_ticker.tick() => {
+                self.blocks.record_metrics();
             }
         };
 
@@ -980,6 +996,7 @@ impl DataAvailability {
         catchup_joinset: &mut JoinSet<(String, usize)>,
         peer_ip: &str,
     ) -> Result<()> {
+        let range_start = std::time::Instant::now();
         // Collect all blocks from start_height to current highest
         let processed_block_hashes: VecDeque<_> = self
             .blocks
@@ -992,6 +1009,8 @@ impl DataAvailability {
             )
             .filter_map(|item| item.ok())
             .collect();
+        self.blocks
+            .record_op("range_collect", "by_height", range_start.elapsed());
 
         info!(
             "Starting stream to peer {} from height {} ({} blocks queued)",

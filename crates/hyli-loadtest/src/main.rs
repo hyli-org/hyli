@@ -73,8 +73,6 @@ enum SendCommands {
 async fn main() -> Result<(), Error> {
     tracing_subscriber::fmt().with_max_level(Level::INFO).init();
 
-    let _ = hyli_modules::telemetry::init_prometheus_registry_meter_provider()?;
-
     let args = Args::parse();
 
     let url = format!("{}:{}", args.host, args.tcp_port);
