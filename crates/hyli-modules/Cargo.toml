@@ -27,7 +27,7 @@ rand = { workspace = true }
 futures = { workspace = true }
 paste = { workspace = true }
 hex = { workspace = true }
-fjall = { workspace = true }
+fjall = { workspace = true, optional = true }
 
 # For DB utils
 sqlx = { workspace = true, optional = true, features = ["chrono"] }
@@ -73,6 +73,7 @@ risc0 = ["client-sdk/risc0"]
 sp1 = ["client-sdk/sp1"]
 turmoil = ["hyli-turmoil-shims/turmoil", "hyli-bus/turmoil"]
 test = ["dep:test-log"]
+fjall = ["dep:fjall"]
 instrumentation = [
   "dep:tracing-opentelemetry",
   "dep:opentelemetry-http",
