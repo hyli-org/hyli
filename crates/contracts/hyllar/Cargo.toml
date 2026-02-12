@@ -31,7 +31,7 @@ risc0-zkvm = { workspace = true, optional = true, features = ['std'] }
 client-sdk = { workspace = true, features = [
   "risc0",
   "rest",
-  "indexer",
+  "csi",
 ], optional = true }
 
 [dev-dependencies]

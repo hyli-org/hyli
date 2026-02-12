@@ -27,10 +27,7 @@ sparse-merkle-tree = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "alloc"] }
 
 risc0-zkvm = { workspace = true, optional = true, features = ['std'] }
-client-sdk = { workspace = true, features = [
-  "rest",
-  "indexer",
-], optional = true }
+client-sdk = { workspace = true, features = ["rest", "csi"], optional = true }
 
 [dev-dependencies]
 # Active client feature for tests
