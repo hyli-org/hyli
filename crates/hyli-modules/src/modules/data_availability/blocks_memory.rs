@@ -59,6 +59,13 @@ impl Blocks {
         Ok(self.data.get_index(index).map(|(_, block)| block.clone()))
     }
 
+    pub fn has_by_height(&self, height: BlockHeight) -> Result<bool> {
+        Ok(self
+            .data
+            .binary_search_by(|_, block| block.height().0.cmp(&height.0))
+            .is_ok())
+    }
+
     pub fn contains(&mut self, block_hash: &ConsensusProposalHash) -> bool {
         self.data.contains_key(block_hash)
     }

@@ -310,6 +310,8 @@ async fn test_check_block_request_timeouts_increments_retry_count() {
 
     // Create a pending request for block 5
     listener.stream.request_specific_block(BlockHeight(5));
+    listener.stream.dispatch_new_block_requests().await.unwrap();
+
     // Simulate timeout by setting request_time to the past
     if let Some(state) = listener
         .stream
@@ -317,6 +319,7 @@ async fn test_check_block_request_timeouts_increments_retry_count() {
         .get_mut(&BlockHeight(5))
     {
         state.request_time = Instant::now() - Duration::from_secs(100);
+        state.in_flight = true;
     }
 
     // Call check_block_request_timeouts - should detect timeout and increment retry count

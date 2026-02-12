@@ -11,7 +11,6 @@ use sdk::{BlockHeight, DataAvailabilityEvent, DataAvailabilityRequest, Hashed, S
 use tokio::task::yield_now;
 use tracing::{debug, error, info, warn};
 
-use crate::log_error;
 use crate::{
     bus::SharedMessageBus,
     modules::{
@@ -45,6 +44,7 @@ struct SignedDAListenerBusClient {
 struct BlockRequestState {
     request_time: Instant,
     retry_count: usize,
+    in_flight: bool,
 }
 
 pub enum DaStreamPoll {
@@ -77,6 +77,8 @@ pub struct SignedDaStream {
 impl SignedDaStream {
     const MAX_CONNECT_ROUNDS: usize = 5;
     const BLOCK_REQUEST_RETRIES_PER_SERVER: usize = 10;
+    const MAX_IN_FLIGHT_BLOCK_REQUESTS: usize = 64;
+    const MAX_GAP_BEFORE_RECONNECT: u64 = 10_000;
 
     fn max_block_request_retries(&self) -> usize {
         self.addresses.len().max(1) * Self::BLOCK_REQUEST_RETRIES_PER_SERVER
@@ -212,6 +214,9 @@ impl SignedDaStream {
 
     pub async fn reconnect(&mut self, reason: &'static str) -> Result<()> {
         self.tcp_client_metrics.reconnect(reason);
+        // Re-subscription from current_block supersedes any ad-hoc block requests.
+        // Clearing avoids stale in-flight bookkeeping after connection loss.
+        self.pending_block_requests.clear();
         self.start_client().await
     }
 
@@ -279,9 +284,44 @@ impl SignedDaStream {
         let state = BlockRequestState {
             request_time: Instant::now(),
             retry_count: 0,
+            in_flight: false,
         };
 
         self.pending_block_requests.insert(height, state);
+    }
+
+    async fn dispatch_new_block_requests(&mut self) -> Result<()> {
+        if self.client.is_none() {
+            return Ok(());
+        }
+
+        let in_flight = self
+            .pending_block_requests
+            .values()
+            .filter(|state| state.in_flight)
+            .count();
+        let available_slots = Self::MAX_IN_FLIGHT_BLOCK_REQUESTS.saturating_sub(in_flight);
+        if available_slots == 0 {
+            return Ok(());
+        }
+
+        let mut queued_heights = self
+            .pending_block_requests
+            .iter()
+            .filter_map(|(&height, state)| (!state.in_flight).then_some(height))
+            .collect::<Vec<_>>();
+        queued_heights.sort_by_key(|height| height.0);
+
+        for height in queued_heights.into_iter().take(available_slots) {
+            self.send_request(DataAvailabilityRequest::BlockRequest(height))
+                .await?;
+            if let Some(state) = self.pending_block_requests.get_mut(&height) {
+                state.in_flight = true;
+                state.request_time = Instant::now();
+            }
+        }
+
+        Ok(())
     }
 
     async fn check_block_request_timeouts(&mut self) -> Result<()> {
@@ -292,9 +332,13 @@ impl SignedDaStream {
         let mut failed_blocks = Vec::new();
 
         for (&height, state) in &self.pending_block_requests {
-            let backoff_duration = Duration::from_secs(
-                timeout_base_secs * 2_u64.pow(state.retry_count as u32).min(60),
-            );
+            if !state.in_flight {
+                continue;
+            }
+
+            let backoff_multiplier = 2_u64.pow((state.retry_count as u32).min(6));
+            let backoff_duration =
+                Duration::from_secs(timeout_base_secs * backoff_multiplier.min(60));
 
             if now.duration_since(state.request_time) > backoff_duration {
                 timed_out.push(height);
@@ -323,20 +367,13 @@ impl SignedDaStream {
                 state.request_time = now;
                 self.send_request(DataAvailabilityRequest::BlockRequest(height))
                     .await?;
+                state.in_flight = true;
 
                 self.pending_block_requests.insert(height, state);
             }
         }
 
-        let pending = self
-            .pending_block_requests
-            .keys()
-            .copied()
-            .collect::<Vec<_>>();
-        for height in pending {
-            self.send_request(DataAvailabilityRequest::BlockRequest(height))
-                .await?;
-        }
+        self.dispatch_new_block_requests().await?;
 
         if !failed_blocks.is_empty() {
             return Err(anyhow::anyhow!(
@@ -356,6 +393,7 @@ impl SignedDaStream {
             .unwrap_or(BlockRequestState {
                 request_time: now,
                 retry_count: 0,
+                in_flight: false,
             });
 
         state.retry_count += 1;
@@ -378,6 +416,7 @@ impl SignedDaStream {
         );
 
         state.request_time = now;
+        state.in_flight = true;
         self.pending_block_requests.insert(height, state);
 
         if self.addresses.len() > 1 {
@@ -426,8 +465,23 @@ impl SignedDaStream {
             }
             std::cmp::Ordering::Greater => {
                 if block_height > self.current_block {
+                    let gap = block_height.0.saturating_sub(self.current_block.0);
+                    if gap > Self::MAX_GAP_BEFORE_RECONNECT {
+                        error!(
+                            "📦 Gap too large from peer (expected {}, got {}, gap={}). Failing stream.",
+                            self.current_block, block_height, gap
+                        );
+                        return Err(anyhow::anyhow!(
+                            "Gap too large from peer: expected {}, got {}, gap {} (max {})",
+                            self.current_block,
+                            block_height,
+                            gap,
+                            Self::MAX_GAP_BEFORE_RECONNECT
+                        ));
+                    }
+
                     warn!(
-                        "📦 Gap detected! Expected {}, got {}. Requesting missing blocks.",
+                        "📦 Gap detected! Expected {}, got {}. Scheduling missing blocks.",
                         self.current_block, block_height
                     );
                     for missing_height in self.current_block.0..block_height.0 {
@@ -442,6 +496,8 @@ impl SignedDaStream {
                 self.block_buffer.insert(block_height, block);
             }
         }
+
+        self.dispatch_new_block_requests().await?;
 
         Ok(output)
     }
@@ -643,7 +699,15 @@ impl<P: BlockProcessor + 'static> SignedDAListener<P> {
                             self.stream.reconnect("stream_closed").await?;
                         }
                         DaStreamPoll::Event(event) => {
-                            let _ = log_error!(self.processing_next_frame(event).await, "Consuming da stream");
+                            if let Err(e) = self.processing_next_frame(event).await {
+                                warn!(
+                                    "Error while consuming DA stream event: {}. Reconnecting after sleeping 1s...",
+                                    e
+                                );
+                                tokio::time::sleep(Duration::from_secs(1)).await;
+                                self.stream.reconnect("event_processing_error").await?;
+                                continue;
+                            }
                             if let Err(e) = self.stream.ping().await {
                                 warn!("Ping failed: {}. Restarting client...", e);
                                 self.stream.reconnect("ping_error").await?;

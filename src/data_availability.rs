@@ -1016,20 +1016,45 @@ impl DataAvailability {
         server: &mut DataAvailabilityServer,
     ) -> Result<()> {
         let range_start = std::time::Instant::now();
-        if self.blocks.get_by_height(start_height)?.is_none() {
+        let highest = self
+            .blocks
+            .last()
+            .map_or(start_height, |block| block.height());
+
+        // Collect all blocks from start_height to current highest
+        let processed_block_hashes: VecDeque<_> = self
+            .blocks
+            .range(start_height, highest + 1)
+            .filter_map(|item| item.ok())
+            .collect();
+        self.blocks
+            .record_op("range_collect", "by_height", range_start.elapsed());
+
+        let expected = highest.0.saturating_sub(start_height.0).saturating_add(1);
+        if processed_block_hashes.len() as u64 != expected {
+            let first_missing = (start_height.0..=highest.0)
+                .find(|height| {
+                    self.blocks
+                        .has_by_height(BlockHeight(*height))
+                        .map(|present| !present)
+                        .unwrap_or(true)
+                })
+                .map(BlockHeight)
+                .unwrap_or(start_height);
+
             info!(
-                "Rejecting stream for peer {}: requested start height {} is unavailable locally",
-                peer_ip, start_height
+                "Rejecting stream for peer {}: local gap detected at height {} while serving [{}..={}]",
+                peer_ip, first_missing, start_height, highest
             );
 
             if let Err(e) = server.send(
                 peer_ip.to_string(),
-                DataAvailabilityEvent::BlockNotFound(start_height),
+                DataAvailabilityEvent::BlockNotFound(first_missing),
                 vec![],
             ) {
                 warn!(
                     "Error sending BlockNotFound at height {} to {}: {:#}",
-                    start_height, peer_ip, e
+                    first_missing, peer_ip, e
                 );
             }
 
@@ -1037,21 +1062,6 @@ impl DataAvailability {
             self.peer_send_queues.remove(peer_ip);
             return Ok(());
         }
-
-        // Collect all blocks from start_height to current highest
-        let processed_block_hashes: VecDeque<_> = self
-            .blocks
-            .range(
-                start_height,
-                self.blocks
-                    .last()
-                    .map_or(start_height, |block| block.height())
-                    + 1,
-            )
-            .filter_map(|item| item.ok())
-            .collect();
-        self.blocks
-            .record_op("range_collect", "by_height", range_start.elapsed());
 
         info!(
             "Starting stream to peer {} from height {} ({} blocks queued)",
@@ -1907,6 +1917,77 @@ pub mod tests {
             assert!(
                 second_event.is_none(),
                 "Stream should close after rejecting invalid start height"
+            );
+        }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_stream_rejected_when_requested_range_has_gap() {
+        let tmpdir = tempfile::tempdir().unwrap().keep();
+        let mut blocks_storage = Blocks::new(&tmpdir).unwrap();
+
+        let global_bus = crate::bus::SharedMessageBus::new();
+        let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
+
+        let mut config: Conf = Conf::new(vec![], None, None).unwrap();
+        config.da_server_port = find_available_port().await;
+        config.da_public_address = format!("127.0.0.1:{}", config.da_server_port);
+
+        // Build sparse heights 0,1,3,4 so start height exists but range is not contiguous.
+        let mut block = SignedBlock::default();
+        block.consensus_proposal.slot = 0;
+        blocks_storage.put(block.clone()).unwrap();
+        block.consensus_proposal.parent_hash = block.hashed();
+        block.consensus_proposal.slot = 1;
+        blocks_storage.put(block.clone()).unwrap();
+        block.consensus_proposal.parent_hash = block.hashed();
+        block.consensus_proposal.slot = 3;
+        blocks_storage.put(block.clone()).unwrap();
+        block.consensus_proposal.parent_hash = block.hashed();
+        block.consensus_proposal.slot = 4;
+        blocks_storage.put(block.clone()).unwrap();
+
+        let mut da = super::DataAvailability {
+            config: config.clone().into(),
+            bus,
+            blocks: blocks_storage,
+            buffered_signed_blocks: Default::default(),
+            catchupper: Default::default(),
+            allow_peer_catchup: false,
+            peer_send_queues: HashMap::new(),
+        };
+
+        tokio::spawn(async move {
+            da.start().await.unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let mut client =
+            DataAvailabilityClient::connect("client_id", config.da_public_address.clone())
+                .await
+                .unwrap();
+
+        client
+            .send(DataAvailabilityRequest::StreamFromHeight(BlockHeight(0)))
+            .await
+            .unwrap();
+
+        let first_event = tokio::time::timeout(Duration::from_secs(1), client.recv())
+            .await
+            .expect("Timed out waiting for stream rejection");
+        if let Some(event) = first_event {
+            assert_eq!(
+                event,
+                DataAvailabilityEvent::BlockNotFound(BlockHeight(2)),
+                "Only BlockNotFound should be emitted before stream closes"
+            );
+            let second_event = tokio::time::timeout(Duration::from_secs(1), client.recv())
+                .await
+                .expect("Timed out waiting for stream closure");
+            assert!(
+                second_event.is_none(),
+                "Stream should close after rejecting sparse range"
             );
         }
     }
