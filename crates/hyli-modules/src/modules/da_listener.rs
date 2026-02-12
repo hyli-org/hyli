@@ -16,7 +16,7 @@ use crate::{
     bus::SharedMessageBus,
     modules::{
         block_processor::BlockProcessor, da_listener_metrics::DaTcpClientMetrics,
-        data_availability::blocks_fjall::Blocks, Module,
+        data_availability::Blocks, Module,
     },
     node_state::module::NodeStateModule,
     utils::da_codec::DataAvailabilityClient,
@@ -607,6 +607,8 @@ impl<P: BlockProcessor + 'static> SignedDAListener<P> {
             };
         } else if let Some(folder) = self.config.da_read_from.strip_prefix("da:") {
             info!("Reading blocks from DA {folder}");
+
+            #[cfg_attr(not(feature = "fjall"), expect(unused_mut))]
             let mut blocks = Blocks::new(&PathBuf::from(folder))?;
             let block_hashes = blocks
                 .range(BlockHeight(0), BlockHeight(u64::MAX))
