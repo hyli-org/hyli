@@ -46,20 +46,24 @@ impl Module for DataAvailability {
         let catchup_policy = if ctx.config.consensus.solo {
             None
         } else {
+            let floor = if ctx.config.run_fast_catchup {
+                ctx.start_height.and_then(|start_height| {
+                    // Avoid fast catchup reexecution
+                    if highest_block < start_height {
+                        Some(start_height + 1)
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            };
             Some(DaCatchupPolicy {
-                floor: if ctx.config.run_fast_catchup {
-                    ctx.start_height.and_then(|start_height| {
-                        // Avoid fast catchup reexecution
-                        if highest_block < start_height {
-                            Some(start_height + 1)
-                        } else {
-                            None
-                        }
-                    })
-                } else {
-                    None
-                },
-                backfill: ctx.config.fast_catchup_backfill,
+                floor,
+                // Backfill only makes sense in fast catchup mode once a floor exists.
+                backfill: ctx.config.run_fast_catchup
+                    && ctx.config.fast_catchup_backfill
+                    && floor.is_some(),
             })
         };
 
@@ -203,6 +207,34 @@ impl DaCatchupper {
 
     pub fn need_to_tick(&self) -> bool {
         self.policy.as_ref().is_some_and(|p| p.backfill) || self.status.is_some()
+    }
+
+    pub fn on_mempool_started_building(
+        &mut self,
+        height: BlockHeight,
+        first_hole: Option<BlockHeight>,
+    ) {
+        if self.policy.is_none() {
+            return;
+        }
+
+        let next_stop = self.stop_height.map_or(height, |old| old.max(height));
+
+        let Some(policy) = &mut self.policy else {
+            return;
+        };
+
+        // If regular catchup is still running and mempool starts producing blocks,
+        // convert to a bounded catchup at this observed tip and schedule a backfill.
+        if policy.floor.is_none() && self.status.is_some() {
+            policy.floor = Some(height);
+            policy.backfill = true;
+            self.backfill_start_height = self.backfill_start_height.or(first_hole);
+            self.stop_height = Some(next_stop);
+            return;
+        }
+
+        self.stop_height = Some(next_stop);
     }
 
     #[cfg(test)]
@@ -808,7 +840,15 @@ impl DataAvailability {
                     "Received started building block (at height {}) from Mempool",
                     height
                 );
-                self.catchupper.stop_height = Some(height);
+                let first_hole = match self.blocks.first_hole_by_height() {
+                    Ok(hole) => hole,
+                    Err(e) => {
+                        debug!("Could not compute first hole while handling mempool event: {e}");
+                        None
+                    }
+                };
+                self.catchupper
+                    .on_mempool_started_building(height, first_hole);
             }
         }
 
@@ -1031,6 +1071,9 @@ impl DataAvailability {
             .record_op("range_collect", "by_height", range_start.elapsed());
 
         let expected = highest.0.saturating_sub(start_height.0).saturating_add(1);
+        // If requester starts beyond our current tip, they are already caught up:
+        // the valid stream response is an empty queue (wait for future blocks), not BlockNotFound.
+        let expected = if start_height > highest { 0 } else { expected };
         if processed_block_hashes.len() as u64 != expected {
             let first_missing = (start_height.0..=highest.0)
                 .find(|height| {
@@ -1990,5 +2033,84 @@ pub mod tests {
                 "Stream should close after rejecting sparse range"
             );
         }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_started_building_promotes_regular_catchup_to_backfill() {
+        let mut catchupper = super::DaCatchupper {
+            policy: Some(DaCatchupPolicy {
+                floor: None,
+                backfill: false,
+            }),
+            status: Some((tokio::spawn(async { Ok(()) }), BlockHeight(3))),
+            backfill_start_height: None,
+            peers: vec![],
+            stop_height: None,
+            da_max_frame_length: 1024,
+            metrics: Default::default(),
+        };
+
+        catchupper.on_mempool_started_building(BlockHeight(10), Some(BlockHeight(2)));
+
+        let policy = catchupper.policy.expect("policy should be present");
+        assert_eq!(policy.floor, Some(BlockHeight(10)));
+        assert!(policy.backfill);
+        assert_eq!(catchupper.stop_height, Some(BlockHeight(10)));
+        assert_eq!(catchupper.backfill_start_height, Some(BlockHeight(2)));
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_stream_accepts_when_peer_is_already_up_to_date() {
+        let tmpdir = tempfile::tempdir().unwrap().keep();
+        let mut blocks_storage = Blocks::new(&tmpdir).unwrap();
+
+        let global_bus = crate::bus::SharedMessageBus::new();
+        let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
+
+        let mut config: Conf = Conf::new(vec![], None, None).unwrap();
+        config.da_server_port = find_available_port().await;
+        config.da_public_address = format!("127.0.0.1:{}", config.da_server_port);
+
+        let mut block = SignedBlock::default();
+        blocks_storage.put(block.clone()).unwrap();
+        for i in 1..5 {
+            block.consensus_proposal.parent_hash = block.hashed();
+            block.consensus_proposal.slot = i;
+            blocks_storage.put(block.clone()).unwrap();
+        }
+
+        let mut da = super::DataAvailability {
+            config: config.clone().into(),
+            bus,
+            blocks: blocks_storage,
+            buffered_signed_blocks: Default::default(),
+            catchupper: Default::default(),
+            allow_peer_catchup: false,
+            peer_send_queues: HashMap::new(),
+        };
+
+        tokio::spawn(async move {
+            da.start().await.unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let mut client =
+            DataAvailabilityClient::connect("client_id", config.da_public_address.clone())
+                .await
+                .unwrap();
+
+        // Request starts at the next block after current highest (peer is already up to date).
+        client
+            .send(DataAvailabilityRequest::StreamFromHeight(BlockHeight(5)))
+            .await
+            .unwrap();
+
+        // Should not be rejected with BlockNotFound.
+        let next = tokio::time::timeout(Duration::from_millis(300), client.recv()).await;
+        assert!(
+            next.is_err(),
+            "Did not expect an immediate stream event/rejection for up-to-date peer"
+        );
     }
 }
