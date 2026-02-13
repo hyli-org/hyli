@@ -9,8 +9,8 @@ use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::middleware::{
-    DropOnError, EventPipeline, QueuedSendWithRetry, TcpInboundMessage, TcpServerLike,
-    TcpServerWithMiddleware,
+    middleware_layer, DropOnError, QueuedSendWithRetry, TcpInboundMessage, TcpServerExt,
+    TcpServerLike, TcpServerWithMiddleware,
 };
 use tokio::task::JoinHandle;
 
@@ -34,12 +34,10 @@ use tracing::{debug, error, info, trace, warn};
 use crate::model::SharedRunContext;
 
 type DataAvailabilityServer = TcpServerWithMiddleware<
-    EventPipeline<
-        DropOnError,
-        QueuedSendWithRetry<DataAvailabilityRequest, DataAvailabilityEvent>,
-    >,
+    QueuedSendWithRetry<DataAvailabilityRequest, DataAvailabilityEvent>,
     DataAvailabilityRequest,
     DataAvailabilityEvent,
+    TcpServerWithMiddleware<DropOnError, DataAvailabilityRequest, DataAvailabilityEvent>,
 >;
 
 impl Module for DataAvailability {
@@ -496,13 +494,11 @@ impl DataAvailability {
             format!("DAServer-{}", self.config.id.clone()).as_str(),
         )
         .await?;
-        let mut server = DataAvailabilityServer::new(
-            inner_server,
-            EventPipeline::new(
-                DropOnError,
+        let mut server = inner_server
+            .layer(middleware_layer(DropOnError))
+            .layer(middleware_layer(
                 QueuedSendWithRetry::new(10, Duration::from_millis(100)).max_per_tick(256),
-            ),
-        );
+            ));
 
         let (catchup_block_sender, mut catchup_block_receiver) =
             tokio::sync::mpsc::channel::<SignedBlock>(100);
@@ -678,10 +674,7 @@ impl DataAvailability {
                     "📦  Received built block (height {}) from Mempool",
                     signed_block.height()
                 );
-                if let Some(height) = self
-                    .handle_signed_block(signed_block, tcp_server)
-                    .await
-                {
+                if let Some(height) = self.handle_signed_block(signed_block, tcp_server).await {
                     self.catchupper.manage_catchup(height, sender)?;
                 }
             }
@@ -854,7 +847,8 @@ impl DataAvailability {
     ) -> anyhow::Result<()> {
         self.store_block(&block)?;
 
-        tcp_server.enqueue_to_streaming_peers(DataAvailabilityEvent::SignedBlock(block.clone()), vec![]);
+        tcp_server
+            .enqueue_to_streaming_peers(DataAvailabilityEvent::SignedBlock(block.clone()), vec![]);
 
         // Send the block to NodeState for processing
         _ = log_error!(
@@ -908,7 +902,10 @@ impl DataAvailability {
                     );
                 }
                 Ok(None) => {
-                    warn!("Missing block {} while starting stream to {}", hash, peer_ip);
+                    warn!(
+                        "Missing block {} while starting stream to {}",
+                        hash, peer_ip
+                    );
                 }
                 Err(e) => {
                     warn!(
@@ -943,7 +940,9 @@ pub mod tests {
     use hyli_modules::node_state::NodeState;
     use hyli_modules::utils::da_codec::DataAvailabilityClient;
     use hyli_modules::utils::da_codec::DataAvailabilityServer as RawDataAvailabilityServer;
-    use hyli_net::tcp::middleware::{DropOnError, EventPipeline, QueuedSendWithRetry};
+    use hyli_net::tcp::middleware::{
+        middleware_layer, DropOnError, QueuedSendWithRetry, TcpServerExt,
+    };
     use hyli_net::tcp::TcpEvent;
     use staking::state::Staking;
 
@@ -955,13 +954,11 @@ pub mod tests {
 
     async fn make_da_server(port: u16, name: &str) -> super::DataAvailabilityServer {
         let inner = RawDataAvailabilityServer::start(port, name).await.unwrap();
-        super::DataAvailabilityServer::new(
-            inner,
-            EventPipeline::new(
-                DropOnError,
+        inner
+            .layer(middleware_layer(DropOnError))
+            .layer(middleware_layer(
                 QueuedSendWithRetry::new(10, Duration::from_millis(100)).max_per_tick(256),
-            ),
-        )
+            ))
     }
 
     impl DataAvailabilityTestCtx {
@@ -1057,10 +1054,7 @@ pub mod tests {
                     Some(BlockHeight(9998))
                 );
             } else {
-                assert_eq!(
-                    da.handle_signed_block(block, &mut server).await,
-                    None
-                );
+                assert_eq!(da.handle_signed_block(block, &mut server).await, None);
             }
         }
     }

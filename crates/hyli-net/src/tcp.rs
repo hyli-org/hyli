@@ -1,7 +1,7 @@
 #[cfg(feature = "turmoil")]
 pub mod intercept;
-pub mod p2p_server;
 pub mod middleware;
+pub mod p2p_server;
 pub mod tcp_client;
 pub mod tcp_server;
 

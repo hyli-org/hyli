@@ -5,9 +5,9 @@ use std::time::Duration;
 use borsh::{BorshDeserialize, BorshSerialize};
 use tokio::time::Instant;
 
-use crate::tcp::{tcp_server::TcpServer, TcpEvent, TcpHeaders, TcpMessageLabel};
+use crate::tcp::{TcpEvent, TcpHeaders, TcpMessageLabel};
 
-use super::{SendErrorContext, SendErrorOutcome, TcpServerMiddleware};
+use super::{SendErrorContext, SendErrorOutcome, TcpServerLike, TcpServerMiddleware};
 
 #[derive(Default)]
 pub struct DropOnError;
@@ -19,11 +19,10 @@ where
 {
     type EventOut = TcpEvent<Req>;
 
-    fn on_event(
-        &mut self,
-        server: &mut TcpServer<Req, Res>,
-        event: TcpEvent<Req>,
-    ) -> Option<Self::EventOut> {
+    fn on_event<S>(&mut self, server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+    {
         match &event {
             TcpEvent::Error { socket_addr, .. } | TcpEvent::Closed { socket_addr } => {
                 server.drop_peer_stream(socket_addr.clone());
@@ -67,27 +66,28 @@ where
 {
     type EventOut = B::EventOut;
 
-    fn on_event(
-        &mut self,
-        server: &mut TcpServer<Req, Res>,
-        event: TcpEvent<Req>,
-    ) -> Option<Self::EventOut> {
+    fn on_event<S>(&mut self, server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+    {
         let event = self.first.on_event(server, event)?;
         self.second.on_event(server, event)
     }
 
-    fn on_send_error(
-        &mut self,
-        server: &mut TcpServer<Req, Res>,
-        ctx: &SendErrorContext<Res>,
-    ) -> SendErrorOutcome {
+    fn on_send_error<S>(&mut self, server: &mut S, ctx: &SendErrorContext<Res>) -> SendErrorOutcome
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+    {
         match self.first.on_send_error(server, ctx) {
             SendErrorOutcome::Unhandled(_) => self.second.on_send_error(server, ctx),
             outcome => outcome,
         }
     }
 
-    fn on_tick(&mut self, server: &mut TcpServer<Req, Res>) {
+    fn on_tick<S>(&mut self, server: &mut S)
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+    {
         self.first.on_tick(server);
         self.second.on_tick(server);
     }
@@ -113,11 +113,10 @@ where
 {
     type EventOut = Req;
 
-    fn on_event(
-        &mut self,
-        _server: &mut TcpServer<Req, Res>,
-        event: TcpEvent<Req>,
-    ) -> Option<Self::EventOut> {
+    fn on_event<S>(&mut self, _server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+    {
         match event {
             TcpEvent::Message { data, .. } => Some(data),
             TcpEvent::Closed { .. } | TcpEvent::Error { .. } => None,
@@ -135,11 +134,10 @@ where
 {
     type EventOut = TcpInboundMessage<Req>;
 
-    fn on_event(
-        &mut self,
-        _server: &mut TcpServer<Req, Res>,
-        event: TcpEvent<Req>,
-    ) -> Option<Self::EventOut> {
+    fn on_event<S>(&mut self, _server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+    {
         match event {
             TcpEvent::Message {
                 socket_addr,
@@ -274,11 +272,10 @@ where
 {
     type EventOut = TcpInboundMessage<Req>;
 
-    fn on_event(
-        &mut self,
-        _server: &mut TcpServer<Req, Res>,
-        event: TcpEvent<Req>,
-    ) -> Option<Self::EventOut> {
+    fn on_event<S>(&mut self, _server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+    {
         match event {
             TcpEvent::Message {
                 socket_addr,
@@ -300,20 +297,26 @@ where
         }
     }
 
-    fn on_send_error(
-        &mut self,
-        server: &mut TcpServer<Req, Res>,
-        ctx: &SendErrorContext<Res>,
-    ) -> SendErrorOutcome {
+    fn on_send_error<S>(&mut self, server: &mut S, ctx: &SendErrorContext<Res>) -> SendErrorOutcome
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+    {
         if !server.connected(&ctx.socket_addr) {
             self.unregister_streaming_peer(&ctx.socket_addr);
             return SendErrorOutcome::Unhandled(anyhow::anyhow!(ctx.error.to_string()));
         }
-        self.enqueue_to_peer(ctx.socket_addr.clone(), ctx.msg.clone(), ctx.headers.clone());
+        self.enqueue_to_peer(
+            ctx.socket_addr.clone(),
+            ctx.msg.clone(),
+            ctx.headers.clone(),
+        );
         SendErrorOutcome::RetryScheduled
     }
 
-    fn on_tick(&mut self, server: &mut TcpServer<Req, Res>) {
+    fn on_tick<S>(&mut self, server: &mut S)
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+    {
         if self.queues.is_empty() {
             return;
         }
@@ -354,8 +357,7 @@ where
                         server.drop_peer_stream(peer.clone());
                         self.unregister_streaming_peer(&peer);
                     } else {
-                        front.next_attempt_at =
-                            now + self.base_delay.mul_f64(front.retries as f64);
+                        front.next_attempt_at = now + self.base_delay.mul_f64(front.retries as f64);
                     }
                 }
             }
@@ -412,19 +414,17 @@ where
 {
     type EventOut = TcpEvent<Req>;
 
-    fn on_event(
-        &mut self,
-        _server: &mut TcpServer<Req, Res>,
-        event: TcpEvent<Req>,
-    ) -> Option<Self::EventOut> {
+    fn on_event<S>(&mut self, _server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+    {
         Some(event)
     }
 
-    fn on_send_error(
-        &mut self,
-        server: &mut TcpServer<Req, Res>,
-        ctx: &SendErrorContext<Res>,
-    ) -> SendErrorOutcome {
+    fn on_send_error<S>(&mut self, server: &mut S, ctx: &SendErrorContext<Res>) -> SendErrorOutcome
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+    {
         if !server.connected(&ctx.socket_addr) {
             return SendErrorOutcome::Unhandled(anyhow::anyhow!(ctx.error.to_string()));
         }
@@ -438,7 +438,10 @@ where
         SendErrorOutcome::RetryScheduled
     }
 
-    fn on_tick(&mut self, server: &mut TcpServer<Req, Res>) {
+    fn on_tick<S>(&mut self, server: &mut S)
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+    {
         if self.queue.is_empty() {
             return;
         }
@@ -516,23 +519,24 @@ where
 {
     type EventOut = TcpEvent<Req>;
 
-    fn on_event(
-        &mut self,
-        server: &mut TcpServer<Req, Res>,
-        event: TcpEvent<Req>,
-    ) -> Option<Self::EventOut> {
+    fn on_event<S>(&mut self, server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+    {
         self.drop_on_error.on_event(server, event)
     }
 
-    fn on_send_error(
-        &mut self,
-        server: &mut TcpServer<Req, Res>,
-        ctx: &SendErrorContext<Res>,
-    ) -> SendErrorOutcome {
+    fn on_send_error<S>(&mut self, server: &mut S, ctx: &SendErrorContext<Res>) -> SendErrorOutcome
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+    {
         self.retrying_send.on_send_error(server, ctx)
     }
 
-    fn on_tick(&mut self, server: &mut TcpServer<Req, Res>) {
+    fn on_tick<S>(&mut self, server: &mut S)
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+    {
         self.retrying_send.on_tick(server)
     }
 

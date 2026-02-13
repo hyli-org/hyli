@@ -33,6 +33,16 @@ use super::{tcp_client::TcpClient, SocketStream, TcpEvent};
 type TcpSender = SplitSink<FramedStream, Bytes>;
 type TcpReceiver = SplitStream<FramedStream>;
 
+pub struct ConnectedClients<'a>(std::collections::hash_map::Keys<'a, String, SocketStream>);
+
+impl<'a> Iterator for ConnectedClients<'a> {
+    type Item = &'a String;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+}
+
 // Best-effort enqueue into the main TcpServer event loop. If the queue is full, log once and apply
 // backpressure by awaiting. If the queue is closed, do whatever the caller decides (typically
 // break out of the task loop).
@@ -194,10 +204,8 @@ where
     }
 
     /// Adresses of currently connected clients (no health check)
-    pub fn connected_clients(
-        &self,
-    ) -> impl Iterator<Item = &String> {
-        self.sockets.keys()
+    pub fn connected_clients(&self) -> ConnectedClients<'_> {
+        ConnectedClients(self.sockets.keys())
     }
 
     pub fn connected(&self, socket_addr: &str) -> bool {
@@ -310,6 +318,37 @@ where
             .context(format!("Retrieving client {socket_addr}"))?;
 
         let binary_data = to_tcp_message_with_headers(&msg, headers)?;
+        stream
+            .sender
+            .try_send(TcpOutboundMessage {
+                message: binary_data,
+                message_label,
+            })
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Outbound TCP channel full/closed while sending msg to client {}: {}",
+                    socket_addr,
+                    e
+                )
+            })?;
+        self.metrics.event_loop_message_sent(message_label);
+        Ok(())
+    }
+
+    pub fn send_ref(
+        &mut self,
+        socket_addr: &str,
+        msg: &Res,
+        headers: &TcpHeaders,
+    ) -> anyhow::Result<()> {
+        debug!(pool = %self.pool_name, "Sending msg {:?} to {}", msg, socket_addr);
+        let message_label = msg.message_label();
+        let stream = self
+            .sockets
+            .get_mut(socket_addr)
+            .context(format!("Retrieving client {socket_addr}"))?;
+
+        let binary_data = to_tcp_message_with_headers(msg, headers.clone())?;
         stream
             .sender
             .try_send(TcpOutboundMessage {
