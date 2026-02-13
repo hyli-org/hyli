@@ -131,6 +131,7 @@ struct DaCatchupMetrics {
     timeout: Counter<u64>,
     stream_closed: Counter<u64>,
     start_height: Gauge<u64>,
+    current_height: Gauge<u64>,
 }
 
 impl Default for DaCatchupMetrics {
@@ -148,6 +149,7 @@ impl DaCatchupMetrics {
             timeout: my_meter.u64_counter("da_catchup_timeout").build(),
             stream_closed: my_meter.u64_counter("da_catchup_stream_closed").build(),
             start_height: my_meter.u64_gauge("da_catchup_start_height").build(),
+            current_height: my_meter.u64_gauge("da_catchup_current_height").build(),
         }
     }
 
@@ -171,6 +173,10 @@ impl DaCatchupMetrics {
     fn stream_closed(&self, peer: &str) {
         self.stream_closed
             .add(1, &[KeyValue::new("peer", peer.to_string())]);
+    }
+
+    fn current_height(&self, height: u64) {
+        self.current_height.record(height, &[]);
     }
 }
 
@@ -214,15 +220,15 @@ impl DaCatchupper {
         height: BlockHeight,
         first_hole: Option<BlockHeight>,
     ) {
-        if self.policy.is_none() {
-            return;
-        }
-
         let next_stop = self.stop_height.map_or(height, |old| old.max(height));
 
         let Some(policy) = &mut self.policy else {
             return;
         };
+        info!(
+            "Catchup stop height recalculated from mempool start: previous_stop={:?}, mempool_height={}, next_stop={}",
+            self.stop_height, height, next_stop
+        );
 
         // If regular catchup is still running and mempool starts producing blocks,
         // convert to a bounded catchup at this observed tip and schedule a backfill.
@@ -230,8 +236,6 @@ impl DaCatchupper {
             policy.floor = Some(height);
             policy.backfill = true;
             self.backfill_start_height = self.backfill_start_height.or(first_hole);
-            self.stop_height = Some(next_stop);
-            return;
         }
 
         self.stop_height = Some(next_stop);
@@ -334,6 +338,7 @@ impl DaCatchupper {
             debug!("No catchup policy set, skipping catchup");
             return Ok(());
         };
+        self.metrics.current_height(processed_height.0);
 
         if self.status.is_none() {
             if let Some(policy) = &mut self.policy {
