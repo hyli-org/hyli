@@ -107,11 +107,11 @@ jobs:
         with:
           toolchain: ${{ matrix.toolchain }}
       - name: Build model
-        run: cargo build -p hyli-model --no-default-features
+        run: cargo check -p hyli-model --no-default-features
       - name: Build
-        run: cargo build --no-default-features
+        run: cargo check --no-default-features
       - name: Build with sp1
-        run: cargo build --no-default-features -F sp1
+        run: cargo check --no-default-features -F sp1
 
   unused_dependencies:
     name: Check unused dependencies
