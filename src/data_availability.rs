@@ -5,7 +5,6 @@ use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
 use hyli_modules::utils::da_codec::DataAvailabilityServer;
 //use hyli_modules::modules::data_availability::blocks_memory::Blocks;
 use hyli_modules::modules::da_listener::{DaStreamPoll, SignedDaStream};
-use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::TcpEvent;
@@ -17,11 +16,10 @@ use crate::{
     genesis::GenesisEvent,
     model::*,
     p2p::network::{OutboundMessage, PeerEvent},
-    utils::{conf::SharedConf, rng::deterministic_rng},
+    utils::conf::SharedConf,
 };
 use anyhow::{Context, Result};
 use core::str;
-use rand::seq::IndexedRandom;
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
     time::Duration,
@@ -58,12 +56,13 @@ impl Module for DataAvailability {
             } else {
                 None
             };
-            Some(DaCatchupPolicy {
+            Some(DaCatchupPolicy::Regular {
                 floor,
-                // Backfill only makes sense in fast catchup mode once a floor exists.
-                backfill: ctx.config.run_fast_catchup
+                ceiling: None,
+                backfill_enabled: ctx.config.run_fast_catchup
                     && ctx.config.fast_catchup_backfill
                     && floor.is_some(),
+                backfill_start: None,
             })
         };
 
@@ -71,7 +70,6 @@ impl Module for DataAvailability {
             "📦  DataAvailability module built with policy {:?}",
             catchup_policy
         );
-
         Ok(DataAvailability {
             config: ctx.config.clone(),
             bus,
@@ -117,318 +115,322 @@ pub struct DataAvailability {
     peer_send_queues: HashMap<String, VecDeque<ConsensusProposalHash>>,
 }
 
-/// Catchup configuration for the Data Availability module.
-#[derive(Default, Debug, Clone)]
-struct DaCatchupPolicy {
-    floor: Option<BlockHeight>,
-    backfill: bool,
-}
-
 #[derive(Debug, Clone)]
-struct DaCatchupMetrics {
-    start: Counter<u64>,
-    restart: Counter<u64>,
-    timeout: Counter<u64>,
-    stream_closed: Counter<u64>,
-    start_height: Gauge<u64>,
-    current_height: Gauge<u64>,
+enum DaCatchupPolicy {
+    Regular {
+        floor: Option<BlockHeight>,
+        ceiling: Option<BlockHeight>,
+        backfill_enabled: bool,
+        backfill_start: Option<BlockHeight>,
+    },
+    BackfillPending {
+        ceiling: BlockHeight,
+    },
+    Backfill {
+        start: BlockHeight,
+        ceiling: BlockHeight,
+    },
 }
 
-impl Default for DaCatchupMetrics {
-    fn default() -> Self {
-        Self::global()
-    }
-}
-
-impl DaCatchupMetrics {
-    pub fn global() -> DaCatchupMetrics {
-        let my_meter = global_meter_or_panic();
-        DaCatchupMetrics {
-            start: my_meter.u64_counter("da_catchup_start").build(),
-            restart: my_meter.u64_counter("da_catchup_restart").build(),
-            timeout: my_meter.u64_counter("da_catchup_timeout").build(),
-            stream_closed: my_meter.u64_counter("da_catchup_stream_closed").build(),
-            start_height: my_meter.u64_gauge("da_catchup_start_height").build(),
-            current_height: my_meter.u64_gauge("da_catchup_current_height").build(),
-        }
-    }
-
-    fn start(&self, peer: &str, height: u64) {
-        let labels = [KeyValue::new("peer", peer.to_string())];
-        self.start.add(1, &labels);
-        self.start_height.record(height, &labels);
-    }
-
-    fn restart(&self, peer: &str, height: u64) {
-        let labels = [KeyValue::new("peer", peer.to_string())];
-        self.restart.add(1, &labels);
-        self.start_height.record(height, &labels);
-    }
-
-    fn timeout(&self, peer: &str) {
-        self.timeout
-            .add(1, &[KeyValue::new("peer", peer.to_string())]);
-    }
-
-    fn stream_closed(&self, peer: &str) {
-        self.stream_closed
-            .add(1, &[KeyValue::new("peer", peer.to_string())]);
-    }
-
-    fn current_height(&self, height: u64) {
-        self.current_height.record(height, &[]);
-    }
-}
-
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct DaCatchupper {
     policy: Option<DaCatchupPolicy>,
-    status: Option<(tokio::task::JoinHandle<anyhow::Result<()>>, BlockHeight)>,
-    backfill_start_height: Option<BlockHeight>,
+    task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
+    last_height: Option<BlockHeight>,
+    sender: tokio::sync::mpsc::Sender<SignedBlock>,
+    receiver: Option<tokio::sync::mpsc::Receiver<SignedBlock>>,
     pub peers: Vec<String>,
-    pub stop_height: Option<BlockHeight>,
     da_max_frame_length: usize,
-    metrics: DaCatchupMetrics,
 }
 
 impl DaCatchupper {
     pub fn new(policy: Option<DaCatchupPolicy>, da_max_frame_length: usize) -> Self {
+        let (sender, receiver) = tokio::sync::mpsc::channel::<SignedBlock>(100);
         DaCatchupper {
             policy,
-            status: None,
-            backfill_start_height: None,
+            task: None,
+            last_height: None,
+            sender,
+            receiver: Some(receiver),
             peers: vec![],
             da_max_frame_length,
-            stop_height: None,
-            metrics: DaCatchupMetrics::global(),
         }
+    }
+
+    pub fn take_receiver(&mut self) -> Option<tokio::sync::mpsc::Receiver<SignedBlock>> {
+        self.receiver.take()
     }
 
     pub fn is_fast_catchup_initial_block(&self, height: &BlockHeight) -> bool {
         matches!(
             self.policy,
-            Some(DaCatchupPolicy { floor: Some(floor), .. }) if height == &floor
+            Some(DaCatchupPolicy::Regular {
+                floor: Some(floor),
+                ..
+            }) if height == &floor
         )
     }
 
-    pub fn need_to_tick(&self) -> bool {
-        self.policy.as_ref().is_some_and(|p| p.backfill) || self.status.is_some()
+    #[cfg(test)]
+    pub fn stop_task(&mut self) {
+        if let Some(task) = &mut self.task {
+            task.abort();
+            self.task = None;
+        }
+    }
+
+    pub fn ensure_started(&mut self, from_height: BlockHeight) -> anyhow::Result<()> {
+        self.ensure_task_running(Some(from_height))
+    }
+
+    fn mode_name(policy: &DaCatchupPolicy) -> &'static str {
+        match policy {
+            DaCatchupPolicy::Regular { .. } => "regular",
+            DaCatchupPolicy::BackfillPending { .. } => "backfill-pending",
+            DaCatchupPolicy::Backfill { .. } => "backfill",
+        }
+    }
+
+    fn mode_start_height(
+        policy: &DaCatchupPolicy,
+        requested_start: Option<BlockHeight>,
+    ) -> Option<BlockHeight> {
+        match policy {
+            DaCatchupPolicy::Regular {
+                floor: Some(floor), ..
+            } => Some(*floor),
+            DaCatchupPolicy::Regular { floor: None, .. } => requested_start,
+            DaCatchupPolicy::BackfillPending { .. } => None,
+            DaCatchupPolicy::Backfill { start, .. } => Some(*start),
+        }
+    }
+
+    fn mode_ceiling(policy: &DaCatchupPolicy) -> Option<BlockHeight> {
+        match policy {
+            DaCatchupPolicy::Regular { ceiling, .. } => *ceiling,
+            DaCatchupPolicy::BackfillPending { .. } => None,
+            DaCatchupPolicy::Backfill { ceiling, .. } => Some(*ceiling),
+        }
+    }
+
+    fn ensure_task_running(&mut self, requested_start: Option<BlockHeight>) -> anyhow::Result<()> {
+        if self.task.is_some() {
+            return Ok(());
+        }
+        let sender = self.sender.clone();
+
+        let Some(policy) = self.policy.as_ref() else {
+            return Ok(());
+        };
+        let Some(from_height) = Self::mode_start_height(policy, requested_start) else {
+            return Ok(());
+        };
+        self.spawn_for_mode(from_height, sender)
+    }
+
+    fn spawn_for_mode(
+        &mut self,
+        from_height: BlockHeight,
+        sender: tokio::sync::mpsc::Sender<SignedBlock>,
+    ) -> anyhow::Result<()> {
+        let Some(policy) = self.policy.as_ref() else {
+            return Ok(());
+        };
+        let target_height = Self::mode_ceiling(policy);
+        let mode_name = Self::mode_name(policy);
+        if let Some(height) = target_height {
+            if height <= from_height {
+                debug!(
+                    "Skipping {} catchup spawn: empty range (from={}, to={})",
+                    mode_name, from_height, height
+                );
+                return self.complete_mode_if_reached(height);
+            }
+        }
+
+        let peers = self.peers.clone();
+        if peers.is_empty() {
+            info!("No peers available for catchup");
+            return Ok(());
+        }
+        let peer = peers
+            .first()
+            .map_or("unknown", std::string::String::as_str);
+
+        debug!(
+            "Starting {} catchup from height {} to {:?} on peer {}",
+            mode_name, from_height, target_height, peer
+        );
+
+        self.task = Some(Self::spawn_stream_task(
+            peers,
+            self.da_max_frame_length,
+            from_height,
+            sender,
+        ));
+        self.last_height = Some(from_height);
+
+        Ok(())
+    }
+
+    fn transition_after_regular_done(&mut self) {
+        let Some(DaCatchupPolicy::Regular {
+            floor,
+            backfill_enabled,
+            backfill_start,
+            ..
+        }) = self.policy.clone()
+        else {
+            self.policy = None;
+            return;
+        };
+
+        self.policy = None;
+        if backfill_enabled {
+            if let Some(floor) = floor {
+                if let Some(start) = backfill_start {
+                    if start < floor {
+                        self.policy = Some(DaCatchupPolicy::Backfill {
+                            start,
+                            ceiling: floor,
+                        });
+                    }
+                } else {
+                    self.policy = Some(DaCatchupPolicy::BackfillPending { ceiling: floor });
+                }
+            }
+        }
+    }
+
+    fn complete_mode_if_reached(
+        &mut self,
+        processed_height: BlockHeight,
+    ) -> anyhow::Result<()> {
+        let Some(policy) = self.policy.as_ref() else {
+            return Ok(());
+        };
+        let Some(ceiling) = Self::mode_ceiling(policy) else {
+            return Ok(());
+        };
+        if processed_height < ceiling {
+            return Ok(());
+        }
+
+        if let Some(task) = &mut self.task {
+            task.abort();
+        }
+        self.task = None;
+        match policy {
+            DaCatchupPolicy::Regular { .. } => {
+                info!(
+                    "Regular catchup done at height {}, evaluating backfill",
+                    processed_height
+                );
+                self.transition_after_regular_done();
+            }
+            DaCatchupPolicy::BackfillPending { .. } => {
+                debug!("Backfill is pending first-hole discovery");
+            }
+            DaCatchupPolicy::Backfill { .. } => {
+                info!("Backfill catchup done at height {}", processed_height);
+                self.policy = None;
+            }
+        }
+        self.ensure_task_running(None)
+    }
+
+    pub fn on_first_hole_discovered(&mut self, hole: Option<BlockHeight>) {
+        match &mut self.policy {
+            Some(DaCatchupPolicy::Regular { backfill_start, .. }) => {
+                *backfill_start = backfill_start.or(hole);
+            }
+            Some(DaCatchupPolicy::BackfillPending { ceiling }) => {
+                if let Some(start) = hole {
+                    if start < *ceiling {
+                        self.policy = Some(DaCatchupPolicy::Backfill {
+                            start,
+                            ceiling: *ceiling,
+                        });
+                    } else {
+                        self.policy = None;
+                    }
+                } else {
+                    self.policy = None;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn on_catchup_progress(&mut self, processed_height: BlockHeight) -> anyhow::Result<()> {
+        if self.policy.is_none() {
+            return Ok(());
+        }
+
+        if let Some(last_height) = &mut self.last_height {
+            *last_height = processed_height.max(*last_height);
+        }
+        self.complete_mode_if_reached(processed_height)
+    }
+
+    pub fn on_tick(&mut self) -> anyhow::Result<()> {
+        if self.policy.is_none() {
+            return Ok(());
+        }
+        self.ensure_task_running(None)?;
+        let Some(task) = &self.task else {
+            return Ok(());
+        };
+        if !task.is_finished() {
+            return Ok(());
+        }
+        let restart_height = self.last_height.unwrap_or(BlockHeight(0));
+
+        info!(
+            "Catchup task finished before reaching target, restarting from height {}",
+            restart_height
+        );
+        self.task = None;
+        self.spawn_for_mode(restart_height, self.sender.clone())
     }
 
     pub fn on_mempool_started_building(
         &mut self,
         height: BlockHeight,
         first_hole: Option<BlockHeight>,
-    ) {
-        let next_stop = self.stop_height.map_or(height, |old| old.max(height));
-
-        let Some(policy) = &mut self.policy else {
-            return;
-        };
-        info!(
-            "Catchup stop height recalculated from mempool start: previous_stop={:?}, mempool_height={}, next_stop={}",
-            self.stop_height, height, next_stop
-        );
-
-        // If regular catchup is still running and mempool starts producing blocks,
-        // convert to a bounded catchup at this observed tip and schedule a backfill.
-        if policy.floor.is_none() && self.status.is_some() {
-            policy.floor = Some(height);
-            policy.backfill = true;
-            self.backfill_start_height = self.backfill_start_height.or(first_hole);
-        }
-
-        self.stop_height = Some(next_stop);
-    }
-
-    #[cfg(test)]
-    pub fn stop_task(&mut self) {
-        if let Some((task, _)) = &mut self.status {
-            task.abort();
-            self.status = None;
-        }
-    }
-
-    pub fn choose_random_peer(&self) -> Vec<String> {
-        let Some(primary) = self.peers.choose(&mut deterministic_rng()).cloned() else {
-            return vec![];
-        };
-        let mut ordered = Vec::with_capacity(self.peers.len());
-        ordered.push(primary.clone());
-        for peer in &self.peers {
-            if peer != &primary {
-                ordered.push(peer.clone());
+    ) -> anyhow::Result<()> {
+        if let Some(DaCatchupPolicy::Regular {
+            floor,
+            ceiling,
+            backfill_enabled,
+            backfill_start,
+        }) = &mut self.policy
+        {
+            if ceiling.is_none() {
+                *ceiling = Some(height);
+                *backfill_start = backfill_start.or(first_hole);
+                info!(
+                    "Bounded regular catchup at ceiling {} (floor={:?}, backfill_enabled={}, backfill_start={:?})",
+                    height, floor, backfill_enabled, backfill_start
+                );
             }
         }
-        ordered
-    }
-
-    pub fn init_catchup(
-        &mut self,
-        from_height: BlockHeight,
-        sender: &tokio::sync::mpsc::Sender<SignedBlock>,
-    ) -> anyhow::Result<()> {
-        let mut start_height = from_height;
-
-        if let Some(DaCatchupPolicy {
-            floor: Some(floor), ..
-        }) = &self.policy
-        {
-            start_height = *floor;
+        if let Some(progress) = self.last_height {
+            self.complete_mode_if_reached(progress)?;
         }
-
-        self.catchup_from(start_height, sender)
-    }
-
-    /// Start catchup workflow based on the current policy
-    pub fn catchup_from(
-        &mut self,
-        from_height: BlockHeight,
-        sender: &tokio::sync::mpsc::Sender<SignedBlock>,
-    ) -> anyhow::Result<()> {
-        if self.policy.is_none() {
-            debug!("No catchup policy set, stopping catchup task");
-            return Ok(());
-        }
-
-        if self.status.is_some() {
-            debug!("Catchup is already in progress, no need to start a new task");
-            return Ok(());
-        }
-
-        if self.stop_height.is_some_and(|height| height <= from_height) {
-            debug!("Catchup is already done, no need to start a new task");
-            return Ok(());
-        }
-
-        let peers = self.choose_random_peer();
-        if peers.is_empty() {
-            info!("choose_random_peer returned no peers");
-            return Ok(());
-        }
-        #[expect(clippy::unwrap_used, reason = "gated above")]
-        let peer = peers.first().unwrap();
-
-        debug!(
-            "Starting catchup from height {} to {:?} on peer {}",
-            from_height, self.stop_height, peer
-        );
-
-        self.status = Some((
-            Self::start_task(
-                peers,
-                self.da_max_frame_length,
-                from_height,
-                sender.clone(),
-                self.metrics.clone(),
-            ),
-            from_height,
-        ));
-
         Ok(())
     }
 
-    /// Try transition the catchup state based on the current status and policy.    
-    pub fn manage_catchup(
-        &mut self,
-        processed_height: BlockHeight,
-        sender: &tokio::sync::mpsc::Sender<SignedBlock>,
-    ) -> anyhow::Result<()> {
-        if self.policy.is_none() {
-            debug!("No catchup policy set, skipping catchup");
-            return Ok(());
-        };
-        self.metrics.current_height(processed_height.0);
-
-        if self.status.is_none() {
-            if let Some(policy) = &mut self.policy {
-                // In case status is None, we check if we need to start a new catchup task up to the floor height
-                if policy.backfill && policy.floor.is_some() {
-                    if let Some(start_height) = self.backfill_start_height {
-                        policy.backfill = false; // Disable backfill after the first catchup
-                        self.stop_height = policy.floor; // Set stop height to the floor if backfill is enabled
-
-                        debug!(
-                            "Starting backfill catchup from height {} to {:?}",
-                            start_height, policy.floor
-                        );
-
-                        self.catchup_from(start_height, sender)?;
-                    }
-                } else {
-                    trace!("Catchup is already done");
-                }
-            }
-
-            return Ok(());
-        };
-
-        let peers = self.choose_random_peer();
-        if peers.is_empty() {
-            info!("choose_random_peer returned no peers");
-            return Ok(());
-        }
-        #[expect(clippy::unwrap_used, reason = "gated above")]
-        let peer = peers.first().unwrap();
-
-        let Some((task, old_height)) = &mut self.status else {
-            unreachable!("Status was already checked");
-        };
-
-        if self
-            .stop_height
-            .is_some_and(|height| height <= processed_height)
-        {
-            info!(
-                "Catchup task finished, last processed height {}",
-                processed_height
-            );
-            task.abort();
-            self.status = None;
-        } else if task.is_finished() {
-            info!(
-                "Catchup task finished, but catchup is not done yet, restarting from height {}",
-                processed_height
-            );
-            let from = processed_height.max(*old_height);
-
-            self.metrics.restart(peer, from.0);
-            let new_task = Self::start_task(
-                peers,
-                self.da_max_frame_length,
-                from,
-                sender.clone(),
-                self.metrics.clone(),
-            );
-            self.status = Some((new_task, from));
-        } else {
-            debug!(
-                "Catchup task is still running, last processed height {}",
-                processed_height
-            );
-            *old_height = processed_height;
-        }
-
-        Ok(())
-    }
-
-    fn start_task(
+    fn spawn_stream_task(
         peers: Vec<String>,
         da_max_frame_length: usize,
         start_height: BlockHeight,
         sender: tokio::sync::mpsc::Sender<SignedBlock>,
-        metrics: DaCatchupMetrics,
     ) -> JoinHandle<anyhow::Result<()>> {
-        let peer_label = peers
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "unknown".to_string());
         info!(
-            "Starting catchup from height {} on peer {}",
-            start_height, peer_label
+            "Starting catchup from height {}",
+            start_height
         );
-
-        metrics.start(&peer_label, start_height.0);
 
         tokio::spawn(async move {
             let timeout_duration = std::env::var("HYLI_DA_SLEEP_TIMEOUT")
@@ -446,7 +448,7 @@ impl DaCatchupper {
                 timeout_duration,
             );
             log_error!(
-                stream.start_client().await,
+                stream.start_client_with_metrics().await,
                 "Error occurred setting up the DA listener"
             )?;
 
@@ -454,11 +456,9 @@ impl DaCatchupper {
                 match stream.listen_next().await? {
                     DaStreamPoll::Timeout => {
                         warn!("Timeout expired while waiting for block.");
-                        metrics.timeout(&peer_label);
                         stream.reconnect("timeout").await?;
                     }
                     DaStreamPoll::StreamClosed => {
-                        metrics.stream_closed(&peer_label);
                         tokio::time::sleep(Duration::from_secs(1)).await;
                         stream.reconnect("stream_closed").await?;
                     }
@@ -490,6 +490,12 @@ impl DaCatchupper {
     }
 }
 
+impl Default for DaCatchupper {
+    fn default() -> Self {
+        Self::new(None, 0)
+    }
+}
+
 impl DataAvailability {
     pub fn start_scanning_for_first_hole(
         &self,
@@ -499,7 +505,11 @@ impl DataAvailability {
         let (first_hole_sender, first_hole_receiver) =
             tokio::sync::mpsc::channel::<Option<BlockHeight>>(10);
 
-        if let Some(DaCatchupPolicy { backfill: true, .. }) = self.catchupper.policy {
+        if let Some(DaCatchupPolicy::Regular {
+            backfill_enabled: true,
+            ..
+        }) = self.catchupper.policy
+        {
             // Start scanning local storage for first hole, if any
             _ = tokio::task::spawn(async move {
                 loop {
@@ -533,8 +543,10 @@ impl DataAvailability {
         )
         .await?;
 
-        let (catchup_block_sender, mut catchup_block_receiver) =
-            tokio::sync::mpsc::channel::<SignedBlock>(100);
+        let mut catchup_block_receiver = self
+            .catchupper
+            .take_receiver()
+            .ok_or_else(|| anyhow::anyhow!("Catchup receiver already taken"))?;
 
         let mut first_hole_receiver = self.start_scanning_for_first_hole();
 
@@ -544,13 +556,13 @@ impl DataAvailability {
         // - The number of retries for sending the blocks
         let mut catchup_joinset: JoinSet<(String, usize)> = tokio::task::JoinSet::new();
         let mut catchup_task_checker_ticker =
-            tokio::time::interval(std::time::Duration::from_millis(5000));
+            tokio::time::interval(std::time::Duration::from_secs(5));
         let mut storage_metrics_ticker = tokio::time::interval(std::time::Duration::from_secs(30));
 
         module_handle_messages! {
             on_self self,
             listen<MempoolBlockEvent> evt => {
-                _ = log_error!(self.handle_mempool_event(evt, &mut server, &catchup_block_sender, &mut catchup_joinset).await, "Handling Mempool Event");
+                _ = log_error!(self.handle_mempool_event(evt, &mut server, &mut catchup_joinset).await, "Handling Mempool Event");
             }
 
             listen<MempoolStatusEvent> evt => {
@@ -566,9 +578,8 @@ impl DataAvailability {
                     GenesisEvent::NoGenesis => {
                         self.allow_peer_catchup = true;
                         _ = log_error!(
-                            self.catchupper.init_catchup(
+                            self.catchupper.ensure_started(
                                 self.blocks.highest(),
-                                &catchup_block_sender,
                             ),
                             "Init catchup after NoGenesis"
                         );
@@ -581,9 +592,8 @@ impl DataAvailability {
                 info!("New peer {}", da_address);
                 if self.allow_peer_catchup {
                     _ = log_error!(
-                        self.catchupper.init_catchup(
+                        self.catchupper.ensure_started(
                             self.blocks.highest(),
-                            &catchup_block_sender,
                         ),
                         "Init catchup on new peer"
                     );
@@ -592,14 +602,13 @@ impl DataAvailability {
                 }
             }
 
-            _ = catchup_task_checker_ticker.tick(), if self.catchupper.need_to_tick() => {
-                let highest_block = self.blocks.highest();
-                _ = log_error!(self.catchupper.manage_catchup(highest_block, &catchup_block_sender), "Catchup transition after tick");
+            _ = catchup_task_checker_ticker.tick(), if self.catchupper.policy.is_some() => {
+                _ = log_error!(self.catchupper.on_tick(), "Catchup task liveness check");
             }
 
             Some(streamed_block) = catchup_block_receiver.recv() => {
                 if let Some(height) = self.handle_signed_block(streamed_block, &mut server, &mut catchup_joinset).await {
-                    _ = log_error!(self.catchupper.manage_catchup(height, &catchup_block_sender), "Catchup transition after streamed block");
+                    _ = log_error!(self.catchupper.on_catchup_progress(height), "Catchup transition after streamed block");
                 }
             }
 
@@ -658,10 +667,8 @@ impl DataAvailability {
 
             Some(hole) = first_hole_receiver.recv() => {
                 info!("Setting backfill start height as {:?}", &hole);
-                self.catchupper.backfill_start_height = hole;
-                let highest_block = self.blocks.highest();
-                _ = log_error!(self.catchupper.manage_catchup(highest_block, &catchup_block_sender), "Catchup transition after tick");
-
+                self.catchupper.on_first_hole_discovered(hole);
+                _ = log_error!(self.catchupper.on_tick(), "Starting backfill after first-hole discovery");
             }
 
             _ = storage_metrics_ticker.tick() => {
@@ -824,7 +831,6 @@ impl DataAvailability {
         &mut self,
         evt: MempoolBlockEvent,
         tcp_server: &mut DataAvailabilityServer,
-        sender: &tokio::sync::mpsc::Sender<SignedBlock>,
         catchup_joinset: &mut JoinSet<(String, usize)>,
     ) -> Result<()> {
         match evt {
@@ -837,7 +843,7 @@ impl DataAvailability {
                     .handle_signed_block(signed_block, tcp_server, catchup_joinset)
                     .await
                 {
-                    self.catchupper.manage_catchup(height, sender)?;
+                    self.catchupper.on_catchup_progress(height)?;
                 }
             }
             MempoolBlockEvent::StartedBuildingBlocks(height) => {
@@ -853,7 +859,7 @@ impl DataAvailability {
                     }
                 };
                 self.catchupper
-                    .on_mempool_started_building(height, first_hole);
+                    .on_mempool_started_building(height, first_hole)?;
             }
         }
 
@@ -1198,9 +1204,13 @@ pub mod tests {
             tcp_server: &mut DataAvailabilityServer,
         ) {
             let mut catchup_joinset: JoinSet<(String, usize)> = JoinSet::new();
-            self.da
+            if let Some(height) = self
+                .da
                 .handle_signed_block(block.clone(), tcp_server, &mut catchup_joinset)
-                .await;
+                .await
+            {
+                let _ = self.da.catchupper.on_catchup_progress(height);
+            }
             let block_hash = block.hashed();
             let Ok(full_block) = self.node_state.handle_signed_block(block) else {
                 tracing::warn!("Error while handling signed block {}", block_hash);
@@ -1233,7 +1243,8 @@ pub mod tests {
         let tmpdir = tempfile::tempdir().unwrap().keep();
         let blocks = Blocks::new(&tmpdir).unwrap();
 
-        let mut server = DataAvailabilityServer::start(7898, "DaServer")
+        let port = find_available_port().await;
+        let mut server = DataAvailabilityServer::start(port, "DaServer")
             .await
             .unwrap();
 
@@ -1499,15 +1510,18 @@ pub mod tests {
         let sender_global_bus = crate::bus::SharedMessageBus::new();
         let mut block_sender = TestBusClient::new_from_bus(sender_global_bus.new_handle()).await;
         let mut da_sender = DataAvailabilityTestCtx::new(sender_global_bus).await;
-        let mut server = DataAvailabilityServer::start(7890, "DaServer")
+        let port = find_available_port().await;
+        let mut server = DataAvailabilityServer::start(port, "DaServer")
             .await
             .unwrap();
 
         let receiver_global_bus = crate::bus::SharedMessageBus::new();
         let mut da_receiver = DataAvailabilityTestCtx::new(receiver_global_bus).await;
-        da_receiver.da.catchupper.policy = Some(DaCatchupPolicy {
+        da_receiver.da.catchupper.policy = Some(DaCatchupPolicy::Regular {
             floor: None,
-            backfill: false,
+            ceiling: None,
+            backfill_enabled: false,
+            backfill_start: None,
         });
         da_receiver.da.catchupper.da_max_frame_length = da_sender.da.config.da_max_frame_length;
 
@@ -1538,14 +1552,21 @@ pub mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // Setup done
-        let (tx, mut rx) = tokio::sync::mpsc::channel(200);
+        let mut rx = da_receiver
+            .da
+            .catchupper
+            .take_receiver()
+            .expect("catchup receiver should be available");
         da_receiver
             .da
             .catchupper
             .peers
             .push(da_sender_address.clone());
 
-        _ = da_receiver.da.catchupper.catchup_from(BlockHeight(0), &tx);
+        _ = da_receiver
+            .da
+            .catchupper
+            .ensure_started(BlockHeight(0));
 
         // Waiting a bit to push the block ten in the middle of all other 1..9 blocks
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -1626,7 +1647,7 @@ pub mod tests {
         da_receiver
             .da
             .catchupper
-            .init_catchup(BlockHeight(15), &tx)
+            .ensure_started(BlockHeight(15))
             .expect("Error while asking for catchup blocks");
 
         let mut received_blocks = vec![];
@@ -1646,15 +1667,18 @@ pub mod tests {
         let sender_global_bus = crate::bus::SharedMessageBus::new();
         let mut block_sender = TestBusClient::new_from_bus(sender_global_bus.new_handle()).await;
         let mut da_sender = DataAvailabilityTestCtx::new(sender_global_bus).await;
-        let mut server = DataAvailabilityServer::start(7891, "DaServer")
+        let port = find_available_port().await;
+        let mut server = DataAvailabilityServer::start(port, "DaServer")
             .await
             .unwrap();
 
         let receiver_global_bus = crate::bus::SharedMessageBus::new();
         let mut da_receiver = DataAvailabilityTestCtx::new(receiver_global_bus).await;
-        da_receiver.da.catchupper.policy = Some(DaCatchupPolicy {
+        da_receiver.da.catchupper.policy = Some(DaCatchupPolicy::Regular {
             floor: Some(BlockHeight(8)),
-            backfill: true,
+            ceiling: None,
+            backfill_enabled: true,
+            backfill_start: None,
         });
         da_receiver.da.catchupper.da_max_frame_length = da_sender.da.config.da_max_frame_length;
 
@@ -1685,15 +1709,22 @@ pub mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // Setup done
-        let (tx, mut rx) = tokio::sync::mpsc::channel(200);
+        let mut rx = da_receiver
+            .da
+            .catchupper
+            .take_receiver()
+            .expect("catchup receiver should be available");
         da_receiver
             .da
             .catchupper
             .peers
             .push(da_sender_address.clone());
 
-        // first init catchup should get last blocks after the floor = 8
-        _ = da_receiver.da.catchupper.init_catchup(BlockHeight(0), &tx);
+        // Initial fast catchup starts at floor and remains unbounded until mempool starts building.
+        _ = da_receiver
+            .da
+            .catchupper
+            .ensure_started(BlockHeight(0));
         _ = block_sender.send(MempoolBlockEvent::BuiltSignedBlock(block_ten.clone()));
 
         let mut received_blocks = vec![];
@@ -1713,28 +1744,11 @@ pub mod tests {
             assert!(received_blocks.iter().any(|b| b.height().0 == i));
         }
 
-        // Stop the task
-        da_receiver.da.catchupper.stop_height = Some(BlockHeight(10));
-        _ = da_receiver
-            .da
-            .catchupper
-            .manage_catchup(BlockHeight(10), &tx);
-
-        // should not start backfill
-        _ = da_receiver
-            .da
-            .catchupper
-            .manage_catchup(BlockHeight(10), &tx);
-
-        assert!(rx.try_recv().is_err());
-
-        da_receiver.da.catchupper.backfill_start_height = Some(BlockHeight(5));
-
-        // should start backfill from height 5
-        _ = da_receiver
-            .da
-            .catchupper
-            .manage_catchup(BlockHeight(10), &tx);
+        // Mempool starts producing blocks; this sets regular mode ceiling and transitions to backfill.
+        _ = da_receiver.da.catchupper.on_mempool_started_building(
+            BlockHeight(10),
+            Some(BlockHeight(5)),
+        );
 
         let mut received_blocks = vec![];
         while let Some(streamed_block) = rx.recv().await {
@@ -2041,27 +2055,267 @@ pub mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn test_started_building_promotes_regular_catchup_to_backfill() {
+    async fn test_regular_mode_stops_only_when_reaching_ceiling() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<SignedBlock>(1);
         let mut catchupper = super::DaCatchupper {
-            policy: Some(DaCatchupPolicy {
-                floor: None,
-                backfill: false,
+            policy: Some(DaCatchupPolicy::Regular {
+                floor: Some(BlockHeight(180)),
+                ceiling: Some(BlockHeight(75_001)),
+                backfill_enabled: false,
+                backfill_start: Some(BlockHeight(0)),
             }),
-            status: Some((tokio::spawn(async { Ok(()) }), BlockHeight(3))),
-            backfill_start_height: None,
-            peers: vec![],
-            stop_height: None,
+            task: Some(tokio::spawn(async {
+                futures::future::pending::<anyhow::Result<()>>().await
+            })),
+            last_height: Some(BlockHeight(180)),
+            sender: tx.clone(),
+            receiver: None,
+            peers: vec!["127.0.0.1:12345".to_string()],
             da_max_frame_length: 1024,
-            metrics: Default::default(),
         };
 
-        catchupper.on_mempool_started_building(BlockHeight(10), Some(BlockHeight(2)));
+        // Simulate stale external progress lower than floor.
+        catchupper
+            .on_catchup_progress(BlockHeight(180))
+            .expect("on_catchup_progress should succeed");
+        assert!(
+            catchupper.task.is_some(),
+            "catchup should keep running until it reaches ceiling"
+        );
 
-        let policy = catchupper.policy.expect("policy should be present");
-        assert_eq!(policy.floor, Some(BlockHeight(10)));
-        assert!(policy.backfill);
-        assert_eq!(catchupper.stop_height, Some(BlockHeight(10)));
-        assert_eq!(catchupper.backfill_start_height, Some(BlockHeight(2)));
+        // Explicit catchup progress to the ceiling should complete it.
+        catchupper
+            .on_catchup_progress(BlockHeight(75_001))
+            .expect("on_catchup_progress should succeed");
+        assert!(
+            catchupper.task.is_none(),
+            "catchup should stop once progress reaches ceiling"
+        );
+        assert!(
+            catchupper.policy.is_none(),
+            "regular mode should clear policy when done and no backfill is configured"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_started_building_only_sets_regular_ceiling() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<SignedBlock>(1);
+        let mut catchupper = super::DaCatchupper {
+            policy: Some(DaCatchupPolicy::Regular {
+                floor: Some(BlockHeight(180)),
+                ceiling: None,
+                backfill_enabled: true,
+                backfill_start: None,
+            }),
+            task: Some(tokio::spawn(async {
+                futures::future::pending::<anyhow::Result<()>>().await
+            })),
+            last_height: Some(BlockHeight(180)),
+            sender: tx.clone(),
+            receiver: None,
+            peers: vec!["127.0.0.1:12345".to_string()],
+            da_max_frame_length: 1024,
+        };
+
+        catchupper
+            .on_mempool_started_building(BlockHeight(75_001), Some(BlockHeight(120)))
+            .expect("on_mempool_started_building should succeed");
+
+        assert!(
+            catchupper.task.is_some(),
+            "started-building event should not complete regular catchup"
+        );
+        assert!(
+            matches!(
+                catchupper.policy,
+                Some(DaCatchupPolicy::Regular {
+                    ceiling: Some(BlockHeight(75_001)),
+                    backfill_start: Some(BlockHeight(120)),
+                    ..
+                })
+            ),
+            "started-building event should only bound regular mode and record backfill start"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_started_building_transitions_when_regular_range_is_empty_without_progress() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<SignedBlock>(1);
+        let mut catchupper = super::DaCatchupper {
+            policy: Some(DaCatchupPolicy::Regular {
+                floor: Some(BlockHeight(8)),
+                ceiling: None,
+                backfill_enabled: true,
+                backfill_start: Some(BlockHeight(5)),
+            }),
+            task: None,
+            last_height: None,
+            sender: tx.clone(),
+            receiver: None,
+            peers: vec![],
+            da_max_frame_length: 1024,
+        };
+
+        catchupper
+            .on_mempool_started_building(BlockHeight(8), Some(BlockHeight(5)))
+            .expect("on_mempool_started_building should succeed");
+        catchupper.on_tick().expect("on_tick should succeed");
+
+        assert!(
+            matches!(
+                catchupper.policy,
+                Some(DaCatchupPolicy::Backfill {
+                    start: BlockHeight(5),
+                    ceiling: BlockHeight(8)
+                })
+            ),
+            "empty regular range should immediately transition to backfill mode"
+        );
+        assert!(
+            catchupper.task.is_none(),
+            "backfill task should not start without peers"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_started_building_completes_regular_when_progress_already_reached_ceiling() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<SignedBlock>(1);
+        let mut catchupper = super::DaCatchupper {
+            policy: Some(DaCatchupPolicy::Regular {
+                floor: Some(BlockHeight(8)),
+                ceiling: None,
+                backfill_enabled: true,
+                backfill_start: Some(BlockHeight(5)),
+            }),
+            task: Some(tokio::spawn(async {
+                futures::future::pending::<anyhow::Result<()>>().await
+            })),
+            last_height: Some(BlockHeight(10)),
+            sender: tx.clone(),
+            receiver: None,
+            peers: vec![],
+            da_max_frame_length: 1024,
+        };
+
+        catchupper
+            .on_mempool_started_building(BlockHeight(10), Some(BlockHeight(5)))
+            .expect("on_mempool_started_building should succeed");
+
+        assert!(
+            catchupper.task.is_none(),
+            "regular catchup should complete when known progress already reached new ceiling"
+        );
+        assert!(
+            matches!(
+                catchupper.policy,
+                Some(DaCatchupPolicy::Backfill {
+                    start: BlockHeight(5),
+                    ceiling: BlockHeight(8)
+                })
+            ),
+            "regular mode should transition to backfill after completion"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_late_first_hole_transitions_pending_to_backfill() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<SignedBlock>(1);
+        let mut catchupper = super::DaCatchupper {
+            policy: Some(DaCatchupPolicy::Regular {
+                floor: Some(BlockHeight(10)),
+                ceiling: Some(BlockHeight(10)),
+                backfill_enabled: true,
+                backfill_start: None,
+            }),
+            task: Some(tokio::spawn(async {
+                futures::future::pending::<anyhow::Result<()>>().await
+            })),
+            last_height: Some(BlockHeight(10)),
+            sender: tx.clone(),
+            receiver: None,
+            peers: vec![],
+            da_max_frame_length: 1024,
+        };
+
+        catchupper
+            .on_catchup_progress(BlockHeight(10))
+            .expect("regular mode completion should succeed");
+        assert!(
+            matches!(
+                catchupper.policy,
+                Some(DaCatchupPolicy::BackfillPending {
+                    ceiling: BlockHeight(10)
+                })
+            ),
+            "regular completion without known hole should wait for hole discovery"
+        );
+
+        catchupper.on_first_hole_discovered(Some(BlockHeight(5)));
+        assert!(
+            matches!(
+                catchupper.policy,
+                Some(DaCatchupPolicy::Backfill {
+                    start: BlockHeight(5),
+                    ceiling: BlockHeight(10)
+                })
+            ),
+            "late hole discovery should transition pending state into backfill mode"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_on_tick_restarts_finished_task() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<SignedBlock>(1);
+        let mut catchupper = super::DaCatchupper {
+            policy: Some(DaCatchupPolicy::Regular {
+                floor: Some(BlockHeight(180)),
+                ceiling: Some(BlockHeight(75_001)),
+                backfill_enabled: false,
+                backfill_start: Some(BlockHeight(0)),
+            }),
+            task: Some(tokio::spawn(async { Ok(()) })),
+            last_height: Some(BlockHeight(180)),
+            sender: tx.clone(),
+            receiver: None,
+            peers: vec!["127.0.0.1:12345".to_string()],
+            da_max_frame_length: 1024,
+        };
+
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        catchupper.on_tick().expect("on_tick should succeed");
+        let restart_height = catchupper.last_height.expect("catchup should have restarted");
+        assert_eq!(
+            restart_height,
+            BlockHeight(180),
+            "catchup should restart from the last known catchup height"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_on_tick_keeps_backfill_mode_when_task_not_started() {
+        let (tx, _rx) = tokio::sync::mpsc::channel::<SignedBlock>(1);
+        let mut catchupper = super::DaCatchupper {
+            policy: Some(DaCatchupPolicy::Backfill {
+                start: BlockHeight(180),
+                ceiling: BlockHeight(75_001),
+            }),
+            task: None,
+            last_height: None,
+            sender: tx.clone(),
+            receiver: None,
+            peers: vec![],
+            da_max_frame_length: 1024,
+        };
+
+        catchupper.on_tick().expect("on_tick should succeed");
+        assert!(
+            matches!(catchupper.policy, Some(DaCatchupPolicy::Backfill { .. })),
+            "backfill mode should remain active until a task can start"
+        );
+        assert!(
+            catchupper.task.is_none(),
+            "no task should start when no peers are available"
+        );
     }
 
     #[test_log::test(tokio::test)]
