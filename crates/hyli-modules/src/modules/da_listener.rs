@@ -209,6 +209,7 @@ impl SignedDaStream {
     pub async fn start_client_with_metrics(&mut self) -> Result<()> {
         self.start_client().await?;
         self.tcp_client_metrics.start(self.current_block.0);
+        self.tcp_client_metrics.current_height(self.current_block.0);
         Ok(())
     }
 
@@ -459,6 +460,7 @@ impl SignedDaStream {
 
                 output.push(block);
                 self.current_block = block_height + 1;
+                self.tcp_client_metrics.current_height(self.current_block.0);
 
                 let mut buffered = self.process_buffered_blocks().await?;
                 output.append(&mut buffered);
@@ -520,6 +522,7 @@ impl SignedDaStream {
                 );
                 output.push(block);
                 self.current_block = height + 1;
+                self.tcp_client_metrics.current_height(self.current_block.0);
             } else {
                 info!(
                     "📦 Wanted block {}, next buffered is {}, waiting.",
