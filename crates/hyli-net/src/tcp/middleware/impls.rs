@@ -33,70 +33,6 @@ where
     }
 }
 
-fn min_wakeup(lhs: Option<Instant>, rhs: Option<Instant>) -> Option<Instant> {
-    match (lhs, rhs) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (None, None) => None,
-    }
-}
-
-pub struct EventPipeline<A, B> {
-    first: A,
-    second: B,
-}
-
-impl<A, B> EventPipeline<A, B> {
-    pub fn new(first: A, second: B) -> Self {
-        Self { first, second }
-    }
-
-    pub(crate) fn second_mut(&mut self) -> &mut B {
-        &mut self.second
-    }
-}
-
-impl<Req, Res, A, B> TcpServerMiddleware<Req, Res> for EventPipeline<A, B>
-where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel + Clone,
-    A: TcpServerMiddleware<Req, Res, EventOut = TcpEvent<Req>>,
-    B: TcpServerMiddleware<Req, Res>,
-{
-    type EventOut = B::EventOut;
-
-    fn on_event<S>(&mut self, server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
-        let event = self.first.on_event(server, event)?;
-        self.second.on_event(server, event)
-    }
-
-    fn on_send_error<S>(&mut self, server: &mut S, ctx: &SendErrorContext<Res>) -> SendErrorOutcome
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
-        match self.first.on_send_error(server, ctx) {
-            SendErrorOutcome::Unhandled(_) => self.second.on_send_error(server, ctx),
-            outcome => outcome,
-        }
-    }
-
-    fn on_tick<S>(&mut self, server: &mut S)
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
-        self.first.on_tick(server);
-        self.second.on_tick(server);
-    }
-
-    fn next_wakeup(&self) -> Option<Instant> {
-        min_wakeup(self.first.next_wakeup(), self.second.next_wakeup())
-    }
-}
-
 pub struct TcpInboundMessage<Req> {
     pub socket_addr: String,
     pub data: Req,
@@ -242,26 +178,6 @@ where
 
     fn enqueue_to_streaming_peers(&mut self, msg: Res, headers: TcpHeaders) {
         QueuedSendWithRetry::enqueue_to_streaming_peers(self, msg, headers);
-    }
-}
-
-impl<Req, Res, A, B> QueuedSenderMiddleware<Req, Res> for EventPipeline<A, B>
-where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel + Clone,
-    A: TcpServerMiddleware<Req, Res, EventOut = TcpEvent<Req>>,
-    B: QueuedSenderMiddleware<Req, Res>,
-{
-    fn enqueue_to_peer(&mut self, socket_addr: String, msg: Res, headers: TcpHeaders) {
-        self.second_mut().enqueue_to_peer(socket_addr, msg, headers);
-    }
-
-    fn register_streaming_peer(&mut self, socket_addr: String) {
-        self.second_mut().register_streaming_peer(socket_addr);
-    }
-
-    fn enqueue_to_streaming_peers(&mut self, msg: Res, headers: TcpHeaders) {
-        self.second_mut().enqueue_to_streaming_peers(msg, headers);
     }
 }
 

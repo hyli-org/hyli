@@ -91,8 +91,8 @@ use crate::tcp::{tcp_server::TcpServer, TcpEvent, TcpHeaders, TcpMessageLabel};
 mod impls;
 
 pub use impls::{
-    DropOnError, DropOnErrorAndRetry, EventPipeline, MessageOnly, MessageWithMeta,
-    QueuedSendWithRetry, QueuedSenderMiddleware, RetryingSend, TcpInboundMessage,
+    DropOnError, DropOnErrorAndRetry, MessageOnly, MessageWithMeta, QueuedSendWithRetry,
+    QueuedSenderMiddleware, RetryingSend, TcpInboundMessage,
 };
 
 pub trait Layer<S, Req, Res> {
@@ -112,50 +112,6 @@ impl<M> MiddlewareLayer<M> {
 
 pub fn middleware_layer<M>(middleware: M) -> MiddlewareLayer<M> {
     MiddlewareLayer::new(middleware)
-}
-
-/// Compose an arbitrary number of TCP middlewares into nested [`EventPipeline`]s.
-///
-/// This is compile-time composition (no dynamic dispatch/runtime middleware list).
-///
-/// # Example
-/// ```ignore
-/// let middleware = hyli_net::compose_tcp_middleware!(
-///     DropOnError,
-///     RetryingSend::new(10, Duration::from_millis(100)),
-///     MessageWithMeta,
-/// );
-/// ```
-#[macro_export]
-macro_rules! compose_tcp_middleware {
-    ($single:expr $(,)?) => {
-        $single
-    };
-    ($first:expr, $($rest:expr),+ $(,)?) => {
-        $crate::tcp::middleware::EventPipeline::new(
-            $first,
-            $crate::compose_tcp_middleware!($($rest),+),
-        )
-    };
-}
-
-/// Compose middleware types into a nested [`EventPipeline`] type.
-///
-/// # Example
-/// ```ignore
-/// type MyMiddleware = hyli_net::compose_tcp_middleware_type!(DropOnError, MessageOnly);
-/// ```
-#[macro_export]
-macro_rules! compose_tcp_middleware_type {
-    ($single:ty $(,)?) => {
-        $single
-    };
-    ($first:ty, $($rest:ty),+ $(,)?) => {
-        $crate::tcp::middleware::EventPipeline<
-            $first,
-            $crate::compose_tcp_middleware_type!($($rest),+),
-        >
-    };
 }
 
 pub struct SendErrorContext<Res> {
