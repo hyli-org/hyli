@@ -209,14 +209,20 @@ impl DaCatchupper {
 
     fn ensure_task_running(&mut self, requested_start: Option<BlockHeight>) -> anyhow::Result<()> {
         if self.task.is_some() {
+            trace!("Catchup task already running, skipping spawn");
             return Ok(());
         }
         let sender = self.sender.clone();
 
         let Some(policy) = self.policy.as_ref() else {
+            debug!("No catchup policy configured, skipping catchup start");
             return Ok(());
         };
         let Some(from_height) = Self::mode_start_height(policy, requested_start) else {
+            debug!(
+                "Catchup mode {} has no start height yet, waiting",
+                policy.as_ref()
+            );
             return Ok(());
         };
         self.spawn_for_mode(from_height, sender)
@@ -247,11 +253,10 @@ impl DaCatchupper {
             info!("No peers available for catchup");
             return Ok(());
         }
-        let peer = peers.first().map_or("unknown", std::string::String::as_str);
 
-        debug!(
-            "Starting {} catchup from height {} to {:?} on peer {}",
-            mode_name, from_height, target_height, peer
+        info!(
+            "Starting {} catchup from height {} to {:?}",
+            mode_name, from_height, target_height
         );
 
         self.task = Some(Self::spawn_stream_task(
@@ -277,20 +282,41 @@ impl DaCatchupper {
             return;
         };
 
+        debug!(
+            "Regular catchup completion: floor={:?}, backfill_enabled={}, backfill_start={:?}",
+            floor, backfill_enabled, backfill_start
+        );
         self.policy = None;
         if backfill_enabled {
             if let Some(floor) = floor {
                 if let Some(start) = backfill_start {
                     if start < floor {
+                        info!(
+                            "Transitioning to backfill mode: start={}, ceiling={}",
+                            start, floor
+                        );
                         self.policy = Some(DaCatchupPolicy::Backfill {
                             start,
                             ceiling: floor,
                         });
+                    } else {
+                        info!(
+                            "Skipping backfill: discovered start {} is not below floor {}",
+                            start, floor
+                        );
                     }
                 } else {
+                    info!(
+                        "Transitioning to backfill-pending mode at ceiling {}",
+                        floor
+                    );
                     self.policy = Some(DaCatchupPolicy::BackfillPending { ceiling: floor });
                 }
+            } else {
+                debug!("Backfill is enabled but regular floor is unknown, no transition");
             }
+        } else {
+            debug!("Backfill disabled, clearing catchup policy");
         }
     }
 
@@ -331,23 +357,45 @@ impl DaCatchupper {
     pub fn on_first_hole_discovered(&mut self, hole: Option<BlockHeight>) {
         match &mut self.policy {
             Some(DaCatchupPolicy::Regular { backfill_start, .. }) => {
+                debug!(
+                    "First-hole discovery during regular mode: hole={:?}, existing_backfill_start={:?}",
+                    hole, backfill_start
+                );
                 *backfill_start = backfill_start.or(hole);
             }
             Some(DaCatchupPolicy::BackfillPending { ceiling }) => {
+                debug!(
+                    "First-hole discovery during backfill-pending: hole={:?}, ceiling={}",
+                    hole, ceiling
+                );
                 if let Some(start) = hole {
                     if start < *ceiling {
+                        info!(
+                            "Resolved backfill-pending -> backfill (start={}, ceiling={})",
+                            start, ceiling
+                        );
                         self.policy = Some(DaCatchupPolicy::Backfill {
                             start,
                             ceiling: *ceiling,
                         });
                     } else {
+                        info!(
+                            "Dropping catchup policy: first hole {} is not below pending ceiling {}",
+                            start, ceiling
+                        );
                         self.policy = None;
                     }
                 } else {
+                    info!("Dropping catchup policy: no first hole found for pending backfill");
                     self.policy = None;
                 }
             }
-            _ => {}
+            _ => {
+                debug!(
+                    "Ignoring first-hole discovery for non-catchup state: hole={:?}",
+                    hole
+                );
+            }
         }
     }
 
@@ -383,26 +431,31 @@ impl DaCatchupper {
         self.spawn_for_mode(restart_height, self.sender.clone())
     }
 
-    pub fn on_mempool_started_building(
-        &mut self,
-        height: BlockHeight,
-        first_hole: Option<BlockHeight>,
-    ) -> anyhow::Result<()> {
+    pub fn on_mempool_started_building(&mut self, height: BlockHeight) -> anyhow::Result<()> {
         if let Some(DaCatchupPolicy::Regular {
             floor,
             ceiling,
             backfill_enabled,
-            backfill_start,
+            backfill_start: _,
         }) = &mut self.policy
         {
             if ceiling.is_none() {
                 *ceiling = Some(height);
-                *backfill_start = backfill_start.or(first_hole);
                 info!(
-                    "Bounded regular catchup at ceiling {} (floor={:?}, backfill_enabled={}, backfill_start={:?})",
-                    height, floor, backfill_enabled, backfill_start
+                    "Bounded regular catchup at ceiling {} (floor={:?}, backfill_enabled={})",
+                    height, floor, backfill_enabled
+                );
+            } else {
+                debug!(
+                    "Ignoring started-building event at {}: regular ceiling already set to {:?}",
+                    height, ceiling
                 );
             }
+        } else {
+            debug!(
+                "Ignoring started-building event at {}: catchup is not in regular mode",
+                height
+            );
         }
         if let Some(progress) = self.last_height {
             self.complete_mode_if_reached(progress)?;
@@ -837,15 +890,7 @@ impl DataAvailability {
                     "Received started building block (at height {}) from Mempool",
                     height
                 );
-                let first_hole = match self.blocks.first_hole_by_height() {
-                    Ok(hole) => hole,
-                    Err(e) => {
-                        debug!("Could not compute first hole while handling mempool event: {e}");
-                        None
-                    }
-                };
-                self.catchupper
-                    .on_mempool_started_building(height, first_hole)?;
+                self.catchupper.on_mempool_started_building(height)?;
             }
         }
 
@@ -1725,10 +1770,14 @@ pub mod tests {
         }
 
         // Mempool starts producing blocks; this sets regular mode ceiling and transitions to backfill.
+        da_receiver
+            .da
+            .catchupper
+            .on_first_hole_discovered(Some(BlockHeight(5)));
         _ = da_receiver
             .da
             .catchupper
-            .on_mempool_started_building(BlockHeight(10), Some(BlockHeight(5)));
+            .on_mempool_started_building(BlockHeight(10));
 
         let mut received_blocks = vec![];
         while let Some(streamed_block) = rx.recv().await {
@@ -2098,7 +2147,7 @@ pub mod tests {
         };
 
         catchupper
-            .on_mempool_started_building(BlockHeight(75_001), Some(BlockHeight(120)))
+            .on_mempool_started_building(BlockHeight(75_001))
             .expect("on_mempool_started_building should succeed");
 
         assert!(
@@ -2110,11 +2159,11 @@ pub mod tests {
                 catchupper.policy,
                 Some(DaCatchupPolicy::Regular {
                     ceiling: Some(BlockHeight(75_001)),
-                    backfill_start: Some(BlockHeight(120)),
+                    backfill_start: None,
                     ..
                 })
             ),
-            "started-building event should only bound regular mode and record backfill start"
+            "started-building event should only bound regular mode"
         );
     }
 
@@ -2137,7 +2186,7 @@ pub mod tests {
         };
 
         catchupper
-            .on_mempool_started_building(BlockHeight(8), Some(BlockHeight(5)))
+            .on_mempool_started_building(BlockHeight(8))
             .expect("on_mempool_started_building should succeed");
         catchupper.on_tick().expect("on_tick should succeed");
 
@@ -2178,7 +2227,7 @@ pub mod tests {
         };
 
         catchupper
-            .on_mempool_started_building(BlockHeight(10), Some(BlockHeight(5)))
+            .on_mempool_started_building(BlockHeight(10))
             .expect("on_mempool_started_building should succeed");
 
         assert!(
