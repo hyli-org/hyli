@@ -5371,6 +5371,7 @@ dependencies = [
  "hyli-model",
  "hyli-modules",
  "hyli-net",
+ "hyli-net-traits",
  "hyli-risc0-recursion",
  "hyli-smt-token",
  "hyli-staking",

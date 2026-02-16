@@ -214,6 +214,7 @@ hyli-contract-sdk = { workspace = true, default-features = false, features = [
 staking = { workspace = true, default-features = false, features = ["client"] }
 client-sdk = { workspace = true, features = ["rest", "csi"] }
 hyli-net = { workspace = true }
+hyli-net-traits = { workspace = true }
 hyli-model = { workspace = true, default-features = false, features = [
   "full",
   "sqlx",
