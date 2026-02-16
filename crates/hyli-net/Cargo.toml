@@ -14,7 +14,6 @@ hyli-crypto = { workspace = true }
 hyli-turmoil-shims = { workspace = true, features = ["opentelemetry"] }
 hyli-bus = { workspace = true, optional = true }
 hyli-net-traits = { workspace = true }
-hyli-net-macros = { workspace = true }
 
 anyhow = { workspace = true }
 borsh = { workspace = true }

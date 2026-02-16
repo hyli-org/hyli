@@ -5673,7 +5673,6 @@ dependencies = [
  "hyli-bus",
  "hyli-contract-sdk",
  "hyli-crypto",
- "hyli-net-macros",
  "hyli-net-traits",
  "hyli-turmoil-shims",
  "hyper 1.8.1",
