@@ -24,28 +24,18 @@ use crate::net::TcpStream;
 /// - Structs return `"TypeName"`.
 /// - Enums return `"TypeName::VariantName"`.
 ///
-/// # Overrides
-/// Use `#[tcp_label(...)]` on the type and/or enum variants:
-/// - Type-level: `prefix = "..."`, `label = "..."`
-/// - Variant-level (enums): `suffix = "..."`, `label = "..."`
-///
 /// # Example
 /// ```rust
 /// use hyli_net::tcp::TcpMessageLabel;
 ///
 /// #[derive(TcpMessageLabel)]
-/// #[tcp_label(prefix = "Net")]
 /// enum Msg {
 ///     Ping,
-///     #[tcp_label(suffix = "Payload")]
 ///     Data(Vec<u8>),
-///     #[tcp_label(label = "Custom")]
-///     CustomVariant,
 /// }
 ///
-/// assert_eq!(Msg::Ping.message_label(), "Net::Msg::Ping");
-/// assert_eq!(Msg::Data(vec![]).message_label(), "Net::Msg::Payload");
-/// assert_eq!(Msg::CustomVariant.message_label(), "Custom");
+/// assert_eq!(Msg::Ping.message_label(), "Msg::Ping");
+/// assert_eq!(Msg::Data(vec![]).message_label(), "Msg::Data");
 /// ```
 pub use hyli_net_traits::TcpMessageLabel;
 
