@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use hyli_net::tcp::TcpMessageLabel;
+use hyli_net_traits::TcpMessageLabel;
 
 #[derive(TcpMessageLabel)]
 struct MyStruct {
