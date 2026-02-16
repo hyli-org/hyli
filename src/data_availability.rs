@@ -878,12 +878,11 @@ impl DataAvailability {
                     "📦  Received built block (height {}) from Mempool",
                     signed_block.height()
                 );
-                if let Some(height) = self
+                // Mempool-produced blocks are local tip updates, not catchup-stream progress.
+                // Feeding them into catchup progress can prematurely complete backfill.
+                _ = self
                     .handle_signed_block(signed_block, tcp_server, catchup_joinset)
-                    .await
-                {
-                    self.catchupper.on_catchup_progress(height)?;
-                }
+                    .await;
             }
             MempoolBlockEvent::StartedBuildingBlocks(height) => {
                 debug!(
@@ -1235,13 +1234,10 @@ pub mod tests {
             tcp_server: &mut DataAvailabilityServer,
         ) {
             let mut catchup_joinset: JoinSet<(String, usize)> = JoinSet::new();
-            if let Some(height) = self
+            _ = self
                 .da
                 .handle_signed_block(block.clone(), tcp_server, &mut catchup_joinset)
-                .await
-            {
-                let _ = self.da.catchupper.on_catchup_progress(height);
-            }
+                .await;
             let block_hash = block.hashed();
             let Ok(full_block) = self.node_state.handle_signed_block(block) else {
                 tracing::warn!("Error while handling signed block {}", block_hash);
@@ -1605,6 +1601,10 @@ pub mod tests {
             da_receiver
                 .handle_signed_block(streamed_block.clone(), &mut server)
                 .await;
+            let _ = da_receiver
+                .da
+                .catchupper
+                .on_catchup_progress(streamed_block.height());
             received_blocks.push(streamed_block);
             if received_blocks.len() == 11 {
                 break;
@@ -1640,6 +1640,10 @@ pub mod tests {
             da_receiver
                 .handle_signed_block(streamed_block.clone(), &mut server)
                 .await;
+            let _ = da_receiver
+                .da
+                .catchupper
+                .on_catchup_progress(streamed_block.height());
             received_blocks.push(streamed_block);
             if received_blocks.len() == 15 {
                 break;
@@ -1757,6 +1761,10 @@ pub mod tests {
             da_receiver
                 .handle_signed_block(streamed_block.clone(), &mut server)
                 .await;
+            let _ = da_receiver
+                .da
+                .catchupper
+                .on_catchup_progress(streamed_block.height());
             received_blocks.push(streamed_block);
             if received_blocks.len() == 3 {
                 break;
@@ -1784,6 +1792,10 @@ pub mod tests {
             da_receiver
                 .handle_signed_block(streamed_block.clone(), &mut server)
                 .await;
+            let _ = da_receiver
+                .da
+                .catchupper
+                .on_catchup_progress(streamed_block.height());
             received_blocks.push(streamed_block);
             if received_blocks.len() == 3 {
                 break;
