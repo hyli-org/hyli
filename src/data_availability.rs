@@ -24,6 +24,7 @@ use std::{
     collections::{BTreeSet, HashMap, VecDeque},
     time::Duration,
 };
+use strum_macros::AsRefStr;
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, trace, warn};
 
@@ -115,7 +116,8 @@ pub struct DataAvailability {
     peer_send_queues: HashMap<String, VecDeque<ConsensusProposalHash>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, AsRefStr)]
+#[strum(serialize_all = "kebab-case")]
 enum DaCatchupPolicy {
     Regular {
         floor: Option<BlockHeight>,
@@ -183,14 +185,6 @@ impl DaCatchupper {
         self.ensure_task_running(Some(from_height))
     }
 
-    fn mode_name(policy: &DaCatchupPolicy) -> &'static str {
-        match policy {
-            DaCatchupPolicy::Regular { .. } => "regular",
-            DaCatchupPolicy::BackfillPending { .. } => "backfill-pending",
-            DaCatchupPolicy::Backfill { .. } => "backfill",
-        }
-    }
-
     fn mode_start_height(
         policy: &DaCatchupPolicy,
         requested_start: Option<BlockHeight>,
@@ -237,7 +231,7 @@ impl DaCatchupper {
             return Ok(());
         };
         let target_height = Self::mode_ceiling(policy);
-        let mode_name = Self::mode_name(policy);
+        let mode_name = policy.as_ref();
         if let Some(height) = target_height {
             if height <= from_height {
                 debug!(
