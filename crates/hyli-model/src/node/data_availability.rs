@@ -9,6 +9,7 @@ use sha3::{Digest, Sha3_256};
 use utoipa::ToSchema;
 
 use crate::*;
+use hyli_net_traits::TcpMessageLabel;
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, Eq, PartialEq)]
 pub enum DataEvent {
@@ -196,7 +197,7 @@ pub enum NodeStateEvent {
 
 // Da Listener
 //
-#[derive(BorshDeserialize, BorshSerialize, Clone, Debug, PartialEq, Eq)]
+#[derive(BorshDeserialize, BorshSerialize, Clone, Debug, PartialEq, Eq, TcpMessageLabel)]
 pub enum DataAvailabilityRequest {
     /// Start streaming blocks from a given height
     StreamFromHeight(BlockHeight),
@@ -204,7 +205,7 @@ pub enum DataAvailabilityRequest {
     BlockRequest(BlockHeight),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize, TcpMessageLabel)]
 pub enum DataAvailabilityEvent {
     SignedBlock(SignedBlock),
     MempoolStatusEvent(MempoolStatusEvent),

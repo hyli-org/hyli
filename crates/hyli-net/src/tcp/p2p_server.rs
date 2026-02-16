@@ -1231,14 +1231,18 @@ pub mod tests {
         addr.port()
     }
     // Simple message type for testing
-    #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Eq, PartialEq, PartialOrd, Ord)]
+    #[derive(
+        Debug,
+        Clone,
+        BorshSerialize,
+        BorshDeserialize,
+        Eq,
+        PartialEq,
+        PartialOrd,
+        Ord,
+        crate::tcp::TcpMessageLabel,
+    )]
     pub struct TestMessage(String);
-
-    impl crate::tcp::TcpMessageLabel for TestMessage {
-        fn message_label(&self) -> &'static str {
-            "TestMessage"
-        }
-    }
 
     macro_rules! receive_and_handle_event {
         ($server:expr, $pattern:pat, $error_msg:expr) => {{

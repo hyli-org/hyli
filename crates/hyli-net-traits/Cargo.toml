@@ -1,0 +1,12 @@
+[package]
+name = "hyli-net-traits"
+description = "Shared TCP networking traits"
+license = "MIT"
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
+
+[dependencies]
+hyli-net-macros = { workspace = true }
