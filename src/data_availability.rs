@@ -253,9 +253,7 @@ impl DaCatchupper {
             info!("No peers available for catchup");
             return Ok(());
         }
-        let peer = peers
-            .first()
-            .map_or("unknown", std::string::String::as_str);
+        let peer = peers.first().map_or("unknown", std::string::String::as_str);
 
         debug!(
             "Starting {} catchup from height {} to {:?} on peer {}",
@@ -302,10 +300,7 @@ impl DaCatchupper {
         }
     }
 
-    fn complete_mode_if_reached(
-        &mut self,
-        processed_height: BlockHeight,
-    ) -> anyhow::Result<()> {
+    fn complete_mode_if_reached(&mut self, processed_height: BlockHeight) -> anyhow::Result<()> {
         let Some(policy) = self.policy.as_ref() else {
             return Ok(());
         };
@@ -427,10 +422,7 @@ impl DaCatchupper {
         start_height: BlockHeight,
         sender: tokio::sync::mpsc::Sender<SignedBlock>,
     ) -> JoinHandle<anyhow::Result<()>> {
-        info!(
-            "Starting catchup from height {}",
-            start_height
-        );
+        info!("Starting catchup from height {}", start_height);
 
         tokio::spawn(async move {
             let timeout_duration = std::env::var("HYLI_DA_SLEEP_TIMEOUT")
@@ -1563,10 +1555,7 @@ pub mod tests {
             .peers
             .push(da_sender_address.clone());
 
-        _ = da_receiver
-            .da
-            .catchupper
-            .ensure_started(BlockHeight(0));
+        _ = da_receiver.da.catchupper.ensure_started(BlockHeight(0));
 
         // Waiting a bit to push the block ten in the middle of all other 1..9 blocks
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -1721,10 +1710,7 @@ pub mod tests {
             .push(da_sender_address.clone());
 
         // Initial fast catchup starts at floor and remains unbounded until mempool starts building.
-        _ = da_receiver
-            .da
-            .catchupper
-            .ensure_started(BlockHeight(0));
+        _ = da_receiver.da.catchupper.ensure_started(BlockHeight(0));
         _ = block_sender.send(MempoolBlockEvent::BuiltSignedBlock(block_ten.clone()));
 
         let mut received_blocks = vec![];
@@ -1745,10 +1731,10 @@ pub mod tests {
         }
 
         // Mempool starts producing blocks; this sets regular mode ceiling and transitions to backfill.
-        _ = da_receiver.da.catchupper.on_mempool_started_building(
-            BlockHeight(10),
-            Some(BlockHeight(5)),
-        );
+        _ = da_receiver
+            .da
+            .catchupper
+            .on_mempool_started_building(BlockHeight(10), Some(BlockHeight(5)));
 
         let mut received_blocks = vec![];
         while let Some(streamed_block) = rx.recv().await {
@@ -2283,7 +2269,9 @@ pub mod tests {
 
         tokio::time::sleep(Duration::from_millis(5)).await;
         catchupper.on_tick().expect("on_tick should succeed");
-        let restart_height = catchupper.last_height.expect("catchup should have restarted");
+        let restart_height = catchupper
+            .last_height
+            .expect("catchup should have restarted");
         assert_eq!(
             restart_height,
             BlockHeight(180),
