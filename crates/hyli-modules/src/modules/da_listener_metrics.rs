@@ -6,6 +6,7 @@ pub struct DaTcpClientMetrics {
     start: Counter<u64>,
     reconnect: Counter<u64>,
     start_height: Gauge<u64>,
+    current_height: Gauge<u64>,
 }
 
 impl DaTcpClientMetrics {
@@ -17,6 +18,7 @@ impl DaTcpClientMetrics {
             start: my_meter.u64_counter("da_tcp_client_start").build(),
             reconnect: my_meter.u64_counter("da_tcp_client_reconnect").build(),
             start_height: my_meter.u64_gauge("da_tcp_client_start_height").build(),
+            current_height: my_meter.u64_gauge("da_tcp_client_current_height").build(),
         }
     }
 
@@ -34,5 +36,10 @@ impl DaTcpClientMetrics {
                 KeyValue::new("reason", reason),
             ],
         );
+    }
+
+    pub fn current_height(&self, height: u64) {
+        let labels = [KeyValue::new("module_name", self.module_name)];
+        self.current_height.record(height, &labels);
     }
 }
