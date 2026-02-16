@@ -14,6 +14,7 @@ members = [
   "crates/contract-sdk",
   "crates/hyli-loadtest",
   "crates/hyli-model",
+  "crates/hyli-net-macros",
   "crates/hyli-crypto",
   "crates/hyli-turmoil-shims",
   "crates/hyli-verifiers",
@@ -51,6 +52,7 @@ sdk = { version = "0.14.0", default-features = false, path = "crates/contract-sd
 hyli-contract-sdk = { version = "0.14.0", default-features = false, path = "crates/contract-sdk", package = "hyli-contract-sdk" }
 client-sdk = { version = "0.14.0", default-features = false, path = "crates/client-sdk", package = "hyli-client-sdk" }
 hyli-net = { version = "0.14.0", default-features = false, path = "crates/hyli-net", package = "hyli-net" }
+hyli-net-macros = { version = "0.14.0", default-features = false, path = "crates/hyli-net-macros", package = "hyli-net-macros" }
 hyli-model = { version = "0.14.0", default-features = false, path = "crates/hyli-model", package = "hyli-model" }
 hyli-crypto = { version = "0.14.0", default-features = false, path = "crates/hyli-crypto", package = "hyli-crypto" }
 hyli-turmoil-shims = { version = "0.14.0", default-features = false, path = "crates/hyli-turmoil-shims", package = "hyli-turmoil-shims", features = [

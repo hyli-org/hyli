@@ -2,30 +2,26 @@ use std::collections::{HashSet, VecDeque};
 use std::marker::PhantomData;
 use std::time::Duration;
 
-use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_net_macros::tcp_middleware;
 use tokio::time::Instant;
 
-use crate::tcp::{TcpEvent, TcpHeaders, TcpMessageLabel};
+use crate::tcp::{TcpEvent, TcpHeaders};
 
-use super::{SendErrorContext, SendErrorOutcome, TcpServerLike, TcpServerMiddleware};
+use super::{InboundCx, OutboundCx, SendErrorContext, SendErrorOutcome};
 
 #[derive(Default)]
 pub struct DropOnError;
 
-impl<Req, Res> TcpServerMiddleware<Req, Res> for DropOnError
-where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel,
-{
-    type EventOut = TcpEvent<Req>;
-
-    fn on_event<S>(&mut self, server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
+#[tcp_middleware(inbound, event_out(TcpEvent<__TcpReq>))]
+impl DropOnError {
+    fn inbound<Req, Res, S>(
+        &mut self,
+        cx: &mut InboundCx<Req, Res, S>,
+        event: TcpEvent<Req>,
+    ) -> Option<TcpEvent<Req>> {
         match &event {
             TcpEvent::Error { socket_addr, .. } | TcpEvent::Closed { socket_addr } => {
-                server.drop_peer_stream(socket_addr.clone());
+                cx.drop_peer(socket_addr.clone());
             }
             _ => {}
         }
@@ -42,17 +38,13 @@ pub struct TcpInboundMessage<Req> {
 #[derive(Default)]
 pub struct MessageOnly;
 
-impl<Req, Res> TcpServerMiddleware<Req, Res> for MessageOnly
-where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel,
-{
-    type EventOut = Req;
-
-    fn on_event<S>(&mut self, _server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
+#[tcp_middleware(inbound, event_out(__TcpReq))]
+impl MessageOnly {
+    fn inbound<Req, Res, S>(
+        &mut self,
+        _cx: &mut InboundCx<Req, Res, S>,
+        event: TcpEvent<Req>,
+    ) -> Option<Req> {
         match event {
             TcpEvent::Message { data, .. } => Some(data),
             TcpEvent::Closed { .. } | TcpEvent::Error { .. } => None,
@@ -63,17 +55,13 @@ where
 #[derive(Default)]
 pub struct MessageWithMeta;
 
-impl<Req, Res> TcpServerMiddleware<Req, Res> for MessageWithMeta
-where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel,
-{
-    type EventOut = TcpInboundMessage<Req>;
-
-    fn on_event<S>(&mut self, _server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
+#[tcp_middleware(inbound, event_out(TcpInboundMessage<__TcpReq>))]
+impl MessageWithMeta {
+    fn inbound<Req, Res, S>(
+        &mut self,
+        _cx: &mut InboundCx<Req, Res, S>,
+        event: TcpEvent<Req>,
+    ) -> Option<TcpInboundMessage<Req>> {
         match event {
             TcpEvent::Message {
                 socket_addr,
@@ -155,8 +143,8 @@ impl<Req, Res> QueuedSendWithRetry<Req, Res> {
 
 pub trait QueuedSenderMiddleware<Req, Res>
 where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel + Clone,
+    Req: super::TcpReqBound,
+    Res: super::TcpResBound + Clone,
 {
     fn enqueue_to_peer(&mut self, socket_addr: String, msg: Res, headers: TcpHeaders);
     fn register_streaming_peer(&mut self, socket_addr: String);
@@ -165,33 +153,51 @@ where
 
 impl<Req, Res> QueuedSenderMiddleware<Req, Res> for QueuedSendWithRetry<Req, Res>
 where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel + Clone,
+    Req: super::TcpReqBound,
+    Res: super::TcpResBound + Clone,
 {
     fn enqueue_to_peer(&mut self, socket_addr: String, msg: Res, headers: TcpHeaders) {
-        QueuedSendWithRetry::enqueue_to_peer(self, socket_addr, msg, headers);
+        self.queues
+            .entry(socket_addr)
+            .or_default()
+            .push_back(QueuedOutbound {
+                msg,
+                headers,
+                retries: 0,
+                next_attempt_at: Instant::now(),
+            });
     }
 
     fn register_streaming_peer(&mut self, socket_addr: String) {
-        QueuedSendWithRetry::register_streaming_peer(self, socket_addr);
+        self.streaming_peers.insert(socket_addr);
     }
 
     fn enqueue_to_streaming_peers(&mut self, msg: Res, headers: TcpHeaders) {
-        QueuedSendWithRetry::enqueue_to_streaming_peers(self, msg, headers);
+        for peer in self.streaming_peers.clone() {
+            self.queues
+                .entry(peer)
+                .or_default()
+                .push_back(QueuedOutbound {
+                    msg: msg.clone(),
+                    headers: headers.clone(),
+                    retries: 0,
+                    next_attempt_at: Instant::now(),
+                });
+        }
     }
 }
 
-impl<Req, Res> TcpServerMiddleware<Req, Res> for QueuedSendWithRetry<Req, Res>
+#[tcp_middleware(all, event_out(TcpInboundMessage<Req>))]
+impl<Req, Res> QueuedSendWithRetry<Req, Res>
 where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel + Clone,
+    Req: super::TcpReqBound,
+    Res: super::TcpResBound + Clone,
 {
-    type EventOut = TcpInboundMessage<Req>;
-
-    fn on_event<S>(&mut self, _server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
+    fn inbound<S>(
+        &mut self,
+        _cx: &mut InboundCx<Req, Res, S>,
+        event: TcpEvent<Req>,
+    ) -> Option<TcpInboundMessage<Req>> {
         match event {
             TcpEvent::Message {
                 socket_addr,
@@ -213,11 +219,12 @@ where
         }
     }
 
-    fn on_send_error<S>(&mut self, server: &mut S, ctx: &SendErrorContext<Res>) -> SendErrorOutcome
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
-        if !server.connected(&ctx.socket_addr) {
+    fn outbound_error<S>(
+        &mut self,
+        cx: &mut OutboundCx<Req, Res, S>,
+        ctx: &SendErrorContext<Res>,
+    ) -> SendErrorOutcome {
+        if !cx.connected(&ctx.socket_addr) {
             self.unregister_streaming_peer(&ctx.socket_addr);
             return SendErrorOutcome::Unhandled(anyhow::anyhow!(ctx.error.to_string()));
         }
@@ -229,10 +236,7 @@ where
         SendErrorOutcome::RetryScheduled
     }
 
-    fn on_tick<S>(&mut self, server: &mut S)
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
+    fn tick<S>(&mut self, cx: &mut super::TickCx<Req, Res, S>) {
         if self.queues.is_empty() {
             return;
         }
@@ -246,7 +250,7 @@ where
                 break;
             }
 
-            if !server.connected(&peer) {
+            if !cx.connected(&peer) {
                 self.unregister_streaming_peer(&peer);
                 continue;
             }
@@ -263,14 +267,14 @@ where
                 continue;
             }
 
-            match server.send(peer.clone(), front.msg.clone(), front.headers.clone()) {
+            match cx.send(peer.clone(), front.msg.clone(), front.headers.clone()) {
                 Ok(()) => {
                     queue.pop_front();
                 }
                 Err(_) => {
                     front.retries += 1;
                     if front.retries > self.max_retries {
-                        server.drop_peer_stream(peer.clone());
+                        cx.drop_peer(peer.clone());
                         self.unregister_streaming_peer(&peer);
                     } else {
                         front.next_attempt_at = now + self.base_delay.mul_f64(front.retries as f64);
@@ -323,25 +327,17 @@ impl<Res> RetryingSend<Res> {
     }
 }
 
-impl<Req, Res> TcpServerMiddleware<Req, Res> for RetryingSend<Res>
+#[tcp_middleware(outbound_tick)]
+impl<Res> RetryingSend<Res>
 where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel + Clone,
+    Res: super::TcpResBound + Clone,
 {
-    type EventOut = TcpEvent<Req>;
-
-    fn on_event<S>(&mut self, _server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
-        Some(event)
-    }
-
-    fn on_send_error<S>(&mut self, server: &mut S, ctx: &SendErrorContext<Res>) -> SendErrorOutcome
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
-        if !server.connected(&ctx.socket_addr) {
+    fn outbound_error<Req, S>(
+        &mut self,
+        cx: &mut OutboundCx<Req, Res, S>,
+        ctx: &SendErrorContext<Res>,
+    ) -> SendErrorOutcome {
+        if !cx.connected(&ctx.socket_addr) {
             return SendErrorOutcome::Unhandled(anyhow::anyhow!(ctx.error.to_string()));
         }
         self.queue.push_back(PendingSend {
@@ -354,10 +350,7 @@ where
         SendErrorOutcome::RetryScheduled
     }
 
-    fn on_tick<S>(&mut self, server: &mut S)
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
+    fn tick<Req, S>(&mut self, cx: &mut super::TickCx<Req, Res, S>) {
         if self.queue.is_empty() {
             return;
         }
@@ -372,11 +365,11 @@ where
                 continue;
             }
 
-            if !server.connected(&pending.socket_addr) {
+            if !cx.connected(&pending.socket_addr) {
                 continue;
             }
 
-            match server.send(
+            match cx.send(
                 pending.socket_addr.clone(),
                 pending.msg.clone(),
                 pending.headers.clone(),
@@ -385,7 +378,7 @@ where
                 Err(_) => {
                     let next_retries = pending.retries + 1;
                     if next_retries > self.max_retries {
-                        server.drop_peer_stream(pending.socket_addr);
+                        cx.drop_peer(pending.socket_addr);
                     } else {
                         pending.retries = next_retries;
                         pending.next_attempt_at =
@@ -406,57 +399,5 @@ where
             .iter()
             .map(|pending| pending.next_attempt_at)
             .min()
-    }
-}
-
-pub struct DropOnErrorAndRetry<Res> {
-    drop_on_error: DropOnError,
-    retrying_send: RetryingSend<Res>,
-}
-
-impl<Res> DropOnErrorAndRetry<Res> {
-    pub fn new(max_retries: usize, base_delay: Duration) -> Self {
-        Self {
-            drop_on_error: DropOnError,
-            retrying_send: RetryingSend::new(max_retries, base_delay),
-        }
-    }
-
-    pub fn max_per_tick(mut self, max_per_tick: usize) -> Self {
-        self.retrying_send = self.retrying_send.max_per_tick(max_per_tick);
-        self
-    }
-}
-
-impl<Req, Res> TcpServerMiddleware<Req, Res> for DropOnErrorAndRetry<Res>
-where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel + Clone,
-{
-    type EventOut = TcpEvent<Req>;
-
-    fn on_event<S>(&mut self, server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
-        self.drop_on_error.on_event(server, event)
-    }
-
-    fn on_send_error<S>(&mut self, server: &mut S, ctx: &SendErrorContext<Res>) -> SendErrorOutcome
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
-        self.retrying_send.on_send_error(server, ctx)
-    }
-
-    fn on_tick<S>(&mut self, server: &mut S)
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
-        self.retrying_send.on_tick(server)
-    }
-
-    fn next_wakeup(&self) -> Option<Instant> {
-        <RetryingSend<Res> as TcpServerMiddleware<Req, Res>>::next_wakeup(&self.retrying_send)
     }
 }

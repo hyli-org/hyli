@@ -5671,6 +5671,7 @@ dependencies = [
  "hyli-bus",
  "hyli-contract-sdk",
  "hyli-crypto",
+ "hyli-net-macros",
  "hyli-turmoil-shims",
  "hyper 1.8.1",
  "hyper-util",
@@ -5689,6 +5690,14 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "turmoil",
+]
+
+[[package]]
+name = "hyli-net-macros"
+version = "0.14.0"
+dependencies = [
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]

@@ -10,7 +10,7 @@
 //! use std::time::Duration;
 //! use hyli_net::tcp::{
 //!     tcp_server::TcpServer,
-//!     middleware::{TcpServerWithMiddleware, DropOnErrorAndRetry},
+//!     middleware::{preset, TcpServerExt},
 //! };
 //! # use hyli_net::tcp::{TcpEvent, TcpMessageLabel};
 //! # use borsh::{BorshDeserialize, BorshSerialize};
@@ -28,8 +28,11 @@
 //! #
 //! # async fn example() -> anyhow::Result<()> {
 //! let inner = TcpServer::<Req, Res>::start(0, "Example").await?;
-//! let middleware = DropOnErrorAndRetry::new(10, Duration::from_millis(100));
-//! let mut server = TcpServerWithMiddleware::new(inner, middleware);
+//! let mut server = hyli_net::tcp_stack!(
+//!     inner,
+//!     preset::drop_on_error(),
+//!     preset::retrying_send::<Res>(10, Duration::from_millis(100)),
+//! );
 //!
 //! while let Some(event) = server.listen_next().await {
 //!     match event {
@@ -50,7 +53,7 @@
 //! `TcpEvent::Message` to the `Req` payload and filters out `Error/Closed`.
 //! ```no_run
 //! # use hyli_net::tcp::{tcp_server::TcpServer, TcpEvent, TcpMessageLabel};
-//! # use hyli_net::tcp::middleware::{TcpServerWithMiddleware, TcpServerMiddleware};
+//! # use hyli_net::tcp::middleware::{TcpInboundMiddleware, TcpServerWithMiddleware};
 //! # use borsh::{BorshDeserialize, BorshSerialize};
 //! # #[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
 //! # struct Req;
@@ -64,7 +67,7 @@
 //! # }
 //! #
 //! # struct MessageOnly;
-//! # impl TcpServerMiddleware<Req, Res> for MessageOnly {
+//! # impl TcpInboundMiddleware<Req, Res> for MessageOnly {
 //! #     type EventOut = Req;
 //! #     fn on_event(&mut self, _server: &mut TcpServer<Req, Res>, event: TcpEvent<Req>) -> Option<Req> {
 //! #         match event { TcpEvent::Message { data, .. } => Some(data), _ => None }
@@ -90,10 +93,49 @@ use crate::tcp::{tcp_server::TcpServer, TcpEvent, TcpHeaders, TcpMessageLabel};
 
 mod impls;
 
+pub use hyli_net_macros::tcp_middleware;
 pub use impls::{
-    DropOnError, DropOnErrorAndRetry, MessageOnly, MessageWithMeta, QueuedSendWithRetry,
-    QueuedSenderMiddleware, RetryingSend, TcpInboundMessage,
+    DropOnError, MessageOnly, MessageWithMeta, QueuedSendWithRetry, QueuedSenderMiddleware,
+    RetryingSend, TcpInboundMessage,
 };
+
+pub mod preset {
+    use std::time::Duration;
+
+    use super::{DropOnError, QueuedSendWithRetry, RetryingSend};
+
+    pub fn drop_on_error() -> DropOnError {
+        DropOnError
+    }
+
+    pub fn retrying_send<Res>(max_retries: usize, base_delay: Duration) -> RetryingSend<Res> {
+        RetryingSend::new(max_retries, base_delay)
+    }
+
+    pub fn drop_and_retry<Res>(
+        max_retries: usize,
+        base_delay: Duration,
+    ) -> (DropOnError, RetryingSend<Res>) {
+        (drop_on_error(), retrying_send(max_retries, base_delay))
+    }
+
+    pub fn queued_send_with_retry<Req, Res>(
+        max_retries: usize,
+        base_delay: Duration,
+    ) -> QueuedSendWithRetry<Req, Res> {
+        QueuedSendWithRetry::new(max_retries, base_delay)
+    }
+}
+
+#[macro_export]
+macro_rules! tcp_stack {
+    ($server:expr, $($middleware:expr),+ $(,)?) => {{
+        use $crate::tcp::middleware::{middleware_layer, TcpServerExt};
+        let server = $server;
+        $(let server = server.layer(middleware_layer($middleware));)+
+        server
+    }};
+}
 
 pub trait Layer<S, Req, Res> {
     type Service;
@@ -132,10 +174,28 @@ pub enum SendErrorOutcome {
     Unhandled(anyhow::Error),
 }
 
-pub trait TcpServerMiddleware<Req, Res>
+pub trait TcpReqBound:
+    BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static
+{
+}
+impl<T> TcpReqBound for T where
+    T: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static
+{
+}
+
+pub trait TcpResBound:
+    BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel
+{
+}
+impl<T> TcpResBound for T where
+    T: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel
+{
+}
+
+pub trait TcpInboundMiddleware<Req, Res>
 where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel,
+    Req: TcpReqBound,
+    Res: TcpResBound,
 {
     type EventOut;
 
@@ -144,7 +204,13 @@ where
     fn on_event<S>(&mut self, _server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
     where
         S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>;
+}
 
+pub trait TcpOutboundMiddleware<Req, Res>
+where
+    Req: TcpReqBound,
+    Res: TcpResBound,
+{
     /// Handle outbound send errors. The default behavior is to surface the error.
     /// Implementations can enqueue retries or drop peers.
     fn on_send_error<S>(&mut self, _server: &mut S, ctx: &SendErrorContext<Res>) -> SendErrorOutcome
@@ -153,7 +219,13 @@ where
     {
         SendErrorOutcome::Unhandled(anyhow::anyhow!(ctx.error.to_string()))
     }
+}
 
+pub trait TcpTickMiddleware<Req, Res>
+where
+    Req: TcpReqBound,
+    Res: TcpResBound,
+{
     /// Called on each `listen_next()` iteration before waiting for events.
     /// Use this to drive retry queues or housekeeping.
     fn on_tick<S>(&mut self, _server: &mut S)
@@ -212,6 +284,64 @@ pub trait TcpServerLike<Req, Res> {
     }
 }
 
+pub struct InboundCx<'a, Req, Res, S>
+where
+    Req: BorshDeserialize,
+    S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+{
+    server: &'a mut S,
+    _marker: PhantomData<(Req, Res)>,
+}
+
+impl<'a, Req, Res, S> InboundCx<'a, Req, Res, S>
+where
+    Req: BorshDeserialize,
+    S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+{
+    pub fn new(server: &'a mut S) -> Self {
+        Self {
+            server,
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn connected(&self, socket_addr: &str) -> bool {
+        self.server.connected(socket_addr)
+    }
+
+    pub fn drop_peer(&mut self, peer_ip: String) {
+        self.server.drop_peer_stream(peer_ip);
+    }
+
+    pub fn send(
+        &mut self,
+        socket_addr: String,
+        msg: Res,
+        headers: TcpHeaders,
+    ) -> anyhow::Result<()> {
+        self.server.send(socket_addr, msg, headers)
+    }
+
+    pub fn send_ref(
+        &mut self,
+        socket_addr: &str,
+        msg: &Res,
+        headers: &TcpHeaders,
+    ) -> anyhow::Result<()>
+    where
+        Res: Clone,
+    {
+        self.server.send_ref(socket_addr, msg, headers)
+    }
+
+    pub fn server_mut(&mut self) -> &mut S {
+        self.server
+    }
+}
+
+pub type OutboundCx<'a, Req, Res, S> = InboundCx<'a, Req, Res, S>;
+pub type TickCx<'a, Req, Res, S> = InboundCx<'a, Req, Res, S>;
+
 /// Tower-style layering helper for TCP servers and already-layered services.
 ///
 /// # Example
@@ -234,8 +364,8 @@ impl<T, Req, Res> TcpServerExt<Req, Res> for T where T: TcpServerLike<Req, Res> 
 
 pub struct TcpServerWithMiddleware<M, Req, Res, S = TcpServer<Req, Res>>
 where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel,
+    Req: TcpReqBound,
+    Res: TcpResBound,
 {
     inner: S,
     middleware: M,
@@ -244,8 +374,8 @@ where
 
 impl<S, M, Req, Res> TcpServerWithMiddleware<M, Req, Res, S>
 where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel,
+    Req: TcpReqBound,
+    Res: TcpResBound,
 {
     pub fn new(inner: S, middleware: M) -> Self {
         Self {
@@ -258,10 +388,13 @@ where
 
 impl<S, M, Req, Res> TcpServerWithMiddleware<M, Req, Res, S>
 where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel + Clone,
+    Req: TcpReqBound,
+    Res: TcpResBound + Clone,
     S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    M: TcpServerMiddleware<Req, Res> + QueuedSenderMiddleware<Req, Res>,
+    M: TcpInboundMiddleware<Req, Res>
+        + TcpOutboundMiddleware<Req, Res>
+        + TcpTickMiddleware<Req, Res>
+        + QueuedSenderMiddleware<Req, Res>,
 {
     /// Enqueue a message for ordered, retrying delivery to a specific peer.
     pub fn enqueue(
@@ -302,10 +435,12 @@ where
 
 impl<S, M, Req, Res> TcpServerLike<Req, Res> for TcpServerWithMiddleware<M, Req, Res, S>
 where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel + Clone,
+    Req: TcpReqBound,
+    Res: TcpResBound + Clone,
     S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    M: TcpServerMiddleware<Req, Res>,
+    M: TcpInboundMiddleware<Req, Res>
+        + TcpOutboundMiddleware<Req, Res>
+        + TcpTickMiddleware<Req, Res>,
 {
     type EventOut = M::EventOut;
     type ConnectedClients<'a>
@@ -378,10 +513,12 @@ where
 
 impl<S, M, Req, Res> Layer<S, Req, Res> for MiddlewareLayer<M>
 where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel + Clone,
+    Req: TcpReqBound,
+    Res: TcpResBound + Clone,
     S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    M: TcpServerMiddleware<Req, Res>,
+    M: TcpInboundMiddleware<Req, Res>
+        + TcpOutboundMiddleware<Req, Res>
+        + TcpTickMiddleware<Req, Res>,
 {
     type Service = TcpServerWithMiddleware<M, Req, Res, S>;
 
@@ -392,8 +529,8 @@ where
 
 impl<Req, Res> TcpServerLike<Req, Res> for TcpServer<Req, Res>
 where
-    Req: BorshSerialize + BorshDeserialize + std::fmt::Debug + Send + TcpMessageLabel + 'static,
-    Res: BorshSerialize + BorshDeserialize + std::fmt::Debug + TcpMessageLabel,
+    Req: TcpReqBound,
+    Res: TcpResBound,
 {
     type EventOut = TcpEvent<Req>;
     type ConnectedClients<'a>
