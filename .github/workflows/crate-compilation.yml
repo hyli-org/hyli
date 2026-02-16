@@ -14,7 +14,7 @@ jobs:
           - crate: hyli
             features: sp1
           - crate: hyli-client-sdk
-            features: rest,indexer,risc0,sp1,turmoil
+            features: rest,csi,risc0,sp1,turmoil
           - crate: hyli-contract-sdk
             features: sp1
           - crate: hyli-contract-sdk
