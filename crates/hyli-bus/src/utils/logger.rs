@@ -211,6 +211,10 @@ pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) ->
         otlp_metrics::init(endpoint.clone(), node_name.clone(), push_interval)
             .context("starting OTLP metrics exporter")?;
     }
+    #[cfg(not(feature = "instrumentation"))]
+    {
+        hyli_turmoil_shims::init_noop_meter_provider();
+    }
 
     // Can't use match inline because these are different return types
     let mode = match log_format {

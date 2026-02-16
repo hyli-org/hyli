@@ -130,3 +130,21 @@ pub use imp::{global_meter_or_panic, global_meter_provider_or_panic, init_global
 pub fn init_test_meter_provider() -> std::sync::Arc<dyn MeterProvider + Send + Sync> {
     init_global_meter_provider(opentelemetry_sdk::metrics::SdkMeterProvider::default())
 }
+
+pub fn init_noop_meter_provider() -> std::sync::Arc<dyn MeterProvider + Send + Sync> {
+    #[derive(Debug, Default, Clone)]
+    pub(crate) struct NoopMeterProvider {}
+
+    impl MeterProvider for NoopMeterProvider {
+        fn meter_with_scope(&self, _scope: opentelemetry::InstrumentationScope) -> Meter {
+            Meter::new(std::sync::Arc::new(NoopMeter {}))
+        }
+    }
+
+    #[derive(Debug, Default)]
+    pub(crate) struct NoopMeter {}
+
+    impl opentelemetry::metrics::InstrumentProvider for NoopMeter {}
+
+    init_global_meter_provider(NoopMeterProvider {})
+}
