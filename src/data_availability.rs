@@ -143,6 +143,7 @@ struct DaCatchupper {
     receiver: Option<tokio::sync::mpsc::Receiver<SignedBlock>>,
     pub peers: Vec<String>,
     da_max_frame_length: usize,
+    restart_attempts: usize,
 }
 
 impl DaCatchupper {
@@ -156,6 +157,7 @@ impl DaCatchupper {
             receiver: Some(receiver),
             peers: vec![],
             da_max_frame_length,
+            restart_attempts: 0,
         }
     }
 
@@ -183,6 +185,36 @@ impl DaCatchupper {
 
     pub fn ensure_started(&mut self, from_height: BlockHeight) -> anyhow::Result<()> {
         self.ensure_task_running(Some(from_height))
+    }
+
+    fn max_restart_attempts() -> usize {
+        std::env::var("HYLI_DA_CATCHUP_MAX_RESTARTS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(12)
+    }
+
+    pub fn add_peer_and_maybe_restart(&mut self, peer: String) -> anyhow::Result<bool> {
+        if self.peers.contains(&peer) {
+            return Ok(false);
+        }
+        self.peers.push(peer);
+
+        if self.task.is_some() {
+            let restart_height = self.last_height.unwrap_or(BlockHeight(0));
+            info!(
+                "Catchup peer set changed, restarting task from height {}",
+                restart_height
+            );
+            if let Some(task) = &mut self.task {
+                task.abort();
+            }
+            self.task = None;
+            self.restart_attempts = 0;
+            self.ensure_task_running(Some(restart_height))?;
+        }
+
+        Ok(true)
     }
 
     fn mode_start_height(
@@ -407,6 +439,7 @@ impl DaCatchupper {
         if let Some(last_height) = &mut self.last_height {
             *last_height = processed_height.max(*last_height);
         }
+        self.restart_attempts = 0;
         self.complete_mode_if_reached(processed_height)
     }
 
@@ -422,10 +455,22 @@ impl DaCatchupper {
             return Ok(());
         }
         let restart_height = self.last_height.unwrap_or(BlockHeight(0));
+        self.restart_attempts += 1;
+        let max_restart_attempts = Self::max_restart_attempts();
+        if self.restart_attempts > max_restart_attempts {
+            self.task = None;
+            return Err(anyhow::anyhow!(
+                "Catchup failed after {} restarts (last height {}). Aborting catchup.",
+                self.restart_attempts,
+                restart_height
+            ));
+        }
 
         info!(
-            "Catchup task finished before reaching target, restarting from height {}",
-            restart_height
+            "Catchup task finished before reaching target, restarting from height {} (attempt {}/{})",
+            restart_height,
+            self.restart_attempts,
+            max_restart_attempts
         );
         self.task = None;
         self.spawn_for_mode(restart_height, self.sender.clone())
@@ -505,7 +550,7 @@ impl DaCatchupper {
                         DataAvailabilityEvent::SignedBlock(block) => {
                             let blocks = stream.on_signed_block(block).await?;
                             for block in blocks {
-                                info!(
+                                debug!(
                                     "📦 Received block (height {}) from stream",
                                     block.consensus_proposal.slot
                                 );
@@ -627,22 +672,21 @@ impl DataAvailability {
             }
 
             listen<PeerEvent> PeerEvent::NewPeer { da_address, .. } => {
-                self.catchupper.peers.push(da_address.clone());
-                info!("New peer {}", da_address);
+                let added = self.catchupper.add_peer_and_maybe_restart(da_address.clone())?;
+                if added {
+                    info!("New peer {}", da_address);
+                } else {
+                    debug!("Known peer announced again: {}", da_address);
+                }
                 if self.allow_peer_catchup {
-                    _ = log_error!(
-                        self.catchupper.ensure_started(
-                            self.blocks.highest(),
-                        ),
-                        "Init catchup on new peer"
-                    );
+                    self.catchupper.ensure_started(self.blocks.highest())?;
                 } else {
                     debug!("Skipping catchup init on new peer while genesis path is unresolved");
                 }
             }
 
             _ = catchup_task_checker_ticker.tick(), if self.catchupper.policy.is_some() => {
-                _ = log_error!(self.catchupper.on_tick(), "Catchup task liveness check");
+                self.catchupper.on_tick()?;
             }
 
             Some(streamed_block) = catchup_block_receiver.recv() => {
@@ -707,7 +751,7 @@ impl DataAvailability {
             Some(hole) = first_hole_receiver.recv() => {
                 info!("Setting backfill start height as {:?}", &hole);
                 self.catchupper.on_first_hole_discovered(hole);
-                _ = log_error!(self.catchupper.on_tick(), "Starting backfill after first-hole discovery");
+                self.catchupper.on_tick()?;
             }
 
             _ = storage_metrics_ticker.tick() => {
@@ -1018,7 +1062,9 @@ impl DataAvailability {
 
         trace!("Block {} {}: {:#?}", block.height(), block.hashed(), block);
 
-        if block.height().0.is_multiple_of(10) || block.has_txs() {
+        let height = block.height().0;
+        let info_log_interval = if height < 1_000 { 10 } else { 1_000 };
+        if height.is_multiple_of(info_log_interval) {
             info!(
                 "new block #{} 0x{} with {} txs",
                 block.height(),
@@ -2113,6 +2159,7 @@ pub mod tests {
             receiver: None,
             peers: vec!["127.0.0.1:12345".to_string()],
             da_max_frame_length: 1024,
+            restart_attempts: 0,
         };
 
         // Simulate stale external progress lower than floor.
@@ -2156,6 +2203,7 @@ pub mod tests {
             receiver: None,
             peers: vec!["127.0.0.1:12345".to_string()],
             da_max_frame_length: 1024,
+            restart_attempts: 0,
         };
 
         catchupper
@@ -2195,6 +2243,7 @@ pub mod tests {
             receiver: None,
             peers: vec![],
             da_max_frame_length: 1024,
+            restart_attempts: 0,
         };
 
         catchupper
@@ -2236,6 +2285,7 @@ pub mod tests {
             receiver: None,
             peers: vec![],
             da_max_frame_length: 1024,
+            restart_attempts: 0,
         };
 
         catchupper
@@ -2276,6 +2326,7 @@ pub mod tests {
             receiver: None,
             peers: vec![],
             da_max_frame_length: 1024,
+            restart_attempts: 0,
         };
 
         catchupper
@@ -2320,6 +2371,7 @@ pub mod tests {
             receiver: None,
             peers: vec!["127.0.0.1:12345".to_string()],
             da_max_frame_length: 1024,
+            restart_attempts: 0,
         };
 
         tokio::time::sleep(Duration::from_millis(5)).await;
@@ -2348,6 +2400,7 @@ pub mod tests {
             receiver: None,
             peers: vec![],
             da_max_frame_length: 1024,
+            restart_attempts: 0,
         };
 
         catchupper.on_tick().expect("on_tick should succeed");
