@@ -1,0 +1,36 @@
+# The log format to use - "json", "node" or "full" (default: "full")
+log_format = "full"
+
+# Node API host/port
+host = "127.0.0.1"
+port = 4321
+
+# API key used for node requests
+node_api_key = "KEY_LOADTEST"
+
+# Delay between send loops (milliseconds)
+interval_ms = 1000
+
+# Postgres database URL for ContractListener
+database_url = "postgres://postgres:postgres@localhost:5432/postgres"
+
+# Directory name to store module data
+data_directory = "data_long_smt_running_test"
+
+# Prefix used for randomized contract names
+contract_name_prefix = "lrt_smt_"
+
+# Initial balance for bob and alice in the initial SMT state
+initial_account_balance = 1000000
+
+# ContractListener poll interval (seconds)
+contract_listener_poll_interval_secs = 5
+
+# AutoProver parameters
+tx_buffer_size = 0
+max_txs_per_proof = 30
+tx_working_window_size = 180
+idle_flush_interval_secs = 5
+
+# Wait after registration to allow indexing/catch-up (seconds)
+registration_settle_wait_secs = 10
