@@ -9,8 +9,8 @@ use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::middleware::{
-    middleware_layer, DropOnError, QueuedSendWithRetry, TcpInboundMessage, TcpServerExt,
-    TcpServerLike, TcpServerWithMiddleware,
+    middleware_layer, DropOnError, QueuedSendWithRetry, TcpServerExt, TcpServerLike,
+    TcpServerWithMiddleware,
 };
 use tokio::task::JoinHandle;
 
@@ -558,7 +558,7 @@ impl DataAvailability {
                 }
             }
 
-            Some(TcpInboundMessage { socket_addr, data, .. }) = server.listen_next() => {
+            Some((socket_addr, data, _headers)) = server.listen_next() => {
                 match data {
                     DataAvailabilityRequest::StreamFromHeight(start_height) => {
                         _ = log_error!(

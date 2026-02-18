@@ -1,89 +1,3 @@
-//! TcpServer middleware helpers.
-//!
-//! This module provides a wrapper around `TcpServer` that preserves the
-//! `listen_next()` API while allowing synchronous middleware actions
-//! (drop-on-error) and listen-driven retries (send retry queue progressed
-//! inside `listen_next()`).
-//!
-//! # Example
-//! ```no_run
-//! use std::time::Duration;
-//! use hyli_net::tcp::{
-//!     tcp_server::TcpServer,
-//!     middleware::{preset, TcpServerExt},
-//! };
-//! # use hyli_net::tcp::{TcpEvent, TcpMessageLabel};
-//! # use borsh::{BorshDeserialize, BorshSerialize};
-//! #
-//! # #[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
-//! # struct Req;
-//! # impl TcpMessageLabel for Req {
-//! #     fn message_label(&self) -> &'static str { "Req" }
-//! # }
-//! # #[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
-//! # struct Res;
-//! # impl TcpMessageLabel for Res {
-//! #     fn message_label(&self) -> &'static str { "Res" }
-//! # }
-//! #
-//! # async fn example() -> anyhow::Result<()> {
-//! let inner = TcpServer::<Req, Res>::start(0, "Example").await?;
-//! let mut server = hyli_net::tcp_stack!(
-//!     inner,
-//!     preset::drop_on_error(),
-//!     preset::retrying_send::<Res>(10, Duration::from_millis(100)),
-//! );
-//!
-//! while let Some(event) = server.listen_next().await {
-//!     match event {
-//!         TcpEvent::Message { socket_addr, data, headers } => {
-//!             // Handle inbound message...
-//!             let _ = server.send(socket_addr, Res, headers);
-//!         }
-//!         TcpEvent::Closed { .. } | TcpEvent::Error { .. } => {
-//!             // Drop-on-error is handled by middleware.
-//!         }
-//!     }
-//! }
-//! # Ok(())
-//! # }
-//! ```
-//!
-//! You can also map events to a different output type. This example maps
-//! `TcpEvent::Message` to the `Req` payload and filters out `Error/Closed`.
-//! ```no_run
-//! # use hyli_net::tcp::{tcp_server::TcpServer, TcpEvent, TcpMessageLabel};
-//! # use hyli_net::tcp::middleware::{TcpMiddleware, TcpServerWithMiddleware};
-//! # use borsh::{BorshDeserialize, BorshSerialize};
-//! # #[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
-//! # struct Req;
-//! # impl TcpMessageLabel for Req {
-//! #     fn message_label(&self) -> &'static str { "Req" }
-//! # }
-//! # #[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
-//! # struct Res;
-//! # impl TcpMessageLabel for Res {
-//! #     fn message_label(&self) -> &'static str { "Res" }
-//! # }
-//! #
-//! # struct MessageOnly;
-//! # impl TcpMiddleware<Req, Res> for MessageOnly {
-//! #     type EventOut = Req;
-//! #     fn on_event(&mut self, _server: &mut TcpServer<Req, Res>, event: TcpEvent<Req>) -> Option<Req> {
-//! #         match event { TcpEvent::Message { data, .. } => Some(data), _ => None }
-//! #     }
-//! # }
-//! #
-//! # async fn example() -> anyhow::Result<()> {
-//! let inner = TcpServer::<Req, Res>::start(0, "Example").await?;
-//! let mut server = TcpServerWithMiddleware::new(inner, MessageOnly);
-//! while let Some(req) = server.listen_next().await {
-//!     // req is already the decoded payload
-//! }
-//! # Ok(())
-//! # }
-//! ```
-
 use std::marker::PhantomData;
 use tokio::time::Instant;
 
@@ -94,8 +8,8 @@ use crate::tcp::{tcp_server::TcpServer, TcpEvent, TcpHeaders, TcpMessageLabel};
 mod impls;
 
 pub use impls::{
-    DropOnError, MessageOnly, MessageWithMeta, QueuedSendWithRetry, QueuedSenderMiddleware,
-    RetryingSend, TcpInboundMessage,
+    DropOnError, MessageOnly, QueuedSendWithRetry, QueuedSenderMiddleware, RetryingSend,
+    TcpInboundMessage,
 };
 
 pub mod preset {
@@ -498,40 +412,5 @@ where
 
     fn layer(self, inner: S) -> Self::Service {
         TcpServerWithMiddleware::new(inner, self.middleware)
-    }
-}
-
-impl<Req, Res> TcpServerLike<Req, Res> for TcpServer<Req, Res>
-where
-    Req: TcpReqBound,
-    Res: TcpResBound,
-{
-    type EventOut = TcpEvent<Req>;
-    type ConnectedClients<'a>
-        = crate::tcp::tcp_server::ConnectedClients<'a>
-    where
-        Self: 'a;
-
-    async fn listen_next(&mut self) -> Option<Self::EventOut> {
-        TcpServer::listen_next(self).await
-    }
-
-    fn send(&mut self, socket_addr: String, msg: Res, headers: TcpHeaders) -> anyhow::Result<()> {
-        TcpServer::send(self, socket_addr, msg, headers)
-    }
-
-    fn send_ref(&mut self, socket_addr: &str, msg: &Res, headers: &TcpHeaders) -> anyhow::Result<()>
-    where
-        Res: Clone,
-    {
-        TcpServer::send_ref(self, socket_addr, msg, headers)
-    }
-
-    fn connected_clients(&self) -> Self::ConnectedClients<'_> {
-        TcpServer::connected_clients(self)
-    }
-
-    fn drop_peer_stream(&mut self, peer_ip: String) {
-        TcpServer::drop_peer_stream(self, peer_ip)
     }
 }

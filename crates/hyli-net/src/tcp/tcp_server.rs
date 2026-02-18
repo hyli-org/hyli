@@ -29,6 +29,7 @@ use hyli_turmoil_shims::collections::HashMap;
 use tracing::{debug, error, trace, warn};
 
 use super::{tcp_client::TcpClient, SocketStream, TcpEvent};
+use crate::tcp::middleware::{TcpReqBound, TcpResBound, TcpServerLike};
 
 type TcpSender = SplitSink<FramedStream, Bytes>;
 type TcpReceiver = SplitStream<FramedStream>;
@@ -695,6 +696,41 @@ where
             };
             *guard = label;
         }
+    }
+}
+
+impl<Req, Res> TcpServerLike<Req, Res> for TcpServer<Req, Res>
+where
+    Req: TcpReqBound,
+    Res: TcpResBound,
+{
+    type EventOut = TcpEvent<Req>;
+    type ConnectedClients<'a>
+        = ConnectedClients<'a>
+    where
+        Self: 'a;
+
+    async fn listen_next(&mut self) -> Option<Self::EventOut> {
+        TcpServer::listen_next(self).await
+    }
+
+    fn send(&mut self, socket_addr: String, msg: Res, headers: TcpHeaders) -> anyhow::Result<()> {
+        TcpServer::send(self, socket_addr, msg, headers)
+    }
+
+    fn send_ref(&mut self, socket_addr: &str, msg: &Res, headers: &TcpHeaders) -> anyhow::Result<()>
+    where
+        Res: Clone,
+    {
+        TcpServer::send_ref(self, socket_addr, msg, headers)
+    }
+
+    fn connected_clients(&self) -> Self::ConnectedClients<'_> {
+        TcpServer::connected_clients(self)
+    }
+
+    fn drop_peer_stream(&mut self, peer_ip: String) {
+        TcpServer::drop_peer_stream(self, peer_ip)
     }
 }
 

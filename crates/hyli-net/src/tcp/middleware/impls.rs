@@ -32,37 +32,12 @@ where
     }
 }
 
-pub struct TcpInboundMessage<Req> {
-    pub socket_addr: String,
-    pub data: Req,
-    pub headers: TcpHeaders,
-}
+pub type TcpInboundMessage<Req> = (String, Req, TcpHeaders);
 
 #[derive(Default)]
 pub struct MessageOnly;
 
 impl<Req, Res> TcpMiddleware<Req, Res> for MessageOnly
-where
-    Req: super::TcpReqBound,
-    Res: super::TcpResBound,
-{
-    type EventOut = Req;
-
-    fn on_event<S>(&mut self, _server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
-    where
-        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    {
-        match event {
-            TcpEvent::Message { data, .. } => Some(data),
-            TcpEvent::Closed { .. } | TcpEvent::Error { .. } => None,
-        }
-    }
-}
-
-#[derive(Default)]
-pub struct MessageWithMeta;
-
-impl<Req, Res> TcpMiddleware<Req, Res> for MessageWithMeta
 where
     Req: super::TcpReqBound,
     Res: super::TcpResBound,
@@ -78,11 +53,7 @@ where
                 socket_addr,
                 data,
                 headers,
-            } => Some(TcpInboundMessage {
-                socket_addr,
-                data,
-                headers,
-            }),
+            } => Some((socket_addr, data, headers)),
             TcpEvent::Closed { .. } | TcpEvent::Error { .. } => None,
         }
     }
@@ -214,11 +185,7 @@ where
                 socket_addr,
                 data,
                 headers,
-            } => Some(TcpInboundMessage {
-                socket_addr,
-                data,
-                headers,
-            }),
+            } => Some((socket_addr, data, headers)),
             TcpEvent::Closed { socket_addr } => {
                 self.unregister_streaming_peer(&socket_addr);
                 None
