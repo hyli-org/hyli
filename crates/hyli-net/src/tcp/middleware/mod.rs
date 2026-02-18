@@ -53,7 +53,7 @@
 //! `TcpEvent::Message` to the `Req` payload and filters out `Error/Closed`.
 //! ```no_run
 //! # use hyli_net::tcp::{tcp_server::TcpServer, TcpEvent, TcpMessageLabel};
-//! # use hyli_net::tcp::middleware::{TcpInboundMiddleware, TcpServerWithMiddleware};
+//! # use hyli_net::tcp::middleware::{TcpMiddleware, TcpServerWithMiddleware};
 //! # use borsh::{BorshDeserialize, BorshSerialize};
 //! # #[derive(Clone, Debug, BorshSerialize, BorshDeserialize)]
 //! # struct Req;
@@ -67,7 +67,7 @@
 //! # }
 //! #
 //! # struct MessageOnly;
-//! # impl TcpInboundMiddleware<Req, Res> for MessageOnly {
+//! # impl TcpMiddleware<Req, Res> for MessageOnly {
 //! #     type EventOut = Req;
 //! #     fn on_event(&mut self, _server: &mut TcpServer<Req, Res>, event: TcpEvent<Req>) -> Option<Req> {
 //! #         match event { TcpEvent::Message { data, .. } => Some(data), _ => None }
@@ -93,7 +93,6 @@ use crate::tcp::{tcp_server::TcpServer, TcpEvent, TcpHeaders, TcpMessageLabel};
 
 mod impls;
 
-pub use hyli_net_macros::tcp_middleware;
 pub use impls::{
     DropOnError, MessageOnly, MessageWithMeta, QueuedSendWithRetry, QueuedSenderMiddleware,
     RetryingSend, TcpInboundMessage,
@@ -192,50 +191,32 @@ impl<T> TcpResBound for T where
 {
 }
 
-pub trait TcpInboundMiddleware<Req, Res>
+/// Unified middleware trait. Implement this trait when one type needs to handle
+/// inbound mapping, outbound errors and tick-based housekeeping.
+pub trait TcpMiddleware<Req, Res>
 where
     Req: TcpReqBound,
     Res: TcpResBound,
 {
     type EventOut;
 
-    /// Transform or filter inbound events before they are exposed to callers.
-    /// Returning `None` will cause the wrapper to keep listening.
     fn on_event<S>(&mut self, _server: &mut S, event: TcpEvent<Req>) -> Option<Self::EventOut>
     where
         S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>;
-}
 
-pub trait TcpOutboundMiddleware<Req, Res>
-where
-    Req: TcpReqBound,
-    Res: TcpResBound,
-{
-    /// Handle outbound send errors. The default behavior is to surface the error.
-    /// Implementations can enqueue retries or drop peers.
     fn on_send_error<S>(&mut self, _server: &mut S, ctx: &SendErrorContext<Res>) -> SendErrorOutcome
     where
         S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
     {
         SendErrorOutcome::Unhandled(anyhow::anyhow!(ctx.error.to_string()))
     }
-}
 
-pub trait TcpTickMiddleware<Req, Res>
-where
-    Req: TcpReqBound,
-    Res: TcpResBound,
-{
-    /// Called on each `listen_next()` iteration before waiting for events.
-    /// Use this to drive retry queues or housekeeping.
     fn on_tick<S>(&mut self, _server: &mut S)
     where
         S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
     {
     }
 
-    /// Optional wakeup time for the next middleware action. If present, the
-    /// wrapper will `select!` between the next event and this deadline.
     fn next_wakeup(&self) -> Option<Instant> {
         None
     }
@@ -391,10 +372,7 @@ where
     Req: TcpReqBound,
     Res: TcpResBound + Clone,
     S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    M: TcpInboundMiddleware<Req, Res>
-        + TcpOutboundMiddleware<Req, Res>
-        + TcpTickMiddleware<Req, Res>
-        + QueuedSenderMiddleware<Req, Res>,
+    M: TcpMiddleware<Req, Res> + QueuedSenderMiddleware<Req, Res>,
 {
     /// Enqueue a message for ordered, retrying delivery to a specific peer.
     pub fn enqueue(
@@ -438,9 +416,7 @@ where
     Req: TcpReqBound,
     Res: TcpResBound + Clone,
     S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    M: TcpInboundMiddleware<Req, Res>
-        + TcpOutboundMiddleware<Req, Res>
-        + TcpTickMiddleware<Req, Res>,
+    M: TcpMiddleware<Req, Res>,
 {
     type EventOut = M::EventOut;
     type ConnectedClients<'a>
@@ -516,9 +492,7 @@ where
     Req: TcpReqBound,
     Res: TcpResBound + Clone,
     S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    M: TcpInboundMiddleware<Req, Res>
-        + TcpOutboundMiddleware<Req, Res>
-        + TcpTickMiddleware<Req, Res>,
+    M: TcpMiddleware<Req, Res>,
 {
     type Service = TcpServerWithMiddleware<M, Req, Res, S>;
 
