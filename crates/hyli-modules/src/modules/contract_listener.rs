@@ -423,8 +423,8 @@ fn rows_to_txs(rows: Vec<PgRow>) -> Result<(BlockCursor, Vec<TxData>)> {
         status: TransactionStatusDb,
     }
 
-    // Group rows by tx_hash to rebuild each transaction with its full blob set.
-    let mut txs: IndexMap<TxHash, TxDataBuilder> = IndexMap::new();
+    // Group rows by TxId (parent_dp_hash + tx_hash) to rebuild each transaction with its full blob set.
+    let mut txs: IndexMap<TxId, TxDataBuilder> = IndexMap::new();
     let mut latest_cursor = BlockCursor::default();
 
     for row in rows {
@@ -462,8 +462,9 @@ fn rows_to_txs(rows: Vec<PgRow>) -> Result<(BlockCursor, Vec<TxData>)> {
             chain_id: HYLI_TESTNET_CHAIN_ID,
         };
 
-        let entry = txs.entry(tx_hash.clone()).or_insert_with(|| TxDataBuilder {
-            tx_id: TxId(parent_dp_hash.clone(), tx_hash.clone()),
+        let tx_id = TxId(parent_dp_hash.clone(), tx_hash.clone());
+        let entry = txs.entry(tx_id.clone()).or_insert_with(|| TxDataBuilder {
+            tx_id,
             identity: identity.clone(),
             blobs: IndexedBlobs::default(),
             tx_ctx: Arc::new(tx_ctx),
