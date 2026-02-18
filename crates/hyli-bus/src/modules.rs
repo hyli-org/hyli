@@ -427,7 +427,7 @@ pub struct ModulesHandler {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModuleShutdownStatus {
     TimedOut,
-    PersistenceFailed,
+    PersistenceFailed { reason: String },
     PersistedEntries(ModulePersistOutput),
 }
 
@@ -581,24 +581,28 @@ impl ModulesHandler {
                             ModuleShutdownStatus::PersistedEntries(entries)
                         }
                         Ok(Err(e)) => {
+                            let reason = format!("{e:#}");
                             tracing::error!(
                                 module = %module_name,
                                 module_id = %module_id,
+                                reason = %reason,
                                 "Module {} exited with error: {:?}",
                                 module_name,
                                 e
                             );
-                            ModuleShutdownStatus::PersistenceFailed
+                            ModuleShutdownStatus::PersistenceFailed { reason }
                         }
                         Err(e) => {
+                            let reason = format!("{e:#}");
                             tracing::error!(
                                 module = %module_name,
                                 module_id = %module_id,
+                                reason = %reason,
                                 "Module {} exited, error joining: {:?}",
                                 module_name,
                                 e
                             );
-                            ModuleShutdownStatus::PersistenceFailed
+                            ModuleShutdownStatus::PersistenceFailed { reason }
                         }
                     }
                 };
@@ -640,10 +644,11 @@ impl ModulesHandler {
                             msg.module
                         );
                     }
-                    ModuleShutdownStatus::PersistenceFailed => {
+                    ModuleShutdownStatus::PersistenceFailed { ref reason } => {
                         tracing::warn!(
-                            "Module {} failed to persist during shutdown, manifest will not be written",
-                            msg.module
+                            module = %msg.module,
+                            reason = %reason,
+                            "Module failed to persist during shutdown, manifest will not be written"
                         );
                     }
                     ModuleShutdownStatus::PersistedEntries(_) => {}
@@ -670,15 +675,17 @@ impl ModulesHandler {
                 .then_some(module.as_str())
             })
             .collect();
-        let persistence_failed_modules: Vec<&str> = self
+        let persistence_failed_modules: Vec<(&str, &str)> = self
             .modules_statuses
             .iter()
             .filter_map(|(module, status)| {
-                matches!(
-                    status,
-                    ModuleStatus::Shutdown(ModuleShutdownStatus::PersistenceFailed)
-                )
-                .then_some(module.as_str())
+                if let ModuleStatus::Shutdown(ModuleShutdownStatus::PersistenceFailed { reason }) =
+                    status
+                {
+                    Some((module.as_str(), reason.as_str()))
+                } else {
+                    None
+                }
             })
             .collect();
         let has_shutdown_errors =
@@ -698,8 +705,14 @@ impl ModulesHandler {
                 for module in &timed_out_modules {
                     _ = writeln!(file, "{timestamp} timed_out {module}");
                 }
-                for module in &persistence_failed_modules {
-                    _ = writeln!(file, "{timestamp} persistence_failed {module}");
+                for (module, reason) in &persistence_failed_modules {
+                    _ = writeln!(
+                        file,
+                        "{} persistence_failed {} reason={}",
+                        timestamp,
+                        module,
+                        reason.replace('\n', "\\n")
+                    );
                 }
             } else {
                 warn!(
