@@ -623,7 +623,7 @@ impl DataAvailability {
         let mut server = DataAvailabilityServer::start_with_opts(
             self.config.da_server_port,
             Some(self.config.da_max_frame_length),
-            format!("DAServer-{}", self.config.id.clone()).as_str(),
+            "Da",
         )
         .await?;
 
