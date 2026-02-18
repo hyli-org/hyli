@@ -80,6 +80,40 @@ where
     where
         S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>;
 
+    /// Handle outbound sends. Default behavior is immediate send with
+    /// `on_send_error` fallback.
+    fn on_send<S>(
+        &mut self,
+        server: &mut S,
+        socket_addr: String,
+        msg: Res,
+        headers: TcpHeaders,
+    ) -> anyhow::Result<()>
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+        Res: Clone,
+    {
+        match server.send_ref(&socket_addr, &msg, &headers) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let ctx = SendErrorContext {
+                    socket_addr,
+                    msg,
+                    headers,
+                    error,
+                };
+                match self.on_send_error(server, &ctx) {
+                    SendErrorOutcome::Handled | SendErrorOutcome::RetryScheduled => Ok(()),
+                    SendErrorOutcome::DropPeer => {
+                        server.drop_peer_stream(ctx.socket_addr.clone());
+                        Ok(())
+                    }
+                    SendErrorOutcome::Unhandled(error) => Err(error),
+                }
+            }
+        }
+    }
+
     fn on_send_error<S>(&mut self, _server: &mut S, ctx: &SendErrorContext<Res>) -> SendErrorOutcome
     where
         S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
@@ -192,27 +226,6 @@ where
     S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
     M: TcpMiddleware<Req, Res> + QueuedSenderMiddleware<Req, Res>,
 {
-    /// Enqueue a message for ordered, retrying delivery to a specific peer.
-    pub fn enqueue(
-        &mut self,
-        socket_addr: String,
-        msg: Res,
-        headers: TcpHeaders,
-    ) -> anyhow::Result<()> {
-        self.middleware.enqueue_to_peer(socket_addr, msg, headers);
-        Ok(())
-    }
-
-    /// Immediate send through the underlying TCP server without middleware queueing.
-    pub fn send_now(
-        &mut self,
-        socket_addr: String,
-        msg: Res,
-        headers: TcpHeaders,
-    ) -> anyhow::Result<()> {
-        self.inner.send(socket_addr, msg, headers)
-    }
-
     /// Mark a peer as a streaming subscriber.
     pub fn register_streaming_peer(&mut self, socket_addr: String) {
         self.middleware.register_streaming_peer(socket_addr);
@@ -221,11 +234,6 @@ where
     /// Queue a message to all registered streaming peers.
     pub fn enqueue_to_streaming_peers(&mut self, msg: Res, headers: TcpHeaders) {
         self.middleware.enqueue_to_streaming_peers(msg, headers);
-    }
-
-    /// Backward-compatible alias for `enqueue_to_streaming_peers`.
-    pub fn send_to_streaming_peers(&mut self, msg: Res, headers: TcpHeaders) {
-        self.enqueue_to_streaming_peers(msg, headers)
     }
 }
 
@@ -268,25 +276,8 @@ where
     }
 
     fn send(&mut self, socket_addr: String, msg: Res, headers: TcpHeaders) -> anyhow::Result<()> {
-        match self.inner.send_ref(&socket_addr, &msg, &headers) {
-            Ok(()) => Ok(()),
-            Err(error) => {
-                let ctx = SendErrorContext {
-                    socket_addr,
-                    msg,
-                    headers,
-                    error,
-                };
-                match self.middleware.on_send_error(&mut self.inner, &ctx) {
-                    SendErrorOutcome::Handled | SendErrorOutcome::RetryScheduled => Ok(()),
-                    SendErrorOutcome::DropPeer => {
-                        self.inner.drop_peer_stream(ctx.socket_addr.clone());
-                        Ok(())
-                    }
-                    SendErrorOutcome::Unhandled(error) => Err(error),
-                }
-            }
-        }
+        self.middleware
+            .on_send(&mut self.inner, socket_addr, msg, headers)
     }
 
     fn send_ref(&mut self, socket_addr: &str, msg: &Res, headers: &TcpHeaders) -> anyhow::Result<()>

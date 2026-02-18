@@ -59,37 +59,28 @@ where
     }
 }
 
-struct QueuedOutbound<Res> {
-    msg: Res,
-    headers: TcpHeaders,
-    retries: usize,
-    next_attempt_at: Instant,
-}
-
 pub struct QueuedSendWithRetry<Req, Res> {
-    max_retries: usize,
-    base_delay: Duration,
-    max_per_tick: usize,
+    retrying: RetryingSend<Res>,
     streaming_peers: HashSet<String>,
-    queues: std::collections::HashMap<String, VecDeque<QueuedOutbound<Res>>>,
     _marker: PhantomData<Req>,
 }
 
 impl<Req, Res> QueuedSendWithRetry<Req, Res> {
     pub fn new(max_retries: usize, base_delay: Duration) -> Self {
         Self {
-            max_retries,
-            base_delay,
-            max_per_tick: 64,
+            retrying: RetryingSend::new(max_retries, base_delay),
             streaming_peers: HashSet::new(),
-            queues: std::collections::HashMap::new(),
             _marker: PhantomData,
         }
     }
 
     pub fn max_per_tick(mut self, max_per_tick: usize) -> Self {
-        self.max_per_tick = max_per_tick.max(1);
+        self.retrying = self.retrying.max_per_tick(max_per_tick);
         self
+    }
+
+    pub fn enqueue_to_peer(&mut self, socket_addr: String, msg: Res, headers: TcpHeaders) {
+        self.retrying.enqueue_to_peer(socket_addr, msg, headers);
     }
 
     pub fn register_streaming_peer(&mut self, socket_addr: String) {
@@ -98,19 +89,7 @@ impl<Req, Res> QueuedSendWithRetry<Req, Res> {
 
     pub fn unregister_streaming_peer(&mut self, socket_addr: &str) {
         self.streaming_peers.remove(socket_addr);
-        self.queues.remove(socket_addr);
-    }
-
-    pub fn enqueue_to_peer(&mut self, socket_addr: String, msg: Res, headers: TcpHeaders) {
-        self.queues
-            .entry(socket_addr)
-            .or_default()
-            .push_back(QueuedOutbound {
-                msg,
-                headers,
-                retries: 0,
-                next_attempt_at: Instant::now(),
-            });
+        self.retrying.drop_peer(socket_addr);
     }
 
     pub fn enqueue_to_streaming_peers(&mut self, msg: Res, headers: TcpHeaders)
@@ -128,7 +107,6 @@ where
     Req: super::TcpReqBound,
     Res: super::TcpResBound + Clone,
 {
-    fn enqueue_to_peer(&mut self, socket_addr: String, msg: Res, headers: TcpHeaders);
     fn register_streaming_peer(&mut self, socket_addr: String);
     fn enqueue_to_streaming_peers(&mut self, msg: Res, headers: TcpHeaders);
 }
@@ -138,33 +116,14 @@ where
     Req: super::TcpReqBound,
     Res: super::TcpResBound + Clone,
 {
-    fn enqueue_to_peer(&mut self, socket_addr: String, msg: Res, headers: TcpHeaders) {
-        self.queues
-            .entry(socket_addr)
-            .or_default()
-            .push_back(QueuedOutbound {
-                msg,
-                headers,
-                retries: 0,
-                next_attempt_at: Instant::now(),
-            });
-    }
-
     fn register_streaming_peer(&mut self, socket_addr: String) {
         self.streaming_peers.insert(socket_addr);
     }
 
     fn enqueue_to_streaming_peers(&mut self, msg: Res, headers: TcpHeaders) {
         for peer in self.streaming_peers.clone() {
-            self.queues
-                .entry(peer)
-                .or_default()
-                .push_back(QueuedOutbound {
-                    msg: msg.clone(),
-                    headers: headers.clone(),
-                    retries: 0,
-                    next_attempt_at: Instant::now(),
-                });
+            self.retrying
+                .enqueue_to_peer(peer, msg.clone(), headers.clone());
         }
     }
 }
@@ -197,6 +156,21 @@ where
         }
     }
 
+    fn on_send<S>(
+        &mut self,
+        _server: &mut S,
+        socket_addr: String,
+        msg: Res,
+        headers: TcpHeaders,
+    ) -> anyhow::Result<()>
+    where
+        S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
+        Res: Clone,
+    {
+        self.enqueue_to_peer(socket_addr, msg, headers);
+        Ok(())
+    }
+
     fn on_send_error<S>(&mut self, server: &mut S, ctx: &SendErrorContext<Res>) -> SendErrorOutcome
     where
         S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
@@ -205,7 +179,7 @@ where
             self.unregister_streaming_peer(&ctx.socket_addr);
             return SendErrorOutcome::Unhandled(anyhow::anyhow!(ctx.error.to_string()));
         }
-        self.enqueue_to_peer(
+        self.retrying.enqueue_to_peer(
             ctx.socket_addr.clone(),
             ctx.msg.clone(),
             ctx.headers.clone(),
@@ -217,62 +191,12 @@ where
     where
         S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
     {
-        if self.queues.is_empty() {
-            return;
-        }
-
-        let mut processed = 0usize;
-        let now = Instant::now();
-        let peers: Vec<String> = self.queues.keys().cloned().collect();
-
-        for peer in peers {
-            if processed >= self.max_per_tick {
-                break;
-            }
-
-            if !server.connected(&peer) {
-                self.unregister_streaming_peer(&peer);
-                continue;
-            }
-
-            let Some(queue) = self.queues.get_mut(&peer) else {
-                continue;
-            };
-
-            let Some(front) = queue.front_mut() else {
-                continue;
-            };
-
-            if front.next_attempt_at > now {
-                continue;
-            }
-
-            match server.send(peer.clone(), front.msg.clone(), front.headers.clone()) {
-                Ok(()) => {
-                    queue.pop_front();
-                }
-                Err(_) => {
-                    front.retries += 1;
-                    if front.retries > self.max_retries {
-                        server.drop_peer_stream(peer.clone());
-                        self.unregister_streaming_peer(&peer);
-                    } else {
-                        front.next_attempt_at = now + self.base_delay.mul_f64(front.retries as f64);
-                    }
-                }
-            }
-
-            processed += 1;
-        }
-
-        self.queues.retain(|_, queue| !queue.is_empty());
+        self.streaming_peers.retain(|peer| server.connected(peer));
+        self.retrying.on_tick(server);
     }
 
     fn next_wakeup(&self) -> Option<Instant> {
-        self.queues
-            .values()
-            .filter_map(|queue| queue.front().map(|pending| pending.next_attempt_at))
-            .min()
+        <RetryingSend<Res> as TcpMiddleware<Req, Res>>::next_wakeup(&self.retrying)
     }
 }
 
@@ -304,6 +228,21 @@ impl<Res> RetryingSend<Res> {
     pub fn max_per_tick(mut self, max_per_tick: usize) -> Self {
         self.max_per_tick = max_per_tick.max(1);
         self
+    }
+
+    pub fn enqueue_to_peer(&mut self, socket_addr: String, msg: Res, headers: TcpHeaders) {
+        self.queue.push_back(PendingSend {
+            socket_addr,
+            msg,
+            headers,
+            retries: 0,
+            next_attempt_at: Instant::now(),
+        });
+    }
+
+    pub fn drop_peer(&mut self, socket_addr: &str) {
+        self.queue
+            .retain(|pending| pending.socket_addr != socket_addr);
     }
 }
 
