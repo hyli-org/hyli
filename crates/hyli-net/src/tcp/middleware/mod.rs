@@ -12,44 +12,6 @@ pub use impls::{
     TcpInboundMessage,
 };
 
-pub mod preset {
-    use std::time::Duration;
-
-    use super::{DropOnError, QueuedSendWithRetry, RetryingSend};
-
-    pub fn drop_on_error() -> DropOnError {
-        DropOnError
-    }
-
-    pub fn retrying_send<Res>(max_retries: usize, base_delay: Duration) -> RetryingSend<Res> {
-        RetryingSend::new(max_retries, base_delay)
-    }
-
-    pub fn drop_and_retry<Res>(
-        max_retries: usize,
-        base_delay: Duration,
-    ) -> (DropOnError, RetryingSend<Res>) {
-        (drop_on_error(), retrying_send(max_retries, base_delay))
-    }
-
-    pub fn queued_send_with_retry<Req, Res>(
-        max_retries: usize,
-        base_delay: Duration,
-    ) -> QueuedSendWithRetry<Req, Res> {
-        QueuedSendWithRetry::new(max_retries, base_delay)
-    }
-}
-
-#[macro_export]
-macro_rules! tcp_stack {
-    ($server:expr, $($middleware:expr),+ $(,)?) => {{
-        use $crate::tcp::middleware::{middleware_layer, TcpServerExt};
-        let server = $server;
-        $(let server = server.layer(middleware_layer($middleware));)+
-        server
-    }};
-}
-
 pub trait Layer<S, Req, Res> {
     type Service;
     fn layer(self, inner: S) -> Self::Service;
@@ -178,64 +140,6 @@ pub trait TcpServerLike<Req, Res> {
         errors
     }
 }
-
-pub struct InboundCx<'a, Req, Res, S>
-where
-    Req: BorshDeserialize,
-    S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-{
-    server: &'a mut S,
-    _marker: PhantomData<(Req, Res)>,
-}
-
-impl<'a, Req, Res, S> InboundCx<'a, Req, Res, S>
-where
-    Req: BorshDeserialize,
-    S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-{
-    pub fn new(server: &'a mut S) -> Self {
-        Self {
-            server,
-            _marker: PhantomData,
-        }
-    }
-
-    pub fn connected(&self, socket_addr: &str) -> bool {
-        self.server.connected(socket_addr)
-    }
-
-    pub fn drop_peer(&mut self, peer_ip: String) {
-        self.server.drop_peer_stream(peer_ip);
-    }
-
-    pub fn send(
-        &mut self,
-        socket_addr: String,
-        msg: Res,
-        headers: TcpHeaders,
-    ) -> anyhow::Result<()> {
-        self.server.send(socket_addr, msg, headers)
-    }
-
-    pub fn send_ref(
-        &mut self,
-        socket_addr: &str,
-        msg: &Res,
-        headers: &TcpHeaders,
-    ) -> anyhow::Result<()>
-    where
-        Res: Clone,
-    {
-        self.server.send_ref(socket_addr, msg, headers)
-    }
-
-    pub fn server_mut(&mut self) -> &mut S {
-        self.server
-    }
-}
-
-pub type OutboundCx<'a, Req, Res, S> = InboundCx<'a, Req, Res, S>;
-pub type TickCx<'a, Req, Res, S> = InboundCx<'a, Req, Res, S>;
 
 /// Tower-style layering helper for TCP servers and already-layered services.
 ///
