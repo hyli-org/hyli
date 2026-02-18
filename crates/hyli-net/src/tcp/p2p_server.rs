@@ -160,7 +160,7 @@ where
             current_height: 0,
             tcp_server: TcpServer::start_with_options(
                 port,
-                format!("P2P-{node_id}").as_str(),
+                "P2P",
                 TcpServerOptions {
                     max_frame_length,
                     send_timeout: timeouts.tcp_send_timeout,
