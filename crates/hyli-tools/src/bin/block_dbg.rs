@@ -206,11 +206,11 @@ async fn main() -> Result<()> {
                 node: Arc::new(node_client),
                 api: None,
                 default_state: Default::default(),
-                buffer_blocks: 0,
+                tx_buffer_size: 0,
                 max_txs_per_proof: 40,
                 tx_working_window_size: 180,
-            }))
-            .await?;
+                idle_flush_interval: Duration::from_secs(5),
+        })).await?;
 
         let build_api_ctx = Arc::new(BuildApiContextInner {
             router: Mutex::new(Some(Router::new())),

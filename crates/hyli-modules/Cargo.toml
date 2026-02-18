@@ -82,5 +82,5 @@ instrumentation = [
   "hyli-bus/instrumentation",
 ]
 indexer = ["client-sdk/csi"]
-db = ["dep:sqlx", "hyli-model/sqlx"]
+db = ["dep:sqlx", "hyli-model/sqlx", "sqlx/runtime-tokio", "sqlx/postgres"]
 gcs = ["dep:google-cloud-storage", "dep:chrono"]

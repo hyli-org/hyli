@@ -22,6 +22,7 @@ WORKDIR /hyli
 COPY --from=builder /usr/src/hyli/target/release/hyli               ./
 COPY --from=builder /usr/src/hyli/target/release/indexer            ./
 COPY --from=builder /usr/src/hyli/target/release/hyli-loadtest      ./
+COPY --from=builder /usr/src/hyli/target/release/smt_long_running_test ./
 COPY --from=builder /usr/src/hyli/target/release/gcs_uploader       ./
 COPY --from=builder /usr/src/hyli/target/release/smt_auto_prover    ./
 COPY --from=builder /usr/src/hyli/target/release/health_check       ./
