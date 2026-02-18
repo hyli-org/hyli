@@ -58,7 +58,7 @@ pub enum P2PServerEvent<Msg> {
 }
 
 #[derive(Debug)]
-pub enum P2PTcpEvent<Data: BorshDeserialize + BorshSerialize> {
+pub enum P2PTcpEvent<Data: BorshDeserialize + BorshSerialize + TcpMessageLabel> {
     TcpEvent(TcpEvent<Data>),
     HandShakeTcpClient(String, Box<TcpClient<Data, Data>>, Canal),
     PingPeers,
