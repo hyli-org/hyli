@@ -12,7 +12,7 @@ use crate::{
 use assert_json_diff::assert_json_include;
 use axum_test::TestServer;
 use client_sdk::transaction_builder::ProvableBlobTx;
-use hydentity::{HydentityAction, client::tx_executor_handler::register_identity};
+use hydentity::{client::tx_executor_handler::register_identity, HydentityAction};
 use hyli_contract_sdk::{BlobIndex, HyliOutput, Identity, ProgramId, StateCommitment, TxHash};
 use hyli_model::api::{
     APIBlob, APIBlock, APIContract, APIContractHistory, APITransaction, APITransactionEvents,
@@ -24,7 +24,7 @@ use sqlx::postgres::{PgListener, PgPoolOptions};
 use std::{future::IntoFuture, time::Duration};
 use testcontainers_modules::{
     postgres::Postgres,
-    testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner},
+    testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
 };
 use utils::TimestampMs;
 
@@ -63,16 +63,14 @@ fn new_register_tx(
 ) -> BlobTransaction {
     BlobTransaction::new(
         "hyli@hyli",
-        vec![
-            RegisterContractAction {
-                verifier: "test".into(),
-                program_id: ProgramId(vec![3, 2, 1]),
-                state_commitment,
-                contract_name: contract_name.clone(),
-                ..Default::default()
-            }
-            .as_blob("hyli".into()),
-        ],
+        vec![RegisterContractAction {
+            verifier: "test".into(),
+            program_id: ProgramId(vec![3, 2, 1]),
+            state_commitment,
+            contract_name: contract_name.clone(),
+            ..Default::default()
+        }
+        .as_blob("hyli".into())],
     )
 }
 
@@ -1388,11 +1386,9 @@ async fn test_contract_history_tracking() -> Result<()> {
     let filtered_history = filtered_response.json::<Vec<APIContractHistory>>();
 
     assert_eq!(filtered_history.len(), 1, "Should have 1 registered entry");
-    assert!(
-        filtered_history
-            .iter()
-            .all(|h| h.change_type == vec![hyli_model::api::ContractChangeType::Registered])
-    );
+    assert!(filtered_history
+        .iter()
+        .all(|h| h.change_type == vec![hyli_model::api::ContractChangeType::Registered]));
 
     // Test API with block height range filter
     let range_response = server

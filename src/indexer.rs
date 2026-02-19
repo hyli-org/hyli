@@ -16,12 +16,12 @@ use hyli_modules::{
 use hyli_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
-    modules::{Module, SharedBuildApiCtx, gcs_uploader::GCSRequest, module_bus_client},
-    node_state::{NodeState, NodeStateCallback, NodeStateStore, TxEvent, module::NodeStateModule},
+    modules::{gcs_uploader::GCSRequest, module_bus_client, Module, SharedBuildApiCtx},
+    node_state::{module::NodeStateModule, NodeState, NodeStateCallback, NodeStateStore, TxEvent},
 };
 use hyli_net::clock::TimestampMsClock;
 use serde::Serialize;
-use sqlx::{PgConnection, PgPool, Pool, Postgres, QueryBuilder, Row, postgres::PgPoolOptions};
+use sqlx::{postgres::PgPoolOptions, PgConnection, PgPool, Pool, Postgres, QueryBuilder, Row};
 use std::{collections::HashMap, collections::HashSet, ops::Deref, path::PathBuf};
 use tokio::io::ReadBuf;
 use tracing::warn;
