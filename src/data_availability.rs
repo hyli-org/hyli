@@ -659,10 +659,8 @@ impl DataAvailability {
         let mut first_hole_receiver = self.start_scanning_for_first_hole();
 
         // Used to send blocks to clients (indexers/peers)
-        // This is a JoinSet of tuples containing:
-        // - The peer IP address to send the blocks to
-        // - The number of retries for sending the blocks
-        let mut catchup_joinset: JoinSet<(String, usize)> = tokio::task::JoinSet::new();
+        // JoinSet of peer addresses to process one queued send at a time.
+        let mut catchup_joinset: JoinSet<String> = tokio::task::JoinSet::new();
         let mut catchup_task_checker_ticker =
             tokio::time::interval(std::time::Duration::from_secs(5));
         let mut storage_metrics_ticker = tokio::time::interval(std::time::Duration::from_secs(30));
@@ -743,7 +741,7 @@ impl DataAvailability {
 
             // Send one block to a peer as part of "catchup",
             // once we have sent all blocks the peer is presumably synchronised.
-            Some(Ok((peer_ip, retries))) = catchup_joinset.join_next() => {
+            Some(Ok(peer_ip)) = catchup_joinset.join_next() => {
 
                 #[cfg(test)]
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -751,7 +749,6 @@ impl DataAvailability {
                 _ = log_error!(
                     self.handle_send_next_block_to_peer(
                         peer_ip.clone(),
-                        retries,
                         &mut catchup_joinset,
                         &mut server
                     ).await,
@@ -776,22 +773,11 @@ impl DataAvailability {
     async fn handle_send_next_block_to_peer(
         &mut self,
         peer_ip: String,
-        retries: usize,
-        catchup_joinset: &mut JoinSet<(String, usize)>,
+        catchup_joinset: &mut JoinSet<String>,
         server: &mut DaServerStack,
     ) -> Result<()> {
         if !server.connected(&peer_ip) {
             debug!("Peer {} disconnected, removing from send queues", peer_ip);
-            self.peer_send_queues.remove(&peer_ip);
-            return Ok(());
-        }
-
-        if retries > 10 {
-            warn!(
-                "Failed to send block, too many retries for peer {}",
-                &peer_ip
-            );
-            server.drop_peer_stream(peer_ip.clone());
             self.peer_send_queues.remove(&peer_ip);
             return Ok(());
         }
@@ -823,17 +809,11 @@ impl DataAvailability {
             ) {
                 Ok(()) => {
                     // Successfully sent, continue with next block
-                    catchup_joinset.spawn(async move { (peer_ip, 0) });
+                    catchup_joinset.spawn(async move { peer_ip });
                 }
-                Err(_) => {
-                    // Retry sending the same block (put it back at front of queue)
-                    if let Some(queue) = self.peer_send_queues.get_mut(&peer_ip) {
-                        queue.push_front(hash);
-                    }
-                    catchup_joinset.spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(100 * (retries as u64))).await;
-                        (peer_ip, retries + 1)
-                    });
+                Err(e) => {
+                    warn!("Error sending block {} to peer {}: {:#}", hash, peer_ip, e);
+                    self.peer_send_queues.remove(&peer_ip);
                 }
             }
         } else {
@@ -842,7 +822,7 @@ impl DataAvailability {
                 &hash, &peer_ip
             );
             // Continue anyway with next block
-            catchup_joinset.spawn(async move { (peer_ip, 0) });
+            catchup_joinset.spawn(async move { peer_ip });
         }
         Ok(())
     }
@@ -872,10 +852,9 @@ impl DataAvailability {
                     vec![],
                 ) {
                     warn!(
-                        "📦 Error while responding to block request at height {} for {}: {:#}. Dropping socket.",
+                        "📦 Error while responding to block request at height {} for {}: {:#}",
                         block_height, socket_addr, e
                     );
-                    server.drop_peer_stream(socket_addr.to_string());
                     return Ok(());
                 }
             }
@@ -891,10 +870,9 @@ impl DataAvailability {
                     vec![],
                 ) {
                     warn!(
-                        "📦 Error while responding BlockNotFound at height {} for {}: {:#}. Dropping socket.",
+                        "📦 Error while responding BlockNotFound at height {} for {}: {:#}",
                         block_height, socket_addr, e
                     );
-                    server.drop_peer_stream(socket_addr.to_string());
                     return Ok(());
                 }
             }
@@ -909,10 +887,9 @@ impl DataAvailability {
                     vec![],
                 ) {
                     warn!(
-                        "📦 Error while responding BlockNotFound at height {} for {}: {:#}. Dropping socket.",
+                        "📦 Error while responding BlockNotFound at height {} for {}: {:#}",
                         block_height, socket_addr, e
                     );
-                    server.drop_peer_stream(socket_addr.to_string());
                     return Ok(());
                 }
             }
@@ -925,7 +902,7 @@ impl DataAvailability {
         &mut self,
         evt: MempoolBlockEvent,
         tcp_server: &mut DaServerStack,
-        catchup_joinset: &mut JoinSet<(String, usize)>,
+        catchup_joinset: &mut JoinSet<String>,
     ) -> Result<()> {
         match evt {
             MempoolBlockEvent::BuiltSignedBlock(signed_block) => {
@@ -959,8 +936,10 @@ impl DataAvailability {
         let errors = tcp_server.broadcast(DataAvailabilityEvent::MempoolStatusEvent(evt), vec![]);
 
         for (peer, error) in errors {
-            warn!("Error while broadcasting mempool status event {:#}", error);
-            tcp_server.drop_peer_stream(peer.clone());
+            warn!(
+                "Error while broadcasting mempool status event to {}: {:#}",
+                peer, error
+            );
         }
     }
 
@@ -969,7 +948,7 @@ impl DataAvailability {
         &mut self,
         block: SignedBlock,
         tcp_server: &mut DaServerStack,
-        catchup_joinset: &mut JoinSet<(String, usize)>,
+        catchup_joinset: &mut JoinSet<String>,
     ) -> Option<BlockHeight> {
         let hash = block.hashed();
         // if new block is already handled, ignore it
@@ -1031,7 +1010,7 @@ impl DataAvailability {
         &mut self,
         mut last_block_hash: ConsensusProposalHash,
         tcp_server: &mut DaServerStack,
-        catchup_joinset: &mut JoinSet<(String, usize)>,
+        catchup_joinset: &mut JoinSet<String>,
     ) -> Option<BlockHeight> {
         let mut res = None;
 
@@ -1105,7 +1084,7 @@ impl DataAvailability {
         &mut self,
         block: SignedBlock,
         _tcp_server: &mut DaServerStack,
-        catchup_joinset: &mut JoinSet<(String, usize)>,
+        catchup_joinset: &mut JoinSet<String>,
     ) -> anyhow::Result<()> {
         self.store_block(&block)?;
 
@@ -1124,7 +1103,7 @@ impl DataAvailability {
                     peer, block_hash
                 );
                 let peer_clone = peer.clone();
-                catchup_joinset.spawn(async move { (peer_clone, 0) });
+                catchup_joinset.spawn(async move { peer_clone });
             } else {
                 debug!(
                     "Appending block {} to queue for peer {} (queue size: {})",
@@ -1149,7 +1128,7 @@ impl DataAvailability {
     async fn start_streaming_to_peer(
         &mut self,
         start_height: BlockHeight,
-        catchup_joinset: &mut JoinSet<(String, usize)>,
+        catchup_joinset: &mut JoinSet<String>,
         peer_ip: &str,
         server: &mut DaServerStack,
     ) -> Result<()> {
@@ -1199,7 +1178,6 @@ impl DataAvailability {
                 );
             }
 
-            server.drop_peer_stream(peer_ip.to_string());
             self.peer_send_queues.remove(peer_ip);
             return Ok(());
         }
@@ -1217,7 +1195,7 @@ impl DataAvailability {
             .insert(peer_ip_string.clone(), processed_block_hashes);
 
         // Start the send task for this peer
-        catchup_joinset.spawn(async move { (peer_ip_string, 0) });
+        catchup_joinset.spawn(async move { peer_ip_string });
 
         Ok(())
     }
@@ -1289,7 +1267,7 @@ pub mod tests {
             block: SignedBlock,
             tcp_server: &mut DaServerStack,
         ) {
-            let mut catchup_joinset: JoinSet<(String, usize)> = JoinSet::new();
+            let mut catchup_joinset: JoinSet<String> = JoinSet::new();
             _ = self
                 .da
                 .handle_signed_block(block.clone(), tcp_server, &mut catchup_joinset)
@@ -1351,7 +1329,7 @@ pub mod tests {
             block.consensus_proposal.slot = i;
         }
         blocks.reverse();
-        let mut catchup_joinset: JoinSet<(String, usize)> = JoinSet::new();
+        let mut catchup_joinset: JoinSet<String> = JoinSet::new();
         for block in blocks {
             if block.height().0 == 0 {
                 assert_eq!(
