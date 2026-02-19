@@ -123,7 +123,7 @@ once_cell = { version = "1.19.0", default-features = false }
 opentelemetry = { version = "0.28.0" }
 opentelemetry-prometheus = { version = "0.28.0" }
 opentelemetry_sdk = { version = "0.28.0" }
-opentelemetry-otlp = { version = "0.28.0", features = [
+opentelemetry-otlp = { version = "0.31.0", features = [
   "grpc-tonic",
   "trace",
   "metrics",
