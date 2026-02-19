@@ -773,16 +773,13 @@ impl DataAvailability {
         Ok(())
     }
 
-    async fn handle_send_next_block_to_peer<S>(
+    async fn handle_send_next_block_to_peer(
         &mut self,
         peer_ip: String,
         retries: usize,
         catchup_joinset: &mut JoinSet<(String, usize)>,
-        server: &mut S,
-    ) -> Result<()>
-    where
-        S: TcpServerLike<DataAvailabilityRequest, DataAvailabilityEvent>,
-    {
+        server: &mut DaServerStack,
+    ) -> Result<()> {
         if !server.connected(&peer_ip) {
             debug!("Peer {} disconnected, removing from send queues", peer_ip);
             self.peer_send_queues.remove(&peer_ip);
@@ -850,15 +847,12 @@ impl DataAvailability {
         Ok(())
     }
 
-    async fn handle_block_request<S>(
+    async fn handle_block_request(
         &mut self,
         block_height: BlockHeight,
         socket_addr: &str,
-        server: &mut S,
-    ) -> Result<()>
-    where
-        S: TcpServerLike<DataAvailabilityRequest, DataAvailabilityEvent>,
-    {
+        server: &mut DaServerStack,
+    ) -> Result<()> {
         debug!(
             "📦 Received block request for height {} from {}",
             block_height, socket_addr
@@ -927,15 +921,12 @@ impl DataAvailability {
         Ok(())
     }
 
-    async fn handle_mempool_event<S>(
+    async fn handle_mempool_event(
         &mut self,
         evt: MempoolBlockEvent,
-        tcp_server: &mut S,
+        tcp_server: &mut DaServerStack,
         catchup_joinset: &mut JoinSet<(String, usize)>,
-    ) -> Result<()>
-    where
-        S: TcpServerLike<DataAvailabilityRequest, DataAvailabilityEvent>,
-    {
+    ) -> Result<()> {
         match evt {
             MempoolBlockEvent::BuiltSignedBlock(signed_block) => {
                 debug!(
@@ -960,10 +951,11 @@ impl DataAvailability {
         Ok(())
     }
 
-    async fn handle_mempool_status_event<S>(&mut self, evt: MempoolStatusEvent, tcp_server: &mut S)
-    where
-        S: TcpServerLike<DataAvailabilityRequest, DataAvailabilityEvent>,
-    {
+    async fn handle_mempool_status_event(
+        &mut self,
+        evt: MempoolStatusEvent,
+        tcp_server: &mut DaServerStack,
+    ) {
         let errors = tcp_server.broadcast(DataAvailabilityEvent::MempoolStatusEvent(evt), vec![]);
 
         for (peer, error) in errors {
@@ -973,15 +965,12 @@ impl DataAvailability {
     }
 
     /// if handled, returns the highest height of the processed blocks
-    async fn handle_signed_block<S>(
+    async fn handle_signed_block(
         &mut self,
         block: SignedBlock,
-        tcp_server: &mut S,
+        tcp_server: &mut DaServerStack,
         catchup_joinset: &mut JoinSet<(String, usize)>,
-    ) -> Option<BlockHeight>
-    where
-        S: TcpServerLike<DataAvailabilityRequest, DataAvailabilityEvent>,
-    {
+    ) -> Option<BlockHeight> {
         let hash = block.hashed();
         // if new block is already handled, ignore it
         if self.blocks.contains(&hash) {
@@ -1038,15 +1027,12 @@ impl DataAvailability {
     }
 
     /// Returns the highest height of the processed blocks
-    async fn pop_buffer<S>(
+    async fn pop_buffer(
         &mut self,
         mut last_block_hash: ConsensusProposalHash,
-        tcp_server: &mut S,
+        tcp_server: &mut DaServerStack,
         catchup_joinset: &mut JoinSet<(String, usize)>,
-    ) -> Option<BlockHeight>
-    where
-        S: TcpServerLike<DataAvailabilityRequest, DataAvailabilityEvent>,
-    {
+    ) -> Option<BlockHeight> {
         let mut res = None;
 
         // Iterative loop to avoid stack overflows
@@ -1115,15 +1101,12 @@ impl DataAvailability {
         Ok(())
     }
 
-    async fn add_processed_block<S>(
+    async fn add_processed_block(
         &mut self,
         block: SignedBlock,
-        _tcp_server: &mut S,
+        _tcp_server: &mut DaServerStack,
         catchup_joinset: &mut JoinSet<(String, usize)>,
-    ) -> anyhow::Result<()>
-    where
-        S: TcpServerLike<DataAvailabilityRequest, DataAvailabilityEvent>,
-    {
+    ) -> anyhow::Result<()> {
         self.store_block(&block)?;
 
         let block_hash = block.hashed();
@@ -1163,16 +1146,13 @@ impl DataAvailability {
         Ok(())
     }
 
-    async fn start_streaming_to_peer<S>(
+    async fn start_streaming_to_peer(
         &mut self,
         start_height: BlockHeight,
         catchup_joinset: &mut JoinSet<(String, usize)>,
         peer_ip: &str,
-        server: &mut S,
-    ) -> Result<()>
-    where
-        S: TcpServerLike<DataAvailabilityRequest, DataAvailabilityEvent>,
-    {
+        server: &mut DaServerStack,
+    ) -> Result<()> {
         let range_start = std::time::Instant::now();
         let highest = self
             .blocks
@@ -1249,7 +1229,7 @@ pub mod tests {
     use std::{collections::HashMap, time::Duration};
 
     use super::module_bus_client;
-    use super::{Blocks, RawDataAvailabilityServer};
+    use super::{Blocks, DaServerStack, RawDataAvailabilityServer};
     use crate::data_availability::DaCatchupPolicy;
     use crate::{
         bus::BusClientSender,
@@ -1304,10 +1284,11 @@ pub mod tests {
             }
         }
 
-        pub async fn handle_signed_block<S>(&mut self, block: SignedBlock, tcp_server: &mut S)
-        where
-            S: TcpServerLike<DataAvailabilityRequest, DataAvailabilityEvent>,
-        {
+        pub async fn handle_signed_block(
+            &mut self,
+            block: SignedBlock,
+            tcp_server: &mut DaServerStack,
+        ) {
             let mut catchup_joinset: JoinSet<(String, usize)> = JoinSet::new();
             _ = self
                 .da

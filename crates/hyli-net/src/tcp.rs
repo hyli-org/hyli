@@ -12,16 +12,33 @@ use std::{
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
-use sdk::{
-    hyli_model_utils::TimestampMs, DataAvailabilityEvent, DataAvailabilityRequest, DataProposal,
-};
-use strum_macros::IntoStaticStr;
+use sdk::hyli_model_utils::TimestampMs;
 use tokio::task::JoinHandle;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
 use anyhow::Result;
 
 use crate::net::TcpStream;
+/// Derive macro for [`TcpMessageLabel`].
+///
+/// # Defaults
+/// - Structs return `"TypeName"`.
+/// - Enums return `"TypeName::VariantName"`.
+///
+/// # Example
+/// ```rust
+/// use hyli_net::tcp::TcpMessageLabel;
+///
+/// #[derive(TcpMessageLabel)]
+/// enum Msg {
+///     Ping,
+///     Data(Vec<u8>),
+/// }
+///
+/// assert_eq!(Msg::Ping.message_label(), "Msg::Ping");
+/// assert_eq!(Msg::Data(vec![]).message_label(), "Msg::Data");
+/// ```
+pub use hyli_net_traits::TcpMessageLabel;
 
 pub type TcpHeaders = Vec<(String, String)>;
 
@@ -32,27 +49,20 @@ pub trait TcpServerLike<Req, Res> {
     where
         Self: 'a;
 
-    /// Receive the next inbound event (or mapped output if wrapped).
     async fn listen_next(&mut self) -> Option<Self::EventOut>;
-    /// Send a response to a peer.
     fn send(&mut self, socket_addr: String, msg: Res, headers: TcpHeaders) -> anyhow::Result<()>;
-    /// Send using borrowed payload/headers to avoid cloning on the success path.
     fn send_ref(&mut self, socket_addr: &str, msg: &Res, headers: &TcpHeaders) -> anyhow::Result<()>
     where
         Res: Clone,
     {
         self.send(socket_addr.to_string(), msg.clone(), headers.clone())
     }
-    /// Return the currently connected peer socket addresses.
     fn connected_clients(&self) -> Self::ConnectedClients<'_>;
-    /// Check whether a peer socket is currently connected.
     fn connected(&self, socket_addr: &str) -> bool {
         self.connected_clients().any(|addr| addr == socket_addr)
     }
-    /// Drop and disconnect a peer socket.
     fn drop_peer_stream(&mut self, peer_ip: String);
 
-    /// Broadcast by fanout over `connected_clients()` using `send()`.
     fn broadcast(&mut self, msg: Res, headers: TcpHeaders) -> Vec<(String, anyhow::Error)>
     where
         Res: Clone,
@@ -66,23 +76,6 @@ pub trait TcpServerLike<Req, Res> {
         }
         errors
     }
-}
-
-#[macro_export]
-macro_rules! impl_tcp_message_label_with_prefix {
-    ($ty:ty, $prefix:literal, { $( $variant:ident ),+ $(,)? }) => {
-        impl $crate::tcp::TcpMessageLabel for $ty {
-            fn message_label(&self) -> &'static str {
-                match self {
-                    $( Self::$variant(..) => concat!($prefix, "::", stringify!($variant)), )+
-                }
-            }
-        }
-    };
-}
-
-pub trait TcpMessageLabel {
-    fn message_label(&self) -> &'static str;
 }
 
 pub(crate) type FramedStream = Framed<TcpStream, LengthDelimitedCodec>;
@@ -116,7 +109,7 @@ pub fn headers_from_span() -> TcpHeaders {
     }
 }
 
-#[derive(Clone, BorshDeserialize, BorshSerialize, PartialEq, IntoStaticStr)]
+#[derive(Clone, BorshDeserialize, BorshSerialize, PartialEq, TcpMessageLabel)]
 pub enum TcpMessage {
     Ping,
     Data(TcpData),
@@ -240,12 +233,6 @@ impl std::fmt::Debug for TcpMessage {
     }
 }
 
-impl TcpMessageLabel for TcpMessage {
-    fn message_label(&self) -> &'static str {
-        self.clone().into()
-    }
-}
-
 #[expect(clippy::large_enum_variant)]
 #[derive(Debug, Clone, BorshDeserialize, BorshSerialize, PartialEq)]
 pub enum P2PTcpMessage<Data: BorshDeserialize + BorshSerialize> {
@@ -264,7 +251,7 @@ impl<Data: BorshDeserialize + BorshSerialize + TcpMessageLabel> TcpMessageLabel
     }
 }
 
-#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, PartialEq, IntoStaticStr)]
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, PartialEq, TcpMessageLabel)]
 pub enum Handshake {
     Hello(
         (
@@ -280,53 +267,6 @@ pub enum Handshake {
             TimestampMs,
         ),
     ),
-}
-
-impl TcpMessageLabel for Handshake {
-    fn message_label(&self) -> &'static str {
-        self.clone().into()
-    }
-}
-
-impl TcpMessageLabel for Vec<u8> {
-    fn message_label(&self) -> &'static str {
-        "bytes"
-    }
-}
-
-impl TcpMessageLabel for String {
-    fn message_label(&self) -> &'static str {
-        "string"
-    }
-}
-
-impl TcpMessageLabel for DataAvailabilityRequest {
-    fn message_label(&self) -> &'static str {
-        match self {
-            DataAvailabilityRequest::StreamFromHeight(_) => {
-                "DataAvailabilityRequest::StreamFromHeight"
-            }
-            DataAvailabilityRequest::BlockRequest(_) => "DataAvailabilityRequest::BlockRequest",
-        }
-    }
-}
-
-impl TcpMessageLabel for DataAvailabilityEvent {
-    fn message_label(&self) -> &'static str {
-        match self {
-            DataAvailabilityEvent::SignedBlock(_) => "DataAvailabilityEvent::SignedBlock",
-            DataAvailabilityEvent::MempoolStatusEvent(_) => {
-                "DataAvailabilityEvent::MempoolStatusEvent"
-            }
-            DataAvailabilityEvent::BlockNotFound(_) => "DataAvailabilityEvent::BlockNotFound",
-        }
-    }
-}
-
-impl TcpMessageLabel for DataProposal {
-    fn message_label(&self) -> &'static str {
-        "DataProposal"
-    }
 }
 
 #[derive(
