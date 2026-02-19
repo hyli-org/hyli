@@ -5449,7 +5449,7 @@ dependencies = [
  "crc32fast",
  "futures",
  "hyli-turmoil-shims",
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
  "paste",
@@ -5640,8 +5640,8 @@ dependencies = [
  "hyli-net",
  "hyli-turmoil-shims",
  "indexmap 2.13.0",
- "opentelemetry",
- "opentelemetry-http",
+ "opentelemetry 0.28.0",
+ "opentelemetry-http 0.31.0",
  "paste",
  "rand 0.9.2",
  "secp256k1 0.31.1",
@@ -5681,7 +5681,7 @@ dependencies = [
  "hyli-turmoil-shims",
  "hyper 1.8.1",
  "hyper-util",
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "opentelemetry_sdk",
  "paste",
  "rand 0.9.2",
@@ -5830,7 +5830,7 @@ name = "hyli-turmoil-shims"
 version = "0.14.0"
 dependencies = [
  "borsh",
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "opentelemetry_sdk",
  "rand 0.9.2",
  "tokio",
@@ -7552,6 +7552,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "opentelemetry"
+version = "0.31.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b84bcd6ae87133e903af7ef497404dda70c60d0ea14895fc8a5e6722754fc2a0"
+dependencies = [
+ "futures-core",
+ "futures-sink",
+ "js-sys",
+ "pin-project-lite",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
 name = "opentelemetry-http"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7560,9 +7574,21 @@ dependencies = [
  "async-trait",
  "bytes",
  "http 1.4.0",
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "reqwest 0.12.28",
  "tracing",
+]
+
+[[package]]
+name = "opentelemetry-http"
+version = "0.31.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7a6d09a73194e6b66df7c8f1b680f156d916a1a942abf2de06823dd02b7855d"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "http 1.4.0",
+ "opentelemetry 0.31.0",
 ]
 
 [[package]]
@@ -7574,8 +7600,8 @@ dependencies = [
  "async-trait",
  "futures-core",
  "http 1.4.0",
- "opentelemetry",
- "opentelemetry-http",
+ "opentelemetry 0.28.0",
+ "opentelemetry-http 0.28.0",
  "opentelemetry-proto",
  "opentelemetry_sdk",
  "prost 0.13.5",
@@ -7592,7 +7618,7 @@ version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "56f8870d3024727e99212eb3bb1762ec16e255e3e6f58eeb3dc8db1aa226746d"
 dependencies = [
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "opentelemetry_sdk",
  "prost 0.13.5",
  "tonic 0.12.3",
@@ -7615,7 +7641,7 @@ dependencies = [
  "futures-executor",
  "futures-util",
  "glob",
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "percent-encoding",
  "rand 0.8.5",
  "serde_json",
@@ -12943,7 +12969,7 @@ checksum = "721f2d2569dce9f3dfbbddee5906941e953bfcdf736a62da3377f5751650cc36"
 dependencies = [
  "js-sys",
  "once_cell",
- "opentelemetry",
+ "opentelemetry 0.28.0",
  "opentelemetry_sdk",
  "smallvec 1.15.1",
  "tracing",

@@ -128,7 +128,7 @@ opentelemetry-otlp = { version = "0.28.0", features = [
   "trace",
   "metrics",
 ] }
-opentelemetry-http = { version = "0.28" }
+opentelemetry-http = { version = "0.31" }
 paste = { version = "1.0.15", default-features = false }
 prometheus = { version = "0.13.4" }
 quote = { version = "1.0.42", default-features = false }
