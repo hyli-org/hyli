@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use opentelemetry::metrics::{Meter, MeterProvider};
 
 mod imp {
@@ -60,6 +58,7 @@ mod imp {
                 return provider.clone();
             }
 
+            #[cfg(feature = "otlp")]
             if is_test_process() {
                 let provider = GLOBAL_METER_PROVIDER.get_or_init(|| {
                     eprintln!("[hyli-turmoil-shims] initializing test meter provider");
@@ -76,11 +75,13 @@ mod imp {
             panic!("OTLP meter accessed but global meter provider is not initialized");
         }
 
+        #[cfg(feature = "otlp")]
         #[cfg(test)]
         fn is_test_process() -> bool {
             true
         }
 
+        #[cfg(feature = "otlp")]
         #[cfg(not(test))]
         fn is_test_process() -> bool {
             let auto_init_env = std::env::var("CARGO_AUTO_INIT_OTLP_GLOBAL_METER").ok();
@@ -125,6 +126,25 @@ if this is unexpected"
 
 pub use imp::{global_meter_or_panic, global_meter_provider_or_panic, init_global_meter_provider};
 
-pub fn init_test_meter_provider() -> Arc<dyn MeterProvider + Send + Sync> {
+#[cfg(feature = "otlp")]
+pub fn init_test_meter_provider() -> std::sync::Arc<dyn MeterProvider + Send + Sync> {
     init_global_meter_provider(opentelemetry_sdk::metrics::SdkMeterProvider::default())
+}
+
+pub fn init_noop_meter_provider() -> std::sync::Arc<dyn MeterProvider + Send + Sync> {
+    #[derive(Debug, Default, Clone)]
+    pub(crate) struct NoopMeterProvider {}
+
+    impl MeterProvider for NoopMeterProvider {
+        fn meter_with_scope(&self, _scope: opentelemetry::InstrumentationScope) -> Meter {
+            Meter::new(std::sync::Arc::new(NoopMeter {}))
+        }
+    }
+
+    #[derive(Debug, Default)]
+    pub(crate) struct NoopMeter {}
+
+    impl opentelemetry::metrics::InstrumentProvider for NoopMeter {}
+
+    init_global_meter_provider(NoopMeterProvider {})
 }

@@ -8,6 +8,7 @@ use std::{fmt::Display, ops::Deref};
 use strum_macros::IntoStaticStr;
 
 use hyli_model::*;
+use hyli_net_traits::TcpMessageLabel;
 
 use crate::p2p::network::{HeaderSignableData, IntoHeaderSignableData};
 
@@ -312,6 +313,7 @@ impl From<ConsensusTimeout> for ConsensusNetMessage {
     Hash,
     Ord,
     PartialOrd,
+    TcpMessageLabel,
 )]
 pub enum ConsensusNetMessage {
     Prepare(ConsensusProposal, Ticket, View),
@@ -445,19 +447,6 @@ impl Display for ConsensusNetMessage {
         }
     }
 }
-
-hyli_net::impl_tcp_message_label_with_prefix!(ConsensusNetMessage, "ConsensusNetMessage", {
-    Prepare,
-    PrepareVote,
-    Confirm,
-    ConfirmAck,
-    Commit,
-    Timeout,
-    TimeoutCertificate,
-    ValidatorCandidacy,
-    SyncRequest,
-    SyncReply,
-});
 
 impl IntoHeaderSignableData for ConsensusNetMessage {
     // This signature is just for DOS / efficiency

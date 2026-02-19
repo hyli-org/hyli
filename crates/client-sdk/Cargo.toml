@@ -13,7 +13,7 @@ hyli-model = { workspace = true }
 sdk = { workspace = true, default-features = false, features = ["full-model"] }
 bonsai-runner = { workspace = true, optional = true }
 hyli-net = { workspace = true }
-hyli-registry = { workspace = true }
+hyli-registry = { workspace = true, optional = true }
 
 anyhow = { workspace = true }
 borsh = { workspace = true }
@@ -23,9 +23,7 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 
 risc0-zkvm = { workspace = true, default-features = false, optional = true }
-sp1-sdk = { workspace = true, default-features = false, features = [
-  "network",
-], optional = true }
+sp1-sdk = { workspace = true, default-features = false, optional = true }
 bincode = { workspace = true, optional = true }
 
 
@@ -47,9 +45,12 @@ test-log = { workspace = true, features = [
 [features]
 turmoil = ["hyli-net/turmoil"]
 rest = []
-indexer = ["dep:utoipa", "dep:axum", "dep:utoipa-axum", "dep:tokio"]
-risc0 = ["dep:risc0-zkvm", "dep:bonsai-runner"]
-sp1 = ["dep:sp1-sdk", "dep:bincode"]
+axum = ["dep:axum"]
+csi = ["axum", "dep:utoipa", "dep:utoipa-axum", "dep:tokio"]
+registry = ["dep:hyli-registry"]
+risc0 = ["dep:risc0-zkvm", "dep:bonsai-runner", "registry"]
+sp1 = ["dep:sp1-sdk", "dep:bincode", "registry"]
+sp1-network = ["sp1", "sp1-sdk/network"]
 instrumentation = ["hyli-net/instrumentation"]
 
 [package.metadata.docs.rs]

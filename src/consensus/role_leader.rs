@@ -1,5 +1,6 @@
 use anyhow::{anyhow, bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_bus::bus::metrics::BusMetrics;
 use hyli_modules::bus::BusEnvelope;
 use std::collections::HashSet;
 
@@ -139,6 +140,12 @@ impl Consensus {
                             hyli_modules::bus::BusSender<ConsensusCommand>,
                         >::get(&self.bus)
                         .clone();
+                        // Sort of a hack - we pickthe broadcast sender, so we lost the send metric increase
+                        // increment here so we don't drift over time.
+                        hyli_modules::utils::static_type_map::Pick::<BusMetrics>::get_mut(
+                            &mut self.bus,
+                        )
+                        .send::<ConsensusCommand, ConsensusBusClient>();
                         let max_delay = may_delay.unwrap_or_else(|| {
                             current_timestamp.clone() + self.config.consensus.slot_duration
                         });

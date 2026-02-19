@@ -58,7 +58,7 @@ pub enum P2PServerEvent<Msg> {
 }
 
 #[derive(Debug)]
-pub enum P2PTcpEvent<Data: BorshDeserialize + BorshSerialize> {
+pub enum P2PTcpEvent<Data: BorshDeserialize + BorshSerialize + TcpMessageLabel> {
     TcpEvent(TcpEvent<Data>),
     HandShakeTcpClient(String, Box<TcpClient<Data, Data>>, Canal),
     PingPeers,
@@ -160,7 +160,7 @@ where
             current_height: 0,
             tcp_server: TcpServer::start_with_options(
                 port,
-                format!("P2P-{node_id}").as_str(),
+                "P2P",
                 TcpServerOptions {
                     max_frame_length,
                     send_timeout: timeouts.tcp_send_timeout,
@@ -1233,14 +1233,18 @@ pub mod tests {
         addr.port()
     }
     // Simple message type for testing
-    #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, Eq, PartialEq, PartialOrd, Ord)]
+    #[derive(
+        Debug,
+        Clone,
+        BorshSerialize,
+        BorshDeserialize,
+        Eq,
+        PartialEq,
+        PartialOrd,
+        Ord,
+        crate::tcp::TcpMessageLabel,
+    )]
     pub struct TestMessage(String);
-
-    impl crate::tcp::TcpMessageLabel for TestMessage {
-        fn message_label(&self) -> &'static str {
-            "TestMessage"
-        }
-    }
 
     macro_rules! receive_and_handle_event {
         ($server:expr, $pattern:pat, $error_msg:expr) => {{

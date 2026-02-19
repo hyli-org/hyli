@@ -23,8 +23,8 @@ use tokio_util::sync::CancellationToken;
 use tower_http::catch_panic::CatchPanicLayer;
 use tracing::info;
 
-pub use client_sdk::contract_indexer::AppError;
 pub use client_sdk::rest_client as client;
+pub use client_sdk::AppError;
 
 use super::{
     rest::request_logger,

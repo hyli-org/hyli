@@ -14,6 +14,8 @@ members = [
   "crates/contract-sdk",
   "crates/hyli-loadtest",
   "crates/hyli-model",
+  "crates/hyli-net-traits",
+  "crates/hyli-net-macros",
   "crates/hyli-crypto",
   "crates/hyli-turmoil-shims",
   "crates/hyli-verifiers",
@@ -51,11 +53,11 @@ sdk = { version = "0.14.0", default-features = false, path = "crates/contract-sd
 hyli-contract-sdk = { version = "0.14.0", default-features = false, path = "crates/contract-sdk", package = "hyli-contract-sdk" }
 client-sdk = { version = "0.14.0", default-features = false, path = "crates/client-sdk", package = "hyli-client-sdk" }
 hyli-net = { version = "0.14.0", default-features = false, path = "crates/hyli-net", package = "hyli-net" }
+hyli-net-traits = { version = "0.14.0", default-features = false, path = "crates/hyli-net-traits", package = "hyli-net-traits" }
+hyli-net-macros = { version = "0.14.0", default-features = false, path = "crates/hyli-net-macros", package = "hyli-net-macros" }
 hyli-model = { version = "0.14.0", default-features = false, path = "crates/hyli-model", package = "hyli-model" }
 hyli-crypto = { version = "0.14.0", default-features = false, path = "crates/hyli-crypto", package = "hyli-crypto" }
-hyli-turmoil-shims = { version = "0.14.0", default-features = false, path = "crates/hyli-turmoil-shims", package = "hyli-turmoil-shims", features = [
-  "otlp",
-] }
+hyli-turmoil-shims = { version = "0.14.0", default-features = false, path = "crates/hyli-turmoil-shims", package = "hyli-turmoil-shims" }
 hyli-verifiers = { version = "0.14.0", default-features = false, path = "crates/hyli-verifiers", package = "hyli-verifiers" }
 hyli-bus = { version = "0.14.0", default-features = false, path = "crates/hyli-bus", package = "hyli-bus" }
 risc0-recursion = { version = "0.14.0", default-features = false, path = "crates/contracts/risc0-recursion", package = "hyli-risc0-recursion" }
@@ -121,7 +123,11 @@ once_cell = { version = "1.19.0", default-features = false }
 opentelemetry = { version = "0.28.0" }
 opentelemetry-prometheus = { version = "0.28.0" }
 opentelemetry_sdk = { version = "0.28.0" }
-opentelemetry-otlp = { version = "0.28.0", features = ["grpc-tonic", "trace", "metrics"] }
+opentelemetry-otlp = { version = "0.28.0", features = [
+  "grpc-tonic",
+  "trace",
+  "metrics",
+] }
 opentelemetry-http = { version = "0.28" }
 paste = { version = "1.0.15", default-features = false }
 prometheus = { version = "0.13.4" }
@@ -206,21 +212,27 @@ hyli-contract-sdk = { workspace = true, default-features = false, features = [
   "tracing",
 ] }
 staking = { workspace = true, default-features = false, features = ["client"] }
-client-sdk = { workspace = true, features = ["rest", "indexer"] }
+client-sdk = { workspace = true, features = ["rest", "csi"] }
 hyli-net = { workspace = true }
+hyli-net-traits = { workspace = true }
 hyli-model = { workspace = true, default-features = false, features = [
   "full",
   "sqlx",
 ] }
 hyli-crypto = { workspace = true }
-hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
+hyli-turmoil-shims = { workspace = true, features = ["opentelemetry"] }
 hydentity = { workspace = true, features = ["client"] }
 hyllar = { workspace = true, features = ["client"] }
 smt-token = { workspace = true, features = ["client"] }
 risc0-recursion = { workspace = true }
 hyli-verifiers = { workspace = true }
 hyli-contracts = { workspace = true }
-hyli-modules = { workspace = true, features = ["db"] }
+hyli-modules = { workspace = true, features = [
+  "db",
+  "fjall",
+  "gcs",
+  "indexer",
+] }
 hyli-bus = { workspace = true }
 
 
@@ -295,7 +307,9 @@ client-sdk = { workspace = true, default-features = false, features = [
 hyli-modules = { workspace = true, default-features = false, features = [
   "test",
   "db",
+  "otlp",
 ] }
+hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 
 assert_cmd = "2.0.17"
 axum-test = { version = "17.2.0" }

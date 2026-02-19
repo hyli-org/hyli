@@ -13,12 +13,16 @@ rust-version.workspace = true
 tokio = { workspace = true, features = ["full", "tracing"] }
 hyllar = { workspace = true, features = ["client"] }
 hydentity = { workspace = true, features = ["client"] }
+smt-token = { workspace = true, features = ["client"] }
 hyli-contracts = { workspace = true }
 hyli-contract-sdk = { workspace = true, features = ["tracing"] }
+hyli-modules = { workspace = true, features = ["db"] }
 client-sdk = { workspace = true, features = ["rest", "risc0"] }
 anyhow = { workspace = true }
 borsh = { workspace = true }
 clap = { workspace = true }
+config = { workspace = true, features = ["toml"] }
+serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["fmt"] }
 rand = { workspace = true }

@@ -49,7 +49,7 @@ impl TcpServer {
             &tcp_server_port
         );
 
-        let mut server = TcpApiServer::start(tcp_server_port, "TcpApiServer").await?;
+        let mut server = TcpApiServer::start(tcp_server_port, "Api").await?;
 
         module_handle_messages! {
             on_self self,

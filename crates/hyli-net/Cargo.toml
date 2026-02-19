@@ -11,13 +11,13 @@ rust-version = { workspace = true }
 [dependencies]
 sdk = { workspace = true, features = ["full-model"] }
 hyli-crypto = { workspace = true }
-hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
+hyli-turmoil-shims = { workspace = true, features = ["opentelemetry"] }
 hyli-bus = { workspace = true, optional = true }
+hyli-net-traits = { workspace = true }
 
 anyhow = { workspace = true }
 borsh = { workspace = true }
 tracing = { workspace = true }
-strum_macros = { workspace = true }
 
 # Tcp feature
 tokio = { workspace = true }
@@ -44,6 +44,7 @@ rand = { workspace = true, features = ["std"] }
 seq-macro = { workspace = true }
 test-log = { workspace = true, features = ["color", "trace"] }
 opentelemetry_sdk = { workspace = true }
+hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 
 [features]
 # default = ["turmoil"]
