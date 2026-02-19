@@ -345,6 +345,43 @@ struct ContractUpdateRow {
     deleted_at_height: Option<i32>,
 }
 
+#[derive(Debug)]
+struct TxContractRow {
+    parent_dp_hash: DataProposalHash,
+    tx_hash: TxHash,
+    contract_name: String,
+}
+
+#[derive(Debug)]
+struct ContractUpsertRow {
+    contract_name: String,
+    verifier: String,
+    program_id: Vec<u8>,
+    soft_timeout: Option<i64>,
+    hard_timeout: Option<i64>,
+    state_commitment: Vec<u8>,
+    parent_dp_hash: DataProposalHash,
+    tx_hash: TxHash,
+    metadata: Option<Vec<u8>>,
+    deleted_at_height: Option<i32>,
+}
+
+#[derive(Debug)]
+struct ContractHistoryRow {
+    contract_name: String,
+    block_height: i64,
+    tx_index: i32,
+    change_type: Vec<ContractChangeType>,
+    verifier: String,
+    program_id: Vec<u8>,
+    state_commitment: Vec<u8>,
+    soft_timeout: Option<i64>,
+    hard_timeout: Option<i64>,
+    deleted_at_height: Option<i32>,
+    parent_dp_hash: DataProposalHash,
+    tx_hash: TxHash,
+}
+
 impl IndexerHandlerStore {
     fn status_rank(status: &TransactionStatusDb) -> u8 {
         match status {
@@ -877,62 +914,7 @@ impl Indexer {
 
         // Then transactions
         let tx_rows: Vec<TxStore> = self.handler_store.txs.drain().map(|(_, tx)| tx).collect();
-        let tx_batch_size = calculate_optimal_batch_size(10);
-        for chunk in tx_rows.chunks(tx_batch_size) {
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) ",
-            );
-            query_builder.push_values(chunk.iter(), |mut b, tx| {
-                b.push_bind(tx.dp_hash.clone())
-                    .push_bind(tx.tx_hash.clone())
-                    .push_bind(1_i32)
-                    .push_bind(tx.transaction_type.clone())
-                    .push_bind(tx.transaction_status.clone())
-                    .push_bind(tx.block_hash.clone())
-                    .push_bind(tx.block_height.0 as i64)
-                    .push_bind(tx.lane_id.clone())
-                    .push_bind(tx.index)
-                    .push_bind(tx.identity.clone());
-            });
-
-            // for genesis block verified proof tx and status consolidation
-            query_builder.push(
-                " ON CONFLICT (parent_dp_hash, tx_hash)
-                DO UPDATE SET
-                    index = GREATEST(transactions.index, excluded.index),
-                    lane_id = COALESCE(excluded.lane_id, transactions.lane_id),
-                    block_hash = COALESCE(excluded.block_hash, transactions.block_hash),
-                    block_height = GREATEST(excluded.block_height, transactions.block_height),
-                    identity = COALESCE(excluded.identity, transactions.identity),
-                    transaction_status = CASE
-                        WHEN (
-                            CASE transactions.transaction_status
-                                WHEN 'waiting_dissemination' THEN 1
-                                WHEN 'data_proposal_created' THEN 2
-                                WHEN 'sequenced' THEN 3
-                                WHEN 'success' THEN 4
-                                WHEN 'failure' THEN 4
-                                WHEN 'timed_out' THEN 4
-                            END
-                        ) < (
-                            CASE excluded.transaction_status
-                                WHEN 'waiting_dissemination' THEN 1
-                                WHEN 'data_proposal_created' THEN 2
-                                WHEN 'sequenced' THEN 3
-                                WHEN 'success' THEN 4
-                                WHEN 'failure' THEN 4
-                                WHEN 'timed_out' THEN 4
-                            END
-                        )
-                        THEN excluded.transaction_status
-                        ELSE transactions.transaction_status
-                    END",
-            );
-            _ = log_error!(
-                query_builder.build().execute(&mut *transaction).await,
-                "Inserting transactions"
-            )?;
-        }
+        upsert_transactions(&mut transaction, tx_rows.as_slice()).await?;
 
         // Then txs_contracts
         let mut tx_contract_rows = Vec::new();
@@ -942,29 +924,14 @@ impl Indexer {
                     .entry(contract_name.clone())
                     .or_default()
                     .insert(tx.block_height);
-                tx_contract_rows.push((
-                    tx.dp_hash.clone(),
-                    tx.tx_hash.clone(),
-                    contract_name.0.clone(),
-                ));
+                tx_contract_rows.push(TxContractRow {
+                    parent_dp_hash: tx.dp_hash.clone(),
+                    tx_hash: tx.tx_hash.clone(),
+                    contract_name: contract_name.0.clone(),
+                });
             }
         }
-        let tx_contract_batch_size = calculate_optimal_batch_size(3);
-        for chunk in tx_contract_rows.chunks(tx_contract_batch_size) {
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name) ",
-            );
-            query_builder.push_values(chunk.iter(), |mut b, (dp_hash, tx_hash, contract_name)| {
-                b.push_bind(dp_hash.clone())
-                    .push_bind(tx_hash.clone())
-                    .push_bind(contract_name.clone());
-            });
-            query_builder.push(" ON CONFLICT DO NOTHING");
-            _ = log_error!(
-                query_builder.build().execute(&mut *transaction).await,
-                "Inserting txs_contracts"
-            )?;
-        }
+        insert_txs_contracts(&mut transaction, tx_contract_rows).await?;
 
         // Merge contract updates into inserts when both affect the same row in this flush.
         let pending_contract_updates = std::mem::take(&mut self.handler_store.contract_updates);
@@ -995,72 +962,42 @@ impl Indexer {
         let mut contract_rows = Vec::new();
         for (_, contract) in self.handler_store.contract_inserts.drain() {
             let (soft_timeout, hard_timeout) = timeout_columns(&contract.timeout_window)?;
-            contract_rows.push((contract, soft_timeout, hard_timeout));
+            contract_rows.push(ContractUpsertRow {
+                contract_name: contract.contract_name.0,
+                verifier: contract.verifier,
+                program_id: contract.program_id,
+                soft_timeout,
+                hard_timeout,
+                state_commitment: contract.state_commitment,
+                parent_dp_hash: contract.parent_dp_hash,
+                tx_hash: contract.tx_hash,
+                metadata: contract.metadata,
+                deleted_at_height: contract.deleted_at_height,
+            });
         }
-        let contract_batch_size = calculate_optimal_batch_size(11);
-        for chunk in contract_rows.chunks(contract_batch_size) {
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO contracts (contract_name, verifier, program_id, soft_timeout, hard_timeout, state_commitment, parent_dp_hash, tx_hash, metadata, deleted_at_height) ",
-            );
-            query_builder.push_values(
-                chunk.iter(),
-                |mut b, (contract, soft_timeout, hard_timeout)| {
-                    b.push_bind(contract.contract_name.0.clone())
-                        .push_bind(contract.verifier.clone())
-                        .push_bind(contract.program_id.clone())
-                        .push_bind(*soft_timeout)
-                        .push_bind(*hard_timeout)
-                        .push_bind(contract.state_commitment.clone())
-                        .push_bind(contract.parent_dp_hash.clone())
-                        .push_bind(contract.tx_hash.clone())
-                        .push_bind(contract.metadata.clone())
-                        .push_bind(contract.deleted_at_height);
-                },
-            );
-            query_builder.push(
-                " ON CONFLICT (contract_name) DO UPDATE SET
-                    verifier = EXCLUDED.verifier,
-                    program_id = EXCLUDED.program_id,
-                    soft_timeout = EXCLUDED.soft_timeout,
-                    hard_timeout = EXCLUDED.hard_timeout,
-                    state_commitment = EXCLUDED.state_commitment,
-                    parent_dp_hash = EXCLUDED.parent_dp_hash,
-                    tx_hash = EXCLUDED.tx_hash,
-                    metadata = EXCLUDED.metadata,
-                    deleted_at_height = EXCLUDED.deleted_at_height",
-            );
-            query_builder.build().execute(&mut *transaction).await?;
-        }
+        upsert_contracts(&mut transaction, contract_rows).await?;
 
         // Insert contract history
-        let contract_history_rows: Vec<_> = self
+        let contract_history_rows: Vec<ContractHistoryRow> = self
             .handler_store
             .contract_history
             .drain()
-            .map(|(_, history)| history)
+            .map(|(_, history)| ContractHistoryRow {
+                contract_name: history.contract_name.0,
+                block_height: history.block_height.0 as i64,
+                tx_index: history.tx_index,
+                change_type: history.change_type,
+                verifier: history.verifier,
+                program_id: history.program_id,
+                state_commitment: history.state_commitment,
+                soft_timeout: history.soft_timeout,
+                hard_timeout: history.hard_timeout,
+                deleted_at_height: history.deleted_at_height,
+                parent_dp_hash: history.parent_dp_hash,
+                tx_hash: history.tx_hash,
+            })
             .collect();
-        let contract_history_batch_size = calculate_optimal_batch_size(12);
-        for chunk in contract_history_rows.chunks(contract_history_batch_size) {
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO contract_history (contract_name, block_height, tx_index, change_type, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash) ",
-            );
-            query_builder.push_values(chunk.iter(), |mut b, history| {
-                b.push_bind(history.contract_name.0.clone())
-                    .push_bind(history.block_height.0 as i64)
-                    .push_bind(history.tx_index)
-                    .push_bind(history.change_type.clone())
-                    .push_bind(history.verifier.clone())
-                    .push_bind(history.program_id.clone())
-                    .push_bind(history.state_commitment.clone())
-                    .push_bind(history.soft_timeout)
-                    .push_bind(history.hard_timeout)
-                    .push_bind(history.deleted_at_height)
-                    .push_bind(history.parent_dp_hash.clone())
-                    .push_bind(history.tx_hash.clone());
-            });
-            query_builder.push(" ON CONFLICT (contract_name, block_height, tx_index) DO NOTHING");
-            query_builder.build().execute(&mut *transaction).await?;
-        }
+        insert_contract_history(&mut transaction, contract_history_rows).await?;
 
         let tx_event_rows = std::mem::take(&mut self.handler_store.tx_events);
         insert_or_copy_tx_events(&mut transaction, tx_event_rows).await?;
@@ -1110,6 +1047,458 @@ impl Indexer {
 }
 
 const INLINE_INSERT_THRESHOLD: usize = 400;
+const MAX_BLOB_BYTES_PER_BATCH: usize = 200 * 1024 * 1024;
+const MAX_BLOB_ROWS_PER_BATCH: usize = 4096;
+
+fn transaction_type_text(value: &TransactionTypeDb) -> &'static str {
+    match value {
+        TransactionTypeDb::BlobTransaction => "blob_transaction",
+        TransactionTypeDb::ProofTransaction => "proof_transaction",
+        TransactionTypeDb::RegisterContractTransaction => "register_contract_transaction",
+        TransactionTypeDb::Stake => "stake",
+    }
+}
+
+fn transaction_status_text(value: &TransactionStatusDb) -> &'static str {
+    match value {
+        TransactionStatusDb::WaitingDissemination => "waiting_dissemination",
+        TransactionStatusDb::DataProposalCreated => "data_proposal_created",
+        TransactionStatusDb::Success => "success",
+        TransactionStatusDb::Failure => "failure",
+        TransactionStatusDb::Sequenced => "sequenced",
+        TransactionStatusDb::TimedOut => "timed_out",
+    }
+}
+
+fn contract_change_type_text(value: &ContractChangeType) -> &'static str {
+    match value {
+        ContractChangeType::Registered => "registered",
+        ContractChangeType::ProgramIdUpdated => "program_id_updated",
+        ContractChangeType::StateUpdated => "state_updated",
+        ContractChangeType::TimeoutUpdated => "timeout_updated",
+        ContractChangeType::Deleted => "deleted",
+    }
+}
+
+fn contract_change_type_array_text(values: &[ContractChangeType]) -> String {
+    let mut out = String::from("{");
+    for (i, value) in values.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(contract_change_type_text(value));
+    }
+    out.push('}');
+    out
+}
+
+async fn upsert_transactions(
+    transaction: &mut sqlx::Transaction<'_, Postgres>,
+    rows: &[TxStore],
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    if rows.len() <= INLINE_INSERT_THRESHOLD {
+        let tx_batch_size = calculate_optimal_batch_size(10);
+        for chunk in rows.chunks(tx_batch_size) {
+            let mut query_builder = QueryBuilder::<Postgres>::new(
+                "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) ",
+            );
+            query_builder.push_values(chunk.iter(), |mut b, tx| {
+                b.push_bind(tx.dp_hash.clone())
+                    .push_bind(tx.tx_hash.clone())
+                    .push_bind(1_i32)
+                    .push_bind(tx.transaction_type.clone())
+                    .push_bind(tx.transaction_status.clone())
+                    .push_bind(tx.block_hash.clone())
+                    .push_bind(tx.block_height.0 as i64)
+                    .push_bind(tx.lane_id.clone())
+                    .push_bind(tx.index)
+                    .push_bind(tx.identity.clone());
+            });
+
+            query_builder.push(
+                " ON CONFLICT (parent_dp_hash, tx_hash)
+                DO UPDATE SET
+                    index = GREATEST(transactions.index, excluded.index),
+                    lane_id = COALESCE(excluded.lane_id, transactions.lane_id),
+                    block_hash = COALESCE(excluded.block_hash, transactions.block_hash),
+                    block_height = GREATEST(excluded.block_height, transactions.block_height),
+                    identity = COALESCE(excluded.identity, transactions.identity),
+                    transaction_status = CASE
+                        WHEN (
+                            CASE transactions.transaction_status
+                                WHEN 'waiting_dissemination' THEN 1
+                                WHEN 'data_proposal_created' THEN 2
+                                WHEN 'sequenced' THEN 3
+                                WHEN 'success' THEN 4
+                                WHEN 'failure' THEN 4
+                                WHEN 'timed_out' THEN 4
+                            END
+                        ) < (
+                            CASE excluded.transaction_status
+                                WHEN 'waiting_dissemination' THEN 1
+                                WHEN 'data_proposal_created' THEN 2
+                                WHEN 'sequenced' THEN 3
+                                WHEN 'success' THEN 4
+                                WHEN 'failure' THEN 4
+                                WHEN 'timed_out' THEN 4
+                            END
+                        )
+                        THEN excluded.transaction_status
+                        ELSE transactions.transaction_status
+                    END",
+            );
+            query_builder.build().execute(&mut **transaction).await?;
+        }
+        return Ok(());
+    }
+
+    sqlx::query(
+        "CREATE TEMPORARY TABLE transactions_stage (
+            parent_dp_hash TEXT NOT NULL,
+            tx_hash TEXT NOT NULL,
+            version INT NOT NULL,
+            transaction_type transaction_type NOT NULL,
+            transaction_status transaction_status NOT NULL,
+            block_hash TEXT,
+            block_height BIGINT,
+            lane_id TEXT,
+            index INT,
+            identity TEXT
+        ) ON COMMIT DROP",
+    )
+    .execute(&mut **transaction)
+    .await?;
+
+    let mut lines = Vec::with_capacity(rows.len());
+    for tx in rows {
+        lines.push(format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            tx.dp_hash,
+            tx.tx_hash,
+            1_i32,
+            transaction_type_text(&tx.transaction_type),
+            transaction_status_text(&tx.transaction_status),
+            copy_optional_owned_text(tx.block_hash.as_ref().map(ToString::to_string)),
+            tx.block_height.0,
+            copy_optional_owned_text(tx.lane_id.as_ref().map(ToString::to_string)),
+            tx.index,
+            copy_optional_text(tx.identity.as_deref()),
+        ));
+    }
+
+    let mut stream = StreamableData::new(lines);
+    let mut copy = transaction
+        .copy_in_raw(
+            "COPY transactions_stage (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) FROM STDIN WITH (FORMAT TEXT)",
+        )
+        .await?;
+    copy.read_from(&mut stream).await?;
+    copy.finish().await?;
+
+    sqlx::query(
+        "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity)
+         SELECT parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity
+         FROM transactions_stage
+         ON CONFLICT (parent_dp_hash, tx_hash)
+         DO UPDATE SET
+            index = GREATEST(transactions.index, excluded.index),
+            lane_id = COALESCE(excluded.lane_id, transactions.lane_id),
+            block_hash = COALESCE(excluded.block_hash, transactions.block_hash),
+            block_height = GREATEST(excluded.block_height, transactions.block_height),
+            identity = COALESCE(excluded.identity, transactions.identity),
+            transaction_status = CASE
+                WHEN (
+                    CASE transactions.transaction_status
+                        WHEN 'waiting_dissemination' THEN 1
+                        WHEN 'data_proposal_created' THEN 2
+                        WHEN 'sequenced' THEN 3
+                        WHEN 'success' THEN 4
+                        WHEN 'failure' THEN 4
+                        WHEN 'timed_out' THEN 4
+                    END
+                ) < (
+                    CASE excluded.transaction_status
+                        WHEN 'waiting_dissemination' THEN 1
+                        WHEN 'data_proposal_created' THEN 2
+                        WHEN 'sequenced' THEN 3
+                        WHEN 'success' THEN 4
+                        WHEN 'failure' THEN 4
+                        WHEN 'timed_out' THEN 4
+                    END
+                )
+                THEN excluded.transaction_status
+                ELSE transactions.transaction_status
+            END",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
+}
+
+async fn insert_txs_contracts(
+    transaction: &mut sqlx::Transaction<'_, Postgres>,
+    rows: Vec<TxContractRow>,
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    if rows.len() <= INLINE_INSERT_THRESHOLD {
+        let batch_size = calculate_optimal_batch_size(3);
+        for chunk in rows.chunks(batch_size) {
+            let mut query_builder = QueryBuilder::<Postgres>::new(
+                "INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name) ",
+            );
+            query_builder.push_values(chunk.iter(), |mut b, row| {
+                b.push_bind(row.parent_dp_hash.clone())
+                    .push_bind(row.tx_hash.clone())
+                    .push_bind(row.contract_name.clone());
+            });
+            query_builder.push(" ON CONFLICT DO NOTHING");
+            query_builder.build().execute(&mut **transaction).await?;
+        }
+        return Ok(());
+    }
+
+    sqlx::query(
+        "CREATE TEMPORARY TABLE txs_contracts_stage (
+            parent_dp_hash TEXT NOT NULL,
+            tx_hash TEXT NOT NULL,
+            contract_name TEXT NOT NULL
+        ) ON COMMIT DROP",
+    )
+    .execute(&mut **transaction)
+    .await?;
+
+    let mut lines = Vec::with_capacity(rows.len());
+    for row in rows {
+        lines.push(format!(
+            "{}\t{}\t{}\n",
+            row.parent_dp_hash,
+            row.tx_hash,
+            escape_copy_text(row.contract_name.as_str())
+        ));
+    }
+    let mut stream = StreamableData::new(lines);
+    let mut copy = transaction
+        .copy_in_raw(
+            "COPY txs_contracts_stage (parent_dp_hash, tx_hash, contract_name) FROM STDIN WITH (FORMAT TEXT)",
+        )
+        .await?;
+    copy.read_from(&mut stream).await?;
+    copy.finish().await?;
+
+    sqlx::query(
+        "INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name)
+         SELECT parent_dp_hash, tx_hash, contract_name FROM txs_contracts_stage
+         ON CONFLICT DO NOTHING",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
+}
+
+async fn upsert_contracts(
+    transaction: &mut sqlx::Transaction<'_, Postgres>,
+    rows: Vec<ContractUpsertRow>,
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    if rows.len() <= INLINE_INSERT_THRESHOLD {
+        let batch_size = calculate_optimal_batch_size(10);
+        for chunk in rows.chunks(batch_size) {
+            let mut query_builder = QueryBuilder::<Postgres>::new(
+                "INSERT INTO contracts (contract_name, verifier, program_id, soft_timeout, hard_timeout, state_commitment, parent_dp_hash, tx_hash, metadata, deleted_at_height) ",
+            );
+            query_builder.push_values(chunk.iter(), |mut b, row| {
+                b.push_bind(row.contract_name.clone())
+                    .push_bind(row.verifier.clone())
+                    .push_bind(row.program_id.clone())
+                    .push_bind(row.soft_timeout)
+                    .push_bind(row.hard_timeout)
+                    .push_bind(row.state_commitment.clone())
+                    .push_bind(row.parent_dp_hash.clone())
+                    .push_bind(row.tx_hash.clone())
+                    .push_bind(row.metadata.clone())
+                    .push_bind(row.deleted_at_height);
+            });
+            query_builder.push(
+                " ON CONFLICT (contract_name) DO UPDATE SET
+                    verifier = EXCLUDED.verifier,
+                    program_id = EXCLUDED.program_id,
+                    soft_timeout = EXCLUDED.soft_timeout,
+                    hard_timeout = EXCLUDED.hard_timeout,
+                    state_commitment = EXCLUDED.state_commitment,
+                    parent_dp_hash = EXCLUDED.parent_dp_hash,
+                    tx_hash = EXCLUDED.tx_hash,
+                    metadata = EXCLUDED.metadata,
+                    deleted_at_height = EXCLUDED.deleted_at_height",
+            );
+            query_builder.build().execute(&mut **transaction).await?;
+        }
+        return Ok(());
+    }
+
+    sqlx::query(
+        "CREATE TEMPORARY TABLE contracts_stage (
+            contract_name TEXT PRIMARY KEY NOT NULL,
+            verifier TEXT NOT NULL,
+            program_id BYTEA NOT NULL,
+            soft_timeout BIGINT,
+            hard_timeout BIGINT,
+            state_commitment BYTEA NOT NULL,
+            parent_dp_hash TEXT NOT NULL,
+            tx_hash TEXT NOT NULL,
+            metadata BYTEA,
+            deleted_at_height INT
+        ) ON COMMIT DROP",
+    )
+    .execute(&mut **transaction)
+    .await?;
+
+    let mut lines = Vec::with_capacity(rows.len());
+    for row in rows {
+        lines.push(format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            escape_copy_text(row.contract_name.as_str()),
+            escape_copy_text(row.verifier.as_str()),
+            format!("\\\\x{}", hex::encode(row.program_id)),
+            copy_optional_i64(row.soft_timeout),
+            copy_optional_i64(row.hard_timeout),
+            format!("\\\\x{}", hex::encode(row.state_commitment)),
+            row.parent_dp_hash,
+            row.tx_hash,
+            copy_optional_bytea(row.metadata.as_deref()),
+            copy_optional_i32(row.deleted_at_height),
+        ));
+    }
+    let mut stream = StreamableData::new(lines);
+    let mut copy = transaction
+        .copy_in_raw(
+            "COPY contracts_stage (contract_name, verifier, program_id, soft_timeout, hard_timeout, state_commitment, parent_dp_hash, tx_hash, metadata, deleted_at_height) FROM STDIN WITH (FORMAT TEXT)",
+        )
+        .await?;
+    copy.read_from(&mut stream).await?;
+    copy.finish().await?;
+
+    sqlx::query(
+        "INSERT INTO contracts (contract_name, verifier, program_id, soft_timeout, hard_timeout, state_commitment, parent_dp_hash, tx_hash, metadata, deleted_at_height)
+         SELECT contract_name, verifier, program_id, soft_timeout, hard_timeout, state_commitment, parent_dp_hash, tx_hash, metadata, deleted_at_height
+         FROM contracts_stage
+         ON CONFLICT (contract_name) DO UPDATE SET
+            verifier = EXCLUDED.verifier,
+            program_id = EXCLUDED.program_id,
+            soft_timeout = EXCLUDED.soft_timeout,
+            hard_timeout = EXCLUDED.hard_timeout,
+            state_commitment = EXCLUDED.state_commitment,
+            parent_dp_hash = EXCLUDED.parent_dp_hash,
+            tx_hash = EXCLUDED.tx_hash,
+            metadata = EXCLUDED.metadata,
+            deleted_at_height = EXCLUDED.deleted_at_height",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    Ok(())
+}
+
+async fn insert_contract_history(
+    transaction: &mut sqlx::Transaction<'_, Postgres>,
+    rows: Vec<ContractHistoryRow>,
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    if rows.len() <= INLINE_INSERT_THRESHOLD {
+        let batch_size = calculate_optimal_batch_size(12);
+        for chunk in rows.chunks(batch_size) {
+            let mut query_builder = QueryBuilder::<Postgres>::new(
+                "INSERT INTO contract_history (contract_name, block_height, tx_index, change_type, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash) ",
+            );
+            query_builder.push_values(chunk.iter(), |mut b, row| {
+                b.push_bind(row.contract_name.clone())
+                    .push_bind(row.block_height)
+                    .push_bind(row.tx_index)
+                    .push_bind(row.change_type.clone())
+                    .push_bind(row.verifier.clone())
+                    .push_bind(row.program_id.clone())
+                    .push_bind(row.state_commitment.clone())
+                    .push_bind(row.soft_timeout)
+                    .push_bind(row.hard_timeout)
+                    .push_bind(row.deleted_at_height)
+                    .push_bind(row.parent_dp_hash.clone())
+                    .push_bind(row.tx_hash.clone());
+            });
+            query_builder.push(" ON CONFLICT (contract_name, block_height, tx_index) DO NOTHING");
+            query_builder.build().execute(&mut **transaction).await?;
+        }
+        return Ok(());
+    }
+
+    sqlx::query(
+        "CREATE TEMPORARY TABLE contract_history_stage (
+            contract_name TEXT NOT NULL,
+            block_height BIGINT NOT NULL,
+            tx_index INT NOT NULL,
+            change_type contract_change_type[] NOT NULL,
+            verifier TEXT NOT NULL,
+            program_id BYTEA NOT NULL,
+            state_commitment BYTEA NOT NULL,
+            soft_timeout BIGINT,
+            hard_timeout BIGINT,
+            deleted_at_height INT,
+            parent_dp_hash TEXT NOT NULL,
+            tx_hash TEXT NOT NULL
+        ) ON COMMIT DROP",
+    )
+    .execute(&mut **transaction)
+    .await?;
+
+    let mut lines = Vec::with_capacity(rows.len());
+    for row in rows {
+        lines.push(format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            escape_copy_text(row.contract_name.as_str()),
+            row.block_height,
+            row.tx_index,
+            contract_change_type_array_text(&row.change_type),
+            escape_copy_text(row.verifier.as_str()),
+            format!("\\\\x{}", hex::encode(row.program_id)),
+            format!("\\\\x{}", hex::encode(row.state_commitment)),
+            copy_optional_i64(row.soft_timeout),
+            copy_optional_i64(row.hard_timeout),
+            copy_optional_i32(row.deleted_at_height),
+            row.parent_dp_hash,
+            row.tx_hash,
+        ));
+    }
+
+    let mut stream = StreamableData::new(lines);
+    let mut copy = transaction
+        .copy_in_raw(
+            "COPY contract_history_stage (contract_name, block_height, tx_index, change_type, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash) FROM STDIN WITH (FORMAT TEXT)",
+        )
+        .await?;
+    copy.read_from(&mut stream).await?;
+    copy.finish().await?;
+
+    sqlx::query(
+        "INSERT INTO contract_history (contract_name, block_height, tx_index, change_type, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash)
+         SELECT contract_name, block_height, tx_index, change_type, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash
+         FROM contract_history_stage
+         ON CONFLICT (contract_name, block_height, tx_index) DO NOTHING",
+    )
+    .execute(&mut **transaction)
+    .await?;
+
+    Ok(())
+}
 
 async fn insert_or_copy_tx_events(
     transaction: &mut sqlx::Transaction<'_, Postgres>,
@@ -1164,42 +1553,49 @@ async fn insert_or_copy_blobs(
         return Ok(());
     }
 
-    if rows.len() <= INLINE_INSERT_THRESHOLD {
-        let mut query_builder = QueryBuilder::<Postgres>::new(
-            "INSERT INTO blobs (parent_dp_hash, tx_hash, blob_index, identity, contract_name, data) ",
-        );
-        query_builder.push_values(rows.into_iter(), |mut b, row| {
-            b.push_bind(row.parent_dp_hash)
-                .push_bind(row.tx_hash)
-                .push_bind(row.blob_index)
-                .push_bind(row.identity)
-                .push_bind(row.contract_name.0)
-                .push_bind(row.data);
-        });
-        query_builder.build().execute(&mut **transaction).await?;
-        return Ok(());
+    // For large BYTEA payloads, prefer bind-based VALUES with byte-size chunking.
+    // COPY text would hex-expand payload (~2x bytes) and can be much slower.
+    let mut batch = Vec::new();
+    let mut batch_bytes = 0_usize;
+
+    for row in rows {
+        let row_bytes = row.data.len();
+        let would_overflow_rows = batch.len() >= MAX_BLOB_ROWS_PER_BATCH;
+        let would_overflow_bytes =
+            !batch.is_empty() && batch_bytes.saturating_add(row_bytes) > MAX_BLOB_BYTES_PER_BATCH;
+        if would_overflow_rows || would_overflow_bytes {
+            insert_blobs_values(transaction, std::mem::take(&mut batch)).await?;
+            batch_bytes = 0;
+        }
+        batch_bytes = batch_bytes.saturating_add(row_bytes);
+        batch.push(row);
     }
 
-    let mut lines = Vec::with_capacity(rows.len());
-    for row in rows {
-        lines.push(format!(
-            "{}\t{}\t{}\t{}\t{}\t\\\\x{}\n",
-            row.parent_dp_hash,
-            row.tx_hash,
-            row.blob_index,
-            escape_copy_text(row.identity.as_str()),
-            row.contract_name,
-            hex::encode(row.data),
-        ));
+    if !batch.is_empty() {
+        insert_blobs_values(transaction, batch).await?;
     }
-    let mut stream = StreamableData::new(lines);
-    let mut copy = transaction
-        .copy_in_raw(
-            "COPY blobs (parent_dp_hash, tx_hash, blob_index, identity, contract_name, data) FROM STDIN WITH (FORMAT TEXT)",
-        )
-        .await?;
-    copy.read_from(&mut stream).await?;
-    copy.finish().await?;
+    Ok(())
+}
+
+async fn insert_blobs_values(
+    transaction: &mut sqlx::Transaction<'_, Postgres>,
+    rows: Vec<BlobRow>,
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let mut query_builder = QueryBuilder::<Postgres>::new(
+        "INSERT INTO blobs (parent_dp_hash, tx_hash, blob_index, identity, contract_name, data) ",
+    );
+    query_builder.push_values(rows.into_iter(), |mut b, row| {
+        b.push_bind(row.parent_dp_hash)
+            .push_bind(row.tx_hash)
+            .push_bind(row.blob_index)
+            .push_bind(row.identity)
+            .push_bind(row.contract_name.0)
+            .push_bind(row.data);
+    });
+    query_builder.build().execute(&mut **transaction).await?;
     Ok(())
 }
 
@@ -1383,6 +1779,13 @@ fn escape_copy_text(value: &str) -> String {
 
 fn copy_optional_text(value: Option<&str>) -> String {
     value
+        .map(escape_copy_text)
+        .unwrap_or_else(|| "\\N".to_string())
+}
+
+fn copy_optional_owned_text(value: Option<String>) -> String {
+    value
+        .as_deref()
         .map(escape_copy_text)
         .unwrap_or_else(|| "\\N".to_string())
 }
