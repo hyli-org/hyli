@@ -14,7 +14,7 @@ use crate::{
     clock::TimestampMsClock,
     metrics::P2PMetrics,
     ordered_join_set::OrderedJoinSet,
-    tcp::{tcp_client::TcpClient, Handshake, TcpHeaders, TcpMessageLabel},
+    tcp::{tcp_client::TcpClient, Handshake, TcpHeaders, TcpMessageLabel, TcpServerLike},
 };
 use hyli_turmoil_shims::collections::HashMap;
 
@@ -1221,7 +1221,9 @@ pub mod tests {
     use tokio::net::TcpListener;
 
     use crate::clock::TimestampMsClock;
-    use crate::tcp::{p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent};
+    use crate::tcp::{
+        p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent, TcpServerLike,
+    };
 
     use super::P2PTcpEvent;
 

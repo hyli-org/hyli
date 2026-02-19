@@ -201,7 +201,7 @@ mod tests {
     use std::time::Duration;
 
     use super::TcpClient;
-    use crate::tcp::tcp_server::TcpServer;
+    use crate::tcp::{tcp_server::TcpServer, TcpServerLike};
 
     type TestTCPServer = TcpServer<String, String>;
     type TestTCPClient = TcpClient<String, String>;

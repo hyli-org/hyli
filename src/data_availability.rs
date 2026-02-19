@@ -8,8 +8,9 @@ use hyli_modules::modules::da_listener::{DaStreamPoll, SignedDaStream};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::middleware::{
-    middleware_layer, DropOnError, MessageOnly, RetryingSend, TcpServerExt, TcpServerLike,
+    middleware_layer, DropOnError, MessageOnly, RetryingSend, TcpServerExt,
 };
+use hyli_net::tcp::TcpServerLike;
 use tokio::task::JoinHandle;
 
 use crate::{
@@ -1261,7 +1262,7 @@ pub mod tests {
     use hyli_modules::node_state::module::NodeStateBusClient;
     use hyli_modules::node_state::NodeState;
     use hyli_modules::utils::da_codec::DataAvailabilityClient;
-    use hyli_net::tcp::middleware::TcpServerLike;
+    use hyli_net::tcp::TcpServerLike;
     use staking::state::Staking;
     use tokio::task::JoinSet;
 
