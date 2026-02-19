@@ -36,6 +36,12 @@ type TcpReceiver = SplitStream<FramedStream>;
 
 pub struct ConnectedClients<'a>(std::collections::hash_map::Keys<'a, String, SocketStream>);
 
+impl<'a> ConnectedClients<'a> {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
 impl<'a> Iterator for ConnectedClients<'a> {
     type Item = &'a String;
 
@@ -862,7 +868,7 @@ pub mod tests {
         let client2_addr = server
             .connected_clients()
             .cloned()
-            .rfind(|addr| addr != &client1_addr)
+            .find(|addr| addr != &client1_addr)
             .unwrap();
 
         server.raw_send_parallel(
@@ -912,7 +918,7 @@ pub mod tests {
         let client2_addr = server
             .connected_clients()
             .cloned()
-            .rfind(|addr| addr != &client1_addr)
+            .find(|addr| addr != &client1_addr)
             .unwrap();
 
         _ = server.send(

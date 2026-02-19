@@ -7,10 +7,56 @@ use crate::tcp::{tcp_server::TcpServer, TcpEvent, TcpHeaders, TcpMessageLabel};
 
 mod impls;
 
-pub use impls::{
-    DropOnError, MessageOnly, QueuedSendWithRetry, QueuedSenderMiddleware, RetryingSend,
-    TcpInboundMessage,
-};
+pub use impls::{DropOnError, MessageOnly, RetryingSend, TcpInboundMessage};
+
+#[macro_export]
+macro_rules! tcp_middleware_chain_type {
+    ($req:ty, $res:ty; $($mw:ty),+ $(,)?) => {
+        $crate::tcp_middleware_chain_type!($req, $res, $($mw),+)
+    };
+    ($req:ty, $res:ty, $($mw:ty),+ $(,)?) => {
+        $crate::tcp_middleware_chain_type!(
+            @inner
+            $req,
+            $res,
+            $crate::tcp::tcp_server::TcpServer<$req, $res>;
+            $($mw),+
+        )
+    };
+    ($req:ty, $res:ty, base = $base:ty, $($mw:ty),* $(,)?) => {
+        $crate::tcp_middleware_chain_type!(@inner $req, $res, $base; $($mw),*)
+    };
+    (@inner $req:ty, $res:ty, $inner:ty; ) => {
+        $inner
+    };
+    (@inner $req:ty, $res:ty, $inner:ty; $head:ty $(, $tail:ty)*) => {
+        $crate::tcp::middleware::TcpServerWithMiddleware<
+            $head,
+            $req,
+            $res,
+            $crate::tcp_middleware_chain_type!(@inner $req, $res, $inner; $($tail),*)
+        >
+    };
+}
+
+#[macro_export]
+macro_rules! tcp_server {
+    (
+        request: $req:ty,
+        response: $res:ty,
+        middlewares: [$($mw:ty),+ $(,)?]
+        $(,)?
+    ) => {
+        $crate::tcp_middleware_chain_type!($req, $res; $($mw),+)
+    };
+    (
+        request: $req:ty,
+        response: $res:ty
+        $(,)?
+    ) => {
+        $crate::tcp::tcp_server::TcpServer<$req, $res>
+    };
+}
 
 pub trait Layer<S, Req, Res> {
     type Service;
@@ -93,7 +139,7 @@ where
         S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
         Res: Clone,
     {
-        match server.send_ref(&socket_addr, &msg, &headers) {
+        match server.send(socket_addr.clone(), msg.clone(), headers.clone()) {
             Ok(()) => Ok(()),
             Err(error) => {
                 let ctx = SendErrorContext {
@@ -219,24 +265,6 @@ where
     }
 }
 
-impl<S, M, Req, Res> TcpServerWithMiddleware<M, Req, Res, S>
-where
-    Req: TcpReqBound,
-    Res: TcpResBound + Clone,
-    S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
-    M: TcpMiddleware<Req, Res> + QueuedSenderMiddleware<Req, Res>,
-{
-    /// Mark a peer as a streaming subscriber.
-    pub fn register_streaming_peer(&mut self, socket_addr: String) {
-        self.middleware.register_streaming_peer(socket_addr);
-    }
-
-    /// Queue a message to all registered streaming peers.
-    pub fn enqueue_to_streaming_peers(&mut self, msg: Res, headers: TcpHeaders) {
-        self.middleware.enqueue_to_streaming_peers(msg, headers);
-    }
-}
-
 impl<S, M, Req, Res> TcpServerLike<Req, Res> for TcpServerWithMiddleware<M, Req, Res, S>
 where
     Req: TcpReqBound,
@@ -284,7 +312,7 @@ where
     where
         Res: Clone,
     {
-        self.inner.send_ref(socket_addr, msg, headers)
+        self.send(socket_addr.to_string(), msg.clone(), headers.clone())
     }
 
     fn connected_clients(&self) -> Self::ConnectedClients<'_> {
