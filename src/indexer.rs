@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use hyli_bus::modules::ModulePersistOutput;
 use hyli_model::api::{ContractChangeType, TransactionStatusDb, TransactionTypeDb};
 use hyli_model::utils::TimestampMs;
+use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, Histogram, KeyValue};
 use hyli_modules::{
     bus::BusClientSender, modules::indexer::MIGRATOR, node_state::NodeStateEventCallback,
 };
@@ -22,6 +23,7 @@ use hyli_modules::{
 use hyli_net::clock::TimestampMsClock;
 use serde::Serialize;
 use sqlx::{postgres::PgPoolOptions, PgConnection, PgPool, Pool, Postgres, QueryBuilder, Row};
+use std::time::Instant;
 use std::{collections::HashMap, collections::HashSet, ops::Deref, path::PathBuf};
 use tokio::io::ReadBuf;
 use tracing::warn;
@@ -42,6 +44,7 @@ pub struct Indexer {
     db: PgPool,
     node_state: NodeState,
     handler_store: IndexerHandlerStore,
+    metrics: IndexerMetrics,
     conf: Conf,
 }
 
@@ -85,6 +88,7 @@ impl Module for Indexer {
             db: pool,
             node_state,
             handler_store: IndexerHandlerStore::default(),
+            metrics: IndexerMetrics::global(),
             conf,
         };
 
@@ -380,6 +384,60 @@ struct ContractHistoryRow {
     deleted_at_height: Option<i32>,
     parent_dp_hash: DataProposalHash,
     tx_hash: TxHash,
+}
+
+#[derive(Clone)]
+struct IndexerMetrics {
+    flush_duration_seconds: Histogram<f64>,
+    pending_rows: Gauge<u64>,
+    rows_written_total: Counter<u64>,
+    bytes_written_total: Counter<u64>,
+    write_duration_seconds: Histogram<f64>,
+}
+
+impl IndexerMetrics {
+    fn global() -> Self {
+        let meter = global_meter_or_panic();
+        Self {
+            flush_duration_seconds: meter
+                .f64_histogram("indexer_flush_duration_seconds")
+                .build(),
+            pending_rows: meter.u64_gauge("indexer_pending_rows").build(),
+            rows_written_total: meter.u64_counter("indexer_rows_written_total").build(),
+            bytes_written_total: meter.u64_counter("indexer_bytes_written_total").build(),
+            write_duration_seconds: meter
+                .f64_histogram("indexer_write_duration_seconds")
+                .build(),
+        }
+    }
+
+    fn record_pending_rows(&self, table: &'static str, rows: usize) {
+        self.pending_rows
+            .record(rows as u64, &[KeyValue::new("table", table)]);
+    }
+
+    fn add_rows_written(&self, table: &'static str, mode: &'static str, rows: usize) {
+        self.rows_written_total.add(
+            rows as u64,
+            &[KeyValue::new("table", table), KeyValue::new("mode", mode)],
+        );
+    }
+
+    fn add_bytes_written(&self, table: &'static str, bytes: usize) {
+        self.bytes_written_total
+            .add(bytes as u64, &[KeyValue::new("table", table)]);
+    }
+
+    fn record_write_duration(&self, table: &'static str, mode: &'static str, elapsed_s: f64) {
+        self.write_duration_seconds.record(
+            elapsed_s,
+            &[KeyValue::new("table", table), KeyValue::new("mode", mode)],
+        );
+    }
+
+    fn record_flush_duration(&self, elapsed_s: f64) {
+        self.flush_duration_seconds.record(elapsed_s, &[]);
+    }
 }
 
 impl IndexerHandlerStore {
@@ -883,6 +941,32 @@ impl NodeStateCallback for IndexerHandlerStore {
 impl Indexer {
     pub(crate) async fn dump_store_to_db(&mut self) -> Result<()> {
         tracing::debug!("Dumping SQL queries to database");
+        let flush_start = Instant::now();
+
+        let pending_txs_contracts: usize = self
+            .handler_store
+            .txs
+            .values()
+            .map(|tx| tx.contract_names.len())
+            .sum();
+        self.metrics
+            .record_pending_rows("transactions", self.handler_store.txs.len());
+        self.metrics
+            .record_pending_rows("txs_contracts", pending_txs_contracts);
+        self.metrics
+            .record_pending_rows("contracts", self.handler_store.contract_inserts.len());
+        self.metrics.record_pending_rows(
+            "contract_history",
+            self.handler_store.contract_history.len(),
+        );
+        self.metrics
+            .record_pending_rows("tx_events", self.handler_store.tx_events.len());
+        self.metrics
+            .record_pending_rows("blobs", self.handler_store.blobs.len());
+        self.metrics.record_pending_rows(
+            "blob_proof_outputs",
+            self.handler_store.blob_proof_outputs.len(),
+        );
 
         let mut transaction = self.db.begin().await?;
         let mut block_notifications = Vec::new();
@@ -914,7 +998,7 @@ impl Indexer {
 
         // Then transactions
         let tx_rows: Vec<TxStore> = self.handler_store.txs.drain().map(|(_, tx)| tx).collect();
-        upsert_transactions(&mut transaction, tx_rows.as_slice()).await?;
+        upsert_transactions(&self.metrics, &mut transaction, tx_rows.as_slice()).await?;
 
         // Then txs_contracts
         let mut tx_contract_rows = Vec::new();
@@ -931,7 +1015,7 @@ impl Indexer {
                 });
             }
         }
-        insert_txs_contracts(&mut transaction, tx_contract_rows).await?;
+        insert_txs_contracts(&self.metrics, &mut transaction, tx_contract_rows).await?;
 
         // Merge contract updates into inserts when both affect the same row in this flush.
         let pending_contract_updates = std::mem::take(&mut self.handler_store.contract_updates);
@@ -975,7 +1059,7 @@ impl Indexer {
                 deleted_at_height: contract.deleted_at_height,
             });
         }
-        upsert_contracts(&mut transaction, contract_rows).await?;
+        upsert_contracts(&self.metrics, &mut transaction, contract_rows).await?;
 
         // Insert contract history
         let contract_history_rows: Vec<ContractHistoryRow> = self
@@ -997,10 +1081,10 @@ impl Indexer {
                 tx_hash: history.tx_hash,
             })
             .collect();
-        insert_contract_history(&mut transaction, contract_history_rows).await?;
+        insert_contract_history(&self.metrics, &mut transaction, contract_history_rows).await?;
 
         let tx_event_rows = std::mem::take(&mut self.handler_store.tx_events);
-        insert_or_copy_tx_events(&mut transaction, tx_event_rows).await?;
+        insert_or_copy_tx_events(&self.metrics, &mut transaction, tx_event_rows).await?;
 
         let blob_rows: Vec<_> = self
             .handler_store
@@ -1008,7 +1092,7 @@ impl Indexer {
             .drain()
             .map(|(_, row)| row)
             .collect();
-        insert_or_copy_blobs(&mut transaction, blob_rows).await?;
+        insert_or_copy_blobs(&self.metrics, &mut transaction, blob_rows).await?;
 
         let proof_rows: Vec<_> = self
             .handler_store
@@ -1016,7 +1100,7 @@ impl Indexer {
             .drain()
             .map(|(_, row)| row)
             .collect();
-        insert_or_copy_blob_proof_outputs(&mut transaction, proof_rows).await?;
+        insert_or_copy_blob_proof_outputs(&self.metrics, &mut transaction, proof_rows).await?;
 
         let mut contract_update_rows =
             Vec::with_capacity(self.handler_store.contract_updates.len());
@@ -1032,16 +1116,18 @@ impl Indexer {
                 deleted_at_height: update.deleted_at_height,
             });
         }
-        apply_contract_updates(&mut transaction, contract_update_rows).await?;
+        apply_contract_updates(&self.metrics, &mut transaction, contract_update_rows).await?;
 
         if !contract_notifications.is_empty() {
-            send_contract_notifications(&mut *transaction, contract_notifications).await?;
+            send_contract_notifications(&mut transaction, contract_notifications).await?;
         }
         if !block_notifications.is_empty() {
-            send_block_notifications(&mut *transaction, block_notifications).await?;
+            send_block_notifications(&mut transaction, block_notifications).await?;
         }
 
         transaction.commit().await?;
+        self.metrics
+            .record_flush_duration(flush_start.elapsed().as_secs_f64());
         Ok(())
     }
 }
@@ -1093,6 +1179,7 @@ fn contract_change_type_array_text(values: &[ContractChangeType]) -> String {
 }
 
 async fn upsert_transactions(
+    metrics: &IndexerMetrics,
     transaction: &mut sqlx::Transaction<'_, Postgres>,
     rows: &[TxStore],
 ) -> Result<()> {
@@ -1101,6 +1188,7 @@ async fn upsert_transactions(
     }
 
     if rows.len() <= INLINE_INSERT_THRESHOLD {
+        let started = Instant::now();
         let tx_batch_size = calculate_optimal_batch_size(10);
         for chunk in rows.chunks(tx_batch_size) {
             let mut query_builder = QueryBuilder::<Postgres>::new(
@@ -1153,9 +1241,13 @@ async fn upsert_transactions(
             );
             query_builder.build().execute(&mut **transaction).await?;
         }
+        metrics.add_rows_written("transactions", "values", rows.len());
+        metrics.record_write_duration("transactions", "values", started.elapsed().as_secs_f64());
+        metrics.add_bytes_written("transactions", rows.len() * (64 + 64 + 16 + 16 + 16 + 16));
         return Ok(());
     }
 
+    let started = Instant::now();
     sqlx::query(
         "CREATE TEMPORARY TABLE transactions_stage (
             parent_dp_hash TEXT NOT NULL,
@@ -1189,6 +1281,7 @@ async fn upsert_transactions(
             copy_optional_text(tx.identity.as_deref()),
         ));
     }
+    let staged_bytes: usize = lines.iter().map(|l| l.len()).sum();
 
     let mut stream = StreamableData::new(lines);
     let mut copy = transaction
@@ -1236,18 +1329,24 @@ async fn upsert_transactions(
     )
     .execute(&mut **transaction)
     .await?;
+    metrics.add_rows_written("transactions", "copy", rows.len());
+    metrics.record_write_duration("transactions", "copy", started.elapsed().as_secs_f64());
+    metrics.add_bytes_written("transactions", staged_bytes);
     Ok(())
 }
 
 async fn insert_txs_contracts(
+    metrics: &IndexerMetrics,
     transaction: &mut sqlx::Transaction<'_, Postgres>,
     rows: Vec<TxContractRow>,
 ) -> Result<()> {
+    let row_count = rows.len();
     if rows.is_empty() {
         return Ok(());
     }
 
     if rows.len() <= INLINE_INSERT_THRESHOLD {
+        let started = Instant::now();
         let batch_size = calculate_optimal_batch_size(3);
         for chunk in rows.chunks(batch_size) {
             let mut query_builder = QueryBuilder::<Postgres>::new(
@@ -1261,9 +1360,13 @@ async fn insert_txs_contracts(
             query_builder.push(" ON CONFLICT DO NOTHING");
             query_builder.build().execute(&mut **transaction).await?;
         }
+        metrics.add_rows_written("txs_contracts", "values", row_count);
+        metrics.record_write_duration("txs_contracts", "values", started.elapsed().as_secs_f64());
+        metrics.add_bytes_written("txs_contracts", row_count * (64 + 64 + 32));
         return Ok(());
     }
 
+    let started = Instant::now();
     sqlx::query(
         "CREATE TEMPORARY TABLE txs_contracts_stage (
             parent_dp_hash TEXT NOT NULL,
@@ -1283,6 +1386,7 @@ async fn insert_txs_contracts(
             escape_copy_text(row.contract_name.as_str())
         ));
     }
+    let staged_bytes: usize = lines.iter().map(|l| l.len()).sum();
     let mut stream = StreamableData::new(lines);
     let mut copy = transaction
         .copy_in_raw(
@@ -1299,18 +1403,24 @@ async fn insert_txs_contracts(
     )
     .execute(&mut **transaction)
     .await?;
+    metrics.add_rows_written("txs_contracts", "copy", row_count);
+    metrics.record_write_duration("txs_contracts", "copy", started.elapsed().as_secs_f64());
+    metrics.add_bytes_written("txs_contracts", staged_bytes);
     Ok(())
 }
 
 async fn upsert_contracts(
+    metrics: &IndexerMetrics,
     transaction: &mut sqlx::Transaction<'_, Postgres>,
     rows: Vec<ContractUpsertRow>,
 ) -> Result<()> {
+    let row_count = rows.len();
     if rows.is_empty() {
         return Ok(());
     }
 
     if rows.len() <= INLINE_INSERT_THRESHOLD {
+        let started = Instant::now();
         let batch_size = calculate_optimal_batch_size(10);
         for chunk in rows.chunks(batch_size) {
             let mut query_builder = QueryBuilder::<Postgres>::new(
@@ -1342,9 +1452,13 @@ async fn upsert_contracts(
             );
             query_builder.build().execute(&mut **transaction).await?;
         }
+        metrics.add_rows_written("contracts", "values", row_count);
+        metrics.record_write_duration("contracts", "values", started.elapsed().as_secs_f64());
+        metrics.add_bytes_written("contracts", row_count * (64 + 64 + 64));
         return Ok(());
     }
 
+    let started = Instant::now();
     sqlx::query(
         "CREATE TEMPORARY TABLE contracts_stage (
             contract_name TEXT PRIMARY KEY NOT NULL,
@@ -1364,20 +1478,23 @@ async fn upsert_contracts(
 
     let mut lines = Vec::with_capacity(rows.len());
     for row in rows {
+        let program_id_hex = format!("\\\\x{}", hex::encode(row.program_id));
+        let state_commitment_hex = format!("\\\\x{}", hex::encode(row.state_commitment));
         lines.push(format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             escape_copy_text(row.contract_name.as_str()),
             escape_copy_text(row.verifier.as_str()),
-            format!("\\\\x{}", hex::encode(row.program_id)),
+            program_id_hex,
             copy_optional_i64(row.soft_timeout),
             copy_optional_i64(row.hard_timeout),
-            format!("\\\\x{}", hex::encode(row.state_commitment)),
+            state_commitment_hex,
             row.parent_dp_hash,
             row.tx_hash,
             copy_optional_bytea(row.metadata.as_deref()),
             copy_optional_i32(row.deleted_at_height),
         ));
     }
+    let staged_bytes: usize = lines.iter().map(|l| l.len()).sum();
     let mut stream = StreamableData::new(lines);
     let mut copy = transaction
         .copy_in_raw(
@@ -1404,18 +1521,24 @@ async fn upsert_contracts(
     )
     .execute(&mut **transaction)
     .await?;
+    metrics.add_rows_written("contracts", "copy", row_count);
+    metrics.record_write_duration("contracts", "copy", started.elapsed().as_secs_f64());
+    metrics.add_bytes_written("contracts", staged_bytes);
     Ok(())
 }
 
 async fn insert_contract_history(
+    metrics: &IndexerMetrics,
     transaction: &mut sqlx::Transaction<'_, Postgres>,
     rows: Vec<ContractHistoryRow>,
 ) -> Result<()> {
+    let row_count = rows.len();
     if rows.is_empty() {
         return Ok(());
     }
 
     if rows.len() <= INLINE_INSERT_THRESHOLD {
+        let started = Instant::now();
         let batch_size = calculate_optimal_batch_size(12);
         for chunk in rows.chunks(batch_size) {
             let mut query_builder = QueryBuilder::<Postgres>::new(
@@ -1438,9 +1561,17 @@ async fn insert_contract_history(
             query_builder.push(" ON CONFLICT (contract_name, block_height, tx_index) DO NOTHING");
             query_builder.build().execute(&mut **transaction).await?;
         }
+        metrics.add_rows_written("contract_history", "values", row_count);
+        metrics.record_write_duration(
+            "contract_history",
+            "values",
+            started.elapsed().as_secs_f64(),
+        );
+        metrics.add_bytes_written("contract_history", row_count * (64 + 64 + 32));
         return Ok(());
     }
 
+    let started = Instant::now();
     sqlx::query(
         "CREATE TEMPORARY TABLE contract_history_stage (
             contract_name TEXT NOT NULL,
@@ -1462,6 +1593,8 @@ async fn insert_contract_history(
 
     let mut lines = Vec::with_capacity(rows.len());
     for row in rows {
+        let program_id_hex = format!("\\\\x{}", hex::encode(row.program_id));
+        let state_commitment_hex = format!("\\\\x{}", hex::encode(row.state_commitment));
         lines.push(format!(
             "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             escape_copy_text(row.contract_name.as_str()),
@@ -1469,8 +1602,8 @@ async fn insert_contract_history(
             row.tx_index,
             contract_change_type_array_text(&row.change_type),
             escape_copy_text(row.verifier.as_str()),
-            format!("\\\\x{}", hex::encode(row.program_id)),
-            format!("\\\\x{}", hex::encode(row.state_commitment)),
+            program_id_hex,
+            state_commitment_hex,
             copy_optional_i64(row.soft_timeout),
             copy_optional_i64(row.hard_timeout),
             copy_optional_i32(row.deleted_at_height),
@@ -1478,6 +1611,7 @@ async fn insert_contract_history(
             row.tx_hash,
         ));
     }
+    let staged_bytes: usize = lines.iter().map(|l| l.len()).sum();
 
     let mut stream = StreamableData::new(lines);
     let mut copy = transaction
@@ -1496,19 +1630,25 @@ async fn insert_contract_history(
     )
     .execute(&mut **transaction)
     .await?;
+    metrics.add_rows_written("contract_history", "copy", row_count);
+    metrics.record_write_duration("contract_history", "copy", started.elapsed().as_secs_f64());
+    metrics.add_bytes_written("contract_history", staged_bytes);
 
     Ok(())
 }
 
 async fn insert_or_copy_tx_events(
+    metrics: &IndexerMetrics,
     transaction: &mut sqlx::Transaction<'_, Postgres>,
     rows: Vec<TxEventRow>,
 ) -> Result<()> {
+    let row_count = rows.len();
     if rows.is_empty() {
         return Ok(());
     }
 
     if rows.len() <= INLINE_INSERT_THRESHOLD {
+        let started = Instant::now();
         let mut query_builder = QueryBuilder::<Postgres>::new(
             "INSERT INTO transaction_state_events (block_hash, block_height, parent_dp_hash, tx_hash, index, event) ",
         );
@@ -1521,9 +1661,13 @@ async fn insert_or_copy_tx_events(
                 .push_bind(row.event);
         });
         query_builder.build().execute(&mut **transaction).await?;
+        metrics.add_rows_written("tx_events", "values", row_count);
+        metrics.record_write_duration("tx_events", "values", started.elapsed().as_secs_f64());
+        metrics.add_bytes_written("tx_events", row_count * (64 + 64 + 256));
         return Ok(());
     }
 
+    let started = Instant::now();
     let mut lines = Vec::with_capacity(rows.len());
     for row in rows {
         lines.push(format!(
@@ -1536,23 +1680,31 @@ async fn insert_or_copy_tx_events(
             escape_copy_text(row.event.to_string().as_str()),
         ));
     }
+    let staged_bytes: usize = lines.iter().map(|l| l.len()).sum();
     let mut stream = StreamableData::new(lines);
     let mut copy = transaction
         .copy_in_raw("COPY transaction_state_events (block_hash, block_height, parent_dp_hash, tx_hash, index, event) FROM STDIN WITH (FORMAT TEXT)")
         .await?;
     copy.read_from(&mut stream).await?;
     copy.finish().await?;
+    metrics.add_rows_written("tx_events", "copy", row_count);
+    metrics.record_write_duration("tx_events", "copy", started.elapsed().as_secs_f64());
+    metrics.add_bytes_written("tx_events", staged_bytes);
     Ok(())
 }
 
 async fn insert_or_copy_blobs(
+    metrics: &IndexerMetrics,
     transaction: &mut sqlx::Transaction<'_, Postgres>,
     rows: Vec<BlobRow>,
 ) -> Result<()> {
+    let row_count = rows.len();
     if rows.is_empty() {
         return Ok(());
     }
 
+    let total_bytes: usize = rows.iter().map(|r| r.data.len()).sum();
+    let started = Instant::now();
     // For large BYTEA payloads, prefer bind-based VALUES with byte-size chunking.
     // COPY text would hex-expand payload (~2x bytes) and can be much slower.
     let mut batch = Vec::new();
@@ -1574,6 +1726,9 @@ async fn insert_or_copy_blobs(
     if !batch.is_empty() {
         insert_blobs_values(transaction, batch).await?;
     }
+    metrics.add_rows_written("blobs", "values", row_count);
+    metrics.record_write_duration("blobs", "values", started.elapsed().as_secs_f64());
+    metrics.add_bytes_written("blobs", total_bytes);
     Ok(())
 }
 
@@ -1600,14 +1755,17 @@ async fn insert_blobs_values(
 }
 
 async fn insert_or_copy_blob_proof_outputs(
+    metrics: &IndexerMetrics,
     transaction: &mut sqlx::Transaction<'_, Postgres>,
     rows: Vec<BlobProofOutputRow>,
 ) -> Result<()> {
+    let row_count = rows.len();
     if rows.is_empty() {
         return Ok(());
     }
 
     if rows.len() <= INLINE_INSERT_THRESHOLD {
+        let started = Instant::now();
         let mut query_builder = QueryBuilder::<Postgres>::new(
             "INSERT INTO blob_proof_outputs (blob_parent_dp_hash, blob_tx_hash, proof_parent_dp_hash, proof_tx_hash, blob_index, blob_proof_output_index, contract_name, hyli_output, settled) ",
         );
@@ -1623,9 +1781,17 @@ async fn insert_or_copy_blob_proof_outputs(
                 .push_bind(row.settled);
         });
         query_builder.build().execute(&mut **transaction).await?;
+        metrics.add_rows_written("blob_proof_outputs", "values", row_count);
+        metrics.record_write_duration(
+            "blob_proof_outputs",
+            "values",
+            started.elapsed().as_secs_f64(),
+        );
+        metrics.add_bytes_written("blob_proof_outputs", row_count * 256);
         return Ok(());
     }
 
+    let started = Instant::now();
     let mut lines = Vec::with_capacity(rows.len());
     for row in rows {
         lines.push(format!(
@@ -1641,24 +1807,35 @@ async fn insert_or_copy_blob_proof_outputs(
             row.settled,
         ));
     }
+    let staged_bytes: usize = lines.iter().map(|l| l.len()).sum();
     let mut stream = StreamableData::new(lines);
     let mut copy = transaction
         .copy_in_raw("COPY blob_proof_outputs (blob_parent_dp_hash, blob_tx_hash, proof_parent_dp_hash, proof_tx_hash, blob_index, blob_proof_output_index, contract_name, hyli_output, settled) FROM STDIN WITH (FORMAT TEXT)")
         .await?;
     copy.read_from(&mut stream).await?;
     copy.finish().await?;
+    metrics.add_rows_written("blob_proof_outputs", "copy", row_count);
+    metrics.record_write_duration(
+        "blob_proof_outputs",
+        "copy",
+        started.elapsed().as_secs_f64(),
+    );
+    metrics.add_bytes_written("blob_proof_outputs", staged_bytes);
     Ok(())
 }
 
 async fn apply_contract_updates(
+    metrics: &IndexerMetrics,
     transaction: &mut sqlx::Transaction<'_, Postgres>,
     rows: Vec<ContractUpdateRow>,
 ) -> Result<()> {
+    let row_count = rows.len();
     if rows.is_empty() {
         return Ok(());
     }
 
     if rows.len() <= INLINE_INSERT_THRESHOLD {
+        let started = Instant::now();
         let mut query_builder = QueryBuilder::<Postgres>::new(
             "UPDATE contracts SET
                 verifier = COALESCE(contract_updates.verifier, contracts.verifier),
@@ -1683,9 +1860,17 @@ async fn apply_contract_updates(
             WHERE contracts.contract_name = contract_updates.contract_name",
         );
         query_builder.build().execute(&mut **transaction).await?;
+        metrics.add_rows_written("contract_updates", "values", row_count);
+        metrics.record_write_duration(
+            "contract_updates",
+            "values",
+            started.elapsed().as_secs_f64(),
+        );
+        metrics.add_bytes_written("contract_updates", row_count * 128);
         return Ok(());
     }
 
+    let started = Instant::now();
     sqlx::query(
         "CREATE TEMPORARY TABLE contract_updates (
             contract_name TEXT PRIMARY KEY NOT NULL,
@@ -1713,6 +1898,7 @@ async fn apply_contract_updates(
             copy_optional_i32(row.deleted_at_height),
         ));
     }
+    let staged_bytes: usize = updates_stream.0.iter().map(|l| l.len()).sum();
 
     let mut copy = transaction
         .copy_in_raw(
@@ -1735,6 +1921,9 @@ async fn apply_contract_updates(
     )
     .execute(&mut **transaction)
     .await?;
+    metrics.add_rows_written("contract_updates", "copy", row_count);
+    metrics.record_write_duration("contract_updates", "copy", started.elapsed().as_secs_f64());
+    metrics.add_bytes_written("contract_updates", staged_bytes);
 
     Ok(())
 }

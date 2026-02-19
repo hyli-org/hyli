@@ -51,6 +51,7 @@ async fn new_indexer(pool: PgPool) -> (Indexer, Explorer) {
             db: pool.clone(),
             node_state: NodeState::create("indexer"),
             handler_store: IndexerHandlerStore::default(),
+            metrics: IndexerMetrics::global(),
             conf,
         },
         Explorer::new(bus, pool).await,
