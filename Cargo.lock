@@ -5371,6 +5371,7 @@ dependencies = [
  "hyli-model",
  "hyli-modules",
  "hyli-net",
+ "hyli-net-traits",
  "hyli-risc0-recursion",
  "hyli-smt-token",
  "hyli-staking",
@@ -5602,6 +5603,7 @@ dependencies = [
  "derive_more 2.1.1",
  "hex",
  "hyli-bus",
+ "hyli-net-traits",
  "readonly",
  "secp256k1 0.31.1",
  "serde",
@@ -5675,6 +5677,7 @@ dependencies = [
  "hyli-bus",
  "hyli-contract-sdk",
  "hyli-crypto",
+ "hyli-net-traits",
  "hyli-turmoil-shims",
  "hyper 1.8.1",
  "hyper-util",
@@ -5685,7 +5688,6 @@ dependencies = [
  "seq-macro",
  "serde",
  "serde_json",
- "strum_macros 0.27.2",
  "test-log",
  "tokio",
  "tokio-util",
@@ -5693,6 +5695,23 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "turmoil",
+]
+
+[[package]]
+name = "hyli-net-macros"
+version = "0.14.0"
+dependencies = [
+ "proc-macro-crate 3.4.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
+]
+
+[[package]]
+name = "hyli-net-traits"
+version = "0.14.0"
+dependencies = [
+ "hyli-net-macros",
 ]
 
 [[package]]

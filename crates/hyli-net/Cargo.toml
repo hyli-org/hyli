@@ -13,11 +13,11 @@ sdk = { workspace = true, features = ["full-model"] }
 hyli-crypto = { workspace = true }
 hyli-turmoil-shims = { workspace = true, features = ["opentelemetry"] }
 hyli-bus = { workspace = true, optional = true }
+hyli-net-traits = { workspace = true }
 
 anyhow = { workspace = true }
 borsh = { workspace = true }
 tracing = { workspace = true }
-strum_macros = { workspace = true }
 
 # Tcp feature
 tokio = { workspace = true }

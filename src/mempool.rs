@@ -18,6 +18,7 @@ use client_sdk::tcp_client::TcpServerMessage;
 use hyli_crypto::SharedBlstCrypto;
 use hyli_modules::{bus::BusMessage, module_bus_client};
 use hyli_net::ordered_join_set::OrderedJoinSet;
+use hyli_net_traits::TcpMessageLabel;
 use hyli_turmoil_shims::{collections::HashMap, runtime::LongTasksRuntime};
 use metrics::MempoolMetrics;
 use serde::{Deserialize, Serialize};
@@ -185,6 +186,7 @@ struct MempoolBusClient {
     Eq,
     PartialEq,
     IntoStaticStr,
+    TcpMessageLabel,
 )]
 pub enum MempoolNetMessage {
     DataProposal(LaneId, DataProposalHash, DataProposal, ValidatorDAG),
@@ -201,13 +203,6 @@ impl Display for MempoolNetMessage {
         write!(f, "{enum_variant}")
     }
 }
-
-hyli_net::impl_tcp_message_label_with_prefix!(MempoolNetMessage, "MempoolNetMessage", {
-    DataProposal,
-    DataVote,
-    SyncRequest,
-    SyncReply,
-});
 
 impl IntoHeaderSignableData for MempoolNetMessage {
     fn to_header_signable_data(&self) -> HeaderSignableData {

@@ -18,12 +18,13 @@ use super::{
 
 type TcpSender = SplitSink<FramedStream, Bytes>;
 type TcpReceiver = SplitStream<FramedStream>;
+const UNKNOWN_MESSAGE_TYPE: &str = "unknown";
 
 #[derive(Debug)]
 pub struct TcpClient<Req, Res>
 where
     Req: BorshSerialize,
-    Res: BorshDeserialize,
+    Res: BorshDeserialize + TcpMessageLabel,
 {
     pub id: String,
     pub sender: TcpSender,
@@ -37,7 +38,7 @@ where
 impl<Req, Res> TcpClient<Req, Res>
 where
     Req: BorshSerialize,
-    Res: BorshDeserialize,
+    Res: BorshDeserialize + TcpMessageLabel,
 {
     pub async fn connect<
         Id: std::fmt::Display,
@@ -137,12 +138,13 @@ where
             .message_send_time(start.elapsed().as_secs_f64(), message_label);
         match res {
             Ok(()) => {
-                self.metrics.message_emitted();
-                self.metrics.message_emitted_bytes(nb_bytes as u64);
+                self.metrics.message_emitted(message_label);
+                self.metrics
+                    .message_emitted_bytes(nb_bytes as u64, message_label);
                 Ok(())
             }
             Err(e) => {
-                self.metrics.message_send_error();
+                self.metrics.message_send_error(message_label);
                 Err(e.into())
             }
         }
@@ -159,12 +161,16 @@ where
                     if *bytes == *b"PING" {
                         trace!("Ping received for client {}", self.id);
                     } else {
-                        self.metrics.message_received();
-                        self.metrics.message_received_bytes(bytes.len() as u64);
-                        match decode_tcp_payload(&bytes) {
-                            Ok((_, data)) => return Some(data),
+                        match decode_tcp_payload::<Res>(&bytes) {
+                            Ok((_, data)) => {
+                                let message_label = data.message_label();
+                                self.metrics.message_received(message_label);
+                                self.metrics
+                                    .message_received_bytes(bytes.len() as u64, message_label);
+                                return Some(data);
+                            }
                             Err(io) => {
-                                self.metrics.message_error();
+                                self.metrics.message_error(UNKNOWN_MESSAGE_TYPE);
                                 warn!("Error while deserializing data: {:#}", io);
                                 return None;
                             }
@@ -179,7 +185,7 @@ where
                 }
                 Some(Err(e)) => {
                     warn!("Error while streaming data from peer: {:#}", e);
-                    self.metrics.message_error();
+                    self.metrics.message_error(UNKNOWN_MESSAGE_TYPE);
                     return None;
                 }
             }

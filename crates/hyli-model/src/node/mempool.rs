@@ -1,11 +1,12 @@
 use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_net_traits::TcpMessageLabel;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::{collections::HashMap, fmt::Display, sync::RwLock};
 
 use crate::*;
 
-#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize, TcpMessageLabel)]
 pub enum MempoolStatusEvent {
     WaitingDissemination {
         parent_data_proposal_hash: DataProposalHash,
@@ -70,7 +71,7 @@ impl DataProposalParent {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, BorshSerialize, BorshDeserialize)]
+#[derive(Debug, Serialize, Deserialize, BorshSerialize, BorshDeserialize, TcpMessageLabel)]
 #[readonly::make]
 pub struct DataProposal {
     pub parent_data_proposal_hash: DataProposalParent,

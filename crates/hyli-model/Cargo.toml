@@ -28,6 +28,7 @@ sha2 = { workspace = true, optional = true }
 secp256k1 = { workspace = true, optional = true }
 strum = { workspace = true }
 hyli-bus = { workspace = true, optional = true }
+hyli-net-traits = { workspace = true, optional = true }
 
 [features]
 # disable default feature if you want minimalist definitions for contracts
@@ -43,6 +44,7 @@ full = [
   "dep:utoipa",
   "dep:secp256k1",
   "dep:sha2",
+  "dep:hyli-net-traits",
 ]
 sqlx = ["dep:sqlx"]
 bus = ["dep:hyli-bus"]

@@ -1,0 +1,18 @@
+[package]
+name = "hyli-net-macros"
+description = "Proc macros for hyli-net"
+license = "MIT"
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro-crate = "3"
+proc-macro2 = "1"
+quote = { workspace = true }
+syn = { workspace = true, features = ["full"] }

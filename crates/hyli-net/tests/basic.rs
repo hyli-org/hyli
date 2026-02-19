@@ -16,14 +16,8 @@ use hyli_net::{
 use hyli_turmoil_shims::init_test_meter_provider;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 
-#[derive(Clone, Debug, borsh::BorshDeserialize, borsh::BorshSerialize)]
+#[derive(Clone, Debug, borsh::BorshDeserialize, borsh::BorshSerialize, TcpMessageLabel)]
 pub struct Msg(usize);
-
-impl TcpMessageLabel for Msg {
-    fn message_label(&self) -> &'static str {
-        "Msg"
-    }
-}
 
 impl Into<P2PTcpMessage<Msg>> for Msg {
     fn into(self) -> P2PTcpMessage<Msg> {

@@ -529,28 +529,33 @@ impl TcpClientMetrics {
         }
     }
 
-    pub fn message_received(&self) {
-        self.message_received.add(1, &self.client_name_label);
+    pub fn message_received(&self, message_type: &str) {
+        let labels = self.labels_with_message_type(message_type);
+        self.message_received.add(1, &labels);
     }
 
-    pub fn message_emitted(&self) {
-        self.message_emitted.add(1, &self.client_name_label);
+    pub fn message_emitted(&self, message_type: &str) {
+        let labels = self.labels_with_message_type(message_type);
+        self.message_emitted.add(1, &labels);
     }
 
-    pub fn message_emitted_bytes(&self, len: u64) {
-        self.message_emitted_bytes.add(len, &self.client_name_label);
+    pub fn message_emitted_bytes(&self, len: u64, message_type: &str) {
+        let labels = self.labels_with_message_type(message_type);
+        self.message_emitted_bytes.add(len, &labels);
     }
 
-    pub fn message_error(&self) {
-        self.message_error.add(1, &self.client_name_label);
+    pub fn message_error(&self, message_type: &str) {
+        let labels = self.labels_with_message_type(message_type);
+        self.message_error.add(1, &labels);
     }
 
     pub fn message_closed(&self) {
         self.message_closed.add(1, &self.client_name_label);
     }
 
-    pub fn message_send_error(&self) {
-        self.message_send_error.add(1, &self.client_name_label);
+    pub fn message_send_error(&self, message_type: &str) {
+        let labels = self.labels_with_message_type(message_type);
+        self.message_send_error.add(1, &labels);
     }
 
     fn labels_with_message_type(&self, message_type: &str) -> Vec<KeyValue> {
@@ -564,9 +569,9 @@ impl TcpClientMetrics {
         self.message_send_time.record(duration, &labels);
     }
 
-    pub(crate) fn message_received_bytes(&self, len: u64) {
-        self.message_received_bytes
-            .add(len, &self.client_name_label);
+    pub(crate) fn message_received_bytes(&self, len: u64, message_type: &str) {
+        let labels = self.labels_with_message_type(message_type);
+        self.message_received_bytes.add(len, &labels);
     }
 }
 
