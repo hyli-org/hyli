@@ -192,10 +192,9 @@ pub(crate) struct IndexerHandlerStore {
 
     blocks: Vec<BlockStore>,
     txs: HashMap<TxId, TxStore>,
-    tx_status_update: HashMap<TxId, TransactionStatusDb>,
-    tx_events: StreamableData,
-    blobs: StreamableData,
-    blob_proof_outputs: StreamableData,
+    tx_events: Vec<TxEventRow>,
+    blobs: HashMap<BlobKey, BlobRow>,
+    blob_proof_outputs: HashMap<BlobProofOutputKey, BlobProofOutputRow>,
     contract_inserts: HashMap<ContractName, ContractInsertStore>,
     contract_updates: HashMap<ContractName, ContractUpdateStore>,
     contract_history: HashMap<ContractHistoryKey, ContractHistoryStore>,
@@ -285,6 +284,67 @@ struct ContractHistoryKey {
     pub tx_index: i32,
 }
 
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct BlobKey {
+    parent_dp_hash: DataProposalHash,
+    tx_hash: TxHash,
+    blob_index: i32,
+}
+
+#[derive(Debug)]
+struct BlobRow {
+    parent_dp_hash: DataProposalHash,
+    tx_hash: TxHash,
+    blob_index: i32,
+    identity: String,
+    contract_name: ContractName,
+    data: Vec<u8>,
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct BlobProofOutputKey {
+    blob_parent_dp_hash: DataProposalHash,
+    blob_tx_hash: TxHash,
+    proof_parent_dp_hash: DataProposalHash,
+    proof_tx_hash: TxHash,
+    blob_index: i32,
+    blob_proof_output_index: i32,
+}
+
+#[derive(Debug)]
+struct BlobProofOutputRow {
+    blob_parent_dp_hash: DataProposalHash,
+    blob_tx_hash: TxHash,
+    proof_parent_dp_hash: DataProposalHash,
+    proof_tx_hash: TxHash,
+    blob_index: i32,
+    blob_proof_output_index: i32,
+    contract_name: ContractName,
+    hyli_output: serde_json::Value,
+    settled: bool,
+}
+
+#[derive(Debug)]
+struct TxEventRow {
+    block_hash: BlockHash,
+    block_height: BlockHeight,
+    parent_dp_hash: DataProposalHash,
+    tx_hash: TxHash,
+    index: i32,
+    event: serde_json::Value,
+}
+
+#[derive(Debug)]
+struct ContractUpdateRow {
+    contract_name: String,
+    verifier: Option<String>,
+    program_id: Option<Vec<u8>>,
+    soft_timeout: Option<i64>,
+    hard_timeout: Option<i64>,
+    state_commitment: Option<Vec<u8>>,
+    deleted_at_height: Option<i32>,
+}
+
 impl IndexerHandlerStore {
     fn status_rank(status: &TransactionStatusDb) -> u8 {
         match status {
@@ -345,12 +405,24 @@ impl IndexerHandlerStore {
                 Self::max_status(existing.transaction_status.clone(), status);
             return;
         }
-        self.tx_status_update
-            .entry(tx_id)
-            .and_modify(|current| {
-                *current = Self::max_status(current.clone(), status.clone());
-            })
-            .or_insert(status);
+
+        let tx_hash = tx_id.1.clone();
+        let dp_hash = tx_id.0.clone();
+        self.txs.insert(
+            tx_id,
+            TxStore {
+                tx_hash,
+                dp_hash,
+                transaction_type: TransactionTypeDb::ProofTransaction,
+                block_hash: None,
+                block_height: BlockHeight(0),
+                lane_id: None,
+                index: 0,
+                identity: None,
+                transaction_status: status,
+                contract_names: HashSet::new(),
+            },
+        );
     }
 
     fn record_contract_history(&mut self, history: ContractHistoryStore) {
@@ -425,7 +497,7 @@ impl Indexer {
         // - if it's been more than 5s since last dump
         // - if the block is recent (less than 1min old) we stream as fast as we can (buffering is mostly useful when catching up)
         let now = TimestampMsClock::now();
-        if self.handler_store.tx_events.0.len() > self.conf.indexer.query_buffer_size
+        if self.handler_store.tx_events.len() > self.conf.indexer.query_buffer_size
             || self.handler_store.last_update.0 + 5000 < now.0
             || now.0.saturating_sub(self.handler_store.block_time.0) < 60 * 1000
         {
@@ -530,15 +602,20 @@ impl NodeStateCallback for IndexerHandlerStore {
                     },
                 );
                 for (index, blob) in blob_tx.blobs.iter().enumerate() {
-                    self.blobs.0.push(format!(
-                        "{}\t{}\t{}\t{}\t{}\t\\\\x{}\n",
-                        tx_id.0,
-                        tx_id.1,
-                        index,
-                        blob_tx.identity,
-                        blob.contract_name,
-                        hex::encode(&blob.data.0),
-                    ));
+                    let row = BlobRow {
+                        parent_dp_hash: tx_id.0.clone(),
+                        tx_hash: tx_id.1.clone(),
+                        blob_index: index as i32,
+                        identity: blob_tx.identity.0.clone(),
+                        contract_name: blob.contract_name.clone(),
+                        data: blob.data.0.clone(),
+                    };
+                    let key = BlobKey {
+                        parent_dp_hash: row.parent_dp_hash.clone(),
+                        tx_hash: row.tx_hash.clone(),
+                        blob_index: row.blob_index,
+                    };
+                    self.blobs.entry(key).or_insert(row);
                 }
             }
             TxEvent::SequencedProofTransaction(tx_id, lane_id, index, ..) => {
@@ -574,18 +651,27 @@ impl NodeStateCallback for IndexerHandlerStore {
             TxEvent::BlobSettled(tx_id, _tx, blob, blob_index, proof_data, blob_proof_index) => {
                 // Can be None for executed blobs
                 if let Some((_, _, proof_tx_id, hyli_output)) = proof_data {
-                    self.blob_proof_outputs.0.push(format!(
-                        "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-                        tx_id.0,
-                        tx_id.1,
-                        proof_tx_id.0,
-                        proof_tx_id.1,
-                        blob_index,
-                        blob_proof_index, // blob_proof_output_index <- this needed?
-                        blob.contract_name,
-                        serde_json::to_string(hyli_output).unwrap_or_default(),
-                        true, // settled
-                    ));
+                    let row = BlobProofOutputRow {
+                        blob_parent_dp_hash: tx_id.0.clone(),
+                        blob_tx_hash: tx_id.1.clone(),
+                        proof_parent_dp_hash: proof_tx_id.0.clone(),
+                        proof_tx_hash: proof_tx_id.1.clone(),
+                        blob_index: blob_index.0 as i32,
+                        blob_proof_output_index: blob_proof_index as i32,
+                        contract_name: blob.contract_name.clone(),
+                        hyli_output: serde_json::to_value(hyli_output)
+                            .unwrap_or(serde_json::Value::Null),
+                        settled: true,
+                    };
+                    let key = BlobProofOutputKey {
+                        blob_parent_dp_hash: row.blob_parent_dp_hash.clone(),
+                        blob_tx_hash: row.blob_tx_hash.clone(),
+                        proof_parent_dp_hash: row.proof_parent_dp_hash.clone(),
+                        proof_tx_hash: row.proof_tx_hash.clone(),
+                        blob_index: row.blob_index,
+                        blob_proof_output_index: row.blob_proof_output_index,
+                    };
+                    self.blob_proof_outputs.entry(key).or_insert(row);
                 }
             }
             TxEvent::ContractRegistered(tx_id, contract_name, contract, metadata) => {
@@ -746,18 +832,14 @@ impl NodeStateCallback for IndexerHandlerStore {
                 return;
             }
         }
-        self.tx_events.0.push(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\n",
-            self.block_hash,
-            self.block_height,
-            event.tx_id().0,
-            event.tx_id().1,
-            self.tx_events.0.len(),
-            serde_json::to_value(event)
-                .unwrap_or(serde_json::Value::Null)
-                .to_string()
-                .replace("\\", "\\\\"),
-        ));
+        self.tx_events.push(TxEventRow {
+            block_hash: self.block_hash.clone(),
+            block_height: self.block_height,
+            parent_dp_hash: event.tx_id().0.clone(),
+            tx_hash: event.tx_id().1.clone(),
+            index: self.tx_events.len() as i32,
+            event: serde_json::to_value(event).unwrap_or(serde_json::Value::Null),
+        });
     }
 }
 
@@ -794,12 +876,6 @@ impl Indexer {
         }
 
         // Then transactions
-        // Apply in-memory status updates to in-memory tx rows when possible
-        let pending_status_updates = std::mem::take(&mut self.handler_store.tx_status_update);
-        for (tx_id, status) in pending_status_updates {
-            self.handler_store.merge_tx_status(tx_id, status);
-        }
-
         let tx_rows: Vec<TxStore> = self.handler_store.txs.drain().map(|(_, tx)| tx).collect();
         let tx_batch_size = calculate_optimal_batch_size(10);
         for chunk in tx_rows.chunks(tx_batch_size) {
@@ -888,61 +964,6 @@ impl Indexer {
                 query_builder.build().execute(&mut *transaction).await,
                 "Inserting txs_contracts"
             )?;
-        }
-
-        // Then status updates
-        if !self.handler_store.tx_status_update.is_empty() {
-            sqlx::query(
-                "CREATE TEMPORARY TABLE updates (
-                    parent_dp_hash TEXT NOT NULL,
-                    tx_hash TEXT NOT NULL,
-                    transaction_status transaction_status NOT NULL
-                 ) ON COMMIT DROP",
-            )
-            .execute(&mut *transaction)
-            .await?;
-
-            let mut updates_stream = StreamableData::default();
-            for (tx_id, status) in self.handler_store.tx_status_update.drain() {
-                updates_stream
-                    .0
-                    .push(format!("{}\t{}\t{}\n", tx_id.0, tx_id.1, status));
-            }
-            let mut copy = transaction
-                .copy_in_raw(
-                    "COPY updates (parent_dp_hash, tx_hash, transaction_status) FROM STDIN WITH (FORMAT TEXT)",
-                )
-                .await?;
-            copy.read_from(&mut updates_stream).await?;
-            copy.finish().await?;
-
-            sqlx::query(
-                "UPDATE transactions SET transaction_status = updates.transaction_status
-                FROM updates
-                WHERE transactions.tx_hash = updates.tx_hash
-                  AND transactions.parent_dp_hash = updates.parent_dp_hash
-                  AND (
-                    CASE transactions.transaction_status
-                        WHEN 'waiting_dissemination' THEN 1
-                        WHEN 'data_proposal_created' THEN 2
-                        WHEN 'sequenced' THEN 3
-                        WHEN 'success' THEN 4
-                        WHEN 'failure' THEN 4
-                        WHEN 'timed_out' THEN 4
-                    END
-                  ) < (
-                    CASE updates.transaction_status
-                        WHEN 'waiting_dissemination' THEN 1
-                        WHEN 'data_proposal_created' THEN 2
-                        WHEN 'sequenced' THEN 3
-                        WHEN 'success' THEN 4
-                        WHEN 'failure' THEN 4
-                        WHEN 'timed_out' THEN 4
-                    END
-                  )",
-            )
-            .execute(&mut *transaction)
-            .await?;
         }
 
         // Merge contract updates into inserts when both affect the same row in this flush.
@@ -1041,73 +1062,40 @@ impl Indexer {
             query_builder.build().execute(&mut *transaction).await?;
         }
 
-        // COPY seems about 2x faster than INSERT
-        let mut copy = transaction.copy_in_raw("COPY transaction_state_events (block_hash, block_height, parent_dp_hash, tx_hash, index, event) FROM STDIN WITH (FORMAT TEXT)").await?;
-        copy.read_from(&mut self.handler_store.tx_events).await?;
-        copy.finish().await?;
+        let tx_event_rows = std::mem::take(&mut self.handler_store.tx_events);
+        insert_or_copy_tx_events(&mut transaction, tx_event_rows).await?;
 
-        let mut copy = transaction.copy_in_raw("COPY blobs (parent_dp_hash, tx_hash, blob_index, identity, contract_name, data) FROM STDIN WITH (FORMAT TEXT)").await?;
-        copy.read_from(&mut self.handler_store.blobs).await?;
-        copy.finish().await?;
+        let blob_rows: Vec<_> = self
+            .handler_store
+            .blobs
+            .drain()
+            .map(|(_, row)| row)
+            .collect();
+        insert_or_copy_blobs(&mut transaction, blob_rows).await?;
 
-        let mut copy = transaction.copy_in_raw("COPY blob_proof_outputs (blob_parent_dp_hash, blob_tx_hash, proof_parent_dp_hash, proof_tx_hash, blob_index, blob_proof_output_index, contract_name, hyli_output, settled) FROM STDIN WITH (FORMAT TEXT)").await?;
-        copy.read_from(&mut self.handler_store.blob_proof_outputs)
-            .await?;
-        copy.finish().await?;
+        let proof_rows: Vec<_> = self
+            .handler_store
+            .blob_proof_outputs
+            .drain()
+            .map(|(_, row)| row)
+            .collect();
+        insert_or_copy_blob_proof_outputs(&mut transaction, proof_rows).await?;
 
-        // Then contract updates
-        if !self.handler_store.contract_updates.is_empty() {
-            sqlx::query(
-                "CREATE TEMPORARY TABLE contract_updates (
-                    contract_name TEXT PRIMARY KEY NOT NULL,
-                    verifier TEXT,
-                    program_id BYTEA,
-                    soft_timeout BIGINT,
-                    hard_timeout BIGINT,
-                    state_commitment BYTEA,
-                    deleted_at_height INT
-                 ) ON COMMIT DROP",
-            )
-            .execute(&mut *transaction)
-            .await?;
-
-            let mut updates_stream = StreamableData::default();
-            for (contract_name, update) in self.handler_store.contract_updates.drain() {
-                let (soft_timeout, hard_timeout) = timeout_columns_opt(&update.timeout_window)?;
-                updates_stream.0.push(format!(
-                    "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
-                    escape_copy_text(contract_name.0.as_str()),
-                    copy_optional_text(update.verifier.as_deref()),
-                    copy_optional_bytea(update.program_id.as_deref()),
-                    copy_optional_i64(soft_timeout),
-                    copy_optional_i64(hard_timeout),
-                    copy_optional_bytea(update.state_commitment.as_deref()),
-                    copy_optional_i32(update.deleted_at_height),
-                ));
-            }
-            let mut copy = transaction
-                .copy_in_raw(
-                    "COPY contract_updates (contract_name, verifier, program_id, soft_timeout, hard_timeout, state_commitment, deleted_at_height) FROM STDIN WITH (FORMAT TEXT)",
-                )
-                .await?;
-            copy.read_from(&mut updates_stream).await?;
-            copy.finish().await?;
-
-            // Batch update contract updates from the temporary table
-            sqlx::query(
-                "UPDATE contracts SET
-                    verifier = COALESCE(contract_updates.verifier, contracts.verifier),
-                    program_id = COALESCE(contract_updates.program_id, contracts.program_id),
-                    soft_timeout = COALESCE(contract_updates.soft_timeout, contracts.soft_timeout),
-                    hard_timeout = COALESCE(contract_updates.hard_timeout, contracts.hard_timeout),
-                    state_commitment = COALESCE(contract_updates.state_commitment, contracts.state_commitment),
-                    deleted_at_height = COALESCE(contract_updates.deleted_at_height, contracts.deleted_at_height)
-                FROM contract_updates
-                WHERE contracts.contract_name = contract_updates.contract_name"
-            )
-            .execute(&mut *transaction)
-            .await?;
+        let mut contract_update_rows =
+            Vec::with_capacity(self.handler_store.contract_updates.len());
+        for (contract_name, update) in self.handler_store.contract_updates.drain() {
+            let (soft_timeout, hard_timeout) = timeout_columns_opt(&update.timeout_window)?;
+            contract_update_rows.push(ContractUpdateRow {
+                contract_name: contract_name.0,
+                verifier: update.verifier,
+                program_id: update.program_id,
+                soft_timeout,
+                hard_timeout,
+                state_commitment: update.state_commitment,
+                deleted_at_height: update.deleted_at_height,
+            });
         }
+        apply_contract_updates(&mut transaction, contract_update_rows).await?;
 
         if !contract_notifications.is_empty() {
             send_contract_notifications(&mut *transaction, contract_notifications).await?;
@@ -1119,6 +1107,240 @@ impl Indexer {
         transaction.commit().await?;
         Ok(())
     }
+}
+
+const INLINE_INSERT_THRESHOLD: usize = 400;
+
+async fn insert_or_copy_tx_events(
+    transaction: &mut sqlx::Transaction<'_, Postgres>,
+    rows: Vec<TxEventRow>,
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    if rows.len() <= INLINE_INSERT_THRESHOLD {
+        let mut query_builder = QueryBuilder::<Postgres>::new(
+            "INSERT INTO transaction_state_events (block_hash, block_height, parent_dp_hash, tx_hash, index, event) ",
+        );
+        query_builder.push_values(rows.into_iter(), |mut b, row| {
+            b.push_bind(row.block_hash)
+                .push_bind(row.block_height.0 as i64)
+                .push_bind(row.parent_dp_hash)
+                .push_bind(row.tx_hash)
+                .push_bind(row.index)
+                .push_bind(row.event);
+        });
+        query_builder.build().execute(&mut **transaction).await?;
+        return Ok(());
+    }
+
+    let mut lines = Vec::with_capacity(rows.len());
+    for row in rows {
+        lines.push(format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            row.block_hash,
+            row.block_height,
+            row.parent_dp_hash,
+            row.tx_hash,
+            row.index,
+            escape_copy_text(row.event.to_string().as_str()),
+        ));
+    }
+    let mut stream = StreamableData::new(lines);
+    let mut copy = transaction
+        .copy_in_raw("COPY transaction_state_events (block_hash, block_height, parent_dp_hash, tx_hash, index, event) FROM STDIN WITH (FORMAT TEXT)")
+        .await?;
+    copy.read_from(&mut stream).await?;
+    copy.finish().await?;
+    Ok(())
+}
+
+async fn insert_or_copy_blobs(
+    transaction: &mut sqlx::Transaction<'_, Postgres>,
+    rows: Vec<BlobRow>,
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    if rows.len() <= INLINE_INSERT_THRESHOLD {
+        let mut query_builder = QueryBuilder::<Postgres>::new(
+            "INSERT INTO blobs (parent_dp_hash, tx_hash, blob_index, identity, contract_name, data) ",
+        );
+        query_builder.push_values(rows.into_iter(), |mut b, row| {
+            b.push_bind(row.parent_dp_hash)
+                .push_bind(row.tx_hash)
+                .push_bind(row.blob_index)
+                .push_bind(row.identity)
+                .push_bind(row.contract_name.0)
+                .push_bind(row.data);
+        });
+        query_builder.build().execute(&mut **transaction).await?;
+        return Ok(());
+    }
+
+    let mut lines = Vec::with_capacity(rows.len());
+    for row in rows {
+        lines.push(format!(
+            "{}\t{}\t{}\t{}\t{}\t\\\\x{}\n",
+            row.parent_dp_hash,
+            row.tx_hash,
+            row.blob_index,
+            escape_copy_text(row.identity.as_str()),
+            row.contract_name,
+            hex::encode(row.data),
+        ));
+    }
+    let mut stream = StreamableData::new(lines);
+    let mut copy = transaction
+        .copy_in_raw(
+            "COPY blobs (parent_dp_hash, tx_hash, blob_index, identity, contract_name, data) FROM STDIN WITH (FORMAT TEXT)",
+        )
+        .await?;
+    copy.read_from(&mut stream).await?;
+    copy.finish().await?;
+    Ok(())
+}
+
+async fn insert_or_copy_blob_proof_outputs(
+    transaction: &mut sqlx::Transaction<'_, Postgres>,
+    rows: Vec<BlobProofOutputRow>,
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    if rows.len() <= INLINE_INSERT_THRESHOLD {
+        let mut query_builder = QueryBuilder::<Postgres>::new(
+            "INSERT INTO blob_proof_outputs (blob_parent_dp_hash, blob_tx_hash, proof_parent_dp_hash, proof_tx_hash, blob_index, blob_proof_output_index, contract_name, hyli_output, settled) ",
+        );
+        query_builder.push_values(rows.into_iter(), |mut b, row| {
+            b.push_bind(row.blob_parent_dp_hash)
+                .push_bind(row.blob_tx_hash)
+                .push_bind(row.proof_parent_dp_hash)
+                .push_bind(row.proof_tx_hash)
+                .push_bind(row.blob_index)
+                .push_bind(row.blob_proof_output_index)
+                .push_bind(row.contract_name.0)
+                .push_bind(row.hyli_output)
+                .push_bind(row.settled);
+        });
+        query_builder.build().execute(&mut **transaction).await?;
+        return Ok(());
+    }
+
+    let mut lines = Vec::with_capacity(rows.len());
+    for row in rows {
+        lines.push(format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            row.blob_parent_dp_hash,
+            row.blob_tx_hash,
+            row.proof_parent_dp_hash,
+            row.proof_tx_hash,
+            row.blob_index,
+            row.blob_proof_output_index,
+            row.contract_name,
+            escape_copy_text(row.hyli_output.to_string().as_str()),
+            row.settled,
+        ));
+    }
+    let mut stream = StreamableData::new(lines);
+    let mut copy = transaction
+        .copy_in_raw("COPY blob_proof_outputs (blob_parent_dp_hash, blob_tx_hash, proof_parent_dp_hash, proof_tx_hash, blob_index, blob_proof_output_index, contract_name, hyli_output, settled) FROM STDIN WITH (FORMAT TEXT)")
+        .await?;
+    copy.read_from(&mut stream).await?;
+    copy.finish().await?;
+    Ok(())
+}
+
+async fn apply_contract_updates(
+    transaction: &mut sqlx::Transaction<'_, Postgres>,
+    rows: Vec<ContractUpdateRow>,
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    if rows.len() <= INLINE_INSERT_THRESHOLD {
+        let mut query_builder = QueryBuilder::<Postgres>::new(
+            "UPDATE contracts SET
+                verifier = COALESCE(contract_updates.verifier, contracts.verifier),
+                program_id = COALESCE(contract_updates.program_id, contracts.program_id),
+                soft_timeout = COALESCE(contract_updates.soft_timeout, contracts.soft_timeout),
+                hard_timeout = COALESCE(contract_updates.hard_timeout, contracts.hard_timeout),
+                state_commitment = COALESCE(contract_updates.state_commitment, contracts.state_commitment),
+                deleted_at_height = COALESCE(contract_updates.deleted_at_height, contracts.deleted_at_height)
+            FROM (",
+        );
+        query_builder.push_values(rows.into_iter(), |mut b, row| {
+            b.push_bind(row.contract_name)
+                .push_bind(row.verifier)
+                .push_bind(row.program_id)
+                .push_bind(row.soft_timeout)
+                .push_bind(row.hard_timeout)
+                .push_bind(row.state_commitment)
+                .push_bind(row.deleted_at_height);
+        });
+        query_builder.push(
+            ") AS contract_updates(contract_name, verifier, program_id, soft_timeout, hard_timeout, state_commitment, deleted_at_height)
+            WHERE contracts.contract_name = contract_updates.contract_name",
+        );
+        query_builder.build().execute(&mut **transaction).await?;
+        return Ok(());
+    }
+
+    sqlx::query(
+        "CREATE TEMPORARY TABLE contract_updates (
+            contract_name TEXT PRIMARY KEY NOT NULL,
+            verifier TEXT,
+            program_id BYTEA,
+            soft_timeout BIGINT,
+            hard_timeout BIGINT,
+            state_commitment BYTEA,
+            deleted_at_height INT
+        ) ON COMMIT DROP",
+    )
+    .execute(&mut **transaction)
+    .await?;
+
+    let mut updates_stream = StreamableData::default();
+    for row in rows {
+        updates_stream.0.push(format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            escape_copy_text(row.contract_name.as_str()),
+            copy_optional_text(row.verifier.as_deref()),
+            copy_optional_bytea(row.program_id.as_deref()),
+            copy_optional_i64(row.soft_timeout),
+            copy_optional_i64(row.hard_timeout),
+            copy_optional_bytea(row.state_commitment.as_deref()),
+            copy_optional_i32(row.deleted_at_height),
+        ));
+    }
+
+    let mut copy = transaction
+        .copy_in_raw(
+            "COPY contract_updates (contract_name, verifier, program_id, soft_timeout, hard_timeout, state_commitment, deleted_at_height) FROM STDIN WITH (FORMAT TEXT)",
+        )
+        .await?;
+    copy.read_from(&mut updates_stream).await?;
+    copy.finish().await?;
+
+    sqlx::query(
+        "UPDATE contracts SET
+            verifier = COALESCE(contract_updates.verifier, contracts.verifier),
+            program_id = COALESCE(contract_updates.program_id, contracts.program_id),
+            soft_timeout = COALESCE(contract_updates.soft_timeout, contracts.soft_timeout),
+            hard_timeout = COALESCE(contract_updates.hard_timeout, contracts.hard_timeout),
+            state_commitment = COALESCE(contract_updates.state_commitment, contracts.state_commitment),
+            deleted_at_height = COALESCE(contract_updates.deleted_at_height, contracts.deleted_at_height)
+        FROM contract_updates
+        WHERE contracts.contract_name = contract_updates.contract_name",
+    )
+    .execute(&mut **transaction)
+    .await?;
+
+    Ok(())
 }
 
 fn timeout_columns(tw: &TimeoutWindow) -> Result<(Option<i64>, Option<i64>)> {
