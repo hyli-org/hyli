@@ -82,8 +82,10 @@ impl Module for Indexer {
         node_state.store = node_state_store;
 
         let conf: Conf = ctx.0.deref().clone();
-        let mut handler_store = IndexerHandlerStore::default();
-        handler_store.index_tx_events = conf.indexer.index_tx_events;
+        let handler_store = IndexerHandlerStore {
+            index_tx_events: conf.indexer.index_tx_events,
+            ..IndexerHandlerStore::default()
+        };
 
         let indexer = Indexer {
             bus,
@@ -937,7 +939,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                 parent_dp_hash: event.tx_id().0.clone(),
                 tx_hash: event.tx_id().1.clone(),
                 index: self.tx_events.len() as i32,
-                event: serde_json::to_value(event).unwrap_or(serde_json::Value::Null),
+                event: tx_event_json_for_db(event),
             });
         }
     }
@@ -1137,9 +1139,10 @@ impl Indexer {
     }
 }
 
-const INLINE_INSERT_THRESHOLD: usize = 400;
+const INLINE_INSERT_THRESHOLD_BYTES: usize = 1024 * 1024;
 const MAX_BLOB_BYTES_PER_BATCH: usize = 200 * 1024 * 1024;
-const MAX_BLOB_ROWS_PER_BATCH: usize = 4096;
+const MAX_BLOB_ROWS_PER_BATCH: usize = 8192;
+const MAX_VALUES_QUERY_PARAMS: usize = 65000;
 const I32_BYTES: usize = std::mem::size_of::<i32>();
 const I64_BYTES: usize = std::mem::size_of::<i64>();
 const BOOL_BYTES: usize = std::mem::size_of::<bool>();
@@ -1208,7 +1211,7 @@ fn json_value_bytes(value: &serde_json::Value) -> usize {
         serde_json::Value::Bool(true) => 4,
         serde_json::Value::Bool(false) => 5,
         serde_json::Value::Number(n) => n.to_string().len(),
-        serde_json::Value::String(s) => json_escaped_str_bytes(s) + 2,
+        serde_json::Value::String(s) => s.len() + 2,
         serde_json::Value::Array(items) => {
             let body_len: usize = items.iter().map(json_value_bytes).sum();
             body_len + items.len().saturating_sub(1) + 2
@@ -1216,23 +1219,11 @@ fn json_value_bytes(value: &serde_json::Value) -> usize {
         serde_json::Value::Object(map) => {
             let entries_len: usize = map
                 .iter()
-                .map(|(k, v)| json_escaped_str_bytes(k) + 2 + 1 + json_value_bytes(v))
+                .map(|(k, v)| k.len() + 2 + 1 + json_value_bytes(v))
                 .sum();
             entries_len + map.len().saturating_sub(1) + 2
         }
     }
-}
-
-fn json_escaped_str_bytes(value: &str) -> usize {
-    value
-        .chars()
-        .map(|c| match c {
-            '"' | '\\' => 2,
-            '\u{08}' | '\u{0C}' | '\n' | '\r' | '\t' => 2,
-            c if c <= '\u{1F}' => 6, // \u00XX
-            _ => c.len_utf8(),
-        })
-        .sum()
 }
 
 fn tx_store_bytes(tx: &TxStore) -> usize {
@@ -1241,7 +1232,9 @@ fn tx_store_bytes(tx: &TxStore) -> usize {
         + I32_BYTES
         + transaction_type_text(&tx.transaction_type).len()
         + transaction_status_text(&tx.transaction_status).len()
-        + tx.block_hash.as_ref().map_or(0, |hash| hash.to_string().len())
+        + tx.block_hash
+            .as_ref()
+            .map_or(0, |hash| hash.to_string().len())
         + I64_BYTES
         + tx.lane_id.as_ref().map_or(0, |lane| lane.to_string().len())
         + I32_BYTES
@@ -1320,6 +1313,146 @@ fn contract_update_row_bytes(row: &ContractUpdateRow) -> usize {
         + optional_i32_bytes(row.deleted_at_height)
 }
 
+fn tx_event_json_for_db(event: &TxEvent<'_>) -> serde_json::Value {
+    match event {
+        TxEvent::RejectedBlobTransaction(tx_id, lane_id, index, blob_tx, tx_context)
+        | TxEvent::SequencedBlobTransaction(tx_id, lane_id, index, blob_tx, tx_context) => {
+            let event_type = match event {
+                TxEvent::RejectedBlobTransaction(..) => "RejectedBlobTransaction",
+                _ => "SequencedBlobTransaction",
+            };
+            serde_json::json!({
+                "type": event_type,
+                "tx_id": tx_id,
+                "lane_id": lane_id,
+                "index": index,
+                "identity": blob_tx.identity,
+                "blob_count": blob_tx.blobs.len(),
+                "blobs": blob_tx.blobs.iter().map(|blob| serde_json::json!({
+                    "contract_name": blob.contract_name,
+                    "data_len": blob.data.0.len(),
+                })).collect::<Vec<_>>(),
+                "tx_context": tx_context,
+            })
+        }
+        TxEvent::DuplicateBlobTransaction(tx_id) => serde_json::json!({
+            "type": "DuplicateBlobTransaction",
+            "tx_id": tx_id,
+        }),
+        TxEvent::SequencedProofTransaction(tx_id, lane_id, index, proof_tx) => serde_json::json!({
+            "type": "SequencedProofTransaction",
+            "tx_id": tx_id,
+            "lane_id": lane_id,
+            "index": index,
+            "contract_name": proof_tx.contract_name,
+            "proof_size": proof_tx.proof_size,
+            "is_recursive": proof_tx.is_recursive,
+            "proven_blobs_count": proof_tx.proven_blobs.len(),
+        }),
+        TxEvent::Settled(tx_id, tx) => tx_event_settlement_json("Settled", tx_id, tx),
+        TxEvent::SettledAsFailed(tx_id, tx) => {
+            tx_event_settlement_json("SettledAsFailed", tx_id, tx)
+        }
+        TxEvent::TimedOut(tx_id, tx) => tx_event_settlement_json("TimedOut", tx_id, tx),
+        TxEvent::TxError(tx_id, error) => serde_json::json!({
+            "type": "TxError",
+            "tx_id": tx_id,
+            "error": error,
+        }),
+        TxEvent::NewProof(tx_id, blob, blob_index, proof, proof_index) => serde_json::json!({
+            "type": "NewProof",
+            "tx_id": tx_id,
+            "blob": {
+                "contract_name": blob.contract_name,
+                "data_len": blob.data.0.len(),
+            },
+            "blob_index": blob_index.0,
+            "proof_parent_dp_hash": (proof.2).0,
+            "proof_tx_hash": (proof.2).1,
+            "proof_index": proof_index,
+        }),
+        TxEvent::BlobSettled(tx_id, tx, blob, blob_index, proof_data, blob_proof_index) => {
+            serde_json::json!({
+                "type": "BlobSettled",
+                "tx_id": tx_id,
+                "settlement": tx_settlement_summary(tx),
+                "blob": {
+                    "contract_name": blob.contract_name,
+                    "data_len": blob.data.0.len(),
+                },
+                "blob_index": blob_index.0,
+                "proof_parent_dp_hash": proof_data.map(|(_, _, proof_tx_id, _)| proof_tx_id.0.clone()),
+                "proof_tx_hash": proof_data.map(|(_, _, proof_tx_id, _)| proof_tx_id.1.clone()),
+                "blob_proof_index": blob_proof_index,
+            })
+        }
+        TxEvent::ContractDeleted(tx_id, contract_name) => serde_json::json!({
+            "type": "ContractDeleted",
+            "tx_id": tx_id,
+            "contract_name": contract_name,
+        }),
+        TxEvent::ContractRegistered(tx_id, contract_name, contract, metadata) => serde_json::json!({
+            "type": "ContractRegistered",
+            "tx_id": tx_id,
+            "contract_name": contract_name,
+            "verifier": contract.verifier,
+            "program_id_len": contract.program_id.0.len(),
+            "state_commitment_len": contract.state.0.len(),
+            "metadata_len": metadata.as_ref().map(|m| m.len()),
+        }),
+        TxEvent::ContractStateUpdated(tx_id, contract_name, contract, state_commitment) => serde_json::json!({
+            "type": "ContractStateUpdated",
+            "tx_id": tx_id,
+            "contract_name": contract_name,
+            "verifier": contract.verifier,
+            "program_id_len": contract.program_id.0.len(),
+            "state_commitment_len": state_commitment.0.len(),
+        }),
+        TxEvent::ContractProgramIdUpdated(tx_id, contract_name, contract, program_id) => serde_json::json!({
+            "type": "ContractProgramIdUpdated",
+            "tx_id": tx_id,
+            "contract_name": contract_name,
+            "verifier": contract.verifier,
+            "program_id_len": program_id.0.len(),
+            "state_commitment_len": contract.state.0.len(),
+        }),
+        TxEvent::ContractTimeoutWindowUpdated(tx_id, contract_name, contract, timeout_window) => serde_json::json!({
+            "type": "ContractTimeoutWindowUpdated",
+            "tx_id": tx_id,
+            "contract_name": contract_name,
+            "verifier": contract.verifier,
+            "program_id_len": contract.program_id.0.len(),
+            "state_commitment_len": contract.state.0.len(),
+            "timeout_window": timeout_window,
+        }),
+    }
+}
+
+fn tx_event_settlement_json(
+    event_type: &'static str,
+    tx_id: &TxId,
+    tx: &UnsettledBlobTransaction,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": event_type,
+        "tx_id": tx_id,
+        "settlement": tx_settlement_summary(tx),
+    })
+}
+
+fn tx_settlement_summary(tx: &UnsettledBlobTransaction) -> serde_json::Value {
+    serde_json::json!({
+        "tx_id": tx.tx_id,
+        "blob_count": tx.tx.blobs.len(),
+        "blobs": tx.tx.blobs.iter().map(|blob| serde_json::json!({
+            "contract_name": blob.contract_name,
+            "data_len": blob.data.0.len(),
+        })).collect::<Vec<_>>(),
+        "possible_proof_slots": tx.possible_proofs.len(),
+        "settleable_contracts": tx.settleable_contracts,
+    })
+}
+
 async fn upsert_transactions(
     metrics: &IndexerMetrics,
     transaction: &mut sqlx::Transaction<'_, Postgres>,
@@ -1329,64 +1462,61 @@ async fn upsert_transactions(
         return Ok(());
     }
 
-    if rows.len() <= INLINE_INSERT_THRESHOLD {
+    let inline_bytes: usize = rows.iter().map(tx_store_bytes).sum();
+    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(rows.len(), 10) {
         let started = Instant::now();
-        let tx_batch_size = calculate_optimal_batch_size(10);
-        for chunk in rows.chunks(tx_batch_size) {
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) ",
-            );
-            query_builder.push_values(chunk.iter(), |mut b, tx| {
-                b.push_bind(tx.dp_hash.clone())
-                    .push_bind(tx.tx_hash.clone())
-                    .push_bind(1_i32)
-                    .push_bind(tx.transaction_type.clone())
-                    .push_bind(tx.transaction_status.clone())
-                    .push_bind(tx.block_hash.clone())
-                    .push_bind(tx.block_height.0 as i64)
-                    .push_bind(tx.lane_id.clone())
-                    .push_bind(tx.index)
-                    .push_bind(tx.identity.clone());
-            });
+        let mut query_builder = QueryBuilder::<Postgres>::new(
+            "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) ",
+        );
+        query_builder.push_values(rows.iter(), |mut b, tx| {
+            b.push_bind(tx.dp_hash.clone())
+                .push_bind(tx.tx_hash.clone())
+                .push_bind(1_i32)
+                .push_bind(tx.transaction_type.clone())
+                .push_bind(tx.transaction_status.clone())
+                .push_bind(tx.block_hash.clone())
+                .push_bind(tx.block_height.0 as i64)
+                .push_bind(tx.lane_id.clone())
+                .push_bind(tx.index)
+                .push_bind(tx.identity.clone());
+        });
 
-            query_builder.push(
-                " ON CONFLICT (parent_dp_hash, tx_hash)
-                DO UPDATE SET
-                    index = GREATEST(transactions.index, excluded.index),
-                    lane_id = COALESCE(excluded.lane_id, transactions.lane_id),
-                    block_hash = COALESCE(excluded.block_hash, transactions.block_hash),
-                    block_height = GREATEST(excluded.block_height, transactions.block_height),
-                    identity = COALESCE(excluded.identity, transactions.identity),
-                    transaction_status = CASE
-                        WHEN (
-                            CASE transactions.transaction_status
-                                WHEN 'waiting_dissemination' THEN 1
-                                WHEN 'data_proposal_created' THEN 2
-                                WHEN 'sequenced' THEN 3
-                                WHEN 'success' THEN 4
-                                WHEN 'failure' THEN 4
-                                WHEN 'timed_out' THEN 4
-                            END
-                        ) < (
-                            CASE excluded.transaction_status
-                                WHEN 'waiting_dissemination' THEN 1
-                                WHEN 'data_proposal_created' THEN 2
-                                WHEN 'sequenced' THEN 3
-                                WHEN 'success' THEN 4
-                                WHEN 'failure' THEN 4
-                                WHEN 'timed_out' THEN 4
-                            END
-                        )
-                        THEN excluded.transaction_status
-                        ELSE transactions.transaction_status
-                    END",
-            );
-            query_builder.build().execute(&mut **transaction).await?;
-        }
+        query_builder.push(
+            " ON CONFLICT (parent_dp_hash, tx_hash)
+            DO UPDATE SET
+                index = GREATEST(transactions.index, excluded.index),
+                lane_id = COALESCE(excluded.lane_id, transactions.lane_id),
+                block_hash = COALESCE(excluded.block_hash, transactions.block_hash),
+                block_height = GREATEST(excluded.block_height, transactions.block_height),
+                identity = COALESCE(excluded.identity, transactions.identity),
+                transaction_status = CASE
+                    WHEN (
+                        CASE transactions.transaction_status
+                            WHEN 'waiting_dissemination' THEN 1
+                            WHEN 'data_proposal_created' THEN 2
+                            WHEN 'sequenced' THEN 3
+                            WHEN 'success' THEN 4
+                            WHEN 'failure' THEN 4
+                            WHEN 'timed_out' THEN 4
+                        END
+                    ) < (
+                        CASE excluded.transaction_status
+                            WHEN 'waiting_dissemination' THEN 1
+                            WHEN 'data_proposal_created' THEN 2
+                            WHEN 'sequenced' THEN 3
+                            WHEN 'success' THEN 4
+                            WHEN 'failure' THEN 4
+                            WHEN 'timed_out' THEN 4
+                        END
+                    )
+                    THEN excluded.transaction_status
+                    ELSE transactions.transaction_status
+                END",
+        );
+        query_builder.build().execute(&mut **transaction).await?;
         metrics.add_rows_written("transactions", "values", rows.len());
         metrics.record_write_duration("transactions", "values", started.elapsed().as_secs_f64());
-        let written_bytes: usize = rows.iter().map(tx_store_bytes).sum();
-        metrics.add_bytes_written("transactions", written_bytes);
+        metrics.add_bytes_written("transactions", inline_bytes);
         return Ok(());
     }
 
@@ -1488,25 +1618,22 @@ async fn insert_txs_contracts(
         return Ok(());
     }
 
-    if rows.len() <= INLINE_INSERT_THRESHOLD {
+    let inline_bytes: usize = rows.iter().map(tx_contract_row_bytes).sum();
+    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(rows.len(), 3) {
         let started = Instant::now();
-        let batch_size = calculate_optimal_batch_size(3);
-        for chunk in rows.chunks(batch_size) {
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name) ",
-            );
-            query_builder.push_values(chunk.iter(), |mut b, row| {
-                b.push_bind(row.parent_dp_hash.clone())
-                    .push_bind(row.tx_hash.clone())
-                    .push_bind(row.contract_name.clone());
-            });
-            query_builder.push(" ON CONFLICT DO NOTHING");
-            query_builder.build().execute(&mut **transaction).await?;
-        }
+        let mut query_builder = QueryBuilder::<Postgres>::new(
+            "INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name) ",
+        );
+        query_builder.push_values(rows.iter(), |mut b, row| {
+            b.push_bind(row.parent_dp_hash.clone())
+                .push_bind(row.tx_hash.clone())
+                .push_bind(row.contract_name.clone());
+        });
+        query_builder.push(" ON CONFLICT DO NOTHING");
+        query_builder.build().execute(&mut **transaction).await?;
         metrics.add_rows_written("txs_contracts", "values", row_count);
         metrics.record_write_duration("txs_contracts", "values", started.elapsed().as_secs_f64());
-        let written_bytes: usize = rows.iter().map(tx_contract_row_bytes).sum();
-        metrics.add_bytes_written("txs_contracts", written_bytes);
+        metrics.add_bytes_written("txs_contracts", inline_bytes);
         return Ok(());
     }
 
@@ -1563,43 +1690,40 @@ async fn upsert_contracts(
         return Ok(());
     }
 
-    if rows.len() <= INLINE_INSERT_THRESHOLD {
+    let inline_bytes: usize = rows.iter().map(contract_upsert_row_bytes).sum();
+    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(rows.len(), 10) {
         let started = Instant::now();
-        let batch_size = calculate_optimal_batch_size(10);
-        for chunk in rows.chunks(batch_size) {
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO contracts (contract_name, verifier, program_id, soft_timeout, hard_timeout, state_commitment, parent_dp_hash, tx_hash, metadata, deleted_at_height) ",
-            );
-            query_builder.push_values(chunk.iter(), |mut b, row| {
-                b.push_bind(row.contract_name.clone())
-                    .push_bind(row.verifier.clone())
-                    .push_bind(row.program_id.clone())
-                    .push_bind(row.soft_timeout)
-                    .push_bind(row.hard_timeout)
-                    .push_bind(row.state_commitment.clone())
-                    .push_bind(row.parent_dp_hash.clone())
-                    .push_bind(row.tx_hash.clone())
-                    .push_bind(row.metadata.clone())
-                    .push_bind(row.deleted_at_height);
-            });
-            query_builder.push(
-                " ON CONFLICT (contract_name) DO UPDATE SET
-                    verifier = EXCLUDED.verifier,
-                    program_id = EXCLUDED.program_id,
-                    soft_timeout = EXCLUDED.soft_timeout,
-                    hard_timeout = EXCLUDED.hard_timeout,
-                    state_commitment = EXCLUDED.state_commitment,
-                    parent_dp_hash = EXCLUDED.parent_dp_hash,
-                    tx_hash = EXCLUDED.tx_hash,
-                    metadata = EXCLUDED.metadata,
-                    deleted_at_height = EXCLUDED.deleted_at_height",
-            );
-            query_builder.build().execute(&mut **transaction).await?;
-        }
+        let mut query_builder = QueryBuilder::<Postgres>::new(
+            "INSERT INTO contracts (contract_name, verifier, program_id, soft_timeout, hard_timeout, state_commitment, parent_dp_hash, tx_hash, metadata, deleted_at_height) ",
+        );
+        query_builder.push_values(rows.iter(), |mut b, row| {
+            b.push_bind(row.contract_name.clone())
+                .push_bind(row.verifier.clone())
+                .push_bind(row.program_id.clone())
+                .push_bind(row.soft_timeout)
+                .push_bind(row.hard_timeout)
+                .push_bind(row.state_commitment.clone())
+                .push_bind(row.parent_dp_hash.clone())
+                .push_bind(row.tx_hash.clone())
+                .push_bind(row.metadata.clone())
+                .push_bind(row.deleted_at_height);
+        });
+        query_builder.push(
+            " ON CONFLICT (contract_name) DO UPDATE SET
+                verifier = EXCLUDED.verifier,
+                program_id = EXCLUDED.program_id,
+                soft_timeout = EXCLUDED.soft_timeout,
+                hard_timeout = EXCLUDED.hard_timeout,
+                state_commitment = EXCLUDED.state_commitment,
+                parent_dp_hash = EXCLUDED.parent_dp_hash,
+                tx_hash = EXCLUDED.tx_hash,
+                metadata = EXCLUDED.metadata,
+                deleted_at_height = EXCLUDED.deleted_at_height",
+        );
+        query_builder.build().execute(&mut **transaction).await?;
         metrics.add_rows_written("contracts", "values", row_count);
         metrics.record_write_duration("contracts", "values", started.elapsed().as_secs_f64());
-        let written_bytes: usize = rows.iter().map(contract_upsert_row_bytes).sum();
-        metrics.add_bytes_written("contracts", written_bytes);
+        metrics.add_bytes_written("contracts", inline_bytes);
         return Ok(());
     }
 
@@ -1682,38 +1806,35 @@ async fn insert_contract_history(
         return Ok(());
     }
 
-    if rows.len() <= INLINE_INSERT_THRESHOLD {
+    let inline_bytes: usize = rows.iter().map(contract_history_row_bytes).sum();
+    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(rows.len(), 12) {
         let started = Instant::now();
-        let batch_size = calculate_optimal_batch_size(12);
-        for chunk in rows.chunks(batch_size) {
-            let mut query_builder = QueryBuilder::<Postgres>::new(
-                "INSERT INTO contract_history (contract_name, block_height, tx_index, change_type, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash) ",
-            );
-            query_builder.push_values(chunk.iter(), |mut b, row| {
-                b.push_bind(row.contract_name.clone())
-                    .push_bind(row.block_height)
-                    .push_bind(row.tx_index)
-                    .push_bind(row.change_type.clone())
-                    .push_bind(row.verifier.clone())
-                    .push_bind(row.program_id.clone())
-                    .push_bind(row.state_commitment.clone())
-                    .push_bind(row.soft_timeout)
-                    .push_bind(row.hard_timeout)
-                    .push_bind(row.deleted_at_height)
-                    .push_bind(row.parent_dp_hash.clone())
-                    .push_bind(row.tx_hash.clone());
-            });
-            query_builder.push(" ON CONFLICT (contract_name, block_height, tx_index) DO NOTHING");
-            query_builder.build().execute(&mut **transaction).await?;
-        }
+        let mut query_builder = QueryBuilder::<Postgres>::new(
+            "INSERT INTO contract_history (contract_name, block_height, tx_index, change_type, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash) ",
+        );
+        query_builder.push_values(rows.iter(), |mut b, row| {
+            b.push_bind(row.contract_name.clone())
+                .push_bind(row.block_height)
+                .push_bind(row.tx_index)
+                .push_bind(row.change_type.clone())
+                .push_bind(row.verifier.clone())
+                .push_bind(row.program_id.clone())
+                .push_bind(row.state_commitment.clone())
+                .push_bind(row.soft_timeout)
+                .push_bind(row.hard_timeout)
+                .push_bind(row.deleted_at_height)
+                .push_bind(row.parent_dp_hash.clone())
+                .push_bind(row.tx_hash.clone());
+        });
+        query_builder.push(" ON CONFLICT (contract_name, block_height, tx_index) DO NOTHING");
+        query_builder.build().execute(&mut **transaction).await?;
         metrics.add_rows_written("contract_history", "values", row_count);
         metrics.record_write_duration(
             "contract_history",
             "values",
             started.elapsed().as_secs_f64(),
         );
-        let written_bytes: usize = rows.iter().map(contract_history_row_bytes).sum();
-        metrics.add_bytes_written("contract_history", written_bytes);
+        metrics.add_bytes_written("contract_history", inline_bytes);
         return Ok(());
     }
 
@@ -1793,9 +1914,9 @@ async fn insert_or_copy_tx_events(
         return Ok(());
     }
 
-    if rows.len() <= INLINE_INSERT_THRESHOLD {
+    let inline_bytes: usize = rows.iter().map(tx_event_row_bytes).sum();
+    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(rows.len(), 6) {
         let started = Instant::now();
-        let written_bytes: usize = rows.iter().map(tx_event_row_bytes).sum();
         let mut query_builder = QueryBuilder::<Postgres>::new(
             "INSERT INTO transaction_state_events (block_hash, block_height, parent_dp_hash, tx_hash, index, event) ",
         );
@@ -1810,7 +1931,7 @@ async fn insert_or_copy_tx_events(
         query_builder.build().execute(&mut **transaction).await?;
         metrics.add_rows_written("tx_events", "values", row_count);
         metrics.record_write_duration("tx_events", "values", started.elapsed().as_secs_f64());
-        metrics.add_bytes_written("tx_events", written_bytes);
+        metrics.add_bytes_written("tx_events", inline_bytes);
         return Ok(());
     }
 
@@ -1911,9 +2032,9 @@ async fn insert_or_copy_blob_proof_outputs(
         return Ok(());
     }
 
-    if rows.len() <= INLINE_INSERT_THRESHOLD {
+    let inline_bytes: usize = rows.iter().map(blob_proof_output_row_bytes).sum();
+    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(rows.len(), 9) {
         let started = Instant::now();
-        let written_bytes: usize = rows.iter().map(blob_proof_output_row_bytes).sum();
         let mut query_builder = QueryBuilder::<Postgres>::new(
             "INSERT INTO blob_proof_outputs (blob_parent_dp_hash, blob_tx_hash, proof_parent_dp_hash, proof_tx_hash, blob_index, blob_proof_output_index, contract_name, hyli_output, settled) ",
         );
@@ -1935,7 +2056,7 @@ async fn insert_or_copy_blob_proof_outputs(
             "values",
             started.elapsed().as_secs_f64(),
         );
-        metrics.add_bytes_written("blob_proof_outputs", written_bytes);
+        metrics.add_bytes_written("blob_proof_outputs", inline_bytes);
         return Ok(());
     }
 
@@ -1982,9 +2103,9 @@ async fn apply_contract_updates(
         return Ok(());
     }
 
-    if rows.len() <= INLINE_INSERT_THRESHOLD {
+    let inline_bytes: usize = rows.iter().map(contract_update_row_bytes).sum();
+    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(rows.len(), 7) {
         let started = Instant::now();
-        let written_bytes: usize = rows.iter().map(contract_update_row_bytes).sum();
         let mut query_builder = QueryBuilder::<Postgres>::new(
             "UPDATE contracts SET
                 verifier = COALESCE(contract_updates.verifier, contracts.verifier),
@@ -2015,7 +2136,7 @@ async fn apply_contract_updates(
             "values",
             started.elapsed().as_secs_f64(),
         );
-        metrics.add_bytes_written("contract_updates", written_bytes);
+        metrics.add_bytes_written("contract_updates", inline_bytes);
         return Ok(());
     }
 
@@ -2146,15 +2267,10 @@ fn copy_optional_i32(value: Option<i32>) -> String {
         .unwrap_or_else(|| "\\N".to_string())
 }
 
-fn calculate_optimal_batch_size(params_per_item: usize) -> usize {
-    let max_params: usize = 65000; // Security margin
-    if params_per_item == 0 {
-        return 1;
-    }
-
-    let optimal_size = max_params / params_per_item;
-    // Assert there is at least 1 elem per batch
-    std::cmp::max(1, optimal_size)
+fn fits_single_values_query(row_count: usize, params_per_item: usize) -> bool {
+    row_count
+        .checked_mul(params_per_item)
+        .is_some_and(|total| total <= MAX_VALUES_QUERY_PARAMS)
 }
 
 pub fn into_utc_date_time(ts: &TimestampMs) -> Result<DateTime<Utc>> {
