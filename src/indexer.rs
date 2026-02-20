@@ -1140,8 +1140,6 @@ impl Indexer {
 }
 
 const INLINE_INSERT_THRESHOLD_BYTES: usize = 1024 * 1024;
-const MAX_BLOB_BYTES_PER_BATCH: usize = 200 * 1024 * 1024;
-const MAX_BLOB_ROWS_PER_BATCH: usize = 8192;
 const MAX_VALUES_QUERY_PARAMS: usize = 65000;
 const I32_BYTES: usize = std::mem::size_of::<i32>();
 const I64_BYTES: usize = std::mem::size_of::<i64>();
@@ -1971,32 +1969,39 @@ async fn insert_or_copy_blobs(
         return Ok(());
     }
 
-    let total_bytes: usize = rows.iter().map(blob_row_bytes).sum();
+    let inline_bytes: usize = rows.iter().map(blob_row_bytes).sum();
+    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(rows.len(), 6) {
+        let started = Instant::now();
+        insert_blobs_values(transaction, rows).await?;
+        metrics.add_rows_written("blobs", "values", row_count);
+        metrics.record_write_duration("blobs", "values", started.elapsed().as_secs_f64());
+        metrics.add_bytes_written("blobs", inline_bytes);
+        return Ok(());
+    }
+
     let started = Instant::now();
-    // For large BYTEA payloads, prefer bind-based VALUES with byte-size chunking.
-    // COPY text would hex-expand payload (~2x bytes) and can be much slower.
-    let mut batch = Vec::new();
-    let mut batch_bytes = 0_usize;
-
+    let mut lines = Vec::with_capacity(row_count);
     for row in rows {
-        let row_bytes = row.data.len();
-        let would_overflow_rows = batch.len() >= MAX_BLOB_ROWS_PER_BATCH;
-        let would_overflow_bytes =
-            !batch.is_empty() && batch_bytes.saturating_add(row_bytes) > MAX_BLOB_BYTES_PER_BATCH;
-        if would_overflow_rows || would_overflow_bytes {
-            insert_blobs_values(transaction, std::mem::take(&mut batch)).await?;
-            batch_bytes = 0;
-        }
-        batch_bytes = batch_bytes.saturating_add(row_bytes);
-        batch.push(row);
+        lines.push(format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            row.parent_dp_hash,
+            row.tx_hash,
+            row.blob_index,
+            escape_copy_text(row.identity.as_str()),
+            escape_copy_text(row.contract_name.0.as_str()),
+            format!("\\\\x{}", hex::encode(row.data)),
+        ));
     }
-
-    if !batch.is_empty() {
-        insert_blobs_values(transaction, batch).await?;
-    }
-    metrics.add_rows_written("blobs", "values", row_count);
-    metrics.record_write_duration("blobs", "values", started.elapsed().as_secs_f64());
-    metrics.add_bytes_written("blobs", total_bytes);
+    let staged_bytes: usize = lines.iter().map(|l| l.len()).sum();
+    let mut stream = StreamableData::new(lines);
+    let mut copy = transaction
+        .copy_in_raw("COPY blobs (parent_dp_hash, tx_hash, blob_index, identity, contract_name, data) FROM STDIN WITH (FORMAT TEXT)")
+        .await?;
+    copy.read_from(&mut stream).await?;
+    copy.finish().await?;
+    metrics.add_rows_written("blobs", "copy", row_count);
+    metrics.record_write_duration("blobs", "copy", started.elapsed().as_secs_f64());
+    metrics.add_bytes_written("blobs", staged_bytes);
     Ok(())
 }
 
