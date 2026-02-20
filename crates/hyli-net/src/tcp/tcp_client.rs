@@ -223,7 +223,7 @@ mod tests {
             client.socket_addr
         });
 
-        while server.connected_clients().len() == 0 {
+        while server.connected_clients().is_empty() {
             _ = tokio::time::timeout(Duration::from_millis(100), server.listen_next()).await;
         }
 

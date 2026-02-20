@@ -1131,7 +1131,10 @@ impl DataAvailability {
         event: DataAvailabilityEvent,
     ) -> anyhow::Result<()> {
         // Bypass DequeDispatch for request/response priority while keeping RetryingSend.
-        server.inner_mut().inner_mut().send(peer_ip, event, vec![])?;
+        server
+            .inner_mut()
+            .inner_mut()
+            .send(peer_ip, event, vec![])?;
         Ok(())
     }
 }

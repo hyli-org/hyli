@@ -42,6 +42,10 @@ impl<'a> ConnectedClients<'a> {
     pub fn len(&self) -> usize {
         self.0.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.len() == 0
+    }
 }
 
 impl<'a> Iterator for ConnectedClients<'a> {
@@ -844,8 +848,8 @@ pub mod tests {
         _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
         let client2_addr = server
             .connected_clients()
+            .find(|&addr| addr != &client1_addr)
             .cloned()
-            .find(|addr| addr != &client1_addr)
             .unwrap();
 
         server.raw_send_parallel(
@@ -894,8 +898,8 @@ pub mod tests {
         _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
         let client2_addr = server
             .connected_clients()
+            .find(|&addr| addr != &client1_addr)
             .cloned()
-            .find(|addr| addr != &client1_addr)
             .unwrap();
 
         _ = server.send(

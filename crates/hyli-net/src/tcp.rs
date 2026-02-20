@@ -43,6 +43,7 @@ pub use hyli_net_traits::TcpMessageLabel;
 pub type TcpHeaders = Vec<(String, String)>;
 
 /// Common interface for `TcpServer` and middleware wrappers.
+#[allow(async_fn_in_trait)]
 pub trait TcpServerLike<Req, Res> {
     type EventOut;
     type ConnectedClients<'a>: Iterator<Item = &'a String>
