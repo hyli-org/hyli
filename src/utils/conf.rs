@@ -121,6 +121,7 @@ pub struct NodeWebSocketConfig {
 pub struct IndexerConf {
     pub query_buffer_size: usize,
     pub persist_proofs: bool,
+    pub index_tx_events: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

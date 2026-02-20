@@ -42,6 +42,7 @@ async fn new_indexer(pool: PgPool) -> (Indexer, Explorer) {
         indexer: IndexerConf {
             query_buffer_size: 1,
             persist_proofs: false,
+            index_tx_events: true,
         },
         ..Conf::default()
     };

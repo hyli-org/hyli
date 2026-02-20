@@ -82,12 +82,14 @@ impl Module for Indexer {
         node_state.store = node_state_store;
 
         let conf: Conf = ctx.0.deref().clone();
+        let mut handler_store = IndexerHandlerStore::default();
+        handler_store.index_tx_events = conf.indexer.index_tx_events;
 
         let indexer = Indexer {
             bus,
             db: pool,
             node_state,
-            handler_store: IndexerHandlerStore::default(),
+            handler_store,
             metrics: IndexerMetrics::global(),
             conf,
         };
@@ -203,6 +205,7 @@ pub(crate) struct IndexerHandlerStore {
     contract_updates: HashMap<ContractName, ContractUpdateStore>,
     contract_history: HashMap<ContractHistoryKey, ContractHistoryStore>,
     tx_index_map: HashMap<TxId, i32>,
+    index_tx_events: bool,
 }
 
 impl std::fmt::Debug for IndexerHandlerStore {
@@ -927,14 +930,16 @@ impl NodeStateCallback for IndexerHandlerStore {
                 return;
             }
         }
-        self.tx_events.push(TxEventRow {
-            block_hash: self.block_hash.clone(),
-            block_height: self.block_height,
-            parent_dp_hash: event.tx_id().0.clone(),
-            tx_hash: event.tx_id().1.clone(),
-            index: self.tx_events.len() as i32,
-            event: serde_json::to_value(event).unwrap_or(serde_json::Value::Null),
-        });
+        if self.index_tx_events {
+            self.tx_events.push(TxEventRow {
+                block_hash: self.block_hash.clone(),
+                block_height: self.block_height,
+                parent_dp_hash: event.tx_id().0.clone(),
+                tx_hash: event.tx_id().1.clone(),
+                index: self.tx_events.len() as i32,
+                event: serde_json::to_value(event).unwrap_or(serde_json::Value::Null),
+            });
+        }
     }
 }
 
@@ -1135,6 +1140,9 @@ impl Indexer {
 const INLINE_INSERT_THRESHOLD: usize = 400;
 const MAX_BLOB_BYTES_PER_BATCH: usize = 200 * 1024 * 1024;
 const MAX_BLOB_ROWS_PER_BATCH: usize = 4096;
+const I32_BYTES: usize = std::mem::size_of::<i32>();
+const I64_BYTES: usize = std::mem::size_of::<i64>();
+const BOOL_BYTES: usize = std::mem::size_of::<bool>();
 
 fn transaction_type_text(value: &TransactionTypeDb) -> &'static str {
     match value {
@@ -1176,6 +1184,140 @@ fn contract_change_type_array_text(values: &[ContractChangeType]) -> String {
     }
     out.push('}');
     out
+}
+
+fn optional_i64_bytes(value: Option<i64>) -> usize {
+    value.map_or(0, |_| I64_BYTES)
+}
+
+fn optional_i32_bytes(value: Option<i32>) -> usize {
+    value.map_or(0, |_| I32_BYTES)
+}
+
+fn optional_text_bytes(value: Option<&str>) -> usize {
+    value.map_or(0, str::len)
+}
+
+fn optional_bytea_bytes(value: Option<&[u8]>) -> usize {
+    value.map_or(0, |v| v.len())
+}
+
+fn json_value_bytes(value: &serde_json::Value) -> usize {
+    match value {
+        serde_json::Value::Null => 4,
+        serde_json::Value::Bool(true) => 4,
+        serde_json::Value::Bool(false) => 5,
+        serde_json::Value::Number(n) => n.to_string().len(),
+        serde_json::Value::String(s) => json_escaped_str_bytes(s) + 2,
+        serde_json::Value::Array(items) => {
+            let body_len: usize = items.iter().map(json_value_bytes).sum();
+            body_len + items.len().saturating_sub(1) + 2
+        }
+        serde_json::Value::Object(map) => {
+            let entries_len: usize = map
+                .iter()
+                .map(|(k, v)| json_escaped_str_bytes(k) + 2 + 1 + json_value_bytes(v))
+                .sum();
+            entries_len + map.len().saturating_sub(1) + 2
+        }
+    }
+}
+
+fn json_escaped_str_bytes(value: &str) -> usize {
+    value
+        .chars()
+        .map(|c| match c {
+            '"' | '\\' => 2,
+            '\u{08}' | '\u{0C}' | '\n' | '\r' | '\t' => 2,
+            c if c <= '\u{1F}' => 6, // \u00XX
+            _ => c.len_utf8(),
+        })
+        .sum()
+}
+
+fn tx_store_bytes(tx: &TxStore) -> usize {
+    tx.dp_hash.to_string().len()
+        + tx.tx_hash.to_string().len()
+        + I32_BYTES
+        + transaction_type_text(&tx.transaction_type).len()
+        + transaction_status_text(&tx.transaction_status).len()
+        + tx.block_hash.as_ref().map_or(0, |hash| hash.to_string().len())
+        + I64_BYTES
+        + tx.lane_id.as_ref().map_or(0, |lane| lane.to_string().len())
+        + I32_BYTES
+        + optional_text_bytes(tx.identity.as_deref())
+}
+
+fn tx_contract_row_bytes(row: &TxContractRow) -> usize {
+    row.parent_dp_hash.to_string().len() + row.tx_hash.to_string().len() + row.contract_name.len()
+}
+
+fn contract_upsert_row_bytes(row: &ContractUpsertRow) -> usize {
+    row.contract_name.len()
+        + row.verifier.len()
+        + row.program_id.len()
+        + optional_i64_bytes(row.soft_timeout)
+        + optional_i64_bytes(row.hard_timeout)
+        + row.state_commitment.len()
+        + row.parent_dp_hash.to_string().len()
+        + row.tx_hash.to_string().len()
+        + optional_bytea_bytes(row.metadata.as_deref())
+        + optional_i32_bytes(row.deleted_at_height)
+}
+
+fn contract_history_row_bytes(row: &ContractHistoryRow) -> usize {
+    row.contract_name.len()
+        + I64_BYTES
+        + I32_BYTES
+        + contract_change_type_array_text(&row.change_type).len()
+        + row.verifier.len()
+        + row.program_id.len()
+        + row.state_commitment.len()
+        + optional_i64_bytes(row.soft_timeout)
+        + optional_i64_bytes(row.hard_timeout)
+        + optional_i32_bytes(row.deleted_at_height)
+        + row.parent_dp_hash.to_string().len()
+        + row.tx_hash.to_string().len()
+}
+
+fn tx_event_row_bytes(row: &TxEventRow) -> usize {
+    row.block_hash.to_string().len()
+        + I64_BYTES
+        + row.parent_dp_hash.to_string().len()
+        + row.tx_hash.to_string().len()
+        + I32_BYTES
+        + json_value_bytes(&row.event)
+}
+
+fn blob_row_bytes(row: &BlobRow) -> usize {
+    row.parent_dp_hash.to_string().len()
+        + row.tx_hash.to_string().len()
+        + I32_BYTES
+        + row.identity.len()
+        + row.contract_name.0.len()
+        + row.data.len()
+}
+
+fn blob_proof_output_row_bytes(row: &BlobProofOutputRow) -> usize {
+    row.blob_parent_dp_hash.to_string().len()
+        + row.blob_tx_hash.to_string().len()
+        + row.proof_parent_dp_hash.to_string().len()
+        + row.proof_tx_hash.to_string().len()
+        + I32_BYTES
+        + I32_BYTES
+        + row.contract_name.0.len()
+        + json_value_bytes(&row.hyli_output)
+        + BOOL_BYTES
+}
+
+fn contract_update_row_bytes(row: &ContractUpdateRow) -> usize {
+    row.contract_name.len()
+        + optional_text_bytes(row.verifier.as_deref())
+        + optional_bytea_bytes(row.program_id.as_deref())
+        + optional_i64_bytes(row.soft_timeout)
+        + optional_i64_bytes(row.hard_timeout)
+        + optional_bytea_bytes(row.state_commitment.as_deref())
+        + optional_i32_bytes(row.deleted_at_height)
 }
 
 async fn upsert_transactions(
@@ -1243,7 +1385,8 @@ async fn upsert_transactions(
         }
         metrics.add_rows_written("transactions", "values", rows.len());
         metrics.record_write_duration("transactions", "values", started.elapsed().as_secs_f64());
-        metrics.add_bytes_written("transactions", rows.len() * (64 + 64 + 16 + 16 + 16 + 16));
+        let written_bytes: usize = rows.iter().map(tx_store_bytes).sum();
+        metrics.add_bytes_written("transactions", written_bytes);
         return Ok(());
     }
 
@@ -1362,7 +1505,8 @@ async fn insert_txs_contracts(
         }
         metrics.add_rows_written("txs_contracts", "values", row_count);
         metrics.record_write_duration("txs_contracts", "values", started.elapsed().as_secs_f64());
-        metrics.add_bytes_written("txs_contracts", row_count * (64 + 64 + 32));
+        let written_bytes: usize = rows.iter().map(tx_contract_row_bytes).sum();
+        metrics.add_bytes_written("txs_contracts", written_bytes);
         return Ok(());
     }
 
@@ -1454,7 +1598,8 @@ async fn upsert_contracts(
         }
         metrics.add_rows_written("contracts", "values", row_count);
         metrics.record_write_duration("contracts", "values", started.elapsed().as_secs_f64());
-        metrics.add_bytes_written("contracts", row_count * (64 + 64 + 64));
+        let written_bytes: usize = rows.iter().map(contract_upsert_row_bytes).sum();
+        metrics.add_bytes_written("contracts", written_bytes);
         return Ok(());
     }
 
@@ -1567,7 +1712,8 @@ async fn insert_contract_history(
             "values",
             started.elapsed().as_secs_f64(),
         );
-        metrics.add_bytes_written("contract_history", row_count * (64 + 64 + 32));
+        let written_bytes: usize = rows.iter().map(contract_history_row_bytes).sum();
+        metrics.add_bytes_written("contract_history", written_bytes);
         return Ok(());
     }
 
@@ -1649,6 +1795,7 @@ async fn insert_or_copy_tx_events(
 
     if rows.len() <= INLINE_INSERT_THRESHOLD {
         let started = Instant::now();
+        let written_bytes: usize = rows.iter().map(tx_event_row_bytes).sum();
         let mut query_builder = QueryBuilder::<Postgres>::new(
             "INSERT INTO transaction_state_events (block_hash, block_height, parent_dp_hash, tx_hash, index, event) ",
         );
@@ -1663,7 +1810,7 @@ async fn insert_or_copy_tx_events(
         query_builder.build().execute(&mut **transaction).await?;
         metrics.add_rows_written("tx_events", "values", row_count);
         metrics.record_write_duration("tx_events", "values", started.elapsed().as_secs_f64());
-        metrics.add_bytes_written("tx_events", row_count * (64 + 64 + 256));
+        metrics.add_bytes_written("tx_events", written_bytes);
         return Ok(());
     }
 
@@ -1703,7 +1850,7 @@ async fn insert_or_copy_blobs(
         return Ok(());
     }
 
-    let total_bytes: usize = rows.iter().map(|r| r.data.len()).sum();
+    let total_bytes: usize = rows.iter().map(blob_row_bytes).sum();
     let started = Instant::now();
     // For large BYTEA payloads, prefer bind-based VALUES with byte-size chunking.
     // COPY text would hex-expand payload (~2x bytes) and can be much slower.
@@ -1766,6 +1913,7 @@ async fn insert_or_copy_blob_proof_outputs(
 
     if rows.len() <= INLINE_INSERT_THRESHOLD {
         let started = Instant::now();
+        let written_bytes: usize = rows.iter().map(blob_proof_output_row_bytes).sum();
         let mut query_builder = QueryBuilder::<Postgres>::new(
             "INSERT INTO blob_proof_outputs (blob_parent_dp_hash, blob_tx_hash, proof_parent_dp_hash, proof_tx_hash, blob_index, blob_proof_output_index, contract_name, hyli_output, settled) ",
         );
@@ -1787,7 +1935,7 @@ async fn insert_or_copy_blob_proof_outputs(
             "values",
             started.elapsed().as_secs_f64(),
         );
-        metrics.add_bytes_written("blob_proof_outputs", row_count * 256);
+        metrics.add_bytes_written("blob_proof_outputs", written_bytes);
         return Ok(());
     }
 
@@ -1836,6 +1984,7 @@ async fn apply_contract_updates(
 
     if rows.len() <= INLINE_INSERT_THRESHOLD {
         let started = Instant::now();
+        let written_bytes: usize = rows.iter().map(contract_update_row_bytes).sum();
         let mut query_builder = QueryBuilder::<Postgres>::new(
             "UPDATE contracts SET
                 verifier = COALESCE(contract_updates.verifier, contracts.verifier),
@@ -1866,7 +2015,7 @@ async fn apply_contract_updates(
             "values",
             started.elapsed().as_secs_f64(),
         );
-        metrics.add_bytes_written("contract_updates", row_count * 128);
+        metrics.add_bytes_written("contract_updates", written_bytes);
         return Ok(());
     }
 
