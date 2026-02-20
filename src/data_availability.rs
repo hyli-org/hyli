@@ -1094,6 +1094,7 @@ impl DataAvailability {
                     first_missing, peer_ip, e
                 );
             }
+            server.drop_peer_stream(peer_ip.to_string());
             return Ok(());
         }
 
