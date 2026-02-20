@@ -10,7 +10,7 @@ use hyli_net::{
     net::Sim,
     tcp::{
         p2p_server::{P2PServer, P2PTimeouts},
-        Canal, P2PTcpMessage, TcpMessageLabel,
+        Canal, P2PTcpMessage, TcpMessageLabel, TcpServerLike,
     },
 };
 use hyli_turmoil_shims::init_test_meter_provider;
@@ -203,7 +203,10 @@ async fn setup_drop_host(
             _ = interval_start_shutdown.tick() => {
                 if turmoil::elapsed() > Duration::from_millis(duration) {
                     tracing::error!("Current peers {:?}", p2p.peers.keys());
-                    tracing::error!("Current tcp peers {:?}", p2p.tcp_server.connected_clients());
+                    tracing::error!(
+                        "Current tcp peers {:?}",
+                        p2p.tcp_server.connected_clients().cloned().collect::<Vec<_>>()
+                    );
 
                     // Peers map should match all_other_peers
                     assert_eq!(all_other_peers.len(), p2p.peers.keys().len());
