@@ -29,6 +29,7 @@ use hyli_turmoil_shims::collections::HashMap;
 use tracing::{debug, error, trace, warn};
 
 use super::{tcp_client::TcpClient, SocketStream, TcpEvent};
+use crate::tcp::middleware::SendStatus;
 use crate::tcp::middleware::{TcpReqBound, TcpResBound};
 use crate::tcp::TcpServerLike;
 
@@ -635,7 +636,12 @@ where
         }
     }
 
-    fn send(&mut self, socket_addr: String, msg: Res, headers: TcpHeaders) -> anyhow::Result<()> {
+    fn send(
+        &mut self,
+        socket_addr: String,
+        msg: Res,
+        headers: TcpHeaders,
+    ) -> anyhow::Result<SendStatus> {
         debug!(pool = %self.pool_name, "Sending msg {:?} to {}", msg, socket_addr);
         let message_label = msg.message_label();
         let stream = self
@@ -658,7 +664,7 @@ where
                 )
             })?;
         self.metrics.event_loop_message_sent(message_label);
-        Ok(())
+        Ok(SendStatus::SentNow)
     }
 
     fn send_ref(&mut self, socket_addr: &str, msg: &Res, headers: &TcpHeaders) -> anyhow::Result<()>

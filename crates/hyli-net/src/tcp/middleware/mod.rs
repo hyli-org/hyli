@@ -7,7 +7,9 @@ use crate::tcp::{tcp_server::TcpServer, TcpEvent, TcpHeaders, TcpMessageLabel, T
 
 mod impls;
 
-pub use impls::{DropOnError, MessageOnly, RetryingSend, TcpInboundMessage};
+pub use impls::{
+    AdvanceOn, DequeDispatch, DropOnError, MessageOnly, RetryingSend, TcpInboundMessage,
+};
 
 #[macro_export]
 macro_rules! tcp_middleware_chain_type {
@@ -84,11 +86,23 @@ pub struct SendErrorContext<Res> {
     pub error: anyhow::Error,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendStatus {
+    SentNow,
+    RetryScheduled { ticket: u64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendCompletion {
+    Delivered { ticket: u64 },
+    Failed { ticket: u64 },
+}
+
 pub enum SendErrorOutcome {
     /// Middleware absorbed the error (e.g. logged only).
     Handled,
     /// Middleware scheduled a retry.
-    RetryScheduled,
+    RetryScheduled { ticket: u64 },
     /// Middleware requests dropping the peer.
     DropPeer,
     /// Middleware did not handle the error; propagate upstream.
@@ -134,13 +148,14 @@ where
         socket_addr: String,
         msg: Res,
         headers: TcpHeaders,
-    ) -> anyhow::Result<()>
+    ) -> anyhow::Result<SendStatus>
     where
         S: TcpServerLike<Req, Res, EventOut = TcpEvent<Req>>,
         Res: Clone,
     {
         match server.send(socket_addr.clone(), msg.clone(), headers.clone()) {
-            Ok(()) => Ok(()),
+            Ok(SendStatus::SentNow) => Ok(SendStatus::SentNow),
+            Ok(SendStatus::RetryScheduled { ticket }) => Ok(SendStatus::RetryScheduled { ticket }),
             Err(error) => {
                 let ctx = SendErrorContext {
                     socket_addr,
@@ -149,10 +164,13 @@ where
                     error,
                 };
                 match self.on_send_error(server, &ctx) {
-                    SendErrorOutcome::Handled | SendErrorOutcome::RetryScheduled => Ok(()),
+                    SendErrorOutcome::Handled => Ok(SendStatus::SentNow),
+                    SendErrorOutcome::RetryScheduled { ticket } => {
+                        Ok(SendStatus::RetryScheduled { ticket })
+                    }
                     SendErrorOutcome::DropPeer => {
                         server.drop_peer_stream(ctx.socket_addr.clone());
-                        Ok(())
+                        Ok(SendStatus::SentNow)
                     }
                     SendErrorOutcome::Unhandled(error) => Err(error),
                 }
@@ -174,6 +192,10 @@ where
     }
 
     fn next_wakeup(&self) -> Option<Instant> {
+        None
+    }
+
+    fn poll_send_completion(&mut self) -> Option<SendCompletion> {
         None
     }
 }
@@ -220,6 +242,14 @@ where
             _marker: PhantomData,
         }
     }
+
+    pub fn middleware_mut(&mut self) -> &mut M {
+        &mut self.middleware
+    }
+
+    pub fn inner_mut(&mut self) -> &mut S {
+        &mut self.inner
+    }
 }
 
 impl<S, M, Req, Res> TcpServerLike<Req, Res> for TcpServerWithMiddleware<M, Req, Res, S>
@@ -260,7 +290,12 @@ where
         }
     }
 
-    fn send(&mut self, socket_addr: String, msg: Res, headers: TcpHeaders) -> anyhow::Result<()> {
+    fn send(
+        &mut self,
+        socket_addr: String,
+        msg: Res,
+        headers: TcpHeaders,
+    ) -> anyhow::Result<SendStatus> {
         self.middleware
             .on_send(&mut self.inner, socket_addr, msg, headers)
     }
@@ -270,6 +305,7 @@ where
         Res: Clone,
     {
         self.send(socket_addr.to_string(), msg.clone(), headers.clone())
+            .map(|_| ())
     }
 
     fn connected_clients(&self) -> Self::ConnectedClients<'_> {
@@ -278,6 +314,12 @@ where
 
     fn drop_peer_stream(&mut self, peer_ip: String) {
         self.inner.drop_peer_stream(peer_ip)
+    }
+
+    fn poll_send_completion(&mut self) -> Option<SendCompletion> {
+        self.middleware
+            .poll_send_completion()
+            .or_else(|| self.inner.poll_send_completion())
     }
 }
 
