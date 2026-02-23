@@ -458,6 +458,7 @@ where
             tx,
             tx_ctx,
             status,
+            ..
         } = tx_data;
         if self.catching_up {
             // Invariant: settled events are emitted only after their matching sequenced event.

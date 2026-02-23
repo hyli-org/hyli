@@ -171,7 +171,7 @@ pub enum TxEvent<'a> {
         Option<&'a (ProgramId, Verifier, TxId, HyliOutput)>,
         usize,
     ),
-    ContractDeleted(&'a TxId, &'a ContractName),
+    ContractDeleted(&'a TxId, &'a ContractName, &'a Contract),
     ContractRegistered(
         &'a TxId,
         &'a ContractName,
@@ -201,7 +201,7 @@ impl<'a> TxEvent<'a> {
             TxEvent::TxError(tx_id, _) => tx_id,
             TxEvent::NewProof(tx_id, _, _, _, _) => tx_id,
             TxEvent::BlobSettled(tx_id, _, _, _, _, _) => tx_id,
-            TxEvent::ContractDeleted(tx_id, _) => tx_id,
+            TxEvent::ContractDeleted(tx_id, ..) => tx_id,
             TxEvent::ContractRegistered(tx_id, ..) => tx_id,
             TxEvent::ContractStateUpdated(tx_id, ..) => tx_id,
             TxEvent::ContractProgramIdUpdated(tx_id, ..) => tx_id,
@@ -1115,6 +1115,7 @@ impl<'any> NodeStateProcessing<'any> {
                 }
                 ContractStatus::Deleted => {
                     debug!("✏️ Delete {} contract", contract_name);
+                    let deleted_contract = self.contracts.get(&contract_name).cloned();
                     self.contracts.remove(&contract_name);
 
                     let mut potentially_blocked_contracts = HashSet::new();
@@ -1143,8 +1144,19 @@ impl<'any> NodeStateProcessing<'any> {
                         }
                     }
 
-                    self.callback
-                        .on_event(&TxEvent::ContractDeleted(&settled_tx.tx_id, &contract_name));
+                    if let Some(deleted_contract) = deleted_contract.as_ref() {
+                        self.callback.on_event(&TxEvent::ContractDeleted(
+                            &settled_tx.tx_id,
+                            &contract_name,
+                            deleted_contract,
+                        ));
+                    } else {
+                        tracing::warn!(
+                            "ContractDeleted emitted for unknown contract {} in tx {}",
+                            contract_name,
+                            settled_tx.tx_id.1
+                        );
+                    }
                     continue;
                 }
                 ContractStatus::Updated(contract) => {
@@ -1844,7 +1856,7 @@ impl NodeStateCallback for NodeStateEventCallback {
                     StatefulEvent::ContractUpdate(contract_name.clone(), contract.clone()),
                 ));
             }
-            TxEvent::ContractDeleted(tx_id, contract_name) => {
+            TxEvent::ContractDeleted(tx_id, contract_name, _contract) => {
                 self.stateful_events.events.push((
                     tx_id.clone(),
                     StatefulEvent::ContractDelete(contract_name.clone()),

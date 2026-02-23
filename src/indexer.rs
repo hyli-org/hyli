@@ -778,7 +778,6 @@ impl NodeStateCallback for IndexerHandlerStore {
                 }
             }
             TxEvent::ContractRegistered(tx_id, contract_name, contract, metadata) => {
-                tracing::info!("ContractRegistered event for contract: {}", contract_name);
                 let tx_index = self.tx_index_map.get(tx_id).copied().unwrap_or(0);
                 let (soft_timeout, hard_timeout) =
                     timeout_columns(&contract.timeout_window).unwrap_or_default();
@@ -816,7 +815,26 @@ impl NodeStateCallback for IndexerHandlerStore {
                 // Don't push events
                 return;
             }
-            TxEvent::ContractDeleted(_, contract_name) => {
+            TxEvent::ContractDeleted(tx_id, contract_name, contract) => {
+                let tx_index = self.tx_index_map.get(tx_id).copied().unwrap_or(0);
+                let (soft_timeout, hard_timeout) =
+                    timeout_columns(&contract.timeout_window).unwrap_or_default();
+
+                self.record_contract_history(ContractHistoryStore {
+                    contract_name: contract_name.clone(),
+                    block_height: self.block_height,
+                    tx_index,
+                    change_type: vec![ContractChangeType::Deleted],
+                    verifier: contract.verifier.0.clone(),
+                    program_id: contract.program_id.0.clone(),
+                    state_commitment: contract.state.0.clone(),
+                    soft_timeout,
+                    hard_timeout,
+                    deleted_at_height: Some(self.block_height.0 as i32),
+                    parent_dp_hash: tx_id.0.clone(),
+                    tx_hash: tx_id.1.clone(),
+                });
+
                 self.contract_updates
                     .entry(contract_name.clone())
                     .and_modify(|e| {
@@ -986,8 +1004,6 @@ impl Indexer {
         let mut block_notifications = Vec::new();
         // Only transaction that have some contracts in tx_store.contract_names will be notified
         // Hence, only sequenced blob transactions will be notified
-        // FIXME: Add notification for contracts at the block where a tx for that contract settles
-        // TODO: Investigate if we should have a channel per transaction status update
         let mut contract_notifications: HashMap<ContractName, HashSet<BlockHeight>> =
             HashMap::new();
 
@@ -1412,7 +1428,7 @@ fn tx_event_json_for_db(event: &TxEvent<'_>) -> serde_json::Value {
                 "blob_proof_index": blob_proof_index,
             })
         }
-        TxEvent::ContractDeleted(tx_id, contract_name) => serde_json::json!({
+        TxEvent::ContractDeleted(tx_id, contract_name, _) => serde_json::json!({
             "type": "ContractDeleted",
             "tx_id": tx_id,
             "contract_name": contract_name,

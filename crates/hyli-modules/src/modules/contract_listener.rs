@@ -5,6 +5,7 @@ use std::{path::PathBuf, time::Duration};
 use anyhow::{Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_bus::modules::ModulePersistOutput;
+use hyli_model::api::ContractChangeType;
 use hyli_model::utils::TimestampMs;
 use hyli_model::{BlockHeight, ContractName, Identity, TxHash};
 use indexmap::IndexMap;
@@ -38,6 +39,18 @@ pub struct ContractTx {
     pub tx: BlobTransaction,
     pub tx_ctx: Arc<TxContext>,
     pub status: TransactionStatusDb,
+    pub contract_changes: HashMap<ContractName, ContractChangeData>,
+}
+
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
+pub struct ContractChangeData {
+    pub change_types: Vec<ContractChangeType>,
+    pub verifier: String,
+    pub program_id: Vec<u8>,
+    pub state_commitment: Vec<u8>,
+    pub soft_timeout: Option<i64>,
+    pub hard_timeout: Option<i64>,
+    pub deleted_at_height: Option<i32>,
 }
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
@@ -54,14 +67,6 @@ module_bus_client! {
 struct ContractListenerBusClient {
     sender(ContractListenerEvent),
 }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct TxData {
-    tx_id: TxId,
-    tx: BlobTransaction,
-    tx_ctx: Arc<TxContext>,
-    status: TransactionStatusDb,
 }
 
 pub struct ContractListener {
@@ -89,8 +94,8 @@ impl Default for BlockCursor {
 
 #[derive(Debug, Default, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
 struct ContractListenerStore {
-    last_sequenced_block_cursor: HashMap<ContractName, BlockCursor>,
-    last_settled_block_cursor: HashMap<ContractName, BlockCursor>,
+    last_sequenced_block_cursor: BlockCursor,
+    last_settled_block_cursor: BlockCursor,
 }
 
 const CONTRACT_LISTENER_STATE_FILE: &str = "contract_listener.bin";
@@ -129,11 +134,7 @@ impl Module for ContractListener {
         };
         let mut store = store;
         if ctx.replay_settled_from_start {
-            for contract in &ctx.contracts {
-                store
-                    .last_settled_block_cursor
-                    .insert(contract.clone(), BlockCursor::default());
-            }
+            store.last_settled_block_cursor = BlockCursor::default();
         }
 
         Ok(Self {
@@ -152,13 +153,9 @@ impl Module for ContractListener {
     async fn persist(&mut self) -> Result<ModulePersistOutput> {
         // Resetting last_seen_block_cursor to default.
         // This forces reprocessing of all sequenced transactions on restart.
-        for cursor in self.store.last_sequenced_block_cursor.values_mut() {
-            *cursor = BlockCursor::default();
-        }
+        self.store.last_sequenced_block_cursor = BlockCursor::default();
         if self.conf.replay_settled_from_start {
-            for cursor in self.store.last_settled_block_cursor.values_mut() {
-                *cursor = BlockCursor::default();
-            }
+            self.store.last_settled_block_cursor = BlockCursor::default();
         }
 
         let file = PathBuf::from(CONTRACT_LISTENER_STATE_FILE);
@@ -177,32 +174,18 @@ impl ContractListener {
                 .with_context(|| format!("listening to contract channel {}", contract))?;
         }
 
-        // Initialize last seen heights per contract so startup dispatch can backfill.
-        for contract in &self.conf.contracts {
-            let last_sequenced_seen = self
-                .store
-                .last_sequenced_block_cursor
-                .entry(contract.clone())
-                .or_default();
-            let last_settled_seen = self
-                .store
-                .last_settled_block_cursor
-                .entry(contract.clone())
-                .or_default();
-            info!(
-                "📡 ContractPgListener initial cursor for contract {}: sequenced=({}, {}), settled=({}, {})",
-                contract,
-                last_sequenced_seen.height.0,
-                last_sequenced_seen.index,
-                last_settled_seen.height.0,
-                last_settled_seen.index
-            );
-        }
+        info!(
+            "📡 ContractPgListener initial global cursors: sequenced=({}, {}), settled=({}, {})",
+            self.store.last_sequenced_block_cursor.height.0,
+            self.store.last_sequenced_block_cursor.index,
+            self.store.last_settled_block_cursor.height.0,
+            self.store.last_settled_block_cursor.index
+        );
 
         // Dispatch any unprocessed txs at startup.
+        self.handle_sequenced_txs().await?;
+        self.handle_settled_txs().await?;
         for contract_name in self.conf.contracts.clone() {
-            self.handle_sequenced_txs(&contract_name).await?;
-            self.handle_settled_txs(&contract_name).await?;
             self.bus.send(ContractListenerEvent::BackfillComplete(
                 contract_name.clone(),
             ))?;
@@ -214,17 +197,19 @@ impl ContractListener {
                 match notif {
                     Ok(notification) => {
                         let contract_name = notification.channel().into();
+                        debug!("🔔 Received notification for contract {}", contract_name);
                         if self.conf.contracts.contains(&contract_name) {
-                            match serde_json::from_str::<BlockHeight>(notification.payload()) {
-                                Ok(block_height) => {
-                                        debug!("🔔 Contract {} new block notification at height {}", contract_name, block_height);
-                                        self.handle_sequenced_txs(&contract_name).await?;
-                                        self.handle_settled_txs(&contract_name).await?;
-                                }
-                                Err(err) => {
-                                    warn!("Failed to decode payload for {} ({}): {err}", notification.channel(), notification.payload());
-                                }
+                            if let Ok(block_height) = serde_json::from_str::<BlockHeight>(notification.payload()) {
+                                debug!("🔔 Contract {} new block notification at height {}", contract_name, block_height);
+                            } else {
+                                debug!(
+                                    "🔔 Contract {} notification payload={}, refreshing cursors",
+                                    contract_name,
+                                    notification.payload()
+                                );
                             }
+                            self.handle_sequenced_txs().await?;
+                            self.handle_settled_txs().await?;
                         }
                     }
                     Err(err) => {
@@ -236,66 +221,61 @@ impl ContractListener {
                 // Periodic poll to catch any missed events for settled transactions only.
                 // This is actually useful only if no new notifications have been received
                 // for more than 5 seconds and that we missed some.
-                for contract_name in self.conf.contracts.clone() {
-                    trace!("⏱️  Contract {} periodic poll for missed settlement events", contract_name);
-                    self.handle_settled_txs(&contract_name).await?;
-                }
+                trace!("⏱️  Periodic poll for missed settlement events");
+                self.handle_settled_txs().await?;
             }
         };
 
         Ok(())
     }
 
-    async fn handle_sequenced_txs(&mut self, contract_name: &ContractName) -> Result<()> {
-        let (sequenced_cursor, sequenced_txs) = self.query_sequenced_txs(contract_name).await?;
+    async fn handle_sequenced_txs(&mut self) -> Result<()> {
+        let (sequenced_cursor, sequenced_txs) = self.query_sequenced_txs().await?;
         self.send_sequenced_txs(sequenced_txs)?;
         Self::update_cursor(
             &mut self.store.last_sequenced_block_cursor,
-            contract_name,
             sequenced_cursor,
         );
         Ok(())
     }
 
-    async fn handle_settled_txs(&mut self, contract_name: &ContractName) -> Result<()> {
-        let (settled_cursor, settled_txs) = self.query_settled_txs(contract_name).await?;
+    async fn handle_settled_txs(&mut self) -> Result<()> {
+        let (settled_cursor, settled_txs) = self.query_settled_txs().await?;
         self.send_settled_txs(settled_txs)?;
-
-        Self::update_cursor(
-            &mut self.store.last_settled_block_cursor,
-            contract_name,
-            settled_cursor,
-        );
-
+        Self::update_cursor(&mut self.store.last_settled_block_cursor, settled_cursor);
         Ok(())
     }
 
-    async fn query_sequenced_txs(
-        &self,
-        contract_name: &ContractName,
-    ) -> Result<(BlockCursor, Vec<TxData>)> {
-        let after_cursor = self
-            .store
-            .last_sequenced_block_cursor
-            .get(contract_name)
-            .cloned()
-            .unwrap_or_default();
+    async fn query_sequenced_txs(&self) -> Result<(BlockCursor, Vec<ContractTx>)> {
+        let after_cursor = self.store.last_sequenced_block_cursor.clone();
+        let contract_names: Vec<String> = self.conf.contracts.iter().map(|c| c.0.clone()).collect();
         let rows = sqlx::query(
             r#"
             WITH contract_txs AS (
                 SELECT DISTINCT t.parent_dp_hash, t.tx_hash, t.block_hash, t.transaction_status, t.block_height, t.index, t.lane_id, blk.timestamp
                 FROM transactions t
-                JOIN blobs b
-                ON b.parent_dp_hash = t.parent_dp_hash
                 JOIN blocks blk
                 ON blk.hash = t.block_hash
-                AND b.tx_hash = t.tx_hash
-                WHERE b.contract_name = $1
-                AND (t.block_height, t.index) > ($2, $3)
+                WHERE (t.block_height, t.index) > ($2, $3)
+                AND EXISTS (
+                    SELECT 1
+                    FROM blobs b
+                    WHERE b.parent_dp_hash = t.parent_dp_hash
+                    AND b.tx_hash = t.tx_hash
+                    AND b.contract_name = ANY($1)
+                )
                 AND t.transaction_type = 'blob_transaction'
                 AND t.transaction_status = 'sequenced'
             )
-            SELECT ct.parent_dp_hash, ct.tx_hash, ct.index, ct.lane_id, b.identity, ct.timestamp, ct.block_hash, ct.transaction_status, ct.block_height, b.blob_index, b.data, b.contract_name
+            SELECT ct.parent_dp_hash, ct.tx_hash, ct.index, ct.lane_id, b.identity, ct.timestamp, ct.block_hash, ct.transaction_status, ct.block_height, b.blob_index, b.data, b.contract_name,
+                   NULL::contract_change_type[] AS contract_change_type,
+                   NULL::text AS contract_verifier,
+                   NULL::bytea AS contract_program_id,
+                   NULL::bytea AS contract_state_commitment,
+                   NULL::bigint AS contract_soft_timeout,
+                   NULL::bigint AS contract_hard_timeout,
+                   NULL::int AS contract_deleted_at_height,
+                   NULL::text AS contract_change_contract_name
             FROM contract_txs ct
             JOIN blobs b
             ON b.parent_dp_hash = ct.parent_dp_hash
@@ -303,117 +283,110 @@ impl ContractListener {
             ORDER BY ct.block_height, ct.index, b.blob_index
             "#,
         )
-        .bind(&contract_name.0)
+        .bind(&contract_names)
         .bind(after_cursor.height.0 as i64)
         .bind(after_cursor.index)
         .fetch_all(&self.pool)
         .await?;
 
         let (latest_cursor, txs) = rows_to_txs(rows)?;
-        debug!(
-            "Processing {} sequenced txs for contract {}",
-            txs.len(),
-            contract_name
-        );
+        debug!("Processing {} sequenced txs", txs.len());
         Ok((latest_cursor, txs))
     }
 
-    async fn query_settled_txs(
-        &self,
-        contract_name: &ContractName,
-    ) -> Result<(BlockCursor, Vec<TxData>)> {
-        let last_settled = self
-            .store
-            .last_settled_block_cursor
-            .get(contract_name)
-            .cloned()
-            .unwrap_or_default();
+    async fn query_settled_txs(&self) -> Result<(BlockCursor, Vec<ContractTx>)> {
+        let last_settled = self.store.last_settled_block_cursor.clone();
+        let contract_names: Vec<String> = self.conf.contracts.iter().map(|c| c.0.clone()).collect();
         let rows = sqlx::query(
             r#"
             WITH contract_txs AS (
                 SELECT DISTINCT t.parent_dp_hash, t.tx_hash, t.block_hash, t.transaction_status, t.block_height, t.index, t.lane_id, blk.timestamp
                 FROM transactions t
-                JOIN blobs b
-                ON b.parent_dp_hash = t.parent_dp_hash
                 JOIN blocks blk
                 ON blk.hash = t.block_hash
-                AND b.tx_hash = t.tx_hash
-                WHERE b.contract_name = $1
-                AND (t.block_height, t.index) > ($2, $3)
+                WHERE (t.block_height, t.index) > ($2, $3)
                 AND t.transaction_type = 'blob_transaction'
                 AND (
                     t.transaction_status = 'success'
                     OR t.transaction_status = 'failure'
                     OR t.transaction_status = 'timed_out'
                 )
+                AND (
+                    EXISTS (
+                        SELECT 1
+                        FROM blobs b
+                        WHERE b.parent_dp_hash = t.parent_dp_hash
+                        AND b.tx_hash = t.tx_hash
+                        AND b.contract_name = ANY($1)
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM contract_history ch
+                        WHERE ch.parent_dp_hash = t.parent_dp_hash
+                        AND ch.tx_hash = t.tx_hash
+                        AND ch.contract_name = ANY($1)
+                    )
+                )
             )
-            SELECT ct.parent_dp_hash, ct.tx_hash, ct.index, ct.lane_id, b.identity, ct.timestamp, ct.block_hash, ct.transaction_status, ct.block_height, b.blob_index, b.data, b.contract_name
+            SELECT ct.parent_dp_hash, ct.tx_hash, ct.index, ct.lane_id, b.identity, ct.timestamp, ct.block_hash, ct.transaction_status, ct.block_height, b.blob_index, b.data, b.contract_name,
+                   ch.change_type AS contract_change_type,
+                   ch.verifier AS contract_verifier,
+                   ch.program_id AS contract_program_id,
+                   ch.state_commitment AS contract_state_commitment,
+                   ch.soft_timeout AS contract_soft_timeout,
+                   ch.hard_timeout AS contract_hard_timeout,
+                   ch.deleted_at_height AS contract_deleted_at_height,
+                   ch.contract_name AS contract_change_contract_name
             FROM contract_txs ct
             JOIN blobs b
             ON b.parent_dp_hash = ct.parent_dp_hash
             AND b.tx_hash = ct.tx_hash
+            LEFT JOIN contract_history ch
+            ON ch.parent_dp_hash = ct.parent_dp_hash
+            AND ch.tx_hash = ct.tx_hash
+            AND ch.contract_name = ANY($1)
             ORDER BY ct.block_height, ct.index, b.blob_index
             "#,
         )
-        .bind(&contract_name.0)
+        .bind(&contract_names)
         .bind(last_settled.height.0 as i64)
         .bind(last_settled.index)
         .fetch_all(&self.pool)
         .await?;
 
         let (settled_cursor, txs) = rows_to_txs(rows)?;
-        debug!(
-            "Processing {} settled txs for contract {}",
-            txs.len(),
-            contract_name
-        );
+        debug!("Processing {} settled txs", txs.len());
         Ok((settled_cursor, txs))
     }
 
-    fn send_sequenced_txs(&mut self, txs: Vec<TxData>) -> Result<()> {
+    fn send_sequenced_txs(&mut self, txs: Vec<ContractTx>) -> Result<()> {
         debug!("Sending {} sequenced txs", txs.len());
-        for data in txs {
-            trace!("Sending sequenced tx {}", data.tx_id);
-            self.bus
-                .send(ContractListenerEvent::SequencedTx(ContractTx {
-                    tx_id: data.tx_id,
-                    tx: data.tx,
-                    tx_ctx: data.tx_ctx,
-                    status: TransactionStatusDb::Sequenced,
-                }))?;
+        for tx in txs {
+            trace!("Sending sequenced tx {}", tx.tx_id);
+            self.bus.send(ContractListenerEvent::SequencedTx(tx))?;
         }
         Ok(())
     }
 
-    fn send_settled_txs(&mut self, txs: Vec<TxData>) -> Result<()> {
+    fn send_settled_txs(&mut self, txs: Vec<ContractTx>) -> Result<()> {
         debug!("Sending {} settled txs", txs.len());
-        for data in txs {
-            trace!("Sending settled tx {}", data.tx_id);
-            self.bus.send(ContractListenerEvent::SettledTx(ContractTx {
-                tx_id: data.tx_id,
-                tx: data.tx,
-                tx_ctx: data.tx_ctx,
-                status: data.status,
-            }))?;
+        for tx in txs {
+            trace!("Sending settled tx {}", tx.tx_id);
+            self.bus.send(ContractListenerEvent::SettledTx(tx))?;
         }
         Ok(())
     }
 
-    fn update_cursor(
-        cursors: &mut HashMap<ContractName, BlockCursor>,
-        contract_name: &ContractName,
-        new_cursor: BlockCursor,
-    ) {
-        let entry = cursors.entry(contract_name.clone()).or_default();
-        if new_cursor.height.0 > entry.height.0
-            || (new_cursor.height.0 == entry.height.0 && new_cursor.index > entry.index)
+    fn update_cursor(cursor: &mut BlockCursor, new_cursor: BlockCursor) {
+        if new_cursor.height.0 > cursor.height.0
+            || (new_cursor.height.0 == cursor.height.0 && new_cursor.index > cursor.index)
         {
-            *entry = new_cursor;
+            *cursor = new_cursor;
         }
     }
 }
 
-fn rows_to_txs(rows: Vec<PgRow>) -> Result<(BlockCursor, Vec<TxData>)> {
+fn rows_to_txs(rows: Vec<PgRow>) -> Result<(BlockCursor, Vec<ContractTx>)> {
     #[derive(Debug, Clone)]
     struct TxDataBuilder {
         tx_id: TxId,
@@ -421,6 +394,7 @@ fn rows_to_txs(rows: Vec<PgRow>) -> Result<(BlockCursor, Vec<TxData>)> {
         blobs: IndexedBlobs,
         tx_ctx: Arc<TxContext>,
         status: TransactionStatusDb,
+        contract_changes: HashMap<ContractName, ContractChangeData>,
     }
 
     // Group rows by TxId (parent_dp_hash + tx_hash) to rebuild each transaction with its full blob set.
@@ -438,6 +412,7 @@ fn rows_to_txs(rows: Vec<PgRow>) -> Result<(BlockCursor, Vec<TxData>)> {
         let blob_contract_name: ContractName = row.try_get("contract_name")?;
         let tx_block_height = BlockHeight(row.try_get::<i64, _>("block_height")? as u64);
         let tx_index = row.try_get::<i32, _>("index")?;
+        let contract_change = parse_contract_change_data(&row)?;
 
         let blob_index = BlobIndex(row.try_get::<i32, _>("blob_index")? as usize);
         let blob_data = row.try_get::<Vec<u8>, _>("data")?;
@@ -469,9 +444,21 @@ fn rows_to_txs(rows: Vec<PgRow>) -> Result<(BlockCursor, Vec<TxData>)> {
             blobs: IndexedBlobs::default(),
             tx_ctx: Arc::new(tx_ctx),
             status: transaction_status,
+            contract_changes: HashMap::new(),
         });
+        if let Some((contract_name, contract_change)) = contract_change {
+            if let Some(existing_change) = entry.contract_changes.get_mut(&contract_name) {
+                merge_contract_change_data(existing_change, contract_change);
+            } else {
+                entry
+                    .contract_changes
+                    .insert(contract_name, contract_change);
+            }
+        }
 
-        entry.blobs.push((blob_index, blob));
+        if entry.blobs.iter().all(|(idx, _)| *idx != blob_index) {
+            entry.blobs.push((blob_index, blob));
+        }
     }
 
     // Convert indexed blobs into ordered vectors to build BlobTransaction payloads.
@@ -479,15 +466,56 @@ fn rows_to_txs(rows: Vec<PgRow>) -> Result<(BlockCursor, Vec<TxData>)> {
     for builder in txs.into_values() {
         let blobs = indexed_blobs_to_vec(&builder.blobs)?;
         let tx = BlobTransaction::new(builder.identity, blobs);
-        out.push(TxData {
+        out.push(ContractTx {
             tx_id: builder.tx_id,
             tx,
             tx_ctx: builder.tx_ctx,
             status: builder.status,
+            contract_changes: builder.contract_changes,
         });
     }
 
     Ok((latest_cursor, out))
+}
+
+fn parse_contract_change_data(row: &PgRow) -> Result<Option<(ContractName, ContractChangeData)>> {
+    let Some(change_types) =
+        row.try_get::<Option<Vec<ContractChangeType>>, _>("contract_change_type")?
+    else {
+        return Ok(None);
+    };
+    if change_types.is_empty() {
+        return Ok(None);
+    }
+    let contract_name = row
+        .try_get::<Option<ContractName>, _>("contract_change_contract_name")?
+        .ok_or_else(|| anyhow::anyhow!("missing contract_change_contract_name"))?;
+    Ok(Some((
+        contract_name,
+        ContractChangeData {
+            change_types,
+            verifier: row.try_get::<String, _>("contract_verifier")?,
+            program_id: row.try_get::<Vec<u8>, _>("contract_program_id")?,
+            state_commitment: row.try_get::<Vec<u8>, _>("contract_state_commitment")?,
+            soft_timeout: row.try_get::<Option<i64>, _>("contract_soft_timeout")?,
+            hard_timeout: row.try_get::<Option<i64>, _>("contract_hard_timeout")?,
+            deleted_at_height: row.try_get::<Option<i32>, _>("contract_deleted_at_height")?,
+        },
+    )))
+}
+
+fn merge_contract_change_data(existing: &mut ContractChangeData, mut incoming: ContractChangeData) {
+    for change_type in incoming.change_types.drain(..) {
+        if !existing.change_types.contains(&change_type) {
+            existing.change_types.push(change_type);
+        }
+    }
+    existing.verifier = incoming.verifier;
+    existing.program_id = incoming.program_id;
+    existing.state_commitment = incoming.state_commitment;
+    existing.soft_timeout = incoming.soft_timeout;
+    existing.hard_timeout = incoming.hard_timeout;
+    existing.deleted_at_height = incoming.deleted_at_height;
 }
 
 fn indexed_blobs_to_vec(blobs: &IndexedBlobs) -> Result<Vec<Blob>> {
