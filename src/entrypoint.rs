@@ -56,7 +56,7 @@ use testcontainers_modules::{
     postgres::Postgres,
     testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use utoipa::OpenApi;
 
 pub struct RunPg {
@@ -217,8 +217,6 @@ pub async fn common_main(
         use_fresh_db(&config.data_directory, &mut config.database_url).await?;
     }
 
-    let config = Arc::new(config);
-
     welcome_message(&config);
     info!("Starting node with config: {:?}", &config);
 
@@ -264,82 +262,91 @@ pub async fn common_main(
         let node_state_path = config.data_directory.join(NODE_STATE_BIN);
         // Check states exist and skip catchup if so.
         if !consensus_path.exists() || !node_state_path.exists() {
-            if config.fast_catchup_peers.is_empty() {
-                bail!("Fast catchup enabled but no peers configured in fast_catchup_peers");
-            }
-
             let mut catchup_response = None;
-            for peer in &config.fast_catchup_peers {
-                info!("Attempting fast catchup from {} with trust", peer);
-                match NodeAdminApiClient::new(peer.clone()) {
-                    Ok(client) => match client.get_catchup_store().await {
-                        Ok(response) => {
-                            info!("Successfully caught up from {}", peer);
-                            catchup_response = Some(response);
-                            break;
-                        }
+            let mut bootstrap_failure_reason = None;
+
+            if config.fast_catchup_peers.is_empty() {
+                bootstrap_failure_reason = Some("no peers configured");
+            } else {
+                for peer in &config.fast_catchup_peers {
+                    info!("Attempting fast catchup from {} with trust", peer);
+                    match NodeAdminApiClient::new(peer.clone()) {
+                        Ok(client) => match client.get_catchup_store().await {
+                            Ok(response) => {
+                                info!("Successfully caught up from {}", peer);
+                                catchup_response = Some(response);
+                                break;
+                            }
+                            Err(e) => {
+                                error!("Failed to catch up from {}: {:?}", peer, e);
+                            }
+                        },
                         Err(e) => {
-                            error!("Failed to catch up from {}: {:?}", peer, e);
+                            error!("Failed to create client for {}: {:?}", peer, e);
                         }
-                    },
-                    Err(e) => {
-                        error!("Failed to create client for {}: {:?}", peer, e);
                     }
                 }
             }
 
-            let catchup_response =
-                catchup_response.context("Fast catchup failed: no peer responded successfully")?;
+            if let Some(catchup_response) = catchup_response {
+                let consensus_store: ConsensusStore =
+                    borsh::from_slice(catchup_response.consensus_store.as_slice())
+                        .context("Deserializing consensus catchup store")?;
+                let node_state_store: NodeStateStore =
+                    borsh::from_slice(catchup_response.node_state_store.as_slice())
+                        .context("Deserializing node state catchup store")?;
+                node_state_override = Some(node_state_store.clone());
 
-            let consensus_store: ConsensusStore =
-                borsh::from_slice(catchup_response.consensus_store.as_slice())
-                    .context("Deserializing consensus catchup store")?;
-            let node_state_store: NodeStateStore =
-                borsh::from_slice(catchup_response.node_state_store.as_slice())
-                    .context("Deserializing node state catchup store")?;
-            node_state_override = Some(node_state_store.clone());
+                if consensus_path.exists() {
+                    _ = fs::remove_file(&consensus_path);
+                    info!("Removed old consensus file at {}", consensus_path.display());
+                }
 
-            if consensus_path.exists() {
-                _ = fs::remove_file(&consensus_path);
-                info!("Removed old consensus file at {}", consensus_path.display());
-            }
+                if node_state_path.exists() {
+                    _ = fs::remove_file(&node_state_path);
+                    info!(
+                        "Removed old node state file at {}",
+                        node_state_path.display()
+                    );
+                }
 
-            if node_state_path.exists() {
-                _ = fs::remove_file(&node_state_path);
-                info!(
-                    "Removed old node state file at {}",
-                    node_state_path.display()
+                let consensus_checksum = log_error!(
+                    Consensus::save_on_disk(
+                        &config.data_directory,
+                        CONSENSUS_BIN.as_ref(),
+                        &consensus_store
+                    ),
+                    "Saving consensus store"
+                )?;
+
+                let node_state_checksum = log_error!(
+                    NodeStateModule::save_on_disk(
+                        &config.data_directory,
+                        NODE_STATE_BIN.as_ref(),
+                        &node_state_store,
+                    ),
+                    "Saving node state store"
+                )?;
+
+                log_error!(
+                    write_manifest(
+                        &config.data_directory,
+                        &[
+                            (consensus_path, consensus_checksum),
+                            (node_state_path, node_state_checksum),
+                        ],
+                    ),
+                    "Writing checksum manifest for fast catchup stores"
+                )?;
+            } else {
+                let reason = bootstrap_failure_reason.unwrap_or("no peer responded successfully");
+                warn!(
+                    "Fast catchup bootstrap failed ({}). Disabling fast catchup for this run and continuing normal startup.",
+                    reason
                 );
+                config.run_fast_catchup = false;
+                config.fast_catchup_backfill = false;
             }
-
-            let consensus_checksum = log_error!(
-                Consensus::save_on_disk(
-                    &config.data_directory,
-                    CONSENSUS_BIN.as_ref(),
-                    &consensus_store
-                ),
-                "Saving consensus store"
-            )?;
-
-            let node_state_checksum = log_error!(
-                NodeStateModule::save_on_disk(
-                    &config.data_directory,
-                    NODE_STATE_BIN.as_ref(),
-                    &node_state_store,
-                ),
-                "Saving node state store"
-            )?;
-
-            log_error!(
-                write_manifest(
-                    &config.data_directory,
-                    &[
-                        (consensus_path, consensus_checksum),
-                        (node_state_path, node_state_checksum),
-                    ],
-                ),
-                "Writing checksum manifest for fast catchup stores"
-            )?;
         } else {
             info!(
                 "Skipping fast catchup, {} and {} already exist in {}",
@@ -349,6 +356,8 @@ pub async fn common_main(
             );
         }
     }
+
+    let config = Arc::new(config);
 
     if config.run_indexer {
         handler
