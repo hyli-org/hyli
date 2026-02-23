@@ -10,19 +10,19 @@ use chrono::{DateTime, Utc};
 use hyli_bus::modules::ModulePersistOutput;
 use hyli_model::api::{ContractChangeType, TransactionStatusDb, TransactionTypeDb};
 use hyli_model::utils::TimestampMs;
-use hyli_modules::telemetry::{Counter, Gauge, Histogram, KeyValue, global_meter_or_panic};
+use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, Histogram, KeyValue};
 use hyli_modules::{
     bus::BusClientSender, modules::indexer::MIGRATOR, node_state::NodeStateEventCallback,
 };
 use hyli_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
-    modules::{Module, SharedBuildApiCtx, gcs_uploader::GCSRequest, module_bus_client},
-    node_state::{NodeState, NodeStateCallback, NodeStateStore, TxEvent, module::NodeStateModule},
+    modules::{gcs_uploader::GCSRequest, module_bus_client, Module, SharedBuildApiCtx},
+    node_state::{module::NodeStateModule, NodeState, NodeStateCallback, NodeStateStore, TxEvent},
 };
 use hyli_net::clock::TimestampMsClock;
 use serde::Serialize;
-use sqlx::{PgConnection, PgPool, Pool, Postgres, QueryBuilder, Row, postgres::PgPoolOptions};
+use sqlx::{postgres::PgPoolOptions, PgConnection, PgPool, Pool, Postgres, QueryBuilder, Row};
 use std::time::Instant;
 use std::{collections::HashMap, collections::HashSet, ops::Deref, path::PathBuf};
 use tokio::io::ReadBuf;
@@ -2152,13 +2152,13 @@ async fn insert_or_copy_blobs(
     let mut lines = Vec::with_capacity(row_count);
     for row in rows {
         lines.push(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\t\\\\x{}\n",
             row.parent_dp_hash,
             row.tx_hash,
             row.blob_index,
             escape_copy_text(row.identity.as_str()),
             escape_copy_text(row.contract_name.0.as_str()),
-            format!("\\\\x{}", hex::encode(row.data)),
+            hex::encode(row.data),
         ));
     }
     let staged_bytes: usize = lines.iter().map(|l| l.len()).sum();
