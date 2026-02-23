@@ -200,6 +200,7 @@ pub(crate) struct IndexerHandlerStore {
 
     blocks: Vec<BlockStore>,
     txs: HashMap<TxId, TxStore>,
+    tx_status_update: HashMap<TxId, TransactionStatusDb>,
     tx_events: Vec<TxEventRow>,
     blobs: HashMap<BlobKey, BlobRow>,
     blob_proof_outputs: HashMap<BlobProofOutputKey, BlobProofOutputRow>,
@@ -362,6 +363,13 @@ struct TxContractRow {
 }
 
 #[derive(Debug)]
+struct TxStatusUpdateRow {
+    parent_dp_hash: DataProposalHash,
+    tx_hash: TxHash,
+    transaction_status: TransactionStatusDb,
+}
+
+#[derive(Debug)]
 struct ContractUpsertRow {
     contract_name: String,
     verifier: String,
@@ -466,14 +474,17 @@ impl IndexerHandlerStore {
     }
 
     fn merge_tx(&mut self, tx_id: TxId, tx: TxStore) {
+        let tx_status = if let Some(pending_status) = self.tx_status_update.remove(&tx_id) {
+            Self::max_status(tx.transaction_status.clone(), pending_status)
+        } else {
+            tx.transaction_status.clone()
+        };
         use std::collections::hash_map::Entry;
         match self.txs.entry(tx_id) {
             Entry::Occupied(mut entry) => {
                 let existing = entry.get_mut();
-                existing.transaction_status = Self::max_status(
-                    existing.transaction_status.clone(),
-                    tx.transaction_status.clone(),
-                );
+                existing.transaction_status =
+                    Self::max_status(existing.transaction_status.clone(), tx_status);
                 existing.contract_names.extend(tx.contract_names);
 
                 if tx.index > existing.index {
@@ -494,7 +505,10 @@ impl IndexerHandlerStore {
                 existing.transaction_type = tx.transaction_type;
             }
             Entry::Vacant(entry) => {
-                entry.insert(tx);
+                entry.insert(TxStore {
+                    transaction_status: tx_status,
+                    ..tx
+                });
             }
         }
     }
@@ -506,23 +520,12 @@ impl IndexerHandlerStore {
             return;
         }
 
-        let tx_hash = tx_id.1.clone();
-        let dp_hash = tx_id.0.clone();
-        self.txs.insert(
-            tx_id,
-            TxStore {
-                tx_hash,
-                dp_hash,
-                transaction_type: TransactionTypeDb::ProofTransaction,
-                block_hash: None,
-                block_height: BlockHeight(0),
-                lane_id: None,
-                index: 0,
-                identity: None,
-                transaction_status: status,
-                contract_names: HashSet::new(),
-            },
-        );
+        self.tx_status_update
+            .entry(tx_id)
+            .and_modify(|existing_status| {
+                *existing_status = Self::max_status(existing_status.clone(), status.clone());
+            })
+            .or_insert(status);
     }
 
     fn record_contract_history(&mut self, history: ContractHistoryStore) {
@@ -958,6 +961,10 @@ impl Indexer {
             .sum();
         self.metrics
             .record_pending_rows("transactions", self.handler_store.txs.len());
+        self.metrics.record_pending_rows(
+            "transaction_status_updates",
+            self.handler_store.tx_status_update.len(),
+        );
         self.metrics
             .record_pending_rows("txs_contracts", pending_txs_contracts);
         self.metrics
@@ -1006,6 +1013,17 @@ impl Indexer {
         // Then transactions
         let tx_rows: Vec<TxStore> = self.handler_store.txs.drain().map(|(_, tx)| tx).collect();
         upsert_transactions(&self.metrics, &mut transaction, tx_rows.as_slice()).await?;
+        let tx_status_rows: Vec<_> = self
+            .handler_store
+            .tx_status_update
+            .drain()
+            .map(|(tx_id, status)| TxStatusUpdateRow {
+                parent_dp_hash: tx_id.0,
+                tx_hash: tx_id.1,
+                transaction_status: status,
+            })
+            .collect();
+        apply_transaction_status_updates(&self.metrics, &mut transaction, tx_status_rows).await?;
 
         // Then txs_contracts
         let mut tx_contract_rows = Vec::new();
@@ -1241,6 +1259,12 @@ fn tx_store_bytes(tx: &TxStore) -> usize {
 
 fn tx_contract_row_bytes(row: &TxContractRow) -> usize {
     row.parent_dp_hash.to_string().len() + row.tx_hash.to_string().len() + row.contract_name.len()
+}
+
+fn tx_status_update_row_bytes(row: &TxStatusUpdateRow) -> usize {
+    row.parent_dp_hash.to_string().len()
+        + row.tx_hash.to_string().len()
+        + transaction_status_text(&row.transaction_status).len()
 }
 
 fn contract_upsert_row_bytes(row: &ContractUpsertRow) -> usize {
@@ -1686,6 +1710,66 @@ async fn insert_txs_contracts(
     Ok(())
 }
 
+async fn apply_transaction_status_updates(
+    metrics: &IndexerMetrics,
+    transaction: &mut sqlx::Transaction<'_, Postgres>,
+    rows: Vec<TxStatusUpdateRow>,
+) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    let started = Instant::now();
+    let inline_bytes: usize = rows.iter().map(tx_status_update_row_bytes).sum();
+    let row_count = rows.len();
+    let mut query_builder = QueryBuilder::<Postgres>::new(
+        "UPDATE transactions SET
+            transaction_status = CASE
+                WHEN (
+                    CASE transactions.transaction_status
+                        WHEN 'waiting_dissemination' THEN 1
+                        WHEN 'data_proposal_created' THEN 2
+                        WHEN 'sequenced' THEN 3
+                        WHEN 'success' THEN 4
+                        WHEN 'failure' THEN 4
+                        WHEN 'timed_out' THEN 4
+                    END
+                ) < (
+                    CASE status_updates.transaction_status
+                        WHEN 'waiting_dissemination' THEN 1
+                        WHEN 'data_proposal_created' THEN 2
+                        WHEN 'sequenced' THEN 3
+                        WHEN 'success' THEN 4
+                        WHEN 'failure' THEN 4
+                        WHEN 'timed_out' THEN 4
+                    END
+                )
+                THEN status_updates.transaction_status
+                ELSE transactions.transaction_status
+            END
+        FROM (",
+    );
+    query_builder.push_values(rows.into_iter(), |mut b, row| {
+        b.push_bind(row.parent_dp_hash)
+            .push_bind(row.tx_hash)
+            .push_bind(row.transaction_status);
+    });
+    query_builder.push(
+        ") AS status_updates(parent_dp_hash, tx_hash, transaction_status)
+        WHERE transactions.parent_dp_hash = status_updates.parent_dp_hash
+          AND transactions.tx_hash = status_updates.tx_hash",
+    );
+    query_builder.build().execute(&mut **transaction).await?;
+    metrics.add_rows_written("transaction_status_updates", "values", row_count);
+    metrics.record_write_duration(
+        "transaction_status_updates",
+        "values",
+        started.elapsed().as_secs_f64(),
+    );
+    metrics.add_bytes_written("transaction_status_updates", inline_bytes);
+    Ok(())
+}
+
 async fn upsert_contracts(
     metrics: &IndexerMetrics,
     transaction: &mut sqlx::Transaction<'_, Postgres>,
@@ -1945,7 +2029,7 @@ async fn insert_or_copy_tx_events(
     let mut lines = Vec::with_capacity(rows.len());
     for row in rows {
         lines.push(format!(
-            "{}\t{}\t{}\t{}\t{}\t\\\\x{}\n",
+            "{}\t{}\t{}\t{}\t{}\t{}\n",
             row.block_hash,
             row.block_height,
             row.parent_dp_hash,
@@ -1997,7 +2081,7 @@ async fn insert_or_copy_blobs(
             row.blob_index,
             escape_copy_text(row.identity.as_str()),
             escape_copy_text(row.contract_name.0.as_str()),
-            hex::encode(row.data),
+            format!("\\\\x{}", hex::encode(row.data)),
         ));
     }
     let staged_bytes: usize = lines.iter().map(|l| l.len()).sum();
