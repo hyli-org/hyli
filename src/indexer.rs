@@ -1389,40 +1389,48 @@ fn tx_event_json_for_db(event: &TxEvent<'_>) -> serde_json::Value {
             "tx_id": tx_id,
             "contract_name": contract_name,
         }),
-        TxEvent::ContractRegistered(tx_id, contract_name, contract, metadata) => serde_json::json!({
-            "type": "ContractRegistered",
-            "tx_id": tx_id,
-            "contract_name": contract_name,
-            "verifier": contract.verifier,
-            "program_id_len": contract.program_id.0.len(),
-            "state_commitment_len": contract.state.0.len(),
-            "metadata_len": metadata.as_ref().map(|m| m.len()),
-        }),
-        TxEvent::ContractStateUpdated(tx_id, contract_name, contract, state_commitment) => serde_json::json!({
-            "type": "ContractStateUpdated",
-            "tx_id": tx_id,
-            "contract_name": contract_name,
-            "verifier": contract.verifier,
-            "program_id_len": contract.program_id.0.len(),
-            "state_commitment_len": state_commitment.0.len(),
-        }),
-        TxEvent::ContractProgramIdUpdated(tx_id, contract_name, contract, program_id) => serde_json::json!({
-            "type": "ContractProgramIdUpdated",
-            "tx_id": tx_id,
-            "contract_name": contract_name,
-            "verifier": contract.verifier,
-            "program_id_len": program_id.0.len(),
-            "state_commitment_len": contract.state.0.len(),
-        }),
-        TxEvent::ContractTimeoutWindowUpdated(tx_id, contract_name, contract, timeout_window) => serde_json::json!({
-            "type": "ContractTimeoutWindowUpdated",
-            "tx_id": tx_id,
-            "contract_name": contract_name,
-            "verifier": contract.verifier,
-            "program_id_len": contract.program_id.0.len(),
-            "state_commitment_len": contract.state.0.len(),
-            "timeout_window": timeout_window,
-        }),
+        TxEvent::ContractRegistered(tx_id, contract_name, contract, metadata) => {
+            serde_json::json!({
+                "type": "ContractRegistered",
+                "tx_id": tx_id,
+                "contract_name": contract_name,
+                "verifier": contract.verifier,
+                "program_id_len": contract.program_id.0.len(),
+                "state_commitment_len": contract.state.0.len(),
+                "metadata_len": metadata.as_ref().map(|m| m.len()),
+            })
+        }
+        TxEvent::ContractStateUpdated(tx_id, contract_name, contract, state_commitment) => {
+            serde_json::json!({
+                "type": "ContractStateUpdated",
+                "tx_id": tx_id,
+                "contract_name": contract_name,
+                "verifier": contract.verifier,
+                "program_id_len": contract.program_id.0.len(),
+                "state_commitment_len": state_commitment.0.len(),
+            })
+        }
+        TxEvent::ContractProgramIdUpdated(tx_id, contract_name, contract, program_id) => {
+            serde_json::json!({
+                "type": "ContractProgramIdUpdated",
+                "tx_id": tx_id,
+                "contract_name": contract_name,
+                "verifier": contract.verifier,
+                "program_id_len": program_id.0.len(),
+                "state_commitment_len": contract.state.0.len(),
+            })
+        }
+        TxEvent::ContractTimeoutWindowUpdated(tx_id, contract_name, contract, timeout_window) => {
+            serde_json::json!({
+                "type": "ContractTimeoutWindowUpdated",
+                "tx_id": tx_id,
+                "contract_name": contract_name,
+                "verifier": contract.verifier,
+                "program_id_len": contract.program_id.0.len(),
+                "state_commitment_len": contract.state.0.len(),
+                "timeout_window": timeout_window,
+            })
+        }
     }
 }
 
@@ -1937,7 +1945,7 @@ async fn insert_or_copy_tx_events(
     let mut lines = Vec::with_capacity(rows.len());
     for row in rows {
         lines.push(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\t\\\\x{}\n",
             row.block_hash,
             row.block_height,
             row.parent_dp_hash,
@@ -1989,7 +1997,7 @@ async fn insert_or_copy_blobs(
             row.blob_index,
             escape_copy_text(row.identity.as_str()),
             escape_copy_text(row.contract_name.0.as_str()),
-            format!("\\\\x{}", hex::encode(row.data)),
+            hex::encode(row.data),
         ));
     }
     let staged_bytes: usize = lines.iter().map(|l| l.len()).sum();
