@@ -4,7 +4,7 @@ use std::time::Duration;
 use std::{fmt::Debug, path::PathBuf, sync::Arc};
 
 use crate::bus::SharedMessageBus;
-use crate::modules::contract_listener::{ContractListenerEvent, ContractTx};
+use crate::modules::contract_listener::{ContractChangeData, ContractListenerEvent, ContractTx};
 use crate::modules::signal::shutdown_aware_timeout;
 use crate::modules::SharedBuildApiCtx;
 use crate::{log_error, module_bus_client, module_handle_messages, modules::Module};
@@ -16,6 +16,7 @@ use client_sdk::rest_client::NodeApiClient;
 use client_sdk::{helpers::ClientSdkProver, transaction_builder::TxExecutorHandler};
 use futures::future::BoxFuture;
 use hyli_bus::modules::ModulePersistOutput;
+use hyli_model::api::ContractChangeType;
 use hyli_net::logged_task::logged_task;
 use indexmap::IndexMap;
 use sdk::api::TransactionStatusDb;
@@ -385,8 +386,9 @@ where
                     "This is likely a bug in the prover, please report it to the Hyli team."
                 );
                 anyhow::bail!(
-                  "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
-                  self.catching_up_state, final_state
+                    "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
+                    self.catching_up_state,
+                    final_state
                 );
             }
         }
@@ -458,8 +460,14 @@ where
             tx,
             tx_ctx,
             status,
+            contract_changes,
             ..
         } = tx_data;
+
+        if let Some(contract_change) = contract_changes.get(&self.ctx.contract_name) {
+            self.handle_contract_change(contract_change).await?;
+        }
+
         if self.catching_up {
             // Invariant: settled events are emitted only after their matching sequenced event.
             // If this is ever violated, catch-up replay assumptions no longer hold.
@@ -485,6 +493,34 @@ where
         }
 
         self.flush_pending(false).await?;
+        Ok(())
+    }
+
+    /// React to onchain contract changes reported by contract-listener.
+    async fn handle_contract_change(&mut self, contract_change: &ContractChangeData) -> Result<()> {
+        for change_type in &contract_change.change_types {
+            match change_type {
+                ContractChangeType::Registered => {}
+                ContractChangeType::ProgramIdUpdated => {
+                    let updated_program_id = ProgramId(contract_change.program_id.clone());
+                    self.ensure_prover_available(
+                        &updated_program_id,
+                        "Program ID updated from contract change",
+                    )
+                    .await?;
+                }
+                ContractChangeType::Deleted => {
+                    self.router_state.lock().unwrap().is_proving = false;
+                    anyhow::bail!(
+                        "Contract {} has been deleted (at height {:?}), stopping AutoProver",
+                        self.ctx.contract_name,
+                        contract_change.deleted_at_height
+                    );
+                }
+                _ => {}
+            }
+        }
+
         Ok(())
     }
 
@@ -1123,7 +1159,9 @@ where
                         } else {
                             match node_client.send_tx_proof(tx).await {
                                 Ok(tx_hash) => {
-                                    info!("✅ Proved {len} txs in {elapsed:?}, Batch id: {batch_id}, Proof TX hash: {tx_hash}");
+                                    info!(
+                                        "✅ Proved {len} txs in {elapsed:?}, Batch id: {batch_id}, Proof TX hash: {tx_hash}"
+                                    );
                                 }
                                 Err(e) => {
                                     error!("Failed to send proof: {e:#}");

@@ -1,10 +1,11 @@
-use crate::node_state::{test::new_node_state, NodeState};
+use crate::node_state::{NodeState, test::new_node_state};
 
 use super::*;
-use crate::modules::contract_listener::{ContractListenerEvent, ContractTx};
+use crate::modules::contract_listener::{ContractChangeData, ContractListenerEvent, ContractTx};
 use client_sdk::helpers::test::TxExecutorTestProver;
 use client_sdk::rest_client::test::NodeApiMockClient;
-use rand::{rng, Rng};
+use hyli_model::api::ContractChangeType;
+use rand::{Rng, rng};
 use sdk::api::TransactionStatusDb;
 use sdk::*;
 use std::collections::VecDeque;
@@ -279,6 +280,23 @@ fn read_contract_state(node_state: &NodeState) -> TestContract {
         .state
         .clone();
     borsh::from_slice::<TestContract>(&state.0).expect("Failed to decode contract state")
+}
+
+fn new_contract_change_data(
+    change_types: Vec<ContractChangeType>,
+    program_id: ProgramId,
+    state_commitment: StateCommitment,
+    deleted_at_height: Option<i32>,
+) -> ContractChangeData {
+    ContractChangeData {
+        change_types,
+        verifier: "test".to_string(),
+        program_id: program_id.0,
+        state_commitment: state_commitment.0,
+        soft_timeout: None,
+        hard_timeout: None,
+        deleted_at_height,
+    }
 }
 
 async fn setup_buffered(
@@ -1163,5 +1181,101 @@ async fn test_auto_prover_program_upgrade_split_and_recurse() -> Result<()> {
     let proofs = get_txs(&api_client).await;
     assert_eq!(proofs.len(), 1);
     assert_eq!(count_hyli_outputs(&proofs[0]), 2);
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_auto_prover_contract_change_registered_checks_commitment() -> Result<()> {
+    let (_node_state, mut auto_prover, _api_client) = setup().await?;
+    let tx = new_blob_tx_with_values(&[1]);
+    let tx_id = TxId(vec![1].into(), tx.hashed());
+    let tx_ctx = Arc::new(TxContext::default());
+
+    let bad_change = new_contract_change_data(
+        vec![ContractChangeType::Registered],
+        ProgramId(vec![]),
+        StateCommitment(vec![9, 9, 9]),
+        None,
+    );
+
+    let res = auto_prover
+        .handle_contract_listener_event(ContractListenerEvent::SettledTx(ContractTx {
+            tx_id,
+            tx,
+            tx_ctx,
+            status: TransactionStatusDb::Success,
+            contract_changes: std::collections::HashMap::from([(
+                auto_prover.ctx.contract_name.clone(),
+                bad_change,
+            )]),
+        }))
+        .await;
+
+    assert!(res.is_err());
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_auto_prover_contract_change_program_id_updated_loads_prover() -> Result<()> {
+    let (_node_state, mut auto_prover, _api_client) = setup().await?;
+    let tx = new_blob_tx_with_values(&[1]);
+    let tx_id = TxId(vec![2].into(), tx.hashed());
+    let tx_ctx = Arc::new(TxContext::default());
+    let next_program_id = ProgramId(vec![4, 4, 4, 4]);
+    auto_prover.provers.remove(&next_program_id);
+
+    let change = new_contract_change_data(
+        vec![ContractChangeType::ProgramIdUpdated],
+        next_program_id.clone(),
+        TestContract::default().commit(),
+        None,
+    );
+
+    auto_prover
+        .handle_contract_listener_event(ContractListenerEvent::SettledTx(ContractTx {
+            tx_id,
+            tx,
+            tx_ctx,
+            status: TransactionStatusDb::Success,
+            contract_changes: std::collections::HashMap::from([(
+                auto_prover.ctx.contract_name.clone(),
+                change,
+            )]),
+        }))
+        .await?;
+
+    assert!(auto_prover.provers.contains_key(&next_program_id));
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_auto_prover_contract_change_deleted_stops_module() -> Result<()> {
+    let (_node_state, mut auto_prover, _api_client) = setup().await?;
+    auto_prover.router_state.lock().unwrap().is_proving = true;
+    let tx = new_blob_tx_with_values(&[1]);
+    let tx_id = TxId(vec![3].into(), tx.hashed());
+    let tx_ctx = Arc::new(TxContext::default());
+    let change = new_contract_change_data(
+        vec![ContractChangeType::Deleted],
+        ProgramId(vec![]),
+        TestContract::default().commit(),
+        Some(42),
+    );
+
+    let res = auto_prover
+        .handle_contract_listener_event(ContractListenerEvent::SettledTx(ContractTx {
+            tx_id,
+            tx,
+            tx_ctx,
+            status: TransactionStatusDb::Success,
+            contract_changes: std::collections::HashMap::from([(
+                auto_prover.ctx.contract_name.clone(),
+                change,
+            )]),
+        }))
+        .await;
+
+    assert!(res.is_err());
+    assert!(!auto_prover.router_state.lock().unwrap().is_proving);
     Ok(())
 }
