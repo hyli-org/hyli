@@ -12,7 +12,7 @@ use crate::{
 use assert_json_diff::assert_json_include;
 use axum_test::TestServer;
 use client_sdk::transaction_builder::ProvableBlobTx;
-use hydentity::{client::tx_executor_handler::register_identity, HydentityAction};
+use hydentity::{HydentityAction, client::tx_executor_handler::register_identity};
 use hyli_contract_sdk::{BlobIndex, HyliOutput, Identity, ProgramId, StateCommitment, TxHash};
 use hyli_model::api::{
     APIBlob, APIBlock, APIContract, APIContractHistory, APITransaction, APITransactionEvents,
@@ -24,7 +24,7 @@ use sqlx::postgres::{PgListener, PgPoolOptions};
 use std::{future::IntoFuture, time::Duration};
 use testcontainers_modules::{
     postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
+    testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner},
 };
 use utils::TimestampMs;
 
@@ -51,7 +51,10 @@ async fn new_indexer(pool: PgPool) -> (Indexer, Explorer) {
             bus: IndexerBusClient::new_from_bus(bus.new_handle()).await,
             db: pool.clone(),
             node_state: NodeState::create("indexer"),
-            handler_store: IndexerHandlerStore::default(),
+            handler_store: IndexerHandlerStore {
+                index_tx_events: conf.indexer.index_tx_events,
+                ..IndexerHandlerStore::default()
+            },
             metrics: IndexerMetrics::global(),
             conf,
         },
@@ -65,14 +68,16 @@ fn new_register_tx(
 ) -> BlobTransaction {
     BlobTransaction::new(
         "hyli@hyli",
-        vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![3, 2, 1]),
-            state_commitment,
-            contract_name: contract_name.clone(),
-            ..Default::default()
-        }
-        .as_blob("hyli".into())],
+        vec![
+            RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![3, 2, 1]),
+                state_commitment,
+                contract_name: contract_name.clone(),
+                ..Default::default()
+            }
+            .as_blob("hyli".into()),
+        ],
     )
 }
 
@@ -1388,9 +1393,11 @@ async fn test_contract_history_tracking() -> Result<()> {
     let filtered_history = filtered_response.json::<Vec<APIContractHistory>>();
 
     assert_eq!(filtered_history.len(), 1, "Should have 1 registered entry");
-    assert!(filtered_history
-        .iter()
-        .all(|h| h.change_type == vec![hyli_model::api::ContractChangeType::Registered]));
+    assert!(
+        filtered_history
+            .iter()
+            .all(|h| h.change_type == vec![hyli_model::api::ContractChangeType::Registered])
+    );
 
     // Test API with block height range filter
     let range_response = server

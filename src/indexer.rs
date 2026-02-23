@@ -10,19 +10,19 @@ use chrono::{DateTime, Utc};
 use hyli_bus::modules::ModulePersistOutput;
 use hyli_model::api::{ContractChangeType, TransactionStatusDb, TransactionTypeDb};
 use hyli_model::utils::TimestampMs;
-use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, Histogram, KeyValue};
+use hyli_modules::telemetry::{Counter, Gauge, Histogram, KeyValue, global_meter_or_panic};
 use hyli_modules::{
     bus::BusClientSender, modules::indexer::MIGRATOR, node_state::NodeStateEventCallback,
 };
 use hyli_modules::{
     bus::SharedMessageBus,
     log_error, module_handle_messages,
-    modules::{gcs_uploader::GCSRequest, module_bus_client, Module, SharedBuildApiCtx},
-    node_state::{module::NodeStateModule, NodeState, NodeStateCallback, NodeStateStore, TxEvent},
+    modules::{Module, SharedBuildApiCtx, gcs_uploader::GCSRequest, module_bus_client},
+    node_state::{NodeState, NodeStateCallback, NodeStateStore, TxEvent, module::NodeStateModule},
 };
 use hyli_net::clock::TimestampMsClock;
 use serde::Serialize;
-use sqlx::{postgres::PgPoolOptions, PgConnection, PgPool, Pool, Postgres, QueryBuilder, Row};
+use sqlx::{PgConnection, PgPool, Pool, Postgres, QueryBuilder, Row, postgres::PgPoolOptions};
 use std::time::Instant;
 use std::{collections::HashMap, collections::HashSet, ops::Deref, path::PathBuf};
 use tokio::io::ReadBuf;
@@ -1719,10 +1719,89 @@ async fn apply_transaction_status_updates(
         return Ok(());
     }
 
-    let started = Instant::now();
     let inline_bytes: usize = rows.iter().map(tx_status_update_row_bytes).sum();
     let row_count = rows.len();
-    let mut query_builder = QueryBuilder::<Postgres>::new(
+    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(row_count, 3) {
+        let started = Instant::now();
+        let mut query_builder = QueryBuilder::<Postgres>::new(
+            "UPDATE transactions SET
+                transaction_status = CASE
+                    WHEN (
+                        CASE transactions.transaction_status
+                            WHEN 'waiting_dissemination' THEN 1
+                            WHEN 'data_proposal_created' THEN 2
+                            WHEN 'sequenced' THEN 3
+                            WHEN 'success' THEN 4
+                            WHEN 'failure' THEN 4
+                            WHEN 'timed_out' THEN 4
+                        END
+                    ) < (
+                        CASE status_updates.transaction_status
+                            WHEN 'waiting_dissemination' THEN 1
+                            WHEN 'data_proposal_created' THEN 2
+                            WHEN 'sequenced' THEN 3
+                            WHEN 'success' THEN 4
+                            WHEN 'failure' THEN 4
+                            WHEN 'timed_out' THEN 4
+                        END
+                    )
+                    THEN status_updates.transaction_status
+                    ELSE transactions.transaction_status
+                END
+            FROM (",
+        );
+        query_builder.push_values(rows.into_iter(), |mut b, row| {
+            b.push_bind(row.parent_dp_hash)
+                .push_bind(row.tx_hash)
+                .push_bind(row.transaction_status);
+        });
+        query_builder.push(
+            ") AS status_updates(parent_dp_hash, tx_hash, transaction_status)
+            WHERE transactions.parent_dp_hash = status_updates.parent_dp_hash
+              AND transactions.tx_hash = status_updates.tx_hash",
+        );
+        query_builder.build().execute(&mut **transaction).await?;
+        metrics.add_rows_written("transaction_status_updates", "values", row_count);
+        metrics.record_write_duration(
+            "transaction_status_updates",
+            "values",
+            started.elapsed().as_secs_f64(),
+        );
+        metrics.add_bytes_written("transaction_status_updates", inline_bytes);
+        return Ok(());
+    }
+
+    let started = Instant::now();
+    sqlx::query(
+        "CREATE TEMPORARY TABLE transaction_status_updates_stage (
+            parent_dp_hash TEXT NOT NULL,
+            tx_hash TEXT NOT NULL,
+            transaction_status transaction_status NOT NULL
+        ) ON COMMIT DROP",
+    )
+    .execute(&mut **transaction)
+    .await?;
+
+    let mut lines = Vec::with_capacity(row_count);
+    for row in rows {
+        lines.push(format!(
+            "{}\t{}\t{}\n",
+            row.parent_dp_hash,
+            row.tx_hash,
+            transaction_status_text(&row.transaction_status),
+        ));
+    }
+    let staged_bytes: usize = lines.iter().map(|l| l.len()).sum();
+    let mut stream = StreamableData::new(lines);
+    let mut copy = transaction
+        .copy_in_raw(
+            "COPY transaction_status_updates_stage (parent_dp_hash, tx_hash, transaction_status) FROM STDIN WITH (FORMAT TEXT)",
+        )
+        .await?;
+    copy.read_from(&mut stream).await?;
+    copy.finish().await?;
+
+    sqlx::query(
         "UPDATE transactions SET
             transaction_status = CASE
                 WHEN (
@@ -1747,26 +1826,20 @@ async fn apply_transaction_status_updates(
                 THEN status_updates.transaction_status
                 ELSE transactions.transaction_status
             END
-        FROM (",
-    );
-    query_builder.push_values(rows.into_iter(), |mut b, row| {
-        b.push_bind(row.parent_dp_hash)
-            .push_bind(row.tx_hash)
-            .push_bind(row.transaction_status);
-    });
-    query_builder.push(
-        ") AS status_updates(parent_dp_hash, tx_hash, transaction_status)
-        WHERE transactions.parent_dp_hash = status_updates.parent_dp_hash
-          AND transactions.tx_hash = status_updates.tx_hash",
-    );
-    query_builder.build().execute(&mut **transaction).await?;
-    metrics.add_rows_written("transaction_status_updates", "values", row_count);
+         FROM transaction_status_updates_stage AS status_updates
+         WHERE transactions.parent_dp_hash = status_updates.parent_dp_hash
+           AND transactions.tx_hash = status_updates.tx_hash",
+    )
+    .execute(&mut **transaction)
+    .await?;
+
+    metrics.add_rows_written("transaction_status_updates", "copy", row_count);
     metrics.record_write_duration(
         "transaction_status_updates",
-        "values",
+        "copy",
         started.elapsed().as_secs_f64(),
     );
-    metrics.add_bytes_written("transaction_status_updates", inline_bytes);
+    metrics.add_bytes_written("transaction_status_updates", staged_bytes);
     Ok(())
 }
 
