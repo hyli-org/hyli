@@ -1226,7 +1226,13 @@ fn json_value_bytes(value: &serde_json::Value) -> usize {
         serde_json::Value::Null => 4,
         serde_json::Value::Bool(true) => 4,
         serde_json::Value::Bool(false) => 5,
-        serde_json::Value::Number(n) => n.to_string().len(),
+        serde_json::Value::Number(n) => {
+            if n.as_u64().is_some() {
+                8
+            } else {
+                n.to_string().len()
+            }
+        }
         serde_json::Value::String(s) => s.len() + 2,
         serde_json::Value::Array(items) => {
             let body_len: usize = items.iter().map(json_value_bytes).sum();
@@ -1243,14 +1249,12 @@ fn json_value_bytes(value: &serde_json::Value) -> usize {
 }
 
 fn tx_store_bytes(tx: &TxStore) -> usize {
-    tx.dp_hash.to_string().len()
-        + tx.tx_hash.to_string().len()
+    tx.dp_hash.0.len()
+        + tx.tx_hash.0.len()
         + I32_BYTES
         + transaction_type_text(&tx.transaction_type).len()
         + transaction_status_text(&tx.transaction_status).len()
-        + tx.block_hash
-            .as_ref()
-            .map_or(0, |hash| hash.to_string().len())
+        + tx.block_hash.as_ref().map_or(0, |hash| hash.0.len())
         + I64_BYTES
         + tx.lane_id.as_ref().map_or(0, |lane| lane.to_string().len())
         + I32_BYTES
@@ -1258,12 +1262,12 @@ fn tx_store_bytes(tx: &TxStore) -> usize {
 }
 
 fn tx_contract_row_bytes(row: &TxContractRow) -> usize {
-    row.parent_dp_hash.to_string().len() + row.tx_hash.to_string().len() + row.contract_name.len()
+    row.parent_dp_hash.0.len() + row.tx_hash.0.len() + row.contract_name.len()
 }
 
 fn tx_status_update_row_bytes(row: &TxStatusUpdateRow) -> usize {
-    row.parent_dp_hash.to_string().len()
-        + row.tx_hash.to_string().len()
+    row.parent_dp_hash.0.len()
+        + row.tx_hash.0.len()
         + transaction_status_text(&row.transaction_status).len()
 }
 
@@ -1274,8 +1278,8 @@ fn contract_upsert_row_bytes(row: &ContractUpsertRow) -> usize {
         + optional_i64_bytes(row.soft_timeout)
         + optional_i64_bytes(row.hard_timeout)
         + row.state_commitment.len()
-        + row.parent_dp_hash.to_string().len()
-        + row.tx_hash.to_string().len()
+        + row.parent_dp_hash.0.len()
+        + row.tx_hash.0.len()
         + optional_bytea_bytes(row.metadata.as_deref())
         + optional_i32_bytes(row.deleted_at_height)
 }
@@ -1291,22 +1295,22 @@ fn contract_history_row_bytes(row: &ContractHistoryRow) -> usize {
         + optional_i64_bytes(row.soft_timeout)
         + optional_i64_bytes(row.hard_timeout)
         + optional_i32_bytes(row.deleted_at_height)
-        + row.parent_dp_hash.to_string().len()
-        + row.tx_hash.to_string().len()
+        + row.parent_dp_hash.0.len()
+        + row.tx_hash.0.len()
 }
 
 fn tx_event_row_bytes(row: &TxEventRow) -> usize {
-    row.block_hash.to_string().len()
+    row.block_hash.0.len()
         + I64_BYTES
-        + row.parent_dp_hash.to_string().len()
-        + row.tx_hash.to_string().len()
+        + row.parent_dp_hash.0.len()
+        + row.tx_hash.0.len()
         + I32_BYTES
         + json_value_bytes(&row.event)
 }
 
 fn blob_row_bytes(row: &BlobRow) -> usize {
-    row.parent_dp_hash.to_string().len()
-        + row.tx_hash.to_string().len()
+    row.parent_dp_hash.0.len()
+        + row.tx_hash.0.len()
         + I32_BYTES
         + row.identity.len()
         + row.contract_name.0.len()
@@ -1314,10 +1318,10 @@ fn blob_row_bytes(row: &BlobRow) -> usize {
 }
 
 fn blob_proof_output_row_bytes(row: &BlobProofOutputRow) -> usize {
-    row.blob_parent_dp_hash.to_string().len()
-        + row.blob_tx_hash.to_string().len()
-        + row.proof_parent_dp_hash.to_string().len()
-        + row.proof_tx_hash.to_string().len()
+    row.blob_parent_dp_hash.0.len()
+        + row.blob_tx_hash.0.len()
+        + row.proof_parent_dp_hash.0.len()
+        + row.proof_tx_hash.0.len()
         + I32_BYTES
         + I32_BYTES
         + row.contract_name.0.len()
