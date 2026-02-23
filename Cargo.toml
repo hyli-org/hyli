@@ -81,7 +81,7 @@ alloy-rlp = { version = "0.3.12", default-features = false }
 alloy-serde = { version = "1.2.1", default-features = false }
 alloy-trie = { version = "0.9.0", default-features = false }
 alloc-metrics = { version = "0.1.1" }
-anyhow = { version = "1.0.98" }
+anyhow = { version = "1.0.102" }
 anymap = { version = "0.12.1", default-features = false }
 assertables = { version = "9.8.2", default-features = false }
 axum = { version = "0.8.4" }
