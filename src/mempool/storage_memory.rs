@@ -7,7 +7,7 @@ use std::{
 use anyhow::{bail, Result};
 use async_stream::try_stream;
 use futures::Stream;
-use hyli_model::{LaneBytesSize, LaneId, ProofData, TxHash};
+use hyli_model::{LaneBytesSize, LaneId, ProofData};
 use tracing::{info, warn};
 
 use super::{
@@ -26,8 +26,8 @@ pub struct LanesStorage {
     // NB: do not iterate on these as they're unordered
     pub by_hash:
         Arc<RwLock<HashMap<LaneId, HashMap<DataProposalHash, (LaneEntryMetadata, DataProposal)>>>>,
-    // Full proofs store: key = (dp_hash, tx_hash)
-    pub proofs: Arc<RwLock<HashMap<LaneId, HashMap<DataProposalHash, HashMap<TxHash, ProofData>>>>>,
+    // Full proofs store: key = (dp_hash, ordered tx_index/proof pairs)
+    pub proofs: Arc<RwLock<HashMap<LaneId, HashMap<DataProposalHash, Vec<(u64, ProofData)>>>>>,
 }
 
 impl Default for LanesStorage {
@@ -175,7 +175,7 @@ impl Storage for LanesStorage {
         &self,
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
-    ) -> Result<Option<HashMap<TxHash, ProofData>>> {
+    ) -> Result<Option<Vec<(u64, ProofData)>>> {
         #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
         let guard = self.proofs.read().unwrap();
         Ok(guard

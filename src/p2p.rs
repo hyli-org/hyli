@@ -191,7 +191,7 @@ impl P2P {
     }
 
     fn verify_msg_header<T: std::fmt::Debug + IntoHeaderSignableData>(
-        msg: MsgWithHeader<T>,
+        msg: &MsgWithHeader<T>,
     ) -> Result<()> {
         // Ignore messages that seem incorrectly timestamped (1h ahead or back)
         if msg.header.msg.timestamp.abs_diff(TimestampMsClock::now().0) > 3_600_000 {
@@ -229,7 +229,7 @@ impl P2P {
         match msg {
             NetMessage::MempoolMessage(mempool_msg) => {
                 trace!("Received new mempool net message {}", mempool_msg.msg);
-                Self::verify_msg_header(mempool_msg.clone())?;
+                Self::verify_msg_header(&mempool_msg)?;
                 self.log_message_delay(
                     &mempool_msg.header.signature.validator,
                     &mempool_msg.header.msg,
@@ -241,7 +241,7 @@ impl P2P {
             }
             NetMessage::ConsensusMessage(consensus_msg) => {
                 trace!("Received new consensus net message {:?}", consensus_msg);
-                Self::verify_msg_header(consensus_msg.clone())?;
+                Self::verify_msg_header(&consensus_msg)?;
                 self.log_message_delay(
                     &consensus_msg.header.signature.validator,
                     &consensus_msg.header.msg,
@@ -293,7 +293,7 @@ mod tests {
             None,
         ))?;
         bad_time_msg.header.msg.timestamp = TimestampMsClock::now().0 + 7200000; // 2h in future
-        assert_err!(P2P::verify_msg_header(bad_time_msg.clone()));
+        assert_err!(P2P::verify_msg_header(&bad_time_msg));
 
         // Test message with timestamp too far in past
         let mut bad_time_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(
@@ -302,7 +302,7 @@ mod tests {
             None,
         ))?;
         bad_time_msg.header.msg.timestamp = TimestampMsClock::now().0 - 7200000; // 2h in past
-        assert_err!(P2P::verify_msg_header(bad_time_msg.clone()));
+        assert_err!(P2P::verify_msg_header(&bad_time_msg));
 
         // Test message with bad signature
         let mut bad_sig_msg = crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(
@@ -311,13 +311,13 @@ mod tests {
             None,
         ))?;
         bad_sig_msg.header.signature.signature.0 = vec![0, 1, 2, 3]; // Invalid signature bytes
-        assert_err!(P2P::verify_msg_header(bad_sig_msg.clone()));
+        assert_err!(P2P::verify_msg_header(&bad_sig_msg));
 
         // Test message with mismatched hash
         let mut bad_hash_msg =
             crypto2.sign_msg_with_header(MempoolNetMessage::SyncRequest(lane_id, None, None))?;
         bad_hash_msg.header.msg.hash = HeaderSignableData(vec![9, 9, 9]); // Wrong hash
-        assert_err!(P2P::verify_msg_header(bad_hash_msg.clone()));
+        assert_err!(P2P::verify_msg_header(&bad_hash_msg));
 
         Ok(())
     }
