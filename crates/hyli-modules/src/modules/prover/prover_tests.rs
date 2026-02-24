@@ -1,11 +1,11 @@
-use crate::node_state::{NodeState, test::new_node_state};
+use crate::node_state::{test::new_node_state, NodeState};
 
 use super::*;
 use crate::modules::contract_listener::{ContractChangeData, ContractListenerEvent, ContractTx};
 use client_sdk::helpers::test::TxExecutorTestProver;
 use client_sdk::rest_client::test::NodeApiMockClient;
 use hyli_model::api::ContractChangeType;
-use rand::{Rng, rng};
+use rand::{rng, Rng};
 use sdk::api::TransactionStatusDb;
 use sdk::*;
 use std::collections::VecDeque;
@@ -122,6 +122,14 @@ async fn setup_with_timeout(
 
     let mut auto_prover = new_simple_auto_prover(api_client.clone()).await?;
     auto_prover.ensure_backfill_complete().await?;
+    auto_prover
+        .handle_contract_change(&new_contract_change_data(
+            vec![ContractChangeType::Registered],
+            ProgramId(vec![]),
+            TestContract::default().commit(),
+            None,
+        ))
+        .await?;
 
     Ok((node_state, auto_prover, api_client))
 }
@@ -149,7 +157,6 @@ async fn new_buffering_auto_prover(
         contract_name: ContractName("test".into()),
         api: None,
         node: api_client,
-        default_state: TestContract::default(),
         tx_buffer_size,
         max_txs_per_proof,
         tx_working_window_size: max_txs_per_proof,
@@ -291,6 +298,7 @@ fn new_contract_change_data(
     ContractChangeData {
         change_types,
         verifier: "test".to_string(),
+        metadata: None,
         program_id: program_id.0,
         state_commitment: state_commitment.0,
         soft_timeout: None,
@@ -323,6 +331,14 @@ async fn setup_buffered(
     let mut auto_prover =
         new_buffering_auto_prover(api_client.clone(), tx_buffer_size, max_txs_per_proof).await?;
     auto_prover.ensure_backfill_complete().await?;
+    auto_prover
+        .handle_contract_change(&new_contract_change_data(
+            vec![ContractChangeType::Registered],
+            ProgramId(vec![]),
+            TestContract::default().commit(),
+            None,
+        ))
+        .await?;
     Ok((node_state, auto_prover, api_client))
 }
 
@@ -349,7 +365,15 @@ async fn setup_catching_with_timeout(
         program_id: ProgramId(vec![]),
         timeout_window: TimeoutWindow::timeout(BlockHeight(timeout), BlockHeight(timeout)),
     });
-    let auto_prover = new_simple_auto_prover(api_client.clone()).await?;
+    let mut auto_prover = new_simple_auto_prover(api_client.clone()).await?;
+    auto_prover
+        .handle_contract_change(&new_contract_change_data(
+            vec![ContractChangeType::Registered],
+            ProgramId(vec![]),
+            TestContract::default().commit(),
+            None,
+        ))
+        .await?;
     Ok((node_state, auto_prover, api_client))
 }
 
@@ -1216,6 +1240,36 @@ async fn test_auto_prover_contract_change_registered_checks_commitment() -> Resu
 }
 
 #[test_log::test(tokio::test)]
+async fn test_auto_prover_tx_before_registration_crashes() -> Result<()> {
+    let api_client = Arc::new(NodeApiMockClient::new());
+    api_client.add_contract(Contract {
+        name: "test".into(),
+        state: TestContract::default().commit(),
+        verifier: "test".into(),
+        program_id: ProgramId(vec![]),
+        timeout_window: TimeoutWindow::default(),
+    });
+    let mut auto_prover = new_simple_auto_prover(api_client).await?;
+    auto_prover.ensure_backfill_complete().await?;
+
+    let tx = new_blob_tx_with_values(&[1]);
+    let tx_id = TxId(vec![5].into(), tx.hashed());
+    let tx_ctx = Arc::new(TxContext::default());
+    let res = auto_prover
+        .handle_contract_listener_event(ContractListenerEvent::SequencedTx(ContractTx {
+            tx_id,
+            tx,
+            tx_ctx,
+            status: TransactionStatusDb::Sequenced,
+            contract_changes: std::collections::HashMap::new(),
+        }))
+        .await;
+
+    assert!(res.is_err());
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
 async fn test_auto_prover_contract_change_program_id_updated_loads_prover() -> Result<()> {
     let (_node_state, mut auto_prover, _api_client) = setup().await?;
     let tx = new_blob_tx_with_values(&[1]);
@@ -1245,6 +1299,65 @@ async fn test_auto_prover_contract_change_program_id_updated_loads_prover() -> R
         .await?;
 
     assert!(auto_prover.provers.contains_key(&next_program_id));
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_auto_prover_contract_change_registered_resets_pipeline_state() -> Result<()> {
+    let (_node_state, mut auto_prover, _api_client) = setup().await?;
+
+    auto_prover.base_state = Some(TestContract { value: 42 });
+    let tx = new_blob_tx_with_values(&[1]);
+    let tx_id = TxId(vec![9].into(), tx.hashed());
+    let tx_ctx = Arc::new(TxContext::default());
+
+    auto_prover
+        .store
+        .unsettled_txs
+        .push((tx.clone(), tx_ctx.clone(), tx_id.clone()));
+    auto_prover
+        .store
+        .proving_txs
+        .push((tx.clone(), tx_ctx.clone(), tx_id.clone()));
+    auto_prover
+        .store
+        .buffered_blobs
+        .push(auto_prover.get_provable_blobs(tx_id.clone(), tx.clone(), tx_ctx.clone()));
+    auto_prover.store.tx_chain.push(tx_id.clone());
+    auto_prover
+        .store
+        .state_history
+        .insert(tx_id.clone(), (TestContract { value: 42 }, true));
+    auto_prover.pending_replay_from = Some(0);
+
+    let next_program_id = ProgramId(vec![8, 8, 8, 8]);
+    auto_prover
+        .provers
+        .insert(next_program_id.clone(), auto_prover.ctx.prover.clone());
+    let change = new_contract_change_data(
+        vec![ContractChangeType::Registered],
+        next_program_id.clone(),
+        TestContract::default().commit(),
+        None,
+    );
+
+    auto_prover.handle_contract_change(&change).await?;
+
+    assert!(auto_prover.store.unsettled_txs.is_empty());
+    assert!(auto_prover.store.proving_txs.is_empty());
+    assert!(auto_prover.store.buffered_blobs.is_empty());
+    assert!(auto_prover.store.tx_chain.is_empty());
+    assert!(auto_prover.store.state_history.is_empty());
+    assert_eq!(auto_prover.pending_replay_from, None);
+    assert_eq!(
+        auto_prover
+            .base_state
+            .as_ref()
+            .expect("base state should be set after registration")
+            .get_state_commitment(),
+        TestContract::default().commit()
+    );
+    assert_eq!(auto_prover.current_program_id, next_program_id);
     Ok(())
 }
 

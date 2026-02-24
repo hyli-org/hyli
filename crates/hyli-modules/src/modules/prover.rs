@@ -21,8 +21,8 @@ use hyli_net::logged_task::logged_task;
 use indexmap::IndexMap;
 use sdk::api::TransactionStatusDb;
 use sdk::{
-    BlobIndex, BlobTransaction, Calldata, ContractName, Hashed, ProgramId, ProofTransaction,
-    StateCommitment, TxContext, TxId,
+    BlobIndex, BlobTransaction, BlockHeight, Calldata, Contract as OnchainContract, ContractName,
+    Hashed, ProgramId, ProofTransaction, StateCommitment, TimeoutWindow, TxContext, TxId,
 };
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
@@ -42,10 +42,11 @@ pub struct AutoProver<
     Prover: ClientSdkProver<Vec<Calldata>> + Send + Sync,
 > {
     bus: AutoProverBusClient,
-    ctx: Arc<AutoProverCtx<Contract, Prover>>,
+    ctx: Arc<AutoProverCtx<Prover>>,
     provers: HashMap<ProgramId, Arc<Prover>>,
     store: AutoProverStore<Contract>,
     metrics: AutoProverMetrics,
+    base_state: Option<Contract>,
     current_program_id: ProgramId,
     catching_up: bool,
     catching_up_state: StateCommitment,
@@ -69,6 +70,7 @@ pub struct RouterData {
 
 #[derive(Default, BorshSerialize, BorshDeserialize)]
 pub struct AutoProverStore<Contract> {
+    base_state: Option<Contract>,
     // These are other unsettled transactions that are waiting to be proved
     unsettled_txs: Vec<(BlobTransaction, Arc<TxContext>, TxId)>,
     // These are the transactions that are currently being proved
@@ -87,14 +89,13 @@ pub struct AutoProverBusClient {
 }
 }
 
-pub struct AutoProverCtx<Contract, Prover: ClientSdkProver<Vec<Calldata>> + Send + Sync> {
+pub struct AutoProverCtx<Prover: ClientSdkProver<Vec<Calldata>> + Send + Sync> {
     pub data_directory: PathBuf,
     pub prover: Arc<Prover>,
     pub contract_name: ContractName,
     pub node: Arc<dyn NodeApiClient + Send + Sync>,
     // Optional API for readiness information
     pub api: Option<SharedBuildApiCtx>,
-    pub default_state: Contract,
     /// Minimum number of transactions to buffer before generating proofs.
     /// If set to 0, proofs are flushed only on idle or max_txs_per_proof.
     pub tx_buffer_size: usize,
@@ -116,7 +117,7 @@ where
         + 'static,
     Prover: ClientSdkProver<Vec<Calldata>> + Send + Sync + 'static,
 {
-    type Context = Arc<AutoProverCtx<Contract, Prover>>;
+    type Context = Arc<AutoProverCtx<Prover>>;
 
     /// Build the prover module, initialize state/provers, and start catch-up mode.
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
@@ -128,6 +129,7 @@ where
             match Self::load_from_disk::<AutoProverStore<Contract>>(&ctx.data_directory, &file)? {
                 Some(store) => store,
                 None => AutoProverStore::<Contract> {
+                    base_state: None,
                     unsettled_txs: vec![],
                     proving_txs: vec![],
                     state_history: BTreeMap::new(),
@@ -185,6 +187,7 @@ where
         store.buffered_blobs.clear();
 
         let catching_txs = IndexMap::new();
+        let base_state = store.base_state.clone();
 
         Ok(AutoProver {
             bus,
@@ -192,6 +195,7 @@ where
             ctx,
             provers,
             metrics,
+            base_state,
             current_program_id,
             catching_up,
             catching_up_state,
@@ -302,7 +306,13 @@ where
             blobs.len()
         );
 
-        let mut contract = self.ctx.default_state.clone();
+        let mut contract = self.base_state.clone();
+        if !blobs.is_empty() && contract.is_none() {
+            anyhow::bail!(
+                "Cannot execute settled transactions for contract '{}' before registration",
+                self.ctx.contract_name
+            );
+        }
         let last_tx_id = blobs.last().map(|(tx_id, ..)| tx_id);
         for (tx_id, blob_index, tx, tx_ctx) in &blobs {
             let calldata = Calldata {
@@ -315,7 +325,17 @@ where
                 tx_blob_count: tx.blobs.len(),
             };
 
-            match contract.handle(&calldata) {
+            match contract
+                .as_mut()
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Cannot execute settled tx {} for contract '{}' before registration",
+                        tx_id,
+                        self.ctx.contract_name
+                    )
+                })?
+                .handle(&calldata)
+            {
                 Err(e) => {
                     error!(
                         cn =% self.ctx.contract_name,
@@ -368,28 +388,30 @@ where
 
         #[cfg(not(test))]
         {
-            let final_state = contract.get_state_commitment();
-            info!(
-                cn =% self.ctx.contract_name,
-                "Final state after catching up: {:?}",
-                final_state
-            );
-
-            if self.catching_up_state != final_state {
-                error!(
+            if let Some(contract) = contract.as_ref() {
+                let final_state = contract.get_state_commitment();
+                info!(
                     cn =% self.ctx.contract_name,
-                    "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
-                    self.catching_up_state, final_state
-                );
-                error!(
-                    cn =% self.ctx.contract_name,
-                    "This is likely a bug in the prover, please report it to the Hyli team."
-                );
-                anyhow::bail!(
-                    "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
-                    self.catching_up_state,
+                    "Final state after catching up: {:?}",
                     final_state
                 );
+
+                if self.catching_up_state != final_state {
+                    error!(
+                        cn =% self.ctx.contract_name,
+                        "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
+                        self.catching_up_state, final_state
+                    );
+                    error!(
+                        cn =% self.ctx.contract_name,
+                        "This is likely a bug in the prover, please report it to the Hyli team."
+                    );
+                    anyhow::bail!(
+                        "Onchain state does not match final state after catching up. Onchain: {:?}, Final: {:?}",
+                        self.catching_up_state,
+                        final_state
+                    );
+                }
             }
         }
 
@@ -398,6 +420,12 @@ where
         self.catching_up = false;
 
         if let Some(last_tx_id) = last_tx_id {
+            let contract = contract.ok_or_else(|| {
+                anyhow!(
+                    "Missing base state for contract '{}' after catch-up",
+                    self.ctx.contract_name
+                )
+            })?;
             self.store.tx_chain = vec![last_tx_id.clone()];
             self.store
                 .state_history
@@ -445,6 +473,13 @@ where
         if self.catching_up {
             self.catching_txs.insert(tx_id, (tx, tx_ctx));
             return Ok(());
+        }
+
+        if self.base_state.is_none() {
+            anyhow::bail!(
+                "Cannot process tx for contract '{}' before registration",
+                self.ctx.contract_name
+            );
         }
 
         self.store.tx_chain.push(tx_id.clone());
@@ -500,7 +535,10 @@ where
     async fn handle_contract_change(&mut self, contract_change: &ContractChangeData) -> Result<()> {
         for change_type in &contract_change.change_types {
             match change_type {
-                ContractChangeType::Registered => {}
+                ContractChangeType::Registered => {
+                    self.ensure_registered_contract_change(contract_change)
+                        .await?;
+                }
                 ContractChangeType::ProgramIdUpdated => {
                     let updated_program_id = ProgramId(contract_change.program_id.clone());
                     self.ensure_prover_available(
@@ -522,6 +560,91 @@ where
         }
 
         Ok(())
+    }
+
+    /// Ensure registration contract change is coherent and usable by the prover.
+    async fn ensure_registered_contract_change(
+        &mut self,
+        contract_change: &ContractChangeData,
+    ) -> Result<()> {
+        let previous_base_commitment = self
+            .base_state
+            .as_ref()
+            .map(TxExecutorHandler::get_state_commitment);
+        let previous_program_id = self.current_program_id.clone();
+        let registered_program_id = ProgramId(contract_change.program_id.clone());
+        self.ensure_prover_available(
+            &registered_program_id,
+            "Program ID registered from contract change",
+        )
+        .await?;
+
+        let timeout_window = match (
+            contract_change.hard_timeout.map(|t| BlockHeight(t as u64)),
+            contract_change.soft_timeout.map(|t| BlockHeight(t as u64)),
+        ) {
+            (Some(hard_timeout), Some(soft_timeout)) => {
+                TimeoutWindow::timeout(hard_timeout, soft_timeout)
+            }
+            (Some(timeout), None) | (None, Some(timeout)) => {
+                TimeoutWindow::timeout(timeout, timeout)
+            }
+            (None, None) => TimeoutWindow::NoTimeout,
+        };
+        let contract = OnchainContract {
+            name: self.ctx.contract_name.clone(),
+            program_id: registered_program_id.clone(),
+            state: StateCommitment(contract_change.state_commitment.clone()),
+            verifier: contract_change.verifier.clone().into(),
+            timeout_window,
+        };
+        let state = Contract::construct_state(
+            &self.ctx.contract_name,
+            &contract,
+            &contract_change.metadata,
+        )
+        .context("Constructing contract state from registration metadata")?;
+        if contract.state != state.get_state_commitment() {
+            anyhow::bail!(
+                "Rebuilt contract '{}' state commitment does not match the one in the register effect",
+                self.ctx.contract_name
+            );
+        }
+
+        if previous_base_commitment.as_ref() != Some(&contract.state)
+            || previous_program_id != registered_program_id
+        {
+            warn!(
+                cn =% self.ctx.contract_name,
+                "⚠️  Got re-register contract '{}', resetting prover pipeline state",
+                self.ctx.contract_name
+            );
+            self.reset_after_registration();
+        } else {
+            info!(
+                cn =% self.ctx.contract_name,
+                "📝 Re-register contract '{}' with same state commitment",
+                self.ctx.contract_name
+            );
+        }
+
+        self.store.base_state = Some(state.clone());
+        self.base_state = Some(state);
+        self.current_program_id = registered_program_id;
+        Ok(())
+    }
+
+    /// Clear in-memory proving queues/state after a successful re-registration.
+    fn reset_after_registration(&mut self) {
+        self.store.unsettled_txs.clear();
+        self.store.proving_txs.clear();
+        self.store.state_history.clear();
+        self.store.tx_chain.clear();
+        self.store.buffered_blobs.clear();
+        self.pending_replay_from = None;
+        if self.catching_up {
+            self.catching_success_txs.clear();
+        }
     }
 
     /// Flush buffered blobs based on thresholds or a forced flush.
@@ -786,9 +909,9 @@ where
             warn!(
                 cn =% self.ctx.contract_name,
                 tx_hash =% tx_id,
-                "No previous tx, returning default state"
+                "No previous tx, returning registered base state"
             );
-            return Some(self.ctx.default_state.clone());
+            return self.base_state.clone();
         };
 
         // Walk backwards to find the most recent state we have.
@@ -808,9 +931,9 @@ where
         warn!(
             cn =% self.ctx.contract_name,
             tx_hash =% tx_id,
-            "No previous state found in history, returning default state"
+            "No previous state found in history, returning registered base state"
         );
-        Some(self.ctx.default_state.clone())
+        self.base_state.clone()
     }
 
     /// Drop cached state for txs after a failed one to force re-execution.

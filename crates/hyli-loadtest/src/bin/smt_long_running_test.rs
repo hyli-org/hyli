@@ -90,7 +90,6 @@ struct BootstrapCtx {
 #[derive(Debug, Clone)]
 struct BootstrapOutput {
     contract_name: ContractName,
-    initial_state: SmtTokenProvableState,
 }
 
 struct ContractBootstrap;
@@ -134,10 +133,7 @@ impl ContractBootstrap {
                         contract_name,
                         tx_hash
                     );
-                    return Ok(BootstrapOutput {
-                        contract_name,
-                        initial_state,
-                    });
+                    return Ok(BootstrapOutput { contract_name });
                 }
                 Err(err) => {
                     if node.get_contract(contract_name.clone()).await.is_ok() {
@@ -329,10 +325,6 @@ async fn resolve_bootstrap(config: &Conf, node_url: &str) -> Result<BootstrapOut
                 tracing::info!("Build phase: reusing existing contract {}", contract_name);
                 return Ok(BootstrapOutput {
                     contract_name: contract_name.clone(),
-                    initial_state: build_smt_state_with_accounts(
-                        &contract_name,
-                        config.initial_account_balance,
-                    )?,
                 });
             }
             Err(err) => {
@@ -390,7 +382,6 @@ async fn main() -> Result<()> {
         contract_name: bootstrap.contract_name.clone(),
         node: prover_node,
         api: None,
-        default_state: bootstrap.initial_state.clone(),
         tx_buffer_size: config.tx_buffer_size,
         max_txs_per_proof: config.max_txs_per_proof,
         tx_working_window_size: config.tx_working_window_size,
