@@ -305,22 +305,24 @@ async fn insert_contract_registration_history_for_tx(
     state_commitment: Vec<u8>,
     soft_timeout: Option<i64>,
     hard_timeout: Option<i64>,
+    metadata: Option<Vec<u8>>,
 ) -> Result<()> {
     let parent_dp_hash = hash("dp-settled");
     sqlx::query(
         r#"
         INSERT INTO contract_history (
             contract_name, block_height, tx_index, change_type,
-            verifier, program_id, state_commitment, soft_timeout, hard_timeout,
+            metadata, verifier, program_id, state_commitment, soft_timeout, hard_timeout,
             deleted_at_height, parent_dp_hash, tx_hash
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, $11, $12)
         "#,
     )
     .bind(&contract.0)
     .bind(block_height)
     .bind(tx_index)
     .bind(vec![ContractChangeType::Registered])
+    .bind(metadata)
     .bind(verifier)
     .bind(program_id)
     .bind(state_commitment)
@@ -1098,6 +1100,7 @@ async fn settled_event_contains_contract_registration_from_contract_history() ->
     let expected_state_commitment = vec![0x01, 0x02, 0x03, 0x04];
     let expected_soft_timeout = Some(123);
     let expected_hard_timeout = Some(456);
+    let expected_metadata = vec![0x42, 0x43];
     insert_contract_registration_history_for_tx(
         &pool,
         &registered_contract,
@@ -1109,6 +1112,7 @@ async fn settled_event_contains_contract_registration_from_contract_history() ->
         expected_state_commitment.clone(),
         expected_soft_timeout,
         expected_hard_timeout,
+        Some(expected_metadata.clone()),
     )
     .await?;
 
@@ -1134,6 +1138,7 @@ async fn settled_event_contains_contract_registration_from_contract_history() ->
             assert_eq!(change.soft_timeout, expected_soft_timeout);
             assert_eq!(change.hard_timeout, expected_hard_timeout);
             assert_eq!(change.deleted_at_height, None);
+            assert_eq!(change.metadata, Some(expected_metadata));
         }
         ContractListenerEvent::SequencedTx(_) => {
             anyhow::bail!("unexpected sequenced event")

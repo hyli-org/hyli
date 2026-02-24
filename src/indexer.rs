@@ -277,6 +277,7 @@ struct ContractHistoryStore {
     pub block_height: BlockHeight,
     pub tx_index: i32,
     pub change_type: Vec<ContractChangeType>,
+    pub metadata: Option<Vec<u8>>,
     pub verifier: String,
     pub program_id: Vec<u8>,
     pub state_commitment: Vec<u8>,
@@ -389,6 +390,7 @@ struct ContractHistoryRow {
     block_height: i64,
     tx_index: i32,
     change_type: Vec<ContractChangeType>,
+    metadata: Option<Vec<u8>>,
     verifier: String,
     program_id: Vec<u8>,
     state_commitment: Vec<u8>,
@@ -543,6 +545,7 @@ impl IndexerHandlerStore {
                         entry.change_type.push(change_type.clone());
                     }
                 }
+                entry.metadata = history.metadata.clone();
                 entry.verifier = history.verifier.clone();
                 entry.program_id = history.program_id.clone();
                 entry.state_commitment = history.state_commitment.clone();
@@ -787,6 +790,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                     block_height: self.block_height,
                     tx_index,
                     change_type: vec![ContractChangeType::Registered],
+                    metadata: metadata.clone(),
                     verifier: contract.verifier.0.clone(),
                     program_id: contract.program_id.0.clone(),
                     state_commitment: contract.state.0.clone(),
@@ -825,6 +829,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                     block_height: self.block_height,
                     tx_index,
                     change_type: vec![ContractChangeType::Deleted],
+                    metadata: None,
                     verifier: contract.verifier.0.clone(),
                     program_id: contract.program_id.0.clone(),
                     state_commitment: contract.state.0.clone(),
@@ -857,6 +862,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                     block_height: self.block_height,
                     tx_index,
                     change_type: vec![ContractChangeType::StateUpdated],
+                    metadata: None,
                     verifier: contract.verifier.0.clone(),
                     program_id: contract.program_id.0.clone(),
                     state_commitment: state_commitment.0.clone(),
@@ -893,6 +899,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                     block_height: self.block_height,
                     tx_index,
                     change_type: vec![ContractChangeType::ProgramIdUpdated],
+                    metadata: None,
                     verifier: contract.verifier.0.clone(),
                     program_id: program_id.0.clone(),
                     state_commitment: contract.state.0.clone(),
@@ -930,6 +937,7 @@ impl NodeStateCallback for IndexerHandlerStore {
                     block_height: self.block_height,
                     tx_index,
                     change_type: vec![ContractChangeType::TimeoutUpdated],
+                    metadata: None,
                     verifier: contract.verifier.0.clone(),
                     program_id: contract.program_id.0.clone(),
                     state_commitment: contract.state.0.clone(),
@@ -1112,6 +1120,7 @@ impl Indexer {
                 block_height: history.block_height.0 as i64,
                 tx_index: history.tx_index,
                 change_type: history.change_type,
+                metadata: history.metadata,
                 verifier: history.verifier,
                 program_id: history.program_id,
                 state_commitment: history.state_commitment,
@@ -1305,6 +1314,7 @@ fn contract_history_row_bytes(row: &ContractHistoryRow) -> usize {
         + I64_BYTES
         + I32_BYTES
         + contract_change_type_array_text(&row.change_type).len()
+        + optional_bytea_bytes(row.metadata.as_deref())
         + row.verifier.len()
         + row.program_id.len()
         + row.state_commitment.len()
@@ -1990,16 +2000,17 @@ async fn insert_contract_history(
     }
 
     let inline_bytes: usize = rows.iter().map(contract_history_row_bytes).sum();
-    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(rows.len(), 12) {
+    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(rows.len(), 13) {
         let started = Instant::now();
         let mut query_builder = QueryBuilder::<Postgres>::new(
-            "INSERT INTO contract_history (contract_name, block_height, tx_index, change_type, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash) ",
+            "INSERT INTO contract_history (contract_name, block_height, tx_index, change_type, metadata, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash) ",
         );
         query_builder.push_values(rows.iter(), |mut b, row| {
             b.push_bind(row.contract_name.clone())
                 .push_bind(row.block_height)
                 .push_bind(row.tx_index)
                 .push_bind(row.change_type.clone())
+                .push_bind(row.metadata.clone())
                 .push_bind(row.verifier.clone())
                 .push_bind(row.program_id.clone())
                 .push_bind(row.state_commitment.clone())
@@ -2028,6 +2039,7 @@ async fn insert_contract_history(
             block_height BIGINT NOT NULL,
             tx_index INT NOT NULL,
             change_type contract_change_type[] NOT NULL,
+            metadata BYTEA,
             verifier TEXT NOT NULL,
             program_id BYTEA NOT NULL,
             state_commitment BYTEA NOT NULL,
@@ -2046,11 +2058,12 @@ async fn insert_contract_history(
         let program_id_hex = format!("\\\\x{}", hex::encode(row.program_id));
         let state_commitment_hex = format!("\\\\x{}", hex::encode(row.state_commitment));
         lines.push(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             escape_copy_text(row.contract_name.as_str()),
             row.block_height,
             row.tx_index,
             contract_change_type_array_text(&row.change_type),
+            copy_optional_bytea(row.metadata.as_deref()),
             escape_copy_text(row.verifier.as_str()),
             program_id_hex,
             state_commitment_hex,
@@ -2066,15 +2079,15 @@ async fn insert_contract_history(
     let mut stream = StreamableData::new(lines);
     let mut copy = transaction
         .copy_in_raw(
-            "COPY contract_history_stage (contract_name, block_height, tx_index, change_type, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash) FROM STDIN WITH (FORMAT TEXT)",
+            "COPY contract_history_stage (contract_name, block_height, tx_index, change_type, metadata, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash) FROM STDIN WITH (FORMAT TEXT)",
         )
         .await?;
     copy.read_from(&mut stream).await?;
     copy.finish().await?;
 
     sqlx::query(
-        "INSERT INTO contract_history (contract_name, block_height, tx_index, change_type, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash)
-         SELECT contract_name, block_height, tx_index, change_type, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash
+        "INSERT INTO contract_history (contract_name, block_height, tx_index, change_type, metadata, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash)
+         SELECT contract_name, block_height, tx_index, change_type, metadata, verifier, program_id, state_commitment, soft_timeout, hard_timeout, deleted_at_height, parent_dp_hash, tx_hash
          FROM contract_history_stage
          ON CONFLICT (contract_name, block_height, tx_index) DO NOTHING",
     )

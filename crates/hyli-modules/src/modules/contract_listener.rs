@@ -45,6 +45,7 @@ pub struct ContractTx {
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
 pub struct ContractChangeData {
     pub change_types: Vec<ContractChangeType>,
+    pub metadata: Option<Vec<u8>>,
     pub verifier: String,
     pub program_id: Vec<u8>,
     pub state_commitment: Vec<u8>,
@@ -269,6 +270,7 @@ impl ContractListener {
             )
             SELECT ct.parent_dp_hash, ct.tx_hash, ct.index, ct.lane_id, b.identity, ct.timestamp, ct.block_hash, ct.transaction_status, ct.block_height, b.blob_index, b.data, b.contract_name,
                    NULL::contract_change_type[] AS contract_change_type,
+                   NULL::bytea AS contract_metadata,
                    NULL::text AS contract_verifier,
                    NULL::bytea AS contract_program_id,
                    NULL::bytea AS contract_state_commitment,
@@ -330,6 +332,7 @@ impl ContractListener {
             )
             SELECT ct.parent_dp_hash, ct.tx_hash, ct.index, ct.lane_id, b.identity, ct.timestamp, ct.block_hash, ct.transaction_status, ct.block_height, b.blob_index, b.data, b.contract_name,
                    ch.change_type AS contract_change_type,
+                   ch.metadata AS contract_metadata,
                    ch.verifier AS contract_verifier,
                    ch.program_id AS contract_program_id,
                    ch.state_commitment AS contract_state_commitment,
@@ -494,6 +497,7 @@ fn parse_contract_change_data(row: &PgRow) -> Result<Option<(ContractName, Contr
         contract_name,
         ContractChangeData {
             change_types,
+            metadata: row.try_get::<Option<Vec<u8>>, _>("contract_metadata")?,
             verifier: row.try_get::<String, _>("contract_verifier")?,
             program_id: row.try_get::<Vec<u8>, _>("contract_program_id")?,
             state_commitment: row.try_get::<Vec<u8>, _>("contract_state_commitment")?,
@@ -516,6 +520,9 @@ fn merge_contract_change_data(existing: &mut ContractChangeData, mut incoming: C
     existing.soft_timeout = incoming.soft_timeout;
     existing.hard_timeout = incoming.hard_timeout;
     existing.deleted_at_height = incoming.deleted_at_height;
+    if incoming.metadata.is_some() {
+        existing.metadata = incoming.metadata;
+    }
 }
 
 fn indexed_blobs_to_vec(blobs: &IndexedBlobs) -> Result<Vec<Blob>> {
