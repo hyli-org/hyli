@@ -8,7 +8,7 @@ use anyhow::{bail, Result};
 use async_stream::try_stream;
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slice};
 use futures::Stream;
-use hyli_model::{LaneId, ProofData, TxHash};
+use hyli_model::{LaneId, ProofData};
 use hyli_modules::utils::fjall_metrics::FjallMetrics;
 use std::time::Instant;
 use tracing::{info, warn};
@@ -285,7 +285,7 @@ impl Storage for LanesStorage {
         &self,
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
-    ) -> Result<Option<HashMap<TxHash, ProofData>>> {
+    ) -> Result<Option<Vec<(u64, ProofData)>>> {
         let start = Instant::now();
         let item = log_warn!(
             self.dp_proofs.get(format!("{lane_id}:{dp_hash}")),

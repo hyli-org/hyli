@@ -19,7 +19,7 @@ use tracing::{debug, info, trace, warn};
 use crate::{
     bus::BusClientSender,
     consensus::ConsensusEvent,
-    model::{Cut, Hashed},
+    model::Cut,
     p2p::network::{HeaderSigner, OutboundMessage},
     utils::conf::{P2pMode, SharedConf},
 };
@@ -870,12 +870,8 @@ impl DisseminationManager {
             })
             .cloned()
             .unwrap_or(self.crypto.sign(expected_msg)?);
-        let net_message = MempoolNetMessage::DataProposal(
-            lane_id.clone(),
-            data_proposal.hashed(),
-            data_proposal,
-            vote,
-        );
+        let net_message =
+            MempoolNetMessage::DataProposal(lane_id.clone(), dp_hash.clone(), data_proposal, vote);
 
         if filtered_targets.len() == bonded_validators_len && there_are_other_validators {
             self.metrics

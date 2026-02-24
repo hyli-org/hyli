@@ -3,10 +3,10 @@ use async_stream::try_stream;
 use borsh::{BorshDeserialize, BorshSerialize};
 use futures::{Stream, StreamExt};
 use hyli_crypto::BlstCrypto;
-use hyli_model::{DataSized, LaneId, ProofData, TxHash};
+use hyli_model::{DataSized, LaneId, ProofData};
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
-use std::{collections::HashMap, future::Future, vec};
+use std::{future::Future, vec};
 use tracing::{error, trace};
 
 use crate::model::{
@@ -64,7 +64,7 @@ pub trait Storage {
         &self,
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
-    ) -> Result<Option<HashMap<TxHash, ProofData>>>;
+    ) -> Result<Option<Vec<(u64, ProofData)>>>;
     fn delete_proofs(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> Result<()>;
     fn pop(
         &mut self,
@@ -523,7 +523,6 @@ mod tests {
             is_recursive: false,
         };
         let tx = Transaction::from(TransactionData::VerifiedProof(vpt.clone()));
-        let tx_hash = tx.hashed();
 
         let dp = DataProposal::new_root(lane_id.clone(), vec![tx]);
         let cumul_size: LaneBytesSize = LaneBytesSize(dp.estimate_size() as u64);
@@ -558,7 +557,7 @@ mod tests {
             .get_proofs_by_hash(lane_id, &dp_hash)
             .unwrap()
             .expect("proofs stored");
-        assert_eq!(proofs.get(&tx_hash), Some(&proof));
+        assert_eq!(proofs.first(), Some(&(0u64, proof.clone())));
 
         // Hydration should restore proofs back into the DP for broadcasting
         let mut to_broadcast = stored_dp.clone();
