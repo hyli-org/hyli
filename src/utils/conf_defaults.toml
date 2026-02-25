@@ -9,6 +9,7 @@ data_directory = "data_node"
 run_fast_catchup = false
 fast_catchup_backfill = false
 fast_catchup_peers = ["127.0.0.1:43222"]
+fast_catchup_timeout_secs = 30
 
 # Data availability module, which streams historical & new blocks.
 # Public IP
