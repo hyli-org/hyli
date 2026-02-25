@@ -3,7 +3,7 @@ use crate::bus::dont_use_this::get_receiver;
 use super::*;
 use crate::bus::SharedMessageBus;
 use signal::{ShutdownCompleted, ShutdownModule};
-use std::{fs::File, path::PathBuf, sync::Arc};
+use std::{fs::File, path::PathBuf, sync::Arc, sync::Once};
 use tempfile::tempdir;
 use tokio::sync::Mutex;
 
@@ -67,6 +67,13 @@ macro_rules! test_module {
 test_module!(TestBusClient, String);
 test_module!(TestBusClient, usize);
 test_module!(TestBusClient, bool);
+
+fn init_test_meter_once() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        hyli_turmoil_shims::init_noop_meter_provider();
+    });
+}
 
 // Failing module by breaking event loop
 
@@ -654,6 +661,7 @@ async fn test_shutdown_all_modules_if_one_module_panics() {
 
 #[tokio::test]
 async fn test_new_with_missing_manifest_backs_up_state_files() {
+    init_test_meter_once();
     let dir = tempdir().unwrap();
     let data_dir = dir.path().join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
@@ -681,7 +689,7 @@ async fn test_new_with_missing_manifest_backs_up_state_files() {
     let entries: Vec<_> = std::fs::read_dir(parent)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("data.backup_"))
+        .filter(|e| e.file_name().to_string_lossy() == "data.backup")
         .collect();
 
     assert_eq!(entries.len(), 1, "Should have created exactly one backup");
@@ -690,10 +698,12 @@ async fn test_new_with_missing_manifest_backs_up_state_files() {
     let backup_dir = entries[0].path();
     assert!(backup_dir.join(files::NODE_STATE_BIN).exists());
     assert!(backup_dir.join(files::CONSENSUS_BIN).exists());
+    assert!(backup_dir.join(BACKUP_TIMESTAMP_FILE).exists());
 }
 
 #[tokio::test]
 async fn test_new_with_empty_manifest_backs_up_state_files() {
+    init_test_meter_once();
     let dir = tempdir().unwrap();
     let data_dir = dir.path().join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
@@ -722,14 +732,16 @@ async fn test_new_with_empty_manifest_backs_up_state_files() {
     let entries: Vec<_> = std::fs::read_dir(parent)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("data.backup_"))
+        .filter(|e| e.file_name().to_string_lossy() == "data.backup")
         .collect();
 
     assert_eq!(entries.len(), 1, "Should have created exactly one backup");
+    assert!(entries[0].path().join(BACKUP_TIMESTAMP_FILE).exists());
 }
 
 #[tokio::test]
 async fn test_new_with_valid_manifest_does_not_backup() {
+    init_test_meter_once();
     let dir = tempdir().unwrap();
     let data_dir = dir.path().join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
@@ -761,7 +773,7 @@ async fn test_new_with_valid_manifest_does_not_backup() {
     let entries: Vec<_> = std::fs::read_dir(parent)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("data.backup_"))
+        .filter(|e| e.file_name().to_string_lossy() == "data.backup")
         .collect();
 
     assert_eq!(entries.len(), 0, "Should not have created any backup");
@@ -769,6 +781,7 @@ async fn test_new_with_valid_manifest_does_not_backup() {
 
 #[tokio::test]
 async fn test_new_creates_fresh_data_dir() {
+    init_test_meter_once();
     let dir = tempdir().unwrap();
     let data_dir = dir.path().join("fresh_data");
 
@@ -796,6 +809,7 @@ async fn test_new_creates_fresh_data_dir() {
 
 #[tokio::test]
 async fn test_new_with_existing_empty_dir_does_not_backup() {
+    init_test_meter_once();
     let dir = tempdir().unwrap();
     let data_dir = dir.path().join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
@@ -823,6 +837,7 @@ async fn test_new_with_existing_empty_dir_does_not_backup() {
 
 #[tokio::test]
 async fn test_new_empty_manifest_without_state_files_backs_up() {
+    init_test_meter_once();
     let dir = tempdir().unwrap();
     let data_dir = dir.path().join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
@@ -844,8 +859,58 @@ async fn test_new_empty_manifest_without_state_files_backs_up() {
     let entries: Vec<_> = std::fs::read_dir(parent)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("data.backup_"))
+        .filter(|e| e.file_name().to_string_lossy() == "data.backup")
         .collect();
 
     assert_eq!(entries.len(), 1, "Should have created exactly one backup");
+    assert!(entries[0].path().join(BACKUP_TIMESTAMP_FILE).exists());
+}
+
+#[tokio::test]
+async fn test_new_overwrites_existing_backup_directory() {
+    init_test_meter_once();
+    let dir = tempdir().unwrap();
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+    std::fs::write(data_dir.join(files::NODE_STATE_BIN), b"first run").unwrap();
+
+    let shared_bus = SharedMessageBus::new();
+
+    // First invalid run creates data.backup with initial content.
+    let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
+    let backup_dir = data_dir.with_extension(BACKUP_DIR_SUFFIX);
+    assert!(backup_dir.exists());
+    assert_eq!(
+        std::fs::read(backup_dir.join(files::NODE_STATE_BIN)).unwrap(),
+        b"first run"
+    );
+    let first_timestamp: u128 = std::fs::read_to_string(backup_dir.join(BACKUP_TIMESTAMP_FILE))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+
+    // Recreate invalid state and call new() again: backup directory should be replaced.
+    std::fs::write(data_dir.join(files::NODE_STATE_BIN), b"second run").unwrap();
+    let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
+
+    assert_eq!(
+        std::fs::read(backup_dir.join(files::NODE_STATE_BIN)).unwrap(),
+        b"second run"
+    );
+    let second_timestamp: u128 = std::fs::read_to_string(backup_dir.join(BACKUP_TIMESTAMP_FILE))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(second_timestamp >= first_timestamp);
+
+    // Only one backup directory should exist.
+    let parent = data_dir.parent().unwrap();
+    let backups: Vec<_> = std::fs::read_dir(parent)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy() == "data.backup")
+        .collect();
+    assert_eq!(backups.len(), 1);
 }

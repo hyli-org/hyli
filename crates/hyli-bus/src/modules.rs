@@ -27,6 +27,8 @@ pub use crate::utils::checksums::{
 const MODULE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const MODULE_ID_SEPARATOR: char = '#';
 const PERSISTENCE_FAILURES_LOG: &str = "persistence_failures.log";
+const BACKUP_DIR_SUFFIX: &str = "backup";
+const BACKUP_TIMESTAMP_FILE: &str = ".backup_timestamp_ms";
 
 #[cfg(target_os = "linux")]
 fn is_mount_point(path: &Path) -> Result<bool> {
@@ -34,7 +36,8 @@ fn is_mount_point(path: &Path) -> Result<bool> {
     let meta = fs::metadata(path)?;
     let parent = path
         .parent()
-        .ok_or_else(|| Error::msg("data_dir has no parent"))?;
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
     let parent_meta = fs::metadata(parent)?;
     Ok(meta.dev() != parent_meta.dev())
 }
@@ -489,19 +492,32 @@ impl ModulesHandler {
                 );
             }
 
-            // Generate a backup directory name using a timestamp
+            // Keep a stable backup folder name and record when it was refreshed.
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_millis();
 
-            let backup_dir = data_dir.with_extension(format!("backup_{timestamp}"));
+            let backup_dir = data_dir.with_extension(BACKUP_DIR_SUFFIX);
+            if backup_dir.exists() {
+                log_warn!(
+                    fs::remove_dir_all(&backup_dir),
+                    "Removing existing backup directory before overwrite"
+                )
+                .context("Failed to remove existing backup directory")?;
+            }
 
             log_warn!(
                 fs::rename(&data_dir, &backup_dir),
                 "Moving data_dir to backup location"
             )
             .context("Failed to move data_dir to backup location")?;
+
+            let backup_timestamp_file = backup_dir.join(BACKUP_TIMESTAMP_FILE);
+            fs::write(&backup_timestamp_file, timestamp.to_string()).context(format!(
+                "Failed to write backup timestamp metadata at {}",
+                backup_timestamp_file.display()
+            ))?;
 
             warn!(
                 "Moved data_dir without valid manifest to backup: {} -> {}",
