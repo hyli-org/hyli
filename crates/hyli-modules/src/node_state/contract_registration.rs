@@ -169,6 +169,19 @@ mod test {
     }
 
     #[test]
+    fn test_validate_contract_registration_invalid_chars_in_subdomain() {
+        let owner = "example".into();
+        // Uppercase letters are rejected by validate()
+        assert!(validate_contract_name_tld(&owner, &"Sub.example".into()).is_err());
+        // Spaces are rejected by validate()
+        assert!(validate_contract_name_tld(&owner, &"my sub.example".into()).is_err());
+        // Special characters are rejected by validate()
+        assert!(validate_contract_name_tld(&owner, &"sub!.example".into()).is_err());
+        // Emojis are rejected by validate() for non-hyli TLDs
+        assert!(validate_contract_name_tld(&owner, &"🥷.example".into()).is_err());
+    }
+
+    #[test]
     fn test_validate_state_commitment_size_ok() {
         let size = 10 * 1024 * 1024;
         let commitment = StateCommitment(vec![0; size]);
