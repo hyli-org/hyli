@@ -6,7 +6,6 @@ use crate::{
     modules::Module,
 };
 use anyhow::{anyhow, Context, Result};
-use borsh::{BorshDeserialize, BorshSerialize};
 pub use axum::Router;
 use axum::{
     body::Bytes,
@@ -15,6 +14,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, post},
 };
+use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_net::http::HttpClient;
 use sdk::*;
 use serde::{Deserialize, Serialize};
@@ -204,7 +204,7 @@ impl NodeAdminApiClient {
                 .client
                 .get_bytes("v1/admin/catchup")
                 .await
-            .context("getting catchup store bytes to initialize the node".to_string())?;
+                .context("getting catchup store bytes to initialize the node".to_string())?;
             borsh::from_slice(bytes.as_ref())
                 .context("deserializing binary catchup store response".to_string())
         })
