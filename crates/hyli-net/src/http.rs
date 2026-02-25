@@ -15,6 +15,7 @@ pub use hyper::http::StatusCode;
 pub enum ContentType {
     Text,
     Json,
+    OctetStream,
 }
 
 #[derive(Clone)]
@@ -61,6 +62,7 @@ impl HttpClient {
         let content_type_header = match content_type {
             ContentType::Text => "application/text",
             ContentType::Json => "application/json",
+            ContentType::OctetStream => "application/octet-stream",
         };
 
         let mut req_builder = Request::builder()
@@ -103,14 +105,16 @@ impl HttpClient {
     }
 
     async fn parse_response_text(response: Response<Incoming>) -> anyhow::Result<String> {
-        let body = response.into_body();
-
-        let response = body.collect().await.context("Collecting body bytes")?;
-
-        let str_bytes: bytes::Bytes = response.to_bytes();
+        let str_bytes = Self::parse_response_bytes(response).await?;
         let str = String::from_utf8(str_bytes.to_vec())?;
 
         Ok(str)
+    }
+
+    async fn parse_response_bytes(response: Response<Incoming>) -> anyhow::Result<bytes::Bytes> {
+        let body = response.into_body();
+        let response = body.collect().await.context("Collecting body bytes")?;
+        Ok(response.to_bytes())
     }
 
     async fn parse_response_json<T: serde::de::DeserializeOwned>(
@@ -175,11 +179,20 @@ impl HttpClient {
 
     pub async fn get_str(&self, endpoint: &str) -> anyhow::Result<String> {
         let do_request = async || {
-            self.request::<String>(endpoint, Method::GET, ContentType::Text, None)
+            self.request::<String>(endpoint, Method::GET, ContentType::OctetStream, None)
                 .await
         };
         let response = self.retry(do_request).await?;
         Self::parse_response_text(response).await
+    }
+
+    pub async fn get_bytes(&self, endpoint: &str) -> anyhow::Result<bytes::Bytes> {
+        let do_request = async || {
+            self.request::<String>(endpoint, Method::GET, ContentType::Text, None)
+                .await
+        };
+        let response = self.retry(do_request).await?;
+        Self::parse_response_bytes(response).await
     }
 
     pub async fn post_json<T, R>(&self, endpoint: &str, body: &T) -> anyhow::Result<R>

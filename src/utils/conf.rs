@@ -174,6 +174,8 @@ pub struct Conf {
     pub fast_catchup_backfill: bool,
     /// Admin API addresses of peers to use for fast catchup (tried in order with fallback)
     pub fast_catchup_peers: Vec<String>,
+    /// Timeout for each admin fast-catchup request, in seconds.
+    pub fast_catchup_timeout_secs: u64,
 
     // Validator options
     /// Consensus configuration

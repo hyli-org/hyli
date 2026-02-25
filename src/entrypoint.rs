@@ -271,16 +271,29 @@ pub async fn common_main(
                 for peer in &config.fast_catchup_peers {
                     info!("Attempting fast catchup from {} with trust", peer);
                     match NodeAdminApiClient::new(peer.clone()) {
-                        Ok(client) => match client.get_catchup_store().await {
-                            Ok(response) => {
-                                info!("Successfully caught up from {}", peer);
-                                catchup_response = Some(response);
-                                break;
+                        Ok(client) => {
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(config.fast_catchup_timeout_secs),
+                                client.get_catchup_store(),
+                            )
+                            .await
+                            {
+                                Ok(Ok(response)) => {
+                                    info!("Successfully caught up from {}", peer);
+                                    catchup_response = Some(response);
+                                    break;
+                                }
+                                Ok(Err(e)) => {
+                                    error!("Failed to catch up from {}: {:?}", peer, e);
+                                }
+                                Err(_) => {
+                                    error!(
+                                        "Failed to catch up from {}: timed out after {}s",
+                                        peer, config.fast_catchup_timeout_secs
+                                    );
+                                }
                             }
-                            Err(e) => {
-                                error!("Failed to catch up from {}: {:?}", peer, e);
-                            }
-                        },
+                        }
                         Err(e) => {
                             error!("Failed to create client for {}: {:?}", peer, e);
                         }

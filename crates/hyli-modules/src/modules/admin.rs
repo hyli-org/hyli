@@ -6,6 +6,7 @@ use crate::{
     modules::Module,
 };
 use anyhow::{anyhow, Context, Result};
+use borsh::{BorshDeserialize, BorshSerialize};
 pub use axum::Router;
 use axum::{
     body::Bytes,
@@ -13,7 +14,6 @@ use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
-    Json,
 };
 use hyli_net::http::HttpClient;
 use sdk::*;
@@ -176,11 +176,9 @@ pub async fn download(
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize)]
 pub struct CatchupStoreResponse {
-    #[serde(with = "base64_field")]
     pub node_state_store: Vec<u8>,
-    #[serde(with = "base64_field")]
     pub consensus_store: Vec<u8>,
 }
 
@@ -202,10 +200,13 @@ impl NodeAdminApiClient {
         &self,
     ) -> Pin<Box<dyn Future<Output = Result<CatchupStoreResponse>> + Send + '_>> {
         Box::pin(async move {
-            self.client
-                .get("v1/admin/catchup")
+            let bytes = self
+                .client
+                .get_bytes("v1/admin/catchup")
                 .await
-                .context("getting catchup store to initialize the node".to_string())
+            .context("getting catchup store bytes to initialize the node".to_string())?;
+            borsh::from_slice(bytes.as_ref())
+                .context("deserializing binary catchup store response".to_string())
         })
     }
 }
@@ -241,7 +242,13 @@ pub async fn catchup(State(mut state): State<RouterState>) -> Result<impl IntoRe
         consensus_store: consensus_state,
     };
 
-    Ok(Json(catchup_response))
+    let body = borsh::to_vec(&catchup_response)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e.into()))?;
+    Ok((
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/octet-stream")],
+        Bytes::from(body),
+    ))
 }
 
 pub struct RouterState {
