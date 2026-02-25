@@ -10,7 +10,10 @@ use crate::{
     },
 };
 use anyhow::Result;
-use hyli_model::{api::TransactionStatusDb, BlockHeight, ContractName, LaneId, TxHash};
+use hyli_model::{
+    api::{ContractChangeType, TransactionStatusDb},
+    BlockHeight, ContractName, LaneId, TxHash,
+};
 use sdk::{BlockHash, ConsensusProposalHash};
 use sqlx::{postgres::PgPoolOptions, types::chrono::Utc, PgPool};
 use tempfile::tempdir;
@@ -218,6 +221,118 @@ async fn insert_settled_tx_with_index(
     .await?;
 
     Ok((tx_hash, block_hash))
+}
+
+async fn insert_program_id_update_history_for_tx(
+    pool: &PgPool,
+    contract: &ContractName,
+    tx_hash: &TxHash,
+    block_height: i64,
+    tx_index: i32,
+    program_id: Vec<u8>,
+) -> Result<()> {
+    let parent_dp_hash = hash("dp-settled");
+    sqlx::query(
+        r#"
+        INSERT INTO contract_history (
+            contract_name, block_height, tx_index, change_type,
+            verifier, program_id, state_commitment, soft_timeout, hard_timeout,
+            deleted_at_height, parent_dp_hash, tx_hash
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, NULL, NULL, $8, $9)
+        "#,
+    )
+    .bind(&contract.0)
+    .bind(block_height)
+    .bind(tx_index)
+    .bind(vec![ContractChangeType::ProgramIdUpdated])
+    .bind("verifier_1")
+    .bind(program_id)
+    .bind(vec![0xAAu8, 0xBBu8, 0xCCu8])
+    .bind(parent_dp_hash)
+    .bind(tx_hash.to_string())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn insert_blob_for_existing_settled_tx(
+    pool: &PgPool,
+    contract: &ContractName,
+    tx_hash: &TxHash,
+    blob_index: i32,
+) -> Result<()> {
+    let parent_dp_hash = hash("dp-settled");
+    let tx_hash_hex = tx_hash.to_string();
+    sqlx::query(
+        r#"
+        INSERT INTO blobs (parent_dp_hash, tx_hash, blob_index, identity, contract_name, data)
+        VALUES ($1, $2, $3, 'id', $4, E'\\x03')
+        "#,
+    )
+    .bind(&parent_dp_hash)
+    .bind(&tx_hash_hex)
+    .bind(blob_index)
+    .bind(&contract.0)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name)
+        VALUES ($1, $2, $3)
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(&parent_dp_hash)
+    .bind(&tx_hash_hex)
+    .bind(&contract.0)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn insert_contract_registration_history_for_tx(
+    pool: &PgPool,
+    contract: &ContractName,
+    tx_hash: &TxHash,
+    block_height: i64,
+    tx_index: i32,
+    verifier: &str,
+    program_id: Vec<u8>,
+    state_commitment: Vec<u8>,
+    soft_timeout: Option<i64>,
+    hard_timeout: Option<i64>,
+    metadata: Option<Vec<u8>>,
+) -> Result<()> {
+    let parent_dp_hash = hash("dp-settled");
+    sqlx::query(
+        r#"
+        INSERT INTO contract_history (
+            contract_name, block_height, tx_index, change_type,
+            metadata, verifier, program_id, state_commitment, soft_timeout, hard_timeout,
+            deleted_at_height, parent_dp_hash, tx_hash
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, $11, $12)
+        "#,
+    )
+    .bind(&contract.0)
+    .bind(block_height)
+    .bind(tx_index)
+    .bind(vec![ContractChangeType::Registered])
+    .bind(metadata)
+    .bind(verifier)
+    .bind(program_id)
+    .bind(state_commitment)
+    .bind(soft_timeout)
+    .bind(hard_timeout)
+    .bind(parent_dp_hash)
+    .bind(tx_hash.to_string())
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 async fn insert_sequenced_tx(
@@ -862,6 +977,237 @@ async fn emits_settled_update_below_last_seen_height() -> Result<()> {
         TransactionStatusDb::Success,
     )
     .await?;
+
+    shutdown
+        .send(ShutdownModule {
+            module: std::any::type_name::<ContractListener>().to_string(),
+        })
+        .expect("failed to send shutdown");
+    let _ = timeout(Duration::from_secs(2), handle).await??;
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn settled_event_contains_program_id_update_from_contract_history() -> Result<()> {
+    let PgTestCtx {
+        pool,
+        database_url,
+        _container,
+    } = setup_pg().await?;
+    let contract = ContractName("contract_1".to_string());
+
+    let bus = SharedMessageBus::new();
+    let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
+    let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
+
+    let data_dir = tempdir()?;
+    let conf = ContractListenerConf {
+        database_url: database_url.clone(),
+        data_directory: data_dir.path().to_path_buf(),
+        contracts: HashSet::from([contract.clone()]),
+        poll_interval: Duration::from_secs(5),
+        replay_settled_from_start: false,
+    };
+
+    let mut module = ContractListener::build(bus.new_handle(), conf).await?;
+    let handle = tokio::spawn(async move { module.run().await });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (tx_hash, _) = insert_settled_tx_with_index(&pool, &contract, 20, 0).await?;
+    let expected_program_id = vec![0x10, 0x20, 0x30, 0x40];
+    insert_program_id_update_history_for_tx(
+        &pool,
+        &contract,
+        &tx_hash,
+        20,
+        0,
+        expected_program_id.clone(),
+    )
+    .await?;
+
+    notify_contract(&pool, &contract, BlockHeight(20)).await?;
+
+    let event = drain_event(&mut receiver).await?;
+    match event {
+        ContractListenerEvent::SettledTx(tx_data) => {
+            assert_eq!(tx_data.tx_id.1, tx_hash);
+            assert_eq!(tx_data.tx_ctx.block_height, BlockHeight(20));
+            assert_eq!(tx_data.status, TransactionStatusDb::Success);
+
+            let change = tx_data
+                .contract_changes
+                .get(&contract)
+                .cloned()
+                .expect("expected contract_changes on settled tx");
+            assert_eq!(
+                change.change_types,
+                vec![ContractChangeType::ProgramIdUpdated]
+            );
+            assert_eq!(change.program_id, expected_program_id);
+        }
+        ContractListenerEvent::SequencedTx(_) => {
+            anyhow::bail!("unexpected sequenced event")
+        }
+        ContractListenerEvent::BackfillComplete(_) => {
+            anyhow::bail!("unexpected backfill complete event")
+        }
+    }
+
+    shutdown
+        .send(ShutdownModule {
+            module: std::any::type_name::<ContractListener>().to_string(),
+        })
+        .expect("failed to send shutdown");
+    let _ = timeout(Duration::from_secs(2), handle).await??;
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn settled_event_contains_contract_registration_from_contract_history() -> Result<()> {
+    let PgTestCtx {
+        pool,
+        database_url,
+        _container,
+    } = setup_pg().await?;
+    let registered_contract = ContractName("contract_1".to_string());
+    let hyli_contract = ContractName("hyli".to_string());
+
+    let bus = SharedMessageBus::new();
+    let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
+    let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
+
+    let data_dir = tempdir()?;
+    let conf = ContractListenerConf {
+        database_url: database_url.clone(),
+        data_directory: data_dir.path().to_path_buf(),
+        contracts: HashSet::from([registered_contract.clone()]),
+        poll_interval: Duration::from_secs(5),
+        replay_settled_from_start: false,
+    };
+
+    let mut module = ContractListener::build(bus.new_handle(), conf).await?;
+    let handle = tokio::spawn(async move { module.run().await });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Contract registration txs are blobs on `hyli`, while history is keyed by the registered contract.
+    let (tx_hash, _) = insert_settled_tx_with_index(&pool, &hyli_contract, 21, 0).await?;
+    let expected_verifier = "test_verifier";
+    let expected_program_id = vec![0xAB, 0xCD, 0xEF];
+    let expected_state_commitment = vec![0x01, 0x02, 0x03, 0x04];
+    let expected_soft_timeout = Some(123);
+    let expected_hard_timeout = Some(456);
+    let expected_metadata = vec![0x42, 0x43];
+    insert_contract_registration_history_for_tx(
+        &pool,
+        &registered_contract,
+        &tx_hash,
+        21,
+        0,
+        expected_verifier,
+        expected_program_id.clone(),
+        expected_state_commitment.clone(),
+        expected_soft_timeout,
+        expected_hard_timeout,
+        Some(expected_metadata.clone()),
+    )
+    .await?;
+
+    notify_contract(&pool, &registered_contract, BlockHeight(21)).await?;
+
+    let event = drain_event(&mut receiver).await?;
+    match event {
+        ContractListenerEvent::SettledTx(tx_data) => {
+            assert_eq!(tx_data.tx_id.1, tx_hash);
+            assert_eq!(tx_data.tx_ctx.block_height, BlockHeight(21));
+            assert_eq!(tx_data.status, TransactionStatusDb::Success);
+            assert_eq!(tx_data.tx.blobs[0].contract_name, hyli_contract);
+
+            let change = tx_data
+                .contract_changes
+                .get(&registered_contract)
+                .cloned()
+                .expect("expected contract_changes on settled tx");
+            assert_eq!(change.change_types, vec![ContractChangeType::Registered]);
+            assert_eq!(change.verifier, expected_verifier);
+            assert_eq!(change.program_id, expected_program_id);
+            assert_eq!(change.state_commitment, expected_state_commitment);
+            assert_eq!(change.soft_timeout, expected_soft_timeout);
+            assert_eq!(change.hard_timeout, expected_hard_timeout);
+            assert_eq!(change.deleted_at_height, None);
+            assert_eq!(change.metadata, Some(expected_metadata));
+        }
+        ContractListenerEvent::SequencedTx(_) => {
+            anyhow::bail!("unexpected sequenced event")
+        }
+        ContractListenerEvent::BackfillComplete(_) => {
+            anyhow::bail!("unexpected backfill complete event")
+        }
+    }
+
+    shutdown
+        .send(ShutdownModule {
+            module: std::any::type_name::<ContractListener>().to_string(),
+        })
+        .expect("failed to send shutdown");
+    let _ = timeout(Duration::from_secs(2), handle).await??;
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn settled_tx_with_multiple_contract_updates_emits_once_with_all_changes() -> Result<()> {
+    let PgTestCtx {
+        pool,
+        database_url,
+        _container,
+    } = setup_pg().await?;
+    let contract_a = ContractName("contract_a".to_string());
+    let contract_b = ContractName("contract_b".to_string());
+
+    let bus = SharedMessageBus::new();
+    let mut receiver = get_receiver::<ContractListenerEvent>(&bus).await;
+    let mut shutdown = ShutdownClient::new_from_bus(bus.new_handle()).await;
+
+    let data_dir = tempdir()?;
+    let conf = ContractListenerConf {
+        database_url: database_url.clone(),
+        data_directory: data_dir.path().to_path_buf(),
+        contracts: HashSet::from([contract_a.clone(), contract_b.clone()]),
+        poll_interval: Duration::from_secs(5),
+        replay_settled_from_start: false,
+    };
+
+    let mut module = ContractListener::build(bus.new_handle(), conf).await?;
+    let handle = tokio::spawn(async move { module.run().await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (tx_hash, _) = insert_settled_tx_with_index(&pool, &contract_a, 30, 0).await?;
+    insert_blob_for_existing_settled_tx(&pool, &contract_b, &tx_hash, 1).await?;
+    insert_program_id_update_history_for_tx(&pool, &contract_a, &tx_hash, 30, 0, vec![1, 2, 3])
+        .await?;
+    insert_program_id_update_history_for_tx(&pool, &contract_b, &tx_hash, 30, 0, vec![4, 5, 6])
+        .await?;
+
+    notify_contract(&pool, &contract_a, BlockHeight(30)).await?;
+    let event = drain_event(&mut receiver).await?;
+    let tx_data = match event {
+        ContractListenerEvent::SettledTx(tx_data) => tx_data,
+        ContractListenerEvent::SequencedTx(_) => anyhow::bail!("unexpected sequenced event"),
+        ContractListenerEvent::BackfillComplete(_) => {
+            anyhow::bail!("unexpected backfill complete event")
+        }
+    };
+    assert_eq!(tx_data.tx_id.1, tx_hash);
+    assert_eq!(tx_data.contract_changes.len(), 2);
+    assert!(tx_data.contract_changes.contains_key(&contract_a));
+    assert!(tx_data.contract_changes.contains_key(&contract_b));
+
+    notify_contract(&pool, &contract_b, BlockHeight(30)).await?;
+    expect_no_event(&mut receiver, Duration::from_millis(400)).await?;
 
     shutdown
         .send(ShutdownModule {

@@ -126,6 +126,7 @@ CREATE TABLE contract_history (
     block_height BIGINT NOT NULL,
     tx_index INT NOT NULL,
     change_type contract_change_type[] NOT NULL,
+    metadata BYTEA,
     verifier TEXT NOT NULL,
     program_id BYTEA NOT NULL,
     state_commitment BYTEA NOT NULL,
