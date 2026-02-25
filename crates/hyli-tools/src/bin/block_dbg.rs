@@ -205,7 +205,6 @@ async fn main() -> Result<()> {
                 contract_name: "oranj".into(),
                 node: Arc::new(node_client),
                 api: None,
-                default_state: Default::default(),
                 tx_buffer_size: 0,
                 max_txs_per_proof: 40,
                 tx_working_window_size: 180,

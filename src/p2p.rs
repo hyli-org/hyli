@@ -1,12 +1,13 @@
 //! Networking layer
 
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, path::PathBuf, time::Duration};
 
 use crate::{
     bus::BusClientSender, consensus::ConsensusNetMessage, mempool::MempoolNetMessage,
     model::SharedRunContext, utils::conf::SharedConf,
 };
 use anyhow::{bail, Context, Error, Result};
+use hyli_bus::modules::ModulePersistOutput;
 use hyli_crypto::{BlstCrypto, SharedBlstCrypto};
 use hyli_model::{utils::TimestampMs, BlockHeight, NodeStateEvent, ValidatorPublicKey};
 use hyli_modules::telemetry::{global_meter_or_panic, Histogram, KeyValue};
@@ -54,7 +55,10 @@ pub struct P2P {
     // Metrics stuff
     netmessage_delay: Histogram<u64>,
     start_timestamp: TimestampMs,
+    current_height: u64,
 }
+
+const P2P_HEIGHT_BIN: &str = "p2p_height.bin";
 
 impl Module for P2P {
     type Context = SharedRunContext;
@@ -63,6 +67,11 @@ impl Module for P2P {
         let bus_client = P2PBusClient::new_from_bus(bus.new_handle()).await;
 
         let my_meter = global_meter_or_panic();
+        let persisted_height = Self::load_from_disk::<u64>(
+            &ctx.config.data_directory,
+            PathBuf::from(P2P_HEIGHT_BIN).as_path(),
+        )?
+        .unwrap_or(0);
 
         Ok(P2P {
             config: ctx.config.clone(),
@@ -74,11 +83,19 @@ impl Module for P2P {
                 .with_unit("ms")
                 .build(),
             start_timestamp: ctx.start_timestamp,
+            current_height: persisted_height,
         })
     }
 
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send {
         self.p2p_server()
+    }
+
+    async fn persist(&mut self) -> Result<ModulePersistOutput> {
+        let file = PathBuf::from(P2P_HEIGHT_BIN);
+        let checksum =
+            Self::save_on_disk(&self.config.data_directory, &file, &self.current_height)?;
+        Ok(vec![(self.config.data_directory.join(file), checksum)])
     }
 }
 
@@ -116,10 +133,10 @@ impl P2P {
             self.start_timestamp.clone(),
         )
         .await?;
-
+        p2p_server.current_height = self.current_height;
         info!(
-            "📡  Starting P2P module, listening on {}",
-            self.config.p2p.public_address
+            "📡  Starting P2P module on {} with handshake height {}",
+            self.config.p2p.public_address, p2p_server.current_height
         );
 
         for peer_ip in self.config.p2p.peers.clone() {
@@ -133,6 +150,7 @@ impl P2P {
                 let height = b.signed_block.height().0;
                 if height > p2p_server.current_height {
                     p2p_server.current_height = height;
+                    self.current_height = height;
                 }
             }
             listen<P2PCommand> cmd => {
@@ -187,6 +205,8 @@ impl P2P {
                 }
             }
         };
+        // Preserve the latest observed handshake height for module persistence.
+        self.current_height = p2p_server.current_height;
         Ok(())
     }
 
