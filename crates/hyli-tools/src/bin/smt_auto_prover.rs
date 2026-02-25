@@ -72,7 +72,6 @@ async fn main() -> Result<()> {
         contract_name: config.contract_name.clone().into(),
         node: node_client.clone(),
         api: Some(build_api_ctx.clone()),
-        default_state: Default::default(),
         tx_buffer_size: config.tx_buffer_size,
         max_txs_per_proof: config.max_txs_per_proof,
         tx_working_window_size: config.tx_working_window_size,
