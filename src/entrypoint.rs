@@ -8,7 +8,7 @@ use crate::{
     genesis::Genesis,
     indexer::Indexer,
     mempool::{dissemination::DisseminationManager, Mempool},
-    model::{api::NodeInfo, SharedRunContext},
+    model::{api::NodeInfo, ContractName, SharedRunContext},
     p2p::P2P,
     rest::{ApiDoc, RestApi, RestApiRunContext},
     single_node_consensus::SingleNodeConsensus,
@@ -31,6 +31,7 @@ use hyli_modules::{
         admin::{AdminApi, AdminApiRunContext, NodeAdminApiClient},
         block_processor::BusOnlyProcessor,
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
+        contract_listener::{ContractListener, ContractListenerConf},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::DAListenerConf,
         da_listener::SignedDAListener,
@@ -48,9 +49,11 @@ use hyli_net::clock::TimestampMsClock;
 use hyllar::Hyllar;
 use smt_token::account::AccountSMT;
 use std::{
+    collections::HashSet,
     fs,
     path::PathBuf,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 use testcontainers_modules::{
     postgres::Postgres,
@@ -360,6 +363,19 @@ pub async fn common_main(
     let config = Arc::new(config);
 
     if config.run_indexer {
+        let mut csi_contracts: HashSet<ContractName> = [
+            ContractName::from("hyllar"),
+            ContractName::from("hydentity"),
+            ContractName::from("oranj"),
+            ContractName::from("oxygen"),
+            ContractName::from("vitamin"),
+        ]
+        .into_iter()
+        .collect();
+        if std::env::var("RUN_HYLLAR2_CSI").is_ok() {
+            csi_contracts.insert(ContractName::from("hyllar2"));
+        }
+
         handler
             .build_module::<ContractStateIndexer<Hyllar>>(ContractStateIndexerCtx {
                 contract_name: "hyllar".into(),
@@ -407,6 +423,15 @@ pub async fn common_main(
             .await?;
         handler
             .build_module::<Indexer>((config.clone(), build_api_ctx.clone()))
+            .await?;
+        handler
+            .build_module::<ContractListener>(ContractListenerConf {
+                database_url: config.database_url.clone(),
+                data_directory: config.data_directory.clone(),
+                contracts: csi_contracts,
+                poll_interval: Duration::from_millis(50),
+                replay_settled_from_start: false,
+            })
             .await?;
     }
 
