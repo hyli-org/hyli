@@ -135,8 +135,8 @@ impl EventLoopMetrics {
         }
     }
 
-    pub fn record_branch(&self, branch_index: u64) {
-        self.branch.record(branch_index, &[]);
+    pub fn record_branch(&self, branch_index: u64, labels: &[KeyValue]) {
+        self.branch.record(branch_index, labels);
     }
 }
 impl LatencyMetricSink for EventLoopMetrics {
@@ -190,11 +190,12 @@ macro_rules! handle_messages {
                 "branch",
                 $crate::bus::metrics::BusMetrics::simplified_name::<$crate::bus::command_response::Query<$command, $response>>(),
             ),
+            $crate::KeyValue::new("index", $branch_index.to_string()),
         ];
         $crate::handle_messages! {
             $(processed $bind = $fut $(, if $cond)? => $handle,)*
             processed Ok(_raw_query) = #[allow(clippy::macro_metavars_in_unsafe)] $index.recv() => {
-                $metrics.record_branch($branch_index);
+                $metrics.record_branch($branch_index, &[<branch_ $index>][..1]);
                 receive_bus_metrics::<$crate::bus::command_response::Query<$command, $response>,_>(&mut $bus);
                 let _latency = $crate::utils::profiling::LatencyTimer::new(&$metrics, &[<branch_ $index>]);
                 $(
@@ -242,11 +243,12 @@ macro_rules! handle_messages {
                 "branch",
                 $crate::bus::metrics::BusMetrics::simplified_name::<$message>(),
             ),
+            $crate::KeyValue::new("index", $branch_index.to_string()),
         ];
         $crate::handle_messages! {
             $(processed $bind = $fut $(, if $cond)? => $handle,)*
             processed Ok(mut __envelope) = $index.recv() => {
-                $metrics.record_branch($branch_index);
+                $metrics.record_branch($branch_index, &[<branch_ $index>][..1]);
                 receive_bus_metrics::<$message, _>(&mut $bus);
                 let _latency = $crate::utils::profiling::LatencyTimer::new(&$metrics, &[<branch_ $index>]);
                 $(
@@ -276,11 +278,12 @@ macro_rules! handle_messages {
         let [<branch_ $index>] = [
             Pick::<$crate::bus::metrics::BusMetrics>::get(&$bus).client_name(),
             $crate::KeyValue::new("branch", stringify!($fut2)),
+            $crate::KeyValue::new("index", $branch_index.to_string()),
         ];
         $crate::handle_messages! {
             $(processed $bind = $fut $(, if $cond)? => $handle,)*
             processed $bind2 = $fut2 $(, if $cond2)? => {
-                $metrics.record_branch($branch_index);
+                $metrics.record_branch($branch_index, &[<branch_ $index>][..1]);
                 let _latency = $crate::utils::profiling::LatencyTimer::new(&$metrics, &[<branch_ $index>]);
                 $handler
             },

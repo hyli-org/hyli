@@ -2,7 +2,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_net_traits::TcpMessageLabel;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
-use std::{collections::HashMap, fmt::Display, sync::RwLock};
+use std::{fmt::Display, sync::RwLock};
 
 use crate::*;
 
@@ -114,13 +114,14 @@ impl DataProposal {
         });
     }
 
-    pub fn take_proofs(&mut self) -> HashMap<TxHash, ProofData> {
+    pub fn take_proofs(&mut self) -> Vec<(u64, ProofData)> {
         self.txs
             .iter_mut()
-            .filter_map(|tx| {
+            .enumerate()
+            .filter_map(|(tx_idx, tx)| {
                 match &mut tx.transaction_data {
                     TransactionData::VerifiedProof(proof_tx) => {
-                        proof_tx.proof.take().map(|proof| (tx.hashed(), proof))
+                        proof_tx.proof.take().map(|proof| (tx_idx as u64, proof))
                     }
                     TransactionData::Proof(_) => {
                         // This can never happen.
@@ -133,17 +134,21 @@ impl DataProposal {
             .collect()
     }
 
-    pub fn hydrate_proofs(&mut self, mut proofs: HashMap<TxHash, ProofData>) {
-        self.txs.iter_mut().for_each(|tx| {
-            let tx_hash = tx.hashed();
+    /// Proofs are kept as a vector because DP transactions are fundamentally ordered.
+    pub fn hydrate_proofs(&mut self, proofs: Vec<(u64, ProofData)>) {
+        for (tx_idx, proof) in proofs {
+            let Ok(tx_idx) = usize::try_from(tx_idx) else {
+                continue;
+            };
+            let Some(tx) = self.txs.get_mut(tx_idx) else {
+                continue;
+            };
             if let TransactionData::VerifiedProof(ref mut vpt) = tx.transaction_data {
                 if vpt.proof.is_none() {
-                    if let Some(proof) = proofs.remove(&tx_hash) {
-                        vpt.proof = Some(proof);
-                    }
+                    vpt.proof = Some(proof);
                 }
             }
-        });
+        }
     }
 
     /// This is used to set the hash of the DataProposal when we can trust we know it

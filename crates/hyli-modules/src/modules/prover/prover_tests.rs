@@ -495,6 +495,7 @@ where
                             tx: tx.clone(),
                             tx_ctx: tx_ctx.clone(),
                             status: TransactionStatusDb::Sequenced,
+                            contract_changes: std::collections::HashMap::new(),
                         },
                     ))
                     .await?;
@@ -506,6 +507,7 @@ where
                             tx: unsettled.tx.clone(),
                             tx_ctx: unsettled.tx_context.clone(),
                             status: TransactionStatusDb::Success,
+                            contract_changes: std::collections::HashMap::new(),
                         },
                     ))
                     .await?;
@@ -517,6 +519,7 @@ where
                             tx: unsettled.tx.clone(),
                             tx_ctx: unsettled.tx_context.clone(),
                             status: TransactionStatusDb::Failure,
+                            contract_changes: std::collections::HashMap::new(),
                         },
                     ))
                     .await?;
@@ -528,6 +531,7 @@ where
                             tx: unsettled.tx.clone(),
                             tx_ctx: unsettled.tx_context.clone(),
                             status: TransactionStatusDb::TimedOut,
+                            contract_changes: std::collections::HashMap::new(),
                         },
                     ))
                     .await?;
@@ -1117,6 +1121,7 @@ async fn test_auto_prover_idle_flush() -> Result<()> {
                     tx: tx.clone(),
                     tx_ctx: tx_ctx.clone(),
                     status: TransactionStatusDb::Sequenced,
+                    contract_changes: std::collections::HashMap::new(),
                 }))
                 .await?;
         }

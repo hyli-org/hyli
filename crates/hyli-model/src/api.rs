@@ -370,7 +370,9 @@ pub struct APIBlob {
     feature = "sqlx",
     sqlx(type_name = "contract_change_type", rename_all = "snake_case")
 )]
-#[derive(Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq, Eq)]
+#[derive(
+    Debug, Serialize, Deserialize, ToSchema, Clone, PartialEq, Eq, BorshSerialize, BorshDeserialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ContractChangeType {
     Registered,

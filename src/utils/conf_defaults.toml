@@ -105,6 +105,7 @@ events = ["node_state", "new_block", "new_tx"]
 [indexer]
 query_buffer_size = 10000
 persist_proofs = true
+index_tx_events = true
 
 [own_lanes]
 suffixes = ["default"]

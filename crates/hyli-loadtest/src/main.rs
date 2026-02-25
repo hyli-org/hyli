@@ -6,6 +6,7 @@ use hyli_loadtest::{
     long_running_test, send, send_blob_txs, send_massive_blob, send_proof_txs, setup, setup_hyllar,
     States,
 };
+use hyli_modules::bus::command_response::hyli_turmoil_shims::init_noop_meter_provider;
 use tracing::{info, Level};
 
 /// A cli to interact with hyli node
@@ -72,6 +73,8 @@ enum SendCommands {
 #[tokio::main]
 async fn main() -> Result<(), Error> {
     tracing_subscriber::fmt().with_max_level(Level::INFO).init();
+
+    init_noop_meter_provider();
 
     let args = Args::parse();
 

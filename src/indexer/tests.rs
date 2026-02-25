@@ -42,6 +42,7 @@ async fn new_indexer(pool: PgPool) -> (Indexer, Explorer) {
         indexer: IndexerConf {
             query_buffer_size: 1,
             persist_proofs: false,
+            index_tx_events: true,
         },
         ..Conf::default()
     };
@@ -50,7 +51,11 @@ async fn new_indexer(pool: PgPool) -> (Indexer, Explorer) {
             bus: IndexerBusClient::new_from_bus(bus.new_handle()).await,
             db: pool.clone(),
             node_state: NodeState::create("indexer"),
-            handler_store: IndexerHandlerStore::default(),
+            handler_store: IndexerHandlerStore {
+                index_tx_events: conf.indexer.index_tx_events,
+                ..IndexerHandlerStore::default()
+            },
+            metrics: IndexerMetrics::global(),
             conf,
         },
         Explorer::new(bus, pool).await,
