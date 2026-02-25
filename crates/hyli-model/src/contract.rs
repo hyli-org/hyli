@@ -452,6 +452,20 @@ pub trait ContractAction: Send {
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct ContractName(pub String);
 
+impl ContractName {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.0.is_empty()
+            || !self
+                .0
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+        {
+            return Err("ContractName must be a non-empty string containing only lowercase letters, digits, hyphens or underscores".to_string());
+        }
+        Ok(())
+    }
+}
+
 #[derive(
     Default,
     Debug,
