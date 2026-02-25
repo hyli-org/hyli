@@ -41,11 +41,7 @@ pub fn validate_contract_name_tld(
         );
     }
     if let Err(e) = new_contract_name.validate() {
-        bail!(
-            "Invalid contract name for '{}': {} is not a valid contract name: {e}",
-            owner,
-            new_contract_name
-        );
+        bail!("Invalid contract name: {new_contract_name} is not a valid contract name: {e}");
     }
     Ok(())
 }
