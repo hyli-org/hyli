@@ -13,8 +13,10 @@ use axum::{
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
+    Json,
 };
 use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_model::BlockHeight;
 use hyli_net::http::HttpClient;
 use sdk::*;
 use serde::{Deserialize, Serialize};
@@ -30,6 +32,7 @@ use super::{
     rest::request_logger,
     signal::{self},
 };
+use crate::node_state::module::QueryBlockHeight;
 
 #[derive(Clone)]
 pub struct QueryNodeStateStore;
@@ -46,6 +49,7 @@ pub struct QueryConsensusCatchupStoreResponse(pub Vec<u8>);
 module_bus_client! {
     struct AdminBusClient {
         sender(signal::PersistModule),
+        sender(crate::bus::command_response::Query<QueryBlockHeight, BlockHeight>),
         sender(crate::bus::command_response::Query<QueryNodeStateStore, QueryNodeStateStoreResponse>),
         sender(crate::bus::command_response::Query<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse>),
     }
@@ -88,6 +92,7 @@ impl Module for AdminApi {
             Router::new()
                 .route("/v1/admin/persist", post(persist))
                 .route("/v1/admin/download/{file}", get(download))
+                .route("/v1/admin/block_height", get(block_height))
                 .route("/v1/admin/catchup", get(catchup))
                 .with_state(RouterState {
                     bus: AdminBusClient::new_from_bus(bus.new_handle()).await,
@@ -209,6 +214,32 @@ impl NodeAdminApiClient {
                 .context("deserializing binary catchup store response".to_string())
         })
     }
+
+    pub fn get_block_height(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<BlockHeight>> + Send + '_>> {
+        Box::pin(async move {
+            self.client
+                .get("v1/admin/block_height")
+                .await
+                .context("getting block height from admin api".to_string())
+        })
+    }
+}
+
+pub async fn block_height(
+    State(mut state): State<RouterState>,
+) -> Result<impl IntoResponse, AppError> {
+    tracing::info!("Getting node block height from node state");
+    let height = log_error!(
+        state
+            .bus
+            .shutdown_aware_request::<()>(QueryBlockHeight {})
+            .await,
+        "Getting node block height"
+    )
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    Ok(Json(height))
 }
 
 pub async fn catchup(State(mut state): State<RouterState>) -> Result<impl IntoResponse, AppError> {
