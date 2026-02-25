@@ -40,6 +40,9 @@ pub fn validate_contract_name_tld(
             new_contract_name
         );
     }
+    if let Err(e) = new_contract_name.validate() {
+        bail!("Invalid contract name: {new_contract_name} is not a valid contract name: {e}");
+    }
     Ok(())
 }
 
@@ -163,6 +166,19 @@ mod test {
     fn test_validate_contract_registration_smiley() {
         assert!(validate_contract_name_tld(&"hyli".into(), &"🥷".into()).is_ok());
         assert!(validate_contract_name_tld(&"hyli".into(), &"💅🏻💅🏼💅🏽💅🏾💅🏿💅".into()).is_ok());
+    }
+
+    #[test]
+    fn test_validate_contract_registration_invalid_chars_in_subdomain() {
+        let owner = "example".into();
+        // Uppercase letters are rejected by validate()
+        assert!(validate_contract_name_tld(&owner, &"Sub.example".into()).is_err());
+        // Spaces are rejected by validate()
+        assert!(validate_contract_name_tld(&owner, &"my sub.example".into()).is_err());
+        // Special characters are rejected by validate()
+        assert!(validate_contract_name_tld(&owner, &"sub!.example".into()).is_err());
+        // Emojis are rejected by validate() for non-hyli TLDs
+        assert!(validate_contract_name_tld(&owner, &"🥷.example".into()).is_err());
     }
 
     #[test]
