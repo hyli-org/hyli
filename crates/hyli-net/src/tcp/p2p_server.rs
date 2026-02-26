@@ -1,9 +1,9 @@
 use std::{cmp::Ordering, collections::HashSet, sync::Arc, task::Poll, time::Duration};
 
-use anyhow::{Context, bail};
+use anyhow::{bail, Context};
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_crypto::BlstCrypto;
-use sdk::{SignedByValidator, ValidatorPublicKey, hyli_model_utils::TimestampMs};
+use sdk::{hyli_model_utils::TimestampMs, SignedByValidator, ValidatorPublicKey};
 use tokio::{
     task::{AbortHandle, JoinSet},
     time::Interval,
@@ -14,13 +14,13 @@ use crate::{
     clock::TimestampMsClock,
     metrics::P2PMetrics,
     ordered_join_set::OrderedJoinSet,
-    tcp::{Handshake, TcpHeaders, TcpMessageLabel, tcp_client::TcpClient},
+    tcp::{tcp_client::TcpClient, Handshake, TcpHeaders, TcpMessageLabel},
 };
 use hyli_turmoil_shims::collections::HashMap;
 
 use super::{
-    Canal, NodeConnectionData, P2PTcpMessage, TcpEvent,
     tcp_server::{TcpServer, TcpServerOptions},
+    Canal, NodeConnectionData, P2PTcpMessage, TcpEvent,
 };
 
 #[derive(Clone, Debug)]
@@ -302,7 +302,11 @@ where
                         self.metrics.message_received(peer_p2p_addr, canal.clone());
                         trace!(
                             "P2P recv data (node={}, peer={} ({}), canal={}, socket_addr={})",
-                            self.node_id, peer_name, peer_pubkey, canal, socket_addr
+                            self.node_id,
+                            peer_name,
+                            peer_pubkey,
+                            canal,
+                            socket_addr
                         );
                     } else {
                         self.metrics
@@ -315,7 +319,8 @@ where
                             .unknown_peer("rx", unknown_canal, "unknown_peer");
                         trace!(
                             "P2P recv data (node={}, peer=unknown, socket_addr={})",
-                            self.node_id, socket_addr
+                            self.node_id,
+                            socket_addr
                         );
                     }
                     Ok(Some(P2PServerEvent::P2PMessage { msg, headers }))
@@ -485,7 +490,9 @@ where
         if let Some((peer_pubkey, canal, peer_name, _)) = peer_ctx {
             trace!(
                 "Will retry connection to peer {} canal {} after error {}",
-                peer_name, canal, socket_addr
+                peer_name,
+                canal,
+                socket_addr
             );
             if let Err(e) = self.try_start_connection_for_peer(&peer_pubkey, canal.clone()) {
                 self.metrics
@@ -537,7 +544,9 @@ where
         if let Some((peer_pubkey, canal, peer_name, _)) = peer_ctx {
             trace!(
                 "Will retry connection to peer {} canal {} after close {}",
-                peer_name, canal, socket_addr
+                peer_name,
+                canal,
+                socket_addr
             );
             if let Err(e) = self.try_start_connection_for_peer(&peer_pubkey, canal.clone()) {
                 self.metrics
@@ -1207,7 +1216,7 @@ pub mod tests {
     use tokio::net::TcpListener;
 
     use crate::clock::TimestampMsClock;
-    use crate::tcp::{Canal, Handshake, P2PTcpMessage, TcpEvent, p2p_server::P2PServer};
+    use crate::tcp::{p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent};
 
     use super::P2PTcpEvent;
 
