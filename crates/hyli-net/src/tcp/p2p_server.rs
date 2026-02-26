@@ -1,9 +1,9 @@
 use std::{cmp::Ordering, collections::HashSet, sync::Arc, task::Poll, time::Duration};
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_crypto::BlstCrypto;
-use sdk::{hyli_model_utils::TimestampMs, SignedByValidator, ValidatorPublicKey};
+use sdk::{SignedByValidator, ValidatorPublicKey, hyli_model_utils::TimestampMs};
 use tokio::{
     task::{AbortHandle, JoinSet},
     time::Interval,
@@ -14,13 +14,13 @@ use crate::{
     clock::TimestampMsClock,
     metrics::P2PMetrics,
     ordered_join_set::OrderedJoinSet,
-    tcp::{tcp_client::TcpClient, Handshake, TcpHeaders, TcpMessageLabel},
+    tcp::{Handshake, TcpHeaders, TcpMessageLabel, tcp_client::TcpClient},
 };
 use hyli_turmoil_shims::collections::HashMap;
 
 use super::{
-    tcp_server::{TcpServer, TcpServerOptions},
     Canal, NodeConnectionData, P2PTcpMessage, TcpEvent,
+    tcp_server::{TcpServer, TcpServerOptions},
 };
 
 #[derive(Clone, Debug)]
@@ -302,11 +302,7 @@ where
                         self.metrics.message_received(peer_p2p_addr, canal.clone());
                         trace!(
                             "P2P recv data (node={}, peer={} ({}), canal={}, socket_addr={})",
-                            self.node_id,
-                            peer_name,
-                            peer_pubkey,
-                            canal,
-                            socket_addr
+                            self.node_id, peer_name, peer_pubkey, canal, socket_addr
                         );
                     } else {
                         self.metrics
@@ -319,8 +315,7 @@ where
                             .unknown_peer("rx", unknown_canal, "unknown_peer");
                         trace!(
                             "P2P recv data (node={}, peer=unknown, socket_addr={})",
-                            self.node_id,
-                            socket_addr
+                            self.node_id, socket_addr
                         );
                     }
                     Ok(Some(P2PServerEvent::P2PMessage { msg, headers }))
@@ -490,9 +485,7 @@ where
         if let Some((peer_pubkey, canal, peer_name, _)) = peer_ctx {
             trace!(
                 "Will retry connection to peer {} canal {} after error {}",
-                peer_name,
-                canal,
-                socket_addr
+                peer_name, canal, socket_addr
             );
             if let Err(e) = self.try_start_connection_for_peer(&peer_pubkey, canal.clone()) {
                 self.metrics
@@ -544,9 +537,7 @@ where
         if let Some((peer_pubkey, canal, peer_name, _)) = peer_ctx {
             trace!(
                 "Will retry connection to peer {} canal {} after close {}",
-                peer_name,
-                canal,
-                socket_addr
+                peer_name, canal, socket_addr
             );
             if let Err(e) = self.try_start_connection_for_peer(&peer_pubkey, canal.clone()) {
                 self.metrics
@@ -740,12 +731,7 @@ where
 
             trace!(
                 "Peer {} ({}) canal {} on node {} -> dropping socket_addr={} keeping socket_addr={}",
-                v.msg.name,
-                peer_pubkey,
-                canal,
-                self.node_id,
-                socket_to_drop,
-                kept_socket_addr
+                v.msg.name, peer_pubkey, canal, self.node_id, socket_to_drop, kept_socket_addr
             );
             self.tcp_server.set_peer_label(&kept_socket_addr, label);
             if socket_to_drop != kept_socket_addr {
@@ -1221,7 +1207,7 @@ pub mod tests {
     use tokio::net::TcpListener;
 
     use crate::clock::TimestampMsClock;
-    use crate::tcp::{p2p_server::P2PServer, Canal, Handshake, P2PTcpMessage, TcpEvent};
+    use crate::tcp::{Canal, Handshake, P2PTcpMessage, TcpEvent, p2p_server::P2PServer};
 
     use super::P2PTcpEvent;
 
@@ -1449,82 +1435,49 @@ pub mod tests {
             "Expected HandShake TCP Client connection"
         );
 
-        // For handshake Hello message
-        receive_and_handle_event!(
-            &mut p2p_server2,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                socket_addr: _,
-                data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
-                ..
-            }),
-            "Expected HandShake Hello message canal A"
-        );
-        receive_and_handle_event!(
-            &mut p2p_server2,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                socket_addr: _,
-                data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
-                ..
-            }),
-            "Expected HandShake Hello message canal B"
-        );
-        receive_and_handle_event!(
-            &mut p2p_server1,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                socket_addr: _,
-                data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
-                ..
-            }),
-            "Expected HandShake Hello message canal A"
-        );
-        receive_and_handle_event!(
-            &mut p2p_server1,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                socket_addr: _,
-                data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
-                ..
-            }),
-            "Expected HandShake Hello message canal B"
-        );
+        // Handshake frame ordering can vary across canals; accept Hello/Verack in any order.
+        let mut p1_hello = 0usize;
+        let mut p1_verack = 0usize;
+        let mut p2_hello = 0usize;
+        let mut p2_verack = 0usize;
+        for _ in 0..4 {
+            let e1 = receive_event(&mut p2p_server1, "Expected handshake frame on server1").await?;
+            match &e1 {
+                P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                    socket_addr: _,
+                    data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
+                    ..
+                }) => p1_hello += 1,
+                P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                    socket_addr: _,
+                    data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
+                    ..
+                }) => p1_verack += 1,
+                _ => anyhow::bail!("Expected handshake frame on server1, got {e1:?}"),
+            }
+            p2p_server1.handle_p2p_tcp_event(e1).await?;
 
-        // For handshake Verack message
-        receive_and_handle_event!(
-            &mut p2p_server1,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                socket_addr: _,
-                data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
-                ..
-            }),
-            "Expected HandShake Verack"
-        );
-        receive_and_handle_event!(
-            &mut p2p_server2,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                socket_addr: _,
-                data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
-                ..
-            }),
-            "Expected HandShake Verack"
-        );
+            let e2 = receive_event(&mut p2p_server2, "Expected handshake frame on server2").await?;
+            match &e2 {
+                P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                    socket_addr: _,
+                    data: P2PTcpMessage::Handshake(Handshake::Hello(_)),
+                    ..
+                }) => p2_hello += 1,
+                P2PTcpEvent::TcpEvent(TcpEvent::Message {
+                    socket_addr: _,
+                    data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
+                    ..
+                }) => p2_verack += 1,
+                _ => anyhow::bail!("Expected handshake frame on server2, got {e2:?}"),
+            }
+            p2p_server2.handle_p2p_tcp_event(e2).await?;
+        }
+        assert_eq!(p1_hello, 2, "server1 should receive 2 Hello frames");
+        assert_eq!(p1_verack, 2, "server1 should receive 2 Verack frames");
+        assert_eq!(p2_hello, 2, "server2 should receive 2 Hello frames");
+        assert_eq!(p2_verack, 2, "server2 should receive 2 Verack frames");
 
-        receive_and_handle_event!(
-            &mut p2p_server1,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                socket_addr: _,
-                data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
-                ..
-            }),
-            "Expected HandShake Verack"
-        );
-        receive_and_handle_event!(
-            &mut p2p_server2,
-            P2PTcpEvent::TcpEvent(TcpEvent::Message {
-                socket_addr: _,
-                data: P2PTcpMessage::Handshake(Handshake::Verack(_)),
-                ..
-            }),
-            "Expected HandShake Verack"
-        );
         // Verify that both servers have each other in their peers map
         assert_eq!(p2p_server1.peers.len(), 1);
         assert_eq!(p2p_server2.peers.len(), 1);

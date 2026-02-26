@@ -1,12 +1,12 @@
 use client_sdk::rest_client::{IndexerApiHttpClient, NodeApiClient, NodeApiHttpClient};
 use hyli_model::{
-    api::APIRegisterContract, BlobTransaction, ContractName, Hashed, OnchainEffect, ProgramId,
-    ProofData, ProofTransaction, RegisterContractAction, RegisterContractEffect, StateCommitment,
+    BlobTransaction, ContractName, Hashed, OnchainEffect, ProgramId, ProofData, ProofTransaction,
+    RegisterContractAction, RegisterContractEffect, StateCommitment, api::APIRegisterContract,
 };
 use hyli_modules::node_state::test::make_hyli_output_with_state;
 use testcontainers_modules::{
     postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ImageExt},
+    testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner},
 };
 use tracing::info;
 
@@ -175,7 +175,7 @@ async fn test_full_settlement_flow() -> Result<()> {
     Ok(())
 }
 
-async fn build_hyli_node() -> Result<(String, NodeIntegrationCtx)> {
+async fn build_hyli_node() -> Result<(ContainerAsync<Postgres>, String, NodeIntegrationCtx)> {
     // Start postgres DB with default settings for the indexer.
     let pg = Postgres::default()
         .with_tag("17-alpine")
@@ -193,6 +193,7 @@ async fn build_hyli_node() -> Result<(String, NodeIntegrationCtx)> {
         pg.get_host_port_ipv4(5432).await.unwrap()
     );
     Ok((
+        pg,
         format!("http://localhost:{rest_port}/"),
         builder.build().await?,
     ))
@@ -200,7 +201,7 @@ async fn build_hyli_node() -> Result<(String, NodeIntegrationCtx)> {
 
 #[test_log::test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
 async fn test_tx_settlement_duplicates() -> Result<()> {
-    let (rest_client, mut hyli_node) = build_hyli_node().await?;
+    let (_pg, rest_client, mut hyli_node) = build_hyli_node().await?;
     let client = NodeApiHttpClient::new(rest_client).unwrap();
 
     hyli_node.wait_for_genesis_event().await?;
@@ -419,14 +420,16 @@ async fn test_contract_upgrade() -> Result<()> {
     // Send contract update transaction
     let b2 = BlobTransaction::new(
         "toto@c1.hyli",
-        vec![RegisterContractAction {
-            verifier: "test".into(),
-            program_id: ProgramId(vec![7, 7, 7]),
-            state_commitment: StateCommitment(vec![3, 3, 3]),
-            contract_name: "c1.hyli".into(),
-            ..Default::default()
-        }
-        .as_blob("c1.hyli".into())],
+        vec![
+            RegisterContractAction {
+                verifier: "test".into(),
+                program_id: ProgramId(vec![7, 7, 7]),
+                state_commitment: StateCommitment(vec![3, 3, 3]),
+                contract_name: "c1.hyli".into(),
+                ..Default::default()
+            }
+            .as_blob("c1.hyli".into()),
+        ],
     );
     client.send_tx_blob(b2.clone()).await.unwrap();
 
