@@ -6,7 +6,7 @@ use hyli_model::{
 use hyli_modules::node_state::test::make_hyli_output_with_state;
 use testcontainers_modules::{
     postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ImageExt},
+    testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
 };
 use tracing::info;
 
@@ -175,7 +175,7 @@ async fn test_full_settlement_flow() -> Result<()> {
     Ok(())
 }
 
-async fn build_hyli_node() -> Result<(String, NodeIntegrationCtx)> {
+async fn build_hyli_node() -> Result<(ContainerAsync<Postgres>, String, NodeIntegrationCtx)> {
     // Start postgres DB with default settings for the indexer.
     let pg = Postgres::default()
         .with_tag("17-alpine")
@@ -193,6 +193,7 @@ async fn build_hyli_node() -> Result<(String, NodeIntegrationCtx)> {
         pg.get_host_port_ipv4(5432).await.unwrap()
     );
     Ok((
+        pg,
         format!("http://localhost:{rest_port}/"),
         builder.build().await?,
     ))
@@ -200,7 +201,7 @@ async fn build_hyli_node() -> Result<(String, NodeIntegrationCtx)> {
 
 #[test_log::test(tokio::test(flavor = "multi_thread", worker_threads = 2))]
 async fn test_tx_settlement_duplicates() -> Result<()> {
-    let (rest_client, mut hyli_node) = build_hyli_node().await?;
+    let (_pg, rest_client, mut hyli_node) = build_hyli_node().await?;
     let client = NodeApiHttpClient::new(rest_client).unwrap();
 
     hyli_node.wait_for_genesis_event().await?;
