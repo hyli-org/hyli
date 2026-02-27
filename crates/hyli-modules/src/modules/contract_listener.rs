@@ -260,10 +260,10 @@ impl ContractListener {
                 WHERE (t.block_height, t.index) > ($2, $3)
                 AND EXISTS (
                     SELECT 1
-                    FROM blobs b
-                    WHERE b.parent_dp_hash = t.parent_dp_hash
-                    AND b.tx_hash = t.tx_hash
-                    AND b.contract_name = ANY($1)
+                    FROM txs_contracts tx_c
+                    WHERE tx_c.parent_dp_hash = t.parent_dp_hash
+                    AND tx_c.tx_hash = t.tx_hash
+                    AND tx_c.contract_name = ANY($1)
                 )
                 AND t.transaction_type = 'blob_transaction'
                 AND t.transaction_status = 'sequenced'
@@ -316,10 +316,10 @@ impl ContractListener {
                 AND (
                     EXISTS (
                         SELECT 1
-                        FROM blobs b
-                        WHERE b.parent_dp_hash = t.parent_dp_hash
-                        AND b.tx_hash = t.tx_hash
-                        AND b.contract_name = ANY($1)
+                        FROM txs_contracts tx_c
+                        WHERE tx_c.parent_dp_hash = t.parent_dp_hash
+                        AND tx_c.tx_hash = t.tx_hash
+                        AND tx_c.contract_name = ANY($1)
                     )
                     OR EXISTS (
                         SELECT 1
