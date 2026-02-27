@@ -955,6 +955,21 @@ async fn test_indexer_api_doubles() -> Result<()> {
         .execute(&db)
         .await
         .context("insert test data")?;
+    // Add a second blob for the same tx+contract to guard against duplicate tx rows
+    // in `/transactions/contract/{contract_name}`.
+    sqlx::query(
+        "INSERT INTO blobs (tx_hash, parent_dp_hash, blob_index, identity, contract_name, data)
+         VALUES ($1, $2, $3, $4, $5, $6)",
+    )
+    .bind("a4".repeat(32))
+    .bind("b0".repeat(32))
+    .bind(1_i32)
+    .bind("identity_2")
+    .bind("contract_1")
+    .bind(br#"{"data":"blob_data_4_dup"}"#.as_slice())
+    .execute(&db)
+    .await
+    .context("insert duplicate contract blob for tx")?;
 
     let (_indexer, explorer) = new_indexer(db).await;
     let server = setup_test_server(&explorer).await?;
@@ -1128,7 +1143,24 @@ async fn test_indexer_api() -> Result<()> {
     // Get an existing transaction by name
     let transactions_response = server.get("/transactions/contract/contract_1").await;
     transactions_response.assert_status_ok();
-    assert!(!transactions_response.text().is_empty());
+    let contract_txs = transactions_response.json::<Vec<APITransaction>>();
+    let unique_contract_txs: std::collections::BTreeSet<_> = contract_txs
+        .iter()
+        .map(|t| format!("{}:{}", t.parent_dp_hash, t.tx_hash))
+        .collect();
+    assert_eq!(unique_contract_txs.len(), contract_txs.len());
+
+    // Same endpoint branch with start_block pagination should also stay deduplicated.
+    let transactions_response = server
+        .get("/transactions/contract/contract_1?start_block=2&nb_results=10")
+        .await;
+    transactions_response.assert_status_ok();
+    let contract_txs = transactions_response.json::<Vec<APITransaction>>();
+    let unique_contract_txs: std::collections::BTreeSet<_> = contract_txs
+        .iter()
+        .map(|t| format!("{}:{}", t.parent_dp_hash, t.tx_hash))
+        .collect();
+    assert_eq!(unique_contract_txs.len(), contract_txs.len());
 
     // Get an unknown transaction by name
     let transactions_response = server.get("/transactions/contract/unknown_contract").await;

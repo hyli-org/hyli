@@ -127,10 +127,11 @@ pub async fn get_contract(
             JOIN transactions t2 ON t2.block_hash = bl.hash
             WHERE t2.transaction_status = 'sequenced'
               AND EXISTS (
-                SELECT 1 FROM blobs b2
-                WHERE b2.parent_dp_hash = t2.parent_dp_hash
-                  AND b2.tx_hash = t2.tx_hash
-                  AND b2.contract_name = c.contract_name
+                SELECT 1
+                FROM txs_contracts tx_c2
+                WHERE tx_c2.parent_dp_hash = t2.parent_dp_hash
+                  AND tx_c2.tx_hash = t2.tx_hash
+                  AND tx_c2.contract_name = c.contract_name
               )
           ) AS earliest_unsettled
         FROM contracts AS c

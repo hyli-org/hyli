@@ -386,6 +386,19 @@ async fn insert_sequenced_tx_with_index(
     .execute(pool)
     .await?;
 
+    sqlx::query(
+        r#"
+        INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name)
+        VALUES ($1, $2, $3)
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(&parent_dp_hash)
+    .bind(&tx_hash_hex)
+    .bind(&contract.0)
+    .execute(pool)
+    .await?;
+
     Ok((
         tx_hash,
         ConsensusProposalHash::from_hex(&block_hash).expect("block_hash hex"),
@@ -425,6 +438,19 @@ async fn insert_sequenced_tx_with_null_tx_identity(
         r#"
         INSERT INTO blobs (parent_dp_hash, tx_hash, blob_index, identity, contract_name, data)
         VALUES ($1, $2, 0, 'id', $3, E'\\x02')
+        "#,
+    )
+    .bind(&parent_dp_hash)
+    .bind(&tx_hash_hex)
+    .bind(&contract.0)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name)
+        VALUES ($1, $2, $3)
+        ON CONFLICT DO NOTHING
         "#,
     )
     .bind(&parent_dp_hash)
