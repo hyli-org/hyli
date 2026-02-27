@@ -430,6 +430,7 @@ impl Consensus {
                             lane_size
                         );
                     }
+                    self.metrics.record_lane_bytes(lane_id, *lane_size);
                     continue;
                 }
                 // Ensure we're not going backwards in the cut.
@@ -459,6 +460,7 @@ impl Consensus {
                 signature: poda_sig.clone(),
             })
             .context("Failed to verify PoDA")?;
+            self.metrics.record_lane_bytes(lane_id, *lane_size);
         }
         Ok(())
     }
