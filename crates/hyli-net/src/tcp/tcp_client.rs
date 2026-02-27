@@ -207,7 +207,7 @@ mod tests {
     use std::time::Duration;
 
     use super::TcpClient;
-    use crate::tcp::tcp_server::TcpServer;
+    use crate::tcp::{tcp_server::TcpServer, TcpServerLike};
 
     type TestTCPServer = TcpServer<String, String>;
     type TestTCPClient = TcpClient<String, String>;
@@ -230,7 +230,7 @@ mod tests {
         let client_socket = client_socket.await?;
         assert_eq!(client_socket.port(), server_socket.port());
 
-        let clients = server.connected_clients();
+        let clients: Vec<String> = server.connected_clients().cloned().collect();
         assert_eq!(clients.len(), 1);
         assert_ne!(clients, vec![server_socket.to_string()]);
 

@@ -10,7 +10,7 @@ use hyli_net::{
     net::Sim,
     tcp::{
         p2p_server::{P2PServer, P2PTimeouts},
-        Canal, P2PTcpMessage, TcpMessageLabel,
+        Canal, P2PTcpMessage, TcpMessageLabel, TcpServerLike,
     },
 };
 use hyli_turmoil_shims::init_test_meter_provider;
@@ -203,12 +203,16 @@ async fn setup_drop_host(
             _ = interval_start_shutdown.tick() => {
                 if turmoil::elapsed() > Duration::from_millis(duration) {
                     tracing::error!("Current peers {:?}", p2p.peers.keys());
-                    tracing::error!("Current tcp peers {:?}", p2p.tcp_server.connected_clients());
+                    tracing::error!(
+                        "Current tcp peers {:?}",
+                        p2p.tcp_server.connected_clients().cloned().collect::<Vec<_>>()
+                    );
 
                     // Peers map should match all_other_peers
                     assert_eq!(all_other_peers.len(), p2p.peers.keys().len());
                     // All current peer sockets should be in tcp server sockets
-                    let connected_tcp_clients = p2p.tcp_server.connected_clients().clone();
+                    let connected_tcp_clients: Vec<String> =
+                        p2p.tcp_server.connected_clients().cloned().collect();
                     assert!(p2p.peers.values().flat_map(|t| t.canals.values()).all(|v| connected_tcp_clients.contains(&v.socket_addr)));
                 }
             }
@@ -261,7 +265,8 @@ async fn setup_drop_client(
                     // Peers map should match all_other_peers
                     assert_eq!(all_other_peers.len(), p2p.peers.keys().len());
                     // All current peer sockets should be in tcp server sockets
-                    let connected_tcp_clients = p2p.tcp_server.connected_clients().clone();
+                    let connected_tcp_clients: Vec<String> =
+                        p2p.tcp_server.connected_clients().cloned().collect();
                     assert!(p2p.peers.values().flat_map(|t| t.canals.values()).all(|v| connected_tcp_clients.contains(&v.socket_addr)));
 
                     break Ok(())
@@ -407,7 +412,7 @@ async fn setup_decode_error_host(peer: String, peers: Vec<String>) -> Result<(),
                 }
 
                 if armed && !sent_error && peer == "peer-1" {
-                    if let Some(socket) = p2p.tcp_server.connected_clients().first().cloned() {
+                    if let Some(socket) = p2p.tcp_server.connected_clients().next().cloned() {
                         let errors = p2p
                             .tcp_server
                             .raw_send_parallel(vec![socket], vec![255], vec![], "raw")
@@ -520,7 +525,7 @@ async fn setup_poisoned_socket_host(
                     && start.elapsed() > Duration::from_millis(500)
                     && p2p.peers.len() == all_other_peers.len()
                 {
-                    if let Some(socket) = p2p.tcp_server.connected_clients().first().cloned() {
+                    if let Some(socket) = p2p.tcp_server.connected_clients().next().cloned() {
                         let errors = p2p
                             .tcp_server
                             .raw_send_parallel(vec![socket], vec![255], vec![], "raw")

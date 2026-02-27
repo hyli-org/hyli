@@ -29,9 +29,32 @@ use hyli_turmoil_shims::collections::HashMap;
 use tracing::{debug, error, trace, warn};
 
 use super::{tcp_client::TcpClient, SocketStream, TcpEvent};
+use crate::tcp::middleware::SendStatus;
+use crate::tcp::middleware::{TcpReqBound, TcpResBound};
+use crate::tcp::TcpServerLike;
 
 type TcpSender = SplitSink<FramedStream, Bytes>;
 type TcpReceiver = SplitStream<FramedStream>;
+
+pub struct ConnectedClients<'a>(std::collections::hash_map::Keys<'a, String, SocketStream>);
+
+impl<'a> ConnectedClients<'a> {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.len() == 0
+    }
+}
+
+impl<'a> Iterator for ConnectedClients<'a> {
+    type Item = &'a String;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+}
 
 // Best-effort enqueue into the main TcpServer event loop. If the queue is full, log once and apply
 // backpressure by awaiting. If the queue is closed, do whatever the caller decides (typically
@@ -149,53 +172,12 @@ where
         })
     }
 
-    pub async fn listen_next(&mut self) -> Option<TcpEvent<Req>> {
-        loop {
-            hyli_turmoil_shims::tokio_select_biased! {
-                Ok((stream, socket_addr)) = self.tcp_listener.accept() => {
-                    if let Some(len) = self.max_frame_length {
-                        debug!("Setting max frame length to {}", len);
-                    }
-                    let (sender, receiver) = framed_stream(stream, self.max_frame_length).split();
-                    self.setup_stream(sender, receiver, &socket_addr.to_string());
-                }
-
-                Some(socket_addr) = self.ping_receiver.recv() => {
-                    trace!("Received ping from {}", socket_addr);
-                    if let Some(socket) = self.sockets.get_mut(&socket_addr) {
-                        socket.last_ping = TimestampMsClock::now();
-                    }
-                }
-                message = self.pool_receiver.recv() => {
-                    let queued = self.pool_receiver.len();
-                    if let Some(msg) = message.as_ref() {
-                        match msg.as_ref() {
-                            TcpEvent::Message { socket_addr, data, .. } => {
-                                self.metrics
-                                    .event_loop_message_received(data.message_label());
-                                trace!(pool = %self.pool_name, "TcpServer event queue: message for {} ({} remaining)", socket_addr, queued)
-                            }
-                            TcpEvent::Closed { socket_addr } => trace!(pool = %self.pool_name, "TcpServer event queue: closed for {} ({} remaining)", socket_addr, queued),
-                            TcpEvent::Error { socket_addr, error } => trace!(pool = %self.pool_name, "TcpServer event queue: error for {}: {} ({} remaining)", socket_addr, error, queued),
-                        }
-                    }
-                    return message.map(|message| *message);
-                }
-            }
-        }
-    }
-
     #[cfg(test)]
     /// Local_addr of the underlying tcp_listener
     pub fn local_addr(&self) -> anyhow::Result<std::net::SocketAddr> {
         self.tcp_listener
             .local_addr()
             .context("Getting local_addr from TcpListener in TcpServer")
-    }
-
-    /// Adresses of currently connected clients (no health check)
-    pub fn connected_clients(&self) -> Vec<String> {
-        self.sockets.keys().cloned().collect::<Vec<String>>()
     }
 
     pub fn connected(&self, socket_addr: &str) -> bool {
@@ -294,37 +276,6 @@ where
 
         result
     }
-    pub fn send(
-        &mut self,
-        socket_addr: String,
-        msg: Res,
-        headers: TcpHeaders,
-    ) -> anyhow::Result<()> {
-        debug!(pool = %self.pool_name, "Sending msg {:?} to {}", msg, socket_addr);
-        let message_label = msg.message_label();
-        let stream = self
-            .sockets
-            .get_mut(&socket_addr)
-            .context(format!("Retrieving client {socket_addr}"))?;
-
-        let binary_data = to_tcp_message_with_headers(&msg, headers)?;
-        stream
-            .sender
-            .try_send(TcpOutboundMessage {
-                message: binary_data,
-                message_label,
-            })
-            .map_err(|e| {
-                anyhow::anyhow!(
-                    "Outbound TCP channel full/closed while sending msg to client {}: {}",
-                    socket_addr,
-                    e
-                )
-            })?;
-        self.metrics.event_loop_message_sent(message_label);
-        Ok(())
-    }
-
     pub fn ping(&mut self, socket_addr: String) -> anyhow::Result<()> {
         let stream = self
             .sockets
@@ -631,7 +582,129 @@ where
         self.setup_stream(sender, receiver, &addr);
     }
 
-    pub fn drop_peer_stream(&mut self, peer_ip: String) {
+    pub fn set_peer_label(&mut self, socket_addr: &str, label: String) {
+        if let Some(stream) = self.sockets.get_mut(socket_addr) {
+            let mut guard = match stream.socket_label.write() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            *guard = label;
+        }
+    }
+}
+
+impl<Req, Res> TcpServerLike<Req, Res> for TcpServer<Req, Res>
+where
+    Req: TcpReqBound,
+    Res: TcpResBound,
+{
+    type EventOut = TcpEvent<Req>;
+    type ConnectedClients<'a>
+        = ConnectedClients<'a>
+    where
+        Self: 'a;
+
+    async fn listen_next(&mut self) -> Option<Self::EventOut> {
+        loop {
+            hyli_turmoil_shims::tokio_select_biased! {
+                Ok((stream, socket_addr)) = self.tcp_listener.accept() => {
+                    if let Some(len) = self.max_frame_length {
+                        debug!("Setting max frame length to {}", len);
+                    }
+                    let (sender, receiver) = framed_stream(stream, self.max_frame_length).split();
+                    self.setup_stream(sender, receiver, &socket_addr.to_string());
+                }
+
+                Some(socket_addr) = self.ping_receiver.recv() => {
+                    trace!("Received ping from {}", socket_addr);
+                    if let Some(socket) = self.sockets.get_mut(&socket_addr) {
+                        socket.last_ping = TimestampMsClock::now();
+                    }
+                }
+                message = self.pool_receiver.recv() => {
+                    let queued = self.pool_receiver.len();
+                    if let Some(msg) = message.as_ref() {
+                        match msg.as_ref() {
+                            TcpEvent::Message { socket_addr, data, .. } => {
+                                self.metrics
+                                    .event_loop_message_received(data.message_label());
+                                trace!(pool = %self.pool_name, "TcpServer event queue: message for {} ({} remaining)", socket_addr, queued)
+                            }
+                            TcpEvent::Closed { socket_addr } => trace!(pool = %self.pool_name, "TcpServer event queue: closed for {} ({} remaining)", socket_addr, queued),
+                            TcpEvent::Error { socket_addr, error } => trace!(pool = %self.pool_name, "TcpServer event queue: error for {}: {} ({} remaining)", socket_addr, error, queued),
+                        }
+                    }
+                    return message.map(|message| *message);
+                }
+            }
+        }
+    }
+
+    fn send(
+        &mut self,
+        socket_addr: String,
+        msg: Res,
+        headers: TcpHeaders,
+    ) -> anyhow::Result<SendStatus> {
+        debug!(pool = %self.pool_name, "Sending msg {:?} to {}", msg, socket_addr);
+        let message_label = msg.message_label();
+        let stream = self
+            .sockets
+            .get_mut(&socket_addr)
+            .context(format!("Retrieving client {socket_addr}"))?;
+
+        let binary_data = to_tcp_message_with_headers(&msg, headers)?;
+        stream
+            .sender
+            .try_send(TcpOutboundMessage {
+                message: binary_data,
+                message_label,
+            })
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Outbound TCP channel full/closed while sending msg to client {}: {}",
+                    socket_addr,
+                    e
+                )
+            })?;
+        self.metrics.event_loop_message_sent(message_label);
+        Ok(SendStatus::SentNow)
+    }
+
+    fn send_ref(&mut self, socket_addr: &str, msg: &Res, headers: &TcpHeaders) -> anyhow::Result<()>
+    where
+        Res: Clone,
+    {
+        debug!(pool = %self.pool_name, "Sending msg {:?} to {}", msg, socket_addr);
+        let message_label = msg.message_label();
+        let stream = self
+            .sockets
+            .get_mut(socket_addr)
+            .context(format!("Retrieving client {socket_addr}"))?;
+
+        let binary_data = to_tcp_message_with_headers(msg, headers.clone())?;
+        stream
+            .sender
+            .try_send(TcpOutboundMessage {
+                message: binary_data,
+                message_label,
+            })
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Outbound TCP channel full/closed while sending msg to client {}: {}",
+                    socket_addr,
+                    e
+                )
+            })?;
+        self.metrics.event_loop_message_sent(message_label);
+        Ok(())
+    }
+
+    fn connected_clients(&self) -> Self::ConnectedClients<'_> {
+        ConnectedClients(self.sockets.keys())
+    }
+
+    fn drop_peer_stream(&mut self, peer_ip: String) {
         if let Some(peer_stream) = self.sockets.remove(&peer_ip) {
             tracing::debug!(
                 pool = %self.pool_name,
@@ -645,16 +718,6 @@ where
             self.metrics.peers_snapshot(self.sockets.len() as u64);
         }
     }
-
-    pub fn set_peer_label(&mut self, socket_addr: &str, label: String) {
-        if let Some(stream) = self.sockets.get_mut(socket_addr) {
-            let mut guard = match stream.socket_label.write() {
-                Ok(guard) => guard,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            *guard = label;
-        }
-    }
 }
 
 #[cfg(test)]
@@ -663,7 +726,8 @@ pub mod tests {
 
     use super::TcpServer;
     use crate::tcp::{
-        tcp_client::TcpClient, tcp_server::peer_label_or_addr, to_tcp_message, TcpEvent, TcpMessage,
+        tcp_client::TcpClient, tcp_server::peer_label_or_addr, to_tcp_message, TcpEvent,
+        TcpMessage, TcpServerLike,
     };
     use anyhow::Result;
     use bytes::Bytes;
@@ -705,7 +769,7 @@ pub mod tests {
             DataAvailabilityEvent::SignedBlock(Default::default())
         );
 
-        let client_socket_addr = server.connected_clients().first().unwrap().clone();
+        let client_socket_addr = server.connected_clients().next().unwrap().clone();
 
         server.ping(client_socket_addr)?;
 
@@ -774,7 +838,7 @@ pub mod tests {
         .await?;
         _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
 
-        let client1_addr = server.connected_clients().clone().first().unwrap().clone();
+        let client1_addr = server.connected_clients().next().unwrap().clone();
 
         let mut client2 = DAClient::connect(
             "me2".to_string(),
@@ -784,9 +848,8 @@ pub mod tests {
         _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
         let client2_addr = server
             .connected_clients()
-            .clone()
-            .into_iter()
-            .rfind(|addr| addr != &client1_addr)
+            .find(|&addr| addr != &client1_addr)
+            .cloned()
             .unwrap();
 
         server.raw_send_parallel(
@@ -825,7 +888,7 @@ pub mod tests {
         )
         .await?;
         _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
-        let client1_addr = server.connected_clients().first().unwrap().clone();
+        let client1_addr = server.connected_clients().next().unwrap().clone();
 
         let mut client2 = DAClient::connect(
             "me2".to_string(),
@@ -835,9 +898,8 @@ pub mod tests {
         _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
         let client2_addr = server
             .connected_clients()
-            .clone()
-            .into_iter()
-            .rfind(|addr| addr != &client1_addr)
+            .find(|&addr| addr != &client1_addr)
+            .cloned()
             .unwrap();
 
         _ = server.send(
@@ -968,7 +1030,7 @@ pub mod tests {
         .await?;
         _ = tokio::time::timeout(Duration::from_millis(200), server.listen_next()).await;
 
-        let socket_addr = server.connected_clients().first().unwrap().clone();
+        let socket_addr = server.connected_clients().next().unwrap().clone();
         {
             let stored = server
                 .sockets

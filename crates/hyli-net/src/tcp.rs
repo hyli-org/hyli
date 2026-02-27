@@ -1,5 +1,6 @@
 #[cfg(feature = "turmoil")]
 pub mod intercept;
+pub mod middleware;
 pub mod p2p_server;
 pub mod tcp_client;
 pub mod tcp_server;
@@ -40,6 +41,52 @@ use crate::net::TcpStream;
 pub use hyli_net_traits::TcpMessageLabel;
 
 pub type TcpHeaders = Vec<(String, String)>;
+
+/// Common interface for `TcpServer` and middleware wrappers.
+#[allow(async_fn_in_trait)]
+pub trait TcpServerLike<Req, Res> {
+    type EventOut;
+    type ConnectedClients<'a>: Iterator<Item = &'a String>
+    where
+        Self: 'a;
+
+    async fn listen_next(&mut self) -> Option<Self::EventOut>;
+    fn send(
+        &mut self,
+        socket_addr: String,
+        msg: Res,
+        headers: TcpHeaders,
+    ) -> anyhow::Result<crate::tcp::middleware::SendStatus>;
+    fn send_ref(&mut self, socket_addr: &str, msg: &Res, headers: &TcpHeaders) -> anyhow::Result<()>
+    where
+        Res: Clone,
+    {
+        self.send(socket_addr.to_string(), msg.clone(), headers.clone())
+            .map(|_| ())
+    }
+    fn connected_clients(&self) -> Self::ConnectedClients<'_>;
+    fn connected(&self, socket_addr: &str) -> bool {
+        self.connected_clients().any(|addr| addr == socket_addr)
+    }
+    fn drop_peer_stream(&mut self, peer_ip: String);
+    fn poll_send_completion(&mut self) -> Option<crate::tcp::middleware::SendCompletion> {
+        None
+    }
+
+    fn broadcast(&mut self, msg: Res, headers: TcpHeaders) -> Vec<(String, anyhow::Error)>
+    where
+        Res: Clone,
+    {
+        let peers: Vec<String> = self.connected_clients().cloned().collect();
+        let mut errors = Vec::new();
+        for peer in peers {
+            if let Err(error) = self.send(peer.clone(), msg.clone(), headers.clone()) {
+                errors.push((peer, error));
+            }
+        }
+        errors
+    }
+}
 
 pub(crate) type FramedStream = Framed<TcpStream, LengthDelimitedCodec>;
 
