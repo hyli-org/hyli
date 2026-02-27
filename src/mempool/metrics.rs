@@ -1,5 +1,5 @@
 use hyli_model::LaneId;
-use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, Histogram, KeyValue};
+use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 
 use crate::model::ValidatorPublicKey;
 
@@ -23,7 +23,7 @@ pub struct MempoolMetrics {
     // Number of individual DPs sent (counting one per validator)
     pub dp_disseminations: Counter<u64>,
     pub created_data_proposals: Counter<u64>,
-    created_data_proposal_bytes: Histogram<u64>,
+    created_data_proposal_bytes: Counter<u64>,
     disseminated_data_proposal_bytes_total: Counter<u64>,
     consumed_data_proposal_bytes_total: Counter<u64>,
 }
@@ -69,7 +69,7 @@ impl MempoolMetrics {
                 .u64_counter(format!("{mempool}_created_data_proposals"))
                 .build(),
             created_data_proposal_bytes: my_meter
-                .u64_histogram(format!("{mempool}_data_proposal_created_bytes"))
+                .u64_counter(format!("{mempool}_data_proposal_created_bytes"))
                 .build(),
             disseminated_data_proposal_bytes_total: my_meter
                 .u64_counter(format!("{mempool}_data_proposal_disseminated_bytes_total"))
@@ -140,7 +140,7 @@ impl MempoolMetrics {
     }
 
     pub fn record_created_data_proposal_bytes(&self, lane_id: &LaneId, size_bytes: u64) {
-        self.created_data_proposal_bytes.record(
+        self.created_data_proposal_bytes.add(
             size_bytes,
             &[KeyValue::new("lane_id", format!("{lane_id}"))],
         );
