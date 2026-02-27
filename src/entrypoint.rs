@@ -28,7 +28,7 @@ use hyli_modules::telemetry::global_meter_or_panic;
 use hyli_modules::{
     log_error,
     modules::{
-        admin::{AdminApi, AdminApiRunContext, NodeAdminApiClient},
+        admin::{AdminApi, AdminApiRunContext, CatchupStoreResponse, NodeAdminApiClient},
         block_processor::BusOnlyProcessor,
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_listener::{ContractListener, ContractListenerConf},
@@ -207,6 +207,107 @@ pub async fn main_process(config: conf::Conf, crypto: Option<SharedBlstCrypto>) 
     Ok(())
 }
 
+#[derive(Clone)]
+struct CatchupPeer {
+    address: String,
+    height: u64,
+}
+
+async fn probe_fast_catchup_peer(peer: String, timeout_secs: u64) -> Option<CatchupPeer> {
+    info!("Checking fast catchup availability from {}", peer);
+    let client = match NodeAdminApiClient::new(peer.clone()) {
+        Ok(client) => client,
+        Err(e) => {
+            error!("Failed to create client for {}: {:?}", peer, e);
+            return None;
+        }
+    };
+
+    let node_state_height =
+        match tokio::time::timeout(Duration::from_secs(timeout_secs), client.get_block_height())
+            .await
+        {
+            Ok(Ok(height)) => height,
+            Ok(Err(e)) => {
+                error!("Failed to get node state height from {}: {:?}", peer, e);
+                return None;
+            }
+            Err(_) => {
+                error!(
+                    "Timed out while getting node state height from {} after {}s",
+                    peer, timeout_secs
+                );
+                return None;
+            }
+        };
+
+    info!(
+        "Peer {} is catchup candidate at height {}",
+        peer, node_state_height.0
+    );
+
+    Some(CatchupPeer {
+        address: peer,
+        height: node_state_height.0,
+    })
+}
+
+async fn pick_best_fast_catchup_peer(peers: &[String], timeout_secs: u64) -> Option<CatchupPeer> {
+    let mut probes = tokio::task::JoinSet::new();
+    for peer in peers {
+        probes.spawn(probe_fast_catchup_peer(peer.clone(), timeout_secs));
+    }
+
+    let mut best_peer: Option<CatchupPeer> = None;
+
+    while let Some(probe_result) = probes.join_next().await {
+        match probe_result {
+            Ok(Some(candidate)) => {
+                if best_peer
+                    .as_ref()
+                    .map(|best| candidate.height > best.height)
+                    .unwrap_or(true)
+                {
+                    best_peer = Some(candidate);
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                error!("Fast catchup probe task failed: {:?}", e);
+            }
+        }
+    }
+
+    best_peer
+}
+
+async fn fetch_fast_catchup_store(
+    best_peer: &CatchupPeer,
+    timeout_secs: u64,
+) -> Result<CatchupStoreResponse> {
+    info!(
+        "Attempting fast catchup from most up-to-date peer {} at height {}",
+        best_peer.address, best_peer.height
+    );
+
+    let client = NodeAdminApiClient::new(best_peer.address.clone())
+        .context("failed to create client for best peer")?;
+    match tokio::time::timeout(
+        Duration::from_secs(timeout_secs),
+        client.get_catchup_store(),
+    )
+    .await
+    {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(e)) => Err(e).context("best peer failed to provide catchup store"),
+        Err(_) => bail!(
+            "best peer {} timed out after {}s",
+            best_peer.address,
+            timeout_secs
+        ),
+    }
+}
+
 pub async fn common_main(
     mut config: conf::Conf,
     crypto: Option<SharedBlstCrypto>,
@@ -266,41 +367,35 @@ pub async fn common_main(
         // Check states exist and skip catchup if so.
         if !consensus_path.exists() || !node_state_path.exists() {
             let mut catchup_response = None;
-            let mut bootstrap_failure_reason = None;
+            let mut bootstrap_failure_reason: Option<String> = None;
 
             if config.fast_catchup_peers.is_empty() {
-                bootstrap_failure_reason = Some("no peers configured");
+                bootstrap_failure_reason = Some("no peers configured".to_string());
             } else {
-                for peer in &config.fast_catchup_peers {
-                    info!("Attempting fast catchup from {} with trust", peer);
-                    match NodeAdminApiClient::new(peer.clone()) {
-                        Ok(client) => {
-                            match tokio::time::timeout(
-                                std::time::Duration::from_secs(config.fast_catchup_timeout_secs),
-                                client.get_catchup_store(),
-                            )
-                            .await
-                            {
-                                Ok(Ok(response)) => {
-                                    info!("Successfully caught up from {}", peer);
-                                    catchup_response = Some(response);
-                                    break;
-                                }
-                                Ok(Err(e)) => {
-                                    error!("Failed to catch up from {}: {:?}", peer, e);
-                                }
-                                Err(_) => {
-                                    error!(
-                                        "Failed to catch up from {}: timed out after {}s",
-                                        peer, config.fast_catchup_timeout_secs
-                                    );
-                                }
-                            }
+                let best_peer = pick_best_fast_catchup_peer(
+                    &config.fast_catchup_peers,
+                    config.fast_catchup_timeout_secs,
+                )
+                .await;
+                if let Some(best_peer) = best_peer {
+                    match fetch_fast_catchup_store(&best_peer, config.fast_catchup_timeout_secs)
+                        .await
+                    {
+                        Ok(response) => {
+                            info!("Successfully caught up from {}", best_peer.address);
+                            catchup_response = Some(response);
                         }
                         Err(e) => {
-                            error!("Failed to create client for {}: {:?}", peer, e);
+                            error!(
+                                "Failed to catch up from best peer {}: {:?}",
+                                best_peer.address, e
+                            );
+                            bootstrap_failure_reason = Some(e.to_string());
                         }
                     }
+                } else {
+                    bootstrap_failure_reason =
+                        Some("no peers responded with a block height".to_string());
                 }
             }
 
@@ -355,7 +450,8 @@ pub async fn common_main(
                     "Writing checksum manifest for fast catchup stores"
                 )?;
             } else {
-                let reason = bootstrap_failure_reason.unwrap_or("no peer responded successfully");
+                let reason = bootstrap_failure_reason
+                    .unwrap_or_else(|| "no peer responded successfully".to_string());
                 warn!(
                     "Fast catchup bootstrap failed ({}). Disabling fast catchup for this run and continuing normal startup.",
                     reason
