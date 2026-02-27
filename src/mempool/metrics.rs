@@ -1,5 +1,5 @@
 use hyli_model::LaneId;
-use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
+use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, Histogram, KeyValue};
 
 use crate::model::ValidatorPublicKey;
 
@@ -23,6 +23,9 @@ pub struct MempoolMetrics {
     // Number of individual DPs sent (counting one per validator)
     pub dp_disseminations: Counter<u64>,
     pub created_data_proposals: Counter<u64>,
+    created_data_proposal_bytes: Histogram<u64>,
+    disseminated_data_proposal_bytes_total: Counter<u64>,
+    consumed_data_proposal_bytes_total: Counter<u64>,
 }
 
 impl MempoolMetrics {
@@ -64,6 +67,15 @@ impl MempoolMetrics {
                 .build(),
             created_data_proposals: my_meter
                 .u64_counter(format!("{mempool}_created_data_proposals"))
+                .build(),
+            created_data_proposal_bytes: my_meter
+                .u64_histogram(format!("{mempool}_data_proposal_created_bytes"))
+                .build(),
+            disseminated_data_proposal_bytes_total: my_meter
+                .u64_counter(format!("{mempool}_data_proposal_disseminated_bytes_total"))
+                .build(),
+            consumed_data_proposal_bytes_total: my_meter
+                .u64_counter(format!("{mempool}_data_proposal_consumed_bytes_total"))
                 .build(),
         }
     }
@@ -125,6 +137,44 @@ impl MempoolMetrics {
     pub fn add_processed_dp(&self, lane_id: &LaneId) {
         self.processed_dp
             .add(1, &[KeyValue::new("lane_id", format!("{lane_id}"))])
+    }
+
+    pub fn record_created_data_proposal_bytes(&self, lane_id: &LaneId, size_bytes: u64) {
+        self.created_data_proposal_bytes.record(
+            size_bytes,
+            &[KeyValue::new("lane_id", format!("{lane_id}"))],
+        );
+    }
+
+    pub fn add_disseminated_data_proposal_bytes(
+        &self,
+        lane_id: &LaneId,
+        size_bytes: u64,
+        targets: usize,
+        mode: &'static str,
+    ) {
+        self.disseminated_data_proposal_bytes_total.add(
+            size_bytes.saturating_mul(targets as u64),
+            &[
+                KeyValue::new("lane_id", format!("{lane_id}")),
+                KeyValue::new("mode", mode),
+            ],
+        );
+    }
+
+    pub fn add_consumed_data_proposal_bytes(
+        &self,
+        lane_id: &LaneId,
+        size_bytes: u64,
+        source: &'static str,
+    ) {
+        self.consumed_data_proposal_bytes_total.add(
+            size_bytes,
+            &[
+                KeyValue::new("lane_id", format!("{lane_id}")),
+                KeyValue::new("source", source),
+            ],
+        );
     }
 
     /// *emitted* a sync request

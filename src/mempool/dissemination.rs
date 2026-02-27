@@ -6,7 +6,8 @@ use std::{collections::HashSet, time::Duration};
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
 use hyli_model::{
-    utils::TimestampMs, DataProposalHash, LaneBytesSize, LaneId, NodeStateEvent, ValidatorPublicKey,
+    utils::TimestampMs, DataProposalHash, DataSized, LaneBytesSize, LaneId, NodeStateEvent,
+    ValidatorPublicKey,
 };
 use hyli_modules::{
     log_error, log_warn, module_bus_client, module_handle_messages, modules::Module,
@@ -859,6 +860,7 @@ impl DisseminationManager {
             bail!("Can't find Proofs for DP {} in lane {}", dp_hash, lane_id);
         };
         data_proposal.hydrate_proofs(proofs);
+        let dp_size_bytes = data_proposal.estimate_size() as u64;
 
         let expected_msg = (dp_hash.clone(), entry_metadata.cumul_size);
         let vote = entry_metadata
@@ -877,6 +879,12 @@ impl DisseminationManager {
             self.metrics
                 .dp_disseminations
                 .add(filtered_targets.len() as u64, &[]);
+            self.metrics.add_disseminated_data_proposal_bytes(
+                lane_id,
+                dp_size_bytes,
+                filtered_targets.len(),
+                "broadcast",
+            );
             debug!(
                 "📢 Broadcasting dp {} in lane {} to all {} bonded validators",
                 dp_hash,
@@ -888,6 +896,12 @@ impl DisseminationManager {
             self.metrics
                 .dp_disseminations
                 .add(filtered_targets.len() as u64, &[]);
+            self.metrics.add_disseminated_data_proposal_bytes(
+                lane_id,
+                dp_size_bytes,
+                filtered_targets.len(),
+                "targeted",
+            );
             debug!(
                 "🎯 Broadcasting dp {} in lane {} to {} targeted validators ({} bonded total)",
                 dp_hash,

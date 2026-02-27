@@ -207,6 +207,7 @@ impl Consensus {
 
             for tx in cut.iter() {
                 debug!("📦 Lane {} cumulated size: {}", tx.0, tx.2);
+                self.metrics.record_lane_bytes(&tx.0, tx.2);
                 staking_actions.push(ConsensusStakingAction::PayFeesForDaDi {
                     lane_id: tx.0.clone(),
                     cumul_size: tx.2,

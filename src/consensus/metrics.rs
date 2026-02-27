@@ -1,4 +1,5 @@
-use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge};
+use hyli_model::{LaneBytesSize, LaneId};
+use hyli_modules::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
 
 #[repr(u64)]
 #[derive(Clone, Copy)]
@@ -20,6 +21,7 @@ pub struct ConsensusMetrics {
 
     commit: Counter<u64>,
     buffered_prepares: Gauge<u64>,
+    lane_bytes: Gauge<u64>,
 
     pub on_prepare_ok: Counter<u64>,
     pub on_prepare_err: Counter<u64>,
@@ -56,6 +58,7 @@ impl ConsensusMetrics {
             last_started_round: build!(my_meter, gauge, "last_started_round"),
             commit: build!(my_meter, counter, "commit"),
             buffered_prepares: build!(my_meter, gauge, "buffered_prepares"),
+            lane_bytes: build!(my_meter, gauge, "lane_bytes"),
             on_prepare_ok: build!(my_meter, counter, "on_prepare_ok"),
             on_prepare_err: build!(my_meter, counter, "on_prepare_err"),
             on_prepare_vote_ok: build!(my_meter, counter, "on_prepare_vote_ok"),
@@ -94,5 +97,10 @@ impl ConsensusMetrics {
 
     pub fn record_prepare_cache_sizes(&self, buffered_prepares: usize) {
         self.buffered_prepares.record(buffered_prepares as u64, &[]);
+    }
+
+    pub fn record_lane_bytes(&self, lane_id: &LaneId, lane_bytes: LaneBytesSize) {
+        self.lane_bytes
+            .record(lane_bytes.0, &[KeyValue::new("lane", lane_id.to_string())]);
     }
 }

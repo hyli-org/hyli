@@ -39,6 +39,11 @@ impl super::Mempool {
         );
 
         self.metrics.add_received_dp(lane_id);
+        self.metrics.add_consumed_data_proposal_bytes(
+            lane_id,
+            data_proposal.estimate_size() as u64,
+            "data_proposal",
+        );
 
         // Check if we have a cached response to this DP hash (we can safely trust the hash here)
         // TODO: if we are currently hashing the same DP we'll still re-hash it

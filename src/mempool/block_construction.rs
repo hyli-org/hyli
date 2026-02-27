@@ -47,6 +47,11 @@ impl super::Mempool {
 
         self.metrics
             .sync_reply_receive(lane_id, self.crypto.validator_pubkey());
+        self.metrics.add_consumed_data_proposal_bytes(
+            lane_id,
+            data_proposal.estimate_size() as u64,
+            "sync_reply",
+        );
 
         #[cfg(test)]
         {

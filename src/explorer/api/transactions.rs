@@ -177,40 +177,50 @@ pub async fn get_transactions_by_contract(
     Query(pagination): Query<BlockPagination>,
     State(state): State<ExplorerApiState>,
 ) -> Result<Json<Vec<APITransaction>>, StatusCode> {
-    let transactions = log_error!(match pagination.start_block {
-        Some(start_block) => sqlx::query_as::<_, TransactionDb>(
-            r#"
+    let transactions = log_error!(
+        match pagination.start_block {
+            Some(start_block) => sqlx::query_as::<_, TransactionDb>(
+                r#"
             SELECT t.* , bl.timestamp
             FROM transactions t
-            JOIN blobs b ON t.tx_hash = b.tx_hash
+            JOIN txs_contracts tx_c
+              ON tx_c.parent_dp_hash = t.parent_dp_hash
+             AND tx_c.tx_hash = t.tx_hash
             LEFT JOIN blocks bl ON t.block_hash = bl.hash
-            WHERE b.contract_name = $1 AND bl.height <= $2 AND bl.height > $3 AND t.transaction_type = 'blob_transaction'
+            WHERE t.transaction_type = 'blob_transaction'
+              AND tx_c.contract_name = $1
+              AND bl.height <= $2
+              AND bl.height > $3
             ORDER BY bl.height DESC, t.index DESC
             LIMIT $4
             "#,
-        )
-        .bind(contract_name)
-        .bind(start_block)
-        .bind(start_block - pagination.nb_results.unwrap_or(10)) // Fine if this goes negative
-        .bind(pagination.nb_results.unwrap_or(10)),
-        None => sqlx::query_as::<_, TransactionDb>(
-            r#"
+            )
+            .bind(contract_name)
+            .bind(start_block)
+            .bind(start_block - pagination.nb_results.unwrap_or(10)) // Fine if this goes negative
+            .bind(pagination.nb_results.unwrap_or(10)),
+            None => sqlx::query_as::<_, TransactionDb>(
+                r#"
             SELECT t.*, bl.timestamp
             FROM transactions t
-            JOIN blobs b ON t.tx_hash = b.tx_hash AND t.parent_dp_hash = b.parent_dp_hash
+            JOIN txs_contracts tx_c
+              ON tx_c.parent_dp_hash = t.parent_dp_hash
+             AND tx_c.tx_hash = t.tx_hash
             LEFT JOIN blocks bl ON t.block_hash = bl.hash
-            WHERE b.contract_name = $1 AND t.transaction_type = 'blob_transaction'
+            WHERE t.transaction_type = 'blob_transaction'
+              AND tx_c.contract_name = $1
             ORDER BY bl.height DESC, t.index DESC
             LIMIT $2
             "#,
-        )
-        .bind(contract_name)
-        .bind(pagination.nb_results.unwrap_or(10)),
-    }
-    .fetch_all(&state.db)
-    .await
-    .map(|db| db.into_iter().map(Into::<APITransaction>::into).collect()),
-    "Failed to fetch transactions by contract")
+            )
+            .bind(contract_name)
+            .bind(pagination.nb_results.unwrap_or(10)),
+        }
+        .fetch_all(&state.db)
+        .await
+        .map(|db| db.into_iter().map(Into::<APITransaction>::into).collect()),
+        "Failed to fetch transactions by contract"
+    )
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(transactions))
@@ -279,8 +289,10 @@ pub async fn get_last_settled_tx_by_contract(
                 t.parent_dp_hash, t.tx_hash 
             FROM 
                 transactions t
-            JOIN blobs b ON t.parent_dp_hash = b.parent_dp_hash AND t.tx_hash = b.tx_hash
-            WHERE b.contract_name = $1 
+            JOIN txs_contracts tx_c
+                ON tx_c.parent_dp_hash = t.parent_dp_hash
+               AND tx_c.tx_hash = t.tx_hash
+            WHERE tx_c.contract_name = $1
             AND t.transaction_status = ANY($2) 
             ORDER BY t.block_height DESC, t.index DESC LIMIT 1
             "
