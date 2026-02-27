@@ -100,9 +100,7 @@ impl ConsensusMetrics {
     }
 
     pub fn record_lane_bytes(&self, lane_id: &LaneId, lane_bytes: LaneBytesSize) {
-        self.lane_bytes.record(
-            lane_bytes.0,
-            &[KeyValue::new("lane", lane_id.to_string())],
-        );
+        self.lane_bytes
+            .record(lane_bytes.0, &[KeyValue::new("lane", lane_id.to_string())]);
     }
 }

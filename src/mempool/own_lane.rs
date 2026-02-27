@@ -355,10 +355,8 @@ impl super::Mempool {
             .context("Sending MempoolStatusEvent DataProposalCreated")?;
 
         self.metrics.created_data_proposals.add(1, &[]);
-        self.metrics.record_created_data_proposal_bytes(
-            &lane_id,
-            data_proposal.estimate_size() as u64,
-        );
+        self.metrics
+            .record_created_data_proposal_bytes(&lane_id, data_proposal.estimate_size() as u64);
 
         let (data_proposal_hash, cumul_size) =
             self.lanes
