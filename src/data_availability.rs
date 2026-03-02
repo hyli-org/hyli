@@ -755,7 +755,6 @@ impl DataAvailability {
         &self,
     ) -> tokio::sync::mpsc::Receiver<Option<BlockHeight>> {
         let blocks_handle = self.blocks.new_handle();
-        let policy = self.fjall_async_policy;
 
         let (first_hole_sender, first_hole_receiver) =
             tokio::sync::mpsc::channel::<Option<BlockHeight>>(10);
@@ -768,29 +767,7 @@ impl DataAvailability {
             // Start scanning local storage for first hole, if any
             _ = tokio::task::spawn(async move {
                 loop {
-                    let handle = tokio::task::spawn_blocking({
-                        let blocks = blocks_handle.new_handle();
-                        move || blocks.first_hole_by_height()
-                    });
-                    let next = tokio::time::timeout(policy.timeout, handle).await;
-                    let hole = match next {
-                        Ok(Ok(res)) => res,
-                        Ok(Err(join_err)) => {
-                            debug!("first_hole_by_height join error: {}", join_err);
-                            tokio::time::sleep(policy.retry_backoff).await;
-                            continue;
-                        }
-                        Err(_) => {
-                            debug!(
-                                "first_hole_by_height timed out after {} ms",
-                                policy.timeout.as_millis()
-                            );
-                            tokio::time::sleep(policy.retry_backoff).await;
-                            continue;
-                        }
-                    };
-
-                    match hole {
+                    match blocks_handle.first_hole_by_height() {
                         Err(e) => {
                             debug!("Catchup not started yet, no data in partition: {}", e);
                             tokio::time::sleep(Duration::from_millis(500)).await;
