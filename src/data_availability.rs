@@ -79,7 +79,7 @@ impl Module for DataAvailability {
             config: ctx.config.clone(),
             bus,
             blocks,
-            fjall_async_policy: da_fjall_policy_from_env(),
+            fjall_async_policy: BlockingCallPolicy::fjall_da_from_env(),
             buffered_signed_blocks: BTreeSet::new(),
             catchupper: DaCatchupper::new(catchup_policy, ctx.config.da_max_frame_length),
             allow_peer_catchup: false,
@@ -120,16 +120,6 @@ pub struct DataAvailability {
 
     // Track blocks to send to each streaming peer (ensures ordering)
     peer_send_queues: HashMap<String, VecDeque<ConsensusProposalHash>>,
-}
-
-fn da_fjall_policy_from_env() -> BlockingCallPolicy {
-    BlockingCallPolicy::from_env(
-        "HYLI_FJALL_ASYNC_TIMEOUT_MS",
-        "HYLI_FJALL_ASYNC_MAX_RETRIES",
-        Some("HYLI_FJALL_ASYNC_RETRY_BACKOFF_MS"),
-        None,
-        true,
-    )
 }
 
 #[derive(Debug, Clone, AsRefStr)]
@@ -1375,7 +1365,7 @@ pub mod tests {
                 config: config.into(),
                 bus,
                 blocks,
-                fjall_async_policy: super::da_fjall_policy_from_env(),
+                fjall_async_policy: super::BlockingCallPolicy::fjall_da_from_env(),
                 buffered_signed_blocks: Default::default(),
                 catchupper: Default::default(),
                 allow_peer_catchup: false,
@@ -1441,7 +1431,7 @@ pub mod tests {
             config: Default::default(),
             bus,
             blocks,
-            fjall_async_policy: super::da_fjall_policy_from_env(),
+            fjall_async_policy: super::BlockingCallPolicy::fjall_da_from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -1496,7 +1486,7 @@ pub mod tests {
             config: config.clone().into(),
             bus,
             blocks,
-            fjall_async_policy: super::da_fjall_policy_from_env(),
+            fjall_async_policy: super::BlockingCallPolicy::fjall_da_from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -1998,7 +1988,7 @@ pub mod tests {
             config: config.clone().into(),
             bus,
             blocks: blocks_storage,
-            fjall_async_policy: super::da_fjall_policy_from_env(),
+            fjall_async_policy: super::BlockingCallPolicy::fjall_da_from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -2147,7 +2137,7 @@ pub mod tests {
             config: config.clone().into(),
             bus,
             blocks: blocks_storage,
-            fjall_async_policy: super::da_fjall_policy_from_env(),
+            fjall_async_policy: super::BlockingCallPolicy::fjall_da_from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -2219,7 +2209,7 @@ pub mod tests {
             config: config.clone().into(),
             bus,
             blocks: blocks_storage,
-            fjall_async_policy: super::da_fjall_policy_from_env(),
+            fjall_async_policy: super::BlockingCallPolicy::fjall_da_from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -2558,7 +2548,7 @@ pub mod tests {
             config: config.clone().into(),
             bus,
             blocks: blocks_storage,
-            fjall_async_policy: super::da_fjall_policy_from_env(),
+            fjall_async_policy: super::BlockingCallPolicy::fjall_da_from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,

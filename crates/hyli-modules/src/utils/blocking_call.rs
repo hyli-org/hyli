@@ -44,6 +44,26 @@ impl BlockingCallPolicy {
             retry_on_timeout,
         }
     }
+
+    pub fn fjall_mempool_from_env() -> Self {
+        Self::from_env(
+            "HYLI_FJALL_TIMEOUT_MS",
+            "HYLI_FJALL_MAX_RETRIES",
+            None,
+            Some("HYLI_FJALL_RETRY_ON_TIMEOUT"),
+            false,
+        )
+    }
+
+    pub fn fjall_da_from_env() -> Self {
+        Self::from_env(
+            "HYLI_FJALL_ASYNC_TIMEOUT_MS",
+            "HYLI_FJALL_ASYNC_MAX_RETRIES",
+            Some("HYLI_FJALL_ASYNC_RETRY_BACKOFF_MS"),
+            None,
+            true,
+        )
+    }
 }
 
 pub fn run_blocking_with_retry_sync<T, F, Op, OnOp, OnRetry, OnTimeout>(

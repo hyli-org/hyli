@@ -178,13 +178,7 @@ impl LanesStorage {
             by_hash_data,
             dp_proofs,
             metrics: FjallMetrics::global("mempool", "unknown", "mempool"),
-            fjall_call_policy: BlockingCallPolicy::from_env(
-                "HYLI_FJALL_TIMEOUT_MS",
-                "HYLI_FJALL_MAX_RETRIES",
-                None,
-                Some("HYLI_FJALL_RETRY_ON_TIMEOUT"),
-                false,
-            ),
+            fjall_call_policy: BlockingCallPolicy::fjall_mempool_from_env(),
             ref_token: Arc::new(()),
         })
     }
