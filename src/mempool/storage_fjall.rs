@@ -193,12 +193,7 @@ impl LanesStorage {
         self.metrics = FjallMetrics::global("mempool", node_id, "mempool");
     }
 
-    fn call_fjall<T, F, Op>(
-        &self,
-        op: &'static str,
-        keyspace: &'static str,
-        build: F,
-    ) -> Result<T>
+    fn call_fjall<T, F, Op>(&self, op: &'static str, keyspace: &'static str, build: F) -> Result<T>
     where
         T: Send + 'static,
         F: FnMut() -> Op,
