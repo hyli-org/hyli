@@ -38,7 +38,10 @@ impl Module for DataAvailability {
 
         let mut blocks = Blocks::new(&ctx.config.data_directory.join("data_availability.db"))?;
         blocks.set_metrics_context(ctx.config.id.clone());
-        let highest_block = blocks.highest();
+        let highest_block = {
+            let blocks_handle = blocks.new_handle();
+            tokio::task::spawn_blocking(move || blocks_handle.highest()).await?
+        };
 
         // When fast catchup is enabled, we load the node state from disk to load blocks
 
@@ -75,6 +78,7 @@ impl Module for DataAvailability {
             config: ctx.config.clone(),
             bus,
             blocks,
+            fjall_async_policy: FjallAsyncPolicy::from_env(),
             buffered_signed_blocks: BTreeSet::new(),
             catchupper: DaCatchupper::new(catchup_policy, ctx.config.da_max_frame_length),
             allow_peer_catchup: false,
@@ -105,6 +109,7 @@ pub struct DataAvailability {
     config: SharedConf,
     bus: DABusClient,
     pub blocks: Blocks,
+    fjall_async_policy: FjallAsyncPolicy,
 
     buffered_signed_blocks: BTreeSet<SignedBlock>,
 
@@ -114,6 +119,37 @@ pub struct DataAvailability {
 
     // Track blocks to send to each streaming peer (ensures ordering)
     peer_send_queues: HashMap<String, VecDeque<ConsensusProposalHash>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FjallAsyncPolicy {
+    timeout: Duration,
+    max_retries: usize,
+    retry_backoff: Duration,
+}
+
+impl FjallAsyncPolicy {
+    fn from_env() -> Self {
+        let timeout = std::env::var("HYLI_FJALL_ASYNC_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or_else(|| Duration::from_secs(5));
+        let max_retries = std::env::var("HYLI_FJALL_ASYNC_MAX_RETRIES")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(2);
+        let retry_backoff = std::env::var("HYLI_FJALL_ASYNC_RETRY_BACKOFF_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or_else(|| Duration::from_millis(50));
+        Self {
+            timeout,
+            max_retries,
+            retry_backoff,
+        }
+    }
 }
 
 #[derive(Debug, Clone, AsRefStr)]
@@ -581,6 +617,140 @@ impl Default for DaCatchupper {
 }
 
 impl DataAvailability {
+    async fn run_fjall_blocking<T, F, Op>(
+        &self,
+        op: &'static str,
+        keyspace: &'static str,
+        mut build: F,
+    ) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnMut() -> Op,
+        Op: FnOnce() -> Result<T> + Send + 'static,
+    {
+        let mut attempts = 0usize;
+        loop {
+            let handle = tokio::task::spawn_blocking(build());
+            let timed = tokio::time::timeout(self.fjall_async_policy.timeout, handle).await;
+            match timed {
+                Ok(joined) => match joined {
+                    Ok(Ok(value)) => return Ok(value),
+                    Ok(Err(err)) => {
+                        if attempts >= self.fjall_async_policy.max_retries {
+                            return Err(err);
+                        }
+                        attempts += 1;
+                        self.blocks.record_retry(op, keyspace);
+                        warn!(
+                            op = op,
+                            keyspace = keyspace,
+                            attempt = attempts,
+                            max_retries = self.fjall_async_policy.max_retries,
+                            "retrying failed fjall call"
+                        );
+                    }
+                    Err(join_err) => {
+                        if attempts >= self.fjall_async_policy.max_retries {
+                            return Err(anyhow::anyhow!(
+                                "fjall blocking task join error: {}",
+                                join_err
+                            ));
+                        }
+                        attempts += 1;
+                        self.blocks.record_retry(op, keyspace);
+                        warn!(
+                            op = op,
+                            keyspace = keyspace,
+                            attempt = attempts,
+                            max_retries = self.fjall_async_policy.max_retries,
+                            error = %join_err,
+                            "retrying fjall call after join error"
+                        );
+                    }
+                },
+                Err(_) => {
+                    self.blocks.record_timeout(op, keyspace);
+                    if attempts >= self.fjall_async_policy.max_retries {
+                        return Err(anyhow::anyhow!(
+                            "fjall call timed out after {} ms (op={}, keyspace={})",
+                            self.fjall_async_policy.timeout.as_millis(),
+                            op,
+                            keyspace
+                        ));
+                    }
+                    attempts += 1;
+                    self.blocks.record_retry(op, keyspace);
+                    warn!(
+                        op = op,
+                        keyspace = keyspace,
+                        attempt = attempts,
+                        max_retries = self.fjall_async_policy.max_retries,
+                        timeout_ms = self.fjall_async_policy.timeout.as_millis(),
+                        "fjall call timed out; retrying"
+                    );
+                }
+            }
+            tokio::time::sleep(self.fjall_async_policy.retry_backoff).await;
+        }
+    }
+
+    async fn blocks_get(&self, hash: ConsensusProposalHash) -> Result<Option<SignedBlock>> {
+        let blocks = self.blocks.new_handle();
+        self.run_fjall_blocking("get", "by_hash", move || {
+            let blocks = blocks.new_handle();
+            let hash = hash.clone();
+            move || blocks.get(&hash)
+        })
+        .await
+    }
+
+    async fn blocks_get_by_height(&self, height: BlockHeight) -> Result<Option<SignedBlock>> {
+        let blocks = self.blocks.new_handle();
+        self.run_fjall_blocking("get_by_height", "by_height", move || {
+            let blocks = blocks.new_handle();
+            move || blocks.get_by_height(height)
+        })
+        .await
+    }
+
+    async fn blocks_contains(&self, hash: ConsensusProposalHash) -> Result<bool> {
+        let blocks = self.blocks.new_handle();
+        self.run_fjall_blocking("contains", "by_hash", move || {
+            let blocks = blocks.new_handle();
+            let hash = hash.clone();
+            move || Ok(blocks.contains(&hash))
+        })
+        .await
+    }
+
+    async fn blocks_highest(&self) -> Result<BlockHeight> {
+        let blocks = self.blocks.new_handle();
+        self.run_fjall_blocking("highest", "by_height", move || {
+            let blocks = blocks.new_handle();
+            move || Ok(blocks.highest())
+        })
+        .await
+    }
+
+    async fn blocks_put(&self, block: SignedBlock) -> Result<()> {
+        let blocks = self.blocks.new_handle();
+        self.run_fjall_blocking("put", "by_hash", move || {
+            let mut blocks = blocks.new_handle();
+            let block = block.clone();
+            move || blocks.put(block)
+        })
+        .await
+    }
+
+    async fn blocks_persist(&self) -> Result<()> {
+        let blocks = self.blocks.new_handle();
+        self.run_fjall_blocking("persist", "db", move || {
+            let blocks = blocks.new_handle();
+            move || blocks.persist()
+        })
+        .await
+    }
+
     pub fn start_scanning_for_first_hole(
         &self,
     ) -> tokio::sync::mpsc::Receiver<Option<BlockHeight>> {
@@ -661,10 +831,9 @@ impl DataAvailability {
                     }
                     GenesisEvent::NoGenesis => {
                         self.allow_peer_catchup = true;
+                        let highest = self.blocks_highest().await?;
                         _ = log_error!(
-                            self.catchupper.ensure_started(
-                                self.blocks.highest(),
-                            ),
+                            self.catchupper.ensure_started(highest),
                             "Init catchup after NoGenesis"
                         );
                     }
@@ -679,7 +848,8 @@ impl DataAvailability {
                     debug!("Known peer announced again: {}", da_address);
                 }
                 if self.allow_peer_catchup {
-                    self.catchupper.ensure_started(self.blocks.highest())?;
+                    let highest = self.blocks_highest().await?;
+                    self.catchupper.ensure_started(highest)?;
                 } else {
                     debug!("Skipping catchup init on new peer while genesis path is unresolved");
                 }
@@ -803,7 +973,7 @@ impl DataAvailability {
         };
 
         debug!("📡  Sending block {} to peer {}", &hash, &peer_ip);
-        if let Ok(Some(signed_block)) = self.blocks.get(&hash) {
+        if let Ok(Some(signed_block)) = self.blocks_get(hash.clone()).await {
             // Errors will be handled when sending new blocks, ignore here.
             match server.send(
                 peer_ip.clone(),
@@ -848,7 +1018,7 @@ impl DataAvailability {
         );
 
         // Check if block exists in storage
-        match self.blocks.get_by_height(block_height) {
+        match self.blocks_get_by_height(block_height).await {
             Ok(Some(block)) => {
                 debug!(
                     "📦 Found block at height {}, sending to {}",
@@ -962,7 +1132,7 @@ impl DataAvailability {
     ) -> Option<BlockHeight> {
         let hash = block.hashed();
         // if new block is already handled, ignore it
-        if self.blocks.contains(&hash) {
+        if self.blocks_contains(hash.clone()).await.unwrap_or(false) {
             warn!(
                 "Block {} {} already exists !",
                 block.height(),
@@ -983,7 +1153,11 @@ impl DataAvailability {
             );
         }
         // if new block is not the next block in the chain, buffer
-        else if !self.blocks.contains(block.parent_hash()) {
+        else if !self
+            .blocks_contains(block.parent_hash().clone())
+            .await
+            .unwrap_or(false)
+        {
             debug!(
                 "Parent block '{}' not found for block hash='{}' height {}",
                 block.parent_hash(),
@@ -995,9 +1169,10 @@ impl DataAvailability {
             return None;
         }
 
-        if block.height() < self.blocks.highest() {
+        let highest = self.blocks_highest().await.unwrap_or(BlockHeight(0));
+        if block.height() < highest {
             // If we are in fast catchup, we need to backfill the block
-            _ = log_error!(self.store_block(&block), "Backfilling block");
+            _ = log_error!(self.store_block(&block).await, "Backfilling block");
         } else {
             // store block
             _ = log_error!(
@@ -1008,7 +1183,7 @@ impl DataAvailability {
         }
 
         let highest_processed_height = self.pop_buffer(hash, tcp_server, catchup_joinset).await;
-        _ = log_error!(self.blocks.persist(), "Persisting blocks");
+        _ = log_error!(self.blocks_persist().await, "Persisting blocks");
 
         let height = block.height();
 
@@ -1055,9 +1230,9 @@ impl DataAvailability {
         res
     }
 
-    fn store_block(&mut self, block: &SignedBlock) -> Result<()> {
-        self.blocks
-            .put(block.clone())
+    async fn store_block(&mut self, block: &SignedBlock) -> Result<()> {
+        self.blocks_put(block.clone())
+            .await
             .context(format!("Storing block {}", block.height()))?;
 
         trace!("Block {} {}: {:#?}", block.height(), block.hashed(), block);
@@ -1096,7 +1271,7 @@ impl DataAvailability {
         _tcp_server: &mut DataAvailabilityServer,
         catchup_joinset: &mut JoinSet<(String, usize)>,
     ) -> anyhow::Result<()> {
-        self.store_block(&block)?;
+        self.store_block(&block).await?;
 
         let block_hash = block.hashed();
 
@@ -1261,6 +1436,7 @@ pub mod tests {
                 config: config.into(),
                 bus,
                 blocks,
+                fjall_async_policy: super::FjallAsyncPolicy::from_env(),
                 buffered_signed_blocks: Default::default(),
                 catchupper: Default::default(),
                 allow_peer_catchup: false,
@@ -1326,6 +1502,7 @@ pub mod tests {
             config: Default::default(),
             bus,
             blocks,
+            fjall_async_policy: super::FjallAsyncPolicy::from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -1380,6 +1557,7 @@ pub mod tests {
             config: config.clone().into(),
             bus,
             blocks,
+            fjall_async_policy: super::FjallAsyncPolicy::from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -1881,6 +2059,7 @@ pub mod tests {
             config: config.clone().into(),
             bus,
             blocks: blocks_storage,
+            fjall_async_policy: super::FjallAsyncPolicy::from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -2029,6 +2208,7 @@ pub mod tests {
             config: config.clone().into(),
             bus,
             blocks: blocks_storage,
+            fjall_async_policy: super::FjallAsyncPolicy::from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -2100,6 +2280,7 @@ pub mod tests {
             config: config.clone().into(),
             bus,
             blocks: blocks_storage,
+            fjall_async_policy: super::FjallAsyncPolicy::from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -2438,6 +2619,7 @@ pub mod tests {
             config: config.clone().into(),
             bus,
             blocks: blocks_storage,
+            fjall_async_policy: super::FjallAsyncPolicy::from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
