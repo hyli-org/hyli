@@ -5,6 +5,7 @@ use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
 use hyli_modules::utils::da_codec::DataAvailabilityServer;
 //use hyli_modules::modules::data_availability::blocks_memory::Blocks;
 use hyli_modules::modules::da_listener::{DaStreamPoll, SignedDaStream};
+use hyli_modules::utils::blocking_call::{run_blocking_with_retry_async, BlockingCallPolicy};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::TcpEvent;
@@ -78,7 +79,7 @@ impl Module for DataAvailability {
             config: ctx.config.clone(),
             bus,
             blocks,
-            fjall_async_policy: FjallAsyncPolicy::from_env(),
+            fjall_async_policy: da_fjall_policy_from_env(),
             buffered_signed_blocks: BTreeSet::new(),
             catchupper: DaCatchupper::new(catchup_policy, ctx.config.da_max_frame_length),
             allow_peer_catchup: false,
@@ -109,7 +110,7 @@ pub struct DataAvailability {
     config: SharedConf,
     bus: DABusClient,
     pub blocks: Blocks,
-    fjall_async_policy: FjallAsyncPolicy,
+    fjall_async_policy: BlockingCallPolicy,
 
     buffered_signed_blocks: BTreeSet<SignedBlock>,
 
@@ -121,35 +122,14 @@ pub struct DataAvailability {
     peer_send_queues: HashMap<String, VecDeque<ConsensusProposalHash>>,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct FjallAsyncPolicy {
-    timeout: Duration,
-    max_retries: usize,
-    retry_backoff: Duration,
-}
-
-impl FjallAsyncPolicy {
-    fn from_env() -> Self {
-        let timeout = std::env::var("HYLI_FJALL_ASYNC_TIMEOUT_MS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .map(Duration::from_millis)
-            .unwrap_or_else(|| Duration::from_secs(5));
-        let max_retries = std::env::var("HYLI_FJALL_ASYNC_MAX_RETRIES")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(2);
-        let retry_backoff = std::env::var("HYLI_FJALL_ASYNC_RETRY_BACKOFF_MS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .map(Duration::from_millis)
-            .unwrap_or_else(|| Duration::from_millis(50));
-        Self {
-            timeout,
-            max_retries,
-            retry_backoff,
-        }
-    }
+fn da_fjall_policy_from_env() -> BlockingCallPolicy {
+    BlockingCallPolicy::from_env(
+        "HYLI_FJALL_ASYNC_TIMEOUT_MS",
+        "HYLI_FJALL_ASYNC_MAX_RETRIES",
+        Some("HYLI_FJALL_ASYNC_RETRY_BACKOFF_MS"),
+        None,
+        true,
+    )
 }
 
 #[derive(Debug, Clone, AsRefStr)]
@@ -621,77 +601,26 @@ impl DataAvailability {
         &self,
         op: &'static str,
         keyspace: &'static str,
-        mut build: F,
+        build: F,
     ) -> Result<T>
     where
         T: Send + 'static,
         F: FnMut() -> Op,
         Op: FnOnce() -> Result<T> + Send + 'static,
     {
-        let mut attempts = 0usize;
-        loop {
-            let handle = tokio::task::spawn_blocking(build());
-            let timed = tokio::time::timeout(self.fjall_async_policy.timeout, handle).await;
-            match timed {
-                Ok(joined) => match joined {
-                    Ok(Ok(value)) => return Ok(value),
-                    Ok(Err(err)) => {
-                        if attempts >= self.fjall_async_policy.max_retries {
-                            return Err(err);
-                        }
-                        attempts += 1;
-                        self.blocks.record_retry(op, keyspace);
-                        warn!(
-                            op = op,
-                            keyspace = keyspace,
-                            attempt = attempts,
-                            max_retries = self.fjall_async_policy.max_retries,
-                            "retrying failed fjall call"
-                        );
-                    }
-                    Err(join_err) => {
-                        if attempts >= self.fjall_async_policy.max_retries {
-                            return Err(anyhow::anyhow!(
-                                "fjall blocking task join error: {}",
-                                join_err
-                            ));
-                        }
-                        attempts += 1;
-                        self.blocks.record_retry(op, keyspace);
-                        warn!(
-                            op = op,
-                            keyspace = keyspace,
-                            attempt = attempts,
-                            max_retries = self.fjall_async_policy.max_retries,
-                            error = %join_err,
-                            "retrying fjall call after join error"
-                        );
-                    }
-                },
-                Err(_) => {
-                    self.blocks.record_timeout(op, keyspace);
-                    if attempts >= self.fjall_async_policy.max_retries {
-                        return Err(anyhow::anyhow!(
-                            "fjall call timed out after {} ms (op={}, keyspace={})",
-                            self.fjall_async_policy.timeout.as_millis(),
-                            op,
-                            keyspace
-                        ));
-                    }
-                    attempts += 1;
-                    self.blocks.record_retry(op, keyspace);
-                    warn!(
-                        op = op,
-                        keyspace = keyspace,
-                        attempt = attempts,
-                        max_retries = self.fjall_async_policy.max_retries,
-                        timeout_ms = self.fjall_async_policy.timeout.as_millis(),
-                        "fjall call timed out; retrying"
-                    );
-                }
-            }
-            tokio::time::sleep(self.fjall_async_policy.retry_backoff).await;
-        }
+        run_blocking_with_retry_async(
+            self.fjall_async_policy,
+            op,
+            keyspace,
+            build,
+            |micros| {
+                self.blocks
+                    .record_op(op, keyspace, Duration::from_micros(micros))
+            },
+            || self.blocks.record_retry(op, keyspace),
+            || self.blocks.record_timeout(op, keyspace),
+        )
+        .await
     }
 
     async fn blocks_get(&self, hash: ConsensusProposalHash) -> Result<Option<SignedBlock>> {
@@ -1436,7 +1365,7 @@ pub mod tests {
                 config: config.into(),
                 bus,
                 blocks,
-                fjall_async_policy: super::FjallAsyncPolicy::from_env(),
+                fjall_async_policy: super::da_fjall_policy_from_env(),
                 buffered_signed_blocks: Default::default(),
                 catchupper: Default::default(),
                 allow_peer_catchup: false,
@@ -1502,7 +1431,7 @@ pub mod tests {
             config: Default::default(),
             bus,
             blocks,
-            fjall_async_policy: super::FjallAsyncPolicy::from_env(),
+            fjall_async_policy: super::da_fjall_policy_from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -1557,7 +1486,7 @@ pub mod tests {
             config: config.clone().into(),
             bus,
             blocks,
-            fjall_async_policy: super::FjallAsyncPolicy::from_env(),
+            fjall_async_policy: super::da_fjall_policy_from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -2059,7 +1988,7 @@ pub mod tests {
             config: config.clone().into(),
             bus,
             blocks: blocks_storage,
-            fjall_async_policy: super::FjallAsyncPolicy::from_env(),
+            fjall_async_policy: super::da_fjall_policy_from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -2208,7 +2137,7 @@ pub mod tests {
             config: config.clone().into(),
             bus,
             blocks: blocks_storage,
-            fjall_async_policy: super::FjallAsyncPolicy::from_env(),
+            fjall_async_policy: super::da_fjall_policy_from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -2280,7 +2209,7 @@ pub mod tests {
             config: config.clone().into(),
             bus,
             blocks: blocks_storage,
-            fjall_async_policy: super::FjallAsyncPolicy::from_env(),
+            fjall_async_policy: super::da_fjall_policy_from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -2619,7 +2548,7 @@ pub mod tests {
             config: config.clone().into(),
             bus,
             blocks: blocks_storage,
-            fjall_async_policy: super::FjallAsyncPolicy::from_env(),
+            fjall_async_policy: super::da_fjall_policy_from_env(),
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,

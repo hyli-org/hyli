@@ -2,15 +2,17 @@ use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock, RwLock},
-    time::Duration,
 };
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 use async_stream::try_stream;
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slice};
 use futures::Stream;
 use hyli_model::{LaneId, ProofData};
-use hyli_modules::utils::fjall_metrics::FjallMetrics;
+use hyli_modules::utils::{
+    blocking_call::{run_blocking_with_retry_sync, BlockingCallPolicy},
+    fjall_metrics::FjallMetrics,
+};
 use std::time::Instant;
 use tracing::{info, warn};
 
@@ -35,39 +37,9 @@ pub struct LanesStorage {
     by_hash_data: Keyspace,
     dp_proofs: Keyspace,
     metrics: FjallMetrics,
-    fjall_call_policy: FjallCallPolicy,
+    fjall_call_policy: BlockingCallPolicy,
     // Used by the shared storage to know when it can drop this handle.
     ref_token: Arc<()>,
-}
-
-#[derive(Clone, Copy)]
-struct FjallCallPolicy {
-    timeout: Duration,
-    max_retries: usize,
-    retry_on_timeout: bool,
-}
-
-impl FjallCallPolicy {
-    fn from_env() -> Self {
-        let timeout = std::env::var("HYLI_FJALL_TIMEOUT_MS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .map(Duration::from_millis)
-            .unwrap_or_else(|| Duration::from_secs(5));
-        let max_retries = std::env::var("HYLI_FJALL_MAX_RETRIES")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(2);
-        let retry_on_timeout = std::env::var("HYLI_FJALL_RETRY_ON_TIMEOUT")
-            .ok()
-            .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-            .unwrap_or(false);
-        Self {
-            timeout,
-            max_retries,
-            retry_on_timeout,
-        }
-    }
 }
 
 static SHARED_LANES: OnceLock<Mutex<HashMap<PathBuf, LanesStorage>>> = OnceLock::new();
@@ -206,7 +178,13 @@ impl LanesStorage {
             by_hash_data,
             dp_proofs,
             metrics: FjallMetrics::global("mempool", "unknown", "mempool"),
-            fjall_call_policy: FjallCallPolicy::from_env(),
+            fjall_call_policy: BlockingCallPolicy::from_env(
+                "HYLI_FJALL_TIMEOUT_MS",
+                "HYLI_FJALL_MAX_RETRIES",
+                None,
+                Some("HYLI_FJALL_RETRY_ON_TIMEOUT"),
+                false,
+            ),
             ref_token: Arc::new(()),
         })
     }
@@ -219,89 +197,23 @@ impl LanesStorage {
         &self,
         op: &'static str,
         keyspace: &'static str,
-        mut build: F,
+        build: F,
     ) -> Result<T>
     where
         T: Send + 'static,
         F: FnMut() -> Op,
         Op: FnOnce() -> Result<T> + Send + 'static,
     {
-        let policy = self.fjall_call_policy;
         let metrics = self.metrics.clone();
-        let mut attempts = 0usize;
-        loop {
-            let start = Instant::now();
-            let (tx, rx) = std::sync::mpsc::sync_channel(1);
-            let op_fn = build();
-
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                handle.spawn_blocking(move || {
-                    let _ = tx.send(op_fn());
-                });
-            } else {
-                std::thread::spawn(move || {
-                    let _ = tx.send(op_fn());
-                });
-            }
-
-            match rx.recv_timeout(policy.timeout) {
-                Ok(result) => {
-                    metrics.record_op(op, keyspace, start.elapsed().as_micros() as u64);
-                    if result.is_err() && attempts < policy.max_retries {
-                        attempts += 1;
-                        metrics.record_retry(op, keyspace);
-                        tracing::warn!(
-                            op = op,
-                            keyspace = keyspace,
-                            attempt = attempts,
-                            max_retries = policy.max_retries,
-                            "retrying failed fjall call"
-                        );
-                        continue;
-                    }
-                    return result;
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    metrics.record_op(op, keyspace, start.elapsed().as_micros() as u64);
-                    metrics.record_timeout(op, keyspace);
-                    if policy.retry_on_timeout && attempts < policy.max_retries {
-                        attempts += 1;
-                        metrics.record_retry(op, keyspace);
-                        tracing::warn!(
-                            op = op,
-                            keyspace = keyspace,
-                            attempt = attempts,
-                            max_retries = policy.max_retries,
-                            timeout_ms = policy.timeout.as_millis(),
-                            "fjall call timed out; retrying"
-                        );
-                        continue;
-                    }
-                    return Err(anyhow!(
-                        "fjall op {} on {} exceeded timeout budget ({} ms)",
-                        op,
-                        keyspace,
-                        policy.timeout.as_millis()
-                    ));
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    metrics.record_op(op, keyspace, start.elapsed().as_micros() as u64);
-                    if attempts < policy.max_retries {
-                        attempts += 1;
-                        metrics.record_retry(op, keyspace);
-                        tracing::warn!(
-                            op = op,
-                            keyspace = keyspace,
-                            attempt = attempts,
-                            max_retries = policy.max_retries,
-                            "retrying fjall call after worker disconnect"
-                        );
-                        continue;
-                    }
-                    return Err(anyhow!("fjall worker disconnected while running {}", op));
-                }
-            }
-        }
+        run_blocking_with_retry_sync(
+            self.fjall_call_policy,
+            op,
+            keyspace,
+            build,
+            |micros| metrics.record_op(op, keyspace, micros),
+            || metrics.record_retry(op, keyspace),
+            || metrics.record_timeout(op, keyspace),
+        )
     }
 
     #[cfg(test)]
