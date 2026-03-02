@@ -156,7 +156,7 @@ strum_macros = { version = "0.27.1", default-features = false }
 syn = { version = "2.0.104" }
 tempfile = { version = "3.20.0", default-features = false }
 test-log = { version = "0.2.18", default-features = false }
-testcontainers-modules = { version = "0.14.0", default-features = false }
+testcontainers-modules = { version = "0.15.0", default-features = false }
 tracing-opentelemetry = "0.29.0"
 tokio = { version = "1.47.1" }
 tokio-util = { version = "0.7.16" }
