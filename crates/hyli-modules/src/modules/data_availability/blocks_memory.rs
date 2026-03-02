@@ -35,6 +35,10 @@ impl Blocks {
     ) {
     }
 
+    pub fn record_timeout(&self, _op: &'static str, _keyspace: &'static str) {}
+
+    pub fn record_retry(&self, _op: &'static str, _keyspace: &'static str) {}
+
     pub fn put(&mut self, data: SignedBlock) -> Result<()> {
         let block_hash = data.hashed();
         if self.contains(&block_hash) {

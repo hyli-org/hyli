@@ -2,9 +2,10 @@ use std::{
     collections::{BTreeMap, HashMap},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock, RwLock},
+    time::Duration,
 };
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use async_stream::try_stream;
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slice};
 use futures::Stream;
@@ -34,8 +35,46 @@ pub struct LanesStorage {
     by_hash_data: Keyspace,
     dp_proofs: Keyspace,
     metrics: FjallMetrics,
+    fjall_call_policy: FjallCallPolicy,
     // Used by the shared storage to know when it can drop this handle.
     ref_token: Arc<()>,
+}
+
+#[derive(Clone, Copy)]
+struct FjallCallPolicy {
+    timeout: Duration,
+    max_retries: usize,
+    retry_backoff: Duration,
+    retry_on_timeout: bool,
+}
+
+impl FjallCallPolicy {
+    fn from_env() -> Self {
+        let timeout = std::env::var("HYLI_FJALL_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or_else(|| Duration::from_secs(5));
+        let max_retries = std::env::var("HYLI_FJALL_MAX_RETRIES")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(2);
+        let retry_backoff = std::env::var("HYLI_FJALL_RETRY_BACKOFF_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or_else(|| Duration::from_millis(50));
+        let retry_on_timeout = std::env::var("HYLI_FJALL_RETRY_ON_TIMEOUT")
+            .ok()
+            .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false);
+        Self {
+            timeout,
+            max_retries,
+            retry_backoff,
+            retry_on_timeout,
+        }
+    }
 }
 
 static SHARED_LANES: OnceLock<Mutex<HashMap<PathBuf, LanesStorage>>> = OnceLock::new();
@@ -174,12 +213,72 @@ impl LanesStorage {
             by_hash_data,
             dp_proofs,
             metrics: FjallMetrics::global("mempool", "unknown", "mempool"),
+            fjall_call_policy: FjallCallPolicy::from_env(),
             ref_token: Arc::new(()),
         })
     }
 
     pub fn set_metrics_context(&mut self, node_id: impl Into<String>) {
         self.metrics = FjallMetrics::global("mempool", node_id, "mempool");
+    }
+
+    fn call_fjall<T, F>(&self, op: &'static str, keyspace: &'static str, mut f: F) -> Result<T>
+    where
+        F: FnMut() -> Result<T>,
+    {
+        let mut attempts = 0usize;
+        loop {
+            let start = Instant::now();
+            let result = if tokio::runtime::Handle::try_current().is_ok() {
+                tokio::task::block_in_place(|| f())
+            } else {
+                f()
+            };
+            let elapsed_micros = start.elapsed().as_micros() as u64;
+            self.metrics.record_op(op, keyspace, elapsed_micros);
+
+            let timed_out = start.elapsed() > self.fjall_call_policy.timeout;
+            if timed_out {
+                self.metrics.record_timeout(op, keyspace);
+                tracing::warn!(
+                    op = op,
+                    keyspace = keyspace,
+                    elapsed_millis = start.elapsed().as_millis(),
+                    timeout_millis = self.fjall_call_policy.timeout.as_millis(),
+                    "fjall call exceeded timeout budget"
+                );
+            }
+
+            let should_retry = match &result {
+                Ok(_) => timed_out && self.fjall_call_policy.retry_on_timeout,
+                Err(_) => true,
+            } && attempts < self.fjall_call_policy.max_retries;
+
+            if should_retry {
+                attempts += 1;
+                self.metrics.record_retry(op, keyspace);
+                tracing::warn!(
+                    op = op,
+                    keyspace = keyspace,
+                    attempt = attempts,
+                    max_retries = self.fjall_call_policy.max_retries,
+                    "retrying fjall call"
+                );
+                std::thread::sleep(self.fjall_call_policy.retry_backoff);
+                continue;
+            }
+
+            if timed_out && self.fjall_call_policy.retry_on_timeout {
+                return Err(anyhow!(
+                    "fjall op {} on {} exceeded timeout budget ({} ms)",
+                    op,
+                    keyspace,
+                    self.fjall_call_policy.timeout.as_millis()
+                ));
+            }
+
+            return result;
+        }
     }
 
     #[cfg(test)]
@@ -189,44 +288,30 @@ impl LanesStorage {
         dp_hash: &DataProposalHash,
         metadata: LaneEntryMetadata,
     ) -> Result<()> {
-        let start = Instant::now();
-        let res = self
-            .by_hash_metadata
-            .insert(format!("{lane_id}:{dp_hash}"), borsh::to_vec(&metadata)?)
-            .map_err(Into::into);
-        self.metrics.record_op(
-            "put_metadata_only",
-            "dp_metadata",
-            start.elapsed().as_micros() as u64,
-        );
-        res
+        self.call_fjall("put_metadata_only", "dp_metadata", || {
+            self.by_hash_metadata
+                .insert(format!("{lane_id}:{dp_hash}"), borsh::to_vec(&metadata)?)
+                .map_err(Into::into)
+        })
     }
 }
 
 impl Storage for LanesStorage {
     fn persist(&self) -> Result<()> {
-        let start = Instant::now();
-        let res = self
-            .db
-            .persist(fjall::PersistMode::Buffer)
-            .map_err(Into::into);
-        self.metrics
-            .record_op("persist", "db", start.elapsed().as_micros() as u64);
-        res
+        self.call_fjall("persist", "db", || {
+            self.db
+                .persist(fjall::PersistMode::Buffer)
+                .map_err(Into::into)
+        })
     }
 
     fn contains(&self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> bool {
-        let start = Instant::now();
-        let res = self
-            .by_hash_metadata
-            .contains_key(format!("{lane_id}:{dp_hash}"))
-            .unwrap_or(false);
-        self.metrics.record_op(
-            "contains",
-            "dp_metadata",
-            start.elapsed().as_micros() as u64,
-        );
-        res
+        self.call_fjall("contains", "dp_metadata", || {
+            self.by_hash_metadata
+                .contains_key(format!("{lane_id}:{dp_hash}"))
+                .map_err(Into::into)
+        })
+        .unwrap_or(false)
     }
 
     fn get_metadata_by_hash(
@@ -234,20 +319,15 @@ impl Storage for LanesStorage {
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
     ) -> Result<Option<LaneEntryMetadata>> {
-        let start = Instant::now();
-        let item = log_warn!(
-            self.by_hash_metadata.get(format!("{lane_id}:{dp_hash}")),
-            "Can't find DP metadata {} for validator {}",
-            dp_hash,
-            lane_id
-        )?;
-        let res = item.map(decode_metadata_from_item).transpose();
-        self.metrics.record_op(
-            "get_metadata_by_hash",
-            "dp_metadata",
-            start.elapsed().as_micros() as u64,
-        );
-        res
+        self.call_fjall("get_metadata_by_hash", "dp_metadata", || {
+            let item = log_warn!(
+                self.by_hash_metadata.get(format!("{lane_id}:{dp_hash}")),
+                "Can't find DP metadata {} for validator {}",
+                dp_hash,
+                lane_id
+            )?;
+            item.map(decode_metadata_from_item).transpose()
+        })
     }
 
     fn get_dp_by_hash(
@@ -255,15 +335,14 @@ impl Storage for LanesStorage {
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
     ) -> Result<Option<DataProposal>> {
-        let start = Instant::now();
-        let item = log_warn!(
-            self.by_hash_data.get(format!("{lane_id}:{dp_hash}")),
-            "Can't find DP data {} for validator {}",
-            dp_hash,
-            lane_id
-        )?;
-        let res = item
-            .map(|s| {
+        self.call_fjall("get_dp_by_hash", "dp_data", || {
+            let item = log_warn!(
+                self.by_hash_data.get(format!("{lane_id}:{dp_hash}")),
+                "Can't find DP data {} for validator {}",
+                dp_hash,
+                lane_id
+            )?;
+            item.map(|s| {
                 decode_data_proposal_from_item(s).map(|mut dp| {
                     // SAFETY: we trust our own fjall storage
                     unsafe {
@@ -272,13 +351,8 @@ impl Storage for LanesStorage {
                     dp
                 })
             })
-            .transpose();
-        self.metrics.record_op(
-            "get_dp_by_hash",
-            "dp_data",
-            start.elapsed().as_micros() as u64,
-        );
-        res
+            .transpose()
+        })
     }
 
     fn get_proofs_by_hash(
@@ -286,34 +360,23 @@ impl Storage for LanesStorage {
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
     ) -> Result<Option<Vec<(u64, ProofData)>>> {
-        let start = Instant::now();
-        let item = log_warn!(
-            self.dp_proofs.get(format!("{lane_id}:{dp_hash}")),
-            "Can't find DP proofs {} for validator {}",
-            dp_hash,
-            lane_id
-        )?;
-        let res = item
-            .map(|s| borsh::from_slice(&s).map_err(Into::into))
-            .transpose();
-        self.metrics.record_op(
-            "get_proofs_by_hash",
-            "dp_proofs",
-            start.elapsed().as_micros() as u64,
-        );
-        res
+        self.call_fjall("get_proofs_by_hash", "dp_proofs", || {
+            let item = log_warn!(
+                self.dp_proofs.get(format!("{lane_id}:{dp_hash}")),
+                "Can't find DP proofs {} for validator {}",
+                dp_hash,
+                lane_id
+            )?;
+            item.map(|s| borsh::from_slice(&s).map_err(Into::into))
+                .transpose()
+        })
     }
 
     fn delete_proofs(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> Result<()> {
-        let start = Instant::now();
-        self.dp_proofs.remove(format!("{lane_id}:{dp_hash}"))?;
-        // NOTE: Garbage collection is now automatic in fjall 3.0
-        self.metrics.record_op(
-            "delete_proofs",
-            "dp_proofs",
-            start.elapsed().as_micros() as u64,
-        );
-        Ok(())
+        self.call_fjall("delete_proofs", "dp_proofs", || {
+            self.dp_proofs.remove(format!("{lane_id}:{dp_hash}"))?;
+            Ok(())
+        })
     }
 
     fn pop(
@@ -323,8 +386,11 @@ impl Storage for LanesStorage {
         let start = Instant::now();
         if let Some(lane_hash_tip) = self.get_lane_hash_tip(&lane_id) {
             if let Some(lane_entry) = self.get_metadata_by_hash(&lane_id, &lane_hash_tip)? {
-                self.by_hash_metadata
-                    .remove(format!("{lane_id}:{lane_hash_tip}"))?;
+                self.call_fjall("pop_remove_metadata", "dp_metadata", || {
+                    self.by_hash_metadata
+                        .remove(format!("{lane_id}:{lane_hash_tip}"))?;
+                    Ok(())
+                })?;
                 // Check if have the data locally after regardless - if we don't, print an error but delete metadata anyways for consistency.
                 let Some(dp) = self.get_dp_by_hash(&lane_id, &lane_hash_tip)? else {
                     bail!(
@@ -333,8 +399,11 @@ impl Storage for LanesStorage {
                         lane_id
                     );
                 };
-                self.by_hash_data
-                    .remove(format!("{lane_id}:{lane_hash_tip}"))?;
+                self.call_fjall("pop_remove_data", "dp_data", || {
+                    self.by_hash_data
+                        .remove(format!("{lane_id}:{lane_hash_tip}"))?;
+                    Ok(())
+                })?;
                 self.update_lane_tip(lane_id, lane_hash_tip.clone(), lane_entry.cumul_size);
                 self.metrics
                     .record_op("pop", "dp_metadata", start.elapsed().as_micros() as u64);
@@ -380,51 +449,47 @@ impl Storage for LanesStorage {
         dp_hash: &DataProposalHash,
         vote_msgs: T,
     ) -> Result<Vec<ValidatorDAG>> {
-        let start = Instant::now();
-        let key = format!("{lane_id}:{dp_hash}");
-        let Some(mut lem) = log_warn!(
-            self.by_hash_metadata.get(key.clone()),
-            "Can't find lane entry metadata {} for lane {}",
-            dp_hash,
-            lane_id
-        )?
-        .map(decode_metadata_from_item)
-        .transpose()?
-        else {
-            bail!(
+        let votes: Vec<_> = vote_msgs.into_iter().collect();
+        self.call_fjall("add_signatures", "dp_metadata", || {
+            let key = format!("{lane_id}:{dp_hash}");
+            let Some(mut lem) = log_warn!(
+                self.by_hash_metadata.get(key.clone()),
                 "Can't find lane entry metadata {} for lane {}",
                 dp_hash,
                 lane_id
-            );
-        };
-
-        for msg in vote_msgs {
-            let (dph, cumul_size) = &msg.msg;
-            if &lem.cumul_size != cumul_size || dp_hash != dph {
-                tracing::warn!(
-                    "Received a DataVote message with wrong hash or size: {:?}",
-                    msg.msg
+            )?
+            .map(decode_metadata_from_item)
+            .transpose()?
+            else {
+                bail!(
+                    "Can't find lane entry metadata {} for lane {}",
+                    dp_hash,
+                    lane_id
                 );
-                continue;
+            };
+
+            for msg in &votes {
+                let (dph, cumul_size) = &msg.msg;
+                if &lem.cumul_size != cumul_size || dp_hash != dph {
+                    tracing::warn!(
+                        "Received a DataVote message with wrong hash or size: {:?}",
+                        msg.msg
+                    );
+                    continue;
+                }
+                match lem
+                    .signatures
+                    .binary_search_by(|probe| probe.signature.cmp(&msg.signature))
+                {
+                    Ok(_) => {}
+                    Err(pos) => lem.signatures.insert(pos, msg.clone()),
+                }
             }
-            // Insert the new messages if they're not already in
-            match lem
-                .signatures
-                .binary_search_by(|probe| probe.signature.cmp(&msg.signature))
-            {
-                Ok(_) => {}
-                Err(pos) => lem.signatures.insert(pos, msg),
-            }
-        }
-        let signatures = lem.signatures.clone();
-        self.by_hash_metadata
-            .insert(key, encode_metadata_to_item(lem)?)?;
-        self.metrics.record_op(
-            "add_signatures",
-            "dp_metadata",
-            start.elapsed().as_micros() as u64,
-        );
-        Ok(signatures)
+            let signatures = lem.signatures.clone();
+            self.by_hash_metadata
+                .insert(key, encode_metadata_to_item(lem)?)?;
+            Ok(signatures)
+        })
     }
 
     fn set_cached_poda(
@@ -433,33 +498,29 @@ impl Storage for LanesStorage {
         dp_hash: &DataProposalHash,
         poda: PoDA,
     ) -> Result<()> {
-        let start = Instant::now();
-        let key = format!("{lane_id}:{dp_hash}");
-        let Some(mut lem) = log_warn!(
-            self.by_hash_metadata.get(key.clone()),
-            "Can't find lane entry metadata {} for lane {}",
-            dp_hash,
-            lane_id
-        )?
-        .map(decode_metadata_from_item)
-        .transpose()?
-        else {
-            bail!(
+        self.call_fjall("set_cached_poda", "dp_metadata", || {
+            let key = format!("{lane_id}:{dp_hash}");
+            let Some(mut lem) = log_warn!(
+                self.by_hash_metadata.get(key.clone()),
                 "Can't find lane entry metadata {} for lane {}",
                 dp_hash,
                 lane_id
-            );
-        };
+            )?
+            .map(decode_metadata_from_item)
+            .transpose()?
+            else {
+                bail!(
+                    "Can't find lane entry metadata {} for lane {}",
+                    dp_hash,
+                    lane_id
+                );
+            };
 
-        lem.cached_poda = Some(poda);
-        self.by_hash_metadata
-            .insert(key, encode_metadata_to_item(lem)?)?;
-        self.metrics.record_op(
-            "set_cached_poda",
-            "dp_metadata",
-            start.elapsed().as_micros() as u64,
-        );
-        Ok(())
+            lem.cached_poda = Some(poda.clone());
+            self.by_hash_metadata
+                .insert(key, encode_metadata_to_item(lem)?)?;
+            Ok(())
+        })
     }
 
     fn get_lane_ids(&self) -> Vec<LaneId> {
@@ -536,12 +597,16 @@ impl Storage for LanesStorage {
 
     #[cfg(test)]
     fn remove_lane_entry(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) {
-        self.by_hash_metadata
-            .remove(format!("{lane_id}:{dp_hash}"))
-            .unwrap();
-        self.by_hash_data
-            .remove(format!("{lane_id}:{dp_hash}"))
-            .unwrap();
+        let _ = self.call_fjall("remove_lane_entry_metadata", "dp_metadata", || {
+            self.by_hash_metadata
+                .remove(format!("{lane_id}:{dp_hash}"))
+                .map_err(Into::into)
+        });
+        let _ = self.call_fjall("remove_lane_entry_data", "dp_data", || {
+            self.by_hash_data
+                .remove(format!("{lane_id}:{dp_hash}"))
+                .map_err(Into::into)
+        });
     }
 }
 

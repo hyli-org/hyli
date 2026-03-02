@@ -199,6 +199,14 @@ impl Blocks {
             .record_op(op, keyspace, elapsed.as_micros() as u64);
     }
 
+    pub fn record_timeout(&self, op: &'static str, keyspace: &'static str) {
+        self.metrics.record_timeout(op, keyspace);
+    }
+
+    pub fn record_retry(&self, op: &'static str, keyspace: &'static str) {
+        self.metrics.record_retry(op, keyspace);
+    }
+
     /// Scan the whole by_height table and returns the first missing height
     pub fn first_hole_by_height(&self) -> Result<Option<BlockHeight>> {
         let Some(guard) = self.by_height.last_key_value() else {
