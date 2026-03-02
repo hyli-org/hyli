@@ -604,6 +604,10 @@ async fn test_redisseminate_owned_lanes_sends_oldest_first() -> Result<()> {
     // Drain any prior outbound messages
     while ctx.out_receiver.try_recv().is_ok() {}
 
+    // Allow an immediate resend in this deterministic test.
+    ctx.dissemination_manager
+        .clear_last_dp_sent_for_test(&lane_id, &dp1_hash);
+
     ctx.dissemination_manager
         .redisseminate_owned_lanes()
         .await?;
