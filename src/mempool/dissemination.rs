@@ -38,6 +38,7 @@ use crate::model::SharedRunContext;
 const REQUEST_BACKOFF_INITIAL: Duration = Duration::from_secs(1);
 const REQUEST_BACKOFF_MAX: Duration = Duration::from_secs(8);
 const HOUSEKEEPING_INTERVAL: Duration = Duration::from_millis(400);
+const RESEND_MIN_INTERVAL: Duration = Duration::from_secs(2);
 #[cfg(not(test))]
 const SYNC_REPLY_DEBOUNCE: Duration = Duration::from_secs(2);
 #[cfg(test)]
@@ -847,7 +848,11 @@ impl DisseminationManager {
             return Ok(false);
         }
 
-        let filtered_targets = candidate_targets;
+        let now = TimestampMsClock::now();
+        let filtered_targets: HashSet<ValidatorPublicKey> = candidate_targets
+            .into_iter()
+            .filter(|peer| self.can_send_to_peer(lane_id, dp_hash, peer, now.clone()))
+            .collect();
         if filtered_targets.is_empty() {
             return Ok(false);
         }
@@ -991,6 +996,33 @@ impl DisseminationManager {
             .insert((lane_id.clone(), dp_hash.clone()), now);
     }
 
+    fn can_send_to_peer(
+        &self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+        peer: &ValidatorPublicKey,
+        now: TimestampMs,
+    ) -> bool {
+        let key = (lane_id.clone(), dp_hash.clone(), peer.clone());
+        let evidence = self.knowledge.by_dp.get(&key);
+        let should_rate_limit = matches!(
+            evidence,
+            Some(EvidenceState::WeakHas)
+                | Some(EvidenceState::StrongHas)
+                | Some(EvidenceState::ObservedHas)
+        );
+
+        if !should_rate_limit {
+            return true;
+        }
+
+        self.knowledge
+            .by_peer
+            .get(peer)
+            .and_then(|state| state.last_dp_sent.get(&(lane_id.clone(), dp_hash.clone())))
+            .is_none_or(|last_sent| now - last_sent.clone() >= RESEND_MIN_INTERVAL)
+    }
+
     fn should_debounce_sync_reply(
         &self,
         lane_id: &LaneId,
@@ -1008,6 +1040,19 @@ impl DisseminationManager {
     #[cfg(test)]
     pub(super) fn add_owned_lane(&mut self, lane_id: LaneId) {
         self.owned_lanes.insert(lane_id);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn clear_last_dp_sent_for_test(
+        &mut self,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
+    ) {
+        for peer_state in self.knowledge.by_peer.values_mut() {
+            peer_state
+                .last_dp_sent
+                .remove(&(lane_id.clone(), dp_hash.clone()));
+        }
     }
 
     #[cfg(test)]
