@@ -222,62 +222,96 @@ impl LanesStorage {
         self.metrics = FjallMetrics::global("mempool", node_id, "mempool");
     }
 
-    fn call_fjall<T, F>(&self, op: &'static str, keyspace: &'static str, mut f: F) -> Result<T>
+    fn call_fjall<T, F, Op>(&self, op: &'static str, keyspace: &'static str, mut build: F) -> Result<T>
     where
-        F: FnMut() -> Result<T>,
+        T: Send + 'static,
+        F: FnMut() -> Op,
+        Op: FnOnce() -> Result<T> + Send + 'static,
     {
-        let mut attempts = 0usize;
-        loop {
-            let start = Instant::now();
-            let result = if tokio::runtime::Handle::try_current().is_ok() {
-                tokio::task::block_in_place(|| f())
-            } else {
-                f()
-            };
-            let elapsed_micros = start.elapsed().as_micros() as u64;
-            self.metrics.record_op(op, keyspace, elapsed_micros);
+        let policy = self.fjall_call_policy;
+        let metrics = self.metrics.clone();
 
-            let timed_out = start.elapsed() > self.fjall_call_policy.timeout;
-            if timed_out {
-                self.metrics.record_timeout(op, keyspace);
-                tracing::warn!(
-                    op = op,
-                    keyspace = keyspace,
-                    elapsed_millis = start.elapsed().as_millis(),
-                    timeout_millis = self.fjall_call_policy.timeout.as_millis(),
-                    "fjall call exceeded timeout budget"
-                );
+        let fut = async move {
+            let mut attempts = 0usize;
+            loop {
+                let start = Instant::now();
+                let handle = tokio::task::spawn_blocking(build());
+                let timed = tokio::time::timeout(policy.timeout, handle).await;
+
+                match timed {
+                    Ok(joined) => match joined {
+                        Ok(result) => {
+                            metrics.record_op(op, keyspace, start.elapsed().as_micros() as u64);
+                            if result.is_err() && attempts < policy.max_retries {
+                                attempts += 1;
+                                metrics.record_retry(op, keyspace);
+                                tracing::warn!(
+                                    op = op,
+                                    keyspace = keyspace,
+                                    attempt = attempts,
+                                    max_retries = policy.max_retries,
+                                    "retrying failed fjall call"
+                                );
+                                tokio::time::sleep(policy.retry_backoff).await;
+                                continue;
+                            }
+                            return result;
+                        }
+                        Err(join_err) => {
+                            metrics.record_op(op, keyspace, start.elapsed().as_micros() as u64);
+                            if attempts < policy.max_retries {
+                                attempts += 1;
+                                metrics.record_retry(op, keyspace);
+                                tracing::warn!(
+                                    op = op,
+                                    keyspace = keyspace,
+                                    attempt = attempts,
+                                    max_retries = policy.max_retries,
+                                    error = %join_err,
+                                    "retrying fjall call after join error"
+                                );
+                                tokio::time::sleep(policy.retry_backoff).await;
+                                continue;
+                            }
+                            return Err(anyhow!("fjall blocking task join error: {}", join_err));
+                        }
+                    },
+                    Err(_) => {
+                        metrics.record_op(op, keyspace, start.elapsed().as_micros() as u64);
+                        metrics.record_timeout(op, keyspace);
+                        if policy.retry_on_timeout && attempts < policy.max_retries {
+                            attempts += 1;
+                            metrics.record_retry(op, keyspace);
+                            tracing::warn!(
+                                op = op,
+                                keyspace = keyspace,
+                                attempt = attempts,
+                                max_retries = policy.max_retries,
+                                timeout_ms = policy.timeout.as_millis(),
+                                "fjall call timed out; retrying"
+                            );
+                            tokio::time::sleep(policy.retry_backoff).await;
+                            continue;
+                        }
+                        return Err(anyhow!(
+                            "fjall op {} on {} exceeded timeout budget ({} ms)",
+                            op,
+                            keyspace,
+                            policy.timeout.as_millis()
+                        ));
+                    }
+                }
             }
+        };
 
-            let should_retry = match &result {
-                Ok(_) => timed_out && self.fjall_call_policy.retry_on_timeout,
-                Err(_) => true,
-            } && attempts < self.fjall_call_policy.max_retries;
-
-            if should_retry {
-                attempts += 1;
-                self.metrics.record_retry(op, keyspace);
-                tracing::warn!(
-                    op = op,
-                    keyspace = keyspace,
-                    attempt = attempts,
-                    max_retries = self.fjall_call_policy.max_retries,
-                    "retrying fjall call"
-                );
-                std::thread::sleep(self.fjall_call_policy.retry_backoff);
-                continue;
-            }
-
-            if timed_out && self.fjall_call_policy.retry_on_timeout {
-                return Err(anyhow!(
-                    "fjall op {} on {} exceeded timeout budget ({} ms)",
-                    op,
-                    keyspace,
-                    self.fjall_call_policy.timeout.as_millis()
-                ));
-            }
-
-            return result;
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            tokio::task::block_in_place(|| handle.block_on(fut))
+        } else {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_time()
+                .build()
+                .map_err(|e| anyhow!("failed to build runtime for fjall call: {e}"))?
+                .block_on(fut)
         }
     }
 
@@ -288,28 +322,34 @@ impl LanesStorage {
         dp_hash: &DataProposalHash,
         metadata: LaneEntryMetadata,
     ) -> Result<()> {
+        let by_hash_metadata = self.by_hash_metadata.clone();
+        let key = format!("{lane_id}:{dp_hash}");
+        let value = borsh::to_vec(&metadata)?;
         self.call_fjall("put_metadata_only", "dp_metadata", || {
-            self.by_hash_metadata
-                .insert(format!("{lane_id}:{dp_hash}"), borsh::to_vec(&metadata)?)
-                .map_err(Into::into)
+            let by_hash_metadata = by_hash_metadata.clone();
+            let key = key.clone();
+            let value = value.clone();
+            move || by_hash_metadata.insert(key, value).map_err(Into::into)
         })
     }
 }
 
 impl Storage for LanesStorage {
     fn persist(&self) -> Result<()> {
+        let db = self.db.clone();
         self.call_fjall("persist", "db", || {
-            self.db
-                .persist(fjall::PersistMode::Buffer)
-                .map_err(Into::into)
+            let db = db.clone();
+            move || db.persist(fjall::PersistMode::Buffer).map_err(Into::into)
         })
     }
 
     fn contains(&self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> bool {
+        let by_hash_metadata = self.by_hash_metadata.clone();
+        let key = format!("{lane_id}:{dp_hash}");
         self.call_fjall("contains", "dp_metadata", || {
-            self.by_hash_metadata
-                .contains_key(format!("{lane_id}:{dp_hash}"))
-                .map_err(Into::into)
+            let by_hash_metadata = by_hash_metadata.clone();
+            let key = key.clone();
+            move || by_hash_metadata.contains_key(key).map_err(Into::into)
         })
         .unwrap_or(false)
     }
@@ -319,14 +359,24 @@ impl Storage for LanesStorage {
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
     ) -> Result<Option<LaneEntryMetadata>> {
-        self.call_fjall("get_metadata_by_hash", "dp_metadata", || {
-            let item = log_warn!(
-                self.by_hash_metadata.get(format!("{lane_id}:{dp_hash}")),
+        let by_hash_metadata = self.by_hash_metadata.clone();
+        let key = format!("{lane_id}:{dp_hash}");
+        let lane_id_str = lane_id.to_string();
+        let dp_hash_str = dp_hash.to_string();
+        self.call_fjall("get_metadata_by_hash", "dp_metadata", move || {
+            let by_hash_metadata = by_hash_metadata.clone();
+            let key = key.clone();
+            let lane_id_str = lane_id_str.clone();
+            let dp_hash_str = dp_hash_str.clone();
+            move || {
+                let item = log_warn!(
+                by_hash_metadata.get(key),
                 "Can't find DP metadata {} for validator {}",
-                dp_hash,
-                lane_id
+                dp_hash_str,
+                lane_id_str
             )?;
-            item.map(decode_metadata_from_item).transpose()
+                item.map(decode_metadata_from_item).transpose()
+            }
         })
     }
 
@@ -335,23 +385,35 @@ impl Storage for LanesStorage {
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
     ) -> Result<Option<DataProposal>> {
-        self.call_fjall("get_dp_by_hash", "dp_data", || {
-            let item = log_warn!(
-                self.by_hash_data.get(format!("{lane_id}:{dp_hash}")),
+        let by_hash_data = self.by_hash_data.clone();
+        let key = format!("{lane_id}:{dp_hash}");
+        let dp_hash = dp_hash.clone();
+        let lane_id_str = lane_id.to_string();
+        let dp_hash_str = dp_hash.to_string();
+        self.call_fjall("get_dp_by_hash", "dp_data", move || {
+            let by_hash_data = by_hash_data.clone();
+            let key = key.clone();
+            let dp_hash = dp_hash.clone();
+            let lane_id_str = lane_id_str.clone();
+            let dp_hash_str = dp_hash_str.clone();
+            move || {
+                let item = log_warn!(
+                by_hash_data.get(key),
                 "Can't find DP data {} for validator {}",
-                dp_hash,
-                lane_id
+                dp_hash_str,
+                lane_id_str
             )?;
-            item.map(|s| {
-                decode_data_proposal_from_item(s).map(|mut dp| {
-                    // SAFETY: we trust our own fjall storage
-                    unsafe {
-                        dp.unsafe_set_hash(dp_hash);
-                    }
-                    dp
+                item.map(|s| {
+                    decode_data_proposal_from_item(s).map(|mut dp| {
+                        // SAFETY: we trust our own fjall storage
+                        unsafe {
+                            dp.unsafe_set_hash(&dp_hash);
+                        }
+                        dp
+                    })
                 })
-            })
-            .transpose()
+                .transpose()
+            }
         })
     }
 
@@ -360,22 +422,38 @@ impl Storage for LanesStorage {
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
     ) -> Result<Option<Vec<(u64, ProofData)>>> {
-        self.call_fjall("get_proofs_by_hash", "dp_proofs", || {
-            let item = log_warn!(
-                self.dp_proofs.get(format!("{lane_id}:{dp_hash}")),
+        let dp_proofs = self.dp_proofs.clone();
+        let key = format!("{lane_id}:{dp_hash}");
+        let lane_id_str = lane_id.to_string();
+        let dp_hash_str = dp_hash.to_string();
+        self.call_fjall("get_proofs_by_hash", "dp_proofs", move || {
+            let dp_proofs = dp_proofs.clone();
+            let key = key.clone();
+            let lane_id_str = lane_id_str.clone();
+            let dp_hash_str = dp_hash_str.clone();
+            move || {
+                let item = log_warn!(
+                dp_proofs.get(key),
                 "Can't find DP proofs {} for validator {}",
-                dp_hash,
-                lane_id
+                dp_hash_str,
+                lane_id_str
             )?;
-            item.map(|s| borsh::from_slice(&s).map_err(Into::into))
-                .transpose()
+                item.map(|s| borsh::from_slice(&s).map_err(Into::into))
+                    .transpose()
+            }
         })
     }
 
     fn delete_proofs(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> Result<()> {
+        let dp_proofs = self.dp_proofs.clone();
+        let key = format!("{lane_id}:{dp_hash}");
         self.call_fjall("delete_proofs", "dp_proofs", || {
-            self.dp_proofs.remove(format!("{lane_id}:{dp_hash}"))?;
-            Ok(())
+            let dp_proofs = dp_proofs.clone();
+            let key = key.clone();
+            move || {
+                dp_proofs.remove(key)?;
+                Ok(())
+            }
         })
     }
 
@@ -386,10 +464,15 @@ impl Storage for LanesStorage {
         let start = Instant::now();
         if let Some(lane_hash_tip) = self.get_lane_hash_tip(&lane_id) {
             if let Some(lane_entry) = self.get_metadata_by_hash(&lane_id, &lane_hash_tip)? {
+                let by_hash_metadata = self.by_hash_metadata.clone();
+                let key = format!("{lane_id}:{lane_hash_tip}");
                 self.call_fjall("pop_remove_metadata", "dp_metadata", || {
-                    self.by_hash_metadata
-                        .remove(format!("{lane_id}:{lane_hash_tip}"))?;
-                    Ok(())
+                    let by_hash_metadata = by_hash_metadata.clone();
+                    let key = key.clone();
+                    move || {
+                        by_hash_metadata.remove(key)?;
+                        Ok(())
+                    }
                 })?;
                 // Check if have the data locally after regardless - if we don't, print an error but delete metadata anyways for consistency.
                 let Some(dp) = self.get_dp_by_hash(&lane_id, &lane_hash_tip)? else {
@@ -399,10 +482,15 @@ impl Storage for LanesStorage {
                         lane_id
                     );
                 };
+                let by_hash_data = self.by_hash_data.clone();
+                let key = format!("{lane_id}:{lane_hash_tip}");
                 self.call_fjall("pop_remove_data", "dp_data", || {
-                    self.by_hash_data
-                        .remove(format!("{lane_id}:{lane_hash_tip}"))?;
-                    Ok(())
+                    let by_hash_data = by_hash_data.clone();
+                    let key = key.clone();
+                    move || {
+                        by_hash_data.remove(key)?;
+                        Ok(())
+                    }
                 })?;
                 self.update_lane_tip(lane_id, lane_hash_tip.clone(), lane_entry.cumul_size);
                 self.metrics
@@ -449,11 +537,20 @@ impl Storage for LanesStorage {
         dp_hash: &DataProposalHash,
         vote_msgs: T,
     ) -> Result<Vec<ValidatorDAG>> {
+        let by_hash_metadata = self.by_hash_metadata.clone();
+        let key = format!("{lane_id}:{dp_hash}");
+        let dp_hash = dp_hash.clone();
+        let lane_id = lane_id.clone();
         let votes: Vec<_> = vote_msgs.into_iter().collect();
         self.call_fjall("add_signatures", "dp_metadata", || {
-            let key = format!("{lane_id}:{dp_hash}");
-            let Some(mut lem) = log_warn!(
-                self.by_hash_metadata.get(key.clone()),
+            let by_hash_metadata = by_hash_metadata.clone();
+            let key = key.clone();
+            let dp_hash = dp_hash.clone();
+            let lane_id = lane_id.clone();
+            let votes = votes.clone();
+            move || {
+                let Some(mut lem) = log_warn!(
+                by_hash_metadata.get(key.clone()),
                 "Can't find lane entry metadata {} for lane {}",
                 dp_hash,
                 lane_id
@@ -468,27 +565,27 @@ impl Storage for LanesStorage {
                 );
             };
 
-            for msg in &votes {
-                let (dph, cumul_size) = &msg.msg;
-                if &lem.cumul_size != cumul_size || dp_hash != dph {
-                    tracing::warn!(
-                        "Received a DataVote message with wrong hash or size: {:?}",
-                        msg.msg
-                    );
-                    continue;
+                for msg in &votes {
+                    let (dph, cumul_size) = &msg.msg;
+                    if &lem.cumul_size != cumul_size || dp_hash != *dph {
+                        tracing::warn!(
+                            "Received a DataVote message with wrong hash or size: {:?}",
+                            msg.msg
+                        );
+                        continue;
+                    }
+                    match lem
+                        .signatures
+                        .binary_search_by(|probe| probe.signature.cmp(&msg.signature))
+                    {
+                        Ok(_) => {}
+                        Err(pos) => lem.signatures.insert(pos, msg.clone()),
+                    }
                 }
-                match lem
-                    .signatures
-                    .binary_search_by(|probe| probe.signature.cmp(&msg.signature))
-                {
-                    Ok(_) => {}
-                    Err(pos) => lem.signatures.insert(pos, msg.clone()),
-                }
+                let signatures = lem.signatures.clone();
+                by_hash_metadata.insert(key, encode_metadata_to_item(lem)?)?;
+                Ok(signatures)
             }
-            let signatures = lem.signatures.clone();
-            self.by_hash_metadata
-                .insert(key, encode_metadata_to_item(lem)?)?;
-            Ok(signatures)
         })
     }
 
@@ -498,10 +595,19 @@ impl Storage for LanesStorage {
         dp_hash: &DataProposalHash,
         poda: PoDA,
     ) -> Result<()> {
+        let by_hash_metadata = self.by_hash_metadata.clone();
+        let key = format!("{lane_id}:{dp_hash}");
+        let lane_id = lane_id.clone();
+        let dp_hash = dp_hash.clone();
         self.call_fjall("set_cached_poda", "dp_metadata", || {
-            let key = format!("{lane_id}:{dp_hash}");
-            let Some(mut lem) = log_warn!(
-                self.by_hash_metadata.get(key.clone()),
+            let by_hash_metadata = by_hash_metadata.clone();
+            let key = key.clone();
+            let lane_id = lane_id.clone();
+            let dp_hash = dp_hash.clone();
+            let poda = poda.clone();
+            move || {
+                let Some(mut lem) = log_warn!(
+                by_hash_metadata.get(key.clone()),
                 "Can't find lane entry metadata {} for lane {}",
                 dp_hash,
                 lane_id
@@ -516,10 +622,10 @@ impl Storage for LanesStorage {
                 );
             };
 
-            lem.cached_poda = Some(poda.clone());
-            self.by_hash_metadata
-                .insert(key, encode_metadata_to_item(lem)?)?;
-            Ok(())
+                lem.cached_poda = Some(poda);
+                by_hash_metadata.insert(key, encode_metadata_to_item(lem)?)?;
+                Ok(())
+            }
         })
     }
 
@@ -597,15 +703,19 @@ impl Storage for LanesStorage {
 
     #[cfg(test)]
     fn remove_lane_entry(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) {
+        let by_hash_metadata = self.by_hash_metadata.clone();
+        let key = format!("{lane_id}:{dp_hash}");
         let _ = self.call_fjall("remove_lane_entry_metadata", "dp_metadata", || {
-            self.by_hash_metadata
-                .remove(format!("{lane_id}:{dp_hash}"))
-                .map_err(Into::into)
+            let by_hash_metadata = by_hash_metadata.clone();
+            let key = key.clone();
+            move || by_hash_metadata.remove(key).map_err(Into::into)
         });
+        let by_hash_data = self.by_hash_data.clone();
+        let key = format!("{lane_id}:{dp_hash}");
         let _ = self.call_fjall("remove_lane_entry_data", "dp_data", || {
-            self.by_hash_data
-                .remove(format!("{lane_id}:{dp_hash}"))
-                .map_err(Into::into)
+            let by_hash_data = by_hash_data.clone();
+            let key = key.clone();
+            move || by_hash_data.remove(key).map_err(Into::into)
         });
     }
 }
