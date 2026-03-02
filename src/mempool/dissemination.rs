@@ -1043,6 +1043,15 @@ impl DisseminationManager {
     }
 
     #[cfg(test)]
+    pub(crate) fn clear_last_dp_sent_for_test(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) {
+        for peer_state in self.knowledge.by_peer.values_mut() {
+            peer_state
+                .last_dp_sent
+                .remove(&(lane_id.clone(), dp_hash.clone()));
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) async fn process_sync_requests_and_replies_for_test(&mut self) -> Result<()> {
         self.process_sync_requests_and_replies().await
     }
