@@ -1246,6 +1246,16 @@ impl DataAvailability {
         peer_ip: &str,
         server: &mut DataAvailabilityServer,
     ) -> Result<()> {
+        // Before genesis is stored, serve an empty stream from height 0 and wait for future blocks.
+        // Rejecting here would close the stream during node bootstrap and drop first blocks for listeners.
+        if self.blocks.is_empty() && start_height == BlockHeight(0) {
+            let peer_ip_string = peer_ip.to_string();
+            self.peer_send_queues
+                .insert(peer_ip_string.clone(), VecDeque::new());
+            catchup_joinset.spawn(async move { (peer_ip_string, 0) });
+            return Ok(());
+        }
+
         let range_start = std::time::Instant::now();
         let highest = self
             .blocks
