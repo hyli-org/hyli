@@ -44,7 +44,6 @@ pub struct LanesStorage {
 struct FjallCallPolicy {
     timeout: Duration,
     max_retries: usize,
-    retry_backoff: Duration,
     retry_on_timeout: bool,
 }
 
@@ -59,11 +58,6 @@ impl FjallCallPolicy {
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
             .unwrap_or(2);
-        let retry_backoff = std::env::var("HYLI_FJALL_RETRY_BACKOFF_MS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .map(Duration::from_millis)
-            .unwrap_or_else(|| Duration::from_millis(50));
         let retry_on_timeout = std::env::var("HYLI_FJALL_RETRY_ON_TIMEOUT")
             .ok()
             .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
@@ -71,7 +65,6 @@ impl FjallCallPolicy {
         Self {
             timeout,
             max_retries,
-            retry_backoff,
             retry_on_timeout,
         }
     }
@@ -222,7 +215,12 @@ impl LanesStorage {
         self.metrics = FjallMetrics::global("mempool", node_id, "mempool");
     }
 
-    fn call_fjall<T, F, Op>(&self, op: &'static str, keyspace: &'static str, mut build: F) -> Result<T>
+    fn call_fjall<T, F, Op>(
+        &self,
+        op: &'static str,
+        keyspace: &'static str,
+        mut build: F,
+    ) -> Result<T>
     where
         T: Send + 'static,
         F: FnMut() -> Op,
@@ -230,88 +228,79 @@ impl LanesStorage {
     {
         let policy = self.fjall_call_policy;
         let metrics = self.metrics.clone();
+        let mut attempts = 0usize;
+        loop {
+            let start = Instant::now();
+            let (tx, rx) = std::sync::mpsc::sync_channel(1);
+            let op_fn = build();
 
-        let fut = async move {
-            let mut attempts = 0usize;
-            loop {
-                let start = Instant::now();
-                let handle = tokio::task::spawn_blocking(build());
-                let timed = tokio::time::timeout(policy.timeout, handle).await;
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn_blocking(move || {
+                    let _ = tx.send(op_fn());
+                });
+            } else {
+                std::thread::spawn(move || {
+                    let _ = tx.send(op_fn());
+                });
+            }
 
-                match timed {
-                    Ok(joined) => match joined {
-                        Ok(result) => {
-                            metrics.record_op(op, keyspace, start.elapsed().as_micros() as u64);
-                            if result.is_err() && attempts < policy.max_retries {
-                                attempts += 1;
-                                metrics.record_retry(op, keyspace);
-                                tracing::warn!(
-                                    op = op,
-                                    keyspace = keyspace,
-                                    attempt = attempts,
-                                    max_retries = policy.max_retries,
-                                    "retrying failed fjall call"
-                                );
-                                tokio::time::sleep(policy.retry_backoff).await;
-                                continue;
-                            }
-                            return result;
-                        }
-                        Err(join_err) => {
-                            metrics.record_op(op, keyspace, start.elapsed().as_micros() as u64);
-                            if attempts < policy.max_retries {
-                                attempts += 1;
-                                metrics.record_retry(op, keyspace);
-                                tracing::warn!(
-                                    op = op,
-                                    keyspace = keyspace,
-                                    attempt = attempts,
-                                    max_retries = policy.max_retries,
-                                    error = %join_err,
-                                    "retrying fjall call after join error"
-                                );
-                                tokio::time::sleep(policy.retry_backoff).await;
-                                continue;
-                            }
-                            return Err(anyhow!("fjall blocking task join error: {}", join_err));
-                        }
-                    },
-                    Err(_) => {
-                        metrics.record_op(op, keyspace, start.elapsed().as_micros() as u64);
-                        metrics.record_timeout(op, keyspace);
-                        if policy.retry_on_timeout && attempts < policy.max_retries {
-                            attempts += 1;
-                            metrics.record_retry(op, keyspace);
-                            tracing::warn!(
-                                op = op,
-                                keyspace = keyspace,
-                                attempt = attempts,
-                                max_retries = policy.max_retries,
-                                timeout_ms = policy.timeout.as_millis(),
-                                "fjall call timed out; retrying"
-                            );
-                            tokio::time::sleep(policy.retry_backoff).await;
-                            continue;
-                        }
-                        return Err(anyhow!(
-                            "fjall op {} on {} exceeded timeout budget ({} ms)",
-                            op,
-                            keyspace,
-                            policy.timeout.as_millis()
-                        ));
+            match rx.recv_timeout(policy.timeout) {
+                Ok(result) => {
+                    metrics.record_op(op, keyspace, start.elapsed().as_micros() as u64);
+                    if result.is_err() && attempts < policy.max_retries {
+                        attempts += 1;
+                        metrics.record_retry(op, keyspace);
+                        tracing::warn!(
+                            op = op,
+                            keyspace = keyspace,
+                            attempt = attempts,
+                            max_retries = policy.max_retries,
+                            "retrying failed fjall call"
+                        );
+                        continue;
                     }
+                    return result;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    metrics.record_op(op, keyspace, start.elapsed().as_micros() as u64);
+                    metrics.record_timeout(op, keyspace);
+                    if policy.retry_on_timeout && attempts < policy.max_retries {
+                        attempts += 1;
+                        metrics.record_retry(op, keyspace);
+                        tracing::warn!(
+                            op = op,
+                            keyspace = keyspace,
+                            attempt = attempts,
+                            max_retries = policy.max_retries,
+                            timeout_ms = policy.timeout.as_millis(),
+                            "fjall call timed out; retrying"
+                        );
+                        continue;
+                    }
+                    return Err(anyhow!(
+                        "fjall op {} on {} exceeded timeout budget ({} ms)",
+                        op,
+                        keyspace,
+                        policy.timeout.as_millis()
+                    ));
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    metrics.record_op(op, keyspace, start.elapsed().as_micros() as u64);
+                    if attempts < policy.max_retries {
+                        attempts += 1;
+                        metrics.record_retry(op, keyspace);
+                        tracing::warn!(
+                            op = op,
+                            keyspace = keyspace,
+                            attempt = attempts,
+                            max_retries = policy.max_retries,
+                            "retrying fjall call after worker disconnect"
+                        );
+                        continue;
+                    }
+                    return Err(anyhow!("fjall worker disconnected while running {}", op));
                 }
             }
-        };
-
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            tokio::task::block_in_place(|| handle.block_on(fut))
-        } else {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_time()
-                .build()
-                .map_err(|e| anyhow!("failed to build runtime for fjall call: {e}"))?
-                .block_on(fut)
         }
     }
 
@@ -370,11 +359,11 @@ impl Storage for LanesStorage {
             let dp_hash_str = dp_hash_str.clone();
             move || {
                 let item = log_warn!(
-                by_hash_metadata.get(key),
-                "Can't find DP metadata {} for validator {}",
-                dp_hash_str,
-                lane_id_str
-            )?;
+                    by_hash_metadata.get(key),
+                    "Can't find DP metadata {} for validator {}",
+                    dp_hash_str,
+                    lane_id_str
+                )?;
                 item.map(decode_metadata_from_item).transpose()
             }
         })
@@ -398,11 +387,11 @@ impl Storage for LanesStorage {
             let dp_hash_str = dp_hash_str.clone();
             move || {
                 let item = log_warn!(
-                by_hash_data.get(key),
-                "Can't find DP data {} for validator {}",
-                dp_hash_str,
-                lane_id_str
-            )?;
+                    by_hash_data.get(key),
+                    "Can't find DP data {} for validator {}",
+                    dp_hash_str,
+                    lane_id_str
+                )?;
                 item.map(|s| {
                     decode_data_proposal_from_item(s).map(|mut dp| {
                         // SAFETY: we trust our own fjall storage
@@ -433,11 +422,11 @@ impl Storage for LanesStorage {
             let dp_hash_str = dp_hash_str.clone();
             move || {
                 let item = log_warn!(
-                dp_proofs.get(key),
-                "Can't find DP proofs {} for validator {}",
-                dp_hash_str,
-                lane_id_str
-            )?;
+                    dp_proofs.get(key),
+                    "Can't find DP proofs {} for validator {}",
+                    dp_hash_str,
+                    lane_id_str
+                )?;
                 item.map(|s| borsh::from_slice(&s).map_err(Into::into))
                     .transpose()
             }
@@ -550,20 +539,20 @@ impl Storage for LanesStorage {
             let votes = votes.clone();
             move || {
                 let Some(mut lem) = log_warn!(
-                by_hash_metadata.get(key.clone()),
-                "Can't find lane entry metadata {} for lane {}",
-                dp_hash,
-                lane_id
-            )?
-            .map(decode_metadata_from_item)
-            .transpose()?
-            else {
-                bail!(
+                    by_hash_metadata.get(key.clone()),
                     "Can't find lane entry metadata {} for lane {}",
                     dp_hash,
                     lane_id
-                );
-            };
+                )?
+                .map(decode_metadata_from_item)
+                .transpose()?
+                else {
+                    bail!(
+                        "Can't find lane entry metadata {} for lane {}",
+                        dp_hash,
+                        lane_id
+                    );
+                };
 
                 for msg in &votes {
                     let (dph, cumul_size) = &msg.msg;
@@ -607,20 +596,20 @@ impl Storage for LanesStorage {
             let poda = poda.clone();
             move || {
                 let Some(mut lem) = log_warn!(
-                by_hash_metadata.get(key.clone()),
-                "Can't find lane entry metadata {} for lane {}",
-                dp_hash,
-                lane_id
-            )?
-            .map(decode_metadata_from_item)
-            .transpose()?
-            else {
-                bail!(
+                    by_hash_metadata.get(key.clone()),
                     "Can't find lane entry metadata {} for lane {}",
                     dp_hash,
                     lane_id
-                );
-            };
+                )?
+                .map(decode_metadata_from_item)
+                .transpose()?
+                else {
+                    bail!(
+                        "Can't find lane entry metadata {} for lane {}",
+                        dp_hash,
+                        lane_id
+                    );
+                };
 
                 lem.cached_poda = Some(poda);
                 by_hash_metadata.insert(key, encode_metadata_to_item(lem)?)?;
