@@ -939,20 +939,18 @@ pub mod test {
         ctx1.submit_tx(&tx2);
         ctx1.timer_tick().await?;
 
-        // This ends up disseminating 4 DPs for now - when we receive it, then on tick, then the other, then on tick.
+        // With resend gating, each new DP is disseminated once on creation in this flow.
         let mut dps = vec![];
-        for _ in 0..4 {
+        for _ in 0..2 {
             match ctx1.assert_broadcast("DataProposal").await.msg {
                 MempoolNetMessage::DataProposal(_, hash, dp, _) => dps.push((hash, dp)),
                 _ => panic!("Expected DataProposal message"),
             }
         }
 
-        assert!(dps.len() == 4, "Should have 4 DataProposals");
+        assert!(dps.len() == 2, "Should have 2 DataProposals");
         assert_eq!(dps[0].1.txs, vec![tx1.clone()]);
-        assert_eq!(dps[1].1.txs, vec![tx1.clone()]);
-        assert_eq!(dps[2].1.txs, vec![tx2.clone()]);
-        assert_eq!(dps[3].1.txs, vec![tx1.clone()]);
+        assert_eq!(dps[1].1.txs, vec![tx2.clone()]);
 
         // Redisseminate the oldest pending DataProposal
         // TODO: implement this as more of an integration test?
@@ -960,6 +958,8 @@ pub mod test {
             .iter()
             .find(|(_, dp)| dp.parent_data_proposal_hash.is_lane_root())
             .expect("oldest dp should exist");
+        ctx1.dissemination_manager
+            .clear_last_dp_sent_for_test(&ctx1.own_lane(), oldest_hash);
         ctx1.maybe_disseminate_dp(&ctx1.own_lane(), oldest_hash)
             .expect("disseminate");
 

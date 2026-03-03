@@ -183,8 +183,22 @@ async fn insert_settled_tx_with_index(
 
     sqlx::query(
         r#"
-        INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity)
-        VALUES ($1, $2, 1, 'blob_transaction', 'success', $3, $4, $5, $6, 'id')
+        INSERT INTO transactions (
+            parent_dp_hash,
+            tx_hash,
+            version,
+            transaction_type,
+            transaction_status,
+            block_hash,
+            block_height,
+            lane_id,
+            index,
+            settled_block_hash,
+            settled_block_height,
+            settled_index,
+            identity
+        )
+        VALUES ($1, $2, 1, 'blob_transaction', 'success', $3, $4, $5, $6, $3, $4, $6, 'id')
         "#,
     )
     .bind(&parent_dp_hash)
@@ -198,13 +212,23 @@ async fn insert_settled_tx_with_index(
 
     sqlx::query(
         r#"
-        INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name)
-        VALUES ($1, $2, $3)
+        INSERT INTO txs_contracts_settled (
+            parent_dp_hash,
+            tx_hash,
+            contract_name,
+            settled_block_hash,
+            settled_block_height,
+            settled_index
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
         "#,
     )
     .bind(&parent_dp_hash)
     .bind(&tx_hash_hex)
     .bind(&contract.0)
+    .bind(&block_hash)
+    .bind(height)
+    .bind(index)
     .execute(pool)
     .await?;
 
@@ -249,8 +273,33 @@ async fn insert_program_id_update_history_for_tx(
     .bind("verifier_1")
     .bind(program_id)
     .bind(vec![0xAAu8, 0xBBu8, 0xCCu8])
-    .bind(parent_dp_hash)
+    .bind(&parent_dp_hash)
     .bind(tx_hash.to_string())
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO txs_contracts_settled (
+            parent_dp_hash,
+            tx_hash,
+            contract_name,
+            settled_block_hash,
+            settled_block_height,
+            settled_index
+        )
+        SELECT $1, $2, $3, t.settled_block_hash, t.settled_block_height, t.settled_index
+        FROM transactions t
+        WHERE t.parent_dp_hash = $1
+          AND t.tx_hash = $2
+          AND t.settled_block_hash IS NOT NULL
+          AND t.settled_block_height IS NOT NULL
+          AND t.settled_index IS NOT NULL
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(&parent_dp_hash)
+    .bind(tx_hash.to_string())
+    .bind(&contract.0)
     .execute(pool)
     .await?;
     Ok(())
@@ -279,8 +328,21 @@ async fn insert_blob_for_existing_settled_tx(
 
     sqlx::query(
         r#"
-        INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name)
-        VALUES ($1, $2, $3)
+        INSERT INTO txs_contracts_settled (
+            parent_dp_hash,
+            tx_hash,
+            contract_name,
+            settled_block_hash,
+            settled_block_height,
+            settled_index
+        )
+        SELECT $1, $2, $3, t.settled_block_hash, t.settled_block_height, t.settled_index
+        FROM transactions t
+        WHERE t.parent_dp_hash = $1
+          AND t.tx_hash = $2
+          AND t.settled_block_hash IS NOT NULL
+          AND t.settled_block_height IS NOT NULL
+          AND t.settled_index IS NOT NULL
         ON CONFLICT DO NOTHING
         "#,
     )
@@ -328,8 +390,33 @@ async fn insert_contract_registration_history_for_tx(
     .bind(state_commitment)
     .bind(soft_timeout)
     .bind(hard_timeout)
-    .bind(parent_dp_hash)
+    .bind(&parent_dp_hash)
     .bind(tx_hash.to_string())
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO txs_contracts_settled (
+            parent_dp_hash,
+            tx_hash,
+            contract_name,
+            settled_block_hash,
+            settled_block_height,
+            settled_index
+        )
+        SELECT $1, $2, $3, t.settled_block_hash, t.settled_block_height, t.settled_index
+        FROM transactions t
+        WHERE t.parent_dp_hash = $1
+          AND t.tx_hash = $2
+          AND t.settled_block_hash IS NOT NULL
+          AND t.settled_block_height IS NOT NULL
+          AND t.settled_index IS NOT NULL
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(&parent_dp_hash)
+    .bind(tx_hash.to_string())
+    .bind(&contract.0)
     .execute(pool)
     .await?;
     Ok(())
@@ -388,14 +475,16 @@ async fn insert_sequenced_tx_with_index(
 
     sqlx::query(
         r#"
-        INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name)
-        VALUES ($1, $2, $3)
+        INSERT INTO txs_contracts_sequenced (parent_dp_hash, tx_hash, contract_name, block_height, tx_index)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT DO NOTHING
         "#,
     )
     .bind(&parent_dp_hash)
     .bind(&tx_hash_hex)
     .bind(&contract.0)
+    .bind(height)
+    .bind(index)
     .execute(pool)
     .await?;
 
@@ -448,14 +537,15 @@ async fn insert_sequenced_tx_with_null_tx_identity(
 
     sqlx::query(
         r#"
-        INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name)
-        VALUES ($1, $2, $3)
+        INSERT INTO txs_contracts_sequenced (parent_dp_hash, tx_hash, contract_name, block_height, tx_index)
+        VALUES ($1, $2, $3, $4, 0)
         ON CONFLICT DO NOTHING
         "#,
     )
     .bind(&parent_dp_hash)
     .bind(&tx_hash_hex)
     .bind(&contract.0)
+    .bind(height)
     .execute(pool)
     .await?;
 
@@ -479,13 +569,68 @@ async fn update_tx_status(
     sqlx::query(
         r#"
         UPDATE transactions
-        SET transaction_status = $1::transaction_status, block_hash = $2, block_height = $3
+        SET transaction_status = $1::transaction_status,
+            settled_block_hash = $2,
+            settled_block_height = $3,
+            settled_index = index
         WHERE tx_hash = $4
         "#,
     )
     .bind(status)
     .bind(&block_hash)
     .bind(height)
+    .bind(&tx_hash_hex)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO txs_contracts_settled (
+            parent_dp_hash,
+            tx_hash,
+            contract_name,
+            settled_block_hash,
+            settled_block_height,
+            settled_index
+        )
+        SELECT tc.parent_dp_hash, tc.tx_hash, tc.contract_name, t.settled_block_hash, t.settled_block_height, t.settled_index
+        FROM txs_contracts_sequenced tc
+        JOIN transactions t
+          ON tc.parent_dp_hash = t.parent_dp_hash
+         AND tc.tx_hash = t.tx_hash
+        WHERE t.tx_hash = $1
+          AND t.settled_block_hash IS NOT NULL
+          AND t.settled_block_height IS NOT NULL
+          AND t.settled_index IS NOT NULL
+        ON CONFLICT DO NOTHING
+        "#,
+    )
+    .bind(&tx_hash_hex)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO txs_contracts_settled (
+            parent_dp_hash,
+            tx_hash,
+            contract_name,
+            settled_block_hash,
+            settled_block_height,
+            settled_index
+        )
+        SELECT ch.parent_dp_hash, ch.tx_hash, ch.contract_name, t.settled_block_hash, t.settled_block_height, t.settled_index
+        FROM contract_history ch
+        JOIN transactions t
+          ON ch.parent_dp_hash = t.parent_dp_hash
+         AND ch.tx_hash = t.tx_hash
+        WHERE t.tx_hash = $1
+          AND t.settled_block_hash IS NOT NULL
+          AND t.settled_block_height IS NOT NULL
+          AND t.settled_index IS NOT NULL
+        ON CONFLICT DO NOTHING
+        "#,
+    )
     .bind(&tx_hash_hex)
     .execute(pool)
     .await?;
@@ -498,11 +643,40 @@ async fn update_tx_status_in_place(pool: &PgPool, tx_hash: &TxHash, status: &str
     sqlx::query(
         r#"
         UPDATE transactions
-        SET transaction_status = $1::transaction_status
+        SET transaction_status = $1::transaction_status,
+            settled_block_hash = block_hash,
+            settled_block_height = block_height,
+            settled_index = index
         WHERE tx_hash = $2
         "#,
     )
     .bind(status)
+    .bind(&tx_hash_hex)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO txs_contracts_settled (
+            parent_dp_hash,
+            tx_hash,
+            contract_name,
+            settled_block_hash,
+            settled_block_height,
+            settled_index
+        )
+        SELECT tc.parent_dp_hash, tc.tx_hash, tc.contract_name, t.settled_block_hash, t.settled_block_height, t.settled_index
+        FROM txs_contracts_sequenced tc
+        JOIN transactions t
+          ON tc.parent_dp_hash = t.parent_dp_hash
+         AND tc.tx_hash = t.tx_hash
+        WHERE t.tx_hash = $1
+          AND t.settled_block_hash IS NOT NULL
+          AND t.settled_block_height IS NOT NULL
+          AND t.settled_index IS NOT NULL
+        ON CONFLICT DO NOTHING
+        "#,
+    )
     .bind(&tx_hash_hex)
     .execute(pool)
     .await?;

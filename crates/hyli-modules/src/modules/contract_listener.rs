@@ -252,20 +252,34 @@ impl ContractListener {
         let contract_names: Vec<String> = self.conf.contracts.iter().map(|c| c.0.clone()).collect();
         let rows = sqlx::query(
             r#"
-            WITH contract_txs AS (
-                SELECT DISTINCT t.parent_dp_hash, t.tx_hash, t.block_hash, t.transaction_status, t.block_height, t.index, t.lane_id, blk.timestamp
-                FROM transactions t
+            WITH txs_contracts_unique AS (
+                SELECT DISTINCT ON (tx_c.parent_dp_hash, tx_c.tx_hash)
+                    tx_c.parent_dp_hash,
+                    tx_c.tx_hash,
+                    tx_c.block_height,
+                    tx_c.tx_index
+                FROM txs_contracts_sequenced tx_c
+                WHERE tx_c.contract_name = ANY($1)
+                AND (tx_c.block_height, tx_c.tx_index) > ($2, $3)
+                ORDER BY tx_c.parent_dp_hash, tx_c.tx_hash, tx_c.block_height DESC, tx_c.tx_index DESC
+            ),
+            contract_txs AS (
+                SELECT
+                    u.parent_dp_hash,
+                    u.tx_hash,
+                    t.block_hash,
+                    t.transaction_status,
+                    u.block_height,
+                    u.tx_index AS index,
+                    t.lane_id,
+                    blk.timestamp
+                FROM txs_contracts_unique u
+                JOIN transactions t
+                  ON t.parent_dp_hash = u.parent_dp_hash
+                 AND t.tx_hash = u.tx_hash
                 JOIN blocks blk
-                ON blk.hash = t.block_hash
-                WHERE (t.block_height, t.index) > ($2, $3)
-                AND EXISTS (
-                    SELECT 1
-                    FROM txs_contracts tx_c
-                    WHERE tx_c.parent_dp_hash = t.parent_dp_hash
-                    AND tx_c.tx_hash = t.tx_hash
-                    AND tx_c.contract_name = ANY($1)
-                )
-                AND t.transaction_type = 'blob_transaction'
+                  ON blk.hash = t.block_hash
+                WHERE t.transaction_type = 'blob_transaction'
                 AND t.transaction_status = 'sequenced'
             )
             SELECT ct.parent_dp_hash, ct.tx_hash, ct.index, ct.lane_id, b.identity, ct.timestamp, ct.block_hash, ct.transaction_status, ct.block_height, b.blob_index, b.data, b.contract_name,
@@ -301,33 +315,39 @@ impl ContractListener {
         let contract_names: Vec<String> = self.conf.contracts.iter().map(|c| c.0.clone()).collect();
         let rows = sqlx::query(
             r#"
-            WITH contract_txs AS (
-                SELECT DISTINCT t.parent_dp_hash, t.tx_hash, t.block_hash, t.transaction_status, t.block_height, t.index, t.lane_id, blk.timestamp
-                FROM transactions t
+            WITH txs_contracts_unique AS (
+                SELECT DISTINCT ON (tx_c.parent_dp_hash, tx_c.tx_hash)
+                    tx_c.parent_dp_hash,
+                    tx_c.tx_hash,
+                    tx_c.settled_block_hash,
+                    tx_c.settled_block_height,
+                    tx_c.settled_index
+                FROM txs_contracts_settled tx_c
+                WHERE tx_c.contract_name = ANY($1)
+                AND (tx_c.settled_block_height, tx_c.settled_index) > ($2, $3)
+                ORDER BY tx_c.parent_dp_hash, tx_c.tx_hash, tx_c.settled_block_height DESC, tx_c.settled_index DESC
+            ),
+            contract_txs AS (
+                SELECT
+                    u.parent_dp_hash,
+                    u.tx_hash,
+                    u.settled_block_hash AS block_hash,
+                    t.transaction_status,
+                    u.settled_block_height AS block_height,
+                    u.settled_index AS index,
+                    t.lane_id,
+                    blk.timestamp
+                FROM txs_contracts_unique u
+                JOIN transactions t
+                ON t.parent_dp_hash = u.parent_dp_hash
+                AND t.tx_hash = u.tx_hash
                 JOIN blocks blk
-                ON blk.hash = t.block_hash
-                WHERE (t.block_height, t.index) > ($2, $3)
-                AND t.transaction_type = 'blob_transaction'
+                ON blk.hash = u.settled_block_hash
+                WHERE t.transaction_type = 'blob_transaction'
                 AND (
                     t.transaction_status = 'success'
                     OR t.transaction_status = 'failure'
                     OR t.transaction_status = 'timed_out'
-                )
-                AND (
-                    EXISTS (
-                        SELECT 1
-                        FROM txs_contracts tx_c
-                        WHERE tx_c.parent_dp_hash = t.parent_dp_hash
-                        AND tx_c.tx_hash = t.tx_hash
-                        AND tx_c.contract_name = ANY($1)
-                    )
-                    OR EXISTS (
-                        SELECT 1
-                        FROM contract_history ch
-                        WHERE ch.parent_dp_hash = t.parent_dp_hash
-                        AND ch.tx_hash = t.tx_hash
-                        AND ch.contract_name = ANY($1)
-                    )
                 )
             )
             SELECT ct.parent_dp_hash, ct.tx_hash, ct.index, ct.lane_id, b.identity, ct.timestamp, ct.block_hash, ct.transaction_status, ct.block_height, b.blob_index, b.data, b.contract_name,
