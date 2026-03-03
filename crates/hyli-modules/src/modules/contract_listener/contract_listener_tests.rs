@@ -198,13 +198,15 @@ async fn insert_settled_tx_with_index(
 
     sqlx::query(
         r#"
-        INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name)
-        VALUES ($1, $2, $3)
+        INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name, block_height, tx_index)
+        VALUES ($1, $2, $3, $4, $5)
         "#,
     )
     .bind(&parent_dp_hash)
     .bind(&tx_hash_hex)
     .bind(&contract.0)
+    .bind(height)
+    .bind(index)
     .execute(pool)
     .await?;
 
@@ -279,8 +281,11 @@ async fn insert_blob_for_existing_settled_tx(
 
     sqlx::query(
         r#"
-        INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name)
-        VALUES ($1, $2, $3)
+        INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name, block_height, tx_index)
+        SELECT $1, $2, $3, t.block_height, t.index
+        FROM transactions t
+        WHERE t.parent_dp_hash = $1
+          AND t.tx_hash = $2
         ON CONFLICT DO NOTHING
         "#,
     )
@@ -388,14 +393,16 @@ async fn insert_sequenced_tx_with_index(
 
     sqlx::query(
         r#"
-        INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name)
-        VALUES ($1, $2, $3)
+        INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name, block_height, tx_index)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT DO NOTHING
         "#,
     )
     .bind(&parent_dp_hash)
     .bind(&tx_hash_hex)
     .bind(&contract.0)
+    .bind(height)
+    .bind(index)
     .execute(pool)
     .await?;
 
@@ -448,14 +455,15 @@ async fn insert_sequenced_tx_with_null_tx_identity(
 
     sqlx::query(
         r#"
-        INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name)
-        VALUES ($1, $2, $3)
+        INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name, block_height, tx_index)
+        VALUES ($1, $2, $3, $4, 0)
         ON CONFLICT DO NOTHING
         "#,
     )
     .bind(&parent_dp_hash)
     .bind(&tx_hash_hex)
     .bind(&contract.0)
+    .bind(height)
     .execute(pool)
     .await?;
 

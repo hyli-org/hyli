@@ -361,6 +361,8 @@ struct TxContractRow {
     parent_dp_hash: DataProposalHash,
     tx_hash: TxHash,
     contract_name: String,
+    block_height: i64,
+    tx_index: i32,
 }
 
 #[derive(Debug)]
@@ -983,6 +985,7 @@ impl Indexer {
             .handler_store
             .txs
             .values()
+            .filter(|tx| tx.block_hash.is_some())
             .map(|tx| tx.contract_names.len())
             .sum();
         self.metrics
@@ -1048,23 +1051,6 @@ impl Indexer {
             })
             .collect();
         apply_transaction_status_updates(&self.metrics, &mut transaction, tx_status_rows).await?;
-
-        // Then txs_contracts
-        let mut tx_contract_rows = Vec::new();
-        for tx in &tx_rows {
-            for contract_name in &tx.contract_names {
-                contract_notifications
-                    .entry(contract_name.clone())
-                    .or_default()
-                    .insert(tx.block_height);
-                tx_contract_rows.push(TxContractRow {
-                    parent_dp_hash: tx.dp_hash.clone(),
-                    tx_hash: tx.tx_hash.clone(),
-                    contract_name: contract_name.0.clone(),
-                });
-            }
-        }
-        insert_txs_contracts(&self.metrics, &mut transaction, tx_contract_rows).await?;
 
         // Merge contract updates into inserts when both affect the same row in this flush.
         let pending_contract_updates = std::mem::take(&mut self.handler_store.contract_updates);
@@ -1142,6 +1128,28 @@ impl Indexer {
             .drain()
             .map(|(_, row)| row)
             .collect();
+
+        // Keep txs_contracts aligned with durable block positions only.
+        let mut tx_contract_rows = Vec::new();
+        for tx in &tx_rows {
+            if tx.block_hash.is_none() {
+                continue;
+            }
+            for contract_name in &tx.contract_names {
+                contract_notifications
+                    .entry(contract_name.clone())
+                    .or_default()
+                    .insert(tx.block_height);
+                tx_contract_rows.push(TxContractRow {
+                    parent_dp_hash: tx.dp_hash.clone(),
+                    tx_hash: tx.tx_hash.clone(),
+                    contract_name: contract_name.0.clone(),
+                    block_height: tx.block_height.0 as i64,
+                    tx_index: tx.index,
+                });
+            }
+        }
+        insert_txs_contracts(&self.metrics, &mut transaction, tx_contract_rows).await?;
         insert_or_copy_blobs(&self.metrics, &mut transaction, blob_rows).await?;
 
         let proof_rows: Vec<_> = self
@@ -1287,7 +1295,11 @@ fn tx_store_bytes(tx: &TxStore) -> usize {
 }
 
 fn tx_contract_row_bytes(row: &TxContractRow) -> usize {
-    row.parent_dp_hash.0.len() + row.tx_hash.0.len() + row.contract_name.len()
+    row.parent_dp_hash.0.len()
+        + row.tx_hash.0.len()
+        + row.contract_name.len()
+        + I64_BYTES
+        + I32_BYTES
 }
 
 fn tx_status_update_row_bytes(row: &TxStatusUpdateRow) -> usize {
@@ -1679,15 +1691,17 @@ async fn insert_txs_contracts(
     }
 
     let inline_bytes: usize = rows.iter().map(tx_contract_row_bytes).sum();
-    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(rows.len(), 3) {
+    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(rows.len(), 5) {
         let started = Instant::now();
         let mut query_builder = QueryBuilder::<Postgres>::new(
-            "INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name) ",
+            "INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name, block_height, tx_index) ",
         );
         query_builder.push_values(rows.iter(), |mut b, row| {
             b.push_bind(row.parent_dp_hash.clone())
                 .push_bind(row.tx_hash.clone())
-                .push_bind(row.contract_name.clone());
+                .push_bind(row.contract_name.clone())
+                .push_bind(row.block_height)
+                .push_bind(row.tx_index);
         });
         query_builder.push(" ON CONFLICT DO NOTHING");
         query_builder.build().execute(&mut **transaction).await?;
@@ -1702,7 +1716,9 @@ async fn insert_txs_contracts(
         "CREATE TEMPORARY TABLE txs_contracts_stage (
             parent_dp_hash TEXT NOT NULL,
             tx_hash TEXT NOT NULL,
-            contract_name TEXT NOT NULL
+            contract_name TEXT NOT NULL,
+            block_height BIGINT NOT NULL,
+            tx_index INT NOT NULL
         ) ON COMMIT DROP",
     )
     .execute(&mut **transaction)
@@ -1711,25 +1727,27 @@ async fn insert_txs_contracts(
     let mut lines = Vec::with_capacity(rows.len());
     for row in rows {
         lines.push(format!(
-            "{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\n",
             row.parent_dp_hash,
             row.tx_hash,
-            escape_copy_text(row.contract_name.as_str())
+            escape_copy_text(row.contract_name.as_str()),
+            row.block_height,
+            row.tx_index
         ));
     }
     let staged_bytes: usize = lines.iter().map(|l| l.len()).sum();
     let mut stream = StreamableData::new(lines);
     let mut copy = transaction
         .copy_in_raw(
-            "COPY txs_contracts_stage (parent_dp_hash, tx_hash, contract_name) FROM STDIN WITH (FORMAT TEXT)",
+            "COPY txs_contracts_stage (parent_dp_hash, tx_hash, contract_name, block_height, tx_index) FROM STDIN WITH (FORMAT TEXT)",
         )
         .await?;
     copy.read_from(&mut stream).await?;
     copy.finish().await?;
 
     sqlx::query(
-        "INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name)
-         SELECT parent_dp_hash, tx_hash, contract_name FROM txs_contracts_stage
+        "INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name, block_height, tx_index)
+         SELECT parent_dp_hash, tx_hash, contract_name, block_height, tx_index FROM txs_contracts_stage
          ON CONFLICT DO NOTHING",
     )
     .execute(&mut **transaction)

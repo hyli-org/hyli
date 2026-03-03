@@ -122,17 +122,13 @@ pub async fn get_contract(
           COUNT(t.*)
             FILTER (WHERE t.transaction_status = 'sequenced')   AS unsettled_tx,
           (
-            SELECT min(bl.height)
-            FROM blocks bl
-            JOIN transactions t2 ON t2.block_hash = bl.hash
+            SELECT min(tx_c2.block_height)
+            FROM txs_contracts tx_c2
+            JOIN transactions t2
+              ON t2.parent_dp_hash = tx_c2.parent_dp_hash
+             AND t2.tx_hash = tx_c2.tx_hash
             WHERE t2.transaction_status = 'sequenced'
-              AND EXISTS (
-                SELECT 1
-                FROM txs_contracts tx_c2
-                WHERE tx_c2.parent_dp_hash = t2.parent_dp_hash
-                  AND tx_c2.tx_hash = t2.tx_hash
-                  AND tx_c2.contract_name = c.contract_name
-              )
+              AND tx_c2.contract_name = c.contract_name
           ) AS earliest_unsettled
         FROM contracts AS c
         left join txs_contracts as tx_c
