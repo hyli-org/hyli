@@ -43,7 +43,7 @@ tokio = { workspace = true, features = ["full"] }
 dirs = "6.0.0"
 
 # HTTP client for downloading scaffolds
-reqwest = { version = "0.12.23", features = ["json", "stream"] }
+reqwest = { version = "0.13.1", features = ["json", "stream"] }
 
 # Process execution
 which = "8.0.0"
