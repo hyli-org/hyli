@@ -24,6 +24,9 @@ CREATE TABLE transactions (
     block_height BIGINT,
     lane_id TEXT,                           -- Lane ID
     index INT,                              -- Index of the transaction within the block
+    settled_block_hash TEXT REFERENCES blocks(hash) ON DELETE CASCADE,
+    settled_block_height BIGINT,
+    settled_index INT,
     identity TEXT,                          -- Identity (NULL except for blob transactions)
     PRIMARY KEY (parent_dp_hash, tx_hash),
     CHECK (length(tx_hash) = 64)
@@ -102,23 +105,36 @@ CREATE INDEX idx_bpo_on_proof_tx
 CREATE INDEX idx_bpo_prooftx_contract
   ON blob_proof_outputs (proof_tx_hash, contract_name);
 
--- Index for get tx by hash
+-- Fast lookup for get tx by hash & transaction pages:
+-- explorer usually filters by tx_hash (+ transaction_type) and does not have parent_dp_hash,
+-- so parent_dp_hash is kept last in the key.
 CREATE INDEX idx_tx_fast_lookup
-  ON transactions (
-    tx_hash,
-    transaction_type,
-    block_height   DESC,
-    index          DESC
-  )
-INCLUDE (block_hash);
+  ON transactions (tx_hash, transaction_type, parent_dp_hash);
 
-create table txs_contracts (
+create table txs_contracts_sequenced (
     parent_dp_hash TEXT NOT NULL,  -- Foreign key linking to the parent_dp_hash BlobTransactions
     tx_hash TEXT NOT NULL,  -- Foreign key linking to the tx_hash BlobTransactions
     contract_name TEXT NOT NULL,       -- Contract name associated with the blob
+    block_height BIGINT NOT NULL,
+    tx_index INT NOT NULL,
     PRIMARY KEY (parent_dp_hash, tx_hash, contract_name)
 );
-create index idx_txs_contracts_name on txs_contracts(contract_name);
+create index idx_txs_contracts_sequenced_contract_cursor
+  on txs_contracts_sequenced(contract_name, block_height, tx_index)
+  include (parent_dp_hash, tx_hash);
+
+create table txs_contracts_settled (
+    parent_dp_hash TEXT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    contract_name TEXT NOT NULL,
+    settled_block_hash TEXT NOT NULL REFERENCES blocks(hash) ON DELETE CASCADE,
+    settled_block_height BIGINT NOT NULL,
+    settled_index INT NOT NULL,
+    PRIMARY KEY (parent_dp_hash, tx_hash, contract_name)
+);
+create index idx_txs_contracts_settled_contract_cursor
+  on txs_contracts_settled(contract_name, settled_block_height, settled_index)
+  include (parent_dp_hash, tx_hash);
 
 -- Contract history table to track all contract changes over time
 CREATE TABLE contract_history (
