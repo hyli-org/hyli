@@ -114,16 +114,25 @@ impl ContractBootstrap {
 
             let initial_state =
                 build_smt_state_with_accounts(&contract_name, ctx.initial_account_balance)?;
+            let constructor_metadata =
+                borsh::to_vec(&initial_state).context("serialize initial SMT state")?;
             let register_tx = BlobTransaction::new(
                 Identity::new("hyli@hyli"),
-                vec![RegisterContractAction {
-                    contract_name: contract_name.clone(),
-                    verifier: "risc0-3".into(),
-                    program_id: SMT_TOKEN_PROGRAM_ID.to_vec().into(),
-                    state_commitment: smt_state_commitment(&initial_state),
-                    ..Default::default()
-                }
-                .as_blob("hyli".into())],
+                vec![
+                    RegisterContractAction {
+                        contract_name: contract_name.clone(),
+                        verifier: "risc0-3".into(),
+                        program_id: SMT_TOKEN_PROGRAM_ID.to_vec().into(),
+                        state_commitment: smt_state_commitment(&initial_state),
+                        constructor_metadata: Some(constructor_metadata.clone()),
+                        ..Default::default()
+                    }
+                    .as_blob("hyli".into()),
+                    hyli_contract_sdk::Blob {
+                        contract_name: contract_name.clone(),
+                        data: hyli_contract_sdk::BlobData(constructor_metadata),
+                    },
+                ],
             );
 
             match node.send_tx_blob(register_tx).await {
