@@ -93,7 +93,7 @@ borsh = { version = "1.6.0" }
 boundless-market = { version = "1.0.0", default-features = false }
 bytemuck = { version = "1.23.1", default-features = false }
 bytes = { version = "1.10.0", default-features = false }
-alloy-signer = { version = "1.5.2", default-features = false }
+alloy-signer = { version = "1.7.3", default-features = false }
 alloy-signer-local = { version = "1.0.41", default-features = false, features = [
   "mnemonic",
 ] }
