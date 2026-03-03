@@ -191,11 +191,16 @@ impl TxExecutorHandler for SmtTokenProvableState {
     }
 
     fn construct_state(
-        _: &sdk::ContractName,
+        contract_name: &sdk::ContractName,
         _: &sdk::Contract,
-        _: &Option<Vec<u8>>,
+        metadata: &Option<Vec<u8>>,
     ) -> Result<Self> {
-        Ok(Self::default())
+        match metadata {
+            Some(metadata) => borsh::from_slice::<Self>(metadata).with_context(|| {
+                format!("Failed to deserialize constructor metadata for {contract_name}")
+            }),
+            None => Ok(Self::default()),
+        }
     }
 
     fn merge_commitment_metadata(
@@ -587,5 +592,28 @@ mod tests {
             private_input: vec![],
         });
         assert_eq!(ho.unwrap_err(), format!("Owner account {owner} not found"));
+    }
+
+    #[test]
+    fn test_construct_state_from_constructor_metadata() {
+        let contract_name = ContractName::new("lrt_smt_test");
+        let mut expected_state = AccountSMT::default();
+        let bob = Account::new(Identity::from("bob@lrt_smt_test"), 1_000_000);
+        let alice = Account::new(Identity::from("alice@lrt_smt_test"), 1_000_000);
+        expected_state.0.update(bob.get_key(), bob).unwrap();
+        expected_state.0.update(alice.get_key(), alice).unwrap();
+
+        let metadata = borsh::to_vec(&expected_state).unwrap();
+        let rebuilt = SmtTokenProvableState::construct_state(
+            &contract_name,
+            &sdk::Contract::default(),
+            &Some(metadata),
+        )
+        .unwrap();
+
+        assert_eq!(
+            rebuilt.get_state_commitment(),
+            expected_state.get_state_commitment()
+        );
     }
 }
