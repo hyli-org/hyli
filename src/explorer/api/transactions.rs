@@ -183,7 +183,7 @@ pub async fn get_transactions_by_contract(
                 r#"
             WITH contract_txs AS (
                 SELECT tx_c.parent_dp_hash, tx_c.tx_hash, tx_c.block_height, tx_c.tx_index
-                FROM txs_contracts tx_c
+                FROM txs_contracts_sequenced tx_c
                 WHERE tx_c.contract_name = $1
                   AND tx_c.block_height <= $2
                   AND tx_c.block_height > $3
@@ -208,7 +208,7 @@ pub async fn get_transactions_by_contract(
                 r#"
             WITH contract_txs AS (
                 SELECT tx_c.parent_dp_hash, tx_c.tx_hash, tx_c.block_height, tx_c.tx_index
-                FROM txs_contracts tx_c
+                FROM txs_contracts_sequenced tx_c
                 WHERE tx_c.contract_name = $1
                 ORDER BY tx_c.block_height DESC, tx_c.tx_index DESC
                 LIMIT $2
@@ -298,14 +298,14 @@ pub async fn get_last_settled_tx_by_contract(
             SELECT
                 t.parent_dp_hash, t.tx_hash
             FROM
-                txs_contracts tx_c
+                txs_contracts_settled tx_c
             JOIN transactions t
                 ON tx_c.parent_dp_hash = t.parent_dp_hash
                AND tx_c.tx_hash = t.tx_hash
             WHERE tx_c.contract_name = $1
               AND t.transaction_type = 'blob_transaction'
               AND t.transaction_status = ANY($2)
-            ORDER BY tx_c.block_height DESC, tx_c.tx_index DESC
+            ORDER BY tx_c.settled_block_height DESC, tx_c.settled_index DESC
             LIMIT 1
             "
         )

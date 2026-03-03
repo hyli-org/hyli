@@ -252,17 +252,34 @@ impl ContractListener {
         let contract_names: Vec<String> = self.conf.contracts.iter().map(|c| c.0.clone()).collect();
         let rows = sqlx::query(
             r#"
-            WITH contract_txs AS (
-                SELECT DISTINCT t.parent_dp_hash, t.tx_hash, t.block_hash, t.transaction_status, t.block_height, t.index, t.lane_id, blk.timestamp
-                FROM txs_contracts tx_c
-                JOIN transactions t
-                  ON t.parent_dp_hash = tx_c.parent_dp_hash
-                 AND t.tx_hash = tx_c.tx_hash
-                JOIN blocks blk
-                  ON blk.hash = t.block_hash
+            WITH txs_contracts_unique AS (
+                SELECT DISTINCT ON (tx_c.parent_dp_hash, tx_c.tx_hash)
+                    tx_c.parent_dp_hash,
+                    tx_c.tx_hash,
+                    tx_c.block_height,
+                    tx_c.tx_index
+                FROM txs_contracts_sequenced tx_c
                 WHERE tx_c.contract_name = ANY($1)
                 AND (tx_c.block_height, tx_c.tx_index) > ($2, $3)
-                AND t.transaction_type = 'blob_transaction'
+                ORDER BY tx_c.parent_dp_hash, tx_c.tx_hash, tx_c.block_height DESC, tx_c.tx_index DESC
+            ),
+            contract_txs AS (
+                SELECT
+                    u.parent_dp_hash,
+                    u.tx_hash,
+                    t.block_hash,
+                    t.transaction_status,
+                    u.block_height,
+                    u.tx_index AS index,
+                    t.lane_id,
+                    blk.timestamp
+                FROM txs_contracts_unique u
+                JOIN transactions t
+                  ON t.parent_dp_hash = u.parent_dp_hash
+                 AND t.tx_hash = u.tx_hash
+                JOIN blocks blk
+                  ON blk.hash = t.block_hash
+                WHERE t.transaction_type = 'blob_transaction'
                 AND t.transaction_status = 'sequenced'
             )
             SELECT ct.parent_dp_hash, ct.tx_hash, ct.index, ct.lane_id, b.identity, ct.timestamp, ct.block_hash, ct.transaction_status, ct.block_height, b.blob_index, b.data, b.contract_name,
@@ -298,25 +315,34 @@ impl ContractListener {
         let contract_names: Vec<String> = self.conf.contracts.iter().map(|c| c.0.clone()).collect();
         let rows = sqlx::query(
             r#"
-            WITH candidate_txs AS (
-                SELECT DISTINCT tx_c.parent_dp_hash, tx_c.tx_hash
-                FROM txs_contracts tx_c
+            WITH txs_contracts_unique AS (
+                SELECT DISTINCT ON (tx_c.parent_dp_hash, tx_c.tx_hash)
+                    tx_c.parent_dp_hash,
+                    tx_c.tx_hash,
+                    tx_c.settled_block_hash,
+                    tx_c.settled_block_height,
+                    tx_c.settled_index
+                FROM txs_contracts_settled tx_c
                 WHERE tx_c.contract_name = ANY($1)
-                AND (tx_c.block_height, tx_c.tx_index) > ($2, $3)
-                UNION
-                SELECT DISTINCT ch.parent_dp_hash, ch.tx_hash
-                FROM contract_history ch
-                WHERE ch.contract_name = ANY($1)
-                AND (ch.block_height, ch.tx_index) > ($2, $3)
+                AND (tx_c.settled_block_height, tx_c.settled_index) > ($2, $3)
+                ORDER BY tx_c.parent_dp_hash, tx_c.tx_hash, tx_c.settled_block_height DESC, tx_c.settled_index DESC
             ),
             contract_txs AS (
-                SELECT DISTINCT t.parent_dp_hash, t.tx_hash, t.block_hash, t.transaction_status, t.block_height, t.index, t.lane_id, blk.timestamp
-                FROM candidate_txs c
+                SELECT
+                    u.parent_dp_hash,
+                    u.tx_hash,
+                    u.settled_block_hash AS block_hash,
+                    t.transaction_status,
+                    u.settled_block_height AS block_height,
+                    u.settled_index AS index,
+                    t.lane_id,
+                    blk.timestamp
+                FROM txs_contracts_unique u
                 JOIN transactions t
-                ON t.parent_dp_hash = c.parent_dp_hash
-                AND t.tx_hash = c.tx_hash
+                ON t.parent_dp_hash = u.parent_dp_hash
+                AND t.tx_hash = u.tx_hash
                 JOIN blocks blk
-                ON blk.hash = t.block_hash
+                ON blk.hash = u.settled_block_hash
                 WHERE t.transaction_type = 'blob_transaction'
                 AND (
                     t.transaction_status = 'success'

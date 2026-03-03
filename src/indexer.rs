@@ -200,7 +200,7 @@ pub(crate) struct IndexerHandlerStore {
 
     blocks: Vec<BlockStore>,
     txs: HashMap<TxId, TxStore>,
-    tx_status_update: HashMap<TxId, TransactionStatusDb>,
+    tx_status_update: HashMap<TxId, TxStatusUpdateStore>,
     tx_events: Vec<TxEventRow>,
     blobs: HashMap<BlobKey, BlobRow>,
     blob_proof_outputs: HashMap<BlobProofOutputKey, BlobProofOutputRow>,
@@ -208,6 +208,7 @@ pub(crate) struct IndexerHandlerStore {
     contract_updates: HashMap<ContractName, ContractUpdateStore>,
     contract_history: HashMap<ContractHistoryKey, ContractHistoryStore>,
     tx_index_map: HashMap<TxId, i32>,
+    settled_event_index: i32,
     index_tx_events: bool,
 }
 
@@ -228,6 +229,9 @@ pub struct TxStore {
     pub block_height: BlockHeight,
     pub lane_id: Option<LaneId>,
     pub index: i32,
+    pub settled_block_hash: Option<ConsensusProposalHash>,
+    pub settled_block_height: Option<BlockHeight>,
+    pub settled_index: Option<i32>,
     pub identity: Option<String>,
     pub transaction_status: TransactionStatusDb,
     pub contract_names: HashSet<ContractName>,
@@ -370,6 +374,52 @@ struct TxStatusUpdateRow {
     parent_dp_hash: DataProposalHash,
     tx_hash: TxHash,
     transaction_status: TransactionStatusDb,
+    settled_block_hash: Option<ConsensusProposalHash>,
+    settled_block_height: Option<i64>,
+    settled_index: Option<i32>,
+}
+
+#[derive(Debug, Clone)]
+struct TxStatusUpdateStore {
+    transaction_status: TransactionStatusDb,
+    settled_block_hash: Option<ConsensusProposalHash>,
+    settled_block_height: Option<BlockHeight>,
+    settled_index: Option<i32>,
+}
+
+impl TxStatusUpdateStore {
+    fn new(
+        transaction_status: TransactionStatusDb,
+        settled_position: Option<(ConsensusProposalHash, BlockHeight, i32)>,
+    ) -> Self {
+        let (settled_block_hash, settled_block_height, settled_index) = match settled_position {
+            Some(position) => (Some(position.0), Some(position.1), Some(position.2)),
+            None => (None, None, None),
+        };
+        Self {
+            transaction_status,
+            settled_block_hash,
+            settled_block_height,
+            settled_index,
+        }
+    }
+
+    fn settled_position(&self) -> Option<(ConsensusProposalHash, BlockHeight, i32)> {
+        Some((
+            self.settled_block_hash.clone()?,
+            self.settled_block_height?,
+            self.settled_index?,
+        ))
+    }
+
+    fn set_settled_position(
+        &mut self,
+        settled_position: &(ConsensusProposalHash, BlockHeight, i32),
+    ) {
+        self.settled_block_hash = Some(settled_position.0.clone());
+        self.settled_block_height = Some(settled_position.1);
+        self.settled_index = Some(settled_position.2);
+    }
 }
 
 #[derive(Debug)]
@@ -458,6 +508,30 @@ impl IndexerMetrics {
 }
 
 impl IndexerHandlerStore {
+    fn is_settlement_event(status: &TransactionStatusDb) -> bool {
+        matches!(
+            status,
+            TransactionStatusDb::Success
+                | TransactionStatusDb::Failure
+                | TransactionStatusDb::TimedOut
+        )
+    }
+
+    fn next_settled_index(&mut self) -> i32 {
+        let settled_index = self.settled_event_index;
+        self.settled_event_index += 1;
+        settled_index
+    }
+
+    fn set_tx_settled_position(
+        tx: &mut TxStore,
+        settled_position: (ConsensusProposalHash, BlockHeight, i32),
+    ) {
+        tx.settled_block_hash = Some(settled_position.0);
+        tx.settled_block_height = Some(settled_position.1);
+        tx.settled_index = Some(settled_position.2);
+    }
+
     fn status_rank(status: &TransactionStatusDb) -> u8 {
         match status {
             TransactionStatusDb::WaitingDissemination => 1,
@@ -477,9 +551,17 @@ impl IndexerHandlerStore {
         }
     }
 
-    fn merge_tx(&mut self, tx_id: TxId, tx: TxStore) {
+    fn merge_tx(&mut self, tx_id: TxId, mut tx: TxStore) {
         let tx_status = if let Some(pending_status) = self.tx_status_update.remove(&tx_id) {
-            Self::max_status(tx.transaction_status.clone(), pending_status)
+            if Self::is_settlement_event(&pending_status.transaction_status) {
+                if let Some(settled_position) = pending_status.settled_position() {
+                    Self::set_tx_settled_position(&mut tx, settled_position);
+                }
+            }
+            Self::max_status(
+                tx.transaction_status.clone(),
+                pending_status.transaction_status,
+            )
         } else {
             tx.transaction_status.clone()
         };
@@ -488,7 +570,12 @@ impl IndexerHandlerStore {
             Entry::Occupied(mut entry) => {
                 let existing = entry.get_mut();
                 existing.transaction_status =
-                    Self::max_status(existing.transaction_status.clone(), tx_status);
+                    Self::max_status(existing.transaction_status.clone(), tx_status.clone());
+                let tx_settled_position = (
+                    tx.settled_block_hash.clone(),
+                    tx.settled_block_height,
+                    tx.settled_index,
+                );
                 existing.contract_names.extend(tx.contract_names);
 
                 if tx.index > existing.index {
@@ -506,6 +593,11 @@ impl IndexerHandlerStore {
                 if tx.identity.is_some() {
                     existing.identity = tx.identity;
                 }
+                if Self::is_settlement_event(&tx_status) {
+                    if let (Some(hash), Some(height), Some(index)) = tx_settled_position {
+                        Self::set_tx_settled_position(existing, (hash, height, index));
+                    }
+                }
                 existing.transaction_type = tx.transaction_type;
             }
             Entry::Vacant(entry) => {
@@ -518,18 +610,47 @@ impl IndexerHandlerStore {
     }
 
     fn merge_tx_status(&mut self, tx_id: TxId, status: TransactionStatusDb) {
+        self.merge_tx_status_with_settlement(tx_id, status, None);
+    }
+
+    fn merge_tx_status_with_settlement(
+        &mut self,
+        tx_id: TxId,
+        status: TransactionStatusDb,
+        settled_position: Option<(ConsensusProposalHash, BlockHeight, i32)>,
+    ) {
         if let Some(existing) = self.txs.get_mut(&tx_id) {
             existing.transaction_status =
-                Self::max_status(existing.transaction_status.clone(), status);
+                Self::max_status(existing.transaction_status.clone(), status.clone());
+            if Self::is_settlement_event(&status) {
+                if let Some(settled_position) = settled_position {
+                    Self::set_tx_settled_position(existing, settled_position);
+                }
+            }
             return;
         }
 
         self.tx_status_update
             .entry(tx_id)
             .and_modify(|existing_status| {
-                *existing_status = Self::max_status(existing_status.clone(), status.clone());
+                existing_status.transaction_status =
+                    Self::max_status(existing_status.transaction_status.clone(), status.clone());
+                if Self::is_settlement_event(&status) {
+                    if let Some(settled_position) = settled_position.as_ref() {
+                        existing_status.set_settled_position(settled_position);
+                    }
+                }
             })
-            .or_insert(status);
+            .or_insert_with(|| TxStatusUpdateStore::new(status, settled_position));
+    }
+
+    fn merge_settlement_status(&mut self, tx_id: TxId, status: TransactionStatusDb) {
+        let settled_position = (
+            self.block_hash.clone(),
+            self.block_height,
+            self.next_settled_index(),
+        );
+        self.merge_tx_status_with_settlement(tx_id, status, Some(settled_position));
     }
 
     fn record_contract_history(&mut self, history: ContractHistoryStore) {
@@ -576,6 +697,7 @@ impl Indexer {
             self.handler_store.block_height = block.height();
             self.handler_store.block_hash = block.hashed();
             self.handler_store.block_time = block.consensus_proposal.timestamp.clone();
+            self.handler_store.settled_event_index = 0;
 
             self.handler_store.blocks.push(BlockStore {
                 block_hash: self.handler_store.block_hash.clone(),
@@ -640,6 +762,9 @@ impl Indexer {
                             block_height: BlockHeight(0),
                             lane_id: None, // TODO: we know the lane here so not sure why this used to be an option
                             index: 0,
+                            settled_block_hash: None,
+                            settled_block_height: None,
+                            settled_index: None,
                             identity: match tx.transaction_data {
                                 TransactionData::Blob(ref blob_tx) => {
                                     Some(blob_tx.identity.clone().0)
@@ -697,6 +822,9 @@ impl NodeStateCallback for IndexerHandlerStore {
                         block_height: self.block_height,
                         lane_id: Some(lane_id.clone()),
                         index: index as i32,
+                        settled_block_hash: None,
+                        settled_block_height: None,
+                        settled_index: None,
                         identity: Some(blob_tx.identity.clone().0),
                         transaction_status: match *event {
                             TxEvent::RejectedBlobTransaction(..) => TransactionStatusDb::Failure,
@@ -738,6 +866,9 @@ impl NodeStateCallback for IndexerHandlerStore {
                         block_height: self.block_height,
                         lane_id: Some(lane_id.clone()),
                         index: index as i32,
+                        settled_block_hash: None,
+                        settled_block_height: None,
+                        settled_index: None,
                         identity: None,
                         transaction_status: TransactionStatusDb::Success,
                         contract_names: HashSet::new(),
@@ -745,13 +876,13 @@ impl NodeStateCallback for IndexerHandlerStore {
                 );
             }
             TxEvent::Settled(tx_id, ..) => {
-                self.merge_tx_status(tx_id.clone(), TransactionStatusDb::Success);
+                self.merge_settlement_status(tx_id.clone(), TransactionStatusDb::Success);
             }
             TxEvent::SettledAsFailed(tx_id, ..) => {
-                self.merge_tx_status(tx_id.clone(), TransactionStatusDb::Failure);
+                self.merge_settlement_status(tx_id.clone(), TransactionStatusDb::Failure);
             }
             TxEvent::TimedOut(tx_id, ..) => {
-                self.merge_tx_status(tx_id.clone(), TransactionStatusDb::TimedOut);
+                self.merge_settlement_status(tx_id.clone(), TransactionStatusDb::TimedOut);
             }
             TxEvent::TxError(..) => {}
             // Skip registering unproven blobs
@@ -995,7 +1126,7 @@ impl Indexer {
             self.handler_store.tx_status_update.len(),
         );
         self.metrics
-            .record_pending_rows("txs_contracts", pending_txs_contracts);
+            .record_pending_rows("txs_contracts_sequenced", pending_txs_contracts);
         self.metrics
             .record_pending_rows("contracts", self.handler_store.contract_inserts.len());
         self.metrics.record_pending_rows(
@@ -1044,13 +1175,16 @@ impl Indexer {
             .handler_store
             .tx_status_update
             .drain()
-            .map(|(tx_id, status)| TxStatusUpdateRow {
+            .map(|(tx_id, update)| TxStatusUpdateRow {
                 parent_dp_hash: tx_id.0,
                 tx_hash: tx_id.1,
-                transaction_status: status,
+                transaction_status: update.transaction_status,
+                settled_block_hash: update.settled_block_hash,
+                settled_block_height: update.settled_block_height.map(|h| h.0 as i64),
+                settled_index: update.settled_index,
             })
             .collect();
-        apply_transaction_status_updates(&self.metrics, &mut transaction, tx_status_rows).await?;
+        apply_transaction_status_updates(&self.metrics, &mut transaction, &tx_status_rows).await?;
 
         // Merge contract updates into inserts when both affect the same row in this flush.
         let pending_contract_updates = std::mem::take(&mut self.handler_store.contract_updates);
@@ -1117,6 +1251,12 @@ impl Indexer {
                 tx_hash: history.tx_hash,
             })
             .collect();
+        for history in &contract_history_rows {
+            contract_notifications
+                .entry(ContractName::new(history.contract_name.clone()))
+                .or_default()
+                .insert(BlockHeight(history.block_height as u64));
+        }
         insert_contract_history(&self.metrics, &mut transaction, contract_history_rows).await?;
 
         let tx_event_rows = std::mem::take(&mut self.handler_store.tx_events);
@@ -1129,7 +1269,7 @@ impl Indexer {
             .map(|(_, row)| row)
             .collect();
 
-        // Keep txs_contracts aligned with durable block positions only.
+        // Keep txs_contracts_sequenced aligned with durable block positions only.
         let mut tx_contract_rows = Vec::new();
         for tx in &tx_rows {
             if tx.block_hash.is_none() {
@@ -1149,7 +1289,9 @@ impl Indexer {
                 });
             }
         }
-        insert_txs_contracts(&self.metrics, &mut transaction, tx_contract_rows).await?;
+        insert_txs_contracts_sequenced(&self.metrics, &mut transaction, tx_contract_rows).await?;
+        insert_txs_contracts_settled(&self.metrics, &mut transaction, &tx_rows, &tx_status_rows)
+            .await?;
         insert_or_copy_blobs(&self.metrics, &mut transaction, blob_rows).await?;
 
         let proof_rows: Vec<_> = self
@@ -1291,6 +1433,11 @@ fn tx_store_bytes(tx: &TxStore) -> usize {
         + I64_BYTES
         + tx.lane_id.as_ref().map_or(0, |lane| lane.to_string().len())
         + I32_BYTES
+        + tx.settled_block_hash
+            .as_ref()
+            .map_or(0, |hash| hash.0.len())
+        + optional_i64_bytes(tx.settled_block_height.map(|h| h.0 as i64))
+        + optional_i32_bytes(tx.settled_index)
         + optional_text_bytes(tx.identity.as_deref())
 }
 
@@ -1306,6 +1453,12 @@ fn tx_status_update_row_bytes(row: &TxStatusUpdateRow) -> usize {
     row.parent_dp_hash.0.len()
         + row.tx_hash.0.len()
         + transaction_status_text(&row.transaction_status).len()
+        + row
+            .settled_block_hash
+            .as_ref()
+            .map_or(0, |hash| hash.0.len())
+        + optional_i64_bytes(row.settled_block_height)
+        + optional_i32_bytes(row.settled_index)
 }
 
 fn contract_upsert_row_bytes(row: &ContractUpsertRow) -> usize {
@@ -1535,10 +1688,10 @@ async fn upsert_transactions(
     }
 
     let inline_bytes: usize = rows.iter().map(tx_store_bytes).sum();
-    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(rows.len(), 10) {
+    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(rows.len(), 13) {
         let started = Instant::now();
         let mut query_builder = QueryBuilder::<Postgres>::new(
-            "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) ",
+            "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, settled_block_hash, settled_block_height, settled_index, identity) ",
         );
         query_builder.push_values(rows.iter(), |mut b, tx| {
             b.push_bind(tx.dp_hash.clone())
@@ -1550,6 +1703,9 @@ async fn upsert_transactions(
                 .push_bind(tx.block_height.0 as i64)
                 .push_bind(tx.lane_id.clone())
                 .push_bind(tx.index)
+                .push_bind(tx.settled_block_hash.clone())
+                .push_bind(tx.settled_block_height.map(|h| h.0 as i64))
+                .push_bind(tx.settled_index)
                 .push_bind(tx.identity.clone());
         });
 
@@ -1560,6 +1716,9 @@ async fn upsert_transactions(
                 lane_id = COALESCE(excluded.lane_id, transactions.lane_id),
                 block_hash = COALESCE(excluded.block_hash, transactions.block_hash),
                 block_height = GREATEST(excluded.block_height, transactions.block_height),
+                settled_block_hash = COALESCE(excluded.settled_block_hash, transactions.settled_block_hash),
+                settled_block_height = COALESCE(excluded.settled_block_height, transactions.settled_block_height),
+                settled_index = COALESCE(excluded.settled_index, transactions.settled_index),
                 identity = COALESCE(excluded.identity, transactions.identity),
                 transaction_status = CASE
                     WHEN (
@@ -1604,6 +1763,9 @@ async fn upsert_transactions(
             block_height BIGINT,
             lane_id TEXT,
             index INT,
+            settled_block_hash TEXT,
+            settled_block_height BIGINT,
+            settled_index INT,
             identity TEXT
         ) ON COMMIT DROP",
     )
@@ -1613,7 +1775,7 @@ async fn upsert_transactions(
     let mut lines = Vec::with_capacity(rows.len());
     for tx in rows {
         lines.push(format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             tx.dp_hash,
             tx.tx_hash,
             1_i32,
@@ -1623,6 +1785,9 @@ async fn upsert_transactions(
             tx.block_height.0,
             copy_optional_owned_text(tx.lane_id.as_ref().map(ToString::to_string)),
             tx.index,
+            copy_optional_owned_text(tx.settled_block_hash.as_ref().map(ToString::to_string)),
+            copy_optional_i64(tx.settled_block_height.map(|h| h.0 as i64)),
+            copy_optional_i32(tx.settled_index),
             copy_optional_text(tx.identity.as_deref()),
         ));
     }
@@ -1631,15 +1796,15 @@ async fn upsert_transactions(
     let mut stream = StreamableData::new(lines);
     let mut copy = transaction
         .copy_in_raw(
-            "COPY transactions_stage (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity) FROM STDIN WITH (FORMAT TEXT)",
+            "COPY transactions_stage (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, settled_block_hash, settled_block_height, settled_index, identity) FROM STDIN WITH (FORMAT TEXT)",
         )
         .await?;
     copy.read_from(&mut stream).await?;
     copy.finish().await?;
 
     sqlx::query(
-        "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity)
-         SELECT parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, identity
+        "INSERT INTO transactions (parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, settled_block_hash, settled_block_height, settled_index, identity)
+         SELECT parent_dp_hash, tx_hash, version, transaction_type, transaction_status, block_hash, block_height, lane_id, index, settled_block_hash, settled_block_height, settled_index, identity
          FROM transactions_stage
          ON CONFLICT (parent_dp_hash, tx_hash)
          DO UPDATE SET
@@ -1647,6 +1812,9 @@ async fn upsert_transactions(
             lane_id = COALESCE(excluded.lane_id, transactions.lane_id),
             block_hash = COALESCE(excluded.block_hash, transactions.block_hash),
             block_height = GREATEST(excluded.block_height, transactions.block_height),
+            settled_block_hash = COALESCE(excluded.settled_block_hash, transactions.settled_block_hash),
+            settled_block_height = COALESCE(excluded.settled_block_height, transactions.settled_block_height),
+            settled_index = COALESCE(excluded.settled_index, transactions.settled_index),
             identity = COALESCE(excluded.identity, transactions.identity),
             transaction_status = CASE
                 WHEN (
@@ -1680,7 +1848,7 @@ async fn upsert_transactions(
     Ok(())
 }
 
-async fn insert_txs_contracts(
+async fn insert_txs_contracts_sequenced(
     metrics: &IndexerMetrics,
     transaction: &mut sqlx::Transaction<'_, Postgres>,
     rows: Vec<TxContractRow>,
@@ -1694,7 +1862,7 @@ async fn insert_txs_contracts(
     if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(rows.len(), 5) {
         let started = Instant::now();
         let mut query_builder = QueryBuilder::<Postgres>::new(
-            "INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name, block_height, tx_index) ",
+            "INSERT INTO txs_contracts_sequenced (parent_dp_hash, tx_hash, contract_name, block_height, tx_index) ",
         );
         query_builder.push_values(rows.iter(), |mut b, row| {
             b.push_bind(row.parent_dp_hash.clone())
@@ -1705,9 +1873,13 @@ async fn insert_txs_contracts(
         });
         query_builder.push(" ON CONFLICT DO NOTHING");
         query_builder.build().execute(&mut **transaction).await?;
-        metrics.add_rows_written("txs_contracts", "values", row_count);
-        metrics.record_write_duration("txs_contracts", "values", started.elapsed().as_secs_f64());
-        metrics.add_bytes_written("txs_contracts", inline_bytes);
+        metrics.add_rows_written("txs_contracts_sequenced", "values", row_count);
+        metrics.record_write_duration(
+            "txs_contracts_sequenced",
+            "values",
+            started.elapsed().as_secs_f64(),
+        );
+        metrics.add_bytes_written("txs_contracts_sequenced", inline_bytes);
         return Ok(());
     }
 
@@ -1746,22 +1918,138 @@ async fn insert_txs_contracts(
     copy.finish().await?;
 
     sqlx::query(
-        "INSERT INTO txs_contracts (parent_dp_hash, tx_hash, contract_name, block_height, tx_index)
+        "INSERT INTO txs_contracts_sequenced (parent_dp_hash, tx_hash, contract_name, block_height, tx_index)
          SELECT parent_dp_hash, tx_hash, contract_name, block_height, tx_index FROM txs_contracts_stage
          ON CONFLICT DO NOTHING",
     )
     .execute(&mut **transaction)
     .await?;
-    metrics.add_rows_written("txs_contracts", "copy", row_count);
-    metrics.record_write_duration("txs_contracts", "copy", started.elapsed().as_secs_f64());
-    metrics.add_bytes_written("txs_contracts", staged_bytes);
+    metrics.add_rows_written("txs_contracts_sequenced", "copy", row_count);
+    metrics.record_write_duration(
+        "txs_contracts_sequenced",
+        "copy",
+        started.elapsed().as_secs_f64(),
+    );
+    metrics.add_bytes_written("txs_contracts_sequenced", staged_bytes);
+    Ok(())
+}
+
+async fn insert_txs_contracts_settled(
+    metrics: &IndexerMetrics,
+    transaction: &mut sqlx::Transaction<'_, Postgres>,
+    tx_rows: &[TxStore],
+    tx_status_rows: &[TxStatusUpdateRow],
+) -> Result<()> {
+    let started = Instant::now();
+    let mut lines = Vec::with_capacity(tx_rows.len() + tx_status_rows.len());
+    for tx in tx_rows {
+        if !IndexerHandlerStore::is_settlement_event(&tx.transaction_status) {
+            continue;
+        }
+        let (Some(settled_block_hash), Some(settled_block_height), Some(settled_index)) = (
+            tx.settled_block_hash.as_ref(),
+            tx.settled_block_height,
+            tx.settled_index,
+        ) else {
+            continue;
+        };
+        lines.push(format!(
+            "{}\t{}\t{}\t{}\t{}\n",
+            tx.dp_hash, tx.tx_hash, settled_block_hash, settled_block_height.0, settled_index
+        ));
+    }
+    for tx in tx_status_rows {
+        if !IndexerHandlerStore::is_settlement_event(&tx.transaction_status) {
+            continue;
+        }
+        let (Some(settled_block_hash), Some(settled_block_height), Some(settled_index)) = (
+            tx.settled_block_hash.as_ref(),
+            tx.settled_block_height,
+            tx.settled_index,
+        ) else {
+            continue;
+        };
+        lines.push(format!(
+            "{}\t{}\t{}\t{}\t{}\n",
+            tx.parent_dp_hash, tx.tx_hash, settled_block_hash, settled_block_height, settled_index
+        ));
+    }
+    if lines.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        "CREATE TEMPORARY TABLE settled_txs_stage (
+            parent_dp_hash TEXT NOT NULL,
+            tx_hash TEXT NOT NULL,
+            settled_block_hash TEXT NOT NULL,
+            settled_block_height BIGINT NOT NULL,
+            settled_index INT NOT NULL
+        ) ON COMMIT DROP",
+    )
+    .execute(&mut **transaction)
+    .await?;
+    let staged_bytes: usize = lines.iter().map(|l| l.len()).sum();
+    let row_count = lines.len();
+    let mut stream = StreamableData::new(lines);
+    let mut copy = transaction
+        .copy_in_raw(
+            "COPY settled_txs_stage (parent_dp_hash, tx_hash, settled_block_hash, settled_block_height, settled_index) FROM STDIN WITH (FORMAT TEXT)",
+        )
+        .await?;
+    copy.read_from(&mut stream).await?;
+    copy.finish().await?;
+
+    sqlx::query(
+        "INSERT INTO txs_contracts_settled (
+            parent_dp_hash,
+            tx_hash,
+            contract_name,
+            settled_block_hash,
+            settled_block_height,
+            settled_index
+        )
+        SELECT
+            s.parent_dp_hash,
+            s.tx_hash,
+            c.contract_name,
+            s.settled_block_hash,
+            s.settled_block_height,
+            s.settled_index
+        FROM settled_txs_stage s
+        JOIN (
+            SELECT DISTINCT s1.parent_dp_hash, s1.tx_hash, tc.contract_name
+            FROM settled_txs_stage s1
+            JOIN txs_contracts_sequenced tc
+                ON tc.parent_dp_hash = s1.parent_dp_hash
+               AND tc.tx_hash = s1.tx_hash
+            UNION
+            SELECT DISTINCT s2.parent_dp_hash, s2.tx_hash, ch.contract_name
+            FROM settled_txs_stage s2
+            JOIN contract_history ch
+                ON ch.parent_dp_hash = s2.parent_dp_hash
+               AND ch.tx_hash = s2.tx_hash
+        ) c
+            ON c.parent_dp_hash = s.parent_dp_hash
+           AND c.tx_hash = s.tx_hash
+        ON CONFLICT DO NOTHING",
+    )
+    .execute(&mut **transaction)
+    .await?;
+
+    metrics.add_rows_written("txs_contracts_settled", "copy", row_count);
+    metrics.record_write_duration(
+        "txs_contracts_settled",
+        "copy",
+        started.elapsed().as_secs_f64(),
+    );
+    metrics.add_bytes_written("txs_contracts_settled", staged_bytes);
     Ok(())
 }
 
 async fn apply_transaction_status_updates(
     metrics: &IndexerMetrics,
     transaction: &mut sqlx::Transaction<'_, Postgres>,
-    rows: Vec<TxStatusUpdateRow>,
+    rows: &[TxStatusUpdateRow],
 ) -> Result<()> {
     if rows.is_empty() {
         return Ok(());
@@ -1769,7 +2057,7 @@ async fn apply_transaction_status_updates(
 
     let inline_bytes: usize = rows.iter().map(tx_status_update_row_bytes).sum();
     let row_count = rows.len();
-    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(row_count, 3) {
+    if inline_bytes <= INLINE_INSERT_THRESHOLD_BYTES && fits_single_values_query(row_count, 6) {
         let started = Instant::now();
         let mut query_builder = QueryBuilder::<Postgres>::new(
             "UPDATE transactions SET
@@ -1795,16 +2083,22 @@ async fn apply_transaction_status_updates(
                     )
                     THEN status_updates.transaction_status
                     ELSE transactions.transaction_status
-                END
+                END,
+                settled_block_hash = COALESCE(status_updates.settled_block_hash, transactions.settled_block_hash),
+                settled_block_height = COALESCE(status_updates.settled_block_height, transactions.settled_block_height),
+                settled_index = COALESCE(status_updates.settled_index, transactions.settled_index)
             FROM (",
         );
-        query_builder.push_values(rows.into_iter(), |mut b, row| {
-            b.push_bind(row.parent_dp_hash)
-                .push_bind(row.tx_hash)
-                .push_bind(row.transaction_status);
+        query_builder.push_values(rows.iter(), |mut b, row| {
+            b.push_bind(row.parent_dp_hash.clone())
+                .push_bind(row.tx_hash.clone())
+                .push_bind(row.transaction_status.clone())
+                .push_bind(row.settled_block_hash.clone())
+                .push_bind(row.settled_block_height)
+                .push_bind(row.settled_index);
         });
         query_builder.push(
-            ") AS status_updates(parent_dp_hash, tx_hash, transaction_status)
+            ") AS status_updates(parent_dp_hash, tx_hash, transaction_status, settled_block_hash, settled_block_height, settled_index)
             WHERE transactions.parent_dp_hash = status_updates.parent_dp_hash
               AND transactions.tx_hash = status_updates.tx_hash",
         );
@@ -1824,7 +2118,10 @@ async fn apply_transaction_status_updates(
         "CREATE TEMPORARY TABLE transaction_status_updates_stage (
             parent_dp_hash TEXT NOT NULL,
             tx_hash TEXT NOT NULL,
-            transaction_status transaction_status NOT NULL
+            transaction_status transaction_status NOT NULL,
+            settled_block_hash TEXT,
+            settled_block_height BIGINT,
+            settled_index INT
         ) ON COMMIT DROP",
     )
     .execute(&mut **transaction)
@@ -1833,17 +2130,20 @@ async fn apply_transaction_status_updates(
     let mut lines = Vec::with_capacity(row_count);
     for row in rows {
         lines.push(format!(
-            "{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\t{}\n",
             row.parent_dp_hash,
             row.tx_hash,
             transaction_status_text(&row.transaction_status),
+            copy_optional_owned_text(row.settled_block_hash.as_ref().map(ToString::to_string)),
+            copy_optional_i64(row.settled_block_height),
+            copy_optional_i32(row.settled_index),
         ));
     }
     let staged_bytes: usize = lines.iter().map(|l| l.len()).sum();
     let mut stream = StreamableData::new(lines);
     let mut copy = transaction
         .copy_in_raw(
-            "COPY transaction_status_updates_stage (parent_dp_hash, tx_hash, transaction_status) FROM STDIN WITH (FORMAT TEXT)",
+            "COPY transaction_status_updates_stage (parent_dp_hash, tx_hash, transaction_status, settled_block_hash, settled_block_height, settled_index) FROM STDIN WITH (FORMAT TEXT)",
         )
         .await?;
     copy.read_from(&mut stream).await?;
@@ -1870,10 +2170,13 @@ async fn apply_transaction_status_updates(
                         WHEN 'failure' THEN 4
                         WHEN 'timed_out' THEN 4
                     END
-                )
-                THEN status_updates.transaction_status
-                ELSE transactions.transaction_status
-            END
+                    )
+                    THEN status_updates.transaction_status
+                    ELSE transactions.transaction_status
+                END,
+            settled_block_hash = COALESCE(status_updates.settled_block_hash, transactions.settled_block_hash),
+            settled_block_height = COALESCE(status_updates.settled_block_height, transactions.settled_block_height),
+            settled_index = COALESCE(status_updates.settled_index, transactions.settled_index)
          FROM transaction_status_updates_stage AS status_updates
          WHERE transactions.parent_dp_hash = status_updates.parent_dp_hash
            AND transactions.tx_hash = status_updates.tx_hash",
