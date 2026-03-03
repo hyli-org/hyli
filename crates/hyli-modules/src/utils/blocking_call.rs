@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
-use tracing::warn;
+use tracing::error;
 
 #[derive(Debug, Clone, Copy)]
 pub struct BlockingCallPolicy {
@@ -23,7 +23,7 @@ impl BlockingCallPolicy {
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .map(Duration::from_millis)
-            .unwrap_or_else(|| Duration::from_secs(5));
+            .unwrap_or_else(|| Duration::from_secs(30));
         let max_retries = std::env::var(max_retries_var)
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
@@ -83,78 +83,52 @@ where
     OnRetry: FnMut(),
     OnTimeout: FnMut(),
 {
-    let mut attempts = 0usize;
-    loop {
-        let start = Instant::now();
-        let (tx, rx) = std::sync::mpsc::sync_channel(1);
-        let op_fn = build();
+    let _ = (
+        &policy.max_retries,
+        &policy.retry_backoff,
+        &policy.retry_on_timeout,
+    );
+    let _ = &mut on_retry;
 
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn_blocking(move || {
-                let _ = tx.send(op_fn());
-            });
-        } else {
-            std::thread::spawn(move || {
-                let _ = tx.send(op_fn());
-            });
+    let start = Instant::now();
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let op_fn = build();
+
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        handle.spawn_blocking(move || {
+            let _ = tx.send(op_fn());
+        });
+    } else {
+        std::thread::spawn(move || {
+            let _ = tx.send(op_fn());
+        });
+    }
+
+    match rx.recv_timeout(policy.timeout) {
+        Ok(result) => {
+            on_op(start.elapsed().as_micros() as u64);
+            if let Err(ref err) = result {
+                error!(op = op, keyspace = keyspace, error = %err, "blocking call failed");
+            }
+            result
         }
-
-        match rx.recv_timeout(policy.timeout) {
-            Ok(result) => {
-                on_op(start.elapsed().as_micros() as u64);
-                if result.is_err() && attempts < policy.max_retries {
-                    attempts += 1;
-                    on_retry();
-                    warn!(
-                        op = op,
-                        keyspace = keyspace,
-                        attempt = attempts,
-                        max_retries = policy.max_retries,
-                        "retrying failed blocking call"
-                    );
-                    continue;
-                }
-                return result;
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                on_op(start.elapsed().as_micros() as u64);
-                on_timeout();
-                if policy.retry_on_timeout && attempts < policy.max_retries {
-                    attempts += 1;
-                    on_retry();
-                    warn!(
-                        op = op,
-                        keyspace = keyspace,
-                        attempt = attempts,
-                        max_retries = policy.max_retries,
-                        timeout_ms = policy.timeout.as_millis(),
-                        "blocking call timed out; retrying"
-                    );
-                    continue;
-                }
-                return Err(anyhow!(
-                    "blocking call {} on {} exceeded timeout budget ({} ms)",
-                    op,
-                    keyspace,
-                    policy.timeout.as_millis()
-                ));
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                on_op(start.elapsed().as_micros() as u64);
-                if attempts < policy.max_retries {
-                    attempts += 1;
-                    on_retry();
-                    warn!(
-                        op = op,
-                        keyspace = keyspace,
-                        attempt = attempts,
-                        max_retries = policy.max_retries,
-                        "retrying blocking call after worker disconnect"
-                    );
-                    continue;
-                }
-                return Err(anyhow!("blocking worker disconnected while running {}", op));
-            }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            on_op(start.elapsed().as_micros() as u64);
+            on_timeout();
+            let err = anyhow!(
+                "blocking call {} on {} exceeded timeout budget ({} ms)",
+                op,
+                keyspace,
+                policy.timeout.as_millis()
+            );
+            error!(op = op, keyspace = keyspace, error = %err, "blocking call timed out");
+            Err(err)
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            on_op(start.elapsed().as_micros() as u64);
+            let err = anyhow!("blocking worker disconnected while running {}", op);
+            error!(op = op, keyspace = keyspace, error = %err, "blocking worker disconnected");
+            Err(err)
         }
     }
 }
@@ -176,75 +150,45 @@ where
     OnRetry: FnMut(),
     OnTimeout: FnMut(),
 {
-    let mut attempts = 0usize;
-    loop {
-        let start = Instant::now();
-        let handle = tokio::task::spawn_blocking(build());
-        let timed = tokio::time::timeout(policy.timeout, handle).await;
-        match timed {
-            Ok(joined) => match joined {
-                Ok(Ok(value)) => {
-                    on_op(start.elapsed().as_micros() as u64);
-                    return Ok(value);
-                }
-                Ok(Err(err)) => {
-                    on_op(start.elapsed().as_micros() as u64);
-                    if attempts >= policy.max_retries {
-                        return Err(err);
-                    }
-                    attempts += 1;
-                    on_retry();
-                    warn!(
-                        op = op,
-                        keyspace = keyspace,
-                        attempt = attempts,
-                        max_retries = policy.max_retries,
-                        "retrying failed blocking call"
-                    );
-                }
-                Err(join_err) => {
-                    on_op(start.elapsed().as_micros() as u64);
-                    if attempts >= policy.max_retries {
-                        return Err(anyhow!("blocking task join error: {}", join_err));
-                    }
-                    attempts += 1;
-                    on_retry();
-                    warn!(
-                        op = op,
-                        keyspace = keyspace,
-                        attempt = attempts,
-                        max_retries = policy.max_retries,
-                        error = %join_err,
-                        "retrying blocking call after join error"
-                    );
-                }
-            },
-            Err(_) => {
+    let _ = (
+        &policy.max_retries,
+        &policy.retry_backoff,
+        &policy.retry_on_timeout,
+    );
+    let _ = &mut on_retry;
+
+    let start = Instant::now();
+    let handle = tokio::task::spawn_blocking(build());
+    let timed = tokio::time::timeout(policy.timeout, handle).await;
+    match timed {
+        Ok(joined) => match joined {
+            Ok(Ok(value)) => {
                 on_op(start.elapsed().as_micros() as u64);
-                on_timeout();
-                if policy.retry_on_timeout && attempts < policy.max_retries {
-                    attempts += 1;
-                    on_retry();
-                    warn!(
-                        op = op,
-                        keyspace = keyspace,
-                        attempt = attempts,
-                        max_retries = policy.max_retries,
-                        timeout_ms = policy.timeout.as_millis(),
-                        "blocking call timed out; retrying"
-                    );
-                } else {
-                    return Err(anyhow!(
-                        "blocking call timed out after {} ms (op={}, keyspace={})",
-                        policy.timeout.as_millis(),
-                        op,
-                        keyspace
-                    ));
-                }
+                Ok(value)
             }
-        }
-        if !policy.retry_backoff.is_zero() {
-            tokio::time::sleep(policy.retry_backoff).await;
+            Ok(Err(err)) => {
+                on_op(start.elapsed().as_micros() as u64);
+                error!(op = op, keyspace = keyspace, error = %err, "blocking call failed");
+                Err(err)
+            }
+            Err(join_err) => {
+                on_op(start.elapsed().as_micros() as u64);
+                let err = anyhow!("blocking task join error: {}", join_err);
+                error!(op = op, keyspace = keyspace, error = %err, "blocking task join error");
+                Err(err)
+            }
+        },
+        Err(_) => {
+            on_op(start.elapsed().as_micros() as u64);
+            on_timeout();
+            let err = anyhow!(
+                "blocking call timed out after {} ms (op={}, keyspace={})",
+                policy.timeout.as_millis(),
+                op,
+                keyspace
+            );
+            error!(op = op, keyspace = keyspace, error = %err, "blocking call timed out");
+            Err(err)
         }
     }
 }

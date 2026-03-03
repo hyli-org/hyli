@@ -406,7 +406,7 @@ impl Storage for LanesStorage {
         let key = format!("{lane_id}:{dp_hash}");
         let metadata = encode_metadata_to_item(lane_entry)?;
         let data = encode_data_proposal_to_item(dp_to_store)?;
-        let proofs = Slice::from(borsh::to_vec(&proofs)?);
+        let proofs = borsh::to_vec(&proofs)?;
 
         let mut batch = self.db.batch();
         batch.insert(&self.by_hash_metadata, key.clone(), metadata);
