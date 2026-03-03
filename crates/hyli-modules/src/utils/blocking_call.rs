@@ -6,73 +6,33 @@ use tracing::error;
 #[derive(Debug, Clone, Copy)]
 pub struct BlockingCallPolicy {
     pub timeout: Duration,
-    pub max_retries: usize,
-    pub retry_backoff: Duration,
-    pub retry_on_timeout: bool,
 }
 
 impl BlockingCallPolicy {
-    pub fn from_env(
-        timeout_var: &str,
-        max_retries_var: &str,
-        retry_backoff_var: Option<&str>,
-        retry_on_timeout_var: Option<&str>,
-        default_retry_on_timeout: bool,
-    ) -> Self {
+    pub fn from_env(timeout_var: &str) -> Self {
         let timeout = std::env::var(timeout_var)
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .map(Duration::from_millis)
             .unwrap_or_else(|| Duration::from_secs(30));
-        let max_retries = std::env::var(max_retries_var)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(2);
-        let retry_backoff = retry_backoff_var
-            .and_then(|var| std::env::var(var).ok())
-            .and_then(|v| v.parse::<u64>().ok())
-            .map(Duration::from_millis)
-            .unwrap_or_else(|| Duration::from_millis(50));
-        let retry_on_timeout = retry_on_timeout_var
-            .and_then(|var| std::env::var(var).ok())
-            .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-            .unwrap_or(default_retry_on_timeout);
-        Self {
-            timeout,
-            max_retries,
-            retry_backoff,
-            retry_on_timeout,
-        }
+        Self { timeout }
     }
 
     pub fn fjall_mempool_from_env() -> Self {
-        Self::from_env(
-            "HYLI_FJALL_TIMEOUT_MS",
-            "HYLI_FJALL_MAX_RETRIES",
-            None,
-            Some("HYLI_FJALL_RETRY_ON_TIMEOUT"),
-            false,
-        )
+        Self::from_env("HYLI_FJALL_TIMEOUT_MS")
     }
 
     pub fn fjall_da_from_env() -> Self {
-        Self::from_env(
-            "HYLI_FJALL_ASYNC_TIMEOUT_MS",
-            "HYLI_FJALL_ASYNC_MAX_RETRIES",
-            Some("HYLI_FJALL_ASYNC_RETRY_BACKOFF_MS"),
-            None,
-            true,
-        )
+        Self::from_env("HYLI_FJALL_ASYNC_TIMEOUT_MS")
     }
 }
 
-pub fn run_blocking_with_retry_sync<T, F, Op, OnOp, OnRetry, OnTimeout>(
+pub fn run_blocking_with_timeout_sync<T, F, Op, OnOp, OnTimeout>(
     policy: BlockingCallPolicy,
     op: &'static str,
     keyspace: &'static str,
     mut build: F,
     mut on_op: OnOp,
-    mut on_retry: OnRetry,
     mut on_timeout: OnTimeout,
 ) -> Result<T>
 where
@@ -80,16 +40,8 @@ where
     F: FnMut() -> Op,
     Op: FnOnce() -> Result<T> + Send + 'static,
     OnOp: FnMut(u64),
-    OnRetry: FnMut(),
     OnTimeout: FnMut(),
 {
-    let _ = (
-        &policy.max_retries,
-        &policy.retry_backoff,
-        &policy.retry_on_timeout,
-    );
-    let _ = &mut on_retry;
-
     let start = Instant::now();
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     let op_fn = build();
@@ -133,13 +85,12 @@ where
     }
 }
 
-pub async fn run_blocking_with_retry_async<T, F, Op, OnOp, OnRetry, OnTimeout>(
+pub async fn run_blocking_with_timeout_async<T, F, Op, OnOp, OnTimeout>(
     policy: BlockingCallPolicy,
     op: &'static str,
     keyspace: &'static str,
     mut build: F,
     mut on_op: OnOp,
-    mut on_retry: OnRetry,
     mut on_timeout: OnTimeout,
 ) -> Result<T>
 where
@@ -147,16 +98,8 @@ where
     F: FnMut() -> Op,
     Op: FnOnce() -> Result<T> + Send + 'static,
     OnOp: FnMut(u64),
-    OnRetry: FnMut(),
     OnTimeout: FnMut(),
 {
-    let _ = (
-        &policy.max_retries,
-        &policy.retry_backoff,
-        &policy.retry_on_timeout,
-    );
-    let _ = &mut on_retry;
-
     let start = Instant::now();
     let handle = tokio::task::spawn_blocking(build());
     let timed = tokio::time::timeout(policy.timeout, handle).await;

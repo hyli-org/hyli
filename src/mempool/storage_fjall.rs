@@ -10,7 +10,7 @@ use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slic
 use futures::Stream;
 use hyli_model::{LaneId, ProofData};
 use hyli_modules::utils::{
-    blocking_call::{run_blocking_with_retry_sync, BlockingCallPolicy},
+    blocking_call::{run_blocking_with_timeout_sync, BlockingCallPolicy},
     fjall_metrics::FjallMetrics,
 };
 use std::time::Instant;
@@ -194,13 +194,12 @@ impl LanesStorage {
         Op: FnOnce() -> Result<T> + Send + 'static,
     {
         let metrics = self.metrics.clone();
-        run_blocking_with_retry_sync(
+        run_blocking_with_timeout_sync(
             self.fjall_call_policy,
             op,
             keyspace,
             build,
             |micros| metrics.record_op(op, keyspace, micros),
-            || metrics.record_retry(op, keyspace),
             || metrics.record_timeout(op, keyspace),
         )
     }

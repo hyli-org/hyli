@@ -472,6 +472,29 @@ impl super::Mempool {
                         dps.push(dp);
                     }
                     Ok(EntryOrMissingHash::MissingHash(hash)) => {
+                        let meta_present = self
+                            .lanes
+                            .get_metadata_by_hash(lane_id, &hash)
+                            .ok()
+                            .flatten()
+                            .is_some();
+                        let data_present = self
+                            .lanes
+                            .get_dp_by_hash(lane_id, &hash)
+                            .ok()
+                            .flatten()
+                            .is_some();
+                        let lane_tip = self.lanes.get_lane_hash_tip(lane_id);
+                        warn!(
+                            "Missing DP while building signed block: lane {}, hash {}, from {:?}, to {}, lane_tip {:?}, metadata_present {}, data_present {}",
+                            lane_id,
+                            hash,
+                            from_hash,
+                            to_hash,
+                            lane_tip,
+                            meta_present,
+                            data_present
+                        );
                         bail!("Unexpected missing data proposal {hash} for lane {lane_id}");
                     }
                     Err(e) => {
@@ -643,6 +666,14 @@ impl super::Mempool {
                     .as_ref()
                     .and_then(|cut| cut.iter().find(|(v, _, _, _)| v == lane_id))
                     .map(|(_, h, _, _)| h);
+                debug!(
+                    "Lane cleanup needed for {}: missing cut hash {}, previous_committed {:?}, current_tip {:?}, pending_bucs {}",
+                    lane_id,
+                    data_proposal_hash,
+                    previous_committed_dp_hash,
+                    self.lanes.get_lane_hash_tip(lane_id),
+                    self.blocks_under_contruction.len()
+                );
                 if previous_committed_dp_hash == Some(data_proposal_hash) {
                     // No cut have been made for this validator; we keep the DPs
                     continue;

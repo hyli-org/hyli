@@ -5,7 +5,7 @@ use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
 use hyli_modules::utils::da_codec::DataAvailabilityServer;
 //use hyli_modules::modules::data_availability::blocks_memory::Blocks;
 use hyli_modules::modules::da_listener::{DaStreamPoll, SignedDaStream};
-use hyli_modules::utils::blocking_call::{run_blocking_with_retry_async, BlockingCallPolicy};
+use hyli_modules::utils::blocking_call::{run_blocking_with_timeout_async, BlockingCallPolicy};
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::TcpEvent;
@@ -598,7 +598,7 @@ impl DataAvailability {
         F: FnMut() -> Op,
         Op: FnOnce() -> Result<T> + Send + 'static,
     {
-        run_blocking_with_retry_async(
+        run_blocking_with_timeout_async(
             self.fjall_async_policy,
             op,
             keyspace,
@@ -607,7 +607,6 @@ impl DataAvailability {
                 self.blocks
                     .record_op(op, keyspace, Duration::from_micros(micros))
             },
-            || self.blocks.record_retry(op, keyspace),
             || self.blocks.record_timeout(op, keyspace),
         )
         .await
