@@ -181,18 +181,23 @@ pub async fn get_transactions_by_contract(
         match pagination.start_block {
             Some(start_block) => sqlx::query_as::<_, TransactionDb>(
                 r#"
-            SELECT t.* , bl.timestamp
-            FROM transactions t
-            JOIN txs_contracts tx_c
-              ON tx_c.parent_dp_hash = t.parent_dp_hash
-             AND tx_c.tx_hash = t.tx_hash
+            WITH contract_txs AS (
+                SELECT tx_c.parent_dp_hash, tx_c.tx_hash, tx_c.block_height, tx_c.tx_index
+                FROM txs_contracts_sequenced tx_c
+                WHERE tx_c.contract_name = $1
+                  AND tx_c.block_height <= $2
+                  AND tx_c.block_height > $3
+                ORDER BY tx_c.block_height DESC, tx_c.tx_index DESC
+                LIMIT $4
+            )
+            SELECT t.*, bl.timestamp
+            FROM contract_txs ct
+            JOIN transactions t
+              ON t.parent_dp_hash = ct.parent_dp_hash
+             AND t.tx_hash = ct.tx_hash
             LEFT JOIN blocks bl ON t.block_hash = bl.hash
             WHERE t.transaction_type = 'blob_transaction'
-              AND tx_c.contract_name = $1
-              AND bl.height <= $2
-              AND bl.height > $3
-            ORDER BY bl.height DESC, t.index DESC
-            LIMIT $4
+            ORDER BY ct.block_height DESC, ct.tx_index DESC
             "#,
             )
             .bind(contract_name)
@@ -201,16 +206,21 @@ pub async fn get_transactions_by_contract(
             .bind(pagination.nb_results.unwrap_or(10)),
             None => sqlx::query_as::<_, TransactionDb>(
                 r#"
+            WITH contract_txs AS (
+                SELECT tx_c.parent_dp_hash, tx_c.tx_hash, tx_c.block_height, tx_c.tx_index
+                FROM txs_contracts_sequenced tx_c
+                WHERE tx_c.contract_name = $1
+                ORDER BY tx_c.block_height DESC, tx_c.tx_index DESC
+                LIMIT $2
+            )
             SELECT t.*, bl.timestamp
-            FROM transactions t
-            JOIN txs_contracts tx_c
-              ON tx_c.parent_dp_hash = t.parent_dp_hash
-             AND tx_c.tx_hash = t.tx_hash
+            FROM contract_txs ct
+            JOIN transactions t
+              ON t.parent_dp_hash = ct.parent_dp_hash
+             AND t.tx_hash = ct.tx_hash
             LEFT JOIN blocks bl ON t.block_hash = bl.hash
             WHERE t.transaction_type = 'blob_transaction'
-              AND tx_c.contract_name = $1
-            ORDER BY bl.height DESC, t.index DESC
-            LIMIT $2
+            ORDER BY ct.block_height DESC, ct.tx_index DESC
             "#,
             )
             .bind(contract_name)
@@ -285,16 +295,18 @@ pub async fn get_last_settled_tx_by_contract(
     let tx_id = log_error!(
         sqlx::query_as::<_, TxId>(
             "
-            SELECT 
-                t.parent_dp_hash, t.tx_hash 
-            FROM 
-                transactions t
-            JOIN txs_contracts tx_c
+            SELECT
+                t.parent_dp_hash, t.tx_hash
+            FROM
+                txs_contracts_settled tx_c
+            JOIN transactions t
                 ON tx_c.parent_dp_hash = t.parent_dp_hash
                AND tx_c.tx_hash = t.tx_hash
             WHERE tx_c.contract_name = $1
-            AND t.transaction_status = ANY($2) 
-            ORDER BY t.block_height DESC, t.index DESC LIMIT 1
+              AND t.transaction_type = 'blob_transaction'
+              AND t.transaction_status = ANY($2)
+            ORDER BY tx_c.settled_block_height DESC, tx_c.settled_index DESC
+            LIMIT 1
             "
         )
         .bind(contract_name)
