@@ -18,7 +18,7 @@ use tracing::{info, warn};
 
 use crate::{
     mempool::storage::MetadataOrMissingHash,
-    model::{DataProposal, DataProposalHash, DataProposalParent, Hashed, PoDA},
+    model::{DataProposal, DataProposalHash, Hashed, PoDA},
 };
 use hyli_modules::log_warn;
 
