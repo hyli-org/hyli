@@ -57,7 +57,7 @@ use std::{
 };
 use testcontainers_modules::{
     postgres::Postgres,
-    testcontainers::{core::ContainerPort, runners::AsyncRunner, ContainerAsync, ImageExt},
+    testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
 };
 use tracing::{error, info, warn};
 use utoipa::OpenApi;
