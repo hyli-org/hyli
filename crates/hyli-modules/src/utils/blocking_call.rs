@@ -101,27 +101,18 @@ where
     OnTimeout: FnMut(),
 {
     let start = Instant::now();
-    let handle = tokio::task::spawn_blocking(build());
-    let timed = tokio::time::timeout(policy.timeout, handle).await;
-    match timed {
-        Ok(joined) => match joined {
-            Ok(Ok(value)) => {
-                on_op(start.elapsed().as_micros() as u64);
-                Ok(value)
-            }
-            Ok(Err(err)) => {
-                on_op(start.elapsed().as_micros() as u64);
-                error!(op = op, keyspace = keyspace, error = %err, "blocking call failed");
-                Err(err)
-            }
-            Err(join_err) => {
-                on_op(start.elapsed().as_micros() as u64);
-                let err = anyhow!("blocking task join error: {}", join_err);
-                error!(op = op, keyspace = keyspace, error = %err, "blocking task join error");
-                Err(err)
-            }
-        },
-        Err(_) => {
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let op_fn = build();
+    tokio::task::spawn_blocking(move || {
+        let _ = tx.send(op_fn());
+    });
+
+    let poll_interval = Duration::from_millis(25);
+    let deadline = start + policy.timeout;
+
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
             on_op(start.elapsed().as_micros() as u64);
             on_timeout();
             let err = anyhow!(
@@ -131,7 +122,100 @@ where
                 keyspace
             );
             error!(op = op, keyspace = keyspace, error = %err, "blocking call timed out");
-            Err(err)
+            return Err(err);
         }
+
+        let remaining = deadline.saturating_duration_since(now);
+        let wait_for = remaining.min(poll_interval);
+        match rx.recv_timeout(wait_for) {
+            Ok(result) => {
+                on_op(start.elapsed().as_micros() as u64);
+                if let Err(ref err) = result {
+                    error!(op = op, keyspace = keyspace, error = %err, "blocking call failed");
+                }
+                return result;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                on_op(start.elapsed().as_micros() as u64);
+                let err = anyhow!("blocking worker disconnected while running {}", op);
+                error!(op = op, keyspace = keyspace, error = %err, "blocking worker disconnected");
+                return Err(err);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    #[test]
+    fn sync_timeout_triggers_timeout_callback() {
+        let timeout_calls = Arc::new(AtomicUsize::new(0));
+        let op_calls = Arc::new(AtomicUsize::new(0));
+
+        let timeout_calls_cb = Arc::clone(&timeout_calls);
+        let op_calls_cb = Arc::clone(&op_calls);
+        let res = run_blocking_with_timeout_sync(
+            BlockingCallPolicy {
+                timeout: Duration::from_millis(10),
+            },
+            "test_sync",
+            "test_keyspace",
+            || {
+                move || {
+                    std::thread::sleep(Duration::from_millis(200));
+                    Ok::<(), anyhow::Error>(())
+                }
+            },
+            move |_| {
+                op_calls_cb.fetch_add(1, Ordering::Relaxed);
+            },
+            move || {
+                timeout_calls_cb.fetch_add(1, Ordering::Relaxed);
+            },
+        );
+
+        assert!(res.is_err());
+        assert_eq!(timeout_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(op_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn async_timeout_triggers_timeout_callback() {
+        let timeout_calls = Arc::new(AtomicUsize::new(0));
+        let op_calls = Arc::new(AtomicUsize::new(0));
+
+        let timeout_calls_cb = Arc::clone(&timeout_calls);
+        let op_calls_cb = Arc::clone(&op_calls);
+        let res = run_blocking_with_timeout_async(
+            BlockingCallPolicy {
+                timeout: Duration::from_millis(10),
+            },
+            "test_async",
+            "test_keyspace",
+            || {
+                move || {
+                    std::thread::sleep(Duration::from_millis(200));
+                    Ok::<(), anyhow::Error>(())
+                }
+            },
+            move |_| {
+                op_calls_cb.fetch_add(1, Ordering::Relaxed);
+            },
+            move || {
+                timeout_calls_cb.fetch_add(1, Ordering::Relaxed);
+            },
+        )
+        .await;
+
+        assert!(res.is_err());
+        assert_eq!(timeout_calls.load(Ordering::Relaxed), 1);
+        assert_eq!(op_calls.load(Ordering::Relaxed), 1);
     }
 }
