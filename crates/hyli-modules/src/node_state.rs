@@ -171,10 +171,14 @@ pub enum TxError {
     BlobsHashMismatch,
 
     /// Contract is in RegisterWithConstructor state at settlement end; constructor blob missing
-    MissingConstructorBlob { contract_name: ContractName },
+    MissingConstructorBlob {
+        contract_name: ContractName,
+    },
 
     /// Contract is in WaitingDeletion state at settlement end; deletion blob missing
-    MissingDeletionBlob { contract_name: ContractName },
+    MissingDeletionBlob {
+        contract_name: ContractName,
+    },
 
     /// On-chain execution failed for a blob
     OnChainExecutionFailed {
@@ -877,7 +881,9 @@ impl<'any> NodeStateProcessing<'any> {
                     );
                     callback.on_event(&TxEvent::TxError(
                         &unsettled_tx.tx_id,
-                        TxError::MissingConstructorBlob { contract_name: contract_name.clone() },
+                        TxError::MissingConstructorBlob {
+                            contract_name: contract_name.clone(),
+                        },
                     ));
                     return SettlementResult {
                         settlement_status: SettlementStatus::SettleAsFailed,
@@ -892,7 +898,9 @@ impl<'any> NodeStateProcessing<'any> {
                     );
                     callback.on_event(&TxEvent::TxError(
                         &unsettled_tx.tx_id,
-                        TxError::MissingDeletionBlob { contract_name: contract_name.clone() },
+                        TxError::MissingDeletionBlob {
+                            contract_name: contract_name.clone(),
+                        },
                     ));
                     return SettlementResult {
                         settlement_status: SettlementStatus::SettleAsFailed,
