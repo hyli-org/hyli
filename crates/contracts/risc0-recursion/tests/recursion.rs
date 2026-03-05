@@ -4,7 +4,7 @@ use client_sdk::{
 };
 use hydentity::{client::tx_executor_handler::register_identity, Hydentity};
 use hyli_risc0_recursion::ProofInput;
-use sdk::{Blob, Calldata, ContractName, HyliOutput};
+use sdk::{Calldata, ContractName, HyliOutput};
 
 contract_states!(
     struct States {

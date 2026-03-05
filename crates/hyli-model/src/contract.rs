@@ -123,6 +123,14 @@ pub struct Calldata {
     pub private_input: Vec<u8>,
 }
 
+impl Calldata {
+    pub fn get_blob(&self) -> Result<&Blob, String> {
+        self.blobs
+            .get(&self.index)
+            .ok_or_else(|| format!("Blob with index {} not found in calldata", self.index.0))
+    }
+}
+
 /// State commitment of the contract.
 #[derive(
     Default, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize,
