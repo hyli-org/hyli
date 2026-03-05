@@ -2,7 +2,11 @@ use crate::utils::fjall_metrics::FjallMetrics;
 use anyhow::{Context, Result};
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slice};
 use sdk::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock};
-use std::{fmt::Debug, path::Path, time::Instant};
+use std::{
+    fmt::Debug,
+    path::Path,
+    time::{Duration, Instant},
+};
 use tracing::{debug, info, trace, warn};
 
 struct FjallHashKey(ConsensusProposalHash);
