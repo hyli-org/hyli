@@ -4,6 +4,9 @@ id = "node"
 log_format = "full"
 # Directory name to store node state.
 data_directory = "data_node"
+# If true, back up non-empty data directory when manifest is missing/empty.
+# If false, delete that invalid directory and recreate it empty.
+backup_on_invalid_manifest = false
 
 # Fast Catchup mode
 run_fast_catchup = false

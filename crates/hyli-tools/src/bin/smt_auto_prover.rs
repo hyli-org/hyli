@@ -10,7 +10,7 @@ use hyli_contract_sdk::api::NodeInfo;
 use hyli_modules::{
     bus::SharedMessageBus,
     modules::{
-        BuildApiContextInner, ModulesHandler,
+        BuildApiContextInner, ModulesHandler, ModulesHandlerOptions,
         admin::{AdminApi, AdminApiRunContext},
         contract_listener::{ContractListener, ContractListenerConf},
         prover::{AutoProver, AutoProverCtx},
@@ -52,7 +52,11 @@ async fn main() -> Result<()> {
     });
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
+    let mut handler = ModulesHandler::new(
+        &bus,
+        config.data_directory.clone(),
+        ModulesHandlerOptions::default(),
+    )?;
 
     hyli_registry::upload_elf(
         smt_token::client::tx_executor_handler::metadata::SMT_TOKEN_ELF,
