@@ -1,7 +1,10 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
-use tracing::error;
+use tracing::{debug, error, warn};
+
+static BLOCKING_CALL_ID: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy)]
 pub struct BlockingCallPolicy {
@@ -23,7 +26,12 @@ impl BlockingCallPolicy {
     }
 
     pub fn fjall_da_from_env() -> Self {
-        Self::from_env("HYLI_FJALL_ASYNC_TIMEOUT_MS")
+        let timeout = std::env::var("HYLI_FJALL_ASYNC_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or_else(|| Duration::from_secs(10 * 60));
+        Self { timeout }
     }
 }
 
@@ -42,9 +50,18 @@ where
     OnOp: FnMut(u64),
     OnTimeout: FnMut(),
 {
+    let call_id = BLOCKING_CALL_ID.fetch_add(1, Ordering::Relaxed);
     let start = Instant::now();
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     let op_fn = build();
+
+    debug!(
+        call_id,
+        op = op,
+        keyspace = keyspace,
+        timeout_ms = policy.timeout.as_millis(),
+        "starting blocking call"
+    );
 
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         handle.spawn_blocking(move || {
@@ -58,14 +75,31 @@ where
 
     match rx.recv_timeout(policy.timeout) {
         Ok(result) => {
-            on_op(start.elapsed().as_micros() as u64);
+            let elapsed_micros = start.elapsed().as_micros() as u64;
+            on_op(elapsed_micros);
             if let Err(ref err) = result {
-                error!(op = op, keyspace = keyspace, error = %err, "blocking call failed");
+                error!(
+                    call_id,
+                    op = op,
+                    keyspace = keyspace,
+                    elapsed_micros,
+                    error = %err,
+                    "blocking call failed"
+                );
+            } else {
+                debug!(
+                    call_id,
+                    op = op,
+                    keyspace = keyspace,
+                    elapsed_micros,
+                    "blocking call completed"
+                );
             }
             result
         }
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            on_op(start.elapsed().as_micros() as u64);
+            let elapsed_micros = start.elapsed().as_micros() as u64;
+            on_op(elapsed_micros);
             on_timeout();
             let err = anyhow!(
                 "blocking call {} on {} exceeded timeout budget ({} ms)",
@@ -73,13 +107,29 @@ where
                 keyspace,
                 policy.timeout.as_millis()
             );
-            error!(op = op, keyspace = keyspace, error = %err, "blocking call timed out");
+            warn!(
+                call_id,
+                op = op,
+                keyspace = keyspace,
+                timeout_ms = policy.timeout.as_millis(),
+                elapsed_micros,
+                error = %err,
+                "blocking call timed out"
+            );
             Err(err)
         }
         Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-            on_op(start.elapsed().as_micros() as u64);
+            let elapsed_micros = start.elapsed().as_micros() as u64;
+            on_op(elapsed_micros);
             let err = anyhow!("blocking worker disconnected while running {}", op);
-            error!(op = op, keyspace = keyspace, error = %err, "blocking worker disconnected");
+            error!(
+                call_id,
+                op = op,
+                keyspace = keyspace,
+                elapsed_micros,
+                error = %err,
+                "blocking worker disconnected"
+            );
             Err(err)
         }
     }
@@ -100,9 +150,19 @@ where
     OnOp: FnMut(u64),
     OnTimeout: FnMut(),
 {
+    let call_id = BLOCKING_CALL_ID.fetch_add(1, Ordering::Relaxed);
     let start = Instant::now();
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     let op_fn = build();
+
+    debug!(
+        call_id,
+        op = op,
+        keyspace = keyspace,
+        timeout_ms = policy.timeout.as_millis(),
+        "starting blocking call"
+    );
+
     tokio::task::spawn_blocking(move || {
         let _ = tx.send(op_fn());
     });
@@ -113,7 +173,8 @@ where
     loop {
         let now = Instant::now();
         if now >= deadline {
-            on_op(start.elapsed().as_micros() as u64);
+            let elapsed_micros = start.elapsed().as_micros() as u64;
+            on_op(elapsed_micros);
             on_timeout();
             let err = anyhow!(
                 "blocking call timed out after {} ms (op={}, keyspace={})",
@@ -121,7 +182,15 @@ where
                 op,
                 keyspace
             );
-            error!(op = op, keyspace = keyspace, error = %err, "blocking call timed out");
+            warn!(
+                call_id,
+                op = op,
+                keyspace = keyspace,
+                timeout_ms = policy.timeout.as_millis(),
+                elapsed_micros,
+                error = %err,
+                "blocking call timed out"
+            );
             return Err(err);
         }
 
@@ -129,17 +198,41 @@ where
         let wait_for = remaining.min(poll_interval);
         match rx.recv_timeout(wait_for) {
             Ok(result) => {
-                on_op(start.elapsed().as_micros() as u64);
+                let elapsed_micros = start.elapsed().as_micros() as u64;
+                on_op(elapsed_micros);
                 if let Err(ref err) = result {
-                    error!(op = op, keyspace = keyspace, error = %err, "blocking call failed");
+                    error!(
+                        call_id,
+                        op = op,
+                        keyspace = keyspace,
+                        elapsed_micros,
+                        error = %err,
+                        "blocking call failed"
+                    );
+                } else {
+                    debug!(
+                        call_id,
+                        op = op,
+                        keyspace = keyspace,
+                        elapsed_micros,
+                        "blocking call completed"
+                    );
                 }
                 return result;
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                on_op(start.elapsed().as_micros() as u64);
+                let elapsed_micros = start.elapsed().as_micros() as u64;
+                on_op(elapsed_micros);
                 let err = anyhow!("blocking worker disconnected while running {}", op);
-                error!(op = op, keyspace = keyspace, error = %err, "blocking worker disconnected");
+                error!(
+                    call_id,
+                    op = op,
+                    keyspace = keyspace,
+                    elapsed_micros,
+                    error = %err,
+                    "blocking worker disconnected"
+                );
                 return Err(err);
             }
         }
