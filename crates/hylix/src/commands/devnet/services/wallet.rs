@@ -32,6 +32,20 @@ pub async fn start_wallet_app(
             constants::env_values::RISC0_DEV_MODE_TRUE,
         )
         .set(
+            constants::env_vars::HYLI_INDEXER_DATABASE_URL,
+            &format!(
+                "postgresql://postgres:postgres@{}:5432/hyli_indexer",
+                constants::containers::POSTGRES
+            ),
+        )
+        .set(
+            constants::env_vars::HYLI_DB_URL,
+            &format!(
+                "postgresql://postgres:postgres@{}:5432/postgres",
+                constants::containers::POSTGRES
+            ),
+        )
+        .set(
             constants::env_vars::HYLI_NODE_URL,
             &format!("http://{node_name}:{}", ports.rest),
         )
