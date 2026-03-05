@@ -60,6 +60,8 @@ pub mod env_vars {
     pub const HYLI_REGISTRY_URL: &str = "HYLI_REGISTRY_URL";
     pub const HYLI_REGISTRY_API_KEY: &str = "HYLI_REGISTRY_API_KEY";
     pub const HYLI_DATABASE_URL: &str = "HYLI_DATABASE_URL";
+    pub const HYLI_INDEXER_DATABASE_URL: &str = "HYLI_INDEXER_DATABASE_URL";
+    pub const HYLI_DB_URL: &str = "HYLI_DB_URL";
     pub const HYLI_RUN_INDEXER: &str = "HYLI_RUN_INDEXER";
     pub const HYLI_RUN_EXPLORER: &str = "HYLI_RUN_EXPLORER";
     pub const RUST_LOG: &str = "RUST_LOG";
