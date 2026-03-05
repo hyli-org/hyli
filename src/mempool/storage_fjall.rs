@@ -14,11 +14,11 @@ use hyli_modules::utils::{
     fjall_metrics::FjallMetrics,
 };
 use std::time::Instant;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{
     mempool::storage::MetadataOrMissingHash,
-    model::{DataProposal, DataProposalHash, Hashed, PoDA},
+    model::{DataProposal, DataProposalHash, DataProposalParent, Hashed, PoDA},
 };
 use hyli_modules::log_warn;
 
@@ -412,6 +412,16 @@ impl Storage for LanesStorage {
     ) -> Result<()> {
         let start = Instant::now();
         let dp_hash = data_proposal.hashed();
+        let lane_id_for_log = lane_id.clone();
+        let dp_hash_for_log = dp_hash.clone();
+        debug!(
+            "put_no_verification[1] start lane {} dp {}",
+            lane_id, dp_hash
+        );
+        let db = self.db.clone();
+        let by_hash_metadata = self.by_hash_metadata.clone();
+        let by_hash_data = self.by_hash_data.clone();
+        let dp_proofs = self.dp_proofs.clone();
         let mut dp_to_store = data_proposal;
         // Save full proofs separately and strip them from the stored DataProposal
         let proofs = dp_to_store.take_proofs();
@@ -419,16 +429,35 @@ impl Storage for LanesStorage {
         let metadata = encode_metadata_to_item(lane_entry)?;
         let data = encode_data_proposal_to_item(dp_to_store)?;
         let proofs = borsh::to_vec(&proofs)?;
-
-        let mut batch = self.db.batch();
-        batch.insert(&self.by_hash_metadata, key.clone(), metadata);
-        batch.insert(&self.by_hash_data, key.clone(), data);
-        batch.insert(&self.dp_proofs, key, proofs);
-        let res = batch.commit().map_err(Into::into);
-        self.metrics.record_op(
-            "put_no_verification",
-            "batch",
-            start.elapsed().as_micros() as u64,
+        let res = self.call_fjall("put_no_verification", "batch", move || {
+            let db = db.clone();
+            let by_hash_metadata = by_hash_metadata.clone();
+            let by_hash_data = by_hash_data.clone();
+            let dp_proofs = dp_proofs.clone();
+            let key = key.clone();
+            let metadata = metadata.clone();
+            let data = data.clone();
+            let proofs = proofs.clone();
+            let lane_id = lane_id.clone();
+            let dp_hash = dp_hash.clone();
+            move || {
+                debug!(
+                    "put_no_verification[2] batch prepared lane {} dp {}, committing",
+                    lane_id, dp_hash
+                );
+                let mut batch = db.batch();
+                batch.insert(&by_hash_metadata, key.clone(), metadata);
+                batch.insert(&by_hash_data, key.clone(), data);
+                batch.insert(&dp_proofs, key, proofs);
+                batch.commit().map_err(Into::into)
+            }
+        });
+        debug!(
+            "put_no_verification[3] batch commit done lane {} dp {} ok={} elapsed_us={}",
+            lane_id_for_log,
+            dp_hash_for_log,
+            res.is_ok(),
+            start.elapsed().as_micros()
         );
         res
     }

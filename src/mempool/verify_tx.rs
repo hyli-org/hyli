@@ -320,9 +320,8 @@ impl super::Mempool {
                 Ok((DataProposalVerdict::Refuse, None))
             }
             CanBePutOnTop::AlreadyOnTop => {
-                // Lane tip may have been updated by commit/cleanup before this proposal's hash check
-                // completed. We still need to process+store the DP locally to avoid dangling tips.
-                Ok((DataProposalVerdict::Process, None))
+                // Lane tip was updated (via commit) before this proposal arrived, so we ignore it.
+                Ok((DataProposalVerdict::Ignore, None))
             }
         }
     }
