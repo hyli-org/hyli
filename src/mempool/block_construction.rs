@@ -750,6 +750,7 @@ impl super::Mempool {
 
 #[cfg(test)]
 pub mod test {
+    use hyli_crypto::BlstCrypto;
     use staking::state::Staking;
     use utils::TimestampMs;
 
@@ -1189,6 +1190,155 @@ pub mod test {
             }
             _ => panic!("Expected SyncRequest message"),
         };
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_committed_child_without_parent_from_known_tip_requests_sync() -> Result<()> {
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+        let peer_crypto = BlstCrypto::new("peer").unwrap();
+        let lane_id = LaneId::new(peer_crypto.validator_pubkey().clone());
+        ctx.add_trusted_validator(peer_crypto.validator_pubkey())
+            .await;
+
+        // Local tip is A.
+        let dp_a = DataProposal::new_root(lane_id.clone(), vec![]);
+        let (dp_a_hash, dp_a_cumul_size) =
+            ctx.mempool
+                .lanes
+                .store_data_proposal(&peer_crypto, &lane_id, dp_a)?;
+
+        // Receive C whose parent is B (missing locally).
+        let dp_b = DataProposal::new(dp_a_hash.clone(), vec![]);
+        let dp_c = DataProposal::new(dp_b.hashed(), vec![]);
+        let dp_c_size = LaneBytesSize(dp_c.estimate_size() as u64);
+        let dp_c_hash = dp_c.hashed();
+        let vote_c = peer_crypto.sign((dp_c_hash.clone(), dp_c_size))?;
+        ctx.mempool
+            .on_hashed_data_proposal(&lane_id, dp_c, vote_c)?;
+
+        // C is not yet storable because B is missing.
+        assert!(ctx
+            .mempool
+            .lanes
+            .get_dp_by_hash(&lane_id, &dp_c_hash)?
+            .is_none());
+
+        // C gets committed while B is still missing.
+        let mut buc = BlockUnderConstruction {
+            from: Some(vec![(
+                lane_id.clone(),
+                dp_a_hash.clone(),
+                dp_a_cumul_size,
+                AggregateSignature::default(),
+            )]),
+            ccp: CommittedConsensusProposal {
+                consensus_proposal: ConsensusProposal {
+                    slot: 1,
+                    cut: vec![(
+                        lane_id.clone(),
+                        dp_c_hash.clone(),
+                        LaneBytesSize(dp_a_cumul_size.0 + dp_c_size.0),
+                        AggregateSignature::default(),
+                    )],
+                    staking_actions: vec![],
+                    timestamp: TimestampMs(0),
+                    parent_hash: b"test".into(),
+                },
+                staking: Staking::default(),
+                certificate: AggregateSignature::default(),
+            },
+            holes_tops: HashMap::new(),
+            holes_materialized: false,
+        };
+
+        let result = ctx.mempool.build_signed_block_and_emit(&mut buc).await;
+        assert!(result.is_err());
+        assert_eq!(
+            buc.holes_tops.get(&lane_id).map(|(h, _)| h.clone()),
+            Some(dp_c_hash.clone())
+        );
+
+        ctx.process_sync().await?;
+
+        match ctx
+            .assert_send(peer_crypto.validator_pubkey(), "SyncRequest")
+            .await
+            .msg
+        {
+            MempoolNetMessage::SyncRequest(req_lane_id, from, to) => {
+                assert_eq!(req_lane_id, lane_id);
+                assert_eq!(from, Some(dp_a_hash));
+                assert_eq!(to, Some(dp_c_hash));
+            }
+            _ => panic!("Expected SyncRequest message"),
+        }
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_lane_tip_updated_before_try_send_with_buffered_child() -> Result<()> {
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+        let peer_crypto = BlstCrypto::new("peer-tip-order").unwrap();
+        let lane_id = LaneId::new(peer_crypto.validator_pubkey().clone());
+        ctx.add_trusted_validator(peer_crypto.validator_pubkey())
+            .await;
+
+        // A -> B -> C chain, but only A is stored; C is buffered (B missing).
+        let dp_a = DataProposal::new_root(lane_id.clone(), vec![Transaction::default()]);
+        let (dp_a_hash, dp_a_cumul_size) =
+            ctx.mempool
+                .lanes
+                .store_data_proposal(&peer_crypto, &lane_id, dp_a)?;
+
+        let dp_b = DataProposal::new(dp_a_hash.clone(), vec![Transaction::default()]);
+        let dp_b_hash = dp_b.hashed();
+        let dp_c = DataProposal::new(dp_b_hash.clone(), vec![Transaction::default()]);
+        let dp_c_hash = dp_c.hashed();
+        let dp_c_cumul_size = LaneBytesSize(
+            dp_a_cumul_size.0 + dp_b.estimate_size() as u64 + dp_c.estimate_size() as u64,
+        );
+
+        // Receive C first -> buffered because parent B is unknown.
+        let vote_c = peer_crypto.sign((dp_c_hash.clone(), dp_c_cumul_size))?;
+        ctx.mempool
+            .on_hashed_data_proposal(&lane_id, dp_c, vote_c)?;
+
+        // Commit slot 1 at A, then slot 2 at C.
+        ctx.process_cut_with_dp(
+            peer_crypto.validator_pubkey(),
+            &dp_a_hash,
+            dp_a_cumul_size,
+            1,
+        )
+        .await?;
+        ctx.process_cut_with_dp(
+            peer_crypto.validator_pubkey(),
+            &dp_c_hash,
+            dp_c_cumul_size,
+            2,
+        )
+        .await?;
+
+        // Non-regression: lane tip must be updated to C even if BUC still has a hole on B.
+        assert_eq!(
+            ctx.mempool.lanes.get_lane_hash_tip(&lane_id),
+            Some(dp_c_hash)
+        );
+
+        // C was insta-filled from buffer; remaining hole should now point to B.
+        let buc = ctx
+            .mempool
+            .inner
+            .blocks_under_contruction
+            .front()
+            .expect("expected one pending BUC");
+        assert_eq!(
+            buc.holes_tops.get(&lane_id).map(|(h, _)| h.clone()),
+            Some(dp_b_hash)
+        );
 
         Ok(())
     }
