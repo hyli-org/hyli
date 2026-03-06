@@ -380,7 +380,7 @@ mod tests {
             anyhow::bail!("not implemented");
         }
 
-        fn build_commitment_metadata(&self, _: &Blob) -> Result<Vec<u8>> {
+        fn build_commitment_metadata(&self, _: &Calldata) -> Result<Vec<u8>> {
             anyhow::bail!("not implemented");
         }
 

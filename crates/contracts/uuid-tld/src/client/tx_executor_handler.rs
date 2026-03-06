@@ -6,7 +6,7 @@ use client_sdk::{
         TxExecutorHandlerResult,
     },
 };
-use sdk::{utils::as_hyli_output, Blob, Calldata, ContractName, StateCommitment, ZkContract};
+use sdk::{utils::as_hyli_output, Calldata, ContractName, StateCommitment, ZkContract};
 
 pub mod metadata {
     pub const UUID_TLD_ELF: &[u8] = include_bytes!("../../uuid-tld.img");
@@ -29,7 +29,7 @@ impl UuidTld {
 impl TxExecutorHandler for UuidTld {
     type Contract = UuidTld;
 
-    fn build_commitment_metadata(&self, _blob: &Blob) -> TxExecutorHandlerResult<Vec<u8>> {
+    fn build_commitment_metadata(&self, _calldata: &Calldata) -> TxExecutorHandlerResult<Vec<u8>> {
         borsh::to_vec(self).context("Failed to serialize UuidTld")
     }
 
