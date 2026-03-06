@@ -29,6 +29,12 @@ impl Timeouts {
         self.by_block.entry(scheduled_at).or_default().push(tx);
     }
 
+    pub fn remove(&mut self, tx: &TxHash) {
+        if let Some(previous_block) = self.by_tx.remove(tx) {
+            self.remove_from_block(&previous_block, tx);
+        }
+    }
+
     pub fn count_all(&self) -> usize {
         self.by_block.values().map(|v| v.len()).sum()
     }
@@ -95,5 +101,17 @@ pub mod tests {
         assert_eq!(get(&t, &tx1), Some(BlockHeight(27)));
         assert_eq!(list_timeouts(&t, BlockHeight(15)), None);
         assert_eq!(list_timeouts(&t, BlockHeight(27)), Some(&vec![tx1]));
+    }
+
+    #[test]
+    fn removing_timeout_clears_both_indexes() {
+        let mut t = Timeouts::default();
+        let tx1: TxHash = b"tx1".into();
+
+        t.set(tx1.clone(), BlockHeight(10), BlockHeight(5));
+        t.remove(&tx1);
+
+        assert_eq!(get(&t, &tx1), None);
+        assert_eq!(list_timeouts(&t, BlockHeight(15)), None);
     }
 }

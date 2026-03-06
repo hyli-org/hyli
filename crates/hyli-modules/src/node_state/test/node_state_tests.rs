@@ -1102,11 +1102,7 @@ async fn test_tx_no_timeout_once_settled() {
     );
 
     assert!(state.unsettled_transactions.get(&blob_tx_hash).is_none());
-    // The TX remains in the map
-    assert_eq!(
-        timeouts::tests::get(&state.timeouts, &blob_tx_hash),
-        Some(BlockHeight(204))
-    );
+    assert_eq!(timeouts::tests::get(&state.timeouts, &blob_tx_hash), None);
 
     // Time out
     let timed_out_tx_hashes = state.craft_block_and_handle(204, vec![]).timed_out_txs();
@@ -1887,7 +1883,7 @@ async fn test_tx_timeout_chooses_unproven_contract_timeout() {
     assert_eq!(block.successful_txs(), vec![tx1_hash.clone()]);
 
     // tx1 should be removed from timeouts after settlement
-    // assert_eq!(timeouts::tests::get(&state.timeouts, &tx1_hash), None);
+    assert_eq!(timeouts::tests::get(&state.timeouts, &tx1_hash), None);
 
     // At that point:
     // c1 is fully proven --> soft_timeout of 200 blocks
@@ -1979,6 +1975,32 @@ async fn get_tx_timeout_prefers_hard_when_not_settleable() {
 
     let timeout = state.get_tx_timeout(&make_unsettled_from_tx(blob_tx, HashSet::new()));
     assert_eq!(timeout, Some(BlockHeight(5)));
+}
+
+#[test_log::test(tokio::test)]
+async fn test_reject_proof_with_mismatched_tx_blob_count() {
+    let mut state = new_node_state().await;
+    let c1 = ContractName::new("c1");
+    let register_c1 = make_register_contract_tx(c1.clone());
+
+    let blob_tx = BlobTransaction::new(
+        Identity::new("test@c1"),
+        vec![new_blob(&c1.0), new_blob(&c1.0)],
+    );
+    let blob_tx_hash = blob_tx.hashed();
+
+    state.force_handle_block(craft_signed_block(
+        104,
+        vec![register_c1.into(), blob_tx.clone().into()],
+    ));
+
+    let mut hyli_output = make_hyli_output(blob_tx, BlobIndex(0));
+    hyli_output.tx_blob_count -= 1;
+    let bad_proof = new_proof_tx(&c1, &hyli_output, &blob_tx_hash);
+
+    let block = state.craft_block_and_handle(105, vec![bad_proof.into()]);
+    assert!(block.successful_txs().is_empty());
+    assert!(state.unsettled_transactions.get(&blob_tx_hash).is_some());
 }
 
 #[test_log::test(tokio::test)]
