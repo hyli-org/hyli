@@ -4,7 +4,7 @@ use client_sdk::{
     helpers::risc0::Risc0Prover,
     transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutorBuilder, TxExecutorHandler},
 };
-use sdk::{utils::as_hyli_output, Blob, Calldata, ContractName, StateCommitment, ZkContract};
+use sdk::{utils::as_hyli_output, Calldata, ContractName, StateCommitment, ZkContract};
 
 pub mod metadata {
     pub const HYDENTITY_ELF: &[u8] = include_bytes!("../../hydentity.img");
@@ -15,7 +15,7 @@ use metadata::*;
 impl TxExecutorHandler for Hydentity {
     type Contract = Hydentity;
 
-    fn build_commitment_metadata(&self, _blob: &Blob) -> Result<Vec<u8>> {
+    fn build_commitment_metadata(&self, _calldata: &Calldata) -> Result<Vec<u8>> {
         borsh::to_vec(self).context("Failed to serialize Hydentity")
     }
 

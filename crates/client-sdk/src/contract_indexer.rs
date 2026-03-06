@@ -31,6 +31,45 @@ impl<State> Default for ContractStateStore<State> {
     }
 }
 
+/// Implement this trait on your contract state to plug into [`ContractStateIndexer`].
+///
+/// The `Event` type parameter is what you emit to notify the rest of the app of state changes.
+/// If you don't need events, omit it (defaults to `()`).
+///
+/// ## Method summary
+///
+/// | Method | When called | Default behaviour |
+/// |---|---|---|
+/// | `on_transaction_success` | After state is updated on success | No-op, returns `None` — **override this to emit events** |
+/// | `handle_transaction_success` | Tx settled successfully | Builds calldata, calls `TxExecutorHandler::handle`, then calls `on_transaction_success` |
+/// | `handle_transaction_failed` | Tx was rejected | No-op, returns `None` |
+/// | `handle_transaction_timeout` | Tx timed out | No-op, returns `None` |
+/// | `handle_transaction_sequenced` | Tx entered the mempool | No-op, returns `None` |
+///
+/// Override only the methods you care about. Any `Some(event)` you return is automatically
+/// broadcast as a `CSIBusEvent<Event>` on the message bus by `ContractStateIndexer`
+/// (see `crates/hyli-modules/src/modules/contract_state_indexer.rs`).
+///
+/// ## Emitting events without duplicating logic
+///
+/// Override `on_transaction_success` instead of `handle_transaction_success`.
+/// By the time it is called, `self` already reflects the new state.
+///
+/// ```rust,ignore
+/// impl ContractHandler<AmmEvent> for AmmState {
+///     fn on_transaction_success(
+///         &mut self, tx: &BlobTransaction, index: BlobIndex, _ctx: Arc<TxContext>,
+///         _output: &HyliOutput,
+///     ) -> Result<Option<AmmEvent>> {
+///         // self is already updated here
+///         Ok(Some(AmmEvent::LiquidityChanged { total: self.total_liquidity }))
+///     }
+///
+///     async fn api(store: ContractHandlerStore<Self>) -> (Router<()>, OpenApi) {
+///         // expose REST endpoints backed by `store`
+///     }
+/// }
+/// ```
 pub trait ContractHandler<Event = ()>
 where
     Self: Sized + TxExecutorHandler + 'static,
@@ -78,10 +117,23 @@ where
             handler = %contract_name,
             "hyli_output: {:?}", hyli_output
         );
+        self.on_transaction_success(tx, index, tx_context, &hyli_output)
+    }
+
+    /// Called by the default `handle_transaction_success` after `TxExecutorHandler::handle`
+    /// has already mutated `self`. Override this to emit events without duplicating any
+    /// calldata-building or state-application logic.
+    fn on_transaction_success(
+        &mut self,
+        _tx: &BlobTransaction,
+        _index: BlobIndex,
+        _tx_context: Arc<TxContext>,
+        _output: &HyliOutput,
+    ) -> Result<Option<Event>> {
         Ok(None)
     }
 
-    fn handle_transaction_failed(
+    fn on_transaction_failed(
         &mut self,
         _tx: &BlobTransaction,
         _index: BlobIndex,
@@ -90,7 +142,7 @@ where
         Ok(None)
     }
 
-    fn handle_transaction_timeout(
+    fn on_transaction_timeout(
         &mut self,
         _tx: &BlobTransaction,
         _index: BlobIndex,
@@ -99,7 +151,7 @@ where
         Ok(None)
     }
 
-    fn handle_transaction_sequenced(
+    fn on_transaction_sequenced(
         &mut self,
         _tx: &BlobTransaction,
         _index: BlobIndex,

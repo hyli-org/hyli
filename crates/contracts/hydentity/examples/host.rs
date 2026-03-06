@@ -10,7 +10,7 @@ use client_sdk::transaction_builder::TxExecutorHandler;
 use hyli_hydentity::Hydentity;
 use hyli_hydentity::HydentityAction;
 use sdk::Hashed;
-use sdk::{Blob, Calldata, ContractName, HyliOutput};
+use sdk::{Calldata, ContractName, HyliOutput};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
     mempool::storage::MetadataOrMissingHash,
-    model::{DataProposal, DataProposalHash, Hashed, PoDA},
+    model::{DataProposal, DataProposalHash, DataProposalParent, Hashed, PoDA},
 };
 
 #[derive(Clone)]
@@ -211,7 +211,20 @@ impl Storage for LanesStorage {
                     .and_then(|lane| lane.remove(&lane_tip))
             };
             if let Some(entry) = entry {
-                self.update_lane_tip(validator, lane_tip.clone(), entry.0.cumul_size);
+                match &entry.0.parent_data_proposal_hash {
+                    DataProposalParent::DP(parent_hash) => {
+                        let parent_size = self.get_lane_size_at(&validator, parent_hash)?;
+                        self.update_lane_tip(validator.clone(), parent_hash.clone(), parent_size);
+                    }
+                    DataProposalParent::LaneRoot(_) => {
+                        #[allow(
+                            clippy::unwrap_used,
+                            reason = "RwLock cannot be poisoned in our usage"
+                        )]
+                        let mut guard = self.lanes_tip.write().unwrap();
+                        guard.remove(&validator);
+                    }
+                }
                 return Ok(Some((lane_tip.clone(), entry)));
             }
         }

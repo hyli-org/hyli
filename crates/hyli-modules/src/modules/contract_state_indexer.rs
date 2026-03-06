@@ -1,3 +1,48 @@
+//! # ContractStateIndexer
+//!
+//! Listens to [`ContractListenerEvent::SettledTx`] events and maintains an up-to-date
+//! in-memory (and persisted) state for a single contract by calling [`ContractHandler`] methods
+//! (defined in `crates/client-sdk/src/contract_indexer.rs`).
+//!
+//! ## How to observe state changes
+//!
+//! **Do not read the state store directly from other modules.** Instead, use the Event system:
+//!
+//! 1. Define an event type that describes what changed.
+//! 2. Return it from your [`ContractHandler`] transaction handlers (`handle_transaction_success`, etc.).
+//! 3. The indexer automatically sends it as a [`CSIBusEvent<YourEvent>`] on the message bus.
+//! 4. Other modules subscribe to `CSIBusEvent<YourEvent>` to react to state updates.
+//!
+//! ```rust,ignore
+//! // 1. Your event type
+//! #[derive(Clone, Debug)]
+//! pub enum AmmEvent {
+//!     Swapped { from: Token, to: Token, amount: u64 },
+//! }
+//! impl BusMessage for AmmEvent { const CAPACITY: usize = 100; }
+//!
+//! // 2. Return the event from your handler
+//! impl ContractHandler<AmmEvent> for AmmState {
+//!     fn handle_transaction_success(
+//!         &mut self, tx: &BlobTransaction, index: BlobIndex, _ctx: Arc<TxContext>,
+//!     ) -> Result<Option<AmmEvent>> {
+//!         let action = decode_action(tx, index)?;
+//!         self.apply(action.clone());
+//!         Ok(Some(AmmEvent::Swapped { .. }))
+//!     }
+//! }
+//!
+//! // 3. Subscribe in another module
+//! module_bus_client! {
+//!     struct MyBusClient {
+//!         receiver(CSIBusEvent<AmmEvent>),
+//!     }
+//! }
+//! // Then in your run loop, receive CSIBusEvent<AmmEvent> and inspect event.event.
+//! ```
+//!
+//! If you don't need events, use `()` as the `Event` type parameter (the default).
+
 use crate::{
     bus::{BusClientSender, BusMessage, SharedMessageBus},
     log_debug, log_error, module_bus_client, module_handle_messages,
@@ -217,14 +262,14 @@ where
             }
             TransactionStatusDb::Failure => {
                 self.handle_tx(&tx, tx_ctx, |state, tx, index, ctx| {
-                    state.handle_transaction_failed(tx, index, ctx)
+                    state.on_transaction_failed(tx, index, ctx)
                 })
                 .await
                 .context("handling settled tx failure")?;
             }
             TransactionStatusDb::TimedOut => {
                 self.handle_tx(&tx, tx_ctx, |state, tx, index, ctx| {
-                    state.handle_transaction_timeout(tx, index, ctx)
+                    state.on_transaction_timeout(tx, index, ctx)
                 })
                 .await
                 .context("handling settled tx timeout")?;
@@ -335,7 +380,7 @@ mod tests {
             anyhow::bail!("not implemented");
         }
 
-        fn build_commitment_metadata(&self, _: &Blob) -> Result<Vec<u8>> {
+        fn build_commitment_metadata(&self, _: &Calldata) -> Result<Vec<u8>> {
             anyhow::bail!("not implemented");
         }
 

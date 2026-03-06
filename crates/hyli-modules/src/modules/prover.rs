@@ -987,13 +987,20 @@ where
             let mut updated_program_id = None;
 
             for blob_index in blob_indexes {
-                let blob = tx.blobs.get(blob_index.0).ok_or_else(|| {
-                    anyhow!("Failed to get blob {} from tx {}", blob_index, tx.hashed())
-                })?;
                 let blobs = tx.blobs.clone();
 
+                let calldata = Calldata {
+                    identity: tx.identity.clone(),
+                    tx_hash: tx_id.1.clone(),
+                    private_input: vec![],
+                    blobs: blobs.clone().into(),
+                    index: blob_index,
+                    tx_ctx: Some((*tx_ctx).clone()),
+                    tx_blob_count: blobs.len(),
+                };
+
                 let state = contract
-                    .build_commitment_metadata(blob)
+                    .build_commitment_metadata(&calldata)
                     .map_err(|e| anyhow!(e))
                     .context("Failed to build commitment metadata");
 
@@ -1025,16 +1032,6 @@ where
                             .context("Merging commitment_metadata")?,
                     );
                 }
-
-                let calldata = Calldata {
-                    identity: tx.identity.clone(),
-                    tx_hash: tx_id.1.clone(),
-                    private_input: vec![],
-                    blobs: blobs.clone().into(),
-                    index: blob_index,
-                    tx_ctx: Some((*tx_ctx).clone()),
-                    tx_blob_count: blobs.len(),
-                };
 
                 match contract.handle(&calldata).map_err(|e| anyhow!(e)) {
                     Err(e) => {
