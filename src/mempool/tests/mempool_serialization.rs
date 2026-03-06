@@ -5,7 +5,7 @@
 
 use super::*;
 use crate::mempool::ArcBorsh;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use hyli_model::{
     BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, ProofTransaction, Transaction,
     TransactionData, VerifiedProofTransaction, Verifier,
@@ -163,7 +163,7 @@ async fn test_mempool_serialization_with_processing_txs_pending() -> Result<()> 
 }
 
 #[test_log::test(tokio::test)]
-async fn test_mempool_restore_inflight_work_enqueues_correct_tasks() -> Result<()> {
+async fn test_mempool_restore_inflight_work_requeues_expected_workers() -> Result<()> {
     let mut ctx = MempoolTestCtx::new("mempool").await;
 
     // Manually add transactions to processing_txs_pending
@@ -195,11 +195,46 @@ async fn test_mempool_restore_inflight_work_enqueues_correct_tasks() -> Result<(
     // Call restore_inflight_work
     ctx.mempool.restore_inflight_work();
 
-    // After restore, we should have 2 tasks in the JoinSet
-    assert_eq!(
-        ctx.mempool.inner.processing_txs.len(),
-        2,
-        "Should have 2 tasks enqueued after restore"
+    let mut saw_blob_hash_task = false;
+    let mut saw_proof_processing_task = false;
+
+    for _ in 0..2 {
+        let result = ctx
+            .mempool
+            .inner
+            .processing_txs
+            .join_next()
+            .await
+            .expect("a restored task should be present")?;
+
+        match result {
+            Ok(tx) => match tx.transaction_data {
+                TransactionData::Blob(_) => {
+                    assert_eq!(tx.hashed(), blob_tx.hashed());
+                    saw_blob_hash_task = true;
+                }
+                TransactionData::Proof(_) => {
+                    bail!("proof tx should not be returned unchanged after restore");
+                }
+                TransactionData::VerifiedProof(_) => {
+                    bail!("unexpected verified proof tx in restore test");
+                }
+            },
+            Err(err) => {
+                let err_text = format!("{err:#}");
+                assert!(
+                    !err_text.contains("Can only process ProofTx"),
+                    "blob tx was sent to proof worker during restore: {err_text}"
+                );
+                saw_proof_processing_task = true;
+            }
+        }
+    }
+
+    assert!(saw_blob_hash_task, "blob tx should use the hash worker");
+    assert!(
+        saw_proof_processing_task,
+        "proof tx should use the proof worker"
     );
 
     Ok(())
