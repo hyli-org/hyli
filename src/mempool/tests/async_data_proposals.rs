@@ -112,6 +112,13 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
         .unwrap(),
     );
     let proof_hash = proof.hashed();
+    let verified_output = HyliOutput {
+        success: true,
+        identity: blob_tx.identity.clone(),
+        blobs: blob_tx.blobs.clone().into(),
+        tx_hash: blob_tx_hash.clone(),
+        ..HyliOutput::default()
+    };
 
     node_client.send(RestApiMessage::NewTx {
         tx: blob_tx.clone().into(),
@@ -204,7 +211,7 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
                     blob_tx_hash: blob_tx_hash.clone(),
                     program_id: ProgramId(vec![]),
                     verifier: "test-slow".into(),
-                    hyli_output: HyliOutput::default(),
+                    hyli_output: verified_output.clone(),
                 }],
                 is_recursive: false,
                 proof_size: proof.0.len(),
