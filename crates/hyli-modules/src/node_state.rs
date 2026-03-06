@@ -203,6 +203,30 @@ pub enum TxError {
     },
 }
 
+impl std::fmt::Display for TxError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TxError::UnsettledTxNotFound => write!(f, "Unsettled transaction not found in the state."),
+            TxError::BlobTxNotFound => write!(f, "BlobTx not found."),
+            TxError::BlobIndexNotFound { blob_index } => write!(f, "Blob at index {} not found in blob TX.", blob_index.0),
+            TxError::NotNextToSettle => write!(f, "Transaction is not next to settle, skipping."),
+            TxError::NotReadyToSettle => write!(f, "Tx is not ready to settle."),
+            TxError::NativeBlobFailed => write!(f, "Settling fast as failed because native blob was failed."),
+            TxError::IdentityMismatch { proof_identity, tx_identity } => write!(f, "Proof identity '{proof_identity}' does not correspond to BlobTx identity '{tx_identity}'."),
+            TxError::TxHashMismatch { proof_hash, tx_hash } => write!(f, "Proof tx_hash '{proof_hash}' does not correspond to BlobTx hash '{tx_hash}'."),
+            TxError::TxContextMismatch => write!(f, "Proof tx_context does not correspond to BlobTx tx_context."),
+            TxError::BlobsHashMismatch => write!(f, "Proof blobs hash does not correspond to BlobTx blobs hash."),
+            TxError::MissingConstructorBlob { contract_name } => write!(f, "Contract '{contract_name}' is in RegisterWithConstructor state at settlement end; constructor blob missing."),
+            TxError::MissingDeletionBlob { contract_name } => write!(f, "Contract '{contract_name}' is in WaitingDeletion state at settlement end; deletion blob missing."),
+            TxError::OnChainExecutionFailed { blob_index, message } => write!(f, "On-chain execution failed for blob {blob_index}: {message}"),
+            TxError::InvalidBlobProofOutput { proof_index, blob_index, contract_name, message } => write!(f, "Could not settle blob proof output #{proof_index} on blob {blob_index} for contract '{contract_name}': {message}"),
+            TxError::FatalBlobProofError { proof_index, blob_index, contract_name, message } => write!(f, "Fatal error processing blob proof output #{proof_index} on blob {blob_index} for contract '{contract_name}': {message}"),
+        }
+    }
+}
+
+impl std::error::Error for TxError {}
+
 #[derive(serde::Serialize, Debug)]
 pub enum TxEvent<'a> {
     RejectedBlobTransaction(
@@ -512,7 +536,7 @@ impl<'any> NodeStateProcessing<'any> {
                                 Ok(maybe_tx_hash) => maybe_tx_hash,
                                 Err(err) => {
                                     debug!(
-                                        "Failed to handle blob #{} in verified proof transaction {}: {err:#?}",
+                                        "Failed to handle blob #{} in verified proof transaction {}: {err}",
                                         blob_proof_data.hyli_output.index, &tx_id);
                                     // If we can find a matching blob-tx, store that there (helps debugging settlement issues)
                                     if let Some((tx, _)) = self.this.store.unsettled_transactions.get_for_settlement(
@@ -753,7 +777,7 @@ impl<'any> NodeStateProcessing<'any> {
                 }
                 Err(e) => {
                     unsettlable_txs.insert(bth.clone());
-                    debug!(tx_hash = %bth, "Failed to settle: {e:?}");
+                    debug!(tx_hash = %bth, "Failed to settle: {e}");
                     self.callback.on_event(&TxEvent::TxError(
                         // TODO: store TxID not TxHash in btreeset ?
                         &self
@@ -876,15 +900,11 @@ impl<'any> NodeStateProcessing<'any> {
                 );
                 // Sanity check: a contract state cannot be in RegisterWithConstructor as it would mean the constructor blob has not been sent
                 if let ContractStatus::RegisterWithConstructor(_) = contract_status {
-                    debug!(
-                        "Contract '{contract_name}' is in RegisterWithConstructor state at settlement end; constructor blob missing."
-                    );
-                    callback.on_event(&TxEvent::TxError(
-                        &unsettled_tx.tx_id,
-                        TxError::MissingConstructorBlob {
-                            contract_name: contract_name.clone(),
-                        },
-                    ));
+                    let e = TxError::MissingConstructorBlob {
+                        contract_name: contract_name.clone(),
+                    };
+                    debug!("{e}");
+                    callback.on_event(&TxEvent::TxError(&unsettled_tx.tx_id, e));
                     return SettlementResult {
                         settlement_status: SettlementStatus::SettleAsFailed,
                         contract_changes,
@@ -893,15 +913,11 @@ impl<'any> NodeStateProcessing<'any> {
                 }
                 // Sanity check: a contract state cannot be in WaitingDeletion as it would mean the deletion blob has not been sent
                 if let ContractStatus::WaitingDeletion = contract_status {
-                    debug!(
-                        "Contract '{contract_name}' is in WaitingDeletion state at settlement end; deletion blob missing."
-                    );
-                    callback.on_event(&TxEvent::TxError(
-                        &unsettled_tx.tx_id,
-                        TxError::MissingDeletionBlob {
-                            contract_name: contract_name.clone(),
-                        },
-                    ));
+                    let e = TxError::MissingDeletionBlob {
+                        contract_name: contract_name.clone(),
+                    };
+                    debug!("{e}");
+                    callback.on_event(&TxEvent::TxError(&unsettled_tx.tx_id, e));
                     return SettlementResult {
                         settlement_status: SettlementStatus::SettleAsFailed,
                         contract_changes,
@@ -965,14 +981,12 @@ impl<'any> NodeStateProcessing<'any> {
             }
             BlobProcessingResult::ProvenFailure(msg) => {
                 // Fatal error - settle as failed immediately
-                debug!("On-chain execution failed for blob {blob_index}: {msg}");
-                callback.on_event(&TxEvent::TxError(
-                    &unsettled_tx.tx_id,
-                    TxError::OnChainExecutionFailed {
-                        blob_index,
-                        message: msg,
-                    },
-                ));
+                let e = TxError::OnChainExecutionFailed {
+                    blob_index,
+                    message: msg,
+                };
+                debug!("{e}");
+                callback.on_event(&TxEvent::TxError(&unsettled_tx.tx_id, e));
                 return SettlementResult {
                     settlement_status: SettlementStatus::SettleAsFailed,
                     contract_changes,
@@ -1035,30 +1049,26 @@ impl<'any> NodeStateProcessing<'any> {
                 }
                 ProofProcessingResult::Invalid(msg) => {
                     // Not a valid proof, log it and try the next one.
-                    debug!("Could not settle blob proof output #{i} on blob {blob_index} for contract '{contract_name}': {msg}");
-                    callback.on_event(&TxEvent::TxError(
-                        &unsettled_tx.tx_id,
-                        TxError::InvalidBlobProofOutput {
-                            proof_index: i,
-                            blob_index,
-                            contract_name: contract_name.clone(),
-                            message: msg,
-                        },
-                    ));
+                    let e = TxError::InvalidBlobProofOutput {
+                        proof_index: i,
+                        blob_index,
+                        contract_name: contract_name.clone(),
+                        message: msg,
+                    };
+                    debug!("{e}");
+                    callback.on_event(&TxEvent::TxError(&unsettled_tx.tx_id, e));
                     continue;
                 }
                 ProofProcessingResult::ProvenFailure(msg) => {
                     // Fatal error - settle as failed immediately
-                    debug!("Fatal error processing blob proof output #{i} on blob {blob_index} for contract '{contract_name}': {msg}");
-                    callback.on_event(&TxEvent::TxError(
-                        &unsettled_tx.tx_id,
-                        TxError::FatalBlobProofError {
-                            proof_index: i,
-                            blob_index,
-                            contract_name: contract_name.clone(),
-                            message: msg,
-                        },
-                    ));
+                    let e = TxError::FatalBlobProofError {
+                        proof_index: i,
+                        blob_index,
+                        contract_name: contract_name.clone(),
+                        message: msg,
+                    };
+                    debug!("{e}");
+                    callback.on_event(&TxEvent::TxError(&unsettled_tx.tx_id, e));
                     return SettlementResult {
                         settlement_status: SettlementStatus::SettleAsFailed,
                         contract_changes,
