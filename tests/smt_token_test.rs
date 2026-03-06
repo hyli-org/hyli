@@ -17,7 +17,7 @@ mod e2e_smt_token {
         client::tx_executor_handler::{register_identity, verify_identity},
         Hydentity,
     };
-    use hyli_contract_sdk::{Blob, Calldata, ContractName, HyliOutput};
+    use hyli_contract_sdk::{Calldata, ContractName, HyliOutput};
     use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, SMT_TOKEN_ELF, SMT_TOKEN_ID};
     use smt_token::{client::tx_executor_handler::SmtTokenProvableState, FAUCET_ID};
 

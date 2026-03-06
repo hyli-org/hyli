@@ -38,9 +38,7 @@ where
         private_input: vec![],
     };
 
-    let blob = tx.blobs.get(index.0).expect("Blob index out of range");
-
-    let cm = contract.build_commitment_metadata(blob);
+    let cm = contract.build_commitment_metadata(&calldata);
     assert!(cm.is_ok(), "Failed to build commitment metadata: {cm:#?}");
     let cm = cm.unwrap();
 

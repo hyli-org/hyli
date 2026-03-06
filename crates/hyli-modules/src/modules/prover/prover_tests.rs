@@ -59,7 +59,10 @@ impl ZkContract for TestContract {
 impl TxExecutorHandler for TestContract {
     type Contract = TestContract;
 
-    fn build_commitment_metadata(&self, blob: &Blob) -> Result<Vec<u8>> {
+    fn build_commitment_metadata(&self, calldata: &Calldata) -> Result<Vec<u8>> {
+        let blob = calldata
+            .get_blob()
+            .map_err(|e| anyhow!(e).context("Failed to get blob from calldata"))?;
         let action = borsh::from_slice::<u32>(&blob.data.0)
             .context("Failed to parse action from blob data")?;
         if action == 66 {

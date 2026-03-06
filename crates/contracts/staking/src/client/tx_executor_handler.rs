@@ -6,7 +6,7 @@ use client_sdk::{
 use sdk::{
     api::{APIFees, APIFeesBalance, APIStaking},
     utils::as_hyli_output,
-    Blob, Calldata, ContractName, StakingAction, StateCommitment, ValidatorPublicKey, ZkContract,
+    Calldata, ContractName, StakingAction, StateCommitment, ValidatorPublicKey, ZkContract,
 };
 
 use crate::{
@@ -23,7 +23,7 @@ use metadata::*;
 impl TxExecutorHandler for Staking {
     type Contract = Staking;
 
-    fn build_commitment_metadata(&self, _blob: &Blob) -> Result<Vec<u8>> {
+    fn build_commitment_metadata(&self, _calldata: &Calldata) -> Result<Vec<u8>> {
         borsh::to_vec(self).map_err(Into::into)
     }
     fn handle(&mut self, calldata: &Calldata) -> Result<sdk::HyliOutput> {

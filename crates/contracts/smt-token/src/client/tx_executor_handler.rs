@@ -74,8 +74,10 @@ impl TxExecutorHandler for SmtTokenProvableState {
 
     /// This function provides the metadata needed to reconstruct the SMT Token contract's state.
     /// This state is made up of the rootHash of the MerkleTrie, and the merkle proof used to prove the accounts used in the action.
-    fn build_commitment_metadata(&self, blob: &sdk::Blob) -> Result<Vec<u8>> {
+    fn build_commitment_metadata(&self, calldata: &sdk::Calldata) -> Result<Vec<u8>> {
         let root = *self.0.root();
+
+        let blob = calldata.get_blob().map_err(|e| anyhow::anyhow!(e))?;
 
         let parsed_blob: StructuredBlob<SmtTokenAction> =
             match StructuredBlob::try_from(blob.clone()) {
@@ -476,13 +478,7 @@ mod tests {
             amount: 100,
         };
 
-        let commitment = smt_token
-            .build_commitment_metadata(&transfer.as_blob(ContractName::new("oranj"), None, None))
-            .unwrap();
-
-        let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
-
-        let ho = zk.execute(&Calldata {
+        let calldata = Calldata {
             tx_hash: TxHash::default(),
             identity: Identity::from("sender"),
             blobs: IndexedBlobs::from(vec![transfer.as_blob(
@@ -494,7 +490,12 @@ mod tests {
             index: BlobIndex(0),
             tx_ctx: None,
             private_input: vec![],
-        });
+        };
+        let commitment = smt_token.build_commitment_metadata(&calldata).unwrap();
+
+        let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
+
+        let ho = zk.execute(&calldata);
         assert_eq!(ho.unwrap_err(), "Insufficient balance".to_string());
     }
 
@@ -502,24 +503,24 @@ mod tests {
     fn test_proof_of_failure_not_even_an_smt_blob() {
         let smt_token = SmtTokenProvableState::default();
 
-        let blob = Blob {
-            contract_name: ContractName::new("oranj"),
-            data: BlobData(vec![1, 2, 3, 4, 5]),
-        };
-
-        let commitment = smt_token.build_commitment_metadata(&blob).unwrap();
-
-        let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
-
-        let ho = zk.execute(&Calldata {
+        let calldata = Calldata {
             tx_hash: TxHash::default(),
             identity: Identity::from("sender"),
-            blobs: IndexedBlobs::from(vec![blob]),
+            blobs: IndexedBlobs::from(vec![Blob {
+                contract_name: ContractName::new("oranj"),
+                data: BlobData(vec![1, 2, 3, 4, 5]),
+            }]),
             tx_blob_count: 1,
             index: BlobIndex(0),
             tx_ctx: None,
             private_input: vec![],
-        });
+        };
+
+        let commitment = smt_token.build_commitment_metadata(&calldata).unwrap();
+
+        let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
+
+        let ho = zk.execute(&calldata);
         assert_eq!(ho.unwrap_err(), "Failed to parse input blob".to_string());
     }
 
@@ -541,11 +542,7 @@ mod tests {
             recipient: recipient.clone(),
             amount,
         };
-        let commitment = state
-            .build_commitment_metadata(&transfer.as_blob(ContractName::new("oranj"), None, None))
-            .unwrap();
-        let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
-        let ho = zk.execute(&Calldata {
+        let calldata = Calldata {
             tx_hash: TxHash::default(),
             identity: sender.clone(),
             blobs: IndexedBlobs::from(vec![transfer.as_blob(
@@ -557,7 +554,10 @@ mod tests {
             index: BlobIndex(0),
             tx_ctx: None,
             private_input: vec![],
-        });
+        };
+        let commitment = state.build_commitment_metadata(&calldata).unwrap();
+        let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
+        let ho = zk.execute(&calldata);
         assert!(ho.is_ok());
         let output = String::from_utf8(ho.unwrap().0).unwrap();
         assert!(output.contains(&format!("Transferred {amount} to {recipient}")));
@@ -574,11 +574,7 @@ mod tests {
             spender: spender.clone(),
             amount,
         };
-        let commitment = smt_token
-            .build_commitment_metadata(&approve.as_blob(ContractName::new("oranj"), None, None))
-            .unwrap();
-        let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
-        let ho = zk.execute(&Calldata {
+        let calldata = Calldata {
             tx_hash: TxHash::default(),
             identity: owner.clone(),
             blobs: IndexedBlobs::from(vec![approve.as_blob(
@@ -590,7 +586,10 @@ mod tests {
             index: BlobIndex(0),
             tx_ctx: None,
             private_input: vec![],
-        });
+        };
+        let commitment = smt_token.build_commitment_metadata(&calldata).unwrap();
+        let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
+        let ho = zk.execute(&calldata);
         assert_eq!(ho.unwrap_err(), format!("Owner account {owner} not found"));
     }
 
