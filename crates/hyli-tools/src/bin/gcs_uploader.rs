@@ -6,7 +6,7 @@ use clap::Parser;
 use hyli_modules::{
     bus::SharedMessageBus,
     modules::{
-        ModulesHandler,
+        ModulesHandler, ModulesHandlerOptions,
         block_processor::BusOnlyProcessor,
         da_listener::DAListenerConf,
         da_listener::SignedDAListener,
@@ -50,7 +50,11 @@ async fn main() -> Result<()> {
     tracing::info!("Setting up modules");
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
+    let mut handler = ModulesHandler::new(
+        &bus,
+        config.data_directory.clone(),
+        ModulesHandlerOptions::default(),
+    )?;
 
     let upload_start =
         GcsUploader::get_last_uploaded_block(&config.gcs, &config.data_directory).await?;

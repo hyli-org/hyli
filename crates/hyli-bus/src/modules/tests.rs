@@ -305,7 +305,12 @@ async fn test_multi_file_persist_writes_manifest_and_loads_files() {
     let (first_path, second_path) = multi_persist_paths();
 
     let shared_bus = SharedMessageBus::new();
-    let mut handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
+    let mut handler = ModulesHandler::new(
+        &shared_bus,
+        data_dir.clone(),
+        ModulesHandlerOptions::default(),
+    )
+    .unwrap();
     handler
         .build_module::<MultiPersistModule>(MultiPersistCtx {
             data_dir: data_dir.clone(),
@@ -360,7 +365,12 @@ async fn test_multi_file_persist_writes_manifest_and_loads_files() {
 async fn test_build_module() {
     let dir = tempdir().unwrap();
     let shared_bus = SharedMessageBus::new();
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(
+        &shared_bus,
+        dir.path().to_path_buf(),
+        ModulesHandlerOptions::default(),
+    )
+    .unwrap();
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
     assert_eq!(handler.modules.len(), 1);
 }
@@ -369,7 +379,12 @@ async fn test_build_module() {
 async fn test_add_module() {
     let dir = tempdir().unwrap();
     let shared_bus = SharedMessageBus::new();
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(
+        &shared_bus,
+        dir.path().to_path_buf(),
+        ModulesHandlerOptions::default(),
+    )
+    .unwrap();
     let module = TestModule {
         bus: TestBusClient::new_from_bus(shared_bus.new_handle()).await,
         _field: 2_usize,
@@ -385,7 +400,12 @@ async fn test_start_modules() {
     let shared_bus = SharedMessageBus::new();
     let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(
+        &shared_bus,
+        dir.path().to_path_buf(),
+        ModulesHandlerOptions::default(),
+    )
+    .unwrap();
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
 
     _ = handler.start_modules().await;
@@ -411,7 +431,12 @@ async fn test_start_stop_modules_in_order() {
     let shared_bus = SharedMessageBus::new();
     let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(
+        &shared_bus,
+        dir.path().to_path_buf(),
+        ModulesHandlerOptions::default(),
+    )
+    .unwrap();
 
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
     handler
@@ -454,7 +479,12 @@ async fn test_shutdown_duplicate_modules() {
     let shared_bus = SharedMessageBus::new();
     let mut shutdown_receiver = get_receiver::<ShutdownModule>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(
+        &shared_bus,
+        dir.path().to_path_buf(),
+        ModulesHandlerOptions::default(),
+    )
+    .unwrap();
 
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
@@ -479,7 +509,12 @@ async fn test_shutdown_modules_exactly_once() {
     let shared_bus = SharedMessageBus::new();
     let mut cancellation_counter_receiver = get_receiver::<usize>(&shared_bus).await;
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(
+        &shared_bus,
+        dir.path().to_path_buf(),
+        ModulesHandlerOptions::default(),
+    )
+    .unwrap();
 
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
     handler
@@ -546,7 +581,12 @@ async fn test_shutdown_all_modules_if_one_fails() {
     let dir = tempdir().unwrap();
     let shared_bus = SharedMessageBus::new();
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(
+        &shared_bus,
+        dir.path().to_path_buf(),
+        ModulesHandlerOptions::default(),
+    )
+    .unwrap();
 
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
     handler
@@ -603,7 +643,12 @@ async fn test_shutdown_all_modules_if_one_module_panics() {
     let dir = tempdir().unwrap();
     let shared_bus = SharedMessageBus::new();
     let mut shutdown_completed_receiver = get_receiver::<ShutdownCompleted>(&shared_bus).await;
-    let mut handler = ModulesHandler::new(&shared_bus, dir.path().to_path_buf()).unwrap();
+    let mut handler = ModulesHandler::new(
+        &shared_bus,
+        dir.path().to_path_buf(),
+        ModulesHandlerOptions::default(),
+    )
+    .unwrap();
 
     handler.build_module::<TestModule<usize>>(()).await.unwrap();
     handler
@@ -653,7 +698,46 @@ async fn test_shutdown_all_modules_if_one_module_panics() {
 // Tests for ModulesHandler::new() backup logic
 
 #[tokio::test]
-async fn test_new_with_missing_manifest_backs_up_state_files() {
+async fn test_new_with_missing_manifest_deletes_state_by_default() {
+    let dir = tempdir().unwrap();
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+
+    // Create module state files without manifest
+    let node_state_path = data_dir.join(files::NODE_STATE_BIN);
+    let consensus_path = data_dir.join(files::CONSENSUS_BIN);
+    std::fs::write(&node_state_path, b"fake node state data").unwrap();
+    std::fs::write(&consensus_path, b"fake consensus data").unwrap();
+
+    let shared_bus = SharedMessageBus::new();
+
+    // Default behavior should delete invalid state without backup.
+    let _handler = ModulesHandler::new(
+        &shared_bus,
+        data_dir.clone(),
+        ModulesHandlerOptions::default(),
+    )
+    .unwrap();
+
+    // Original data_dir should exist (recreated)
+    assert!(data_dir.exists());
+    // State files should have been removed.
+    assert!(!node_state_path.exists());
+    assert!(!consensus_path.exists());
+
+    // No backup directory should exist
+    let parent = data_dir.parent().unwrap();
+    let entries: Vec<_> = std::fs::read_dir(parent)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("data.backup_"))
+        .collect();
+
+    assert_eq!(entries.len(), 0, "Should not have created any backup");
+}
+
+#[tokio::test]
+async fn test_new_with_missing_manifest_backs_up_state_files_when_enabled() {
     let dir = tempdir().unwrap();
     let data_dir = dir.path().join("data");
     std::fs::create_dir_all(&data_dir).unwrap();
@@ -667,7 +751,14 @@ async fn test_new_with_missing_manifest_backs_up_state_files() {
     let shared_bus = SharedMessageBus::new();
 
     // This should back up the directory
-    let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
+    let _handler = ModulesHandler::new(
+        &shared_bus,
+        data_dir.clone(),
+        ModulesHandlerOptions {
+            backup_on_invalid_manifest: true,
+        },
+    )
+    .unwrap();
 
     // Original data_dir should exist (recreated)
     assert!(data_dir.exists());
@@ -709,7 +800,14 @@ async fn test_new_with_empty_manifest_backs_up_state_files() {
     let shared_bus = SharedMessageBus::new();
 
     // This should back up the directory because manifest is effectively empty
-    let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
+    let _handler = ModulesHandler::new(
+        &shared_bus,
+        data_dir.clone(),
+        ModulesHandlerOptions {
+            backup_on_invalid_manifest: true,
+        },
+    )
+    .unwrap();
 
     // Original data_dir should exist (recreated)
     assert!(data_dir.exists());
@@ -729,6 +827,45 @@ async fn test_new_with_empty_manifest_backs_up_state_files() {
 }
 
 #[tokio::test]
+async fn test_new_with_empty_manifest_deletes_state_by_default() {
+    let dir = tempdir().unwrap();
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir_all(&data_dir).unwrap();
+
+    // Create module state files
+    let node_state_path = data_dir.join(files::NODE_STATE_BIN);
+    std::fs::write(&node_state_path, b"fake node state data").unwrap();
+
+    // Create empty manifest
+    let manifest_path = super::manifest_path(&data_dir);
+    std::fs::write(&manifest_path, "   \n  \n").unwrap();
+
+    let shared_bus = SharedMessageBus::new();
+
+    let _handler = ModulesHandler::new(
+        &shared_bus,
+        data_dir.clone(),
+        ModulesHandlerOptions::default(),
+    )
+    .unwrap();
+
+    // data_dir should be recreated and stale state removed.
+    assert!(data_dir.exists());
+    assert!(!node_state_path.exists());
+    assert!(!manifest_path.exists());
+
+    // No backup directory should exist.
+    let parent = data_dir.parent().unwrap();
+    let entries: Vec<_> = std::fs::read_dir(parent)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with("data.backup_"))
+        .collect();
+
+    assert_eq!(entries.len(), 0, "Should not have created any backup");
+}
+
+#[tokio::test]
 async fn test_new_with_valid_manifest_does_not_backup() {
     let dir = tempdir().unwrap();
     let data_dir = dir.path().join("data");
@@ -745,7 +882,12 @@ async fn test_new_with_valid_manifest_does_not_backup() {
     let shared_bus = SharedMessageBus::new();
 
     // This should NOT back up because manifest is valid
-    let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
+    let _handler = ModulesHandler::new(
+        &shared_bus,
+        data_dir.clone(),
+        ModulesHandlerOptions::default(),
+    )
+    .unwrap();
 
     // Original data_dir should exist
     assert!(data_dir.exists());
@@ -777,7 +919,12 @@ async fn test_new_creates_fresh_data_dir() {
 
     let shared_bus = SharedMessageBus::new();
 
-    let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
+    let _handler = ModulesHandler::new(
+        &shared_bus,
+        data_dir.clone(),
+        ModulesHandlerOptions::default(),
+    )
+    .unwrap();
 
     // data_dir should now exist
     assert!(data_dir.exists());
@@ -805,7 +952,12 @@ async fn test_new_with_existing_empty_dir_does_not_backup() {
 
     let shared_bus = SharedMessageBus::new();
 
-    let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
+    let _handler = ModulesHandler::new(
+        &shared_bus,
+        data_dir.clone(),
+        ModulesHandlerOptions::default(),
+    )
+    .unwrap();
 
     // Original data_dir should still exist
     assert!(data_dir.exists());
@@ -834,7 +986,14 @@ async fn test_new_empty_manifest_without_state_files_backs_up() {
     let shared_bus = SharedMessageBus::new();
 
     // This should back up because an empty manifest is invalid even without state files
-    let _handler = ModulesHandler::new(&shared_bus, data_dir.clone()).unwrap();
+    let _handler = ModulesHandler::new(
+        &shared_bus,
+        data_dir.clone(),
+        ModulesHandlerOptions {
+            backup_on_invalid_manifest: true,
+        },
+    )
+    .unwrap();
 
     // Original data_dir should exist (recreated)
     assert!(data_dir.exists());

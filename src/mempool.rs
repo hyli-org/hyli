@@ -241,11 +241,11 @@ impl Mempool {
             .map(|(tx, _)| tx.arc().clone())
             .collect::<Vec<_>>();
         for arc_tx in txs_to_restore {
-            let is_proof = matches!(arc_tx.transaction_data, TransactionData::Proof(_));
-            if is_proof {
-                self.enqueue_processing_tx_hash(arc_tx);
-            } else {
-                self.enqueue_processing_tx_proof(arc_tx);
+            match &arc_tx.transaction_data {
+                TransactionData::Proof(_) => self.enqueue_processing_tx_proof(arc_tx),
+                TransactionData::Blob(_) | TransactionData::VerifiedProof(_) => {
+                    self.enqueue_processing_tx_hash(arc_tx)
+                }
             }
         }
 

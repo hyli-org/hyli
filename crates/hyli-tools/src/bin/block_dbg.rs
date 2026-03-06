@@ -21,7 +21,7 @@ use hyli_modules::{
     bus::SharedMessageBus,
     module_bus_client, module_handle_messages,
     modules::{
-        BuildApiContextInner, Module, ModulesHandler,
+        BuildApiContextInner, Module, ModulesHandler, ModulesHandlerOptions,
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         rest::{ApiDoc, RestApi, RestApiRunContext, Router},
     },
@@ -171,7 +171,8 @@ async fn main() -> Result<()> {
         .unwrap_or(false);
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus, data_dir.clone())?;
+    let mut handler =
+        ModulesHandler::new(&bus, data_dir.clone(), ModulesHandlerOptions::default())?;
 
     if !has_blocks {
         handler

@@ -13,7 +13,7 @@ use hyli_modules::{
     modules::{
         contract_listener::{ContractListener, ContractListenerConf},
         prover::{AutoProver, AutoProverCtx},
-        Module, ModulesHandler,
+        Module, ModulesHandler, ModulesHandlerOptions,
     },
     utils::logger::setup_tracing,
 };
@@ -364,8 +364,12 @@ async fn main() -> Result<()> {
     setup_tracing(&config.log_format, "LongSMTRunningTest".to_string()).context("setup tracing")?;
 
     let bus = SharedMessageBus::new();
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())
-        .context("initialize modules handler")?;
+    let mut handler = ModulesHandler::new(
+        &bus,
+        config.data_directory.clone(),
+        ModulesHandlerOptions::default(),
+    )
+    .context("initialize modules handler")?;
 
     let node_url = format!("http://{}:{}/", config.host, config.port);
     let bootstrap = resolve_bootstrap(&config, &node_url)
