@@ -17,7 +17,8 @@ const axios = require('axios');
     // Charger le nombre précédent d'étoiles
     let previousStars = 0;
     if (fs.existsSync(cacheFile)) {
-      previousStars = parseInt(fs.readFileSync(cacheFile, 'utf8'), 10);
+      const parsed = parseInt(fs.readFileSync(cacheFile, 'utf8'), 10);
+      previousStars = Number.isNaN(parsed) ? 0 : parsed;
     }
 
     // Comparer et notifier si nécessaire
