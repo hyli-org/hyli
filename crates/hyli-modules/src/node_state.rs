@@ -789,6 +789,7 @@ impl<'any> NodeStateProcessing<'any> {
             .unsettled_transactions
             .remove(unsettled_tx_hash)
             .unwrap();
+        self.timeouts.remove(unsettled_tx_hash);
 
         Ok(SettledTxOutput {
             tx: unsettled_tx,
@@ -1127,6 +1128,7 @@ impl<'any> NodeStateProcessing<'any> {
                         .cloned()
                     {
                         if let Some(popped_tx) = self.unsettled_transactions.remove(&tx_hash) {
+                            self.timeouts.remove(&tx_hash);
                             info!("⏳ Timeout tx {} (from contract deletion)", &tx_hash);
 
                             potentially_blocked_contracts
@@ -1271,6 +1273,14 @@ impl<'any> NodeStateProcessing<'any> {
                 "Proof tx_hash '{}' does not correspond to BlobTx hash '{}'.",
                 hyli_output.tx_hash,
                 unsettled_tx.tx_id.1
+            )
+        }
+
+        if hyli_output.tx_blob_count != unsettled_tx.tx.blobs.len() {
+            bail!(
+                "Proof tx_blob_count '{}' does not correspond to BlobTx blob count '{}'.",
+                hyli_output.tx_blob_count,
+                unsettled_tx.tx.blobs.len()
             )
         }
 
