@@ -419,12 +419,12 @@ impl Mempool {
                     .as_ref()
                     .map(|ccp| ccp.consensus_proposal.cut.clone());
 
+                // Removes all DPs that are not in the new cut, updates lane tip and sends SyncRequest for missing DPs
+                self.clean_and_update_lanes(&cut, &previous_cut)?;
+
                 self.try_create_block_under_construction(cpp);
 
                 self.try_to_send_full_signed_blocks().await?;
-
-                // Removes all DPs that are not in the new cut, updates lane tip and sends SyncRequest for missing DPs
-                self.clean_and_update_lanes(&cut, &previous_cut)?;
 
                 // We need to wait until we've updated our lanes_tip when restarting.
                 self.ready_to_create_dps = true;
