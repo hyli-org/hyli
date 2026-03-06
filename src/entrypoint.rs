@@ -22,6 +22,7 @@ use anyhow::{bail, Context, Result};
 use axum::Router;
 use hydentity::Hydentity;
 use hyli_bus::modules::write_manifest;
+use hyli_bus::modules::ModulesHandlerOptions;
 use hyli_crypto::SharedBlstCrypto;
 #[cfg(feature = "monitoring")]
 use hyli_modules::telemetry::global_meter_or_panic;
@@ -313,7 +314,13 @@ pub async fn common_main(
     crypto: Option<SharedBlstCrypto>,
     bus: SharedMessageBus,
 ) -> Result<ModulesHandler> {
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
+    let mut handler = ModulesHandler::new(
+        &bus,
+        config.data_directory.clone(),
+        ModulesHandlerOptions {
+            backup_on_invalid_manifest: config.backup_on_invalid_manifest,
+        },
+    )?;
 
     // For convenience, when starting the node from scratch with an unspecified DB, we'll create a new one.
     // Handle this configuration rewrite before we print anything.

@@ -12,8 +12,8 @@ use hyli_modules::modules::{Module, module_bus_client};
 use hyli_modules::{
     bus::SharedMessageBus,
     modules::{
-        ModulesHandler, block_processor::BusOnlyProcessor, da_listener::DAListenerConf,
-        da_listener::SignedDAListener,
+        ModulesHandler, ModulesHandlerOptions, block_processor::BusOnlyProcessor,
+        da_listener::DAListenerConf, da_listener::SignedDAListener,
     },
     node_state::NodeState,
     utils::logger::setup_tracing,
@@ -40,7 +40,11 @@ async fn main() -> Result<()> {
     tracing::info!("Setting up modules");
 
     // Initialize modules
-    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
+    let mut handler = ModulesHandler::new(
+        &bus,
+        config.data_directory.clone(),
+        ModulesHandlerOptions::default(),
+    )?;
 
     handler
         .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {

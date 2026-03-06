@@ -30,7 +30,7 @@ use hyli_model::{NodeStateEvent, StatefulEvent, TxId};
 use hyli_modules::node_state::module::NodeStateModule;
 use hyli_modules::{
     module_bus_client, module_handle_messages,
-    modules::{BuildApiContextInner, Module, ModulesHandler},
+    modules::{BuildApiContextInner, Module, ModulesHandler, ModulesHandlerOptions},
     node_state::module::NodeStateCtx,
 };
 use tracing::info;
@@ -268,7 +268,11 @@ impl NodeIntegrationCtx {
             start_timestamp: hyli_model::utils::TimestampMs(1000000),
         };
 
-        let mut handler = ModulesHandler::new(&bus, config.data_directory.clone())?;
+        let mut handler = ModulesHandler::new(
+            &bus,
+            config.data_directory.clone(),
+            ModulesHandlerOptions::default(),
+        )?;
 
         Self::build_module::<Mempool>(&mut handler, &ctx, ctx.clone(), &mut mocks).await?;
         Self::build_module::<DisseminationManager>(&mut handler, &ctx, ctx.clone(), &mut mocks)
