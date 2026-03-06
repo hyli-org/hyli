@@ -24,7 +24,7 @@ mod e2e_amm {
         client::tx_executor_handler::{register_identity, verify_identity},
         Hydentity,
     };
-    use hyli_contract_sdk::{Blob, Calldata, ContractName, HyliOutput};
+    use hyli_contract_sdk::{Calldata, ContractName, HyliOutput};
     use hyli_contracts::{AMM_ELF, AMM_ID, HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
     use hyli_model::api::TransactionStatusDb;
     use hyllar::{

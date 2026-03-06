@@ -17,9 +17,7 @@ use hydentity::{
     Hydentity,
 };
 use hyli_bus::{module_handle_messages, modules::ModulePersistOutput};
-use hyli_contract_sdk::{
-    Blob, Calldata, ContractName, Identity, ProgramId, StateCommitment, ZkContract,
-};
+use hyli_contract_sdk::{Calldata, ContractName, Identity, ProgramId, StateCommitment, ZkContract};
 use hyli_crypto::SharedBlstCrypto;
 use hyli_modules::{
     bus::{BusClientSender, BusMessage, SharedMessageBus},

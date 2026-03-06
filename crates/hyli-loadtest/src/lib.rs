@@ -102,15 +102,15 @@ impl transaction_builder::StateUpdater for CanonicalStates {
     fn build_commitment_metadata(
         &self,
         contract_name: &ContractName,
-        blob: &Blob,
+        calldata: &Calldata,
     ) -> anyhow::Result<Vec<u8>> {
         if contract_name == &self.hydentity_name {
             self.hydentity
-                .build_commitment_metadata(blob)
+                .build_commitment_metadata(calldata)
                 .map_err(|e| anyhow::anyhow!(e))
         } else if contract_name == &self.hyllar_name {
             self.hyllar
-                .build_commitment_metadata(blob)
+                .build_commitment_metadata(calldata)
                 .map_err(|e| anyhow::anyhow!(e))
         } else {
             anyhow::bail!("Unknown contract name: {contract_name}");
