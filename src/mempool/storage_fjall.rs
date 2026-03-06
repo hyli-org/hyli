@@ -15,7 +15,7 @@ use tracing::{info, warn};
 
 use crate::{
     mempool::storage::MetadataOrMissingHash,
-    model::{DataProposal, DataProposalHash, Hashed, PoDA},
+    model::{DataProposal, DataProposalHash, DataProposalParent, Hashed, PoDA},
 };
 use hyli_modules::log_warn;
 
@@ -335,7 +335,20 @@ impl Storage for LanesStorage {
                 };
                 self.by_hash_data
                     .remove(format!("{lane_id}:{lane_hash_tip}"))?;
-                self.update_lane_tip(lane_id, lane_hash_tip.clone(), lane_entry.cumul_size);
+                match &lane_entry.parent_data_proposal_hash {
+                    DataProposalParent::DP(parent_hash) => {
+                        let parent_size = self.get_lane_size_at(&lane_id, parent_hash)?;
+                        self.update_lane_tip(lane_id.clone(), parent_hash.clone(), parent_size);
+                    }
+                    DataProposalParent::LaneRoot(_) => {
+                        #[allow(
+                            clippy::unwrap_used,
+                            reason = "RwLock cannot be poisoned in our usage"
+                        )]
+                        let mut guard = self.lanes_tip.write().unwrap();
+                        guard.remove(&lane_id);
+                    }
+                }
                 self.metrics
                     .record_op("pop", "dp_metadata", start.elapsed().as_micros() as u64);
                 return Ok(Some((lane_hash_tip, (lane_entry, dp))));
