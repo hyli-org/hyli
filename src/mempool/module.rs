@@ -16,7 +16,7 @@ use crate::model::SharedRunContext;
 
 use super::{
     api, mempool_bus_client::MempoolBusClient, metrics::MempoolMetrics, shared_lanes_storage,
-    Mempool, MempoolStore,
+    storage::Storage, Mempool, MempoolStore,
 };
 
 use anyhow::Result;
@@ -146,6 +146,8 @@ impl Module for Mempool {
 
     async fn persist(&mut self) -> Result<ModulePersistOutput> {
         if let Some(file) = &self.file {
+            self.lanes.persist()?;
+
             let mempool_file = "mempool.bin";
             let checksum = Self::save_on_disk(file, mempool_file.as_ref(), &self.inner)?;
 

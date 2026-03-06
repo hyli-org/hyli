@@ -389,7 +389,7 @@ impl super::Mempool {
                             Ok(outputs) => {
                                 // TODO: we could check the blob hash here too.
                                 if outputs.len() != proof_tx.proven_blobs.len()
-                                    && std::iter::zip(outputs.iter(), proof_tx.proven_blobs.iter())
+                                    || std::iter::zip(outputs.iter(), proof_tx.proven_blobs.iter())
                                         .any(|(output, BlobProofOutput { hyli_output, .. })| {
                                             output != hyli_output
                                         })
@@ -449,7 +449,11 @@ pub mod test {
         p2p::network::HeaderSigner,
     };
     use hyli_crypto::BlstCrypto;
-    use hyli_model::{ContractName, DataProposalHash, SignedByValidator, Transaction};
+    use hyli_model::{
+        BlobIndex, BlobProofOutput, ContractName, DataProposalHash, HyliOutput, ProgramId,
+        ProofData, SignedByValidator, Transaction, TransactionData, VerifiedProofTransaction,
+        Verifier,
+    };
 
     #[test_log::test(tokio::test)]
     async fn test_get_verdict() {
@@ -551,6 +555,55 @@ pub mod test {
             }
             _ => panic!("Expected DataProposal message"),
         };
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_receiving_data_proposal_rejects_mismatched_verified_proof_output() -> Result<()> {
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+
+        let proof_output = HyliOutput::default();
+        let proof = ProofData(borsh::to_vec(&vec![proof_output.clone()])?);
+        let mut wrong_output = proof_output.clone();
+        wrong_output.index = BlobIndex(999);
+        let proof_hash = proof.hashed();
+
+        let tx = Transaction::from(TransactionData::VerifiedProof(VerifiedProofTransaction {
+            contract_name: ContractName::new("proof-check"),
+            program_id: ProgramId(vec![]),
+            verifier: Verifier("test".into()),
+            proof: Some(proof),
+            proof_hash: proof_hash.clone(),
+            proof_size: 0,
+            proven_blobs: vec![BlobProofOutput {
+                original_proof_hash: proof_hash,
+                blob_tx_hash: b"blob-tx".into(),
+                program_id: ProgramId(vec![]),
+                verifier: Verifier("test".into()),
+                hyli_output: wrong_output,
+            }],
+            is_recursive: false,
+        }));
+
+        let data_proposal = ctx.create_data_proposal(None, &[tx]);
+        let lane_id = LaneId::new(ctx.mempool.crypto.validator_pubkey().clone());
+
+        let vote = ctx.mempool.crypto.sign((
+            data_proposal.hashed(),
+            LaneBytesSize(data_proposal.estimate_size() as u64),
+        ))?;
+
+        ctx.mempool
+            .on_hashed_data_proposal(&lane_id, data_proposal.clone(), vote)?;
+        ctx.handle_processed_data_proposals().await;
+
+        assert_eq!(
+            ctx.mempool
+                .cached_dp_votes
+                .get(&(lane_id, data_proposal.hashed())),
+            Some(&DataProposalVerdict::Refuse)
+        );
+
         Ok(())
     }
 }
