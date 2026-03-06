@@ -1594,12 +1594,17 @@ impl<'any> NodeStateProcessing<'any> {
                             "Forbidden programId update: contract {contract_name} trying to upgrade {cn}"
                         ));
                     }
+                    let target_contract = match Self::get_contract(contracts, contract_changes, cn)
+                    {
+                        Ok(contract) => contract.clone(),
+                        Err(e) => return ProofProcessingResult::Invalid(e.to_string()),
+                    };
                     contract_changes
                         .entry(cn.clone())
                         .and_modify(|mcd| {
                             mcd.contract_status = ContractStatus::Updated(Contract {
                                 program_id: program_id.clone(),
-                                ..contract.clone()
+                                ..target_contract.clone()
                             });
                             mcd.modified_fields.program_id = true;
                             mcd.side_effects.push(SideEffect::UpdateProgramId);
@@ -1607,7 +1612,7 @@ impl<'any> NodeStateProcessing<'any> {
                         .or_insert_with(|| ModifiedContractData {
                             contract_status: ContractStatus::Updated(Contract {
                                 program_id: program_id.clone(),
-                                ..contract.clone()
+                                ..target_contract.clone()
                             }),
                             modified_fields: ModifiedContractFields {
                                 program_id: true,
@@ -1623,12 +1628,17 @@ impl<'any> NodeStateProcessing<'any> {
                             "Forbidden TimeoutWindow update: contract {contract_name} trying to upgrade {cn}"
                         ));
                     }
+                    let target_contract = match Self::get_contract(contracts, contract_changes, cn)
+                    {
+                        Ok(contract) => contract.clone(),
+                        Err(e) => return ProofProcessingResult::Invalid(e.to_string()),
+                    };
                     contract_changes
                         .entry(cn.clone())
                         .and_modify(|mcd| {
                             mcd.contract_status = ContractStatus::Updated(Contract {
                                 timeout_window: timeout_window.clone(),
-                                ..contract.clone()
+                                ..target_contract.clone()
                             });
                             mcd.modified_fields.timeout_window = true;
                             mcd.side_effects.push(SideEffect::UpdateTimeoutWindow);
@@ -1636,7 +1646,7 @@ impl<'any> NodeStateProcessing<'any> {
                         .or_insert_with(|| ModifiedContractData {
                             contract_status: ContractStatus::Updated(Contract {
                                 timeout_window: timeout_window.clone(),
-                                ..contract.clone()
+                                ..target_contract.clone()
                             }),
                             modified_fields: ModifiedContractFields {
                                 timeout_window: true,
