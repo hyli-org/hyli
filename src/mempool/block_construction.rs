@@ -534,10 +534,16 @@ impl super::Mempool {
 
         self.metrics.constructed_block.add(1, &[]);
 
+        let cut_lanes = block_data.len();
+        let lanes_with_new_data = block_data.iter().filter(|(_, dps)| !dps.is_empty()).count();
+        let total_new_data_proposals: usize = block_data.iter().map(|(_, dps)| dps.len()).sum();
+
         debug!(
-            "🚧 Built signed block for slot {} with {} data proposals",
+            "🚧 Built signed block for slot {} with {} cut lanes, {} lanes with new data, {} new data proposals",
             buc.ccp.consensus_proposal.slot,
-            block_data.len()
+            cut_lanes,
+            lanes_with_new_data,
+            total_new_data_proposals
         );
 
         // Delete stored proofs for all committed DataProposals - we don't need them anymore
