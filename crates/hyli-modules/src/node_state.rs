@@ -164,6 +164,12 @@ pub enum TxError {
         tx_hash: TxHash,
     },
 
+    /// Proof tx_blob_count doesn't match blob tx blob count
+    TxBlobCountMismatch {
+        proof_count: usize,
+        tx_count: usize,
+    },
+
     /// Proof tx context doesn't match blob tx context
     TxContextMismatch,
 
@@ -214,6 +220,7 @@ impl std::fmt::Display for TxError {
             TxError::NativeBlobFailed => write!(f, "Settling fast as failed because native blob was failed."),
             TxError::IdentityMismatch { proof_identity, tx_identity } => write!(f, "Proof identity '{proof_identity}' does not correspond to BlobTx identity '{tx_identity}'."),
             TxError::TxHashMismatch { proof_hash, tx_hash } => write!(f, "Proof tx_hash '{proof_hash}' does not correspond to BlobTx hash '{tx_hash}'."),
+            TxError::TxBlobCountMismatch { proof_count, tx_count } => write!(f, "Proof tx_blob_count '{proof_count}' does not correspond to BlobTx blob count '{tx_count}'."),
             TxError::TxContextMismatch => write!(f, "Proof tx_context does not correspond to BlobTx tx_context."),
             TxError::BlobsHashMismatch => write!(f, "Proof blobs hash does not correspond to BlobTx blobs hash."),
             TxError::MissingConstructorBlob { contract_name } => write!(f, "Contract '{contract_name}' is in RegisterWithConstructor state at settlement end; constructor blob missing."),
@@ -872,6 +879,7 @@ impl<'any> NodeStateProcessing<'any> {
             .unsettled_transactions
             .remove(unsettled_tx_hash)
             .unwrap();
+        self.timeouts.remove(unsettled_tx_hash);
 
         Ok(SettledTxOutput {
             tx: unsettled_tx,
@@ -1219,6 +1227,7 @@ impl<'any> NodeStateProcessing<'any> {
                         .cloned()
                     {
                         if let Some(popped_tx) = self.unsettled_transactions.remove(&tx_hash) {
+                            self.timeouts.remove(&tx_hash);
                             info!("⏳ Timeout tx {} (from contract deletion)", &tx_hash);
 
                             potentially_blocked_contracts
@@ -1361,6 +1370,13 @@ impl<'any> NodeStateProcessing<'any> {
             return Err(TxError::TxHashMismatch {
                 proof_hash: hyli_output.tx_hash.clone(),
                 tx_hash: unsettled_tx.tx_id.1.clone(),
+            });
+        }
+
+        if hyli_output.tx_blob_count != unsettled_tx.tx.blobs.len() {
+            return Err(TxError::TxBlobCountMismatch {
+                proof_count: hyli_output.tx_blob_count,
+                tx_count: unsettled_tx.tx.blobs.len(),
             });
         }
 
