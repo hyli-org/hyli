@@ -2413,7 +2413,7 @@ dependencies = [
  "hex",
  "moka",
  "rand 0.9.2",
- "reqwest 0.13.1",
+ "reqwest 0.13.2",
  "reqwest-middleware 0.5.0",
  "reqwest-retry",
  "risc0-aggregation",
@@ -4838,7 +4838,7 @@ dependencies = [
  "bytes",
  "google-cloud-gax",
  "http 1.4.0",
- "reqwest 0.13.1",
+ "reqwest 0.13.2",
  "rustc_version 0.4.1",
  "rustls 0.23.36",
  "rustls-pki-types",
@@ -4890,7 +4890,7 @@ dependencies = [
  "pin-project",
  "prost 0.14.3",
  "prost-types",
- "reqwest 0.13.1",
+ "reqwest 0.13.2",
  "rustc_version 0.4.1",
  "serde",
  "serde_json",
@@ -4916,7 +4916,7 @@ dependencies = [
  "google-cloud-type",
  "google-cloud-wkt",
  "lazy_static",
- "reqwest 0.13.1",
+ "reqwest 0.13.2",
  "serde",
  "serde_json",
  "serde_with",
@@ -4936,7 +4936,7 @@ dependencies = [
  "google-cloud-rpc",
  "google-cloud-wkt",
  "lazy_static",
- "reqwest 0.13.1",
+ "reqwest 0.13.2",
  "serde",
  "serde_json",
  "serde_with",
@@ -5001,7 +5001,7 @@ dependencies = [
  "pin-project",
  "prost 0.14.3",
  "prost-types",
- "reqwest 0.13.1",
+ "reqwest 0.13.2",
  "serde",
  "serde_json",
  "serde_with",
@@ -5891,7 +5891,7 @@ dependencies = [
  "dirs 6.0.0",
  "hyli-client-sdk",
  "indicatif 0.18.4",
- "reqwest 0.13.1",
+ "reqwest 0.13.2",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -9027,16 +9027,16 @@ dependencies = [
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-streams",
+ "wasm-streams 0.4.2",
  "web-sys",
  "webpki-roots",
 ]
 
 [[package]]
 name = "reqwest"
-version = "0.13.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04e9018c9d814e5f30cc16a0f03271aeab3571e609612d9fe78c1aa8d11c2f62"
+checksum = "ab3f43e3283ab1488b624b44b0e988d0acea0b3214e694730a055cb6b2efa801"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -9073,7 +9073,7 @@ dependencies = [
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
- "wasm-streams",
+ "wasm-streams 0.5.0",
  "web-sys",
 ]
 
@@ -9101,7 +9101,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "http 1.4.0",
- "reqwest 0.13.1",
+ "reqwest 0.13.2",
  "thiserror 2.0.18",
  "tower-service",
 ]
@@ -9118,7 +9118,7 @@ dependencies = [
  "getrandom 0.2.17",
  "http 1.4.0",
  "hyper 1.8.1",
- "reqwest 0.13.1",
+ "reqwest 0.13.2",
  "reqwest-middleware 0.5.0",
  "retry-policies",
  "thiserror 2.0.18",
@@ -13503,6 +13503,19 @@ name = "wasm-streams"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "15053d8d85c7eccdbefef60f06769760a563c7f0a9d6902a13d35c7800b0ad65"
+dependencies = [
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
+name = "wasm-streams"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d1ec4f6517c9e11ae630e200b2b65d193279042e28edd4a2cda233e46670bbb"
 dependencies = [
  "futures-util",
  "js-sys",
