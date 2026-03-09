@@ -522,6 +522,7 @@ impl Genesis {
 
             ptx.outputs[0].1.tx_hash = ptx.to_blob_tx().hashed();
             ptx.outputs[0].1.blobs = IndexedBlobs::from(ptx.blobs.clone());
+            ptx.outputs[0].1.tx_blob_count = ptx.blobs.len();
 
             let tx_hash = ptx.to_blob_tx().hashed();
             ptx.outputs.push((
