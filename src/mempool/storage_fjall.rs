@@ -6,16 +6,22 @@ use std::{
 
 use anyhow::{bail, Result};
 use async_stream::try_stream;
-use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slice};
+use borsh::{BorshDeserialize, BorshSerialize};
+use fjall::{
+    Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, OwnedWriteBatch, Slice,
+};
 use futures::Stream;
-use hyli_model::{LaneId, ProofData};
+use hyli_model::{BlockHeight, DataSized, LaneId, ProofData};
 use hyli_modules::utils::fjall_metrics::FjallMetrics;
 use std::time::Instant;
 use tracing::{info, warn};
 
 use crate::{
     mempool::storage::MetadataOrMissingHash,
-    model::{DataProposal, DataProposalHash, Hashed, PoDA},
+    model::{
+        AggregateSignature, ConsensusProposal, ConsensusProposalHash, DataProposal,
+        DataProposalHash, Hashed, PoDA, SignedBlock,
+    },
 };
 use hyli_modules::log_warn;
 
@@ -24,7 +30,51 @@ use super::{
     ValidatorDAG,
 };
 
+mod blocks;
+
+use self::blocks::{FjallHashKey, FjallHeightKey, FjallValue};
+
 pub use hyli_model::LaneBytesSize;
+
+#[derive(Debug, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
+pub struct StoredSignedBlock {
+    pub consensus_proposal: ConsensusProposal,
+    pub certificate: AggregateSignature,
+    // We only persist DP hashes here. Full DPs live in the lane store, where proofs are
+    // intentionally stripped and kept in the side proof store.
+    pub data_proposals: Vec<(LaneId, Vec<DataProposalHash>)>,
+}
+
+impl StoredSignedBlock {
+    pub fn height(&self) -> BlockHeight {
+        BlockHeight(self.consensus_proposal.slot)
+    }
+}
+
+impl From<SignedBlock> for StoredSignedBlock {
+    fn from(value: SignedBlock) -> Self {
+        Self::from(&value)
+    }
+}
+
+impl From<&SignedBlock> for StoredSignedBlock {
+    fn from(value: &SignedBlock) -> Self {
+        StoredSignedBlock {
+            consensus_proposal: value.consensus_proposal.clone(),
+            certificate: value.certificate.clone(),
+            data_proposals: value
+                .data_proposals
+                .iter()
+                .map(|(lane_id, dps)| {
+                    (
+                        lane_id.clone(),
+                        dps.iter().map(crate::model::Hashed::hashed).collect(),
+                    )
+                })
+                .collect(),
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct LanesStorage {
@@ -33,6 +83,8 @@ pub struct LanesStorage {
     by_hash_metadata: Keyspace,
     by_hash_data: Keyspace,
     dp_proofs: Keyspace,
+    blocks_by_hash: Keyspace,
+    block_hashes_by_height: Keyspace,
     metrics: FjallMetrics,
     // Used by the shared storage to know when it can drop this handle.
     ref_token: Arc<()>,
@@ -127,6 +179,10 @@ impl LanesStorage {
             .record_keyspace("dp_metadata", &self.by_hash_metadata);
         self.metrics.record_keyspace("dp_data", &self.by_hash_data);
         self.metrics.record_keyspace("dp_proofs", &self.dp_proofs);
+        self.metrics
+            .record_keyspace("blocks_by_hash", &self.blocks_by_hash);
+        self.metrics
+            .record_keyspace("block_hashes_by_height", &self.block_hashes_by_height);
     }
 
     pub fn new(
@@ -165,6 +221,18 @@ impl LanesStorage {
                 .max_memtable_size(64 * 1024 * 1024)
         })?;
 
+        let blocks_by_hash = db.keyspace("blocks_by_hash", || {
+            KeyspaceCreateOptions::default()
+                .with_kv_separation(Some(
+                    KvSeparationOptions::default().file_target_size(256 * 1024 * 1024),
+                ))
+                .manual_journal_persist(true)
+                .max_memtable_size(128 * 1024 * 1024)
+        })?;
+
+        let block_hashes_by_height =
+            db.keyspace("block_hashes_by_height", KeyspaceCreateOptions::default)?;
+
         info!("{} DP(s) available", by_hash_metadata.len()?);
 
         Ok(LanesStorage {
@@ -173,6 +241,8 @@ impl LanesStorage {
             by_hash_metadata,
             by_hash_data,
             dp_proofs,
+            blocks_by_hash,
+            block_hashes_by_height,
             metrics: FjallMetrics::global("mempool", "unknown", "mempool"),
             ref_token: Arc::new(()),
         })
@@ -180,6 +250,178 @@ impl LanesStorage {
 
     pub fn set_metrics_context(&mut self, node_id: impl Into<String>) {
         self.metrics = FjallMetrics::global("mempool", node_id, "mempool");
+    }
+
+    pub fn record_op(
+        &self,
+        op: &'static str,
+        keyspace: &'static str,
+        elapsed: std::time::Duration,
+    ) {
+        self.metrics
+            .record_op(op, keyspace, elapsed.as_micros() as u64);
+    }
+
+    pub fn store_signed_block(&mut self, block: &SignedBlock) -> Result<()> {
+        let start = Instant::now();
+        let mut batch = self.db.batch();
+
+        for (lane_id, dps) in &block.data_proposals {
+            if dps.is_empty() {
+                continue;
+            }
+
+            let final_cumul_size = block
+                .consensus_proposal
+                .cut
+                .iter()
+                .find(|(cut_lane_id, _, _, _)| cut_lane_id == lane_id)
+                .map(|(_, _, cumul_size, _)| *cumul_size)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Missing cut entry for lane {lane_id} while storing block {}",
+                        block.hashed()
+                    )
+                })?;
+
+            // Block payloads are proof-stripped before they reach DA storage, but
+            // `VerifiedProofTransaction::estimate_size()` still accounts for the original
+            // proof bytes via its persisted `proof_size` field. That lets us reconstruct the
+            // original per-DP cumulative sizes without storing duplicate size metadata.
+            let total_segment_size =
+                LaneBytesSize(dps.iter().map(|dp| dp.estimate_size() as u64).sum());
+            let mut running_cumul_size = LaneBytesSize(
+                final_cumul_size
+                    .0
+                    .checked_sub(total_segment_size.0)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Invalid cut size {} for lane {lane_id} in block {}",
+                            final_cumul_size.0,
+                            block.hashed()
+                        )
+                    })?,
+            );
+
+            for dp in dps.iter().cloned() {
+                running_cumul_size =
+                    LaneBytesSize(running_cumul_size.0 + dp.estimate_size() as u64);
+                self.stage_committed_data_proposal(&mut batch, lane_id, dp, running_cumul_size)?;
+            }
+        }
+
+        let block = StoredSignedBlock::from(block);
+        let block_hash = block.consensus_proposal.hashed();
+        let block_height = block.height();
+        let height_key = FjallHeightKey::new(block_height);
+
+        if self.contains_block(&block_hash) {
+            match self.block_hashes_by_height.get(height_key.as_ref())? {
+                Some(existing_hash_value) => {
+                    let existing_hash: ConsensusProposalHash =
+                        borsh::from_slice(&existing_hash_value)?;
+                    if existing_hash != block_hash {
+                        bail!(
+                            "Conflicting block index for height {}: existing {}, new {}",
+                            block_height,
+                            existing_hash,
+                            block_hash
+                        );
+                    }
+                }
+                None => {
+                    batch.insert(
+                        &self.block_hashes_by_height,
+                        height_key.as_ref(),
+                        FjallValue::new_with_block_hash(&block_hash)?.0,
+                    );
+                }
+            }
+        } else {
+            if let Some(existing_hash_value) =
+                self.block_hashes_by_height.get(height_key.as_ref())?
+            {
+                let existing_hash: ConsensusProposalHash = borsh::from_slice(&existing_hash_value)?;
+                if existing_hash != block_hash {
+                    bail!(
+                        "Conflicting block index for height {}: existing {}, new {}",
+                        block_height,
+                        existing_hash,
+                        block_hash
+                    );
+                }
+            }
+
+            batch.insert(
+                &self.blocks_by_hash,
+                FjallHashKey(block_hash.clone()).as_ref(),
+                FjallValue::new_with_block(&block)?.0,
+            );
+            batch.insert(
+                &self.block_hashes_by_height,
+                height_key.as_ref(),
+                FjallValue::new_with_block_hash(&block_hash)?.0,
+            );
+        }
+
+        batch.commit()?;
+
+        self.metrics.record_op(
+            "store_signed_block",
+            "batch",
+            start.elapsed().as_micros() as u64,
+        );
+        Ok(())
+    }
+
+    fn stage_committed_data_proposal(
+        &self,
+        batch: &mut OwnedWriteBatch,
+        lane_id: &LaneId,
+        data_proposal: DataProposal,
+        cumul_size: LaneBytesSize,
+    ) -> Result<()> {
+        let data_proposal_hash = data_proposal.hashed();
+        let new_metadata = LaneEntryMetadata {
+            parent_data_proposal_hash: data_proposal.parent_data_proposal_hash.clone(),
+            cumul_size,
+            signatures: vec![],
+            cached_poda: None,
+        };
+
+        let existing_metadata = self.get_metadata_by_hash(lane_id, &data_proposal_hash)?;
+        let payload_exists = self.get_dp_by_hash(lane_id, &data_proposal_hash)?.is_some();
+        let metadata = existing_metadata
+            .clone()
+            .map(|existing| LaneEntryMetadata {
+                parent_data_proposal_hash: new_metadata.parent_data_proposal_hash.clone(),
+                cumul_size: new_metadata.cumul_size,
+                signatures: existing.signatures,
+                cached_poda: existing.cached_poda,
+            })
+            .unwrap_or(new_metadata);
+
+        match (existing_metadata.is_some(), payload_exists) {
+            (true, true) => Ok(()),
+            (false, true) => {
+                anyhow::bail!(
+                    "Inconsistent lane state for {lane_id}:{data_proposal_hash}: payload exists without metadata"
+                );
+            }
+            (true, false) | (false, false) => {
+                let mut dp_to_store = data_proposal;
+                let proofs = dp_to_store.take_proofs();
+                let key = format!("{lane_id}:{data_proposal_hash}");
+                let metadata = encode_metadata_to_item(metadata)?;
+                let data = encode_data_proposal_to_item(dp_to_store)?;
+                let proofs = Slice::from(borsh::to_vec(&proofs)?);
+
+                batch.insert(&self.by_hash_metadata, key.clone(), metadata);
+                batch.insert(&self.by_hash_data, key.clone(), data);
+                batch.insert(&self.dp_proofs, key, proofs);
+                Ok(())
+            }
+        }
     }
 
     #[cfg(test)]

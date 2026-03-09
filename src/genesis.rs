@@ -699,9 +699,13 @@ impl Genesis {
             .clone();
         let lane_id = LaneId::new(round_leader.clone());
         let dp = DataProposal::new_root(lane_id.clone(), genesis_txs);
+        let genesis_poda = AggregateSignature {
+            signature: Signature("fake".into()),
+            validators: initial_validators.clone(),
+        };
 
         SignedBlock {
-            data_proposals: vec![(lane_id, vec![dp.clone()])],
+            data_proposals: vec![(lane_id.clone(), vec![dp.clone()])],
             certificate: AggregateSignature {
                 signature: Signature("fake".into()),
                 validators: initial_validators.clone(),
@@ -709,15 +713,12 @@ impl Genesis {
             consensus_proposal: ConsensusProposal {
                 slot: 0,
                 timestamp: mean_timestamp,
-                // TODO: We aren't actually storing the data proposal above, so we cannot store it here,
-                // or we might mistakenly request data from that cut, but mempool hasn't seen it.
-                // This should be fixed by storing the data proposal in mempool or handling this whole thing differently.
-                cut: vec![/*(
-                    round_leader.clone(), dp.hash(), AggregateSignature {
-                        signature: Signature("fake".into()),
-                        validators: initial_validators.clone()
-                    }
-                )*/],
+                cut: vec![(
+                    lane_id,
+                    dp.hashed(),
+                    LaneBytesSize(dp.estimate_size() as u64),
+                    genesis_poda,
+                )],
                 staking_actions: initial_validators
                     .iter()
                     .map(|v| {

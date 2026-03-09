@@ -2,11 +2,8 @@
 
 pub mod local_da_replayer;
 
-// Pick one of the two implementations
-use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
-use hyli_modules::utils::da_codec::DataAvailabilityServer;
-//use hyli_modules::modules::data_availability::blocks_memory::Blocks;
 use hyli_modules::modules::da_listener::{DaStreamPoll, SignedDaStream};
+use hyli_modules::utils::da_codec::DataAvailabilityServer;
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::TcpEvent;
@@ -16,6 +13,7 @@ use crate::{
     bus::BusClientSender,
     consensus::ConsensusCommand,
     genesis::GenesisEvent,
+    mempool::{shared_lanes_storage, storage::Storage, LanesStorage},
     model::*,
     p2p::network::{OutboundMessage, PeerEvent},
     utils::conf::SharedConf,
@@ -38,9 +36,9 @@ impl Module for DataAvailability {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> anyhow::Result<Self> {
         let bus = DABusClient::new_from_bus(bus.new_handle()).await;
 
-        let mut blocks = Blocks::new(&ctx.config.data_directory.join("data_availability.db"))?;
-        blocks.set_metrics_context(ctx.config.id.clone());
-        let highest_block = blocks.highest();
+        let mut lanes = shared_lanes_storage(&ctx.config.data_directory)?;
+        lanes.set_metrics_context(ctx.config.id.clone());
+        let highest_block = lanes.highest_block_height();
 
         // When fast catchup is enabled, we load the node state from disk to load blocks
 
@@ -76,7 +74,7 @@ impl Module for DataAvailability {
         Ok(DataAvailability {
             config: ctx.config.clone(),
             bus,
-            blocks,
+            lanes,
             buffered_signed_blocks: BTreeSet::new(),
             catchupper: DaCatchupper::new(catchup_policy, ctx.config.da_max_frame_length),
             allow_peer_catchup: false,
@@ -102,11 +100,10 @@ struct DABusClient {
 }
 }
 
-#[derive(Debug)]
 pub struct DataAvailability {
     config: SharedConf,
     bus: DABusClient,
-    pub blocks: Blocks,
+    pub lanes: LanesStorage,
 
     buffered_signed_blocks: BTreeSet<SignedBlock>,
 
@@ -586,7 +583,7 @@ impl DataAvailability {
     pub fn start_scanning_for_first_hole(
         &self,
     ) -> tokio::sync::mpsc::Receiver<Option<BlockHeight>> {
-        let blocks_handle = self.blocks.new_handle();
+        let blocks_handle = self.lanes.new_handle();
 
         let (first_hole_sender, first_hole_receiver) =
             tokio::sync::mpsc::channel::<Option<BlockHeight>>(10);
@@ -599,7 +596,7 @@ impl DataAvailability {
             // Start scanning local storage for first hole, if any
             _ = tokio::task::spawn(async move {
                 loop {
-                    match blocks_handle.first_hole_by_height() {
+                    match blocks_handle.first_block_hole_by_height() {
                         Err(e) => {
                             debug!("Catchup not started yet, no data in partition: {}", e);
                             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -665,7 +662,7 @@ impl DataAvailability {
                         self.allow_peer_catchup = true;
                         _ = log_error!(
                             self.catchupper.ensure_started(
-                                self.blocks.highest(),
+                                self.lanes.highest_block_height(),
                             ),
                             "Init catchup after NoGenesis"
                         );
@@ -681,7 +678,8 @@ impl DataAvailability {
                     debug!("Known peer announced again: {}", da_address);
                 }
                 if self.allow_peer_catchup {
-                    self.catchupper.ensure_started(self.blocks.highest())?;
+                    self.catchupper
+                        .ensure_started(self.lanes.highest_block_height())?;
                 } else {
                     debug!("Skipping catchup init on new peer while genesis path is unresolved");
                 }
@@ -757,7 +755,7 @@ impl DataAvailability {
             }
 
             _ = storage_metrics_ticker.tick() => {
-                self.blocks.record_metrics();
+                self.lanes.record_metrics();
             }
         };
 
@@ -805,37 +803,94 @@ impl DataAvailability {
         };
 
         debug!("📡  Sending block {} to peer {}", &hash, &peer_ip);
-        if let Ok(Some(signed_block)) = self.blocks.get(&hash) {
-            // Errors will be handled when sending new blocks, ignore here.
-            match server.send(
-                peer_ip.clone(),
-                DataAvailabilityEvent::SignedBlock(signed_block),
-                vec![],
-            ) {
-                Ok(()) => {
-                    // Successfully sent, continue with next block
-                    catchup_joinset.spawn(async move { (peer_ip, 0) });
-                }
-                Err(_) => {
-                    // Retry sending the same block (put it back at front of queue)
-                    if let Some(queue) = self.peer_send_queues.get_mut(&peer_ip) {
-                        queue.push_front(hash);
-                    }
-                    catchup_joinset.spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(100 * (retries as u64))).await;
-                        (peer_ip, retries + 1)
-                    });
-                }
-            }
-        } else {
+        let Some(stored_block) = self.lanes.get_stored_block(&hash)? else {
             error!(
-                "Block {} not found in storage while sending to peer {}. Should not happen",
+                "Block {} not found in block index while sending to peer {}. Closing stream",
                 &hash, &peer_ip
             );
-            // Continue anyway with next block
-            catchup_joinset.spawn(async move { (peer_ip, 0) });
+            self.drop_streaming_peer(&peer_ip, server);
+            return Ok(());
+        };
+
+        let signed_block = match self.lanes.load_full_block(&hash) {
+            Ok(Some(signed_block)) => signed_block,
+            Ok(None) => {
+                self.reject_streaming_peer_for_missing_block(
+                    &peer_ip,
+                    stored_block.height(),
+                    server,
+                    format!(
+                        "Block {} at height {} disappeared from storage while sending to peer {}. Closing stream",
+                        &hash,
+                        stored_block.height(),
+                        &peer_ip
+                    ),
+                );
+                return Ok(());
+            }
+            Err(e) => {
+                self.reject_streaming_peer_for_missing_block(
+                    &peer_ip,
+                    stored_block.height(),
+                    server,
+                    format!(
+                        "Failed to reconstruct block {} at height {} while sending to peer {}: {:#}. Closing stream",
+                        &hash,
+                        stored_block.height(),
+                        &peer_ip,
+                        e
+                    ),
+                );
+                return Ok(());
+            }
+        };
+
+        // Errors will be handled when sending new blocks, ignore here.
+        match server.send(
+            peer_ip.clone(),
+            DataAvailabilityEvent::SignedBlock(signed_block),
+            vec![],
+        ) {
+            Ok(()) => {
+                catchup_joinset.spawn(async move { (peer_ip, 0) });
+            }
+            Err(_) => {
+                if let Some(queue) = self.peer_send_queues.get_mut(&peer_ip) {
+                    queue.push_front(hash);
+                }
+                catchup_joinset.spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(100 * (retries as u64))).await;
+                    (peer_ip, retries + 1)
+                });
+            }
         }
         Ok(())
+    }
+
+    fn reject_streaming_peer_for_missing_block(
+        &mut self,
+        peer_ip: &str,
+        block_height: BlockHeight,
+        server: &mut DataAvailabilityServer,
+        message: String,
+    ) {
+        error!("{message}");
+        if let Err(e) = server.send(
+            peer_ip.to_owned(),
+            DataAvailabilityEvent::BlockNotFound(block_height),
+            vec![],
+        ) {
+            warn!(
+                "Error sending BlockNotFound at height {} to {}: {:#}",
+                block_height, peer_ip, e
+            );
+        }
+        self.drop_streaming_peer(peer_ip, server);
+    }
+
+    fn drop_streaming_peer(&mut self, peer_ip: &str, server: &mut DataAvailabilityServer) {
+        server.drop_peer_stream(peer_ip.to_owned());
+        self.peer_send_queues.remove(peer_ip);
     }
 
     async fn handle_block_request(
@@ -850,7 +905,7 @@ impl DataAvailability {
         );
 
         // Check if block exists in storage
-        match self.blocks.get_by_height(block_height) {
+        match self.lanes.load_full_block_by_height(block_height) {
             Ok(Some(block)) => {
                 debug!(
                     "📦 Found block at height {}, sending to {}",
@@ -964,7 +1019,7 @@ impl DataAvailability {
     ) -> Option<BlockHeight> {
         let hash = block.hashed();
         // if new block is already handled, ignore it
-        if self.blocks.contains(&hash) {
+        if self.lanes.contains_block(&hash) {
             warn!(
                 "Block {} {} already exists !",
                 block.height(),
@@ -985,7 +1040,7 @@ impl DataAvailability {
             );
         }
         // if new block is not the next block in the chain, buffer
-        else if !self.blocks.contains(block.parent_hash()) {
+        else if !self.lanes.contains_block(block.parent_hash()) {
             debug!(
                 "Parent block '{}' not found for block hash='{}' height {}",
                 block.parent_hash(),
@@ -997,7 +1052,7 @@ impl DataAvailability {
             return None;
         }
 
-        if block.height() < self.blocks.highest() {
+        if block.height() < self.lanes.highest_block_height() {
             // If we are in fast catchup, we need to backfill the block
             _ = log_error!(self.store_block(&block), "Backfilling block");
         } else {
@@ -1010,7 +1065,7 @@ impl DataAvailability {
         }
 
         let highest_processed_height = self.pop_buffer(hash, tcp_server, catchup_joinset).await;
-        _ = log_error!(self.blocks.persist(), "Persisting blocks");
+        _ = log_error!(self.lanes.persist(), "Persisting storage");
 
         let height = block.height();
 
@@ -1058,8 +1113,8 @@ impl DataAvailability {
     }
 
     fn store_block(&mut self, block: &SignedBlock) -> Result<()> {
-        self.blocks
-            .put(block.clone())
+        self.lanes
+            .store_signed_block(block)
             .context(format!("Storing block {}", block.height()))?;
 
         trace!("Block {} {}: {:#?}", block.height(), block.hashed(), block);
@@ -1145,29 +1200,30 @@ impl DataAvailability {
         server: &mut DataAvailabilityServer,
     ) -> Result<()> {
         let range_start = std::time::Instant::now();
-        let highest = self
-            .blocks
-            .last()
-            .map_or(start_height, |block| block.height());
+        let highest = self.lanes.highest_block_height();
 
         // Collect all blocks from start_height to current highest
         let processed_block_hashes: VecDeque<_> = self
-            .blocks
-            .range(start_height, highest + 1)
+            .lanes
+            .block_range(start_height, highest + 1)
             .filter_map(|item| item.ok())
             .collect();
-        self.blocks
-            .record_op("range_collect", "by_height", range_start.elapsed());
+        self.lanes.record_op(
+            "range_collect",
+            "block_hashes_by_height",
+            range_start.elapsed(),
+        );
 
-        let expected = highest.0.saturating_sub(start_height.0).saturating_add(1);
-        // If requester starts beyond our current tip, they are already caught up:
-        // the valid stream response is an empty queue (wait for future blocks), not BlockNotFound.
-        let expected = if start_height > highest { 0 } else { expected };
+        let expected = if start_height > highest {
+            0
+        } else {
+            highest.0.saturating_sub(start_height.0).saturating_add(1)
+        };
         if processed_block_hashes.len() as u64 != expected {
             let first_missing = (start_height.0..=highest.0)
                 .find(|height| {
-                    self.blocks
-                        .has_by_height(BlockHeight(*height))
+                    self.lanes
+                        .has_block_by_height(BlockHeight(*height))
                         .map(|present| !present)
                         .unwrap_or(true)
                 })
@@ -1220,11 +1276,11 @@ pub mod tests {
     use std::{collections::HashMap, time::Duration};
 
     use super::module_bus_client;
-    use super::Blocks;
     use crate::data_availability::DaCatchupPolicy;
     use crate::{
         bus::BusClientSender,
         consensus::CommittedConsensusProposal,
+        mempool::LanesStorage,
         model::*,
         utils::{conf::Conf, integration_test::find_available_port},
     };
@@ -1248,7 +1304,7 @@ pub mod tests {
         pub async fn new(shared_bus: crate::bus::SharedMessageBus) -> Self {
             let path = tempfile::tempdir().unwrap().keep();
             let tmpdir = path;
-            let blocks = Blocks::new(&tmpdir).unwrap();
+            let lanes = LanesStorage::new(&tmpdir, Default::default()).unwrap();
 
             let bus = super::DABusClient::new_from_bus(shared_bus.new_handle()).await;
             let node_state_bus = NodeStateBusClient::new_from_bus(shared_bus).await;
@@ -1262,7 +1318,7 @@ pub mod tests {
             let da = super::DataAvailability {
                 config: config.into(),
                 bus,
-                blocks,
+                lanes,
                 buffered_signed_blocks: Default::default(),
                 catchupper: Default::default(),
                 allow_peer_catchup: false,
@@ -1303,11 +1359,11 @@ pub mod tests {
     #[test_log::test]
     fn test_blocks() -> Result<()> {
         let tmpdir = tempfile::tempdir().unwrap().keep();
-        let mut blocks = Blocks::new(&tmpdir).unwrap();
+        let mut lanes = LanesStorage::new(&tmpdir, Default::default()).unwrap();
         let block = SignedBlock::default();
-        blocks.put(block.clone())?;
-        assert!(blocks.last().unwrap().height() == block.height());
-        let last = blocks.get(&block.hashed())?;
+        lanes.put_block((&block).into())?;
+        assert!(lanes.highest_block_height() == block.height());
+        let last = lanes.load_full_block(&block.hashed())?;
         assert!(last.is_some());
         assert!(last.unwrap().height() == BlockHeight(0));
         Ok(())
@@ -1316,7 +1372,7 @@ pub mod tests {
     #[test_log::test(tokio::test)]
     async fn test_pop_buffer_large() {
         let tmpdir = tempfile::tempdir().unwrap().keep();
-        let blocks = Blocks::new(&tmpdir).unwrap();
+        let lanes = LanesStorage::new(&tmpdir, Default::default()).unwrap();
 
         let port = find_available_port().await;
         let mut server = DataAvailabilityServer::start(port, "DaServer")
@@ -1327,7 +1383,7 @@ pub mod tests {
         let mut da = super::DataAvailability {
             config: Default::default(),
             bus,
-            blocks,
+            lanes,
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -1369,7 +1425,7 @@ pub mod tests {
     #[test_log::test(tokio::test)]
     async fn test_da_streaming() {
         let tmpdir = tempfile::tempdir().unwrap().keep();
-        let blocks = Blocks::new(&tmpdir).unwrap();
+        let lanes = LanesStorage::new(&tmpdir, Default::default()).unwrap();
 
         let global_bus = crate::bus::SharedMessageBus::new();
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
@@ -1381,7 +1437,7 @@ pub mod tests {
         let mut da = super::DataAvailability {
             config: config.clone().into(),
             bus,
-            blocks,
+            lanes,
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -1861,7 +1917,7 @@ pub mod tests {
     async fn test_block_request_while_streaming() {
         // Create DA server with blocks 0-9 already stored
         let tmpdir = tempfile::tempdir().unwrap().keep();
-        let mut blocks_storage = Blocks::new(&tmpdir).unwrap();
+        let mut lanes = LanesStorage::new(&tmpdir, Default::default()).unwrap();
 
         let global_bus = crate::bus::SharedMessageBus::new();
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
@@ -1872,17 +1928,17 @@ pub mod tests {
 
         // Create and store blocks 0-9
         let mut block = SignedBlock::default();
-        blocks_storage.put(block.clone()).unwrap();
+        lanes.put_block((&block).into()).unwrap();
         for i in 1..10 {
             block.consensus_proposal.parent_hash = block.hashed();
             block.consensus_proposal.slot = i;
-            blocks_storage.put(block.clone()).unwrap();
+            lanes.put_block((&block).into()).unwrap();
         }
 
         let mut da = super::DataAvailability {
             config: config.clone().into(),
             bus,
-            blocks: blocks_storage,
+            lanes,
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -2008,7 +2064,7 @@ pub mod tests {
     #[test_log::test(tokio::test)]
     async fn test_stream_rejected_when_start_height_missing() {
         let tmpdir = tempfile::tempdir().unwrap().keep();
-        let mut blocks_storage = Blocks::new(&tmpdir).unwrap();
+        let mut lanes = LanesStorage::new(&tmpdir, Default::default()).unwrap();
 
         let global_bus = crate::bus::SharedMessageBus::new();
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
@@ -2020,17 +2076,17 @@ pub mod tests {
         // Only store high blocks (10k+), leaving low heights unavailable.
         let mut block = SignedBlock::default();
         block.consensus_proposal.slot = 10_000;
-        blocks_storage.put(block.clone()).unwrap();
+        lanes.put_block((&block).into()).unwrap();
         for i in 10_001..10_006 {
             block.consensus_proposal.parent_hash = block.hashed();
             block.consensus_proposal.slot = i;
-            blocks_storage.put(block.clone()).unwrap();
+            lanes.put_block((&block).into()).unwrap();
         }
 
         let mut da = super::DataAvailability {
             config: config.clone().into(),
             bus,
-            blocks: blocks_storage,
+            lanes,
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -2075,7 +2131,7 @@ pub mod tests {
     #[test_log::test(tokio::test)]
     async fn test_stream_rejected_when_requested_range_has_gap() {
         let tmpdir = tempfile::tempdir().unwrap().keep();
-        let mut blocks_storage = Blocks::new(&tmpdir).unwrap();
+        let mut lanes = LanesStorage::new(&tmpdir, Default::default()).unwrap();
 
         let global_bus = crate::bus::SharedMessageBus::new();
         let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
@@ -2087,21 +2143,21 @@ pub mod tests {
         // Build sparse heights 0,1,3,4 so start height exists but range is not contiguous.
         let mut block = SignedBlock::default();
         block.consensus_proposal.slot = 0;
-        blocks_storage.put(block.clone()).unwrap();
+        lanes.put_block((&block).into()).unwrap();
         block.consensus_proposal.parent_hash = block.hashed();
         block.consensus_proposal.slot = 1;
-        blocks_storage.put(block.clone()).unwrap();
+        lanes.put_block((&block).into()).unwrap();
         block.consensus_proposal.parent_hash = block.hashed();
         block.consensus_proposal.slot = 3;
-        blocks_storage.put(block.clone()).unwrap();
+        lanes.put_block((&block).into()).unwrap();
         block.consensus_proposal.parent_hash = block.hashed();
         block.consensus_proposal.slot = 4;
-        blocks_storage.put(block.clone()).unwrap();
+        lanes.put_block((&block).into()).unwrap();
 
         let mut da = super::DataAvailability {
             config: config.clone().into(),
             bus,
-            blocks: blocks_storage,
+            lanes,
             buffered_signed_blocks: Default::default(),
             catchupper: Default::default(),
             allow_peer_catchup: false,
@@ -2141,6 +2197,87 @@ pub mod tests {
                 "Stream should close after rejecting sparse range"
             );
         }
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_stream_accepts_when_peer_is_already_up_to_date() {
+        let tmpdir = tempfile::tempdir().unwrap().keep();
+        let mut lanes = LanesStorage::new(&tmpdir, Default::default()).unwrap();
+
+        let global_bus = crate::bus::SharedMessageBus::new();
+        let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
+        let mut block_sender = TestBusClient::new_from_bus(global_bus).await;
+
+        let mut config: Conf = Conf::new(vec![], None, None).unwrap();
+        config.da_server_port = find_available_port().await;
+        config.da_public_address = format!("127.0.0.1:{}", config.da_server_port);
+
+        let mut block = SignedBlock::default();
+        lanes.put_block((&block).into()).unwrap();
+        for i in 1..5 {
+            block.consensus_proposal.parent_hash = block.hashed();
+            block.consensus_proposal.slot = i;
+            lanes.put_block((&block).into()).unwrap();
+        }
+
+        let next_block = SignedBlock {
+            data_proposals: vec![(LaneId::default(), vec![])],
+            certificate: AggregateSignature {
+                signature: crate::model::Signature("signature".into()),
+                validators: vec![],
+            },
+            consensus_proposal: ConsensusProposal {
+                slot: 5,
+                parent_hash: block.hashed(),
+                ..Default::default()
+            },
+        };
+
+        let mut da = super::DataAvailability {
+            config: config.clone().into(),
+            bus,
+            lanes,
+            buffered_signed_blocks: Default::default(),
+            catchupper: Default::default(),
+            allow_peer_catchup: false,
+            peer_send_queues: HashMap::new(),
+        };
+
+        tokio::spawn(async move {
+            da.start().await.unwrap();
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        let mut client =
+            DataAvailabilityClient::connect("client_id", config.da_public_address.clone())
+                .await
+                .unwrap();
+
+        client
+            .send(DataAvailabilityRequest::StreamFromHeight(BlockHeight(5)))
+            .await
+            .unwrap();
+
+        let next = tokio::time::timeout(Duration::from_millis(300), client.recv()).await;
+        assert!(
+            next.is_err(),
+            "Did not expect an immediate stream event or rejection for an up-to-date peer"
+        );
+
+        block_sender
+            .send(MempoolBlockEvent::BuiltSignedBlock(next_block.clone()))
+            .unwrap();
+
+        let streamed = tokio::time::timeout(Duration::from_secs(1), client.recv())
+            .await
+            .expect("Timed out waiting for the next streamed block")
+            .expect("Stream closed unexpectedly for up-to-date peer");
+        assert_eq!(
+            streamed,
+            DataAvailabilityEvent::SignedBlock(next_block),
+            "Peer should stay subscribed and receive the next block"
+        );
     }
 
     #[test_log::test(tokio::test)]
@@ -2413,61 +2550,6 @@ pub mod tests {
         assert!(
             catchupper.task.is_none(),
             "no task should start when no peers are available"
-        );
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn test_stream_accepts_when_peer_is_already_up_to_date() {
-        let tmpdir = tempfile::tempdir().unwrap().keep();
-        let mut blocks_storage = Blocks::new(&tmpdir).unwrap();
-
-        let global_bus = crate::bus::SharedMessageBus::new();
-        let bus = super::DABusClient::new_from_bus(global_bus.new_handle()).await;
-
-        let mut config: Conf = Conf::new(vec![], None, None).unwrap();
-        config.da_server_port = find_available_port().await;
-        config.da_public_address = format!("127.0.0.1:{}", config.da_server_port);
-
-        let mut block = SignedBlock::default();
-        blocks_storage.put(block.clone()).unwrap();
-        for i in 1..5 {
-            block.consensus_proposal.parent_hash = block.hashed();
-            block.consensus_proposal.slot = i;
-            blocks_storage.put(block.clone()).unwrap();
-        }
-
-        let mut da = super::DataAvailability {
-            config: config.clone().into(),
-            bus,
-            blocks: blocks_storage,
-            buffered_signed_blocks: Default::default(),
-            catchupper: Default::default(),
-            allow_peer_catchup: false,
-            peer_send_queues: HashMap::new(),
-        };
-
-        tokio::spawn(async move {
-            da.start().await.unwrap();
-        });
-
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-        let mut client =
-            DataAvailabilityClient::connect("client_id", config.da_public_address.clone())
-                .await
-                .unwrap();
-
-        // Request starts at the next block after current highest (peer is already up to date).
-        client
-            .send(DataAvailabilityRequest::StreamFromHeight(BlockHeight(5)))
-            .await
-            .unwrap();
-
-        // Should not be rejected with BlockNotFound.
-        let next = tokio::time::timeout(Duration::from_millis(300), client.recv()).await;
-        assert!(
-            next.is_err(),
-            "Did not expect an immediate stream event/rejection for up-to-date peer"
         );
     }
 }

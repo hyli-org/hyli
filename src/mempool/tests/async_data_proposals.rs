@@ -50,27 +50,33 @@ async fn impl_test_mempool_isnt_blocked_by_proof_verification() -> Result<()> {
     let contract_name = ContractName::new("test1");
 
     let lane_id = LaneId::new(node_modules.crypto.validator_pubkey().clone());
+    let genesis_dp = DataProposal::new_root(
+        lane_id.clone(),
+        vec![BlobTransaction::new(
+            "test@hyli",
+            vec![RegisterContractAction {
+                verifier: "test-slow".into(),
+                program_id: ProgramId(vec![]),
+                state_commitment: StateCommitment(vec![0, 1, 2, 3]),
+                contract_name: contract_name.clone(),
+                ..Default::default()
+            }
+            .as_blob("hyli".into())],
+        )
+        .into()],
+    );
     node_client.send(GenesisEvent::GenesisBlock(SignedBlock {
-        data_proposals: vec![(
-            lane_id.clone(),
-            vec![DataProposal::new_root(
-                lane_id,
-                vec![BlobTransaction::new(
-                    "test@hyli",
-                    vec![RegisterContractAction {
-                        verifier: "test-slow".into(),
-                        program_id: ProgramId(vec![]),
-                        state_commitment: StateCommitment(vec![0, 1, 2, 3]),
-                        contract_name: contract_name.clone(),
-                        ..Default::default()
-                    }
-                    .as_blob("hyli".into())],
-                )
-                .into()],
-            )],
-        )],
+        data_proposals: vec![(lane_id.clone(), vec![genesis_dp.clone()])],
         certificate: AggregateSignature::default(),
-        consensus_proposal: ConsensusProposal::default(),
+        consensus_proposal: ConsensusProposal {
+            cut: vec![(
+                lane_id,
+                genesis_dp.hashed(),
+                LaneBytesSize(genesis_dp.estimate_size() as u64),
+                AggregateSignature::default(),
+            )],
+            ..ConsensusProposal::default()
+        },
     }))?;
 
     // Wait until we process the genesis block

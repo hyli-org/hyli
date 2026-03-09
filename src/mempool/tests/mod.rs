@@ -13,7 +13,7 @@ use std::time::Duration;
 use super::*;
 use crate::bus::SharedMessageBus;
 use crate::mempool::dissemination::DisseminationManager;
-use crate::mempool::storage::LaneEntryMetadata;
+use crate::mempool::storage::{LaneEntryMetadata, Storage};
 use crate::model;
 use crate::model::DataProposalParent;
 use crate::p2p::network::NetMessage;
@@ -550,6 +550,29 @@ impl MempoolTestCtx {
 
         Ok(cut)
     }
+}
+
+fn put_committed_data_proposal_for_test(
+    storage: &mut impl Storage,
+    lane_id: &LaneId,
+    data_proposal: DataProposal,
+    cumul_size: LaneBytesSize,
+    update_tip: bool,
+) -> DataProposalHash {
+    let data_proposal_hash = data_proposal.hashed();
+    let entry = LaneEntryMetadata {
+        parent_data_proposal_hash: data_proposal.parent_data_proposal_hash.clone(),
+        cumul_size,
+        signatures: vec![],
+        cached_poda: None,
+    };
+    storage
+        .put_no_verification(lane_id.clone(), (entry, data_proposal))
+        .unwrap();
+    if update_tip {
+        storage.update_lane_tip(lane_id.clone(), data_proposal_hash.clone(), cumul_size);
+    }
+    data_proposal_hash
 }
 
 pub fn create_data_vote(
@@ -1553,6 +1576,90 @@ async fn test_processed_dp_fails_when_tip_moved_past_it() -> Result<()> {
         .is_err());
 
     assert!(!ctx.mempool.lanes.contains(&lane_id, &dp2_hash));
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_clean_and_update_lanes_sets_tip_when_committed_chain_already_exists() -> Result<()> {
+    let mut ctx = MempoolTestCtx::new("mempool").await;
+
+    let lane_id = ctx.own_lane();
+    let tx = make_register_contract_tx(ContractName::new("reconcile-tip"));
+
+    let dp1 = ctx.create_data_proposal(None, std::slice::from_ref(&tx));
+    let dp1_hash = dp1.hashed();
+    let dp1_size = LaneBytesSize(dp1.estimate_size() as u64);
+    put_committed_data_proposal_for_test(
+        &mut ctx.mempool.lanes,
+        &lane_id,
+        dp1.clone(),
+        dp1_size,
+        false,
+    );
+
+    let dp2 = ctx.create_data_proposal(Some(dp1_hash.clone()), std::slice::from_ref(&tx));
+    let dp2_hash = dp2.hashed();
+    let dp2_size = LaneBytesSize((dp1.estimate_size() + dp2.estimate_size()) as u64);
+    put_committed_data_proposal_for_test(&mut ctx.mempool.lanes, &lane_id, dp2, dp2_size, false);
+
+    assert_eq!(ctx.mempool.lanes.get_lane_hash_tip(&lane_id), None);
+
+    let cut = vec![(lane_id.clone(), dp2_hash.clone(), dp2_size, PoDA::default())];
+    ctx.mempool.clean_and_update_lanes(&cut, &None)?;
+
+    assert_eq!(
+        ctx.mempool.lanes.get_lane_hash_tip(&lane_id),
+        Some(dp2_hash.clone())
+    );
+    assert_eq!(
+        ctx.mempool.lanes.get_lane_size_tip(&lane_id),
+        Some(dp2_size)
+    );
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp1_hash));
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp2_hash));
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_clean_and_update_lanes_keeps_ahead_tip_when_committed_chain_exists() -> Result<()> {
+    let mut ctx = MempoolTestCtx::new("mempool").await;
+
+    let lane_id = ctx.own_lane();
+    let tx = make_register_contract_tx(ContractName::new("ahead-tip"));
+
+    let dp1 = ctx.create_data_proposal(None, std::slice::from_ref(&tx));
+    let dp1_hash = dp1.hashed();
+    let dp1_size = LaneBytesSize(dp1.estimate_size() as u64);
+    put_committed_data_proposal_for_test(&mut ctx.mempool.lanes, &lane_id, dp1, dp1_size, false);
+
+    let dp2 = ctx.create_data_proposal(Some(dp1_hash.clone()), std::slice::from_ref(&tx));
+    let dp2_hash = dp2.hashed();
+    let dp2_size = LaneBytesSize(dp1_size.0 + dp2.estimate_size() as u64);
+    put_committed_data_proposal_for_test(&mut ctx.mempool.lanes, &lane_id, dp2, dp2_size, false);
+
+    let dp3 = ctx.create_data_proposal(Some(dp2_hash.clone()), std::slice::from_ref(&tx));
+    let dp3_hash = dp3.hashed();
+    let dp3_size = LaneBytesSize(dp2_size.0 + dp3.estimate_size() as u64);
+    put_committed_data_proposal_for_test(&mut ctx.mempool.lanes, &lane_id, dp3, dp3_size, true);
+
+    assert_eq!(
+        ctx.mempool.lanes.get_lane_hash_tip(&lane_id),
+        Some(dp3_hash.clone())
+    );
+
+    let cut = vec![(lane_id.clone(), dp2_hash.clone(), dp2_size, PoDA::default())];
+    ctx.mempool.clean_and_update_lanes(&cut, &None)?;
+
+    assert_eq!(
+        ctx.mempool.lanes.get_lane_hash_tip(&lane_id),
+        Some(dp3_hash)
+    );
+    assert_eq!(
+        ctx.mempool.lanes.get_lane_size_tip(&lane_id),
+        Some(dp3_size)
+    );
 
     Ok(())
 }

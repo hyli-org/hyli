@@ -167,7 +167,9 @@ pub trait Storage {
                         return Ok(Some((current, le.cumul_size, poda.signature)));
                     }
                     Err(e) => {
-                        error!("Could not aggregate signatures for lane {lane_id} and DP {current}: {e}");
+                        error!(
+                            "Could not aggregate signatures for lane {lane_id} and DP {current}: {e}"
+                        );
                         return Ok(None);
                     }
                 }
@@ -435,6 +437,25 @@ mod tests {
     fn setup_storage() -> LanesStorage {
         let tmp_dir = tempfile::tempdir().unwrap().keep();
         LanesStorage::new(&tmp_dir, BTreeMap::default()).unwrap()
+    }
+
+    fn put_committed_data_proposal_for_test(
+        storage: &mut impl Storage,
+        lane_id: &LaneId,
+        data_proposal: DataProposal,
+        cumul_size: LaneBytesSize,
+    ) -> DataProposalHash {
+        let data_proposal_hash = data_proposal.hashed();
+        let entry = LaneEntryMetadata {
+            parent_data_proposal_hash: data_proposal.parent_data_proposal_hash.clone(),
+            cumul_size,
+            signatures: vec![],
+            cached_poda: None,
+        };
+        storage
+            .put_no_verification(lane_id.clone(), (entry, data_proposal))
+            .unwrap();
+        data_proposal_hash
     }
 
     #[test_log::test(tokio::test)]
@@ -836,6 +857,39 @@ mod tests {
             .collect()
             .await;
         assert_eq!(1, pending.len());
+    }
+
+    #[test_log::test]
+    fn test_store_committed_data_proposal_without_tip_update_preserves_live_tip() {
+        let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
+        let mut storage = setup_storage();
+
+        let live_tip = DataProposal::new_root(lane_id.clone(), vec![Transaction::default()]);
+        let (live_tip_hash, live_tip_size) = storage
+            .store_data_proposal(&crypto, lane_id, live_tip.clone())
+            .unwrap();
+
+        let historical_root = DataProposal::new_root(lane_id.clone(), vec![]);
+        let historical_root_hash = put_committed_data_proposal_for_test(
+            &mut storage,
+            lane_id,
+            historical_root.clone(),
+            LaneBytesSize(historical_root.estimate_size() as u64),
+        );
+
+        let historical_child = DataProposal::new(historical_root_hash.clone(), vec![]);
+        put_committed_data_proposal_for_test(
+            &mut storage,
+            lane_id,
+            historical_child.clone(),
+            LaneBytesSize(
+                (historical_root.estimate_size() + historical_child.estimate_size()) as u64,
+            ),
+        );
+
+        assert_eq!(storage.get_lane_hash_tip(lane_id), Some(live_tip_hash));
+        assert_eq!(storage.get_lane_size_tip(lane_id), Some(live_tip_size));
     }
 
     /// Add a bonded validator with a specified stake and delegators, using public methods for setup.

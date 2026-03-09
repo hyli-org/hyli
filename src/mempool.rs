@@ -38,7 +38,7 @@ use verify_tx::DataProposalVerdict;
 // Pick one of the two implementations by changing the re-export below.
 // pub use storage_memory::{shared_lanes_storage, LanesStorage};
 use hyli_crypto::BlstCrypto;
-pub use storage_fjall::{shared_lanes_storage, LanesStorage};
+pub use storage_fjall::{shared_lanes_storage, LanesStorage, StoredSignedBlock};
 use strum_macros::IntoStaticStr;
 use tracing::{debug, info};
 
