@@ -683,9 +683,14 @@ async fn test_redisseminate_owned_lane_skips_dp_if_proofs_were_cleaned() -> Resu
     ctx.mempool.lanes.delete_proofs(&lane_id, &dp_hash)?;
 
     ctx.dissemination_manager.add_owned_lane(lane_id);
-    ctx.dissemination_manager.redisseminate_owned_lanes().await?;
+    ctx.dissemination_manager
+        .redisseminate_owned_lanes()
+        .await?;
 
-    assert!(ctx.out_receiver.is_empty(), "redissemination should skip DPs without proofs");
+    assert!(
+        ctx.out_receiver.is_empty(),
+        "redissemination should skip DPs without proofs"
+    );
 
     Ok(())
 }
