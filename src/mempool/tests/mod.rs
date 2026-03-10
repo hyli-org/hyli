@@ -1403,7 +1403,7 @@ async fn test_processed_dp_stored_when_tip_is_itself_after_clean() -> Result<()>
         ctx.mempool.lanes.get_lane_hash_tip(&lane_id),
         Some(dp2_hash.clone())
     );
-    assert!(!ctx.mempool.lanes.contains(&lane_id, &dp1_hash));
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp1_hash));
 
     // When processing finishes, DP2 is stored even though its parent is missing.
     ctx.mempool.on_processed_data_proposal(
@@ -1450,7 +1450,7 @@ async fn test_processed_dp_fails_when_tip_moved_past_it() -> Result<()> {
         ctx.mempool.lanes.get_lane_hash_tip(&lane_id),
         Some(dp3_hash.clone())
     );
-    assert!(!ctx.mempool.lanes.contains(&lane_id, &dp1_hash));
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp1_hash));
 
     // Processing DP2 now should fail because tip moved past it.
     assert!(ctx

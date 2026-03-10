@@ -15,7 +15,7 @@ use tracing::{info, warn};
 
 use crate::{
     mempool::storage::MetadataOrMissingHash,
-    model::{DataProposal, DataProposalHash, DataProposalParent, Hashed, PoDA},
+    model::{DataProposal, DataProposalHash, Hashed, PoDA},
 };
 use hyli_modules::log_warn;
 
@@ -316,46 +316,37 @@ impl Storage for LanesStorage {
         Ok(())
     }
 
-    fn pop(
+    fn remove_by_hash(
         &mut self,
-        lane_id: LaneId,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
     ) -> Result<Option<(DataProposalHash, (LaneEntryMetadata, DataProposal))>> {
         let start = Instant::now();
-        if let Some(lane_hash_tip) = self.get_lane_hash_tip(&lane_id) {
-            if let Some(lane_entry) = self.get_metadata_by_hash(&lane_id, &lane_hash_tip)? {
-                self.by_hash_metadata
-                    .remove(format!("{lane_id}:{lane_hash_tip}"))?;
-                // Check if have the data locally after regardless - if we don't, print an error but delete metadata anyways for consistency.
-                let Some(dp) = self.get_dp_by_hash(&lane_id, &lane_hash_tip)? else {
-                    bail!(
-                        "Can't find DP data {} for lane {} where metadata could be found",
-                        lane_hash_tip,
-                        lane_id
-                    );
-                };
-                self.by_hash_data
-                    .remove(format!("{lane_id}:{lane_hash_tip}"))?;
-                match &lane_entry.parent_data_proposal_hash {
-                    DataProposalParent::DP(parent_hash) => {
-                        let parent_size = self.get_lane_size_at(&lane_id, parent_hash)?;
-                        self.update_lane_tip(lane_id.clone(), parent_hash.clone(), parent_size);
-                    }
-                    DataProposalParent::LaneRoot(_) => {
-                        #[allow(
-                            clippy::unwrap_used,
-                            reason = "RwLock cannot be poisoned in our usage"
-                        )]
-                        let mut guard = self.lanes_tip.write().unwrap();
-                        guard.remove(&lane_id);
-                    }
-                }
-                self.metrics
-                    .record_op("pop", "dp_metadata", start.elapsed().as_micros() as u64);
-                return Ok(Some((lane_hash_tip, (lane_entry, dp))));
-            }
+        if let Some(lane_entry) = self.get_metadata_by_hash(lane_id, dp_hash)? {
+            self.by_hash_metadata
+                .remove(format!("{lane_id}:{dp_hash}"))?;
+            // Check if have the data locally after regardless - if we don't, print an error but delete metadata anyways for consistency.
+            let Some(dp) = self.get_dp_by_hash(lane_id, dp_hash)? else {
+                bail!(
+                    "Can't find DP data {} for lane {} where metadata could be found",
+                    dp_hash,
+                    lane_id
+                );
+            };
+            self.by_hash_data.remove(format!("{lane_id}:{dp_hash}"))?;
+            self.dp_proofs.remove(format!("{lane_id}:{dp_hash}"))?;
+            self.metrics.record_op(
+                "remove_by_hash",
+                "dp_metadata",
+                start.elapsed().as_micros() as u64,
+            );
+            return Ok(Some((dp_hash.clone(), (lane_entry, dp))));
         }
-        self.metrics
-            .record_op("pop", "dp_metadata", start.elapsed().as_micros() as u64);
+        self.metrics.record_op(
+            "remove_by_hash",
+            "dp_metadata",
+            start.elapsed().as_micros() as u64,
+        );
         Ok(None)
     }
 
