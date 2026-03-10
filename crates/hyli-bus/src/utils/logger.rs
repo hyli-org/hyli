@@ -191,6 +191,12 @@ pub fn setup_otlp(log_format: &str, node_name: String, tracing_enabled: bool) ->
         filter = filter.add_directive("opentelemetry=warn".parse()?);
         filter = filter.add_directive("opentelemetry_sdk=warn".parse()?);
     }
+    if !var.contains("h2::codec::framed_read") {
+        filter = filter.add_directive("h2::codec::framed_read=info".parse()?);
+    }
+    if !var.contains("h2::codec::framed_write") {
+        filter = filter.add_directive("h2::codec::framed_write=info".parse()?);
+    }
     if !var.contains("risc0_zkvm") {
         std::env::set_var(
             "RUST_LOG",
