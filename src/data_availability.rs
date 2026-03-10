@@ -251,7 +251,7 @@ impl DaCatchupper {
             return Ok(());
         };
         let Some(from_height) = Self::mode_start_height(policy, requested_start) else {
-            debug!(
+            trace!(
                 "Catchup mode {} has no start height yet, waiting",
                 policy.as_ref()
             );
