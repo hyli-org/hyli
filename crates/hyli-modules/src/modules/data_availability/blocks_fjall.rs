@@ -2,12 +2,8 @@ use crate::utils::fjall_metrics::FjallMetrics;
 use anyhow::{Context, Result};
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, KvSeparationOptions, Slice};
 use sdk::{BlockHeight, ConsensusProposalHash, Hashed, SignedBlock};
-use std::{
-    fmt::Debug,
-    path::Path,
-    time::{Duration, Instant},
-};
-use tracing::{debug, info, trace, warn};
+use std::{fmt::Debug, path::Path, time::Instant};
+use tracing::{debug, info, trace};
 
 struct FjallHashKey(ConsensusProposalHash);
 struct FjallHeightKey([u8; 8]);
@@ -133,89 +129,19 @@ impl Blocks {
     pub fn put(&mut self, block: SignedBlock) -> Result<()> {
         let start = Instant::now();
         let block_hash = block.hashed();
-        let height = block.height();
-        let hash_hex = hex::encode(block_hash.0.as_slice());
-        let slow_step_threshold = std::env::var("HYLI_FJALL_PUT_SLOW_STEP_MS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .map(Duration::from_millis)
-            .unwrap_or_else(|| Duration::from_secs(2));
-
-        debug!(
-            height = height.0,
-            hash = %hash_hex,
-            "fjall blocks.put start"
-        );
-
-        let contains_start = Instant::now();
         if self.contains(&block_hash) {
-            let contains_elapsed = contains_start.elapsed();
-            if contains_elapsed >= slow_step_threshold {
-                warn!(
-                    height = height.0,
-                    hash = %hash_hex,
-                    elapsed_ms = contains_elapsed.as_millis(),
-                    threshold_ms = slow_step_threshold.as_millis(),
-                    "fjall blocks.put slow contains check"
-                );
-            }
             self.record_op("put", "by_hash", start.elapsed());
             return Ok(());
         }
-
-        let contains_elapsed = contains_start.elapsed();
-        if contains_elapsed >= slow_step_threshold {
-            warn!(
-                height = height.0,
-                hash = %hash_hex,
-                elapsed_ms = contains_elapsed.as_millis(),
-                threshold_ms = slow_step_threshold.as_millis(),
-                "fjall blocks.put slow contains check"
-            );
-        }
-
         trace!("📦 storing block in fjall {}", block.height());
-
-        let by_hash_start = Instant::now();
         self.by_hash.insert(
             FjallHashKey(block_hash).as_ref(),
             FjallValue::new_with_block(&block)?.as_ref(),
         )?;
-
-        let by_hash_elapsed = by_hash_start.elapsed();
-        if by_hash_elapsed >= slow_step_threshold {
-            warn!(
-                height = height.0,
-                hash = %hash_hex,
-                elapsed_ms = by_hash_elapsed.as_millis(),
-                threshold_ms = slow_step_threshold.as_millis(),
-                "fjall blocks.put slow by_hash insert"
-            );
-        }
-
-        let by_height_start = Instant::now();
         self.by_height.insert(
-            FjallHeightKey::new(height).as_ref(),
+            FjallHeightKey::new(block.height()).as_ref(),
             FjallValue::new_with_block_hash(&block.hashed())?.as_ref(),
         )?;
-
-        let by_height_elapsed = by_height_start.elapsed();
-        if by_height_elapsed >= slow_step_threshold {
-            warn!(
-                height = height.0,
-                hash = %hash_hex,
-                elapsed_ms = by_height_elapsed.as_millis(),
-                threshold_ms = slow_step_threshold.as_millis(),
-                "fjall blocks.put slow by_height insert"
-            );
-        }
-
-        debug!(
-            height = height.0,
-            hash = %hash_hex,
-            elapsed_ms = start.elapsed().as_millis(),
-            "fjall blocks.put done"
-        );
         self.record_op("put", "by_hash", start.elapsed());
         Ok(())
     }
@@ -271,14 +197,6 @@ impl Blocks {
     ) {
         self.metrics
             .record_op(op, keyspace, elapsed.as_micros() as u64);
-    }
-
-    pub fn record_timeout(&self, op: &'static str, keyspace: &'static str) {
-        self.metrics.record_timeout(op, keyspace);
-    }
-
-    pub fn record_retry(&self, op: &'static str, keyspace: &'static str) {
-        self.metrics.record_retry(op, keyspace);
     }
 
     /// Scan the whole by_height table and returns the first missing height

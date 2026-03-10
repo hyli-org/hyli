@@ -87,13 +87,6 @@ impl super::Mempool {
         data_proposal: DataProposal,
         dp_hash: DataProposalHash,
     ) -> Result<()> {
-        debug!(
-            "on_hashed_sync_reply[1] start lane {} dp {} signatures {} pending_bucs {}",
-            lane_id,
-            dp_hash,
-            signatures.len(),
-            self.inner.blocks_under_contruction.len()
-        );
         // We don't check if we already have stored the DP just in case
         // we processed it async between hole materialization and now.
 
@@ -107,19 +100,11 @@ impl super::Mempool {
                 .get(&lane_id)
                 .is_some_and(|(hole_top, ..)| hole_top == &dp_hash)
         }) {
-            debug!(
-                "on_hashed_sync_reply[2] matched BUC slot {} for lane {} dp {}",
-                buc.ccp.consensus_proposal.slot, lane_id, dp_hash
-            );
             let (expected_top, lane_size) = buc
                 .holes_tops
                 .get(&lane_id)
                 .context("Expected hole top missing")?
                 .clone();
-            debug!(
-                "on_hashed_sync_reply[3] calling fill_hole_from_entry lane {} expected_top {} lane_size {}",
-                lane_id, expected_top, lane_size.0
-            );
             let next_hole = Self::fill_hole_from_entry(
                 &mut self.lanes,
                 &mut self.bus,
@@ -130,48 +115,28 @@ impl super::Mempool {
                 signatures,
                 data_proposal,
             )?;
-            debug!(
-                "on_hashed_sync_reply[4] fill_hole_from_entry returned {:?} for lane {}",
-                next_hole, lane_id
-            );
             match next_hole {
                 Some((next_top, next_size)) => {
-                    debug!(
-                        "on_hashed_sync_reply[5] updating hole top lane {} -> {} ({})",
-                        lane_id, next_top, next_size.0
-                    );
                     buc.holes_tops
                         .insert(lane_id.clone(), (next_top, next_size));
                 }
                 None => {
-                    debug!(
-                        "on_hashed_sync_reply[5] hole resolved lane {} removing entry",
-                        lane_id
-                    );
                     buc.holes_tops.remove(&lane_id);
                 }
             }
 
             if buc.holes_tops.is_empty() {
-                debug!(
-                    "on_hashed_sync_reply[6] all holes resolved for slot {}, try_to_send_full_signed_blocks",
-                    buc.ccp.consensus_proposal.slot
-                );
                 self.try_to_send_full_signed_blocks()
                     .await
                     .context("Try process queued CCP")?;
             }
 
-            debug!(
-                "on_hashed_sync_reply[7] done matched-BUC path lane {} dp {}",
-                lane_id, dp_hash
-            );
             return Ok(());
         }
 
         // Didn't find the matching BUC
         debug!(
-            "on_hashed_sync_reply[8] buffering unmatched SyncReply lane {} hash {}",
+            "Buffering SyncReply entry for lane {} with hash {}",
             lane_id, dp_hash
         );
         self.buffered_entries
@@ -179,10 +144,6 @@ impl super::Mempool {
             .or_default()
             .insert(dp_hash.clone(), (signatures, data_proposal));
 
-        debug!(
-            "on_hashed_sync_reply[9] done buffered path lane {} dp {}",
-            lane_id, dp_hash
-        );
         Ok(())
     }
 
@@ -337,15 +298,7 @@ impl super::Mempool {
             signatures,
             cached_poda: None,
         };
-        debug!(
-            "fill_hole_from_entry[1] before put_no_verification lane {} dp {} lane_size {} slot {}",
-            lane_id, dp_hash, lane_size.0, buc.ccp.consensus_proposal.slot
-        );
         lanes.put_no_verification(lane_id.clone(), (metadata, data_proposal))?;
-        debug!(
-            "fill_hole_from_entry[2] after put_no_verification lane {} dp {}",
-            lane_id, dp_hash
-        );
         debug!(
             "Filled hole {} for lane {} in BUC (slot: {})",
             dp_hash, lane_id, buc.ccp.consensus_proposal.slot
@@ -386,10 +339,6 @@ impl super::Mempool {
                 cumul_size: lane_size,
             },
         )?;
-        debug!(
-            "fill_hole_from_entry[3] sent DpStored lane {} dp {}",
-            lane_id, dp_hash
-        );
         Self::send_dissemination_event_over(
             bus,
             DisseminationEvent::SyncRequestProgress {
@@ -398,12 +347,6 @@ impl super::Mempool {
                 new_to: next_top.as_ref().map(|(dp, ..)| dp.clone()),
             },
         )?;
-        debug!(
-            "fill_hole_from_entry[4] sent SyncRequestProgress lane {} old_to {} new_to {:?}",
-            lane_id,
-            dp_hash,
-            next_top.as_ref().map(|(dp, ..)| dp)
-        );
 
         Ok(next_top)
     }
@@ -529,29 +472,6 @@ impl super::Mempool {
                         dps.push(dp);
                     }
                     Ok(EntryOrMissingHash::MissingHash(hash)) => {
-                        let meta_present = self
-                            .lanes
-                            .get_metadata_by_hash(lane_id, &hash)
-                            .ok()
-                            .flatten()
-                            .is_some();
-                        let data_present = self
-                            .lanes
-                            .get_dp_by_hash(lane_id, &hash)
-                            .ok()
-                            .flatten()
-                            .is_some();
-                        let lane_tip = self.lanes.get_lane_hash_tip(lane_id);
-                        warn!(
-                            "Missing DP while building signed block: lane {}, hash {}, from {:?}, to {}, lane_tip {:?}, metadata_present {}, data_present {}",
-                            lane_id,
-                            hash,
-                            from_hash,
-                            to_hash,
-                            lane_tip,
-                            meta_present,
-                            data_present
-                        );
                         bail!("Unexpected missing data proposal {hash} for lane {lane_id}");
                     }
                     Err(e) => {
@@ -729,14 +649,6 @@ impl super::Mempool {
                     .as_ref()
                     .and_then(|cut| cut.iter().find(|(v, _, _, _)| v == lane_id))
                     .map(|(_, h, _, _)| h);
-                debug!(
-                    "Lane cleanup needed for {}: missing cut hash {}, previous_committed {:?}, current_tip {:?}, pending_bucs {}",
-                    lane_id,
-                    data_proposal_hash,
-                    previous_committed_dp_hash,
-                    self.lanes.get_lane_hash_tip(lane_id),
-                    self.blocks_under_contruction.len()
-                );
                 if previous_committed_dp_hash == Some(data_proposal_hash) {
                     // No cut have been made for this validator; we keep the DPs
                     continue;
