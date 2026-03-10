@@ -14,6 +14,9 @@ pub mod noir_utils;
 #[cfg(feature = "reth")]
 pub mod reth;
 
+#[cfg(feature = "jolt")]
+pub mod jolt;
+
 pub fn verify(
     verifier: &Verifier,
     proof: &ProofData,
@@ -29,6 +32,10 @@ pub fn verify(
         hyli_model::verifiers::SP1_4 => sp1_4::verify(proof, program_id),
         #[cfg(feature = "reth")]
         hyli_model::verifiers::RETH => reth::verify(proof, program_id),
+        #[cfg(feature = "jolt")]
+        hyli_model::verifiers::JOLT_0_1 => {
+            jolt::verify(proof, program_id).context("Jolt 0.1 verification failed")
+        }
         _ => Err(anyhow::anyhow!("{} verifier not implemented yet", verifier)),
     }
 }

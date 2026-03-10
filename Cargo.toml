@@ -44,7 +44,7 @@ version = "0.14.0"
 edition = "2021"
 homepage = "https://hyli.org/"
 repository = "https://github.com/hyli-org/hyli/"
-rust-version = "1.93"
+rust-version = "1.94"
 license-file = "LICENSE"
 
 [workspace.dependencies]
@@ -290,6 +290,13 @@ ignored = ["zip", "bytes", "tokio-util", "native-tls"]
 [patch.crates-io]
 sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.9-risczero.0" }
 
+ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
+allocative = { git = "https://github.com/facebookexperimental/allocative", rev = "85b773d85d526d068ce94724ff7a7b81203fc95e" }
+
 # Temporary patch for zkhash to support M31 field operations
 # This patches the HorizenLabs/poseidon2 repo to use our custom branch with M31 field support
 # TODO: Remove this patch once https://github.com/HorizenLabs/poseidon2/pull/8 is merged
@@ -329,7 +336,7 @@ risc0-zkvm = { workspace = true, default-features = false, features = [
 signal-child = "1.0.6"
 
 [features]
-default = ["risc0", "instrumentation"]
+default = ["jolt", "instrumentation"]
 
 turmoil = [
   "hyli-net/turmoil",
@@ -342,6 +349,7 @@ cairo-m = ["hyli-verifiers/cairo-m"]
 risc0 = ["hyli-verifiers/risc0", "client-sdk/risc0"]
 sp1 = ["hyli-verifiers/sp1", "client-sdk/sp1"]
 reth = ["hyli-verifiers/reth"]
+jolt = ["hyli-verifiers/jolt"]
 
 # Disable dependency keyring by default, as it requires libdbus
 keyring = ["hyli-crypto/keyring"]
