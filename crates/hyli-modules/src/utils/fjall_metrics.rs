@@ -1,5 +1,6 @@
-use crate::telemetry::{global_meter_or_panic, Counter, Gauge, KeyValue};
+use crate::telemetry::{global_meter_or_panic, Counter, Gauge, Histogram, KeyValue};
 use fjall::{Database, Keyspace};
+use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct FjallMetrics {
@@ -36,6 +37,16 @@ pub struct FjallMetrics {
 
     // Operation timing totals (counter of elapsed microseconds).
     op_time_micros: Counter<u64>,
+    // Operation latency distribution.
+    op_latency_micros: Histogram<u64>,
+    // Count operations whose latency exceeded the warning threshold.
+    op_slow_total: Counter<u64>,
+    // Count operations that exceeded configured timeout.
+    op_timeout_total: Counter<u64>,
+    // Count retry attempts triggered by failures/timeouts.
+    op_retry_total: Counter<u64>,
+    // Threshold used to emit "possible event-loop blocking" warning logs.
+    slow_op_warn_threshold_micros: u64,
 }
 
 impl FjallMetrics {
@@ -45,6 +56,11 @@ impl FjallMetrics {
         db_name: impl Into<String>,
     ) -> FjallMetrics {
         let meter = global_meter_or_panic();
+        let slow_op_warn_threshold_micros = std::env::var("HYLI_FJALL_SLOW_OP_WARN_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(|ms| ms.saturating_mul(1_000))
+            .unwrap_or(50_000);
         FjallMetrics {
             module_name: module_name.into(),
             node_id: node_id.into(),
@@ -86,6 +102,11 @@ impl FjallMetrics {
                 .u64_gauge("fjall_keyspace_filter_block_io_bytes")
                 .build(),
             op_time_micros: meter.u64_counter("fjall_op_time_micros").build(),
+            op_latency_micros: meter.u64_histogram("fjall_op_latency_micros").build(),
+            op_slow_total: meter.u64_counter("fjall_op_slow_total").build(),
+            op_timeout_total: meter.u64_counter("fjall_op_timeout_total").build(),
+            op_retry_total: meter.u64_counter("fjall_op_retry_total").build(),
+            slow_op_warn_threshold_micros,
         }
     }
 
@@ -159,5 +180,49 @@ impl FjallMetrics {
             KeyValue::new("op", op),
         ];
         self.op_time_micros.add(micros, &labels);
+        self.op_latency_micros.record(micros, &labels);
+
+        if micros >= self.slow_op_warn_threshold_micros {
+            self.op_slow_total.add(1, &labels);
+
+            let thread = std::thread::current();
+            let thread_name = thread.name().unwrap_or("unnamed");
+            let in_tokio_runtime = tokio::runtime::Handle::try_current().is_ok();
+
+            warn!(
+                module = %self.module_name,
+                node_id = %self.node_id,
+                db = %self.db_name,
+                keyspace = keyspace,
+                op = op,
+                elapsed_micros = micros,
+                slow_threshold_micros = self.slow_op_warn_threshold_micros,
+                in_tokio_runtime,
+                thread = thread_name,
+                "Slow fjall operation observed; this may block async event loops when running on runtime threads"
+            );
+        }
+    }
+
+    pub fn record_timeout(&self, op: &'static str, keyspace: &'static str) {
+        let labels = [
+            KeyValue::new("module", self.module_name.clone()),
+            KeyValue::new("node_id", self.node_id.clone()),
+            KeyValue::new("db", self.db_name.clone()),
+            KeyValue::new("keyspace", keyspace),
+            KeyValue::new("op", op),
+        ];
+        self.op_timeout_total.add(1, &labels);
+    }
+
+    pub fn record_retry(&self, op: &'static str, keyspace: &'static str) {
+        let labels = [
+            KeyValue::new("module", self.module_name.clone()),
+            KeyValue::new("node_id", self.node_id.clone()),
+            KeyValue::new("db", self.db_name.clone()),
+            KeyValue::new("keyspace", keyspace),
+            KeyValue::new("op", op),
+        ];
+        self.op_retry_total.add(1, &labels);
     }
 }
