@@ -18,12 +18,33 @@ pub enum DataProposalVerdict {
     Process,
     Empty,
     Wait,
-    Vote,
+    Vote(LaneBytesSize),
     Refuse,
     Ignore,
 }
 
 impl super::Mempool {
+    fn cache_processed_verdict(
+        &mut self,
+        lane_id: &LaneId,
+        data_proposal: &DataProposal,
+        verdict: &DataProposalVerdict,
+    ) {
+        match verdict {
+            DataProposalVerdict::Empty
+            | DataProposalVerdict::Process
+            | DataProposalVerdict::Wait => {
+                unreachable!("DataProposal has already been processed");
+            }
+            DataProposalVerdict::Vote(_)
+            | DataProposalVerdict::Refuse
+            | DataProposalVerdict::Ignore => {
+                self.cached_dp_votes
+                    .insert((lane_id.clone(), data_proposal.hashed()), verdict.clone());
+            }
+        }
+    }
+
     pub(super) fn on_data_proposal(
         &mut self,
         lane_id: &LaneId,
@@ -65,16 +86,12 @@ impl super::Mempool {
                 );
                 return Ok(());
             }
-            Some(DataProposalVerdict::Vote) => {
-                // Resend our vote
-                // First fetch the lane size, if we somehow don't have it ignore.
-                if let Ok(lane_size) = self.lanes.get_lane_size_at(lane_id, &received_hash) {
-                    debug!(
-                        "Resending vote for DataProposal {:?} on lane {}",
-                        received_hash, lane_id
-                    );
-                    return self.send_vote(lane_id, received_hash, lane_size);
-                }
+            Some(DataProposalVerdict::Vote(lane_size)) => {
+                debug!(
+                    "Resending vote for DataProposal {:?} on lane {}",
+                    received_hash, lane_id
+                );
+                return self.send_vote(lane_id, received_hash, *lane_size);
             }
             Some(DataProposalVerdict::Wait) | None => {}
         }
@@ -134,7 +151,7 @@ impl super::Mempool {
         self.metrics.add_hashed_dp(lane_id);
 
         let data_proposal_hash = data_proposal.hashed();
-        let (verdict, lane_size) = self.get_verdict(lane_id, &data_proposal)?;
+        let verdict = self.get_verdict(lane_id, &data_proposal)?;
         self.cached_dp_votes.insert(
             (lane_id.clone(), data_proposal_hash.clone()),
             verdict.clone(),
@@ -146,19 +163,19 @@ impl super::Mempool {
                     lane_id
                 );
             }
-            DataProposalVerdict::Vote => {
+            DataProposalVerdict::Vote(lane_size) => {
                 // Normal case, we receive a proposal we already have the parent in store
                 trace!("Send vote for DataProposal");
-                #[allow(clippy::unwrap_used, reason = "we always have a size for Vote")]
-                self.send_vote(lane_id, data_proposal_hash, lane_size.unwrap())?;
+                self.send_vote(lane_id, data_proposal_hash, lane_size)?;
             }
             DataProposalVerdict::Process => {
                 trace!("Further processing for DataProposal");
                 let lane_id = lane_id.clone();
+                let lane_size = self.lanes.get_lane_size_tip(&lane_id).unwrap_or_default();
                 let handle = self.inner.long_tasks_runtime.handle();
                 self.inner.processing_dps.spawn_on(
                     async move {
-                        let decision = Self::process_data_proposal(&mut data_proposal);
+                        let decision = Self::process_data_proposal(lane_size, &mut data_proposal);
                         Ok(ProcessedDPEvent::OnProcessedDataProposal((
                             lane_id,
                             decision,
@@ -200,9 +217,8 @@ impl super::Mempool {
         );
 
         self.metrics.add_processed_dp(&lane_id);
+        self.cache_processed_verdict(&lane_id, &data_proposal, &verdict);
 
-        self.cached_dp_votes
-            .insert((lane_id.clone(), data_proposal.hashed()), verdict.clone());
         match verdict {
             DataProposalVerdict::Empty => {
                 unreachable!("Empty DataProposal should never be processed");
@@ -213,12 +229,16 @@ impl super::Mempool {
             DataProposalVerdict::Wait => {
                 unreachable!("DataProposal has already been processed");
             }
-            DataProposalVerdict::Vote => {
+            DataProposalVerdict::Vote(_) => {
                 trace!("Send vote for DataProposal");
                 let crypto = self.crypto.clone();
                 let (hash, size) =
                     self.lanes
                         .store_data_proposal(&crypto, &lane_id, data_proposal)?;
+                self.cached_dp_votes.insert(
+                    (lane_id.clone(), hash.clone()),
+                    DataProposalVerdict::Vote(size),
+                );
                 self.send_dissemination_event(DisseminationEvent::DpStored {
                     lane_id: lane_id.clone(),
                     data_proposal_hash: hash.clone(),
@@ -282,10 +302,10 @@ impl super::Mempool {
         &mut self,
         lane_id: &LaneId,
         data_proposal: &DataProposal,
-    ) -> Result<(DataProposalVerdict, Option<LaneBytesSize>)> {
+    ) -> Result<DataProposalVerdict> {
         // Check that data_proposal is not empty
         if data_proposal.txs.is_empty() {
-            return Ok((DataProposalVerdict::Empty, None));
+            return Ok(DataProposalVerdict::Empty);
         }
 
         let dp_hash = data_proposal.hashed();
@@ -294,7 +314,7 @@ impl super::Mempool {
         if self.lanes.contains(lane_id, &dp_hash) {
             let lane_size = self.lanes.get_lane_size_at(lane_id, &dp_hash)?;
             // just resend a vote
-            return Ok((DataProposalVerdict::Vote, Some(lane_size)));
+            return Ok(DataProposalVerdict::Vote(lane_size));
         }
 
         match self.lanes.can_be_put_on_top(
@@ -305,10 +325,10 @@ impl super::Mempool {
             // PARENT UNKNOWN
             CanBePutOnTop::No => {
                 // Get the last known parent hash in order to get all the next ones
-                Ok((DataProposalVerdict::Wait, None))
+                Ok(DataProposalVerdict::Wait)
             }
             // LEGIT DATA PROPOSAL
-            CanBePutOnTop::Yes => Ok((DataProposalVerdict::Process, None)),
+            CanBePutOnTop::Yes => Ok(DataProposalVerdict::Process),
             CanBePutOnTop::Fork => {
                 // FORK DETECTED
                 let last_known_hash = self.lanes.get_lane_hash_tip(lane_id);
@@ -317,16 +337,19 @@ impl super::Mempool {
                     last_known_hash,
                     data_proposal.parent_data_proposal_hash
                 );
-                Ok((DataProposalVerdict::Refuse, None))
+                Ok(DataProposalVerdict::Refuse)
             }
             CanBePutOnTop::AlreadyOnTop => {
                 // Lane tip was updated (via commit) before this proposal arrived, so we ignore it.
-                Ok((DataProposalVerdict::Ignore, None))
+                Ok(DataProposalVerdict::Ignore)
             }
         }
     }
 
-    fn process_data_proposal(data_proposal: &mut DataProposal) -> DataProposalVerdict {
+    fn process_data_proposal(
+        lane_size: LaneBytesSize,
+        data_proposal: &mut DataProposal,
+    ) -> DataProposalVerdict {
         for tx in &data_proposal.txs {
             match &tx.transaction_data {
                 TransactionData::Blob(_) => {
@@ -411,7 +434,7 @@ impl super::Mempool {
         // Remove proofs from transactions
         Self::remove_proofs(data_proposal);
 
-        DataProposalVerdict::Vote
+        DataProposalVerdict::Vote(lane_size + data_proposal.estimate_size())
     }
 
     /// Remove proofs from all transactions in the DataProposal
@@ -463,16 +486,16 @@ pub mod test {
 
         let dp = DataProposal::new_root(lane_id2.clone(), vec![]);
         // 2 send a DP to 1
-        let (verdict, _) = ctx.mempool.get_verdict(&lane_id2, &dp).unwrap();
+        let verdict = ctx.mempool.get_verdict(&lane_id2, &dp).unwrap();
         assert_eq!(verdict, DataProposalVerdict::Empty);
 
         let dp = DataProposal::new_root(lane_id2.clone(), vec![Transaction::default()]);
-        let (verdict, _) = ctx.mempool.get_verdict(&lane_id2, &dp).unwrap();
+        let verdict = ctx.mempool.get_verdict(&lane_id2, &dp).unwrap();
         assert_eq!(verdict, DataProposalVerdict::Process);
 
         let dp_unknown_parent =
             DataProposal::new(DataProposalHash::default(), vec![Transaction::default()]);
-        let (verdict, _) = ctx
+        let verdict = ctx
             .mempool
             .get_verdict(&lane_id2, &dp_unknown_parent)
             .unwrap();
@@ -508,8 +531,21 @@ pub mod test {
             vec![Transaction::default(), Transaction::default()],
         );
 
-        let (verdict, _) = ctx.mempool.get_verdict(&lane_id2, &dp2_fork).unwrap();
+        let verdict = ctx.mempool.get_verdict(&lane_id2, &dp2_fork).unwrap();
         assert_eq!(verdict, DataProposalVerdict::Refuse);
+    }
+
+    #[test]
+    fn test_process_data_proposal_returns_vote_with_cumulative_lane_size() {
+        let lane_size = LaneBytesSize(123);
+        let tx = make_register_contract_tx(ContractName::new("lane-size"));
+        let lane_id = LaneId::default();
+        let mut data_proposal = DataProposal::new_root(lane_id, vec![tx]);
+        let expected_size = lane_size + data_proposal.estimate_size();
+
+        let verdict = super::super::Mempool::process_data_proposal(lane_size, &mut data_proposal);
+
+        assert_eq!(verdict, DataProposalVerdict::Vote(expected_size));
     }
 
     #[test_log::test(tokio::test)]
@@ -602,6 +638,54 @@ pub mod test {
                 .cached_dp_votes
                 .get(&(lane_id, data_proposal.hashed())),
             Some(&DataProposalVerdict::Refuse)
+        );
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_stale_cached_vote_does_not_resend_zero_sized_vote() -> Result<()> {
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+
+        let lane_id = LaneId::new(ctx.mempool.crypto.validator_pubkey().clone());
+        let data_proposal = DataProposal::new_root(lane_id.clone(), vec![Transaction::default()]);
+        let dp_hash = data_proposal.hashed();
+        let cumul_size = LaneBytesSize(data_proposal.estimate_size() as u64);
+        let vote = ctx.mempool.crypto.sign((dp_hash.clone(), cumul_size))?;
+
+        ctx.mempool
+            .on_hashed_data_proposal(&lane_id, data_proposal.clone(), vote.clone())?;
+        ctx.handle_processed_data_proposals().await;
+
+        assert_eq!(
+            ctx.mempool
+                .cached_dp_votes
+                .get(&(lane_id.clone(), dp_hash.clone())),
+            Some(&DataProposalVerdict::Vote(cumul_size))
+        );
+
+        ctx.mempool.lanes.remove_lane_entry(&lane_id, &dp_hash);
+
+        while ctx.out_receiver.try_recv().is_ok() {}
+
+        ctx.mempool
+            .on_data_proposal(&lane_id, dp_hash.clone(), data_proposal, vote)?;
+
+        let msg = ctx.assert_broadcast("resend cached vote").await;
+        match msg.msg {
+            MempoolNetMessage::DataVote(broadcast_lane_id, vdag) => {
+                assert_eq!(broadcast_lane_id, lane_id);
+                assert_eq!(vdag.msg.0, dp_hash);
+                assert_eq!(vdag.msg.1, cumul_size);
+            }
+            other => panic!("Expected DataVote message, got {other:?}"),
+        }
+
+        assert_eq!(
+            ctx.mempool
+                .cached_dp_votes
+                .get(&(lane_id.clone(), dp_hash.clone())),
+            Some(&DataProposalVerdict::Vote(cumul_size))
         );
 
         Ok(())

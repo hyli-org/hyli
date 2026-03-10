@@ -1287,7 +1287,9 @@ async fn test_buc_correctly_filled_via_async_verify_tx_path() -> Result<()> {
 
     ctx.mempool.on_processed_data_proposal(
         lane_id.clone(),
-        DataProposalVerdict::Vote,
+        DataProposalVerdict::Vote(LaneBytesSize(
+            (dp_parent.estimate_size() + dp_child.estimate_size()) as u64,
+        )),
         dp_child.clone(),
     )?;
 
@@ -1468,7 +1470,9 @@ async fn test_processed_dp_stored_when_tip_is_itself_after_clean() -> Result<()>
     // When processing finishes, DP2 is stored even though its parent is missing.
     ctx.mempool.on_processed_data_proposal(
         lane_id.clone(),
-        DataProposalVerdict::Vote,
+        DataProposalVerdict::Vote(LaneBytesSize(
+            (dp1.estimate_size() + dp2.estimate_size()) as u64,
+        )),
         dp2.clone(),
     )?;
 
@@ -1515,7 +1519,13 @@ async fn test_processed_dp_fails_when_tip_moved_past_it() -> Result<()> {
     // Processing DP2 now should fail because tip moved past it.
     assert!(ctx
         .mempool
-        .on_processed_data_proposal(lane_id.clone(), DataProposalVerdict::Vote, dp2.clone())
+        .on_processed_data_proposal(
+            lane_id.clone(),
+            DataProposalVerdict::Vote(LaneBytesSize(
+                (dp1.estimate_size() + dp2.estimate_size()) as u64,
+            )),
+            dp2.clone(),
+        )
         .is_err());
 
     assert!(!ctx.mempool.lanes.contains(&lane_id, &dp2_hash));
