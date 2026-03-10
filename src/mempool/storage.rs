@@ -66,9 +66,10 @@ pub trait Storage {
         dp_hash: &DataProposalHash,
     ) -> Result<Option<Vec<(u64, ProofData)>>>;
     fn delete_proofs(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> Result<()>;
-    fn pop(
+    fn remove_by_hash(
         &mut self,
-        lane_id: LaneId,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
     ) -> Result<Option<(DataProposalHash, (LaneEntryMetadata, DataProposal))>>;
     fn put_no_verification(
         &mut self,
@@ -375,39 +376,6 @@ pub trait Storage {
 
             Ok(last_entry)
         }
-    }
-
-    /// For unknown DataProposals in the new cut, we need to remove all DataProposals that we have after the previous cut.
-    /// This is necessary because it is difficult to determine if those DataProposals are part of a fork. --> This approach is suboptimal.
-    /// Therefore, we update the lane_tip with the DataProposal from the new cut, creating a gap in the lane but allowing us to vote on new DataProposals.
-    fn clean_and_update_lane(
-        &mut self,
-        lane_id: &LaneId,
-        previous_committed_dp_hash: Option<&DataProposalHash>,
-        new_committed_dp_hash: &DataProposalHash,
-        new_committed_size: &LaneBytesSize,
-    ) -> Result<()> {
-        let tip_lane = self.get_lane_hash_tip(lane_id);
-        // Check if lane is in a state between previous cut and new cut
-        if tip_lane.as_ref() != previous_committed_dp_hash
-            && tip_lane.as_ref() != Some(new_committed_dp_hash)
-        {
-            // Remove last element from the lane until we find the data proposal of the previous cut
-            while let Some((dp_hash, le)) = self.pop(lane_id.clone())? {
-                if Some(&dp_hash) == previous_committed_dp_hash {
-                    // Reinsert the lane entry corresponding to the previous cut
-                    self.put_no_verification(lane_id.clone(), le)?;
-                    break;
-                }
-            }
-        }
-        // Update lane tip with new cut
-        self.update_lane_tip(
-            lane_id.clone(),
-            new_committed_dp_hash.clone(),
-            *new_committed_size,
-        );
-        Ok(())
     }
 
     /// Returns CanBePutOnTop::Yes if the DataProposal can be put in the lane

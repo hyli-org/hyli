@@ -15,7 +15,7 @@ use super::{
 };
 use anyhow::{bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
 pub struct BlockUnderConstruction {
@@ -36,6 +36,8 @@ type HoleFillChainResult =
     std::result::Result<(LaneId, bool, Option<(DataProposalHash, LaneBytesSize)>), HoleFillError>;
 
 impl super::Mempool {
+    const CLEAN_AND_UPDATE_SCAN_LIMIT: usize = 100;
+
     pub(super) async fn on_sync_reply(
         &mut self,
         lane_id: &LaneId,
@@ -642,24 +644,108 @@ impl super::Mempool {
         cut: &Cut,
         previous_cut: &Option<Cut>,
     ) -> Result<()> {
+        enum LaneCleanupAction {
+            // The committed cut is already on our current ancestry; keep local state as-is.
+            Noop,
+            // We walked back to the previous cut first, so local descendants may belong to a fork.
+            CleanToPreviousCut,
+            // We could not connect the tip to either cut within the bounded walk; retip conservatively.
+            ForceRetip,
+        }
+
         for (lane_id, data_proposal_hash, cumul_size, _) in cut.iter() {
-            if !self.lanes.contains(lane_id, data_proposal_hash) {
-                // We want to start from the lane tip, and remove all DP until we find the data proposal of the previous cut
-                let previous_committed_dp_hash = previous_cut
-                    .as_ref()
-                    .and_then(|cut| cut.iter().find(|(v, _, _, _)| v == lane_id))
-                    .map(|(_, h, _, _)| h);
-                if previous_committed_dp_hash == Some(data_proposal_hash) {
-                    // No cut have been made for this validator; we keep the DPs
-                    continue;
+            let previous_committed_dp_hash = previous_cut
+                .as_ref()
+                .and_then(|cut| cut.iter().find(|(v, _, _, _)| v == lane_id))
+                .map(|(_, h, _, _)| h);
+            let mut cursor = self.lanes.get_lane_hash_tip(lane_id);
+            let mut action = LaneCleanupAction::ForceRetip;
+
+            for scan_depth in 0..=Self::CLEAN_AND_UPDATE_SCAN_LIMIT {
+                let Some(current_hash) = cursor else {
+                    break;
+                };
+
+                if current_hash == *data_proposal_hash {
+                    action = LaneCleanupAction::Noop;
+                    break;
                 }
-                // Removes all DP after the previous cut & update lane_tip with new cut
-                self.lanes.clean_and_update_lane(
-                    lane_id,
-                    previous_committed_dp_hash,
-                    data_proposal_hash,
-                    cumul_size,
-                )?;
+
+                if previous_committed_dp_hash == Some(&current_hash) {
+                    action = LaneCleanupAction::CleanToPreviousCut;
+                    break;
+                }
+
+                let Ok(Some(metadata)) = self.lanes.get_metadata_by_hash(lane_id, &current_hash)
+                else {
+                    break;
+                };
+
+                cursor = match metadata.parent_data_proposal_hash {
+                    DataProposalParent::DP(parent_hash) => Some(parent_hash),
+                    DataProposalParent::LaneRoot(_) => None,
+                };
+
+                if scan_depth == Self::CLEAN_AND_UPDATE_SCAN_LIMIT {
+                    warn!(
+                        lane_id = %lane_id,
+                        scan_limit = Self::CLEAN_AND_UPDATE_SCAN_LIMIT,
+                        previous_committed_dp_hash = ?previous_committed_dp_hash,
+                        new_committed_dp_hash = %data_proposal_hash,
+                        "Exceeded clean-and-update scan limit; force-retipping lane"
+                    );
+                }
+            }
+
+            match action {
+                LaneCleanupAction::Noop => {}
+                LaneCleanupAction::CleanToPreviousCut => {
+                    debug!(
+                        lane_id = %lane_id,
+                        previous_committed_dp_hash = ?previous_committed_dp_hash,
+                        new_committed_dp_hash = %data_proposal_hash,
+                        "Retipping lane to committed cut before cleaning back to previous cut"
+                    );
+                    let mut cursor = self.lanes.get_lane_hash_tip(lane_id);
+                    self.lanes.update_lane_tip(
+                        lane_id.clone(),
+                        data_proposal_hash.clone(),
+                        *cumul_size,
+                    );
+
+                    while cursor.as_ref() != previous_committed_dp_hash {
+                        let Some(removed_hash) = cursor.clone() else {
+                            break;
+                        };
+                        let Ok(Some((_, (removed_metadata, removed_dp)))) =
+                            self.lanes.remove_by_hash(lane_id, &removed_hash)
+                        else {
+                            // if there's an error, stop removing and move on to the next lane.
+                            break;
+                        };
+                        cursor = match removed_metadata.parent_data_proposal_hash.clone() {
+                            DataProposalParent::DP(parent_hash) => Some(parent_hash),
+                            DataProposalParent::LaneRoot(_) => None,
+                        };
+                        self.buffered_entries
+                            .entry(lane_id.clone())
+                            .or_default()
+                            .insert(removed_hash, (removed_metadata.signatures, removed_dp));
+                    }
+                }
+                LaneCleanupAction::ForceRetip => {
+                    info!(
+                        lane_id = %lane_id,
+                        previous_committed_dp_hash = ?previous_committed_dp_hash,
+                        new_committed_dp_hash = %data_proposal_hash,
+                        "Force-retipping lane to committed cut"
+                    );
+                    self.lanes.update_lane_tip(
+                        lane_id.clone(),
+                        data_proposal_hash.clone(),
+                        *cumul_size,
+                    );
+                }
             }
         }
         Ok(())
@@ -1257,6 +1343,124 @@ pub mod test {
             buc.holes_tops.get(&lane_id).map(|(h, _)| h.clone()),
             Some(dp_b_hash)
         );
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_clean_and_update_lanes_buffers_cleaned_fork_entries() -> Result<()> {
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+        let peer_crypto = BlstCrypto::new("peer-clean-fork").unwrap();
+        let lane_id = LaneId::new(peer_crypto.validator_pubkey().clone());
+
+        let dp_a = DataProposal::new_root(lane_id.clone(), vec![Transaction::default()]);
+        let (dp_a_hash, dp_a_size) =
+            ctx.mempool
+                .lanes
+                .store_data_proposal(&peer_crypto, &lane_id, dp_a)?;
+
+        let dp_b = DataProposal::new(dp_a_hash.clone(), vec![Transaction::default()]);
+        let (dp_b_hash, dp_b_size) =
+            ctx.mempool
+                .lanes
+                .store_data_proposal(&peer_crypto, &lane_id, dp_b)?;
+
+        let dp_c = DataProposal::new(dp_b_hash.clone(), vec![Transaction::default()]);
+        let (dp_c_hash, _dp_c_size) =
+            ctx.mempool
+                .lanes
+                .store_data_proposal(&peer_crypto, &lane_id, dp_c)?;
+
+        let committed_hash: DataProposalHash = b"committed-fork-tip".into();
+        let committed_size = LaneBytesSize(dp_b_size.0 + 10);
+        let cut = vec![(
+            lane_id.clone(),
+            committed_hash.clone(),
+            committed_size,
+            AggregateSignature::default(),
+        )];
+        let previous_cut = Some(vec![(
+            lane_id.clone(),
+            dp_a_hash.clone(),
+            dp_a_size,
+            AggregateSignature::default(),
+        )]);
+
+        ctx.mempool.clean_and_update_lanes(&cut, &previous_cut)?;
+
+        assert_eq!(
+            ctx.mempool.lanes.get_lane_hash_tip(&lane_id),
+            Some(committed_hash)
+        );
+        assert!(ctx.mempool.lanes.contains(&lane_id, &dp_a_hash));
+        assert!(!ctx.mempool.lanes.contains(&lane_id, &dp_b_hash));
+        assert!(!ctx.mempool.lanes.contains(&lane_id, &dp_c_hash));
+
+        let buffered = ctx
+            .mempool
+            .buffered_entries
+            .get(&lane_id)
+            .expect("expected buffered cleaned entries");
+        assert!(buffered.contains_key(&dp_b_hash));
+        assert!(buffered.contains_key(&dp_c_hash));
+
+        Ok(())
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn test_clean_and_update_lanes_retips_without_cleaning_after_scan_limit() -> Result<()> {
+        let mut ctx = MempoolTestCtx::new("mempool").await;
+        let peer_crypto = BlstCrypto::new("peer-clean-limit").unwrap();
+        let lane_id = LaneId::new(peer_crypto.validator_pubkey().clone());
+
+        let first_dp = DataProposal::new_root(lane_id.clone(), vec![Transaction::default()]);
+        let (first_hash, first_size) =
+            ctx.mempool
+                .lanes
+                .store_data_proposal(&peer_crypto, &lane_id, first_dp)?;
+
+        let mut parent_hash = first_hash.clone();
+        let mut current_size = first_size;
+        let mut latest_hash = first_hash.clone();
+
+        for _ in 0..101 {
+            let dp = DataProposal::new(parent_hash.clone(), vec![Transaction::default()]);
+            let (dp_hash, dp_size) =
+                ctx.mempool
+                    .lanes
+                    .store_data_proposal(&peer_crypto, &lane_id, dp)?;
+            parent_hash = dp_hash.clone();
+            current_size = dp_size;
+            latest_hash = dp_hash;
+        }
+
+        let committed_hash: DataProposalHash = b"committed-hard-limit".into();
+        let committed_size = LaneBytesSize(current_size.0 + 10);
+        let cut = vec![(
+            lane_id.clone(),
+            committed_hash.clone(),
+            committed_size,
+            AggregateSignature::default(),
+        )];
+        let previous_cut = Some(vec![(
+            lane_id.clone(),
+            first_hash.clone(),
+            first_size,
+            AggregateSignature::default(),
+        )]);
+
+        ctx.mempool.clean_and_update_lanes(&cut, &previous_cut)?;
+
+        assert_eq!(
+            ctx.mempool.lanes.get_lane_hash_tip(&lane_id),
+            Some(committed_hash)
+        );
+        assert!(ctx.mempool.lanes.contains(&lane_id, &latest_hash));
+        assert!(ctx
+            .mempool
+            .buffered_entries
+            .get(&lane_id)
+            .is_none_or(|x| x.is_empty()));
 
         Ok(())
     }
