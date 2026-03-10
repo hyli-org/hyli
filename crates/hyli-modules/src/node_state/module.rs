@@ -114,7 +114,7 @@ impl Module for NodeStateModule {
                     Err(anyhow::anyhow!("Contract {} not found", cmd.0))
                 } else {
                     let height = self.inner.unsettled_transactions.get_earliest_unsettled_height(&cmd.0).unwrap_or(self.inner.current_height);
-                    Ok(BlockHeight(height.0 - 1))
+                    Ok(BlockHeight(height.0.saturating_sub(1)))
                 }
             }
             command_response<QueryUnsettledTxCount, u64> cmd => {

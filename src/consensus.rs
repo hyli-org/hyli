@@ -331,11 +331,19 @@ impl Consensus {
                     match action {
                         // Any new validators are added to the consensus and removed from candidates.
                         ConsensusStakingAction::Bond { candidate } => {
-                            debug!("🎉 New validator bonded: {}", candidate.signature.validator);
+                            let validator = candidate.signature.validator;
+                            if self.store.bft_round_state.staking.is_bonded(&validator) {
+                                tracing::warn!(
+                                    "Ignoring duplicate bond action for already bonded validator {}",
+                                    validator
+                                );
+                                continue;
+                            }
+                            debug!("🎉 New validator bonded: {}", validator);
                             self.store
                                 .bft_round_state
                                 .staking
-                                .bond(candidate.signature.validator)
+                                .bond(validator)
                                 .map_err(|e| anyhow::anyhow!(e))?;
                         }
                         ConsensusStakingAction::PayFeesForDaDi {
@@ -710,6 +718,15 @@ impl Consensus {
             }
         } else {
             bail!("🛑 Candidate validator is not staking !");
+        }
+
+        if self
+            .validator_candidates
+            .iter()
+            .any(|existing| existing.signature.validator == candidacy.signature.validator)
+        {
+            debug!("Validator candidacy already queued. Ignoring duplicate");
+            return Ok(());
         }
 
         // Add validator to consensus candidates
@@ -2099,6 +2116,102 @@ pub mod test {
         assert_eq!(node1.consensus.bft_round_state.slot, 6);
         assert_eq!(node2.consensus.bft_round_state.slot, 6);
         assert_eq!(node3.consensus.bft_round_state.slot, 6);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn duplicate_candidacy_is_ignored() {
+        let mut node1 = ConsensusTestCtx::new_node("node-1").await;
+        let node2 = ConsensusTestCtx::new_node("node-2").await;
+
+        node1.add_staker(&node2, 100, "Add staker").await;
+
+        let candidacy = node2
+            .consensus
+            .crypto
+            .sign(ValidatorCandidacy {
+                peer_address: "127.0.0.1:1234".to_string(),
+            })
+            .expect("sign candidacy");
+
+        node1
+            .consensus
+            .on_validator_candidacy(candidacy.clone())
+            .expect("first candidacy should be accepted");
+        node1
+            .consensus
+            .on_validator_candidacy(candidacy)
+            .expect("duplicate candidacy should be ignored");
+
+        assert_eq!(node1.consensus.validator_candidates.len(), 1);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn duplicate_bond_actions_do_not_fail_commit_application() {
+        let (mut node1, node2): (ConsensusTestCtx, ConsensusTestCtx) = build_nodes!(2).await;
+        let node3 = ConsensusTestCtx::new_node("node-3").await;
+
+        node1.add_staker(&node3, 100, "Add staker").await;
+
+        let candidacy = node3
+            .consensus
+            .crypto
+            .sign(ValidatorCandidacy {
+                peer_address: "127.0.0.1:1234".to_string(),
+            })
+            .expect("sign candidacy");
+
+        let proposal = ConsensusProposal {
+            slot: 1,
+            timestamp: TimestampMs(123),
+            cut: node1.consensus.bft_round_state.parent_cut.clone(),
+            staking_actions: vec![
+                ConsensusStakingAction::Bond {
+                    candidate: Box::new(candidacy.clone()),
+                },
+                ConsensusStakingAction::Bond {
+                    candidate: Box::new(candidacy),
+                },
+            ],
+            parent_hash: node1.consensus.bft_round_state.parent_hash.clone(),
+        };
+
+        node1.consensus.bft_round_state.state_tag = StateTag::Leader;
+        node1.consensus.bft_round_state.current_proposal = Some(proposal.clone());
+
+        let commit_qc = QuorumCertificate(
+            AggregateSignature {
+                signature: Signature("sig".into()),
+                validators: vec![node1.pubkey(), node2.pubkey()],
+            },
+            ConfirmAckMarker,
+        );
+
+        node1
+            .consensus
+            .apply_ticket(Ticket::CommitQC(commit_qc))
+            .expect("duplicate bond actions should be ignored during commit");
+
+        assert!(node1
+            .consensus
+            .bft_round_state
+            .staking
+            .is_bonded(&node3.pubkey()));
+        assert_eq!(
+            node1
+                .consensus
+                .bft_round_state
+                .staking
+                .bonded()
+                .iter()
+                .filter(|validator| *validator == &node3.pubkey())
+                .count(),
+            1
+        );
+        assert_eq!(node1.consensus.bft_round_state.slot, 2);
+        assert_eq!(
+            node1.consensus.bft_round_state.parent_hash,
+            proposal.hashed()
+        );
     }
 
     bus_client! {

@@ -77,9 +77,10 @@ impl Consensus {
             "Received Prepare message: {} (Ticket: {})", consensus_proposal, ticket
         );
 
+        let mut exit_joining_after_validation = false;
+
         if matches!(self.bft_round_state.state_tag, StateTag::Joining) {
             // Shortcut - if this is the prepare we expected, exit joining mode.
-            // This is a little eager (as verification can fail), but it should be fine - handled by sync-request-reply.
             // When we're joining, a couple cases to consider:
             // - we're catching up with DA - in this case we pretend to commit all blocks, so we only expect our current BFT slot / CP + 1 (this matches any view).
             let prepare_follows_commit = consensus_proposal.slot == self.bft_round_state.slot
@@ -90,10 +91,7 @@ impl Consensus {
                     || consensus_proposal.slot == self.bft_round_state.slot
                         && view > self.bft_round_state.view);
             if prepare_follows_commit || is_for_current_slot {
-                info!(
-                    "Received Prepare message for next slot while joining. Exiting joining mode."
-                );
-                self.set_state_tag(StateTag::Follower);
+                exit_joining_after_validation = true;
             } else {
                 follower_state!(self).buffered_prepares.push((
                     sender.clone(),
@@ -199,6 +197,11 @@ impl Consensus {
         self.verify_staking_actions(&consensus_proposal)?;
 
         self.verify_timestamp(&consensus_proposal)?;
+
+        if exit_joining_after_validation {
+            info!("Received valid Prepare message while joining. Exiting joining mode.");
+            self.set_state_tag(StateTag::Follower);
+        }
 
         // At this point we are OK with this new consensus proposal, update locally and vote.
         self.bft_round_state.current_proposal = Some(consensus_proposal.clone());
@@ -1516,6 +1519,50 @@ mod tests {
 
         assert!(matches!(err, TicketVerificationError::Invalid));
         assert_eq!(ctx.consensus.bft_round_state.view, 4);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn invalid_prepare_does_not_exit_joining() {
+        let crypto = BlstCrypto::new("joining-invalid-prepare").unwrap();
+        let mut ctx = ConsensusTestCtx::new("joining-invalid-prepare", crypto).await;
+        ctx.add_trusted_validator(&ctx.pubkey());
+
+        ctx.consensus.bft_round_state.state_tag = StateTag::Joining;
+        ctx.consensus.bft_round_state.slot = 1;
+        ctx.consensus.bft_round_state.view = 1;
+        ctx.consensus.bft_round_state.parent_hash = ConsensusProposalHash("parent".into());
+
+        let proposal = ConsensusProposal {
+            slot: 1,
+            parent_hash: ctx.consensus.bft_round_state.parent_hash.clone(),
+            cut: ctx.consensus.bft_round_state.parent_cut.clone(),
+            ..ConsensusProposal::default()
+        };
+
+        let timeout_qc = QuorumCertificate(AggregateSignature::default(), ConsensusTimeoutMarker);
+        let tc_kind = TCKind::NilProposal(QuorumCertificate(
+            AggregateSignature::default(),
+            NilConsensusTimeoutMarker,
+        ));
+
+        let err = ctx
+            .consensus
+            .on_prepare(
+                ctx.pubkey(),
+                proposal,
+                Ticket::TimeoutQC(timeout_qc, tc_kind),
+                1,
+            )
+            .expect_err("invalid prepare should be rejected");
+
+        assert!(matches!(
+            ctx.consensus.bft_round_state.state_tag,
+            StateTag::Joining
+        ));
+        assert!(
+            err.root_cause().to_string().contains("Ignoring prepare"),
+            "unexpected error: {err:#}"
+        );
     }
 
     #[test_log::test(tokio::test)]

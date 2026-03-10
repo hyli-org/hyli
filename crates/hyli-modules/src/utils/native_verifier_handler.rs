@@ -36,7 +36,7 @@ impl TxExecutorHandler for NativeVerifierHandler {
         ))
     }
 
-    fn build_commitment_metadata(&self, _: &sdk::Blob) -> anyhow::Result<Vec<u8>> {
+    fn build_commitment_metadata(&self, _: &sdk::Calldata) -> anyhow::Result<Vec<u8>> {
         Ok(vec![])
     }
 

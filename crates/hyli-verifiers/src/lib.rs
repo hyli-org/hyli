@@ -285,10 +285,7 @@ pub mod sp1_4 {
 mod tests {
     use std::{fs::File, io::Read};
 
-    use hyli_model::{
-        Blob, BlobData, BlobIndex, HyliOutput, Identity, IndexedBlobs, ProgramId, ProofData,
-        StateCommitment, TxHash,
-    };
+    use hyli_model::{BlobIndex, Identity, ProgramId, ProofData, StateCommitment, TxHash};
 
     use super::noir::verify as noir_proof_verifier;
 
@@ -303,74 +300,94 @@ mod tests {
     /*
         For this test, the proof/vk and the output are obtained running this simple Noir code
         ```
-            fn main(
-            version: pub u32,
-            initial_state_len: pub u32,
-            initial_state: pub [u8; 4],
-            next_state_len: pub u32,
-            next_state: pub [u8; 4],
-            identity_len: pub u8,
-            identity: pub str<56>,
-            tx_hash_len: pub u32,
-            tx_hash: pub [u8; 0],
-            index: pub u32,
-            blobs_len: pub u32,
-            blobs: pub [Field; 10],
-            success: pub bool
-            ) {}
-        ```
-        With the values:
-        ```
-            version = 1
-            blobs = [3, 1, 1, 2, 1, 1, 2, 1, 1, 0]
-            initial_state_len = 4
-            initial_state = [0, 0, 0, 0]
-            next_state_len = 4
-            next_state = [0, 0, 0, 0]
-            identity_len = 56
-            identity = "3f368bf90c71946fc7b0cde9161ace42985d235f@ecdsa_secp256r1"
-            tx_hash_len = 0
-            tx_hash = []
-            blobs_len = 9
-            index = 0
-            success = 1
+            struct BlobInput<let NAME_MAX: u32, let DATA_MAX: u32> {
+                index: u32,
+                contract_name_len: u32,
+                contract_name: str<NAME_MAX>,
+                data_capacity: u32,
+                data_len: u32,
+                data: [u8; DATA_MAX],
+            }
+        struct HyliOutput<
+            let INITIAL_STATE_MAX: u32,
+            let NEXT_STATE_MAX: u32,
+            let IDENTITY_MAX: u32,
+            let BLOBS_MAX: u32,
+            let BLOB_NAME_MAX: u32,
+            let BLOB_DATA_MAX: u32,
+            let PROGRAM_OUTPUT_MAX: u32
+        > {
+            version: u32,
+            initial_state_len: u32,
+            initial_state_max: u32,
+            initial_state: [u8; INITIAL_STATE_MAX],
+            next_state_len: u32,
+            next_state_max: u32,
+            next_state: [u8; NEXT_STATE_MAX],
+            identity_len: u32,
+            identity_max: u32,
+            identity: str<IDENTITY_MAX>,
+            index: u32,
+            blob_count: u32,
+            blob_slots: u32,
+            blob_name_max: u32,
+            blob_data_max: u32,
+            blobs: [BlobInput<BLOB_NAME_MAX, BLOB_DATA_MAX>; BLOBS_MAX],
+            tx_blob_count: u32,
+            tx_hash: [u8; 32],
+            success: bool,
+            program_outputs_max: u32,
+            program_outputs_len: u32,
+            program_outputs: [u8; PROGRAM_OUTPUT_MAX],
+        }
+
+        fn main(hyli_output: pub HyliOutput<4, 4, 56, 2, 8, 4, 2>) {
+            assert(hyli_output.version == 2);
+            assert(hyli_output.initial_state_len == 4);
+            assert(hyli_output.initial_state_max == INITIAL_STATE_MAX);
+            assert(hyli_output.next_state_len == 4);
+            assert(hyli_output.next_state_max == NEXT_STATE_MAX);
+            assert(hyli_output.identity_len == 56);
+            assert(hyli_output.identity_max == IDENTITY_MAX);
+            assert(hyli_output.blob_slots == BLOB_SLOTS);
+            assert(hyli_output.blob_name_max == BLOB_NAME_MAX);
+            assert(hyli_output.blob_data_max == BLOB_DATA_MAX);
+            assert(hyli_output.blob_count <= hyli_output.blob_slots);
+            assert(hyli_output.tx_hash_len == 32);
+            assert(hyli_output.program_outputs_max == PROGRAM_OUTPUT_MAX);
+            assert(hyli_output.program_outputs_len <= hyli_output.program_outputs_max);
+            assert(hyli_output.program_outputs_len == 2);
+            assert(hyli_output.success);
+        }
         ```
     */
     #[ignore = "manual test"]
     #[test_log::test]
-    fn test_noir_proof_verifier() {
-        let noir_proof = load_file_as_bytes("./tests/proofs/webauthn.noir.proof");
-        let image_id = load_file_as_bytes("./tests/proofs/webauthn.noir.vk");
+    fn test_noir_proof_verifier_v2() {
+        let mut noir_proof = load_file_as_bytes("../../tests/proofs/parserv2.noir.public_inputs");
+        noir_proof.extend(load_file_as_bytes("../../tests/proofs/parserv2.noir.proof"));
+        let image_id = load_file_as_bytes("../../tests/proofs/parserv2.noir.vk");
 
         let result = noir_proof_verifier(&ProofData(noir_proof), &ProgramId(image_id));
         match result {
             Ok(outputs) => {
-                assert_eq!(
-                    outputs,
-                    vec![HyliOutput {
-                        version: 1,
-                        initial_state: StateCommitment(vec![0, 0, 0, 0]),
-                        next_state: StateCommitment(vec![0, 0, 0, 0]),
-                        identity: Identity(
-                            "3f368bf90c71946fc7b0cde9161ace42985d235f@ecdsa_secp256r1".to_owned()
-                        ),
-                        index: BlobIndex(0),
-                        blobs: IndexedBlobs(vec![(
-                            BlobIndex(0),
-                            Blob {
-                                contract_name: "webauthn".into(),
-                                data: BlobData(vec![3, 1, 1, 2, 1, 1, 2, 1, 1, 0])
-                            }
-                        )]),
-                        tx_blob_count: 1,
-                        success: true,
-                        tx_hash: TxHash::default(), // TODO
-                        state_reads: vec![],
-                        tx_ctx: None,
-                        onchain_effects: vec![],
-                        program_outputs: vec![]
-                    }]
-                );
+                assert_eq!(outputs.len(), 1);
+                let output = &outputs[0];
+                assert_eq!(output.version, 2);
+                assert_eq!(output.initial_state, StateCommitment(vec![0, 0, 0, 0]));
+                assert_eq!(output.next_state, StateCommitment(vec![0, 0, 0, 0]));
+                assert_eq!(output.identity, Identity("transfer@hyli_utxo".to_owned()));
+                assert_eq!(output.index, BlobIndex(1));
+                assert_eq!(output.tx_blob_count, 2);
+                assert!(output.success);
+                assert_eq!(output.tx_hash, TxHash(vec![0; 32]));
+                assert!(output.program_outputs.is_empty());
+
+                assert_eq!(output.blobs.0.len(), 1);
+                let (blob_index, blob) = &output.blobs.0[0];
+                assert_eq!(*blob_index, BlobIndex(1));
+                assert_eq!(blob.contract_name.0, "hyli_utxo");
+                assert!(!blob.data.0.is_empty());
             }
             Err(e) => panic!("Noir verification failed: {e:?}"),
         }

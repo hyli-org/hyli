@@ -424,6 +424,13 @@ pub struct ModulesHandler {
     module_shutdown_order: Vec<String>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct ModulesHandlerOptions {
+    /// If true, back up a non-empty data directory when the checksum manifest is missing or empty.
+    /// If false, remove that invalid directory and recreate it empty.
+    pub backup_on_invalid_manifest: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModuleShutdownStatus {
     TimedOut,
@@ -438,7 +445,11 @@ pub enum ModuleStatus {
 }
 
 impl ModulesHandler {
-    pub fn new(shared_bus: &SharedMessageBus, data_dir: PathBuf) -> Result<ModulesHandler> {
+    pub fn new(
+        shared_bus: &SharedMessageBus,
+        data_dir: PathBuf,
+        options: ModulesHandlerOptions,
+    ) -> Result<ModulesHandler> {
         let shared_message_bus = shared_bus.new_handle();
         let module_handler = ModulesHandler {
             bus: shared_message_bus,
@@ -468,46 +479,55 @@ impl ModulesHandler {
 
         let manifest_file = manifest_path(&data_dir);
 
-        // Decide whether the directory should be backed up
-        let should_backup = if manifest_file.exists() {
-            // Manifest exists → invalid if empty
+        // Decide whether the directory should be reset due to missing/invalid manifest.
+        let has_invalid_manifest = if manifest_file.exists() {
+            // Manifest exists -> invalid if empty or unreadable.
             match fs::read_to_string(&manifest_file) {
                 Ok(content) => content.trim().is_empty(),
                 Err(_) => true,
             }
         } else {
-            // No manifest → back up
+            // No manifest -> invalid.
             true
         };
 
-        if should_backup {
+        if has_invalid_manifest {
             if is_mount_point(&data_dir)? {
                 bail!(
-                    "Cannot back up data_dir because it is a mount point: {}. Use a subdirectory (e.g. {}), or empty the directory manually.",
+                    "Cannot reset data_dir because it is a mount point: {}. Use a subdirectory (e.g. {}), or empty the directory manually.",
                     data_dir.display(),
                     data_dir.join("node").display()
                 );
             }
 
-            // Generate a backup directory name using a timestamp
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis();
+            if options.backup_on_invalid_manifest {
+                // Generate a backup directory name using a timestamp
+                let timestamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis();
 
-            let backup_dir = data_dir.with_extension(format!("backup_{timestamp}"));
+                let backup_dir = data_dir.with_extension(format!("backup_{timestamp}"));
 
-            log_warn!(
-                fs::rename(&data_dir, &backup_dir),
-                "Moving data_dir to backup location"
-            )
-            .context("Failed to move data_dir to backup location")?;
+                log_warn!(
+                    fs::rename(&data_dir, &backup_dir),
+                    "Moving data_dir to backup location"
+                )
+                .context("Failed to move data_dir to backup location")?;
 
-            warn!(
-                "Moved data_dir without valid manifest to backup: {} -> {}",
-                data_dir.display(),
-                backup_dir.display()
-            );
+                warn!(
+                    "Moved data_dir without valid manifest to backup: {} -> {}",
+                    data_dir.display(),
+                    backup_dir.display()
+                );
+            } else {
+                log_warn!(fs::remove_dir_all(&data_dir), "Removing invalid data_dir")
+                    .context("Failed to remove invalid data_dir")?;
+                warn!(
+                    "Removed data_dir without valid manifest: {}",
+                    data_dir.display()
+                );
+            }
 
             // Recreate an empty data_dir
             fs::create_dir_all(&data_dir).context("Failed to recreate data_dir")?;

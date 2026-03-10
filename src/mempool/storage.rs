@@ -7,7 +7,7 @@ use hyli_model::{DataSized, LaneId, ProofData};
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
 use std::{future::Future, vec};
-use tracing::{debug, error, trace};
+use tracing::{error, trace};
 
 use crate::model::{
     Cut, DataProposal, DataProposalHash, DataProposalParent, Hashed, PoDA, SignedByValidator,
@@ -388,20 +388,12 @@ pub trait Storage {
         new_committed_size: &LaneBytesSize,
     ) -> Result<()> {
         let tip_lane = self.get_lane_hash_tip(lane_id);
-        debug!(
-            "clean_and_update_lane start: lane {}, tip {:?}, previous {:?}, new {}",
-            lane_id, tip_lane, previous_committed_dp_hash, new_committed_dp_hash
-        );
         // Check if lane is in a state between previous cut and new cut
         if tip_lane.as_ref() != previous_committed_dp_hash
             && tip_lane.as_ref() != Some(new_committed_dp_hash)
         {
             // Remove last element from the lane until we find the data proposal of the previous cut
             while let Some((dp_hash, le)) = self.pop(lane_id.clone())? {
-                debug!(
-                    "clean_and_update_lane popped lane {} hash {} (target previous {:?})",
-                    lane_id, dp_hash, previous_committed_dp_hash
-                );
                 if Some(&dp_hash) == previous_committed_dp_hash {
                     // Reinsert the lane entry corresponding to the previous cut
                     self.put_no_verification(lane_id.clone(), le)?;
@@ -414,11 +406,6 @@ pub trait Storage {
             lane_id.clone(),
             new_committed_dp_hash.clone(),
             *new_committed_size,
-        );
-        debug!(
-            "clean_and_update_lane end: lane {}, new_tip {:?}",
-            lane_id,
-            self.get_lane_hash_tip(lane_id)
         );
         Ok(())
     }

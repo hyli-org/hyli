@@ -3,7 +3,7 @@ use client_sdk::{
     helpers::risc0::Risc0Prover,
     transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutorBuilder, TxExecutorHandler},
 };
-use sdk::{utils::as_hyli_output, Blob, Calldata, ContractName, StateCommitment, ZkContract};
+use sdk::{utils::as_hyli_output, Calldata, ContractName, StateCommitment, ZkContract};
 
 use crate::{Hyllar, HyllarAction};
 
@@ -16,7 +16,7 @@ use metadata::*;
 impl TxExecutorHandler for Hyllar {
     type Contract = Hyllar;
 
-    fn build_commitment_metadata(&self, _blob: &Blob) -> Result<Vec<u8>> {
+    fn build_commitment_metadata(&self, _calldata: &Calldata) -> Result<Vec<u8>> {
         borsh::to_vec(self).context("Failed to serialize Hyllar")
     }
 

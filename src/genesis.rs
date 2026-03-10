@@ -17,9 +17,7 @@ use hydentity::{
     Hydentity,
 };
 use hyli_bus::{module_handle_messages, modules::ModulePersistOutput};
-use hyli_contract_sdk::{
-    Blob, Calldata, ContractName, Identity, ProgramId, StateCommitment, ZkContract,
-};
+use hyli_contract_sdk::{Calldata, ContractName, Identity, ProgramId, StateCommitment, ZkContract};
 use hyli_crypto::SharedBlstCrypto;
 use hyli_modules::{
     bus::{BusClientSender, BusMessage, SharedMessageBus},
@@ -524,6 +522,7 @@ impl Genesis {
 
             ptx.outputs[0].1.tx_hash = ptx.to_blob_tx().hashed();
             ptx.outputs[0].1.blobs = IndexedBlobs::from(ptx.blobs.clone());
+            ptx.outputs[0].1.tx_blob_count = ptx.blobs.len();
 
             let tx_hash = ptx.to_blob_tx().hashed();
             ptx.outputs.push((
@@ -1076,5 +1075,40 @@ mod tests {
         // Vérifier que l’événement attendu est bien GenesisBlock
         let rec: GenesisEvent = bus.try_recv().expect("Expected a GenesisBlock event");
         assert_matches!(rec, GenesisEvent::GenesisBlock(..));
+    }
+
+    /// Verify that all genesis blob transactions settle successfully through NodeState.
+    #[test_log::test(tokio::test)]
+    async fn test_genesis_txs_settle_successfully() {
+        use hyli_modules::node_state::{test::NodeStateBlockExt, NodeState};
+        use std::collections::HashSet;
+
+        let tmpdir = tempfile::Builder::new().tempdir().unwrap();
+        let mut config =
+            Conf::new(vec![], tmpdir.path().to_str().map(|s| s.to_owned()), None).unwrap();
+        config.id = "single-node".to_string();
+        config.consensus.solo = true;
+        config.genesis.stakers = [("single-node".into(), 100)].into_iter().collect();
+        let (mut genesis, mut bus) = new(config).await;
+
+        genesis.start().await.expect("genesis start");
+
+        let GenesisEvent::GenesisBlock(signed_block) = bus.try_recv().expect("genesis block event")
+        else {
+            panic!("Expected GenesisBlock event");
+        };
+        let mut node_state = NodeState::create("test");
+        let result = node_state
+            .handle_signed_block(signed_block.clone())
+            .expect("handle genesis block");
+
+        let blob_txs = signed_block
+            .iter_txs_with_id()
+            .filter(|(_, _, tx)| matches!(tx.transaction_data, TransactionData::Blob(_)))
+            .map(|(_, tx_id, _)| tx_id.1.clone())
+            .collect::<HashSet<_>>();
+
+        let successful_txs = result.successful_txs().into_iter().collect::<HashSet<_>>();
+        assert_eq!(successful_txs, blob_txs);
     }
 }

@@ -123,6 +123,14 @@ pub struct Calldata {
     pub private_input: Vec<u8>,
 }
 
+impl Calldata {
+    pub fn get_blob(&self) -> Result<&Blob, String> {
+        self.blobs
+            .get(&self.index)
+            .ok_or_else(|| format!("Blob with index {} not found in calldata", self.index.0))
+    }
+}
+
 /// State commitment of the contract.
 #[derive(
     Default, Serialize, Deserialize, Clone, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize,
@@ -682,10 +690,13 @@ pub struct HyliOutput {
 
     /// The index of the blob being proven.
     pub index: BlobIndex,
-    /// The blobs that were used by the contract. It has to be a subset of the transactions blobs
+    /// The blobs that were used by the contract. It has to be a subset of the transaction blobs.
     /// It can be the complete list of blobs if the contract used all of them.
+    /// No further semantic checks are enforced by node state: contracts and verifiers are
+    /// responsible for validating that the provided blob subset is sufficient for their logic.
     pub blobs: IndexedBlobs,
-    /// Number of blobs in the transaction. tx_blob_count >= blobs.len()
+    /// Number of blobs in the transaction.
+    /// This must match the originating BlobTransaction's total blob count exactly.
     pub tx_blob_count: usize,
 
     /// TxHash of the BlobTransaction.

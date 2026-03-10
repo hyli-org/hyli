@@ -522,131 +522,109 @@ async fn test_register_contract_and_delete_hyli() {
     assert_eq!(state.contracts.len(), 2);
 }
 
-#[test_log::test(tokio::test)]
-async fn test_hyli_contract_update_timeout_window() {
-    let mut state = new_node_state().await;
-    let register_wallet =
-        make_register_tx_with_constructor("hyli@hyli".into(), "hyli".into(), "wallet".into());
-    let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
+#[test]
+fn test_hyli_side_effect_updates_target_without_overwriting_other_fields() {
+    let hyli = hyli_contract_definition();
+    let target = Contract {
+        name: "target".into(),
+        program_id: ProgramId(vec![9, 9, 9]),
+        state: StateCommitment(vec![1, 2, 3]),
+        verifier: Verifier("target-verifier".into()),
+        timeout_window: TimeoutWindow::timeout(BlockHeight(42), BlockHeight(43)),
+    };
 
-    let mut output = make_hyli_output(register_hyli_at_wallet.clone(), BlobIndex(0));
-    let register_hyli_at_wallet_proof =
-        new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
+    let mut contracts = HashMap::new();
+    contracts.insert(hyli.name.clone(), hyli.clone());
+    contracts.insert(target.name.clone(), target.clone());
 
-    let register_contract =
-        make_register_tx_with_constructor("hyli@hyli".into(), "hyli".into(), "contract".into());
+    let assert_target_preserved =
+        |contract_changes: &BTreeMap<ContractName, ModifiedContractData>,
+         expected_program_id: &ProgramId,
+         expected_timeout_window: &TimeoutWindow| {
+            let target_change = contract_changes.get(&target.name).unwrap();
+            let ContractStatus::Updated(updated_target) = &target_change.contract_status else {
+                panic!("expected updated target contract");
+            };
+            assert_eq!(updated_target.name, target.name);
+            assert_eq!(updated_target.program_id, *expected_program_id);
+            assert_eq!(updated_target.state, target.state);
+            assert_eq!(updated_target.verifier, target.verifier);
+            assert_eq!(updated_target.timeout_window, *expected_timeout_window);
 
-    state.craft_block_and_handle(
-        1,
-        vec![
-            register_wallet.into(),
-            register_hyli_at_wallet.into(),
-            register_hyli_at_wallet_proof.into(),
-            register_contract.into(),
-        ],
-    );
+            let hyli_change = contract_changes.get(&hyli.name).unwrap();
+            let ContractStatus::Updated(updated_hyli) = &hyli_change.contract_status else {
+                panic!("expected updated hyli contract");
+            };
+            assert_eq!(updated_hyli.name, hyli.name);
+            assert_eq!(updated_hyli.state, StateCommitment(vec![8, 8, 8, 8]));
+            assert_eq!(updated_hyli.verifier, hyli.verifier);
+        };
 
-    assert_eq!(state.contracts.len(), 3);
-    assert_eq!(
-        state
-            .contracts
-            .get(&ContractName::new("contract"))
-            .unwrap()
-            .timeout_window,
-        TimeoutWindow::timeout(BlockHeight(100), BlockHeight(100))
-    );
-
-    let timeout_window_update_tx = make_update_timeout_window_tx_with_hyli(
+    let mut program_id_changes = BTreeMap::new();
+    let tx = make_update_program_id_tx_with_hyli(
         "hyli".into(),
-        "contract".into(),
-        TimeoutWindow::timeout(BlockHeight(45), BlockHeight(45)),
+        target.name.clone(),
+        ProgramId(vec![7, 7, 7]),
+    );
+    let mut output = make_hyli_output_with_state(tx, BlobIndex(0), &hyli.state.0, &[8, 8, 8, 8]);
+    output
+        .onchain_effects
+        .push(OnchainEffect::UpdateContractProgramId(
+            target.name.clone(),
+            ProgramId(vec![7, 7, 7]),
+        ));
+
+    let result = NodeStateProcessing::process_proof(
+        &contracts,
+        &mut program_id_changes,
+        &hyli.name,
+        &(
+            hyli.program_id.clone(),
+            hyli.verifier.clone(),
+            TxId::default(),
+            output,
+        ),
     );
 
-    let mut output = make_hyli_output_bis(timeout_window_update_tx.clone(), BlobIndex(0));
-    let verify_hyli_proof = new_proof_tx(
-        &"wallet".into(),
-        &output,
-        &timeout_window_update_tx.hashed(),
+    assert!(matches!(result, ProofProcessingResult::Success));
+    assert_target_preserved(
+        &program_id_changes,
+        &ProgramId(vec![7, 7, 7]),
+        &target.timeout_window,
     );
 
-    let block = state.craft_block_and_handle(
-        2,
-        vec![
-            timeout_window_update_tx.into(),
-            verify_hyli_proof.clone().into(),
-        ],
-    );
-
-    assert_eq!(state.contracts.len(), 3);
-    assert_eq!(
-        state
-            .contracts
-            .get(&ContractName::new("contract"))
-            .unwrap()
-            .timeout_window,
-        TimeoutWindow::timeout(BlockHeight(45), BlockHeight(45))
-    );
-}
-
-#[test_log::test(tokio::test)]
-async fn test_hyli_contract_update_program_id() {
-    let mut state = new_node_state().await;
-    let register_wallet =
-        make_register_tx_with_constructor("hyli@hyli".into(), "hyli".into(), "wallet".into());
-    let register_hyli_at_wallet = make_register_hyli_wallet_identity_tx();
-
-    let mut output = make_hyli_output(register_hyli_at_wallet.clone(), BlobIndex(0));
-    let register_hyli_at_wallet_proof =
-        new_proof_tx(&"wallet".into(), &output, &register_hyli_at_wallet.hashed());
-
-    let register_contract =
-        make_register_tx_with_constructor("hyli@hyli".into(), "hyli".into(), "contract".into());
-
-    state.craft_block_and_handle(
-        1,
-        vec![
-            register_wallet.into(),
-            register_hyli_at_wallet.into(),
-            register_hyli_at_wallet_proof.into(),
-            register_contract.into(),
-        ],
-    );
-
-    assert_eq!(state.contracts.len(), 3);
-    assert_eq!(
-        state
-            .contracts
-            .get(&ContractName::new("contract"))
-            .unwrap()
-            .program_id,
-        ProgramId(vec![])
-    );
-
-    let program_id_update_tx = make_update_program_id_tx_with_hyli(
+    let mut timeout_window_changes = BTreeMap::new();
+    let updated_timeout_window = TimeoutWindow::timeout(BlockHeight(99), BlockHeight(100));
+    let tx = make_update_timeout_window_tx_with_hyli(
         "hyli".into(),
-        "contract".into(),
-        ProgramId(vec![1, 2, 3, 4]),
+        target.name.clone(),
+        updated_timeout_window.clone(),
+    );
+    let mut output = make_hyli_output_with_state(tx, BlobIndex(0), &hyli.state.0, &[8, 8, 8, 8]);
+    output
+        .onchain_effects
+        .push(OnchainEffect::UpdateTimeoutWindow(
+            target.name.clone(),
+            updated_timeout_window.clone(),
+        ));
+
+    let result = NodeStateProcessing::process_proof(
+        &contracts,
+        &mut timeout_window_changes,
+        &hyli.name,
+        &(
+            hyli.program_id.clone(),
+            hyli.verifier.clone(),
+            TxId::default(),
+            output,
+        ),
     );
 
-    let mut output = make_hyli_output_bis(program_id_update_tx.clone(), BlobIndex(0));
-    let verify_hyli_proof = new_proof_tx(&"wallet".into(), &output, &program_id_update_tx.hashed());
-
-    let block = state.craft_block_and_handle(
-        2,
-        vec![
-            program_id_update_tx.into(),
-            verify_hyli_proof.clone().into(),
-        ],
-    );
-
-    assert_eq!(state.contracts.len(), 3);
-    assert_eq!(
-        state
-            .contracts
-            .get(&ContractName::new("contract"))
-            .unwrap()
-            .program_id,
-        ProgramId(vec![1, 2, 3, 4])
+    assert!(matches!(result, ProofProcessingResult::Success));
+    assert_target_preserved(
+        &timeout_window_changes,
+        &target.program_id,
+        &updated_timeout_window,
     );
 }
 

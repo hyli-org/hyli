@@ -164,6 +164,9 @@ pub struct Conf {
     pub log_format: String,
     /// Directory name to store node state.
     pub data_directory: PathBuf,
+    /// If true, back up non-empty data directories with missing/empty checksum manifest on startup.
+    /// If false, delete that invalid directory and recreate it empty.
+    pub backup_on_invalid_manifest: bool,
 
     /// Peer-to-peer layer configuration
     pub p2p: P2pConf,

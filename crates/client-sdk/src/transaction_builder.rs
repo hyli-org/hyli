@@ -146,7 +146,7 @@ where
     fn build_commitment_metadata(
         &self,
         contract_name: &ContractName,
-        blob: &Blob,
+        blob: &Calldata,
     ) -> anyhow::Result<Vec<u8>>;
     fn execute(
         &mut self,
@@ -258,13 +258,22 @@ impl<S: StateUpdater> TxExecutor<S> {
             old_states.insert(blob.contract_name.clone(), state);
         }
 
+        let tx_hash = BlobTransaction::new(tx.identity.clone(), tx.blobs.clone()).hashed();
+
         for runner in tx.runners.iter_mut() {
-            // We get the blob that contains the action for that runner.
-            // We build the commitment metadata for that blob. (i.e. the action that will be executed)
-            let blob = &tx.blobs[runner.index.0];
+            let calldata = Calldata {
+                identity: tx.identity.clone(),
+                tx_hash: tx_hash.clone(),
+                private_input: vec![],
+                blobs: tx.blobs.clone().into(),
+                index: runner.index,
+                tx_ctx: tx.tx_context.clone(),
+                tx_blob_count: tx.blobs.len(),
+            };
+
             let commitment_metadata = self
                 .states
-                .build_commitment_metadata(&runner.contract_name, blob)
+                .build_commitment_metadata(&runner.contract_name, &calldata)
                 .unwrap()
                 .clone();
 
@@ -387,7 +396,7 @@ pub trait TxExecutorHandler {
     /// This is the function that creates the commitment metadata.
     /// It provides the minimum information necessary to construct the commitment_medata field of the input
     /// that will be used to execute the program in the zkvm.
-    fn build_commitment_metadata(&self, blob: &Blob) -> anyhow::Result<Vec<u8>>;
+    fn build_commitment_metadata(&self, blob: &Calldata) -> anyhow::Result<Vec<u8>>;
 
     /// This function is used to merge the commitment metadata of the contract.
     /// Used for contracts that use only a partial state like MerkleTrie.
@@ -456,9 +465,9 @@ macro_rules! contract_states {
                 }
             }
 
-            fn build_commitment_metadata(&self, contract_name: &ContractName, blob: &Blob) -> anyhow::Result<Vec<u8>> {
+            fn build_commitment_metadata(&self, contract_name: &ContractName, calldata: &Calldata) -> anyhow::Result<Vec<u8>> {
                 match contract_name.0.as_str() {
-                    $(stringify!($contract_name) => Ok(self.$contract_name.build_commitment_metadata(blob).map_err(|e| anyhow::anyhow!(e))?),)*
+                    $(stringify!($contract_name) => Ok(self.$contract_name.build_commitment_metadata(calldata).map_err(|e| anyhow::anyhow!(e))?),)*
                     _ => anyhow::bail!("Unknown contract name: {contract_name}"),
                 }
             }

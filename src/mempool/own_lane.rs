@@ -278,6 +278,10 @@ impl super::Mempool {
 
             let mut cumulative_size = 0;
             let mut current_idx = 0;
+            // Soft target, not a hard cap: once the current batch reaches or exceeds
+            // MAX_DP_SIZE we stop adding more txs, but we keep the tx that crossed the
+            // threshold. This also guarantees progress when the first pending tx alone
+            // exceeds MAX_DP_SIZE.
             while cumulative_size < MAX_DP_SIZE && current_idx < waiting.len() {
                 if let Some((_tx_hash, tx)) = waiting.get_index(current_idx) {
                     cumulative_size += tx.estimate_size();
