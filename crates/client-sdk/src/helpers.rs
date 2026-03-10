@@ -227,16 +227,30 @@ pub mod jolt {
         pub program_size: Option<u64>,
     }
 
-    impl BorshMemoryConfig {
-        pub fn to_jolt_memory_config(&self) -> jolt_sdk::MemoryConfig {
-            jolt_sdk::MemoryConfig {
-                max_input_size: self.max_input_size,
-                max_trusted_advice_size: self.max_trusted_advice_size,
-                max_untrusted_advice_size: self.max_untrusted_advice_size,
-                max_output_size: self.max_output_size,
-                stack_size: self.stack_size,
-                heap_size: self.heap_size,
-                program_size: self.program_size,
+    impl From<BorshMemoryConfig> for jolt_sdk::MemoryConfig {
+        fn from(config: BorshMemoryConfig) -> Self {
+            Self {
+                max_input_size: config.max_input_size,
+                max_trusted_advice_size: config.max_trusted_advice_size,
+                max_untrusted_advice_size: config.max_untrusted_advice_size,
+                max_output_size: config.max_output_size,
+                stack_size: config.stack_size,
+                heap_size: config.heap_size,
+                program_size: config.program_size,
+            }
+        }
+    }
+
+    impl From<jolt_sdk::MemoryConfig> for BorshMemoryConfig {
+        fn from(config: jolt_sdk::MemoryConfig) -> Self {
+            Self {
+                max_input_size: config.max_input_size,
+                max_trusted_advice_size: config.max_trusted_advice_size,
+                max_untrusted_advice_size: config.max_untrusted_advice_size,
+                max_output_size: config.max_output_size,
+                stack_size: config.stack_size,
+                heap_size: config.heap_size,
+                program_size: config.program_size,
             }
         }
     }
@@ -275,15 +289,29 @@ pub mod jolt {
         elf: Vec<u8>,
     }
 
+    impl JoltRegistryEntry {
+        pub fn new(
+            preprocessing: JoltProverPreprocessing<jolt_sdk::F, jolt_sdk::Curve, jolt_sdk::PCS>,
+            memory_config: impl Into<BorshMemoryConfig>,
+            elf: Vec<u8>,
+        ) -> Self {
+            Self {
+                preprocessing: BorshableJoltProverPreprocessing(preprocessing),
+                memory_config: memory_config.into(),
+                elf,
+            }
+        }
+    }
+
     impl JoltProver {
-        pub fn new(binary: Vec<u8>, program_id: ProgramId) -> Self {
+        pub fn new(entry: JoltRegistryEntry, program_id: ProgramId) -> Self {
             let JoltRegistryEntry {
                 elf,
                 memory_config,
                 preprocessing,
-            } = borsh::from_slice(&binary).expect("Failed to deserialize Jolt ELF");
+            } = entry;
 
-            let program = Program::new(&elf, &memory_config.to_jolt_memory_config());
+            let program = Program::new(&elf, &memory_config.into());
             let preprocessing = preprocessing.0;
 
             Self {
@@ -383,7 +411,10 @@ pub mod jolt {
             let binary = binary
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to get Risc0 ELF: {}", e))?;
-            Ok(JoltProver::new(binary, program_id))
+
+            let entry = borsh::from_slice(&binary).expect("Failed to deserialize Jolt ELF");
+
+            Ok(JoltProver::new(entry, program_id))
         }
     }
 }
