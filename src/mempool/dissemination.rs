@@ -862,7 +862,11 @@ impl DisseminationManager {
         };
 
         let Some(proofs) = self.lanes.get_proofs_by_hash(lane_id, dp_hash)? else {
-            bail!("Can't find Proofs for DP {} in lane {}", dp_hash, lane_id);
+            warn!(
+                "Skipping rebroadcast of dp {} in lane {} because its proofs are no longer stored",
+                dp_hash, lane_id
+            );
+            return Ok(false);
         };
         data_proposal.hydrate_proofs(proofs);
         let dp_size_bytes = data_proposal.estimate_size() as u64;

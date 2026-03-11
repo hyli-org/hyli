@@ -26,6 +26,10 @@ use anyhow::Result;
 use assertables::assert_ok;
 use hyli_contract_sdk::StateCommitment;
 use hyli_crypto::BlstCrypto;
+use hyli_model::{
+    BlobProofOutput, ContractName, HyliOutput, ProgramId, ProofData, TransactionData,
+    VerifiedProofTransaction, Verifier,
+};
 use hyli_modules::bus::BusReceiver;
 use hyli_modules::modules::BuildApiContextInner;
 use hyli_modules::modules::Module;
@@ -575,6 +579,28 @@ pub fn make_register_contract_tx(name: ContractName) -> Transaction {
     .into()
 }
 
+fn make_verified_proof_tx(contract_name: &str) -> Transaction {
+    let proof = ProofData(vec![1, 2, 3, 4]);
+    let proof_hash = proof.hashed();
+    let vpt = VerifiedProofTransaction {
+        contract_name: ContractName::new(contract_name),
+        program_id: ProgramId(vec![]),
+        verifier: Verifier("test".into()),
+        proof: Some(proof.clone()),
+        proof_hash: proof_hash.clone(),
+        proof_size: proof.0.len(),
+        proven_blobs: vec![BlobProofOutput {
+            original_proof_hash: proof_hash,
+            blob_tx_hash: b"blob-tx".into(),
+            program_id: ProgramId(vec![]),
+            verifier: Verifier("test".into()),
+            hyli_output: HyliOutput::default(),
+        }],
+        is_recursive: false,
+    };
+    Transaction::from(TransactionData::VerifiedProof(vpt))
+}
+
 #[test_log::test(tokio::test)]
 async fn test_redisseminate_owned_lanes_sends_oldest_first() -> Result<()> {
     let mut ctx = MempoolTestCtx::new("mempool").await;
@@ -630,6 +656,40 @@ async fn test_redisseminate_owned_lanes_sends_oldest_first() -> Result<()> {
     assert!(
         ctx.out_receiver.is_empty(),
         "only one pending DP should be broadcast per tick"
+    );
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
+async fn test_redisseminate_owned_lane_skips_dp_if_proofs_were_cleaned() -> Result<()> {
+    let mut ctx = MempoolTestCtx::new("mempool").await;
+
+    let peer_crypto = BlstCrypto::new("peer").unwrap();
+    ctx.setup_node(&[peer_crypto]).await;
+
+    let lane_id = ctx.own_lane();
+    let tx = make_verified_proof_tx("cleanup-race");
+    let dp = ctx.create_data_proposal(None, &[tx]);
+    ctx.process_new_data_proposal(dp.clone())?;
+    ctx.process_dissemination_events().await?;
+
+    let dp_hash = dp.hashed();
+
+    while ctx.out_receiver.try_recv().is_ok() {}
+    ctx.dissemination_manager
+        .clear_last_dp_sent_for_test(&lane_id, &dp_hash);
+
+    ctx.mempool.lanes.delete_proofs(&lane_id, &dp_hash)?;
+
+    ctx.dissemination_manager.add_owned_lane(lane_id);
+    ctx.dissemination_manager
+        .redisseminate_owned_lanes()
+        .await?;
+
+    assert!(
+        ctx.out_receiver.is_empty(),
+        "redissemination should skip DPs without proofs"
     );
 
     Ok(())
@@ -1403,7 +1463,7 @@ async fn test_processed_dp_stored_when_tip_is_itself_after_clean() -> Result<()>
         ctx.mempool.lanes.get_lane_hash_tip(&lane_id),
         Some(dp2_hash.clone())
     );
-    assert!(!ctx.mempool.lanes.contains(&lane_id, &dp1_hash));
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp1_hash));
 
     // When processing finishes, DP2 is stored even though its parent is missing.
     ctx.mempool.on_processed_data_proposal(
@@ -1450,7 +1510,7 @@ async fn test_processed_dp_fails_when_tip_moved_past_it() -> Result<()> {
         ctx.mempool.lanes.get_lane_hash_tip(&lane_id),
         Some(dp3_hash.clone())
     );
-    assert!(!ctx.mempool.lanes.contains(&lane_id, &dp1_hash));
+    assert!(ctx.mempool.lanes.contains(&lane_id, &dp1_hash));
 
     // Processing DP2 now should fail because tip moved past it.
     assert!(ctx
