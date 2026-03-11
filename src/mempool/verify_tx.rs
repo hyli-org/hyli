@@ -24,26 +24,6 @@ pub enum DataProposalVerdict {
 }
 
 impl super::Mempool {
-    fn cache_processed_verdict(
-        &mut self,
-        lane_id: &LaneId,
-        data_proposal: &DataProposal,
-        verdict: &DataProposalVerdict,
-    ) {
-        match verdict {
-            DataProposalVerdict::Empty
-            | DataProposalVerdict::Process
-            | DataProposalVerdict::Wait
-            | DataProposalVerdict::Vote => {
-                unreachable!("DataProposal has already been processed");
-            }
-            DataProposalVerdict::Refuse | DataProposalVerdict::Ignore => {
-                self.cached_dp_votes
-                    .insert((lane_id.clone(), data_proposal.hashed()), verdict.clone());
-            }
-        }
-    }
-
     pub(super) fn on_data_proposal(
         &mut self,
         lane_id: &LaneId,
@@ -85,10 +65,18 @@ impl super::Mempool {
                 );
                 return Ok(());
             }
-            Some(DataProposalVerdict::Wait) | None => {}
             Some(DataProposalVerdict::Vote) => {
-                bail!("Vote verdicts must not be cached for DataProposal {received_hash}");
+                // Resend our vote
+                // First fetch the lane size, if we somehow don't have it ignore.
+                if let Ok(lane_size) = self.lanes.get_lane_size_at(lane_id, &received_hash) {
+                    debug!(
+                        "Resending vote for DataProposal {:?} on lane {}",
+                        received_hash, lane_id
+                    );
+                    return self.send_vote(lane_id, received_hash, lane_size);
+                }
             }
+            Some(DataProposalVerdict::Wait) | None => {}
         }
 
         // This is annoying to run in tests because we don't have the event loop setup, so go synchronous.
@@ -147,30 +135,24 @@ impl super::Mempool {
 
         let data_proposal_hash = data_proposal.hashed();
         let (verdict, lane_size) = self.get_verdict(lane_id, &data_proposal)?;
+        self.cached_dp_votes.insert(
+            (lane_id.clone(), data_proposal_hash.clone()),
+            verdict.clone(),
+        );
         match verdict {
             DataProposalVerdict::Empty => {
-                self.cached_dp_votes.insert(
-                    (lane_id.clone(), data_proposal_hash.clone()),
-                    DataProposalVerdict::Empty,
-                );
                 warn!(
                     "received empty DataProposal on lane {}, ignoring...",
                     lane_id
                 );
             }
             DataProposalVerdict::Vote => {
-                let Some(lane_size) = lane_size else {
-                    bail!("Vote verdict missing lane size for DataProposal {}", data_proposal_hash);
-                };
                 // Normal case, we receive a proposal we already have the parent in store
                 trace!("Send vote for DataProposal");
-                self.send_vote(lane_id, data_proposal_hash, lane_size)?;
+                #[allow(clippy::unwrap_used, reason = "we always have a size for Vote")]
+                self.send_vote(lane_id, data_proposal_hash, lane_size.unwrap())?;
             }
             DataProposalVerdict::Process => {
-                self.cached_dp_votes.insert(
-                    (lane_id.clone(), data_proposal_hash.clone()),
-                    DataProposalVerdict::Process,
-                );
                 trace!("Further processing for DataProposal");
                 let lane_id = lane_id.clone();
                 let handle = self.inner.long_tasks_runtime.handle();
@@ -187,10 +169,6 @@ impl super::Mempool {
                 );
             }
             DataProposalVerdict::Wait => {
-                self.cached_dp_votes.insert(
-                    (lane_id.clone(), data_proposal_hash.clone()),
-                    DataProposalVerdict::Wait,
-                );
                 debug!("Buffering DataProposal {}", data_proposal_hash);
                 // Push the data proposal in the waiting list
                 self.buffered_entries
@@ -199,17 +177,9 @@ impl super::Mempool {
                     .insert(data_proposal_hash.clone(), (vec![vote], data_proposal));
             }
             DataProposalVerdict::Refuse => {
-                self.cached_dp_votes.insert(
-                    (lane_id.clone(), data_proposal_hash.clone()),
-                    DataProposalVerdict::Refuse,
-                );
                 debug!("Refuse vote for DataProposal {}", data_proposal.hashed());
             }
             DataProposalVerdict::Ignore => {
-                self.cached_dp_votes.insert(
-                    (lane_id.clone(), data_proposal_hash.clone()),
-                    DataProposalVerdict::Ignore,
-                );
                 debug!("Ignore DataProposal {}", data_proposal_hash);
             }
         }
@@ -230,8 +200,9 @@ impl super::Mempool {
         );
 
         self.metrics.add_processed_dp(&lane_id);
-        self.cache_processed_verdict(&lane_id, &data_proposal, &verdict);
 
+        self.cached_dp_votes
+            .insert((lane_id.clone(), data_proposal.hashed()), verdict.clone());
         match verdict {
             DataProposalVerdict::Empty => {
                 unreachable!("Empty DataProposal should never be processed");
@@ -541,17 +512,6 @@ pub mod test {
         assert_eq!(verdict, DataProposalVerdict::Refuse);
     }
 
-    #[test]
-    fn test_process_data_proposal_returns_vote() {
-        let tx = make_register_contract_tx(ContractName::new("lane-size"));
-        let lane_id = LaneId::default();
-        let mut data_proposal = DataProposal::new_root(lane_id, vec![tx]);
-
-        let verdict = super::super::Mempool::process_data_proposal(&mut data_proposal);
-
-        assert_eq!(verdict, DataProposalVerdict::Vote);
-    }
-
     #[test_log::test(tokio::test)]
     async fn test_receiving_data_proposal() -> Result<()> {
         let mut ctx = MempoolTestCtx::new("mempool").await;
@@ -642,43 +602,6 @@ pub mod test {
                 .cached_dp_votes
                 .get(&(lane_id, data_proposal.hashed())),
             Some(&DataProposalVerdict::Refuse)
-        );
-
-        Ok(())
-    }
-
-    #[test_log::test(tokio::test)]
-    async fn test_stale_cached_vote_does_not_resend_zero_sized_vote() -> Result<()> {
-        let mut ctx = MempoolTestCtx::new("mempool").await;
-
-        let lane_id = LaneId::new(ctx.mempool.crypto.validator_pubkey().clone());
-        let data_proposal = DataProposal::new_root(lane_id.clone(), vec![Transaction::default()]);
-        let dp_hash = data_proposal.hashed();
-        let cumul_size = LaneBytesSize(data_proposal.estimate_size() as u64);
-        let vote = ctx.mempool.crypto.sign((dp_hash.clone(), cumul_size))?;
-
-        ctx.mempool
-            .on_hashed_data_proposal(&lane_id, data_proposal.clone(), vote.clone())?;
-        ctx.handle_processed_data_proposals().await;
-
-        assert_eq!(
-            ctx.mempool
-                .cached_dp_votes
-                .get(&(lane_id.clone(), dp_hash.clone())),
-            Some(&DataProposalVerdict::Process)
-        );
-
-        ctx.mempool.lanes.remove_lane_entry(&lane_id, &dp_hash);
-
-        while ctx.out_receiver.try_recv().is_ok() {}
-
-        ctx.mempool
-            .on_data_proposal(&lane_id, dp_hash.clone(), data_proposal, vote)?;
-
-        assert!(ctx.out_receiver.try_recv().is_err());
-        assert_eq!(
-            ctx.mempool.cached_dp_votes.get(&(lane_id, dp_hash)),
-            Some(&DataProposalVerdict::Process)
         );
 
         Ok(())

@@ -1494,10 +1494,9 @@ async fn test_clean_and_update_lanes_clears_cached_votes_for_lane() -> Result<()
     );
 
     let dp2 = ctx.create_data_proposal(Some(dp1_hash.clone()), std::slice::from_ref(&tx));
-    let dp2_hash = dp2.hashed();
     let cut = vec![(
         lane_id.clone(),
-        dp2_hash,
+        dp2.hashed(),
         LaneBytesSize((dp1.estimate_size() + dp2.estimate_size()) as u64),
         PoDA::default(),
     )];
@@ -1550,11 +1549,7 @@ async fn test_processed_dp_fails_when_tip_moved_past_it() -> Result<()> {
     // Processing DP2 now should fail because tip moved past it.
     assert!(ctx
         .mempool
-        .on_processed_data_proposal(
-            lane_id.clone(),
-            DataProposalVerdict::Vote,
-            dp2.clone(),
-        )
+        .on_processed_data_proposal(lane_id.clone(), DataProposalVerdict::Vote, dp2.clone())
         .is_err());
 
     assert!(!ctx.mempool.lanes.contains(&lane_id, &dp2_hash));

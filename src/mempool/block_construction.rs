@@ -732,6 +732,8 @@ impl super::Mempool {
                             .or_default()
                             .insert(removed_hash, (removed_metadata.signatures, removed_dp));
                     }
+                    self.cached_dp_votes
+                        .retain(|(cached_lane_id, _), _| cached_lane_id != lane_id);
                 }
                 LaneCleanupAction::ForceRetip => {
                     info!(
@@ -745,10 +747,10 @@ impl super::Mempool {
                         data_proposal_hash.clone(),
                         *cumul_size,
                     );
+                    self.cached_dp_votes
+                        .retain(|(cached_lane_id, _), _| cached_lane_id != lane_id);
                 }
             }
-            self.cached_dp_votes
-                .retain(|(cached_lane_id, _), _| cached_lane_id != lane_id);
         }
         Ok(())
     }
