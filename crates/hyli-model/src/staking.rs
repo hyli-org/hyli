@@ -1,3 +1,4 @@
+use alloc::{string::{String, ToString}, vec::Vec};
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{
     de::{self, Visitor},
@@ -91,7 +92,7 @@ impl<'de> Deserialize<'de> for ValidatorPublicKey {
         impl Visitor<'_> for ValidatorPublicKeyVisitor {
             type Value = ValidatorPublicKey;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
                 formatter.write_str("a hex string representing a ValidatorPublicKey")
             }
 
@@ -108,8 +109,8 @@ impl<'de> Deserialize<'de> for ValidatorPublicKey {
     }
 }
 
-impl std::fmt::Debug for ValidatorPublicKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for ValidatorPublicKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("ValidatorPubK")
             .field(&hex::encode(
                 self.0.get(..HASH_DISPLAY_SIZE).unwrap_or(&self.0),
@@ -118,8 +119,8 @@ impl std::fmt::Debug for ValidatorPublicKey {
     }
 }
 
-impl std::fmt::Display for ValidatorPublicKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ValidatorPublicKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             f,
             "{}",
@@ -225,7 +226,7 @@ impl From<ValidatorPublicKey> for LaneId {
     }
 }
 
-impl std::str::FromStr for LaneId {
+impl core::str::FromStr for LaneId {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
@@ -247,8 +248,8 @@ impl From<LaneId> for String {
     }
 }
 
-impl std::fmt::Display for LaneId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for LaneId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}-{}", hex::encode(&self.operator.0), self.suffix)
     }
 }
@@ -271,15 +272,15 @@ impl std::fmt::Display for LaneId {
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct LaneBytesSize(pub u64); // 16M Terabytes, is it enough ?
 
-impl std::ops::Add<usize> for LaneBytesSize {
+impl core::ops::Add<usize> for LaneBytesSize {
     type Output = Self;
     fn add(self, other: usize) -> Self {
         LaneBytesSize(self.0 + other as u64)
     }
 }
 
-impl std::fmt::Display for LaneBytesSize {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for LaneBytesSize {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if self.0 < 1024 {
             write!(f, "{} B", self.0)
         } else if self.0 < 1024 * 1024 {

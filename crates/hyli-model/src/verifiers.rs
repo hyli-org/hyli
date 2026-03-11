@@ -1,3 +1,4 @@
+use alloc::{format, string::String, vec::Vec};
 use crate::{
     Blob, BlobData, BlobIndex, ContractAction, ContractName, Identity, ProgramId, Verifier,
 };

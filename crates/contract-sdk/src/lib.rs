@@ -76,6 +76,8 @@ macro_rules! info {
 #[macro_export]
 macro_rules! info {
     ($($arg:tt)*) => {
+        // no_std: no-op; in test builds (which have std), print normally
+        #[cfg(test)]
         println!($($arg)*);
     }
 }
@@ -93,6 +95,8 @@ macro_rules! error {
 #[macro_export]
 macro_rules! error {
     ($($arg:tt)*) => {
+        // no_std: no-op; in test builds (which have std), print normally
+        #[cfg(test)]
         println!($($arg)*);
     }
 }

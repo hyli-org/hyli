@@ -1,4 +1,5 @@
-use std::{
+use alloc::{format, string::{String, ToString}, vec::Vec};
+use core::{
     ops::{Add, Sub},
     time::Duration,
 };
@@ -8,6 +9,7 @@ use derive_more::Display;
 use serde::{Deserialize, Serialize};
 
 pub mod hex_bytes {
+    use alloc::{string::String, vec::Vec};
     use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S>(bytes: &Vec<u8>, serializer: S) -> Result<S::Ok, S::Error>
