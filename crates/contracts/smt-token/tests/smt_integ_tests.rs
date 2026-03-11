@@ -7,7 +7,7 @@ fn e2e_test_transfer() {
     let mut contract1 = AccountSMT::default();
 
     let tx = BlobTransaction::new(
-        sdk::Identity("identityTest".into()),
+        sdk::Identity(FAUCET_ID.into()),
         vec![SmtTokenAction::Transfer {
             sender: FAUCET_ID.into(),
             recipient: "recipient".into(),

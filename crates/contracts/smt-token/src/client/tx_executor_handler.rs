@@ -16,7 +16,7 @@ use sparse_merkle_tree::{traits::StoreReadOps, SparseMerkleTree};
 
 use crate::{
     account::{Account, AccountSMT},
-    SmtTokenAction, SmtTokenContract,
+    verify_caller, SmtTokenAction, SmtTokenContract,
 };
 
 pub type SmtTokenProvableState = AccountSMT;
@@ -55,7 +55,16 @@ impl TxExecutorHandler for SmtTokenProvableState {
         let (action, execution_ctx) =
             parse_calldata::<SmtTokenAction>(calldata).map_err(|e| anyhow::anyhow!(e))?;
 
-        let output = self.inner_handle(action).map_err(|e| e.to_string());
+        let identity_check = match &action {
+            SmtTokenAction::Transfer { sender, .. } => verify_caller(sender, &execution_ctx.caller),
+            SmtTokenAction::TransferFrom { spender, .. } => {
+                verify_caller(spender, &execution_ctx.caller)
+            }
+            SmtTokenAction::Approve { owner, .. } => verify_caller(owner, &execution_ctx.caller),
+        };
+
+        let output =
+            identity_check.and_then(|_| self.inner_handle(action).map_err(|e| e.to_string()));
 
         let new_rooot = *self.0.root();
         let next_state_commitment = StateCommitment(Into::<[u8; 32]>::into(new_rooot).to_vec());
@@ -591,6 +600,120 @@ mod tests {
         let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
         let ho = zk.execute(&calldata);
         assert_eq!(ho.unwrap_err(), format!("Owner account {owner} not found"));
+    }
+
+    #[test]
+    fn test_unauthorized_transfer() {
+        let mut state = SmtTokenProvableState::default();
+        let alice = Identity::from("alice");
+        let bob = Identity::from("bob");
+        let attacker = Identity::from("attacker");
+        let alice_account = Account::new(alice.clone(), 1000);
+        state
+            .0
+            .update(alice_account.get_key(), alice_account)
+            .unwrap();
+
+        let transfer = SmtTokenAction::Transfer {
+            sender: alice.clone(),
+            recipient: bob.clone(),
+            amount: 100,
+        };
+        let calldata = Calldata {
+            tx_hash: TxHash::default(),
+            identity: attacker.clone(), // attacker signs the tx, not alice
+            blobs: IndexedBlobs::from(vec![transfer.as_blob(
+                ContractName::new("oranj"),
+                None,
+                None,
+            )]),
+            tx_blob_count: 1,
+            index: BlobIndex(0),
+            tx_ctx: None,
+            private_input: vec![],
+        };
+        let commitment = state.build_commitment_metadata(&calldata).unwrap();
+        let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
+        let result = zk.execute(&calldata);
+        assert_eq!(
+            result.unwrap_err(),
+            format!("Unauthorized: {alice} does not match caller {attacker}")
+        );
+    }
+
+    #[test]
+    fn test_unauthorized_transfer_from() {
+        let mut state = SmtTokenProvableState::default();
+        let owner = Identity::from("owner");
+        let spender = Identity::from("spender");
+        let recipient = Identity::from("recipient");
+        let attacker = Identity::from("attacker");
+
+        let mut owner_account = Account::new(owner.clone(), 1000);
+        owner_account.update_allowances(spender.clone(), 500);
+        state
+            .0
+            .update(owner_account.get_key(), owner_account)
+            .unwrap();
+
+        let action = SmtTokenAction::TransferFrom {
+            owner: owner.clone(),
+            spender: spender.clone(),
+            recipient: recipient.clone(),
+            amount: 100,
+        };
+        let calldata = Calldata {
+            tx_hash: TxHash::default(),
+            identity: attacker.clone(), // attacker signs, not the spender
+            blobs: IndexedBlobs::from(vec![action.as_blob(ContractName::new("oranj"), None, None)]),
+            tx_blob_count: 1,
+            index: BlobIndex(0),
+            tx_ctx: None,
+            private_input: vec![],
+        };
+        let commitment = state.build_commitment_metadata(&calldata).unwrap();
+        let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
+        let result = zk.execute(&calldata);
+        assert_eq!(
+            result.unwrap_err(),
+            format!("Unauthorized: {spender} does not match caller {attacker}")
+        );
+    }
+
+    #[test]
+    fn test_unauthorized_approve() {
+        let mut state = SmtTokenProvableState::default();
+        let owner = Identity::from("owner");
+        let spender = Identity::from("spender");
+        let attacker = Identity::from("attacker");
+
+        let owner_account = Account::new(owner.clone(), 1000);
+        state
+            .0
+            .update(owner_account.get_key(), owner_account)
+            .unwrap();
+
+        let action = SmtTokenAction::Approve {
+            owner: owner.clone(),
+            spender: spender.clone(),
+            amount: 500,
+        };
+        let calldata = Calldata {
+            tx_hash: TxHash::default(),
+            identity: attacker.clone(), // attacker signs, not the owner
+            blobs: IndexedBlobs::from(vec![action.as_blob(ContractName::new("oranj"), None, None)]),
+            tx_blob_count: 1,
+            index: BlobIndex(0),
+            tx_ctx: None,
+            private_input: vec![],
+        };
+        let commitment = state.build_commitment_metadata(&calldata).unwrap();
+        let mut zk = borsh::from_slice::<SmtTokenContract>(&commitment).unwrap();
+        let result = zk.execute(&calldata);
+        assert_eq!(
+            result.unwrap_err(),
+            format!("Unauthorized: {owner} does not match caller {attacker}")
+        );
     }
 
     #[test]
