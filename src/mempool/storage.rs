@@ -324,10 +324,15 @@ pub trait Storage {
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
     ) -> Result<LaneBytesSize> {
-        self.get_metadata_by_hash(lane_id, dp_hash)?.map_or_else(
-            || Ok(LaneBytesSize::default()),
-            |entry| Ok(entry.cumul_size),
-        )
+        self.get_metadata_by_hash(lane_id, dp_hash)?
+            .map(|entry| entry.cumul_size)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Missing lane size for DataProposal {} in lane {}",
+                    dp_hash,
+                    lane_id
+                )
+            })
     }
 
     fn get_pending_entries_in_lane(
@@ -829,6 +834,16 @@ mod tests {
         );
         assert_eq!(size, storage.get_lane_size_tip(lane_id).unwrap());
         assert_eq!(size.0, (dp1.estimate_size() + dp2.estimate_size()) as u64);
+    }
+
+    #[test_log::test]
+    fn test_get_lane_size_at_missing_dp_errors() {
+        let crypto: BlstCrypto = BlstCrypto::new("1").unwrap();
+        let lane_id = &LaneId::new(crypto.validator_pubkey().clone());
+        let storage = setup_storage();
+        let missing_dp = DataProposalHash::from(b"missing-dp".as_slice());
+
+        assert!(storage.get_lane_size_at(lane_id, &missing_dp).is_err());
     }
 
     #[test_log::test(tokio::test)]
