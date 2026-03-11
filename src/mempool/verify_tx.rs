@@ -18,7 +18,7 @@ pub enum DataProposalVerdict {
     Process,
     Empty,
     Wait,
-    Vote(LaneBytesSize),
+    Vote,
     Refuse,
     Ignore,
 }
@@ -33,10 +33,10 @@ impl super::Mempool {
         match verdict {
             DataProposalVerdict::Empty
             | DataProposalVerdict::Process
-            | DataProposalVerdict::Wait => {
+            | DataProposalVerdict::Wait
+            | DataProposalVerdict::Vote => {
                 unreachable!("DataProposal has already been processed");
             }
-            DataProposalVerdict::Vote(_) => {}
             DataProposalVerdict::Refuse | DataProposalVerdict::Ignore => {
                 self.cached_dp_votes
                     .insert((lane_id.clone(), data_proposal.hashed()), verdict.clone());
@@ -86,7 +86,7 @@ impl super::Mempool {
                 return Ok(());
             }
             Some(DataProposalVerdict::Wait) | None => {}
-            Some(DataProposalVerdict::Vote(_)) => {
+            Some(DataProposalVerdict::Vote) => {
                 bail!("Vote verdicts must not be cached for DataProposal {received_hash}");
             }
         }
@@ -146,7 +146,7 @@ impl super::Mempool {
         self.metrics.add_hashed_dp(lane_id);
 
         let data_proposal_hash = data_proposal.hashed();
-        let verdict = self.get_verdict(lane_id, &data_proposal)?;
+        let (verdict, lane_size) = self.get_verdict(lane_id, &data_proposal)?;
         match verdict {
             DataProposalVerdict::Empty => {
                 self.cached_dp_votes.insert(
@@ -158,7 +158,10 @@ impl super::Mempool {
                     lane_id
                 );
             }
-            DataProposalVerdict::Vote(lane_size) => {
+            DataProposalVerdict::Vote => {
+                let Some(lane_size) = lane_size else {
+                    bail!("Vote verdict missing lane size for DataProposal {}", data_proposal_hash);
+                };
                 // Normal case, we receive a proposal we already have the parent in store
                 trace!("Send vote for DataProposal");
                 self.send_vote(lane_id, data_proposal_hash, lane_size)?;
@@ -170,11 +173,10 @@ impl super::Mempool {
                 );
                 trace!("Further processing for DataProposal");
                 let lane_id = lane_id.clone();
-                let lane_size = self.lanes.get_lane_size_tip(&lane_id).unwrap_or_default();
                 let handle = self.inner.long_tasks_runtime.handle();
                 self.inner.processing_dps.spawn_on(
                     async move {
-                        let decision = Self::process_data_proposal(lane_size, &mut data_proposal);
+                        let decision = Self::process_data_proposal(&mut data_proposal);
                         Ok(ProcessedDPEvent::OnProcessedDataProposal((
                             lane_id,
                             decision,
@@ -240,7 +242,7 @@ impl super::Mempool {
             DataProposalVerdict::Wait => {
                 unreachable!("DataProposal has already been processed");
             }
-            DataProposalVerdict::Vote(_) => {
+            DataProposalVerdict::Vote => {
                 trace!("Send vote for DataProposal");
                 let crypto = self.crypto.clone();
                 let (hash, size) =
@@ -309,10 +311,10 @@ impl super::Mempool {
         &mut self,
         lane_id: &LaneId,
         data_proposal: &DataProposal,
-    ) -> Result<DataProposalVerdict> {
+    ) -> Result<(DataProposalVerdict, Option<LaneBytesSize>)> {
         // Check that data_proposal is not empty
         if data_proposal.txs.is_empty() {
-            return Ok(DataProposalVerdict::Empty);
+            return Ok((DataProposalVerdict::Empty, None));
         }
 
         let dp_hash = data_proposal.hashed();
@@ -321,7 +323,7 @@ impl super::Mempool {
         if self.lanes.contains(lane_id, &dp_hash) {
             let lane_size = self.lanes.get_lane_size_at(lane_id, &dp_hash)?;
             // just resend a vote
-            return Ok(DataProposalVerdict::Vote(lane_size));
+            return Ok((DataProposalVerdict::Vote, Some(lane_size)));
         }
 
         match self.lanes.can_be_put_on_top(
@@ -332,10 +334,10 @@ impl super::Mempool {
             // PARENT UNKNOWN
             CanBePutOnTop::No => {
                 // Get the last known parent hash in order to get all the next ones
-                Ok(DataProposalVerdict::Wait)
+                Ok((DataProposalVerdict::Wait, None))
             }
             // LEGIT DATA PROPOSAL
-            CanBePutOnTop::Yes => Ok(DataProposalVerdict::Process),
+            CanBePutOnTop::Yes => Ok((DataProposalVerdict::Process, None)),
             CanBePutOnTop::Fork => {
                 // FORK DETECTED
                 let last_known_hash = self.lanes.get_lane_hash_tip(lane_id);
@@ -344,19 +346,16 @@ impl super::Mempool {
                     last_known_hash,
                     data_proposal.parent_data_proposal_hash
                 );
-                Ok(DataProposalVerdict::Refuse)
+                Ok((DataProposalVerdict::Refuse, None))
             }
             CanBePutOnTop::AlreadyOnTop => {
                 // Lane tip was updated (via commit) before this proposal arrived, so we ignore it.
-                Ok(DataProposalVerdict::Ignore)
+                Ok((DataProposalVerdict::Ignore, None))
             }
         }
     }
 
-    fn process_data_proposal(
-        lane_size: LaneBytesSize,
-        data_proposal: &mut DataProposal,
-    ) -> DataProposalVerdict {
+    fn process_data_proposal(data_proposal: &mut DataProposal) -> DataProposalVerdict {
         for tx in &data_proposal.txs {
             match &tx.transaction_data {
                 TransactionData::Blob(_) => {
@@ -441,7 +440,7 @@ impl super::Mempool {
         // Remove proofs from transactions
         Self::remove_proofs(data_proposal);
 
-        DataProposalVerdict::Vote(lane_size + data_proposal.estimate_size())
+        DataProposalVerdict::Vote
     }
 
     /// Remove proofs from all transactions in the DataProposal
@@ -493,16 +492,16 @@ pub mod test {
 
         let dp = DataProposal::new_root(lane_id2.clone(), vec![]);
         // 2 send a DP to 1
-        let verdict = ctx.mempool.get_verdict(&lane_id2, &dp).unwrap();
+        let (verdict, _) = ctx.mempool.get_verdict(&lane_id2, &dp).unwrap();
         assert_eq!(verdict, DataProposalVerdict::Empty);
 
         let dp = DataProposal::new_root(lane_id2.clone(), vec![Transaction::default()]);
-        let verdict = ctx.mempool.get_verdict(&lane_id2, &dp).unwrap();
+        let (verdict, _) = ctx.mempool.get_verdict(&lane_id2, &dp).unwrap();
         assert_eq!(verdict, DataProposalVerdict::Process);
 
         let dp_unknown_parent =
             DataProposal::new(DataProposalHash::default(), vec![Transaction::default()]);
-        let verdict = ctx
+        let (verdict, _) = ctx
             .mempool
             .get_verdict(&lane_id2, &dp_unknown_parent)
             .unwrap();
@@ -538,21 +537,19 @@ pub mod test {
             vec![Transaction::default(), Transaction::default()],
         );
 
-        let verdict = ctx.mempool.get_verdict(&lane_id2, &dp2_fork).unwrap();
+        let (verdict, _) = ctx.mempool.get_verdict(&lane_id2, &dp2_fork).unwrap();
         assert_eq!(verdict, DataProposalVerdict::Refuse);
     }
 
     #[test]
-    fn test_process_data_proposal_returns_vote_with_cumulative_lane_size() {
-        let lane_size = LaneBytesSize(123);
+    fn test_process_data_proposal_returns_vote() {
         let tx = make_register_contract_tx(ContractName::new("lane-size"));
         let lane_id = LaneId::default();
         let mut data_proposal = DataProposal::new_root(lane_id, vec![tx]);
-        let expected_size = lane_size + data_proposal.estimate_size();
 
-        let verdict = super::super::Mempool::process_data_proposal(lane_size, &mut data_proposal);
+        let verdict = super::super::Mempool::process_data_proposal(&mut data_proposal);
 
-        assert_eq!(verdict, DataProposalVerdict::Vote(expected_size));
+        assert_eq!(verdict, DataProposalVerdict::Vote);
     }
 
     #[test_log::test(tokio::test)]

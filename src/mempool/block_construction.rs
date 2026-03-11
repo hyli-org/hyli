@@ -660,6 +660,8 @@ impl super::Mempool {
                     data_proposal_hash,
                     cumul_size,
                 )?;
+                self.cached_dp_votes
+                    .retain(|(cached_lane_id, _), _| cached_lane_id != lane_id);
             }
         }
         Ok(())
