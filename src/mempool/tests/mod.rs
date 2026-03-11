@@ -1478,6 +1478,40 @@ async fn test_processed_dp_stored_when_tip_is_itself_after_clean() -> Result<()>
 }
 
 #[test_log::test(tokio::test)]
+async fn test_clean_and_update_lanes_clears_cached_votes_for_lane() -> Result<()> {
+    let mut ctx = MempoolTestCtx::new("mempool").await;
+
+    let lane_id = ctx.own_lane();
+    let tx = make_register_contract_tx(ContractName::new("clean-cache"));
+
+    let dp1 = ctx.create_data_proposal(None, std::slice::from_ref(&tx));
+    let dp1_hash = dp1.hashed();
+    ctx.process_new_data_proposal(dp1.clone())?;
+
+    ctx.mempool.cached_dp_votes.insert(
+        (lane_id.clone(), dp1_hash.clone()),
+        DataProposalVerdict::Process,
+    );
+
+    let dp2 = ctx.create_data_proposal(Some(dp1_hash.clone()), std::slice::from_ref(&tx));
+    let cut = vec![(
+        lane_id.clone(),
+        dp2.hashed(),
+        LaneBytesSize((dp1.estimate_size() + dp2.estimate_size()) as u64),
+        PoDA::default(),
+    )];
+
+    ctx.mempool.clean_and_update_lanes(&cut, &None)?;
+
+    assert!(!ctx
+        .mempool
+        .cached_dp_votes
+        .contains_key(&(lane_id, dp1_hash)));
+
+    Ok(())
+}
+
+#[test_log::test(tokio::test)]
 async fn test_processed_dp_fails_when_tip_moved_past_it() -> Result<()> {
     let mut ctx = MempoolTestCtx::new("mempool").await;
 
