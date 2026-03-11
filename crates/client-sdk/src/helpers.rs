@@ -214,9 +214,11 @@ pub mod jolt {
         program_id: ProgramId,
         program: Program,
         prover_preprocessing: JoltProverPreprocessing<jolt_sdk::F, jolt_sdk::Curve, jolt_sdk::PCS>,
+        memory_config: jolt_sdk::MemoryConfig,
+        trace_handler: Option<Box<dyn Fn(Vec<u8>, Vec<Calldata>) + Send + Sync>>,
     }
 
-    #[derive(BorshDeserialize, BorshSerialize)]
+    #[derive(BorshDeserialize, BorshSerialize, Clone)]
     pub struct BorshMemoryConfig {
         pub max_input_size: u64,
         pub max_trusted_advice_size: u64,
@@ -305,26 +307,42 @@ pub mod jolt {
 
     impl JoltProver {
         pub fn new(entry: JoltRegistryEntry, program_id: ProgramId) -> Self {
+            Self::new_with_handler(entry, program_id, None)
+        }
+
+        pub fn new_with_handler(
+            entry: JoltRegistryEntry,
+            program_id: ProgramId,
+            trace_handler: Option<Box<dyn Fn(Vec<u8>, Vec<Calldata>) + Send + Sync>>,
+        ) -> Self {
             let JoltRegistryEntry {
                 elf,
                 memory_config,
                 preprocessing,
             } = entry;
 
-            let program = Program::new(&elf, &memory_config.into());
+            let mut memory_config: jolt_sdk::MemoryConfig = memory_config.into();
+
+            let program = Program::new(&elf, &memory_config);
             let preprocessing = preprocessing.0;
+
+            let (_, _, d) = program.decode();
+
+            memory_config.program_size = Some(d);
 
             Self {
                 program,
                 prover_preprocessing: preprocessing,
                 program_id,
+                trace_handler,
+                memory_config,
             }
         }
 
-        pub async fn prove<T: BorshSerialize>(
+        pub async fn prove(
             &self,
             commitment_metadata: Vec<u8>,
-            calldatas: T,
+            calldatas: Vec<Calldata>,
         ) -> Result<Proof> {
             let calldata_bytes = borsh::to_vec(&calldatas)?;
 
@@ -333,6 +351,30 @@ pub mod jolt {
             input_bytes.append(&mut jolt_sdk::postcard::to_stdvec(&calldata_bytes).unwrap());
 
             let mut output_bytes = Vec::new();
+
+            if let Some(handler) = &self.trace_handler {
+                handler(commitment_metadata, calldatas);
+            }
+
+            let elf_path: Option<std::path::PathBuf> = if std::env::var("JOLT_BACKTRACE").is_ok() {
+                let tmp = tempfile::NamedTempFile::new()?;
+                std::fs::write(tmp.path(), &self.program.elf_contents)?;
+                Some(tmp.into_temp_path().keep()?)
+            } else {
+                None
+            };
+
+            let (_, _, _, device, _) = jolt_sdk::host_utils::guest::program::trace(
+                &self.program.elf_contents,
+                elf_path.as_ref(),
+                &input_bytes,
+                &[],
+                &[],
+                &self.memory_config,
+                None,
+            );
+
+            // tracing::info!("Jolt trace generated: {:?}", trace);
 
             let (proof, device, debug_info) = jolt_sdk::host_utils::guest::prover::prove(
                 &self.program,
@@ -375,11 +417,11 @@ pub mod jolt {
         }
     }
 
-    impl<T: BorshSerialize + Send + 'static> ClientSdkProver<T> for JoltProver {
+    impl ClientSdkProver<Vec<Calldata>> for JoltProver {
         fn prove(
             &self,
             commitment_metadata: Vec<u8>,
-            calldatas: T,
+            calldatas: Vec<Calldata>,
         ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>> {
             Box::pin(self.prove(commitment_metadata, calldatas))
         }

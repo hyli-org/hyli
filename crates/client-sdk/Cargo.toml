@@ -29,6 +29,7 @@ bincode = { workspace = true, optional = true }
 jolt-sdk = { git = "https://github.com/a16z/jolt", features = [
   "host",
 ], optional = true }
+tempfile = { workspace = true, optional = true }
 
 # Tcp feature
 tokio = { workspace = true, optional = true }
@@ -52,7 +53,7 @@ rest = []
 axum = ["dep:axum"]
 csi = ["axum", "dep:utoipa", "dep:utoipa-axum", "dep:tokio"]
 registry = ["dep:hyli-registry"]
-jolt = ["dep:jolt-sdk", "registry"]
+jolt = ["dep:jolt-sdk", "registry", "tempfile"]
 risc0 = ["dep:risc0-zkvm", "dep:bonsai-runner", "registry"]
 sp1 = ["dep:sp1-sdk", "dep:bincode", "registry"]
 sp1-network = ["sp1", "sp1-sdk/network"]
