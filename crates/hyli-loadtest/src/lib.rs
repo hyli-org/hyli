@@ -39,6 +39,8 @@ pub struct CanonicalStates {
     pub hyllar_name: ContractName,
 }
 
+pub const SMALL_BLOB_AND_PROOF_COUNT: u32 = 50_000;
+
 impl transaction_builder::StateUpdater for CanonicalStates {
     fn setup(&self, ctx: &mut TxExecutorBuilder<Self>) {
         self.hydentity
@@ -651,4 +653,24 @@ pub async fn send_massive_blob(users: u32, url: String) -> Result<()> {
     }
 
     Ok(())
+}
+
+pub async fn shoot_small_blobs_and_proofs(url: String, verifier: String) -> Result<()> {
+    info!(
+        "Preparing {} small blob transactions and {} proofs",
+        SMALL_BLOB_AND_PROOF_COUNT, SMALL_BLOB_AND_PROOF_COUNT
+    );
+
+    let states = States {
+        hyllar_test: setup_hyllar(SMALL_BLOB_AND_PROOF_COUNT).await?,
+        hydentity: Hydentity::default(),
+    };
+
+    setup(states.hyllar_test.clone(), url.clone(), verifier).await?;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let blob_txs = generate_blobs_txs(SMALL_BLOB_AND_PROOF_COUNT).await?;
+    let proof_txs = generate_proof_txs(SMALL_BLOB_AND_PROOF_COUNT, states).await?;
+
+    send(url, blob_txs, proof_txs).await
 }
