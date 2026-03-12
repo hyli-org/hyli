@@ -1,5 +1,7 @@
 //! Minimal block storage layer for data availability.
 
+pub mod local_da_replayer;
+
 // Pick one of the two implementations
 use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
 use hyli_modules::utils::da_codec::DataAvailabilityServer;
