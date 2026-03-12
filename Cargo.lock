@@ -3193,6 +3193,16 @@ dependencies = [
 [[package]]
 name = "common"
 version = "0.2.0"
+dependencies = [
+ "allocative",
+ "ark-serialize 0.5.0",
+ "serde",
+ "syn 2.0.114",
+]
+
+[[package]]
+name = "common"
+version = "0.2.0"
 source = "git+https://github.com/a16z/jolt#97b2c96fe06826d7e607797e5892be3020044108"
 dependencies = [
  "allocative",
@@ -5663,7 +5673,7 @@ dependencies = [
  "hyli-model",
  "hyli-net",
  "hyli-registry",
- "jolt-sdk",
+ "jolt-sdk 0.1.0 (git+https://github.com/a16z/jolt)",
  "risc0-zkvm",
  "serde",
  "serde_json",
@@ -6053,7 +6063,7 @@ dependencies = [
  "cairo-m-prover",
  "hex",
  "hyli-model",
- "jolt-sdk",
+ "jolt-sdk 0.1.0",
  "k256",
  "once_cell",
  "rand 0.9.2",
@@ -6673,7 +6683,6 @@ dependencies = [
 [[package]]
 name = "jolt-core"
 version = "0.1.0"
-source = "git+https://github.com/a16z/jolt#97b2c96fe06826d7e607797e5892be3020044108"
 dependencies = [
  "allocative",
  "ark-bn254",
@@ -6685,14 +6694,14 @@ dependencies = [
  "blake2",
  "chrono",
  "clap",
- "common",
+ "common 0.2.0",
  "derive_more 2.1.1",
  "dory-pcs",
  "eyre",
  "fixedbitset",
  "itertools 0.14.0",
- "jolt-inlines-keccak256",
- "jolt-inlines-sha2",
+ "jolt-inlines-keccak256 0.1.0",
+ "jolt-inlines-sha2 0.1.0",
  "jolt-optimizations",
  "memory-stats",
  "num",
@@ -6708,7 +6717,51 @@ dependencies = [
  "strum 0.28.0",
  "strum_macros 0.28.0",
  "thiserror 2.0.18",
- "tracer",
+ "tracer 0.2.0",
+ "tracing",
+ "tracing-chrome",
+ "tracing-subscriber 0.3.22",
+]
+
+[[package]]
+name = "jolt-core"
+version = "0.1.0"
+source = "git+https://github.com/a16z/jolt#97b2c96fe06826d7e607797e5892be3020044108"
+dependencies = [
+ "allocative",
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "ark-std 0.5.0",
+ "bincode 2.0.1",
+ "blake2",
+ "chrono",
+ "clap",
+ "common 0.2.0 (git+https://github.com/a16z/jolt)",
+ "derive_more 2.1.1",
+ "dory-pcs",
+ "eyre",
+ "fixedbitset",
+ "itertools 0.14.0",
+ "jolt-inlines-keccak256 0.1.0 (git+https://github.com/a16z/jolt)",
+ "jolt-inlines-sha2 0.1.0 (git+https://github.com/a16z/jolt)",
+ "jolt-optimizations",
+ "memory-stats",
+ "num",
+ "num-derive",
+ "num-traits",
+ "postcard",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "sha3",
+ "strum 0.28.0",
+ "strum_macros 0.28.0",
+ "thiserror 2.0.18",
+ "tracer 0.2.0 (git+https://github.com/a16z/jolt)",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber 0.3.22",
@@ -6717,10 +6770,28 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-keccak256"
 version = "0.1.0"
+dependencies = [
+ "ctor 0.6.3",
+ "tracer 0.2.0",
+ "tracing",
+]
+
+[[package]]
+name = "jolt-inlines-keccak256"
+version = "0.1.0"
 source = "git+https://github.com/a16z/jolt#97b2c96fe06826d7e607797e5892be3020044108"
 dependencies = [
  "ctor 0.6.3",
- "tracer",
+ "tracer 0.2.0 (git+https://github.com/a16z/jolt)",
+ "tracing",
+]
+
+[[package]]
+name = "jolt-inlines-sha2"
+version = "0.1.0"
+dependencies = [
+ "ctor 0.6.3",
+ "tracer 0.2.0",
  "tracing",
 ]
 
@@ -6730,7 +6801,7 @@ version = "0.1.0"
 source = "git+https://github.com/a16z/jolt#97b2c96fe06826d7e607797e5892be3020044108"
 dependencies = [
  "ctor 0.6.3",
- "tracer",
+ "tracer 0.2.0 (git+https://github.com/a16z/jolt)",
  "tracing",
 ]
 
@@ -6755,6 +6826,15 @@ dependencies = [
 [[package]]
 name = "jolt-platform"
 version = "0.1.0"
+dependencies = [
+ "getrandom 0.2.17",
+ "getrandom 0.3.4",
+ "rand 0.8.5",
+]
+
+[[package]]
+name = "jolt-platform"
+version = "0.1.0"
 source = "git+https://github.com/a16z/jolt#97b2c96fe06826d7e607797e5892be3020044108"
 dependencies = [
  "getrandom 0.2.17",
@@ -6765,18 +6845,44 @@ dependencies = [
 [[package]]
 name = "jolt-sdk"
 version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "cfg-if 1.0.4",
+ "common 0.2.0",
+ "jolt-core 0.1.0",
+ "jolt-platform 0.1.0",
+ "jolt-sdk-macros 0.1.0",
+ "postcard",
+ "riscv 0.16.0",
+ "serde",
+ "zeroos 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
+]
+
+[[package]]
+name = "jolt-sdk"
+version = "0.1.0"
 source = "git+https://github.com/a16z/jolt#97b2c96fe06826d7e607797e5892be3020044108"
 dependencies = [
  "bytemuck",
  "cfg-if 1.0.4",
- "common",
- "jolt-core",
- "jolt-platform",
- "jolt-sdk-macros",
+ "common 0.2.0 (git+https://github.com/a16z/jolt)",
+ "jolt-core 0.1.0 (git+https://github.com/a16z/jolt)",
+ "jolt-platform 0.1.0 (git+https://github.com/a16z/jolt)",
+ "jolt-sdk-macros 0.1.0 (git+https://github.com/a16z/jolt)",
  "postcard",
  "riscv 0.16.0",
  "serde",
- "zeroos",
+ "zeroos 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+]
+
+[[package]]
+name = "jolt-sdk-macros"
+version = "0.1.0"
+dependencies = [
+ "common 0.2.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.114",
 ]
 
 [[package]]
@@ -6784,7 +6890,7 @@ name = "jolt-sdk-macros"
 version = "0.1.0"
 source = "git+https://github.com/a16z/jolt#97b2c96fe06826d7e607797e5892be3020044108"
 dependencies = [
- "common",
+ "common 0.2.0 (git+https://github.com/a16z/jolt)",
  "proc-macro2",
  "quote",
  "syn 2.0.114",
@@ -13280,16 +13386,39 @@ dependencies = [
 [[package]]
 name = "tracer"
 version = "0.2.0"
+dependencies = [
+ "addr2line 0.26.0",
+ "ark-serialize 0.5.0",
+ "clap",
+ "common 0.2.0",
+ "derive_more 2.1.1",
+ "fnv",
+ "itertools 0.14.0",
+ "jolt-platform 0.1.0",
+ "object 0.38.1",
+ "paste",
+ "postcard",
+ "serde",
+ "serde_json",
+ "strum 0.28.0",
+ "strum_macros 0.28.0",
+ "tracing",
+ "tracing-subscriber 0.3.22",
+]
+
+[[package]]
+name = "tracer"
+version = "0.2.0"
 source = "git+https://github.com/a16z/jolt#97b2c96fe06826d7e607797e5892be3020044108"
 dependencies = [
  "addr2line 0.26.0",
  "ark-serialize 0.5.0",
  "clap",
- "common",
+ "common 0.2.0 (git+https://github.com/a16z/jolt)",
  "derive_more 2.1.1",
  "fnv",
  "itertools 0.14.0",
- "jolt-platform",
+ "jolt-platform 0.1.0 (git+https://github.com/a16z/jolt)",
  "object 0.38.1",
  "paste",
  "postcard",
@@ -14658,16 +14787,40 @@ dependencies = [
 [[package]]
 name = "zeroos"
 version = "0.1.0"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+dependencies = [
+ "zeroos-allocator-linked-list 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
+ "zeroos-arch-riscv 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
+ "zeroos-debug 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
+ "zeroos-foundation 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
+ "zeroos-macros 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
+ "zeroos-os-linux 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
+ "zeroos-runtime-nostd 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
+ "zeroos-scheduler-cooperative 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
+]
+
+[[package]]
+name = "zeroos"
+version = "0.1.0"
 source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b#ebdf6de34a0719022d42c9d719391b02ba747f8b"
 dependencies = [
- "zeroos-allocator-linked-list",
- "zeroos-arch-riscv",
- "zeroos-debug",
- "zeroos-foundation",
- "zeroos-macros",
- "zeroos-os-linux",
- "zeroos-runtime-nostd",
- "zeroos-scheduler-cooperative",
+ "zeroos-allocator-linked-list 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+ "zeroos-arch-riscv 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+ "zeroos-debug 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+ "zeroos-foundation 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+ "zeroos-macros 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+ "zeroos-os-linux 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+ "zeroos-runtime-nostd 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+ "zeroos-scheduler-cooperative 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+]
+
+[[package]]
+name = "zeroos-allocator-linked-list"
+version = "0.1.0"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+dependencies = [
+ "linked_list_allocator",
+ "zeroos-foundation 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
 ]
 
 [[package]]
@@ -14676,7 +14829,21 @@ version = "0.1.0"
 source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b#ebdf6de34a0719022d42c9d719391b02ba747f8b"
 dependencies = [
  "linked_list_allocator",
- "zeroos-foundation",
+ "zeroos-foundation 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+]
+
+[[package]]
+name = "zeroos-arch-riscv"
+version = "0.1.0"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+dependencies = [
+ "cfg-if 1.0.4",
+ "memoffset",
+ "paste",
+ "riscv 0.11.1",
+ "zeroos-debug 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
+ "zeroos-foundation 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
+ "zeroos-macros 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
 ]
 
 [[package]]
@@ -14688,9 +14855,18 @@ dependencies = [
  "memoffset",
  "paste",
  "riscv 0.11.1",
- "zeroos-debug",
- "zeroos-foundation",
- "zeroos-macros",
+ "zeroos-debug 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+ "zeroos-foundation 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+ "zeroos-macros 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+]
+
+[[package]]
+name = "zeroos-backtrace"
+version = "0.1.0"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+dependencies = [
+ "cfg-if 1.0.4",
+ "zeroos-macros 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
 ]
 
 [[package]]
@@ -14699,7 +14875,15 @@ version = "0.1.0"
 source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b#ebdf6de34a0719022d42c9d719391b02ba747f8b"
 dependencies = [
  "cfg-if 1.0.4",
- "zeroos-macros",
+ "zeroos-macros 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+]
+
+[[package]]
+name = "zeroos-debug"
+version = "0.1.0"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+dependencies = [
+ "cfg-if 1.0.4",
 ]
 
 [[package]]
@@ -14713,12 +14897,27 @@ dependencies = [
 [[package]]
 name = "zeroos-foundation"
 version = "0.1.0"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+dependencies = [
+ "cfg-if 1.0.4",
+ "libc",
+ "zeroos-debug 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
+]
+
+[[package]]
+name = "zeroos-foundation"
+version = "0.1.0"
 source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b#ebdf6de34a0719022d42c9d719391b02ba747f8b"
 dependencies = [
  "cfg-if 1.0.4",
  "libc",
- "zeroos-debug",
+ "zeroos-debug 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
 ]
+
+[[package]]
+name = "zeroos-macros"
+version = "0.1.0"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
 
 [[package]]
 name = "zeroos-macros"
@@ -14728,11 +14927,31 @@ source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022
 [[package]]
 name = "zeroos-os-linux"
 version = "0.1.0"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+dependencies = [
+ "cfg-if 1.0.4",
+ "libc",
+ "zeroos-foundation 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
+]
+
+[[package]]
+name = "zeroos-os-linux"
+version = "0.1.0"
 source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b#ebdf6de34a0719022d42c9d719391b02ba747f8b"
 dependencies = [
  "cfg-if 1.0.4",
  "libc",
- "zeroos-foundation",
+ "zeroos-foundation 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+]
+
+[[package]]
+name = "zeroos-runtime-nostd"
+version = "0.1.0"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+dependencies = [
+ "cfg-if 1.0.4",
+ "zeroos-backtrace 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
+ "zeroos-foundation 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
 ]
 
 [[package]]
@@ -14741,8 +14960,19 @@ version = "0.1.0"
 source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b#ebdf6de34a0719022d42c9d719391b02ba747f8b"
 dependencies = [
  "cfg-if 1.0.4",
- "zeroos-backtrace",
- "zeroos-foundation",
+ "zeroos-backtrace 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+ "zeroos-foundation 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+]
+
+[[package]]
+name = "zeroos-scheduler-cooperative"
+version = "0.1.0"
+source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30#3b132ce862ba6769a4261d151f69ff32c5f0dc30"
+dependencies = [
+ "cfg-if 1.0.4",
+ "libc",
+ "zeroos-foundation 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
+ "zeroos-macros 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=3b132ce862ba6769a4261d151f69ff32c5f0dc30)",
 ]
 
 [[package]]
@@ -14752,8 +14982,8 @@ source = "git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022
 dependencies = [
  "cfg-if 1.0.4",
  "libc",
- "zeroos-foundation",
- "zeroos-macros",
+ "zeroos-foundation 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
+ "zeroos-macros 0.1.0 (git+https://github.com/LayerZero-Labs/ZeroOS.git?rev=ebdf6de34a0719022d42c9d719391b02ba747f8b)",
 ]
 
 [[package]]

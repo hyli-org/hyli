@@ -344,11 +344,9 @@ pub mod jolt {
             commitment_metadata: Vec<u8>,
             calldatas: Vec<Calldata>,
         ) -> Result<Proof> {
-            let calldata_bytes = borsh::to_vec(&calldatas)?;
-
             let mut input_bytes = Vec::new();
             input_bytes.append(&mut jolt_sdk::postcard::to_stdvec(&commitment_metadata).unwrap());
-            input_bytes.append(&mut jolt_sdk::postcard::to_stdvec(&calldata_bytes).unwrap());
+            input_bytes.append(&mut jolt_sdk::postcard::to_stdvec(&calldatas).unwrap());
 
             let mut output_bytes = Vec::new();
 

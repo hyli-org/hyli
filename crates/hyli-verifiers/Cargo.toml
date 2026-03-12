@@ -42,9 +42,10 @@ alloy-primitives = { workspace = true, optional = true }
 alloy-rlp = { workspace = true, optional = true }
 k256 = { workspace = true, optional = true }
 
-jolt-sdk = { git = "https://github.com/a16z/jolt", features = [
+jolt-sdk = { path = "/home/bertrand/workspace/jolt/jolt-sdk", features = [
   "host",
 ], optional = true }
+
 sha3 = { workspace = true, optional = true }
 
 [dev-dependencies]
