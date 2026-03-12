@@ -1,0 +1,23 @@
+[package]
+name = "hyli-jolt-verifier-worker"
+description = "External Jolt verifier worker for Hyli"
+license-file = { workspace = true }
+version = { workspace = true }
+edition = { workspace = true }
+homepage = { workspace = true }
+repository = { workspace = true }
+rust-version = { workspace = true }
+
+[[bin]]
+name = "hyli-jolt-verifier"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+borsh = { workspace = true }
+hyli-model = { workspace = true, features = ["full"] }
+hyli-verifier-worker-core = { path = "../verifier-worker" }
+jolt-sdk = { workspace = true, features = ["host"] }
+sha3 = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }

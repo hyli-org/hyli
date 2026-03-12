@@ -42,12 +42,6 @@ alloy-primitives = { workspace = true, optional = true }
 alloy-rlp = { workspace = true, optional = true }
 k256 = { workspace = true, optional = true }
 
-jolt-sdk = { path = "/home/bertrand/workspace/jolt/jolt-sdk", features = [
-  "host",
-], optional = true }
-
-sha3 = { workspace = true, optional = true }
-
 [dev-dependencies]
 test-log = { workspace = true, features = ["color", "trace"] }
 
@@ -56,7 +50,6 @@ default = []
 risc0 = ["dep:risc0-zkvm"]
 sp1 = ["dep:sp1-sdk", "dep:bincode", "dep:serde_json", "dep:once_cell"]
 cairo-m = ["dep:cairo-m-prover", "dep:stwo-prover", "dep:sonic-rs", "dep:serde"]
-jolt = ["dep:jolt-sdk", "dep:sha3"]
 reth = [
   "dep:reth-stateless",
   "dep:reth-ethereum",

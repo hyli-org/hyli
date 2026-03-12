@@ -19,6 +19,8 @@ members = [
   "crates/hyli-crypto",
   "crates/hyli-turmoil-shims",
   "crates/hyli-verifiers",
+  "crates/verifier-worker",
+  "crates/jolt-verifier-worker",
   "crates/hyli-bus",
   "crates/hyli-modules",
   "crates/hyli-tools",
@@ -113,6 +115,7 @@ http-body-util = { version = "0.1.3", default-features = false }
 hyper = { version = "1.6.0", default-features = false }
 hyper-util = { version = "0.1.18", default-features = false }
 indexmap = { version = "2.11.0", default-features = false }
+jolt-sdk = { path = "/home/bertrand/workspace/jolt/jolt-sdk", default-features = false }
 keyring = { version = "3", default-features = false }
 k256 = { version = "0.13", default-features = false, features = [
   "ecdsa",
@@ -336,7 +339,7 @@ risc0-zkvm = { workspace = true, default-features = false, features = [
 signal-child = "1.0.6"
 
 [features]
-default = ["jolt", "instrumentation"]
+default = ["instrumentation"]
 
 turmoil = [
   "hyli-net/turmoil",
@@ -349,7 +352,6 @@ cairo-m = ["hyli-verifiers/cairo-m"]
 risc0 = ["hyli-verifiers/risc0", "client-sdk/risc0"]
 sp1 = ["hyli-verifiers/sp1", "client-sdk/sp1"]
 reth = ["hyli-verifiers/reth"]
-jolt = ["hyli-verifiers/jolt"]
 
 # Disable dependency keyring by default, as it requires libdbus
 keyring = ["hyli-crypto/keyring"]

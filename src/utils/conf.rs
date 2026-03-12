@@ -131,6 +131,63 @@ pub struct OwnLaneConf {
     pub default_proof_suffix: String,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct VerifierWorkersBackendConf {
+    pub enabled: bool,
+    pub command: String,
+    pub args: Vec<String>,
+    pub verifiers: Vec<String>,
+    pub startup_timeout_ms: u64,
+    pub request_timeout_ms: u64,
+    pub auto_restart: bool,
+}
+
+impl Default for VerifierWorkersBackendConf {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            command: String::new(),
+            args: vec![],
+            verifiers: vec![],
+            startup_timeout_ms: 5_000,
+            request_timeout_ms: 30_000,
+            auto_restart: true,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct VerifierWorkersConf {
+    pub enabled: bool,
+    pub default_request_timeout_ms: u64,
+    pub default_restart_backoff_ms: u64,
+    pub backends: HashMap<String, VerifierWorkersBackendConf>,
+}
+
+impl Default for VerifierWorkersConf {
+    fn default() -> Self {
+        let mut backends = HashMap::new();
+        backends.insert(
+            "jolt".to_string(),
+            VerifierWorkersBackendConf {
+                enabled: true,
+                command: "hyli-jolt-verifier".to_string(),
+                verifiers: vec!["jolt-0.1".to_string()],
+                ..Default::default()
+            },
+        );
+
+        Self {
+            enabled: true,
+            default_request_timeout_ms: 30_000,
+            default_restart_backoff_ms: 1_000,
+            backends,
+        }
+    }
+}
+
 impl Default for OwnLaneConf {
     fn default() -> Self {
         let suffix = "default".to_string();
@@ -232,6 +289,9 @@ pub struct Conf {
 
     /// Own-lane configuration
     pub own_lanes: OwnLaneConf,
+
+    /// External verifier worker configuration
+    pub verifier_workers: VerifierWorkersConf,
 }
 
 impl Conf {
@@ -257,6 +317,8 @@ impl Conf {
                     .with_list_parse_key("p2p.peers") // Parse this key into Vec<String>
                     .with_list_parse_key("own_lanes.suffixes")
                     .with_list_parse_key("fast_catchup_peers")
+                    .with_list_parse_key("verifier_workers.backends.jolt.args")
+                    .with_list_parse_key("verifier_workers.backends.jolt.verifiers")
                     .try_parsing(true),
             )
             .set_override_option("data_directory", data_directory)?

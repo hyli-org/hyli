@@ -1,4 +1,7 @@
-use alloc::{string::{String, ToString}, vec::Vec};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{
     de::{self, Visitor},

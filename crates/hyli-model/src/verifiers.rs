@@ -1,7 +1,7 @@
-use alloc::{format, string::String, vec::Vec};
 use crate::{
     Blob, BlobData, BlobIndex, ContractAction, ContractName, Identity, ProgramId, Verifier,
 };
+use alloc::{format, string::String, vec::Vec};
 
 pub const RETH: &str = "reth";
 pub const CAIRO_M: &str = "cairo-m";

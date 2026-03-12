@@ -55,6 +55,7 @@ impl Module for Mempool {
             crypto: Arc::clone(&ctx.crypto),
             metrics,
             lanes,
+            proof_verifiers: Arc::clone(&ctx.proof_verifiers),
             inner,
         };
         mempool.restore_inflight_work();

@@ -207,6 +207,7 @@ pub mod jolt {
         guest::program::Program, JoltProverPreprocessing, JoltVerifierPreprocessing, Serializable,
     };
     use sdk::ProofMetadata;
+    use sha3::Digest;
 
     use super::*;
 
@@ -303,6 +304,12 @@ pub mod jolt {
                 elf,
             }
         }
+    }
+
+    pub fn verifier_preprocessing_to_program_id(verifier_preprocessing: &[u8]) -> ProgramId {
+        let mut hasher = sha3::Sha3_256::new();
+        hasher.update(verifier_preprocessing);
+        ProgramId(hasher.finalize().to_vec())
     }
 
     impl JoltProver {

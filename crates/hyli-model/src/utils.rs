@@ -1,4 +1,8 @@
-use alloc::{format, string::{String, ToString}, vec::Vec};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::{
     ops::{Add, Sub},
     time::Duration,
