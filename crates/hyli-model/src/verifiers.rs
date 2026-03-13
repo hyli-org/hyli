@@ -60,7 +60,7 @@ pub mod jolt {
         pub input: Vec<u8>,
         pub output: Vec<u8>,
         pub proof: Vec<u8>,
-        pub verifier_preprocessing: Vec<u8>,
+        // pub verifier_preprocessing: Vec<u8>,
     }
 
     impl TryFrom<JoltProofData> for ProofData {

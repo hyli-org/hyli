@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use borsh::to_vec;
+use hyli_jolt_model::JoltRegistryEntry;
 use hyli_model::{
     verifier_worker::{VerifyRequest, VerifyResponse},
     verifiers::jolt::JoltProofData,
@@ -8,7 +9,6 @@ use hyli_model::{
 };
 use hyli_verifier_worker_core::{init_worker_tracing, run_worker_loop};
 use jolt_sdk::{JoltProof, JoltVerifierPreprocessing, Serializable};
-use sha3::Digest;
 use tokio::io::{self, BufReader, BufWriter};
 
 #[tokio::main(flavor = "current_thread")]
@@ -35,6 +35,7 @@ async fn handle_request(request: VerifyRequest) -> Result<VerifyResponse> {
     }
 
     let outputs = verify_jolt(&ProofData(request.proof), &ProgramId(request.program_id))
+        .await
         .context("verifying Jolt proof")?;
 
     Ok(VerifyResponse {
@@ -44,29 +45,22 @@ async fn handle_request(request: VerifyRequest) -> Result<VerifyResponse> {
     })
 }
 
-fn verifier_preprocessing_to_program_id(verifier_preprocessing: &[u8]) -> ProgramId {
-    let mut hasher = sha3::Sha3_256::new();
-    hasher.update(verifier_preprocessing);
-    ProgramId(hasher.finalize().to_vec())
-}
-
-fn verify_jolt(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutput>> {
+async fn verify_jolt(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutput>> {
     let JoltProofData {
         input,
         output,
         proof,
-        verifier_preprocessing,
+        // verifier_preprocessing,
     } = proof
         .try_into()
         .context("decoding Jolt proof payload from ProofData")?;
 
-    if verifier_preprocessing_to_program_id(&verifier_preprocessing) != *program_id {
-        anyhow::bail!("verifier preprocessing hash does not match program id");
-    }
+    let binary = hyli_registry::download_elf_by_program_id(&hex::encode(&program_id.0)).await?;
+    let registry_entry: JoltRegistryEntry = borsh::from_slice(&binary)
+        .map_err(|e| anyhow::anyhow!("deserializing Jolt registry entry: {e}"))?;
 
-    let verifier_preprocessing =
-        JoltVerifierPreprocessing::deserialize_from_bytes(&verifier_preprocessing)
-            .map_err(|e| anyhow::anyhow!("deserializing Jolt verifier preprocessing: {e}"))?;
+    let verifier_preprocessing = JoltVerifierPreprocessing::from(&registry_entry.preprocessing.0);
+
     let proof = JoltProof::deserialize_from_bytes(&proof)
         .map_err(|e| anyhow::anyhow!("deserializing Jolt proof: {e}"))?;
 

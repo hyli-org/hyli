@@ -5659,14 +5659,13 @@ dependencies = [
  "hex",
  "hyli-bonsai-runner",
  "hyli-contract-sdk",
+ "hyli-jolt-prover",
  "hyli-model",
  "hyli-net",
  "hyli-registry",
- "jolt-sdk",
  "risc0-zkvm",
  "serde",
  "serde_json",
- "sha3",
  "sp1-sdk",
  "tempfile",
  "test-log",
@@ -5757,15 +5756,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyli-jolt-model"
+version = "0.14.0"
+dependencies = [
+ "borsh",
+ "jolt-sdk",
+]
+
+[[package]]
+name = "hyli-jolt-prover"
+version = "0.14.0"
+dependencies = [
+ "anyhow",
+ "borsh",
+ "hex",
+ "hyli-contract-sdk",
+ "hyli-jolt-model",
+ "hyli-model",
+ "hyli-registry",
+ "jolt-sdk",
+ "sha3",
+ "tempfile",
+]
+
+[[package]]
 name = "hyli-jolt-verifier-worker"
 version = "0.14.0"
 dependencies = [
  "anyhow",
  "borsh",
+ "hex",
+ "hyli-jolt-model",
  "hyli-model",
+ "hyli-registry",
  "hyli-verifier-worker-core",
  "jolt-sdk",
- "sha3",
  "tokio",
  "tracing",
 ]
@@ -5926,8 +5951,6 @@ dependencies = [
 [[package]]
 name = "hyli-registry"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8e43a83cdc4241a80c7278451d32c70de53bc0b0ac090fea3be299ac62352e5"
 dependencies = [
  "anyhow",
  "clap",

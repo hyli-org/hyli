@@ -201,226 +201,12 @@ pub mod risc0 {
 
 #[cfg(feature = "jolt")]
 pub mod jolt {
-
-    use borsh::{BorshDeserialize, BorshSerialize};
-    use jolt_sdk::{
-        guest::program::Program, JoltProverPreprocessing, JoltVerifierPreprocessing, Serializable,
+    pub use hyli_jolt_prover::{
+        verifier_preprocessing_to_program_id, BorshMemoryConfig, BorshableJoltProverPreprocessing,
+        JoltProver, JoltRegistryEntry,
     };
-    use sdk::ProofMetadata;
-    use sha3::Digest;
 
     use super::*;
-
-    pub struct JoltProver {
-        program_id: ProgramId,
-        program: Program,
-        prover_preprocessing: JoltProverPreprocessing<jolt_sdk::F, jolt_sdk::Curve, jolt_sdk::PCS>,
-        memory_config: jolt_sdk::MemoryConfig,
-        trace_handler: Option<Box<dyn Fn(Vec<u8>, Vec<Calldata>) + Send + Sync>>,
-    }
-
-    #[derive(BorshDeserialize, BorshSerialize, Clone)]
-    pub struct BorshMemoryConfig {
-        pub max_input_size: u64,
-        pub max_trusted_advice_size: u64,
-        pub max_untrusted_advice_size: u64,
-        pub max_output_size: u64,
-        pub stack_size: u64,
-        pub heap_size: u64,
-        pub program_size: Option<u64>,
-    }
-
-    impl From<BorshMemoryConfig> for jolt_sdk::MemoryConfig {
-        fn from(config: BorshMemoryConfig) -> Self {
-            Self {
-                max_input_size: config.max_input_size,
-                max_trusted_advice_size: config.max_trusted_advice_size,
-                max_untrusted_advice_size: config.max_untrusted_advice_size,
-                max_output_size: config.max_output_size,
-                stack_size: config.stack_size,
-                heap_size: config.heap_size,
-                program_size: config.program_size,
-            }
-        }
-    }
-
-    impl From<jolt_sdk::MemoryConfig> for BorshMemoryConfig {
-        fn from(config: jolt_sdk::MemoryConfig) -> Self {
-            Self {
-                max_input_size: config.max_input_size,
-                max_trusted_advice_size: config.max_trusted_advice_size,
-                max_untrusted_advice_size: config.max_untrusted_advice_size,
-                max_output_size: config.max_output_size,
-                stack_size: config.stack_size,
-                heap_size: config.heap_size,
-                program_size: config.program_size,
-            }
-        }
-    }
-
-    struct BorshableJoltProverPreprocessing(
-        JoltProverPreprocessing<jolt_sdk::F, jolt_sdk::Curve, jolt_sdk::PCS>,
-    );
-
-    impl BorshSerialize for BorshableJoltProverPreprocessing {
-        fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
-            let bytes = self.0.serialize_to_bytes().map_err(|e| {
-                std::io::Error::other(format!("Failed to serialize JoltProverPreprocessing: {e}"))
-            })?;
-            writer.write_all(&bytes)
-        }
-    }
-
-    impl BorshDeserialize for BorshableJoltProverPreprocessing {
-        fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
-            let mut bytes = Vec::new();
-            reader.read_to_end(&mut bytes)?;
-            let preprocessing =
-                JoltProverPreprocessing::deserialize_from_bytes(&bytes).map_err(|e| {
-                    std::io::Error::other(format!(
-                        "Failed to deserialize JoltProverPreprocessing: {e}"
-                    ))
-                })?;
-            Ok(BorshableJoltProverPreprocessing(preprocessing))
-        }
-    }
-
-    #[derive(BorshSerialize, BorshDeserialize)]
-    pub struct JoltRegistryEntry {
-        preprocessing: BorshableJoltProverPreprocessing,
-        memory_config: BorshMemoryConfig,
-        elf: Vec<u8>,
-    }
-
-    impl JoltRegistryEntry {
-        pub fn new(
-            preprocessing: JoltProverPreprocessing<jolt_sdk::F, jolt_sdk::Curve, jolt_sdk::PCS>,
-            memory_config: impl Into<BorshMemoryConfig>,
-            elf: Vec<u8>,
-        ) -> Self {
-            Self {
-                preprocessing: BorshableJoltProverPreprocessing(preprocessing),
-                memory_config: memory_config.into(),
-                elf,
-            }
-        }
-    }
-
-    pub fn verifier_preprocessing_to_program_id(verifier_preprocessing: &[u8]) -> ProgramId {
-        let mut hasher = sha3::Sha3_256::new();
-        hasher.update(verifier_preprocessing);
-        ProgramId(hasher.finalize().to_vec())
-    }
-
-    impl JoltProver {
-        pub fn new(entry: JoltRegistryEntry, program_id: ProgramId) -> Self {
-            Self::new_with_handler(entry, program_id, None)
-        }
-
-        pub fn new_with_handler(
-            entry: JoltRegistryEntry,
-            program_id: ProgramId,
-            trace_handler: Option<Box<dyn Fn(Vec<u8>, Vec<Calldata>) + Send + Sync>>,
-        ) -> Self {
-            let JoltRegistryEntry {
-                elf,
-                memory_config,
-                preprocessing,
-            } = entry;
-
-            let mut memory_config: jolt_sdk::MemoryConfig = memory_config.into();
-
-            let program = Program::new(&elf, &memory_config);
-            let preprocessing = preprocessing.0;
-
-            let (_, _, d, _) = program.decode();
-
-            memory_config.program_size = Some(d);
-
-            Self {
-                program,
-                prover_preprocessing: preprocessing,
-                program_id,
-                trace_handler,
-                memory_config,
-            }
-        }
-
-        pub async fn prove(
-            &self,
-            commitment_metadata: Vec<u8>,
-            calldatas: Vec<Calldata>,
-        ) -> Result<Proof> {
-            let mut input_bytes = Vec::new();
-            input_bytes.append(&mut jolt_sdk::postcard::to_stdvec(&commitment_metadata).unwrap());
-            input_bytes.append(&mut jolt_sdk::postcard::to_stdvec(&calldatas).unwrap());
-
-            let mut output_bytes = vec![0; self.memory_config.max_output_size as usize];
-
-            if let Some(handler) = &self.trace_handler {
-                handler(commitment_metadata, calldatas);
-            }
-
-            let elf_path: Option<std::path::PathBuf> = if std::env::var("JOLT_BACKTRACE").is_ok() {
-                let tmp = tempfile::NamedTempFile::new()?;
-                std::fs::write(tmp.path(), &self.program.elf_contents)?;
-                Some(tmp.into_temp_path().keep()?)
-            } else {
-                None
-            };
-
-            let (_, _, _, device, _) = jolt_sdk::host_utils::guest::program::trace(
-                &self.program.elf_contents,
-                elf_path.as_ref(),
-                &input_bytes,
-                &[],
-                &[],
-                &self.memory_config,
-                None,
-            );
-
-            // tracing::info!("Jolt trace generated: {:?}", trace);
-
-            let (proof, device, debug_info) = jolt_sdk::host_utils::guest::prover::prove(
-                &self.program,
-                &input_bytes,
-                &[],
-                &[],
-                None,
-                None,
-                &mut output_bytes,
-                &self.prover_preprocessing,
-            );
-
-            // TODO use device.outputs or output_bytes ??
-
-            let proof = proof
-                .serialize_to_bytes()
-                .map_err(|e| anyhow::anyhow!("serializing Jolt proof: {e}"))?;
-
-            let preprocessing: JoltVerifierPreprocessing<
-                jolt_sdk::F,
-                jolt_sdk::Curve,
-                jolt_sdk::PCS,
-            > = JoltVerifierPreprocessing::from(&self.prover_preprocessing);
-
-            let preprocessing = preprocessing
-                .serialize_to_bytes()
-                .map_err(|e| anyhow::anyhow!("serializing Jolt verifier preprocessing: {e}"))?;
-
-            let data: ProofData = sdk::verifiers::jolt::JoltProofData {
-                input: input_bytes,
-                output: device.outputs,
-                proof,
-                verifier_preprocessing: preprocessing,
-            }
-            .try_into()?;
-
-            let metadata = ProofMetadata::default();
-
-            Ok(Proof { data, metadata })
-        }
-    }
 
     impl ClientSdkProver<Vec<Calldata>> for JoltProver {
         fn prove(
@@ -438,6 +224,7 @@ pub mod jolt {
                 version: "0.1".to_string(),
             }
         }
+
         fn verifier(&self) -> Verifier {
             hyli_model::verifiers::JOLT_0_1.into()
         }
@@ -454,10 +241,9 @@ pub mod jolt {
             Self: Sized,
         {
             let binding = hex::encode(program_id.0.clone());
-            let binary = hyli_registry::download_elf(&contract_name.0, &binding);
-            let binary = binary
+            let binary = hyli_registry::download_elf(&contract_name.0, &binding)
                 .await
-                .map_err(|e| anyhow::anyhow!("Failed to get Risc0 ELF: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("Failed to get Jolt ELF: {}", e))?;
 
             let entry = borsh::from_slice(&binary).expect("Failed to deserialize Jolt ELF");
 

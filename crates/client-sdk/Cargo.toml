@@ -26,9 +26,7 @@ risc0-zkvm = { workspace = true, default-features = false, optional = true }
 sp1-sdk = { workspace = true, default-features = false, optional = true }
 bincode = { workspace = true, optional = true }
 
-jolt-sdk = { workspace = true, features = ["host"], optional = true }
-tempfile = { workspace = true, optional = true }
-sha3 = { workspace = true, optional = true }
+hyli-jolt-prover = { workspace = true, optional = true }
 
 # Tcp feature
 tokio = { workspace = true, optional = true }
@@ -52,7 +50,7 @@ rest = []
 axum = ["dep:axum"]
 csi = ["axum", "dep:utoipa", "dep:utoipa-axum", "dep:tokio"]
 registry = ["dep:hyli-registry"]
-jolt = ["dep:jolt-sdk", "registry", "tempfile", "sha3"]
+jolt = ["dep:hyli-jolt-prover", "registry"]
 risc0 = ["dep:risc0-zkvm", "dep:bonsai-runner", "registry"]
 sp1 = ["dep:sp1-sdk", "dep:bincode", "registry"]
 sp1-network = ["sp1", "sp1-sdk/network"]

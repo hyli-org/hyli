@@ -20,7 +20,9 @@ members = [
   "crates/hyli-turmoil-shims",
   "crates/hyli-verifiers",
   "crates/verifier-worker",
-  "crates/jolt-verifier-worker",
+  "crates/jolt/model",
+  "crates/jolt/prover",
+  "crates/jolt/verifier-worker",
   "crates/hyli-bus",
   "crates/hyli-modules",
   "crates/hyli-tools",
@@ -72,7 +74,9 @@ uuid-tld = { version = "0.14.0", default-features = false, path = "crates/contra
 hyli-contracts = { version = "0.14.0", default-features = false, path = "crates/contracts", package = "hyli-contracts" }
 hyli-modules = { version = "0.14.0", default-features = false, path = "crates/hyli-modules", package = "hyli-modules" }
 
-hyli-registry = { version = "0.4.0" }
+hyli-registry = { version = "0.4.0", path = "/home/bertrand/workspace/hyli-registry/crate" }
+hyli-jolt-model = { version = "0.14.0", path = "crates/jolt/model", package = "hyli-jolt-model" }
+hyli-jolt-prover = { version = "0.14.0", path = "crates/jolt/prover", package = "hyli-jolt-prover" }
 
 # Common external dependencies
 alloy-consensus = { version = "1.1.0", default-features = false }
