@@ -49,20 +49,16 @@ impl BorshSerialize for BorshableJoltProverPreprocessing {
         let bytes = self.0.serialize_to_bytes().map_err(|e| {
             borsh::io::Error::other(format!("Failed to serialize JoltProverPreprocessing: {e}"))
         })?;
+        (bytes.len() as u64).serialize(writer)?;
         writer.write_all(&bytes)
     }
 }
 
 impl BorshDeserialize for BorshableJoltProverPreprocessing {
     fn deserialize_reader<R: borsh::io::Read>(reader: &mut R) -> borsh::io::Result<Self> {
-        let mut bytes = Vec::new();
-        let mut buf = [0u8; 4096];
-        loop {
-            match reader.read(&mut buf)? {
-                0 => break,
-                n => bytes.extend_from_slice(&buf[..n]),
-            }
-        }
+        let len = u64::deserialize_reader(reader)?;
+        let mut bytes = vec![0u8; len as usize];
+        reader.read_exact(&mut bytes)?;
         let preprocessing =
             JoltProverPreprocessing::deserialize_from_bytes(&bytes).map_err(|e| {
                 borsh::io::Error::other(format!(

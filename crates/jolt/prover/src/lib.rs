@@ -3,9 +3,7 @@ use jolt_sdk::guest::program::Program;
 use sdk::{Calldata, ProgramId, Proof, ProofData};
 use sha3::Digest;
 
-pub use hyli_jolt_model::{
-    BorshMemoryConfig, BorshableJoltProverPreprocessing, JoltRegistryEntry,
-};
+pub use hyli_jolt_model::{BorshMemoryConfig, BorshableJoltProverPreprocessing, JoltRegistryEntry};
 
 pub fn verifier_preprocessing_to_program_id(verifier_preprocessing: &[u8]) -> ProgramId {
     let mut hasher = sha3::Sha3_256::new();
@@ -109,7 +107,7 @@ impl JoltProver {
 
         let data: ProofData = sdk::verifiers::jolt::JoltProofData {
             input: input_bytes,
-            output: device.outputs,
+            output: output_bytes,
             proof,
         }
         .try_into()?;

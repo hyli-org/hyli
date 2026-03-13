@@ -74,6 +74,11 @@ async fn verify_jolt(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<Hy
         .context("decoding Jolt proof payload from ProofData")?;
 
     let binary = hyli_registry::download_elf_by_program_id(&hex::encode(&program_id.0)).await?;
+    info!(
+        "Downloaded ELF binary for program_id {}",
+        hex::encode(&program_id.0)
+    );
+    info!("ELF binary size: {} bytes", binary.len());
     let registry_entry: JoltRegistryEntry = borsh::from_slice(&binary)
         .map_err(|e| anyhow::anyhow!("deserializing Jolt registry entry: {e}"))?;
 
@@ -91,7 +96,7 @@ async fn verify_jolt(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<Hy
     )
     .context("verifying proof with Jolt")?;
 
-    borsh::from_slice::<Vec<HyliOutput>>(&output)
+    jolt_sdk::postcard::from_bytes::<Vec<HyliOutput>>(&output)
         .map_err(|e| anyhow::anyhow!("parsing proof output as HyliOutput: {e}"))
 }
 
