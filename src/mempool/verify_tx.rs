@@ -9,7 +9,7 @@ use crate::{
 };
 
 use super::{
-    storage::{CanBePutOnTop, Storage},
+    storage::CanBePutOnTop,
     verifiers::{verify_proof, verify_recursive_proof},
 };
 
