@@ -16,7 +16,7 @@ use crate::model::SharedRunContext;
 
 use super::{
     api, mempool_bus_client::MempoolBusClient, metrics::MempoolMetrics, shared_lanes_storage,
-    storage::Storage, Mempool, MempoolStore,
+    Mempool, MempoolStore,
 };
 
 use anyhow::Result;

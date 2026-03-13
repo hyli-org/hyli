@@ -3,15 +3,21 @@ use async_stream::try_stream;
 use borsh::{BorshDeserialize, BorshSerialize};
 use futures::{Stream, StreamExt};
 use hyli_crypto::BlstCrypto;
-use hyli_model::{DataSized, LaneId, ProofData};
+use hyli_model::{DataSized, LaneId};
 use serde::{Deserialize, Serialize};
 use staking::state::Staking;
-use std::{future::Future, vec};
+use std::{
+    ops::{Deref, DerefMut},
+    vec,
+};
 use tracing::{error, trace};
 
-use crate::model::{
-    Cut, DataProposal, DataProposalHash, DataProposalParent, Hashed, PoDA, SignedByValidator,
-    ValidatorPublicKey,
+use crate::{
+    mempool::storage_fjall::ProposalStorage,
+    model::{
+        Cut, DataProposal, DataProposalHash, DataProposalParent, Hashed, PoDA, SignedByValidator,
+        ValidatorPublicKey,
+    },
 };
 
 use super::ValidatorDAG;
@@ -46,64 +52,85 @@ pub struct LaneEntryMetadata {
     pub cached_poda: Option<PoDA>,
 }
 
-pub trait Storage {
-    fn persist(&self) -> Result<()>;
+#[derive(Clone)]
+pub struct LanesStorage {
+    pub lanes_tip: std::sync::Arc<
+        std::sync::RwLock<std::collections::BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>>,
+    >,
+    pub proposals: ProposalStorage,
+    // Used by the shared storage registry to know when it can drop this handle.
+    ref_token: std::sync::Arc<()>,
+}
 
-    fn contains(&self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> bool;
-    fn get_metadata_by_hash(
-        &self,
-        lane_id: &LaneId,
-        dp_hash: &DataProposalHash,
-    ) -> Result<Option<LaneEntryMetadata>>;
-    fn get_dp_by_hash(
-        &self,
-        lane_id: &LaneId,
-        dp_hash: &DataProposalHash,
-    ) -> Result<Option<DataProposal>>;
-    fn get_proofs_by_hash(
-        &self,
-        lane_id: &LaneId,
-        dp_hash: &DataProposalHash,
-    ) -> Result<Option<Vec<(u64, ProofData)>>>;
-    fn delete_proofs(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) -> Result<()>;
-    fn remove_by_hash(
-        &mut self,
-        lane_id: &LaneId,
-        dp_hash: &DataProposalHash,
-    ) -> Result<Option<(DataProposalHash, (LaneEntryMetadata, DataProposal))>>;
-    fn put_no_verification(
-        &mut self,
-        lane_id: LaneId,
-        entry: (LaneEntryMetadata, DataProposal),
-    ) -> Result<()>;
+impl LanesStorage {
+    pub fn new(
+        path: &std::path::Path,
+        lanes_tip: std::collections::BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>,
+    ) -> Result<Self> {
+        Ok(Self {
+            lanes_tip: std::sync::Arc::new(std::sync::RwLock::new(lanes_tip)),
+            proposals: ProposalStorage::new(path)?,
+            ref_token: std::sync::Arc::new(()),
+        })
+    }
 
-    fn add_signatures<T: IntoIterator<Item = ValidatorDAG>>(
-        &mut self,
-        lane_id: &LaneId,
-        dp_hash: &DataProposalHash,
-        vote_msgs: T,
-    ) -> Result<Vec<ValidatorDAG>>;
-    fn set_cached_poda(
-        &mut self,
-        lane_id: &LaneId,
-        dp_hash: &DataProposalHash,
-        poda: PoDA,
-    ) -> Result<()>;
+    pub fn new_handle(&self) -> Self {
+        self.clone()
+    }
 
-    fn get_lane_ids(&self) -> Vec<LaneId>;
-    fn get_lane_hash_tip(&self, lane_id: &LaneId) -> Option<DataProposalHash>;
-    fn get_lane_size_tip(&self, lane_id: &LaneId) -> Option<LaneBytesSize>;
+    pub(crate) fn ref_count(&self) -> usize {
+        std::sync::Arc::strong_count(&self.ref_token)
+    }
 
-    fn update_lane_tip(
+    pub fn get_lane_ids(&self) -> Vec<LaneId> {
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let guard = self.lanes_tip.read().unwrap();
+        guard.keys().cloned().collect()
+    }
+
+    pub fn get_lane_hash_tip(&self, lane_id: &LaneId) -> Option<DataProposalHash> {
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let guard = self.lanes_tip.read().unwrap();
+        guard.get(lane_id).map(|(hash, _)| hash.clone())
+    }
+
+    pub fn get_lane_size_tip(&self, lane_id: &LaneId) -> Option<LaneBytesSize> {
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let guard = self.lanes_tip.read().unwrap();
+        guard.get(lane_id).map(|(_, size)| *size)
+    }
+
+    pub fn update_lane_tip(
         &mut self,
         lane_id: LaneId,
         dp_hash: DataProposalHash,
         size: LaneBytesSize,
-    ) -> Option<(DataProposalHash, LaneBytesSize)>;
-    #[cfg(test)]
-    fn remove_lane_entry(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash);
+    ) -> Option<(DataProposalHash, LaneBytesSize)> {
+        tracing::trace!("Updating lane tip for lane {} to {:?}", lane_id, dp_hash);
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let mut guard = self.lanes_tip.write().unwrap();
+        guard.insert(lane_id, (dp_hash, size))
+    }
 
-    fn get_latest_car(
+    pub fn lane_tips_snapshot(
+        &self,
+    ) -> std::collections::BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)> {
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        let guard = self.lanes_tip.read().unwrap();
+        guard.clone()
+    }
+
+    pub fn lane_tips_read(
+        &self,
+    ) -> std::sync::RwLockReadGuard<
+        '_,
+        std::collections::BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>,
+    > {
+        #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+        self.lanes_tip.read().unwrap()
+    }
+
+    pub fn get_latest_car(
         &self,
         lane_id: &LaneId,
         staking: &Staking,
@@ -188,7 +215,7 @@ pub trait Storage {
     }
 
     /// Signs the data proposal before creating a new LaneEntry and puting it in the lane
-    fn store_data_proposal(
+    pub fn store_data_proposal(
         &mut self,
         crypto: &BlstCrypto,
         lane_id: &LaneId,
@@ -276,21 +303,48 @@ pub trait Storage {
         Ok((data_proposal_hash, cumul_size))
     }
 
-    // Implemented in the actual modules to potentially benefit from optimizations
-    // in the underlying storage
-    fn get_entries_between_hashes(
-        &self,
-        lane_id: &LaneId,
+    pub fn get_entries_between_hashes<'a>(
+        &'a self,
+        lane_id: &'a LaneId,
         from_data_proposal_hash: Option<DataProposalHash>,
         to_data_proposal_hash: Option<DataProposalHash>,
-    ) -> impl Stream<Item = Result<EntryOrMissingHash>>;
+    ) -> impl Stream<Item = Result<EntryOrMissingHash>> + 'a {
+        try_stream! {
+            let metadata_stream = self.get_entries_metadata_between_hashes(
+                lane_id,
+                from_data_proposal_hash,
+                to_data_proposal_hash,
+            );
+            futures::pin_mut!(metadata_stream);
 
-    fn get_entries_metadata_between_hashes(
-        &self,
-        lane_id: &LaneId,
+            while let Some(md) = metadata_stream.next().await {
+                match md? {
+                    MetadataOrMissingHash::Metadata(metadata, dp_hash) => {
+                        match self.get_dp_by_hash(lane_id, &dp_hash)? {
+                            Some(data_proposal) => {
+                                yield EntryOrMissingHash::Entry(metadata, data_proposal);
+                            }
+                            None => {
+                                yield EntryOrMissingHash::MissingHash(dp_hash);
+                                break;
+                            }
+                        }
+                    }
+                    MetadataOrMissingHash::MissingHash(hash) =>  {
+                        yield EntryOrMissingHash::MissingHash(hash);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn get_entries_metadata_between_hashes<'a>(
+        &'a self,
+        lane_id: &'a LaneId,
         from_data_proposal_hash: Option<DataProposalHash>,
         to_data_proposal_hash: Option<DataProposalHash>,
-    ) -> impl Stream<Item = Result<MetadataOrMissingHash>> {
+    ) -> impl Stream<Item = Result<MetadataOrMissingHash>> + 'a {
         // If no dp hash is provided, we use the tip of the lane
         let initial_dp_hash: Option<DataProposalHash> =
             to_data_proposal_hash.or(self.get_lane_hash_tip(lane_id));
@@ -320,12 +374,13 @@ pub trait Storage {
         }
     }
 
-    fn get_lane_size_at(
+    pub fn get_lane_size_at(
         &self,
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
     ) -> Result<LaneBytesSize> {
-        self.get_metadata_by_hash(lane_id, dp_hash)?
+        self.proposals
+            .get_metadata_by_hash(lane_id, dp_hash)?
             .map(|entry| entry.cumul_size)
             .ok_or_else(|| {
                 anyhow::anyhow!(
@@ -336,11 +391,11 @@ pub trait Storage {
             })
     }
 
-    fn get_pending_entries_in_lane(
-        &self,
-        lane_id: &LaneId,
+    pub fn get_pending_entries_in_lane<'a>(
+        &'a self,
+        lane_id: &'a LaneId,
         last_cut: Option<Cut>,
-    ) -> impl Stream<Item = Result<MetadataOrMissingHash>> {
+    ) -> impl Stream<Item = Result<MetadataOrMissingHash>> + 'a {
         let lane_tip = self.get_lane_hash_tip(lane_id);
 
         let last_committed_dp_hash = match last_cut {
@@ -354,40 +409,38 @@ pub trait Storage {
     }
 
     /// Get oldest entry in the lane wrt the last committed cut.
-    fn get_oldest_pending_entry(
-        &self,
-        lane_id: &LaneId,
+    pub async fn get_oldest_pending_entry<'a>(
+        &'a self,
+        lane_id: &'a LaneId,
         last_cut: Option<Cut>,
-    ) -> impl Future<Output = Result<Option<(LaneEntryMetadata, DataProposalHash)>>> {
-        async move {
-            let mut stream = Box::pin(self.get_pending_entries_in_lane(lane_id, last_cut));
-            let mut last_entry = None;
+    ) -> Result<Option<(LaneEntryMetadata, DataProposalHash)>> {
+        let mut stream = Box::pin(self.get_pending_entries_in_lane(lane_id, last_cut));
+        let mut last_entry = None;
 
-            while let Some(entry) = stream.next().await {
-                match entry? {
-                    MetadataOrMissingHash::Metadata(metadata, dp_hash) => {
-                        last_entry = Some((metadata, dp_hash));
-                    }
-                    MetadataOrMissingHash::MissingHash(_) => {
-                        // Missing entry, should not happen
-                        tracing::warn!(
-                            "Missing entry in lane {} while trying to get oldest entry",
-                            lane_id
-                        );
-                        return Ok(None);
-                    }
+        while let Some(entry) = stream.next().await {
+            match entry? {
+                MetadataOrMissingHash::Metadata(metadata, dp_hash) => {
+                    last_entry = Some((metadata, dp_hash));
+                }
+                MetadataOrMissingHash::MissingHash(_) => {
+                    // Missing entry, should not happen
+                    tracing::warn!(
+                        "Missing entry in lane {} while trying to get oldest entry",
+                        lane_id
+                    );
+                    return Ok(None);
                 }
             }
-
-            Ok(last_entry)
         }
+
+        Ok(last_entry)
     }
 
     /// Returns CanBePutOnTop::Yes if the DataProposal can be put in the lane
     /// Returns CanBePutOnTop::No if the DataProposal can't be put in the lane because the parent is unknown
     /// Returns CanBePutOnTop::Fork if the DataProposal creates an identified fork
     /// Returns CanBePutOnTop::AlreadyOnTop if the DataProposal is already on top of the lane
-    fn can_be_put_on_top(
+    pub fn can_be_put_on_top(
         &mut self,
         lane_id: &LaneId,
         data_proposal_hash: &DataProposalHash,
@@ -418,6 +471,25 @@ pub trait Storage {
             }
         }
     }
+
+    #[cfg(test)]
+    pub fn remove_lane_entry(&mut self, lane_id: &LaneId, dp_hash: &DataProposalHash) {
+        std::ops::DerefMut::deref_mut(self).remove_lane_entry(lane_id, dp_hash);
+    }
+}
+
+impl Deref for LanesStorage {
+    type Target = ProposalStorage;
+
+    fn deref(&self) -> &Self::Target {
+        &self.proposals
+    }
+}
+
+impl DerefMut for LanesStorage {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.proposals
+    }
 }
 
 #[cfg(test)]
@@ -425,7 +497,6 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::*;
-    use crate::mempool::storage_memory::LanesStorage;
     use crate::model::*;
     use assertables::assert_none;
     use futures::StreamExt;
@@ -459,13 +530,18 @@ mod tests {
         assert!(storage.contains(lane_id, &dp_hash));
         assert_eq!(
             storage
+                .proposals
                 .get_metadata_by_hash(lane_id, &dp_hash)
                 .unwrap()
                 .unwrap(),
             entry
         );
         assert_eq!(
-            storage.get_dp_by_hash(lane_id, &dp_hash).unwrap().unwrap(),
+            storage
+                .proposals
+                .get_dp_by_hash(lane_id, &dp_hash)
+                .unwrap()
+                .unwrap(),
             data_proposal
         );
     }
@@ -514,6 +590,7 @@ mod tests {
 
         // Stored DP must have proofs removed
         let stored_dp = storage
+            .proposals
             .get_dp_by_hash(lane_id, &dp_hash)
             .unwrap()
             .expect("stored dp");
@@ -527,6 +604,7 @@ mod tests {
 
         // Proofs must be available in the side-store
         let proofs = storage
+            .proposals
             .get_proofs_by_hash(lane_id, &dp_hash)
             .unwrap()
             .expect("proofs stored");
@@ -571,6 +649,7 @@ mod tests {
             .put_no_verification(lane_id.clone(), (entry.clone(), data_proposal.clone()))
             .unwrap();
         let updated = storage
+            .proposals
             .get_metadata_by_hash(lane_id, &dp_hash)
             .unwrap()
             .unwrap();
@@ -592,6 +671,7 @@ mod tests {
             .unwrap();
 
         let lane_entry = storage
+            .proposals
             .get_metadata_by_hash(lane_id, &dp_hash)
             .unwrap()
             .unwrap();
@@ -631,6 +711,7 @@ mod tests {
             .unwrap();
 
         let lane_entry = storage
+            .proposals
             .get_metadata_by_hash(lane_id2, &dp_hash)
             .unwrap()
             .unwrap();

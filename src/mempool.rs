@@ -15,6 +15,7 @@ use api::RestApiMessage;
 use block_construction::BlockUnderConstruction;
 use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
+use hyli_crypto::BlstCrypto;
 use hyli_crypto::SharedBlstCrypto;
 use hyli_modules::{bus::BusMessage, module_bus_client};
 use hyli_net::ordered_join_set::OrderedJoinSet;
@@ -31,16 +32,11 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use storage::Storage;
-use verify_tx::DataProposalVerdict;
-// Pick one of the two implementations
-// use storage_memory::LanesStorage;
-// Pick one of the two implementations by changing the re-export below.
-// pub use storage_memory::{shared_lanes_storage, LanesStorage};
-use hyli_crypto::BlstCrypto;
-pub use storage_fjall::{shared_lanes_storage, LanesStorage};
+pub use storage::LanesStorage;
+pub use storage_fjall::shared_lanes_storage;
 use strum_macros::IntoStaticStr;
 use tracing::{debug, info};
+use verify_tx::DataProposalVerdict;
 
 pub mod api;
 pub mod block_construction;
@@ -50,7 +46,6 @@ pub mod module;
 pub mod own_lane;
 pub mod storage;
 pub mod storage_fjall;
-pub mod storage_memory;
 pub mod verifiers;
 pub mod verify_tx;
 

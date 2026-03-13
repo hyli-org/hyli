@@ -10,7 +10,7 @@ use futures::StreamExt;
 use hyli_modules::{log_error, log_warn};
 
 use super::{
-    storage::{LaneEntryMetadata, MetadataOrMissingHash, Storage},
+    storage::{LaneEntryMetadata, MetadataOrMissingHash},
     DisseminationEvent, ValidatorDAG,
 };
 use anyhow::{bail, Context, Result};

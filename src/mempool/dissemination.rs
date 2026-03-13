@@ -29,7 +29,7 @@ use hyli_turmoil_shims::collections::HashMap;
 use super::{
     metrics::MempoolMetrics,
     shared_lanes_storage,
-    storage::{LaneEntryMetadata, MetadataOrMissingHash, Storage},
+    storage::{LaneEntryMetadata, MetadataOrMissingHash},
     LanesStorage, MempoolNetMessage,
 };
 
