@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 #[cfg(feature = "instrumentation")]
 use opentelemetry::trace::TracerProvider;
 use tracing::level_filters::LevelFilter;

@@ -175,7 +175,11 @@ fn txs_serialized_size_bytes(txs: &[Transaction]) -> Result<usize> {
     })
 }
 
-async fn generate_blobs_txs_range(start: u32, users: u32, save_to_disk: bool) -> Result<Vec<Transaction>> {
+async fn generate_blobs_txs_range(
+    start: u32,
+    users: u32,
+    save_to_disk: bool,
+) -> Result<Vec<Transaction>> {
     let mut blob_txs = vec![];
     let mut tasks = JoinSet::new();
     let number_of_tasks = 100;
@@ -773,11 +777,7 @@ pub async fn shoot_small_blobs_and_proofs(url: String, verifier: String) -> Resu
 
     while start < SMALL_BLOB_AND_PROOF_COUNT {
         let batch_users = (SMALL_BLOB_AND_PROOF_COUNT - start).min(SSBP_BATCH_SIZE);
-        info!(
-            "Processing ssbp batch {}..{}",
-            start,
-            start + batch_users
-        );
+        info!("Processing ssbp batch {}..{}", start, start + batch_users);
 
         let blob_txs = generate_blobs_txs_range(start, batch_users, false).await?;
         let proof_txs = generate_proof_txs_range(
