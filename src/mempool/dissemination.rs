@@ -29,7 +29,7 @@ use hyli_turmoil_shims::collections::HashMap;
 use super::{
     metrics::MempoolMetrics,
     shared_lanes_storage,
-    storage::{LaneEntryMetadata, MetadataOrMissingHash, Storage},
+    storage::{LaneEntryMetadata, MetadataOrMissingHash},
     LanesStorage, MempoolNetMessage,
 };
 
@@ -475,7 +475,7 @@ impl DisseminationManager {
                             Some(dp_hash) => {
                                 debug!("Updating SyncRequest to {:?}-{} as {} is present", request.from, dp_hash, request.to);
                                 request.to = dp_hash.clone();
-                            },
+                            }
                             None => warn!("Malformed syncRequest - 'to' {} has no parent but 'from' {:?} is a DP", request.to, request.from),
                         }
                     }
