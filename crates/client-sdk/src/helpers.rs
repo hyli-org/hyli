@@ -333,7 +333,7 @@ pub mod jolt {
             let program = Program::new(&elf, &memory_config);
             let preprocessing = preprocessing.0;
 
-            let (_, _, d) = program.decode();
+            let (_, _, d, _) = program.decode();
 
             memory_config.program_size = Some(d);
 
@@ -355,7 +355,7 @@ pub mod jolt {
             input_bytes.append(&mut jolt_sdk::postcard::to_stdvec(&commitment_metadata).unwrap());
             input_bytes.append(&mut jolt_sdk::postcard::to_stdvec(&calldatas).unwrap());
 
-            let mut output_bytes = Vec::new();
+            let mut output_bytes = vec![0; self.memory_config.max_output_size as usize];
 
             if let Some(handler) = &self.trace_handler {
                 handler(commitment_metadata, calldatas);
@@ -410,7 +410,7 @@ pub mod jolt {
 
             let data: ProofData = sdk::verifiers::jolt::JoltProofData {
                 input: input_bytes,
-                output: output_bytes,
+                output: device.outputs,
                 proof,
                 verifier_preprocessing: preprocessing,
             }
