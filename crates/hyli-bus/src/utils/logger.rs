@@ -1,3 +1,5 @@
+#[cfg(feature = "instrumentation")]
+use anyhow::Context;
 use anyhow::Result;
 #[cfg(feature = "instrumentation")]
 use opentelemetry::trace::TracerProvider;
