@@ -3,7 +3,10 @@ use std::{
     env,
     path::{Path, PathBuf},
     process::Stdio,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -15,12 +18,15 @@ use hyli_model::{
     ProofData,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    process::{Child, ChildStdin, ChildStdout, Command},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    net::{UnixListener, UnixStream},
+    process::{Child, Command},
     sync::Mutex,
     time::timeout,
 };
 use tracing::error;
+
+static WORKER_SOCKET_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use crate::utils::conf::{VerifierWorkersBackendConf, VerifierWorkersConf};
 
@@ -92,8 +98,7 @@ struct ProcessVerifierWorker {
 
 struct WorkerProcess {
     child: Child,
-    stdin: ChildStdin,
-    stdout: ChildStdout,
+    stream: UnixStream,
 }
 
 impl ProcessVerifierWorker {
@@ -192,29 +197,29 @@ impl ProcessVerifierWorker {
 
     async fn send_request(process: &mut WorkerProcess, request: &[u8]) -> Result<VerifyResponse> {
         process
-            .stdin
+            .stream
             .write_u32_le(request.len() as u32)
             .await
             .context("writing verifier worker request length")?;
         process
-            .stdin
+            .stream
             .write_all(request)
             .await
             .context("writing verifier worker request")?;
         process
-            .stdin
+            .stream
             .flush()
             .await
             .context("flushing verifier worker request")?;
 
         let response_len = process
-            .stdout
+            .stream
             .read_u32_le()
             .await
             .context("reading verifier worker response length")?;
         let mut response = vec![0; response_len as usize];
         process
-            .stdout
+            .stream
             .read_exact(&mut response)
             .await
             .context("reading verifier worker response body")?;
@@ -284,39 +289,51 @@ impl ProcessVerifierWorker {
                 self.backend_name
             )
         })?;
+
+        let counter = WORKER_SOCKET_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let socket_path = std::env::temp_dir().join(format!(
+            "hyli-worker-{}-{}-{}.sock",
+            self.backend_name,
+            std::process::id(),
+            counter
+        ));
+        // Remove stale socket file if present
+        let _ = std::fs::remove_file(&socket_path);
+        let listener = UnixListener::bind(&socket_path)
+            .with_context(|| format!("binding worker socket at {}", socket_path.display()))?;
+
         tracing::info!(
             backend = %self.backend_name,
             command = %resolved_command.display(),
+            socket = %socket_path.display(),
             "Starting verifier worker"
         );
 
-        let mut child = timeout(self.startup_timeout, async {
+        let (mut child, stream) = timeout(self.startup_timeout, async {
             let mut command = Command::new(&resolved_command);
             command
                 .args(&self.args)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
+                .env("WORKER_COMM_PATH", &socket_path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit());
-            command.spawn()
+            let child = command
+                .spawn()
+                .with_context(|| format!("spawning verifier worker '{}'", self.command))?;
+            let (stream, _) = listener
+                .accept()
+                .await
+                .context("accepting verifier worker connection")?;
+            Ok::<_, anyhow::Error>((child, stream))
         })
         .await
-        .context("timed out spawning verifier worker")?
-        .with_context(|| format!("spawning verifier worker '{}'", self.command))?;
+        .context("timed out waiting for verifier worker to connect")?
+        .context("starting verifier worker")?;
 
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("missing stdin for verifier worker '{}'", self.backend_name))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| anyhow!("missing stdout for verifier worker '{}'", self.backend_name))?;
+        // Socket file no longer needed once the connection is established
+        let _ = std::fs::remove_file(&socket_path);
 
-        Ok(WorkerProcess {
-            child,
-            stdin,
-            stdout,
-        })
+        Ok(WorkerProcess { child, stream })
     }
 }
 

@@ -9,17 +9,24 @@ use hyli_model::{
 };
 use hyli_verifier_worker_core::{init_worker_tracing, run_worker_loop};
 use jolt_sdk::{JoltProof, JoltVerifierPreprocessing, Serializable};
-use tokio::io::{self, BufReader, BufWriter};
+use tokio::io::{BufReader, BufWriter};
+use tokio::net::UnixStream;
+use tracing::{error, info};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     init_worker_tracing("info")?;
 
-    let stdin = io::stdin();
-    let stdout = io::stdout();
+    let path = std::env::var("WORKER_COMM_PATH")
+        .context("WORKER_COMM_PATH environment variable not set")?;
+    let stream = UnixStream::connect(&path)
+        .await
+        .with_context(|| format!("connecting to worker socket at {path}"))?;
+    let (reader, writer) = tokio::io::split(stream);
+
     run_worker_loop(
-        BufReader::new(stdin),
-        BufWriter::new(stdout),
+        BufReader::new(reader),
+        BufWriter::new(writer),
         handle_request,
     )
     .await
@@ -34,9 +41,16 @@ async fn handle_request(request: VerifyRequest) -> Result<VerifyResponse> {
         });
     }
 
-    let outputs = verify_jolt(&ProofData(request.proof), &ProgramId(request.program_id))
+    let outputs = match verify_jolt(&ProofData(request.proof), &ProgramId(request.program_id))
         .await
-        .context("verifying Jolt proof")?;
+        .context("verifying Jolt proof")
+    {
+        Ok(outputs) => outputs,
+        Err(err) => {
+            error!("❌ Jolt proof verification failed: {err:#}");
+            return Err(err);
+        }
+    };
 
     Ok(VerifyResponse {
         ok: true,
@@ -46,6 +60,10 @@ async fn handle_request(request: VerifyRequest) -> Result<VerifyResponse> {
 }
 
 async fn verify_jolt(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutput>> {
+    info!(
+        "⚡ Verifying Jolt proof for program_id {}",
+        hex::encode(&program_id.0)
+    );
     let JoltProofData {
         input,
         output,
@@ -76,3 +94,4 @@ async fn verify_jolt(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<Hy
     borsh::from_slice::<Vec<HyliOutput>>(&output)
         .map_err(|e| anyhow::anyhow!("parsing proof output as HyliOutput: {e}"))
 }
+
