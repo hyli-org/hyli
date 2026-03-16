@@ -11,11 +11,12 @@ fn main() {}
         feature = "smt-token",
         feature = "staking",
         feature = "risc0-recursion",
-        feature = "uuid-tld"
+        feature = "uuid-tld",
+        feature = "hyperlane-bridge"
     ))
 ))]
 fn main() {
-    compile_error!("When the 'build' feature is enabled, at least one of the following features must also be enabled: all, amm, hydentity, hyllar, smt-token, staking, risc0-recursion, uuid-tld.");
+    compile_error!("When the 'build' feature is enabled, at least one of the following features must also be enabled: all, amm, hydentity, hyllar, smt-token, staking, risc0-recursion, uuid-tld, hyperlane-bridge.");
 }
 
 #[cfg(all(
@@ -28,7 +29,8 @@ fn main() {
         feature = "smt-token",
         feature = "staking",
         feature = "risc0-recursion",
-        feature = "uuid-tld"
+        feature = "uuid-tld",
+        feature = "hyperlane-bridge"
     )
 ))]
 fn main() {
@@ -92,6 +94,8 @@ fn main() {
         "risc0-recursion",
         #[cfg(feature = "uuid-tld")]
         "uuid-tld",
+        #[cfg(feature = "hyperlane-bridge")]
+        "hyperlane-bridge",
     ]
     .iter()
     .map(|name| {

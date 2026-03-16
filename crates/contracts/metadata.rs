@@ -26,6 +26,11 @@ mod metadata {
 
     pub const UUID_TLD_ELF: &[u8] = crate::methods::UUID_TLD_ELF;
     pub const UUID_TLD_ID: [u8; 32] = sdk::to_u8_array(&crate::methods::UUID_TLD_ID);
+
+    pub const HYPERLANE_BRIDGE_ELF: &[u8] =
+        hyperlane_bridge::client::tx_executor_handler::metadata::HYPERLANE_BRIDGE_ELF;
+    pub const HYPERLANE_BRIDGE_ID: [u8; 32] =
+        hyperlane_bridge::client::tx_executor_handler::metadata::PROGRAM_ID;
 }
 
 #[cfg(any(clippy, not(feature = "nonreproducible")))]
@@ -52,6 +57,11 @@ mod metadata {
 
     pub const UUID_TLD_ELF: &[u8] = uuid_tld::client::tx_executor_handler::metadata::UUID_TLD_ELF;
     pub const UUID_TLD_ID: [u8; 32] = uuid_tld::client::tx_executor_handler::metadata::PROGRAM_ID;
+
+    pub const HYPERLANE_BRIDGE_ELF: &[u8] =
+        hyperlane_bridge::client::tx_executor_handler::metadata::HYPERLANE_BRIDGE_ELF;
+    pub const HYPERLANE_BRIDGE_ID: [u8; 32] =
+        hyperlane_bridge::client::tx_executor_handler::metadata::PROGRAM_ID;
 }
 
 pub use metadata::*;

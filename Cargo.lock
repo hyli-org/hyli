@@ -269,9 +269,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-eips"
-version = "1.7.3"
+version = "1.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9f7ef09f21bd1e9cb8a686f168cb4a206646804567f0889eadb8dcc4c9288c8"
+checksum = "def1626eea28d48c6cc0a6f16f34d4af0001906e4f889df6c660b39c86fd044d"
 dependencies = [
  "alloy-eip2124",
  "alloy-eip2930",
@@ -310,9 +310,9 @@ dependencies = [
 
 [[package]]
 name = "alloy-genesis"
-version = "1.7.3"
+version = "1.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c9cf3b99f46615fbf7dc1add0c96553abb7bf88fc9ec70dfbe7ad0b47ba7fe8"
+checksum = "55d9d1aba3f914f0e8db9e4616ae37f3d811426d95bdccf44e47d0605ab202f6"
 dependencies = [
  "alloy-eips",
  "alloy-primitives",
@@ -5506,6 +5506,7 @@ dependencies = [
  "hyli-contract-sdk",
  "hyli-hydentity",
  "hyli-hyllar",
+ "hyli-hyperlane-bridge",
  "hyli-risc0-recursion",
  "hyli-smt-token",
  "hyli-staking",
@@ -5562,6 +5563,39 @@ dependencies = [
  "serde_with",
  "sha2",
  "tokio",
+]
+
+[[package]]
+name = "hyli-hyperlane-bridge"
+version = "0.14.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
+ "alloy-sol-types",
+ "anyhow",
+ "axum 0.8.8",
+ "borsh",
+ "clap",
+ "config",
+ "hex",
+ "hyli-client-sdk",
+ "hyli-contract-sdk",
+ "hyli-model",
+ "hyli-modules",
+ "hyli-net",
+ "hyli-smt-token",
+ "k256",
+ "reqwest 0.12.28",
+ "risc0-zkvm",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
