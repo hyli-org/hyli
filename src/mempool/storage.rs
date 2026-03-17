@@ -107,7 +107,7 @@ impl LanesStorage {
         Ok(Self {
             lanes_tip: Arc::new(RwLock::new(lanes_tip)),
             lane_entries: Arc::new(RwLock::new(HashMap::new())),
-            proposals: Arc::new(ProposalStorage::new(_path)?),
+            proposals: ProposalStorage::shared(_path)?,
             ref_token: Arc::new(()),
         })
     }
