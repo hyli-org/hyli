@@ -5518,7 +5518,7 @@ dependencies = [
  "hyli-model",
  "keyring",
  "rand 0.9.2",
- "whoami 2.1.0",
+ "whoami 2.1.1",
 ]
 
 [[package]]
@@ -13598,12 +13598,9 @@ dependencies = [
 
 [[package]]
 name = "whoami"
-version = "2.1.0"
+version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fae98cf96deed1b7572272dfc777713c249ae40aa1cf8862e091e8b745f5361"
-dependencies = [
- "libredox",
-]
+checksum = "d6a5b12f9df4f978d2cfdb1bd3bac52433f44393342d7ee9c25f5a1c14c0f45d"
 
 [[package]]
 name = "winapi"
