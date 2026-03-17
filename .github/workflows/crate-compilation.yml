@@ -52,6 +52,28 @@ jobs:
         if: matrix.crate != 'hyli-noir-tools'
         run: cargo docs-rs -p ${{ matrix.crate }}
 
+  check-no-std:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - hyli-model
+          - hyli-contract-sdk
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: thumbv7em-none-eabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-check-no-std
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Check '${{ matrix.crate }}' in no_std
+        run: cargo check -p ${{ matrix.crate }} --no-default-features --target thumbv7em-none-eabi
+
   list-crates:
     runs-on: ubuntu-latest
     outputs:

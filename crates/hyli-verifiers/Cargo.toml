@@ -9,7 +9,7 @@ repository = { workspace = true }
 rust-version = { workspace = true }
 
 [dependencies]
-hyli-model = { workspace = true }
+hyli-model = { workspace = true, features = ["std"] }
 
 serde_json = { workspace = true, optional = true }
 anyhow = { workspace = true }
