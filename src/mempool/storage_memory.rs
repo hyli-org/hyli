@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
     mempool::storage::MetadataOrMissingHash,
-    model::{DataProposal, DataProposalHash, DataProposalParent, Hashed, PoDA},
+    model::{DataProposal, DataProposalHash, Hashed, PoDA},
 };
 
 #[derive(Clone)]
@@ -193,40 +193,23 @@ impl Storage for LanesStorage {
         Ok(())
     }
 
-    fn pop(
+    fn remove_by_hash(
         &mut self,
-        validator: LaneId,
+        lane_id: &LaneId,
+        dp_hash: &DataProposalHash,
     ) -> Result<Option<(DataProposalHash, (LaneEntryMetadata, DataProposal))>> {
-        let lane_tip = {
+        let entry = {
             #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
-            let guard = self.lanes_tip.read().unwrap();
-            guard.get(&validator).cloned()
+            let mut guard = self.by_hash.write().unwrap();
+            guard.get_mut(lane_id).and_then(|lane| lane.remove(dp_hash))
         };
-        if let Some((lane_tip, _)) = lane_tip {
-            let entry = {
-                #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
-                let mut guard = self.by_hash.write().unwrap();
-                guard
-                    .get_mut(&validator)
-                    .and_then(|lane| lane.remove(&lane_tip))
-            };
-            if let Some(entry) = entry {
-                match &entry.0.parent_data_proposal_hash {
-                    DataProposalParent::DP(parent_hash) => {
-                        let parent_size = self.get_lane_size_at(&validator, parent_hash)?;
-                        self.update_lane_tip(validator.clone(), parent_hash.clone(), parent_size);
-                    }
-                    DataProposalParent::LaneRoot(_) => {
-                        #[allow(
-                            clippy::unwrap_used,
-                            reason = "RwLock cannot be poisoned in our usage"
-                        )]
-                        let mut guard = self.lanes_tip.write().unwrap();
-                        guard.remove(&validator);
-                    }
-                }
-                return Ok(Some((lane_tip.clone(), entry)));
+        if let Some(entry) = entry {
+            #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
+            let mut proofs_guard = self.proofs.write().unwrap();
+            if let Some(dp_map) = proofs_guard.get_mut(lane_id) {
+                dp_map.remove(dp_hash);
             }
+            return Ok(Some((dp_hash.clone(), entry)));
         }
         Ok(None)
     }

@@ -3,7 +3,7 @@
 use crate::{
     bus::SharedMessageBus,
     consensus::{Consensus, ConsensusStore},
-    data_availability::DataAvailability,
+    data_availability::{local_da_replayer::LocalDaReplayer, DataAvailability},
     explorer::Explorer,
     genesis::Genesis,
     indexer::Indexer,
@@ -30,12 +30,10 @@ use hyli_modules::{
     log_error,
     modules::{
         admin::{AdminApi, AdminApiRunContext, CatchupStoreResponse, NodeAdminApiClient},
-        block_processor::BusOnlyProcessor,
         bus_ws_connector::{NodeWebsocketConnector, NodeWebsocketConnectorCtx, WebsocketOutEvent},
         contract_listener::{ContractListener, ContractListenerConf},
         contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
         da_listener::DAListenerConf,
-        da_listener::SignedDAListener,
         files::{CONSENSUS_BIN, NODE_STATE_BIN},
         websocket::WebSocketModule,
         BuildApiContextInner, Module,
@@ -602,16 +600,18 @@ pub async fn common_main(
 
         handler.build_module::<P2P>(ctx.clone()).await?;
     } else if config.run_indexer {
-        handler
-            .build_module::<SignedDAListener<BusOnlyProcessor>>(DAListenerConf {
+        LocalDaReplayer::build_bus_only_source(
+            &mut handler,
+            DAListenerConf {
                 data_directory: config.data_directory.clone(),
                 da_read_from: config.da_read_from.clone(),
                 start_block: None,
                 timeout_client_secs: config.da_timeout_client_secs,
                 da_fallback_addresses: config.da_fallback_addresses.clone(),
                 processor_config: (),
-            })
-            .await?;
+            },
+        )
+        .await?;
     }
 
     if config.websocket.enabled {

@@ -8,15 +8,11 @@ use anyhow::Result;
 use hyli_bus::modules::ModulePersistOutput;
 use hyli_bus::{module_bus_client, module_handle_messages};
 use sdk::{BlockHeight, DataAvailabilityEvent, DataAvailabilityRequest, Hashed, SignedBlock};
-use tokio::task::yield_now;
 use tracing::{debug, error, info, warn};
 
 use crate::{
     bus::SharedMessageBus,
-    modules::{
-        block_processor::BlockProcessor, da_listener_metrics::DaTcpClientMetrics,
-        data_availability::Blocks, Module,
-    },
+    modules::{block_processor::BlockProcessor, da_listener_metrics::DaTcpClientMetrics, Module},
     node_state::module::NodeStateModule,
     utils::da_codec::DataAvailabilityClient,
 };
@@ -634,92 +630,45 @@ impl<P: BlockProcessor + 'static> SignedDAListener<P> {
     }
 
     pub async fn start(&mut self) -> Result<()> {
-        if let Some(folder) = self.config.da_read_from.strip_prefix("folder:") {
-            info!("Reading blocks from folder {folder}");
-            let mut blocks = vec![];
-            let mut entries = std::fs::read_dir(folder)
-                .unwrap_or_else(|_| std::fs::read_dir(".").unwrap())
-                .filter_map(|e| e.ok())
-                .collect::<Vec<_>>();
-            entries.sort_by_key(|e| e.file_name());
-            for entry in entries {
-                let path = entry.path();
-                if path.extension().map(|e| e == "bin").unwrap_or(false) {
-                    if let Ok(bytes) = std::fs::read(&path) {
-                        if let Ok((block, tx_count)) =
-                            borsh::from_slice::<(SignedBlock, usize)>(&bytes)
-                        {
-                            blocks.push((block, tx_count));
-                        }
+        self.start_client().await?;
+
+        info!(
+            "Starting DA client for signed blocks at block {}",
+            self.stream.current_block()
+        );
+
+        module_handle_messages! {
+            on_self self,
+            poll = self.stream.listen_next() => {
+                let poll = poll?;
+                match poll {
+                    DaStreamPoll::Timeout => {
+                        warn!("No blocks received in the last {} seconds, restarting client", self.config.timeout_client_secs);
+                        self.stream.reconnect("timeout").await?;
                     }
-                }
-                yield_now().await; // Yield to allow other tasks to run
-            }
-            blocks.sort_by_key(|b| b.0.consensus_proposal.slot);
-
-            info!("Got {} blocks from folder. Processing...", blocks.len());
-            for (block, _) in blocks {
-                self.handle_signed_block(block).await?;
-            }
-            module_handle_messages! {
-                on_self self,
-            };
-        } else if let Some(folder) = self.config.da_read_from.strip_prefix("da:") {
-            info!("Reading blocks from DA {folder}");
-
-            #[cfg_attr(not(feature = "fjall"), expect(unused_mut))]
-            let mut blocks = Blocks::new(&PathBuf::from(folder))?;
-            let block_hashes = blocks
-                .range(BlockHeight(0), BlockHeight(u64::MAX))
-                .collect::<Result<Vec<_>>>()?;
-            for block_hash in block_hashes {
-                let block = blocks.get(&block_hash)?.unwrap();
-                self.handle_signed_block(block).await?;
-            }
-            module_handle_messages! {
-                on_self self,
-            };
-        } else {
-            self.start_client().await?;
-
-            info!(
-                "Starting DA client for signed blocks at block {}",
-                self.stream.current_block()
-            );
-
-            module_handle_messages! {
-                on_self self,
-                poll = self.stream.listen_next() => {
-                    let poll = poll?;
-                    match poll {
-                        DaStreamPoll::Timeout => {
-                            warn!("No blocks received in the last {} seconds, restarting client", self.config.timeout_client_secs);
-                            self.stream.reconnect("timeout").await?;
-                        }
-                        DaStreamPoll::StreamClosed => {
-                            warn!("DA stream connection lost. Reconnecting after sleeping 1s...");
+                    DaStreamPoll::StreamClosed => {
+                        warn!("DA stream connection lost. Reconnecting after sleeping 1s...");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        self.stream.reconnect("stream_closed").await?;
+                    }
+                    DaStreamPoll::Event(event) => {
+                        if let Err(e) = self.processing_next_frame(event).await {
+                            warn!(
+                                "Error while consuming DA stream event: {}. Reconnecting after sleeping 1s...",
+                                e
+                            );
                             tokio::time::sleep(Duration::from_secs(1)).await;
-                            self.stream.reconnect("stream_closed").await?;
+                            self.stream.reconnect("event_processing_error").await?;
+                            continue;
                         }
-                        DaStreamPoll::Event(event) => {
-                            if let Err(e) = self.processing_next_frame(event).await {
-                                warn!(
-                                    "Error while consuming DA stream event: {}. Reconnecting after sleeping 1s...",
-                                    e
-                                );
-                                tokio::time::sleep(Duration::from_secs(1)).await;
-                                self.stream.reconnect("event_processing_error").await?;
-                                continue;
-                            }
-                            if let Err(e) = self.stream.ping().await {
-                                warn!("Ping failed: {}. Restarting client...", e);
-                                self.stream.reconnect("ping_error").await?;
-                            }
+                        if let Err(e) = self.stream.ping().await {
+                            warn!("Ping failed: {}. Restarting client...", e);
+                            self.stream.reconnect("ping_error").await?;
                         }
                     }
                 }
-            };
-        }
+            }
+        };
         Ok(())
     }
 

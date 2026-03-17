@@ -3,8 +3,8 @@ use clap::{Parser, Subcommand};
 use hydentity::Hydentity;
 use hyli_loadtest::{
     generate, generate_blobs_txs, generate_proof_txs, load_blob_txs, load_proof_txs,
-    long_running_test, send, send_blob_txs, send_massive_blob, send_proof_txs, setup, setup_hyllar,
-    States,
+    long_running_test, send, send_blob_txs, send_massive_blob, send_proof_txs, send_tiny_blobs,
+    setup, setup_hyllar, shoot_small_blobs_and_proofs, States,
 };
 use hyli_modules::bus::command_response::hyli_turmoil_shims::init_noop_meter_provider;
 use tracing::{info, Level};
@@ -62,6 +62,12 @@ enum SendCommands {
 
     #[command(alias = "smb")]
     SendMassiveBlob,
+
+    #[command(alias = "stb")]
+    SendTinyBlobs,
+
+    #[command(alias = "ssbp")]
+    ShootSmallBlobsAndProofs,
 
     #[command(alias = "lrt")]
     LongRunningTest,
@@ -134,6 +140,12 @@ async fn main() -> Result<(), Error> {
         }
         SendCommands::SendMassiveBlob => {
             send_massive_blob(users, url).await?;
+        }
+        SendCommands::SendTinyBlobs => {
+            send_tiny_blobs(users, url).await?;
+        }
+        SendCommands::ShootSmallBlobsAndProofs => {
+            shoot_small_blobs_and_proofs(url, verifier).await?;
         }
         SendCommands::LongRunningTest => {
             let url = format!("http://{}:{}/", args.host, args.port);
