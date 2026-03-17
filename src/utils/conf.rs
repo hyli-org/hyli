@@ -173,7 +173,6 @@ impl From<GCSConf> for DataProposalDurabilityConf {
         }
     }
 }
-
 impl From<NodeWebSocketConfig> for WebSocketConfig {
     fn from(config: NodeWebSocketConfig) -> Self {
         Self {
