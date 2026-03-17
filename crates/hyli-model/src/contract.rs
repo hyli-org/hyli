@@ -1,4 +1,9 @@
-use std::{
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::{
     fmt::Display,
     ops::{Add, Deref, DerefMut, Sub},
 };
@@ -24,14 +29,14 @@ use crate::{utils::TimestampMs, LaneId};
 pub struct ConsensusProposalHash(#[serde(with = "crate::utils::hex_bytes")] pub Vec<u8>);
 pub type BlockHash = ConsensusProposalHash;
 
-impl std::hash::Hash for ConsensusProposalHash {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl core::hash::Hash for ConsensusProposalHash {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
         state.write(&self.0);
     }
 }
 
-impl std::fmt::Debug for ConsensusProposalHash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for ConsensusProposalHash {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "ConsensusProposalHash({})", hex::encode(&self.0))
     }
 }
@@ -95,7 +100,7 @@ where
 
 impl<'a> IntoIterator for &'a IndexedBlobs {
     type Item = &'a (BlobIndex, Blob);
-    type IntoIter = std::slice::Iter<'a, (BlobIndex, Blob)>;
+    type IntoIter = core::slice::Iter<'a, (BlobIndex, Blob)>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
@@ -138,8 +143,8 @@ impl Calldata {
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct StateCommitment(pub Vec<u8>);
 
-impl std::fmt::Debug for StateCommitment {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl core::fmt::Debug for StateCommitment {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         write!(f, "StateCommitment({})", hex::encode(&self.0))
     }
 }
@@ -210,8 +215,8 @@ impl Add<usize> for BlobIndex {
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct BlobData(pub Vec<u8>);
 
-impl std::fmt::Debug for BlobData {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl core::fmt::Debug for BlobData {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         if self.0.len() > 20 {
             write!(f, "BlobData({}...)", hex::encode(&self.0[..20]))
         } else {
@@ -309,7 +314,7 @@ pub struct StructuredBlobData<Action> {
 pub struct DropEndOfReader;
 
 impl<Action: BorshDeserialize> BorshDeserialize for StructuredBlobData<Action> {
-    fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+    fn deserialize_reader<R: borsh::io::Read>(reader: &mut R) -> borsh::io::Result<Self> {
         let caller = Option::<BlobIndex>::deserialize_reader(reader)?;
         let callees = Option::<Vec<BlobIndex>>::deserialize_reader(reader)?;
         let parameters = Action::deserialize_reader(reader)?;
@@ -322,10 +327,16 @@ impl<Action: BorshDeserialize> BorshDeserialize for StructuredBlobData<Action> {
 }
 
 impl BorshDeserialize for StructuredBlobData<DropEndOfReader> {
-    fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
+    fn deserialize_reader<R: borsh::io::Read>(reader: &mut R) -> borsh::io::Result<Self> {
         let caller = Option::<BlobIndex>::deserialize_reader(reader)?;
         let callees = Option::<Vec<BlobIndex>>::deserialize_reader(reader)?;
-        reader.read_to_end(&mut vec![])?;
+        // read_to_end is not available in no_std; drain manually
+        let mut buf = [0u8; 64];
+        loop {
+            if reader.read(&mut buf)? == 0 {
+                break;
+            }
+        }
         let parameters = DropEndOfReader;
         Ok(StructuredBlobData {
             caller,
@@ -341,14 +352,14 @@ impl<Action: BorshSerialize> From<StructuredBlobData<Action>> for BlobData {
     }
 }
 impl<Action: BorshDeserialize> TryFrom<BlobData> for StructuredBlobData<Action> {
-    type Error = std::io::Error;
+    type Error = borsh::io::Error;
 
     fn try_from(val: BlobData) -> Result<StructuredBlobData<Action>, Self::Error> {
         borsh::from_slice(&val.0)
     }
 }
 impl TryFrom<BlobData> for StructuredBlobData<DropEndOfReader> {
-    type Error = std::io::Error;
+    type Error = borsh::io::Error;
 
     fn try_from(val: BlobData) -> Result<StructuredBlobData<DropEndOfReader>, Self::Error> {
         borsh::from_slice(&val.0)
@@ -395,14 +406,14 @@ impl Hashed<BlobHash> for Blob {
     }
 }
 
-impl std::fmt::Debug for BlobHash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for BlobHash {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "BlobHash({})", hex::encode(&self.0))
     }
 }
 
-impl std::fmt::Display for BlobHash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for BlobHash {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", hex::encode(&self.0))
     }
 }
@@ -423,7 +434,7 @@ impl<Action: BorshSerialize> From<StructuredBlob<Action>> for Blob {
 }
 
 impl<Action: BorshDeserialize> TryFrom<Blob> for StructuredBlob<Action> {
-    type Error = std::io::Error;
+    type Error = borsh::io::Error;
 
     fn try_from(val: Blob) -> Result<StructuredBlob<Action>, Self::Error> {
         let data = borsh::from_slice(&val.data.0)?;
@@ -508,8 +519,8 @@ pub struct Verifier(pub String);
 #[cfg_attr(feature = "full", derive(utoipa::ToSchema))]
 pub struct ProgramId(pub Vec<u8>);
 
-impl std::fmt::Display for ProgramId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for ProgramId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", hex::encode(&self.0))
     }
 }
@@ -545,7 +556,7 @@ impl<'de> Deserialize<'de> for ProofData {
         impl<'de> serde::de::Visitor<'de> for ProofDataVisitor {
             type Value = ProofData;
 
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
                 formatter.write_str("a Base64 string or a Vec<u8>")
             }
 
@@ -601,14 +612,14 @@ impl ProofDataHash {
     }
 }
 
-impl std::fmt::Debug for ProofDataHash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for ProofDataHash {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "ProofDataHash({})", hex::encode(&self.0))
     }
 }
 
 impl Display for ProofDataHash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", hex::encode(&self.0))
     }
 }
@@ -867,32 +878,32 @@ impl From<&[u8]> for ProgramId {
 }
 
 impl Display for TxHash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", hex::encode(&self.0))
     }
 }
-impl std::fmt::Debug for TxHash {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for TxHash {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "TxHash({})", hex::encode(&self.0))
     }
 }
 impl Display for BlobIndex {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", &self.0)
     }
 }
 impl Display for ContractName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", &self.0)
     }
 }
 impl Display for Identity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", &self.0)
     }
 }
 impl Display for Verifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}", &self.0)
     }
 }
@@ -963,7 +974,7 @@ pub enum TimeoutWindow {
     },
 }
 impl Display for TimeoutWindow {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match &self {
             TimeoutWindow::NoTimeout => write!(f, "NoTimeout"),
             TimeoutWindow::Timeout {
