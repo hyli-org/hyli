@@ -184,11 +184,15 @@ impl Consensus {
         // (can't do this earlier as might need to process the ticket first)
         let round_leader = self.round_leader()?;
         if sender != round_leader {
+            let bonded = self.bft_round_state.staking.bonded();
             bail!(
-                "Prepare consensus message for {} {} does not come from current leader {}. I won't vote for it.",
+                "Prepare consensus message for {} {} from {} does not come from current leader {}. I won't vote for it. Local bonded validators ({}): {:?}",
                 self.bft_round_state.slot,
                 self.bft_round_state.view,
-                round_leader
+                sender,
+                round_leader,
+                bonded.len(),
+                bonded,
             );
         }
 
@@ -589,13 +593,16 @@ impl Consensus {
             // Not processing a new prepare so we can accept either type of ticket.
         }
 
-        tracing::debug!(
-            "Slot info service: TC for slot {} view {}, bft round state slot {} {}, current proposal slot {:?}",
+            tracing::debug!(
+            "Slot info service: TC for slot {} view {}, bft round state slot {} {}, current proposal slot {:?}, joining updated_to {}, bonded validators ({}): {:?}",
             tc_slot,
             tc_view,
             self.bft_round_state.slot,
             self.bft_round_state.view,
             self.bft_round_state.current_proposal.as_ref().map(|cp| cp.slot),
+            self.bft_round_state.joining.staking_updated_to,
+            self.bft_round_state.staking.bonded().len(),
+            self.bft_round_state.staking.bonded(),
         );
 
         if tc_slot == self.bft_round_state.slot {
