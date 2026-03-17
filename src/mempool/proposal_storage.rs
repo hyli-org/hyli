@@ -15,9 +15,6 @@ use crate::model::{DataProposal, DataProposalHash, Hashed};
 
 type ProposalKey = (LaneId, DataProposalHash);
 type Proofs = Vec<(u64, ProofData)>;
-type SharedProofs = Arc<Proofs>;
-
-static SHARED_PROPOSALS: OnceLock<Mutex<HashMap<PathBuf, Arc<ProposalStorage>>>> = OnceLock::new();
 
 pub trait KvEncode: Send + Sync + 'static {
     fn encode(&self) -> Result<Vec<u8>>;
@@ -31,6 +28,8 @@ where
         borsh::to_vec(self).map_err(Into::into)
     }
 }
+
+static SHARED_PROPOSALS: OnceLock<Mutex<HashMap<PathBuf, Arc<ProposalStorage>>>> = OnceLock::new();
 
 pub trait KvBackend: Send + Sync {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>>;
@@ -156,7 +155,7 @@ impl KvBackend for FjallKvBackend {
 pub struct ProposalStorage {
     backend: Box<dyn KvBackend>,
     data_cache: RwLock<HashMap<ProposalKey, Arc<DataProposal>>>,
-    proofs_cache: RwLock<HashMap<ProposalKey, SharedProofs>>,
+    proofs_cache: RwLock<HashMap<ProposalKey, Arc<Proofs>>>,
 }
 
 impl ProposalStorage {
@@ -183,6 +182,15 @@ impl ProposalStorage {
         })
     }
 
+    #[cfg(test)]
+    pub fn new_in_memory() -> Self {
+        Self {
+            backend: Box::new(InMemoryKvBackend::new()),
+            data_cache: RwLock::new(HashMap::new()),
+            proofs_cache: RwLock::new(HashMap::new()),
+        }
+    }
+
     pub fn persist(&self) -> Result<()> {
         self.backend.persist()
     }
@@ -200,7 +208,11 @@ impl ProposalStorage {
                 let Some(bytes) = self.backend.get(&data_key(lane_id, dp_hash)?)? else {
                     return Ok(None);
                 };
-                let data_proposal = Arc::new(borsh::from_slice::<DataProposal>(&bytes)?);
+                let mut data_proposal = borsh::from_slice::<DataProposal>(&bytes)?;
+                unsafe {
+                    data_proposal.unsafe_set_hash(dp_hash);
+                }
+                let data_proposal = Arc::new(data_proposal);
                 self.data_cache
                     .write()
                     .unwrap()
@@ -208,12 +220,7 @@ impl ProposalStorage {
                 data_proposal
             };
 
-        let mut data_proposal = data_proposal.as_ref().clone();
-        // SAFETY: this hash came from the storage key for this value.
-        unsafe {
-            data_proposal.unsafe_set_hash(dp_hash);
-        }
-        Ok(Some(data_proposal))
+        Ok(Some(data_proposal.as_ref().clone()))
     }
 
     pub fn get_proofs_by_hash(
@@ -282,6 +289,7 @@ impl ProposalStorage {
         self.proofs_cache.write().unwrap().insert(key, proofs);
         Ok(())
     }
+
     #[cfg(test)]
     pub fn remove_lane_entry(&self, lane_id: &LaneId, dp_hash: &DataProposalHash) {
         let _ = self.remove_by_hash(lane_id, dp_hash);

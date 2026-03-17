@@ -5350,6 +5350,8 @@ dependencies = [
  "dhat",
  "fjall",
  "futures",
+ "google-cloud-auth",
+ "google-cloud-storage",
  "hex",
  "hyli-amm",
  "hyli-bus",

@@ -8,6 +8,7 @@ use crate::{
     p2p::network::{
         HeaderSignableData, HeaderSigner, IntoHeaderSignableData, MsgWithHeader, OutboundMessage,
     },
+    shared_storage::DataProposalDurability,
     utils::{conf::SharedConf, serialize::BorshableIndexMap},
 };
 use anyhow::{bail, Context, Result};
@@ -131,6 +132,7 @@ pub struct Mempool {
     crypto: SharedBlstCrypto,
     metrics: MempoolMetrics,
     lanes: LanesStorage,
+    durability: DataProposalDurability,
     inner: MempoolStore,
 }
 
@@ -222,7 +224,7 @@ impl IntoHeaderSignableData for MempoolNetMessage {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum ProcessedDPEvent {
     OnHashedDataProposal((LaneId, DataProposal, ValidatorDAG)),
-    OnProcessedDataProposal((LaneId, DataProposalVerdict, DataProposal)),
+    OnProcessedDataProposal((LaneId, DataProposalVerdict, DataProposal, bool)),
     OnHashedSyncReply((LaneId, Vec<ValidatorDAG>, DataProposal, DataProposalHash)),
 }
 
@@ -385,14 +387,21 @@ impl Mempool {
         match event {
             ProcessedDPEvent::OnHashedDataProposal((lane_id, data_proposal, vote)) => self
                 .on_hashed_data_proposal(&lane_id, data_proposal, vote)
+                .await
                 .context("Hashing data proposal"),
             ProcessedDPEvent::OnHashedSyncReply((lane_id, signatures, data_proposal, dp_hash)) => {
                 self.on_hashed_sync_reply(lane_id, signatures, data_proposal, dp_hash)
                     .await
                     .context("Handling sync reply data proposal")
             }
-            ProcessedDPEvent::OnProcessedDataProposal((lane_id, verdict, data_proposal)) => self
-                .on_processed_data_proposal(lane_id, verdict, data_proposal)
+            ProcessedDPEvent::OnProcessedDataProposal((
+                lane_id,
+                verdict,
+                data_proposal,
+                vote_ready,
+            )) => self
+                .on_processed_data_proposal(lane_id, verdict, data_proposal, vote_ready)
+                .await
                 .context("Processing data proposal"),
         }
     }
@@ -452,7 +461,8 @@ impl Mempool {
                     );
                 }
                 BlstCrypto::verify(&vdag).context("Invalid DataProposal vote signature")?;
-                self.on_data_proposal(&lane_id, data_proposal_hash, data_proposal, vdag.clone())?;
+                self.on_data_proposal(&lane_id, data_proposal_hash, data_proposal, vdag.clone())
+                    .await?;
                 self.on_data_vote(lane_id, vdag)?;
             }
             MempoolNetMessage::DataVote(lane_id, vdag) => {

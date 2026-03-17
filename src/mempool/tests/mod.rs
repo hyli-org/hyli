@@ -17,6 +17,7 @@ use crate::mempool::storage::LaneEntryMetadata;
 use crate::model;
 use crate::model::DataProposalParent;
 use crate::p2p::network::NetMessage;
+use crate::shared_storage::{DataProposalDurability, NullDurabilityBackend};
 use crate::utils::conf::Conf;
 use crate::{
     bus::dont_use_this::get_receiver,
@@ -77,6 +78,7 @@ impl MempoolTestCtx {
                 .expect("Failed to build DisseminationManager");
 
         // Initialize Mempool
+        let durability = DataProposalDurability::new_in_memory(Arc::new(NullDurabilityBackend));
         (
             Mempool {
                 bus,
@@ -84,6 +86,7 @@ impl MempoolTestCtx {
                 conf: SharedConf::default(),
                 crypto: Arc::new(crypto),
                 metrics: MempoolMetrics::global(),
+                durability,
                 lanes,
                 inner: MempoolStore::default(),
             },
@@ -1265,7 +1268,8 @@ async fn test_buc_correctly_filled_via_async_verify_tx_path() -> Result<()> {
         LaneBytesSize(dp_parent.estimate_size() as u64),
     ))?;
     ctx.mempool
-        .on_hashed_data_proposal(&lane_id, dp_parent.clone(), parent_vote)?;
+        .on_hashed_data_proposal(&lane_id, dp_parent.clone(), parent_vote)
+        .await?;
 
     ctx.handle_processed_data_proposals().await;
 
@@ -1285,11 +1289,14 @@ async fn test_buc_correctly_filled_via_async_verify_tx_path() -> Result<()> {
     )
     .await?;
 
-    ctx.mempool.on_processed_data_proposal(
-        lane_id.clone(),
-        DataProposalVerdict::Vote,
-        dp_child.clone(),
-    )?;
+    ctx.mempool
+        .on_processed_data_proposal(
+            lane_id.clone(),
+            DataProposalVerdict::Vote,
+            dp_child.clone(),
+            true,
+        )
+        .await?;
 
     ctx.process_cut_with_dp(
         peer_crypto.validator_pubkey(),
@@ -1466,11 +1473,14 @@ async fn test_processed_dp_stored_when_tip_is_itself_after_clean() -> Result<()>
     assert!(ctx.mempool.lanes.contains(&lane_id, &dp1_hash));
 
     // When processing finishes, DP2 is stored even though its parent is missing.
-    ctx.mempool.on_processed_data_proposal(
-        lane_id.clone(),
-        DataProposalVerdict::Vote,
-        dp2.clone(),
-    )?;
+    ctx.mempool
+        .on_processed_data_proposal(
+            lane_id.clone(),
+            DataProposalVerdict::Vote,
+            dp2.clone(),
+            true,
+        )
+        .await?;
 
     assert!(ctx.mempool.lanes.contains(&lane_id, &dp2_hash));
 
@@ -1549,7 +1559,13 @@ async fn test_processed_dp_fails_when_tip_moved_past_it() -> Result<()> {
     // Processing DP2 now should fail because tip moved past it.
     assert!(ctx
         .mempool
-        .on_processed_data_proposal(lane_id.clone(), DataProposalVerdict::Vote, dp2.clone())
+        .on_processed_data_proposal(
+            lane_id.clone(),
+            DataProposalVerdict::Vote,
+            dp2.clone(),
+            true,
+        )
+        .await
         .is_err());
 
     assert!(!ctx.mempool.lanes.contains(&lane_id, &dp2_hash));

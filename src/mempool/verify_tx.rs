@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use hyli_model::{DataProposalHash, DataSized, LaneBytesSize, LaneId};
 use serde::{Deserialize, Serialize};
+use tokio::time::timeout;
 use tracing::{debug, trace, warn};
 
 use crate::{
@@ -19,12 +20,15 @@ pub enum DataProposalVerdict {
     Empty,
     Wait,
     Vote,
+    VotePendingPersistence,
     Refuse,
     Ignore,
 }
 
+const DP_VOTE_PERSISTENCE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
 impl super::Mempool {
-    pub(super) fn on_data_proposal(
+    pub(super) async fn on_data_proposal(
         &mut self,
         lane_id: &LaneId,
         received_hash: DataProposalHash,
@@ -76,6 +80,14 @@ impl super::Mempool {
                     return self.send_vote(lane_id, received_hash, lane_size);
                 }
             }
+            Some(DataProposalVerdict::VotePendingPersistence) => {
+                if self
+                    .retry_pending_persistence_vote(lane_id, &received_hash, &data_proposal)
+                    .await?
+                {
+                    return Ok(());
+                }
+            }
             Some(DataProposalVerdict::Wait) | None => {}
         }
 
@@ -90,7 +102,8 @@ impl super::Mempool {
                     data_proposal.hashed()
                 );
             }
-            self.on_hashed_data_proposal(lane_id, data_proposal.clone(), vote)?;
+            self.on_hashed_data_proposal(lane_id, data_proposal, vote)
+                .await?;
         }
         #[cfg(not(test))]
         {
@@ -118,7 +131,7 @@ impl super::Mempool {
         Ok(())
     }
 
-    pub(super) fn on_hashed_data_proposal(
+    pub(super) async fn on_hashed_data_proposal(
         &mut self,
         lane_id: &LaneId,
         mut data_proposal: DataProposal,
@@ -134,41 +147,81 @@ impl super::Mempool {
         self.metrics.add_hashed_dp(lane_id);
 
         let data_proposal_hash = data_proposal.hashed();
+        // Overlap durable persistence with proposal processing once we know the canonical hash.
+        self.durability
+            .prime_persistence(lane_id.clone(), &data_proposal)?;
         let (verdict, lane_size) = self.get_verdict(lane_id, &data_proposal)?;
-        self.cached_dp_votes.insert(
-            (lane_id.clone(), data_proposal_hash.clone()),
-            verdict.clone(),
-        );
         match verdict {
             DataProposalVerdict::Empty => {
+                self.cached_dp_votes.insert(
+                    (lane_id.clone(), data_proposal_hash.clone()),
+                    DataProposalVerdict::Empty,
+                );
                 warn!(
                     "received empty DataProposal on lane {}, ignoring...",
                     lane_id
                 );
             }
             DataProposalVerdict::Vote => {
-                // Normal case, we receive a proposal we already have the parent in store
-                trace!("Send vote for DataProposal");
-                #[allow(clippy::unwrap_used, reason = "we always have a size for Vote")]
-                self.send_vote(lane_id, data_proposal_hash, lane_size.unwrap())?;
+                let vote_ready = Self::wait_for_persistence_before_vote(
+                    &self.durability,
+                    lane_id,
+                    &data_proposal_hash,
+                )
+                .await;
+
+                self.cached_dp_votes.insert(
+                    (lane_id.clone(), data_proposal_hash.clone()),
+                    if vote_ready {
+                        DataProposalVerdict::Vote
+                    } else {
+                        DataProposalVerdict::VotePendingPersistence
+                    },
+                );
+
+                if vote_ready {
+                    trace!("Send vote for DataProposal");
+                    #[allow(clippy::unwrap_used, reason = "we always have a size for Vote")]
+                    self.send_vote(lane_id, data_proposal_hash, lane_size.unwrap())?;
+                }
             }
             DataProposalVerdict::Process => {
+                self.cached_dp_votes.insert(
+                    (lane_id.clone(), data_proposal_hash.clone()),
+                    DataProposalVerdict::Process,
+                );
                 trace!("Further processing for DataProposal");
                 let lane_id = lane_id.clone();
+                let durability = self.durability.clone();
                 let handle = self.inner.long_tasks_runtime.handle();
                 self.inner.processing_dps.spawn_on(
                     async move {
                         let decision = Self::process_data_proposal(&mut data_proposal);
+                        let vote_ready = if decision == DataProposalVerdict::Vote {
+                            Self::wait_for_persistence_before_vote(
+                                &durability,
+                                &lane_id,
+                                &data_proposal.hashed(),
+                            )
+                            .await
+                        } else {
+                            false
+                        };
                         Ok(ProcessedDPEvent::OnProcessedDataProposal((
                             lane_id,
                             decision,
                             data_proposal,
+                            vote_ready,
                         )))
                     },
                     &handle,
                 );
             }
             DataProposalVerdict::Wait => {
+                self.cached_dp_votes.insert(
+                    (lane_id.clone(), data_proposal_hash.clone()),
+                    DataProposalVerdict::Wait,
+                );
                 debug!("Buffering DataProposal {}", data_proposal_hash);
                 // Push the data proposal in the waiting list
                 self.buffered_entries
@@ -177,20 +230,32 @@ impl super::Mempool {
                     .insert(data_proposal_hash.clone(), (vec![vote], data_proposal));
             }
             DataProposalVerdict::Refuse => {
+                self.cached_dp_votes.insert(
+                    (lane_id.clone(), data_proposal_hash.clone()),
+                    DataProposalVerdict::Refuse,
+                );
                 debug!("Refuse vote for DataProposal {}", data_proposal.hashed());
             }
             DataProposalVerdict::Ignore => {
+                self.cached_dp_votes.insert(
+                    (lane_id.clone(), data_proposal_hash.clone()),
+                    DataProposalVerdict::Ignore,
+                );
                 debug!("Ignore DataProposal {}", data_proposal_hash);
+            }
+            DataProposalVerdict::VotePendingPersistence => {
+                unreachable!("VotePendingPersistence is an internal cache state");
             }
         }
         Ok(())
     }
 
-    pub(super) fn on_processed_data_proposal(
+    pub(super) async fn on_processed_data_proposal(
         &mut self,
         lane_id: LaneId,
         verdict: DataProposalVerdict,
         data_proposal: DataProposal,
+        vote_ready: bool,
     ) -> Result<()> {
         debug!(
             "Handling processed DataProposal {:?} one lane {} ({} txs)",
@@ -201,8 +266,6 @@ impl super::Mempool {
 
         self.metrics.add_processed_dp(&lane_id);
 
-        self.cached_dp_votes
-            .insert((lane_id.clone(), data_proposal.hashed()), verdict.clone());
         match verdict {
             DataProposalVerdict::Empty => {
                 unreachable!("Empty DataProposal should never be processed");
@@ -224,7 +287,16 @@ impl super::Mempool {
                     data_proposal_hash: hash.clone(),
                     cumul_size: size,
                 })?;
-                self.send_vote(&lane_id, hash.clone(), size)?;
+                if vote_ready {
+                    self.cached_dp_votes
+                        .insert((lane_id.clone(), hash.clone()), DataProposalVerdict::Vote);
+                    self.send_vote(&lane_id, hash.clone(), size)?;
+                } else {
+                    self.cached_dp_votes.insert(
+                        (lane_id.clone(), hash.clone()),
+                        DataProposalVerdict::VotePendingPersistence,
+                    );
+                }
 
                 while let Some(vote) = self
                     .inner
@@ -259,7 +331,8 @@ impl super::Mempool {
                             entry.1.hashed(),
                             lane_id
                         );
-                        self.on_hashed_data_proposal(&lane_id, entry.1, vote)?;
+                        self.on_hashed_data_proposal(&lane_id, entry.1, vote)
+                            .await?;
                     } else {
                         warn!(
                             "No lane operator vote stored for buffered proposal {:?}",
@@ -269,10 +342,17 @@ impl super::Mempool {
                 }
             }
             DataProposalVerdict::Refuse => {
+                self.cached_dp_votes
+                    .insert((lane_id.clone(), data_proposal.hashed()), DataProposalVerdict::Refuse);
                 debug!("Refuse vote for DataProposal");
             }
             DataProposalVerdict::Ignore => {
+                self.cached_dp_votes
+                    .insert((lane_id.clone(), data_proposal.hashed()), DataProposalVerdict::Ignore);
                 debug!("Ignore DataProposal {}", data_proposal.hashed());
+            }
+            DataProposalVerdict::VotePendingPersistence => {
+                unreachable!("VotePendingPersistence is an internal cache state");
             }
         }
         Ok(())
@@ -436,6 +516,76 @@ impl super::Mempool {
         ))?;
         Ok(())
     }
+
+    async fn wait_for_persistence_before_vote(
+        durability: &crate::shared_storage::DataProposalDurability,
+        lane_id: &LaneId,
+        hash: &DataProposalHash,
+    ) -> bool {
+        if durability.is_persisted(lane_id, hash) {
+            return true;
+        }
+
+        match timeout(
+            DP_VOTE_PERSISTENCE_TIMEOUT,
+            durability.wait_until_persisted(lane_id, hash),
+        )
+        .await
+        {
+            Ok(Ok(())) => true,
+            Ok(Err(err)) => {
+                warn!(
+                    "Data proposal {} on lane {} failed durable persistence: {err:#}",
+                    hash, lane_id
+                );
+                false
+            }
+            Err(_) => {
+                warn!(
+                    "Skipping vote for data proposal {} on lane {} because durable persistence did not complete in time",
+                    hash, lane_id
+                );
+                false
+            }
+        }
+    }
+
+    async fn retry_pending_persistence_vote(
+        &mut self,
+        lane_id: &LaneId,
+        received_hash: &DataProposalHash,
+        data_proposal: &DataProposal,
+    ) -> Result<bool> {
+        if data_proposal.hashed() != *received_hash {
+            bail!(
+                "Received DataProposal with wrong hash: expected {:?}, got {:?}",
+                received_hash,
+                data_proposal.hashed()
+            );
+        }
+
+        self.durability
+            .prime_persistence(lane_id.clone(), data_proposal)?;
+
+        if !Self::wait_for_persistence_before_vote(&self.durability, lane_id, received_hash).await {
+            return Ok(true);
+        }
+
+        let Ok(lane_size) = self.lanes.get_lane_size_at(lane_id, received_hash) else {
+            self.cached_dp_votes
+                .remove(&(lane_id.clone(), received_hash.clone()));
+            return Ok(false);
+        };
+
+        debug!(
+            "Sending delayed vote for DataProposal {:?} on lane {} after persistence completed",
+            received_hash, lane_id
+        );
+        self.cached_dp_votes
+            .insert((lane_id.clone(), received_hash.clone()), DataProposalVerdict::Vote);
+        self.send_vote(lane_id, received_hash.clone(), lane_size)?;
+        Ok(true)
+    }
 }
 
 #[cfg(test)]
@@ -594,7 +744,8 @@ pub mod test {
         ))?;
 
         ctx.mempool
-            .on_hashed_data_proposal(&lane_id, data_proposal.clone(), vote)?;
+            .on_hashed_data_proposal(&lane_id, data_proposal.clone(), vote)
+            .await?;
         ctx.handle_processed_data_proposals().await;
 
         assert_eq!(

@@ -1224,7 +1224,8 @@ pub mod test {
         let dp_c_hash = dp_c.hashed();
         let vote_c = peer_crypto.sign((dp_c_hash.clone(), dp_c_size))?;
         ctx.mempool
-            .on_hashed_data_proposal(&lane_id, dp_c, vote_c)?;
+            .on_hashed_data_proposal(&lane_id, dp_c, vote_c)
+            .await?;
 
         // C is not yet storable because B is missing.
         assert!(ctx
@@ -1312,7 +1313,8 @@ pub mod test {
         // Receive C first -> buffered because parent B is unknown.
         let vote_c = peer_crypto.sign((dp_c_hash.clone(), dp_c_cumul_size))?;
         ctx.mempool
-            .on_hashed_data_proposal(&lane_id, dp_c, vote_c)?;
+            .on_hashed_data_proposal(&lane_id, dp_c, vote_c)
+            .await?;
 
         // Commit slot 1 at A, then slot 2 at C.
         ctx.process_cut_with_dp(

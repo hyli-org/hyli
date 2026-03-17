@@ -253,6 +253,7 @@ bytes = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 config = { workspace = true, default-features = false, features = ["toml"] }
 futures = { workspace = true }
+google-cloud-storage = { workspace = true }
 indexmap = { workspace = true, features = ["serde"] }
 paste = { workspace = true }
 rand = { workspace = true }
@@ -327,6 +328,7 @@ risc0-zkvm = { workspace = true, default-features = false, features = [
   "client",
 ] }
 signal-child = "1.0.6"
+google-cloud-auth = { version = "1.5", default-features = false }
 
 [features]
 default = ["risc0", "instrumentation"]

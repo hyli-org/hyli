@@ -362,6 +362,9 @@ impl super::Mempool {
         self.metrics
             .record_created_data_proposal_bytes(&lane_id, data_proposal.estimate_size() as u64);
 
+        self.durability
+            .prime_persistence(lane_id.clone(), &data_proposal)?;
+
         let (data_proposal_hash, cumul_size) =
             self.lanes
                 .store_data_proposal(&self.crypto, &lane_id, data_proposal)?;

@@ -27,6 +27,7 @@ pub mod indexer;
 pub mod mempool;
 pub mod p2p;
 pub mod rest;
+pub mod shared_storage;
 pub mod single_node_consensus;
 pub mod tcp_server;
 pub mod utils;

@@ -9,7 +9,9 @@ use hyli_modules::utils::fjall_metrics::FjallMetrics;
 use std::{fmt::Debug, path::Path, sync::Arc, time::Instant};
 use tracing::{debug, info, trace};
 
-use crate::mempool::proposal_storage::ProposalStorage;
+use crate::{
+    mempool::proposal_storage::ProposalStorage,
+};
 
 #[derive(Clone, BorshSerialize, BorshDeserialize)]
 struct StoredSignedBlock {
@@ -48,7 +50,9 @@ impl AsRef<[u8]> for FjallHeightKey {
 
 impl FjallValue {
     fn new_with_block(block: &SignedBlock) -> Result<Self> {
-        Ok(Self(borsh::to_vec(&StoredSignedBlock::from_signed_block(block))?))
+        Ok(Self(borsh::to_vec(&StoredSignedBlock::from_signed_block(
+            block,
+        ))?))
     }
 
     fn new_with_block_hash(block_hash: &ConsensusProposalHash) -> Result<Self> {
@@ -170,7 +174,8 @@ impl Blocks {
     }
 
     pub fn set_metrics_context(&mut self, node_id: impl Into<String>) {
-        self.metrics = FjallMetrics::global("data_availability", &node_id.into(), "data_availability.db");
+        self.metrics =
+            FjallMetrics::global("data_availability", &node_id.into(), "data_availability.db");
     }
 
     pub fn is_empty(&self) -> bool {

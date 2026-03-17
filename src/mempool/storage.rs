@@ -101,13 +101,13 @@ impl LanesStorage {
     }
 
     pub fn new(
-        _path: &Path,
+        path: &Path,
         lanes_tip: BTreeMap<LaneId, (DataProposalHash, LaneBytesSize)>,
     ) -> Result<Self> {
         Ok(Self {
             lanes_tip: Arc::new(RwLock::new(lanes_tip)),
             lane_entries: Arc::new(RwLock::new(HashMap::new())),
-            proposals: ProposalStorage::shared(_path)?,
+            proposals: ProposalStorage::shared(path)?,
             ref_token: Arc::new(()),
         })
     }
