@@ -13,13 +13,14 @@ use hyli_modules::{
     modules::{
         block_processor::{BlockProcessor, BusOnlyProcessor},
         da_listener::{DAListenerConf, SignedDAListener},
-        data_availability::Blocks,
         Module,
     },
     node_state::module::NodeStateModule,
 };
 use tokio::task::yield_now;
 use tracing::{debug, info, warn};
+
+use crate::data_availability::block_storage::Blocks;
 
 pub struct LocalDaReplayer {
     config: DAListenerConf<BusOnlyProcessor>,

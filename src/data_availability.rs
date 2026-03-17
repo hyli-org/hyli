@@ -1,12 +1,10 @@
 //! Minimal block storage layer for data availability.
 
+pub mod block_storage;
 pub mod local_da_replayer;
 
-// Pick one of the two implementations
-use hyli_modules::modules::data_availability::blocks_fjall::Blocks;
-use hyli_modules::utils::da_codec::DataAvailabilityServer;
-//use hyli_modules::modules::data_availability::blocks_memory::Blocks;
 use hyli_modules::modules::da_listener::{DaStreamPoll, SignedDaStream};
+use hyli_modules::utils::da_codec::DataAvailabilityServer;
 use hyli_modules::{bus::SharedMessageBus, modules::Module};
 use hyli_modules::{log_error, module_bus_client, module_handle_messages};
 use hyli_net::tcp::TcpEvent;
@@ -30,6 +28,7 @@ use strum_macros::AsRefStr;
 use tokio::task::JoinSet;
 use tracing::{debug, error, info, trace, warn};
 
+use self::block_storage::Blocks;
 use crate::model::SharedRunContext;
 
 impl Module for DataAvailability {
@@ -38,7 +37,7 @@ impl Module for DataAvailability {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> anyhow::Result<Self> {
         let bus = DABusClient::new_from_bus(bus.new_handle()).await;
 
-        let mut blocks = Blocks::new(&ctx.config.data_directory.join("data_availability.db"))?;
+        let mut blocks = Blocks::new(&ctx.config.data_directory)?;
         blocks.set_metrics_context(ctx.config.id.clone());
         let highest_block = blocks.highest();
 
