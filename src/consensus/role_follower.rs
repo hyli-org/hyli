@@ -593,7 +593,7 @@ impl Consensus {
             // Not processing a new prepare so we can accept either type of ticket.
         }
 
-            tracing::debug!(
+        tracing::debug!(
             "Slot info service: TC for slot {} view {}, bft round state slot {} {}, current proposal slot {:?}, joining updated_to {}, bonded validators ({}): {:?}",
             tc_slot,
             tc_view,
