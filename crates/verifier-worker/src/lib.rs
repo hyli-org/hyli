@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use borsh::to_vec;
 use hyli_model::verifier_worker::{VerifyRequest, VerifyResponse};
 use std::future::Future;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter};
+use tokio::net::UnixStream;
 
 pub fn init_worker_tracing(default_filter: &str) -> Result<()> {
     let _ = tracing_subscriber::fmt()
@@ -15,17 +16,20 @@ pub fn init_worker_tracing(default_filter: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_worker_loop<R, W, H, Fut>(
-    mut reader: R,
-    mut writer: W,
-    mut handler: H,
-) -> Result<()>
+pub async fn run_worker_loop<H, Fut>(mut handler: H) -> Result<()>
 where
-    R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin,
     H: FnMut(VerifyRequest) -> Fut,
     Fut: Future<Output = Result<VerifyResponse>>,
 {
+    let path = std::env::var("WORKER_COMM_PATH")
+        .context("WORKER_COMM_PATH environment variable not set")?;
+    let stream = UnixStream::connect(&path)
+        .await
+        .with_context(|| format!("connecting to worker socket at {path}"))?;
+    let (reader, writer) = tokio::io::split(stream);
+    let mut reader = BufReader::new(reader);
+    let mut writer = BufWriter::new(writer);
+
     loop {
         let request_len = match reader.read_u32_le().await {
             Ok(len) => len,

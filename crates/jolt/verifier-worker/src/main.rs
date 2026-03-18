@@ -9,27 +9,13 @@ use hyli_model::{
 };
 use hyli_verifier_worker_core::{init_worker_tracing, run_worker_loop};
 use jolt_sdk::{JoltProof, JoltVerifierPreprocessing, Serializable};
-use tokio::io::{BufReader, BufWriter};
-use tokio::net::UnixStream;
 use tracing::{error, info};
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     init_worker_tracing("info")?;
 
-    let path = std::env::var("WORKER_COMM_PATH")
-        .context("WORKER_COMM_PATH environment variable not set")?;
-    let stream = UnixStream::connect(&path)
-        .await
-        .with_context(|| format!("connecting to worker socket at {path}"))?;
-    let (reader, writer) = tokio::io::split(stream);
-
-    run_worker_loop(
-        BufReader::new(reader),
-        BufWriter::new(writer),
-        handle_request,
-    )
-    .await
+    run_worker_loop(handle_request).await
 }
 
 async fn handle_request(request: VerifyRequest) -> Result<VerifyResponse> {
