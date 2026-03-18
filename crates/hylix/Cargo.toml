@@ -46,7 +46,7 @@ dirs = "6.0.0"
 reqwest = { version = "0.13.1", features = ["json", "stream"] }
 
 # Process execution
-which = "8.0.0"
+which = "8.0.2"
 
 # Serialization
 serde = { workspace = true, features = ["derive"] }

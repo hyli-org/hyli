@@ -89,7 +89,7 @@ alloy-trie = { version = "0.9.0", default-features = false }
 alloc-metrics = { version = "0.1.1" }
 anyhow = { version = "1.0.102" }
 anymap = { version = "0.12.1", default-features = false }
-assertables = { version = "9.8.2", default-features = false }
+assertables = { version = "9.8.6", default-features = false }
 axum = { version = "0.8.4" }
 base64 = { version = "0.22.1" }
 bincode = { version = "1.3.3" }
@@ -113,7 +113,7 @@ derive_more = { version = "2.0.1", default-features = false }
 dhat = { version = "0.3.3", default-features = false }
 fjall = { version = "3.0.1", features = ["metrics"] }
 futures = { version = "0.3.32" }
-google-cloud-storage = { version = "1.5.0" }
+google-cloud-storage = { version = "1.8.0" }
 hex = { version = "0.4.3", default-features = false }
 http-body-util = { version = "0.1.3", default-features = false }
 hyper = { version = "1.6.0", default-features = false }
@@ -152,7 +152,7 @@ seq-macro = { version = "0.3.6", default-features = false }
 serde = { version = "1.0", default-features = false }
 serde_json = { version = "1.0.142" }
 serde_with = { version = "3.14.1" }
-sha2 = { version = "=0.10.9" } # Pinned because of risczero patch
+sha2 = { version = "=0.10.9", default-features = false } # Pinned because of risczero patch
 sha3 = { version = "0.10.8" }
 sp1-sdk = { version = "5.2.2", default-features = false }
 sp1-zkvm = { version = "5.2.2", default-features = false }
@@ -181,7 +181,7 @@ utoipa = { version = "5.4.0" }
 utoipa-axum = { version = "0.2.0" }
 utoipa-swagger-ui = { version = "9.0.2" }
 uuid = { version = "1.18.0", default-features = false }
-whoami = { version = "2.0.2", default-features = false }
+whoami = { version = "2.1.1", default-features = false }
 
 # Reth dependencies
 reth-primitives-traits = { git = "https://github.com/paradigmxyz/reth", default-features = false }
@@ -246,7 +246,7 @@ hyli-bus = { workspace = true }
 anyhow = { workspace = true }
 borsh = { workspace = true, features = ["rc"] }
 chrono = { workspace = true, features = ["std", "serde"] }
-hex = { workspace = true }
+hex = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_with = { workspace = true, features = ["hex"] }

@@ -99,4 +99,3 @@ async fn verify_jolt(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<Hy
     jolt_sdk::postcard::from_bytes::<Vec<HyliOutput>>(&output)
         .map_err(|e| anyhow::anyhow!("parsing proof output as HyliOutput: {e}"))
 }
-

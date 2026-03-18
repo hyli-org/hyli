@@ -39,6 +39,12 @@ pub struct CanonicalStates {
     pub hyllar_name: ContractName,
 }
 
+pub const SMALL_BLOB_AND_PROOF_COUNT: u32 = 50_000;
+const SSBP_BATCH_SIZE: u32 = 1_000;
+const SSBP_PROOF_TASKS: u32 = 8;
+const TINY_BLOB_BATCH_SIZE: u32 = 10_000;
+const TINY_BLOB_PAYLOAD_BYTES: usize = 16;
+
 impl transaction_builder::StateUpdater for CanonicalStates {
     fn setup(&self, ctx: &mut TxExecutorBuilder<Self>) {
         self.hydentity
@@ -163,13 +169,23 @@ pub async fn generate(users: u32, states: States) -> Result<(Vec<Transaction>, V
     Ok((blob_txs, proof_txs))
 }
 
-pub async fn generate_blobs_txs(users: u32) -> Result<Vec<Transaction>> {
+fn txs_serialized_size_bytes(txs: &[Transaction]) -> Result<usize> {
+    txs.iter().try_fold(0usize, |acc, tx| {
+        Ok::<usize, anyhow::Error>(acc + borsh::to_vec(tx)?.len())
+    })
+}
+
+async fn generate_blobs_txs_range(
+    start: u32,
+    users: u32,
+    save_to_disk: bool,
+) -> Result<Vec<Transaction>> {
     let mut blob_txs = vec![];
     let mut tasks = JoinSet::new();
     let number_of_tasks = 100;
     let chunk_size: usize = users.div_ceil(number_of_tasks).try_into().unwrap();
 
-    let user_chunks: Vec<_> = (0..users).collect();
+    let user_chunks: Vec<_> = (start..start + users).collect();
     let user_chunks = user_chunks
         .chunks(chunk_size)
         .map(|chunk| chunk.to_vec())
@@ -209,21 +225,32 @@ pub async fn generate_blobs_txs(users: u32) -> Result<Vec<Transaction>> {
         blob_txs.extend(result??);
     }
 
-    info!("Saving blob transactions");
-    std::fs::write(
-        format!("blob_txs.{users}.bin"),
-        borsh::to_vec(&blob_txs).expect("failed to encode blob_txs"),
-    )?;
+    if save_to_disk {
+        info!("Saving blob transactions");
+        std::fs::write(
+            format!("blob_txs.{users}.bin"),
+            borsh::to_vec(&blob_txs).expect("failed to encode blob_txs"),
+        )?;
+    }
     Ok(blob_txs)
 }
 
-pub async fn generate_proof_txs(users: u32, state: States) -> Result<Vec<Transaction>> {
+pub async fn generate_blobs_txs(users: u32) -> Result<Vec<Transaction>> {
+    generate_blobs_txs_range(0, users, true).await
+}
+
+async fn generate_proof_txs_range(
+    start: u32,
+    users: u32,
+    state: States,
+    number_of_tasks: u32,
+    save_to_disk: bool,
+) -> Result<Vec<Transaction>> {
     let mut proof_txs = vec![];
     let mut tasks = JoinSet::new();
-    let number_of_tasks = 100;
     let chunk_size: usize = users.div_ceil(number_of_tasks).try_into().unwrap();
 
-    let user_chunks: Vec<_> = (0..users).collect();
+    let user_chunks: Vec<_> = (start..start + users).collect();
     let user_chunks = user_chunks
         .chunks(chunk_size)
         .map(|chunk| chunk.to_vec())
@@ -266,14 +293,19 @@ pub async fn generate_proof_txs(users: u32, state: States) -> Result<Vec<Transac
         proof_txs.extend(result??);
     }
 
-    // serialize to bincode and write to file
-    info!("Saving proof transactions");
-    std::fs::write(
-        format!("proof_txs.{users}.bin"),
-        borsh::to_vec(&proof_txs).expect("failed to encode proof_txs"),
-    )?;
+    if save_to_disk {
+        info!("Saving proof transactions");
+        std::fs::write(
+            format!("proof_txs.{users}.bin"),
+            borsh::to_vec(&proof_txs).expect("failed to encode proof_txs"),
+        )?;
+    }
 
     Ok(proof_txs)
+}
+
+pub async fn generate_proof_txs(users: u32, state: States) -> Result<Vec<Transaction>> {
+    generate_proof_txs_range(0, users, state, 100, true).await
 }
 
 pub async fn send(
@@ -649,6 +681,137 @@ pub async fn send_massive_blob(users: u32, url: String) -> Result<()> {
             .await
             .unwrap();
     }
+
+    Ok(())
+}
+
+pub async fn send_tiny_blobs(users: u32, url: String) -> Result<()> {
+    let tx = BlobTransaction::new(
+        Identity::new("hyli@hyli"),
+        vec![RegisterContractAction {
+            contract_name: "tiny_blob_test".into(),
+            verifier: "test".into(),
+            program_id: hyli_contracts::HYLLAR_ID.to_vec().into(),
+            state_commitment: StateCommitment(vec![1]),
+            timeout_window: Some(TimeoutWindow::timeout(BlockHeight(2), BlockHeight(2))),
+            ..Default::default()
+        }
+        .as_blob("hyli".into())],
+    );
+
+    let mut client = TcpApiClient::connect("loadtest_client".to_string(), url.clone())
+        .await
+        .unwrap();
+    client
+        .send(TcpServerMessage::NewTx(tx.into()))
+        .await
+        .unwrap();
+
+    let ident = Identity::new("test3@tiny_blob_test");
+    let mut total_bytes = 0usize;
+    let mut start = 0u32;
+
+    info!(
+        "Generating and sending {} tiny blob transactions (payload={} bytes)",
+        users, TINY_BLOB_PAYLOAD_BYTES
+    );
+
+    while start < users {
+        let batch_users = (users - start).min(TINY_BLOB_BATCH_SIZE);
+        let mut txs = Vec::with_capacity(batch_users as usize);
+
+        for i in start..start + batch_users {
+            let mut data = [0u8; TINY_BLOB_PAYLOAD_BYTES];
+            data[..8].copy_from_slice(&(i as u64).to_le_bytes());
+            data[8..16].copy_from_slice(((i as u64) ^ 0xDEADBEEFCAFEBABE).to_le_bytes().as_slice());
+            let tx = BlobTransaction::new(
+                ident.clone(),
+                vec![Blob {
+                    contract_name: "tiny_blob_test".into(),
+                    data: BlobData(data.to_vec()),
+                }],
+            );
+            txs.push(Transaction::from(tx));
+        }
+
+        let batch_bytes = txs_serialized_size_bytes(&txs)?;
+        total_bytes += batch_bytes;
+        info!(
+            "tiny blob batch {}..{} serialized size={} bytes avg={} bytes/tx",
+            start,
+            start + batch_users,
+            batch_bytes,
+            batch_bytes as f64 / batch_users as f64
+        );
+
+        send_blob_txs(url.clone(), txs).await?;
+        start += batch_users;
+    }
+
+    info!(
+        "tiny blob total serialized tx size estimate: total={} bytes avg={} bytes/tx",
+        total_bytes,
+        total_bytes as f64 / users as f64
+    );
+
+    Ok(())
+}
+
+pub async fn shoot_small_blobs_and_proofs(url: String, verifier: String) -> Result<()> {
+    info!(
+        "Preparing {} small blob transactions and {} proofs",
+        SMALL_BLOB_AND_PROOF_COUNT, SMALL_BLOB_AND_PROOF_COUNT
+    );
+
+    let states = States {
+        hyllar_test: setup_hyllar(SMALL_BLOB_AND_PROOF_COUNT).await?,
+        hydentity: Hydentity::default(),
+    };
+
+    setup(states.hyllar_test.clone(), url.clone(), verifier).await?;
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    let mut total_blob_bytes = 0usize;
+    let mut total_proof_bytes = 0usize;
+    let mut start = 0u32;
+
+    while start < SMALL_BLOB_AND_PROOF_COUNT {
+        let batch_users = (SMALL_BLOB_AND_PROOF_COUNT - start).min(SSBP_BATCH_SIZE);
+        info!("Processing ssbp batch {}..{}", start, start + batch_users);
+
+        let blob_txs = generate_blobs_txs_range(start, batch_users, false).await?;
+        let proof_txs = generate_proof_txs_range(
+            start,
+            batch_users,
+            states.clone(),
+            SSBP_PROOF_TASKS.min(batch_users),
+            false,
+        )
+        .await?;
+
+        let blob_bytes = txs_serialized_size_bytes(&blob_txs)?;
+        let proof_bytes = txs_serialized_size_bytes(&proof_txs)?;
+        total_blob_bytes += blob_bytes;
+        total_proof_bytes += proof_bytes;
+
+        info!(
+            "ssbp batch {}..{} serialized size: blobs={} bytes proofs={} bytes",
+            start,
+            start + batch_users,
+            blob_bytes,
+            proof_bytes
+        );
+
+        send(url.clone(), blob_txs, proof_txs).await?;
+        start += batch_users;
+    }
+
+    info!(
+        "ssbp total serialized tx size estimate: blobs={} bytes proofs={} bytes total={} bytes",
+        total_blob_bytes,
+        total_proof_bytes,
+        total_blob_bytes + total_proof_bytes
+    );
 
     Ok(())
 }

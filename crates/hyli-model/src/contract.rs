@@ -330,9 +330,13 @@ impl BorshDeserialize for StructuredBlobData<DropEndOfReader> {
     fn deserialize_reader<R: borsh::io::Read>(reader: &mut R) -> borsh::io::Result<Self> {
         let caller = Option::<BlobIndex>::deserialize_reader(reader)?;
         let callees = Option::<Vec<BlobIndex>>::deserialize_reader(reader)?;
-        // Drain remaining bytes (read_to_end seems not available in no_std)
-        let mut buf = [0u8; 1];
-        while reader.read(&mut buf)? > 0 {}
+        // read_to_end is not available in no_std; drain manually
+        let mut buf = [0u8; 64];
+        loop {
+            if reader.read(&mut buf)? == 0 {
+                break;
+            }
+        }
         let parameters = DropEndOfReader;
         Ok(StructuredBlobData {
             caller,
