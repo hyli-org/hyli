@@ -6,7 +6,7 @@
     <img src="https://github.com/hyli-org/hyli-assets/blob/main/Logos/Logo/HYLI_WORDMARK_ORANGE.png?raw=true" width="320" alt="Hyli">
   </a>
 
-_**Hyli** is a high-performance blockchain with built-in privacy._
+_**Hyli** is a confidential yet verifiable financial settlement infrastructure for European regulated actors. It enables regulated institutions to settle, tokenize, and comply without exposing sensitive data._
 
 This repository hosts the **Rust node client** for the [Hyli](https://hyli.org) chain.
 

@@ -338,8 +338,8 @@ fn validate_blob_matches_block(
     let Some(eth_block_tx) = block_txs.first().filter(|t| t.encoded_2718() == tx_payload) else {
         tracing::warn!(
             target: "hyli::verifiers::reth",
-            identity = %calldata.identity.0,
-            tx_hash = %calldata.tx_hash.0,
+            identity = ?calldata.identity.0,
+            tx_hash = ?calldata.tx_hash.0,
             blob_len = tx_payload.len(),
             "no block transaction matches blob payload"
         );
