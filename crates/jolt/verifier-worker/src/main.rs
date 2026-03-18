@@ -81,17 +81,20 @@ async fn handle_request(
         });
     }
 
-    let outputs =
-        match verify_jolt(&ProofData(request.proof), &ProgramId(request.program_id), cache)
-            .await
-            .context("verifying Jolt proof")
-        {
-            Ok(outputs) => outputs,
-            Err(err) => {
-                error!("❌ Jolt proof verification failed: {err:#}");
-                return Err(err);
-            }
-        };
+    let outputs = match verify_jolt(
+        &ProofData(request.proof),
+        &ProgramId(request.program_id),
+        cache,
+    )
+    .await
+    .context("verifying Jolt proof")
+    {
+        Ok(outputs) => outputs,
+        Err(err) => {
+            error!("❌ Jolt proof verification failed: {err:#}");
+            return Err(err);
+        }
+    };
 
     Ok(VerifyResponse {
         ok: true,
@@ -136,7 +139,9 @@ async fn get_registry_binary(program_id: &[u8], cache: &Rc<RefCell<JoltCache>>) 
     };
 
     // Promote to in-memory last-entry slot
-    cache.borrow_mut().set_last(program_id.to_vec(), binary.clone());
+    cache
+        .borrow_mut()
+        .set_last(program_id.to_vec(), binary.clone());
 
     Ok(binary)
 }
