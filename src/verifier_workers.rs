@@ -18,7 +18,7 @@ use hyli_model::{
     ProofData,
 };
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
     process::{Child, Command},
     sync::Mutex,
@@ -309,7 +309,7 @@ impl ProcessVerifierWorker {
             "Starting verifier worker"
         );
 
-        let (mut child, stream) = timeout(self.startup_timeout, async {
+        let (child, stream) = timeout(self.startup_timeout, async {
             let mut command = Command::new(&resolved_command);
             command
                 .args(&self.args)

@@ -11,13 +11,15 @@ pub fn verifier_preprocessing_to_program_id(verifier_preprocessing: &[u8]) -> Pr
     ProgramId(hasher.finalize().to_vec())
 }
 
+type Handler = Box<dyn Fn(Vec<u8>, Vec<Calldata>) + Send + Sync>;
+
 pub struct JoltProver {
     pub program_id: ProgramId,
     pub program: Program,
     pub prover_preprocessing:
         jolt_sdk::JoltProverPreprocessing<jolt_sdk::F, jolt_sdk::Curve, jolt_sdk::PCS>,
     pub memory_config: jolt_sdk::MemoryConfig,
-    pub trace_handler: Option<Box<dyn Fn(Vec<u8>, Vec<Calldata>) + Send + Sync>>,
+    pub trace_handler: Option<Handler>,
 }
 
 impl JoltProver {
@@ -28,7 +30,7 @@ impl JoltProver {
     pub fn new_with_handler(
         entry: JoltRegistryEntry,
         program_id: ProgramId,
-        trace_handler: Option<Box<dyn Fn(Vec<u8>, Vec<Calldata>) + Send + Sync>>,
+        trace_handler: Option<Handler>,
     ) -> Self {
         let JoltRegistryEntry {
             elf,
@@ -90,7 +92,7 @@ impl JoltProver {
             None,
         );
 
-        let (proof, device, _debug_info) = jolt_sdk::host_utils::guest::prover::prove(
+        let (proof, _device, _debug_info) = jolt_sdk::host_utils::guest::prover::prove(
             &self.program,
             &input_bytes,
             &[],
