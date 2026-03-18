@@ -22,7 +22,7 @@ path = "examples/host.rs"
 anyhow = { workspace = true }
 sdk = { workspace = true, features = ["smt"] }
 sha2 = { workspace = true }
-borsh = { workspace = true, features = ["derive"] }
+borsh = { workspace = true, features = ["derive", "std"] }
 sparse-merkle-tree = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive", "alloc"] }
 

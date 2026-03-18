@@ -12,7 +12,7 @@ rust-version = { workspace = true }
 hyli-turmoil-shims = { workspace = true, features = ["opentelemetry"] }
 anyhow = { workspace = true }
 anymap = { workspace = true }
-borsh = { workspace = true, features = ["derive"] }
+borsh = { workspace = true, features = ["derive", "std"] }
 crc32fast = { workspace = true }
 futures = { workspace = true }
 paste = { workspace = true }
