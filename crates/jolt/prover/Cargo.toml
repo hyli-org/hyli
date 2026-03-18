@@ -11,12 +11,8 @@ rust-version = { workspace = true }
 [dependencies]
 hyli-jolt-model = { workspace = true }
 sdk = { workspace = true, default-features = false, features = ["full-model"] }
-hyli-model = { workspace = true }
-hyli-registry = { workspace = true }
 
 anyhow = { workspace = true }
-borsh = { workspace = true }
-hex = { workspace = true }
 jolt-sdk = { workspace = true, features = ["host"] }
 sha3 = { workspace = true }
 tempfile = { workspace = true }

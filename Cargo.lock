@@ -3197,6 +3197,7 @@ dependencies = [
 [[package]]
 name = "common"
 version = "0.2.0"
+source = "git+https://github.com/BertrandD/jolt#d6747a3b063f5b5d14222775960fb98bb5654df1"
 dependencies = [
  "allocative",
  "ark-serialize 0.5.0",
@@ -5763,12 +5764,8 @@ name = "hyli-jolt-prover"
 version = "0.14.0"
 dependencies = [
  "anyhow",
- "borsh",
- "hex",
  "hyli-contract-sdk",
  "hyli-jolt-model",
- "hyli-model",
- "hyli-registry",
  "jolt-sdk",
  "sha3",
  "tempfile",
@@ -6716,6 +6713,7 @@ dependencies = [
 [[package]]
 name = "jolt-core"
 version = "0.1.0"
+source = "git+https://github.com/BertrandD/jolt#d6747a3b063f5b5d14222775960fb98bb5654df1"
 dependencies = [
  "allocative",
  "ark-bn254",
@@ -6759,6 +6757,7 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-keccak256"
 version = "0.1.0"
+source = "git+https://github.com/BertrandD/jolt#d6747a3b063f5b5d14222775960fb98bb5654df1"
 dependencies = [
  "ctor 0.6.3",
  "tracer",
@@ -6768,6 +6767,7 @@ dependencies = [
 [[package]]
 name = "jolt-inlines-sha2"
 version = "0.1.0"
+source = "git+https://github.com/BertrandD/jolt#d6747a3b063f5b5d14222775960fb98bb5654df1"
 dependencies = [
  "ctor 0.6.3",
  "tracer",
@@ -6795,6 +6795,7 @@ dependencies = [
 [[package]]
 name = "jolt-platform"
 version = "0.1.0"
+source = "git+https://github.com/BertrandD/jolt#d6747a3b063f5b5d14222775960fb98bb5654df1"
 dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.3.4",
@@ -6804,6 +6805,7 @@ dependencies = [
 [[package]]
 name = "jolt-sdk"
 version = "0.1.0"
+source = "git+https://github.com/BertrandD/jolt#d6747a3b063f5b5d14222775960fb98bb5654df1"
 dependencies = [
  "bytemuck",
  "cfg-if 1.0.4",
@@ -6820,6 +6822,7 @@ dependencies = [
 [[package]]
 name = "jolt-sdk-macros"
 version = "0.1.0"
+source = "git+https://github.com/BertrandD/jolt#d6747a3b063f5b5d14222775960fb98bb5654df1"
 dependencies = [
  "common",
  "proc-macro2",
@@ -13326,6 +13329,7 @@ dependencies = [
 [[package]]
 name = "tracer"
 version = "0.2.0"
+source = "git+https://github.com/BertrandD/jolt#d6747a3b063f5b5d14222775960fb98bb5654df1"
 dependencies = [
  "addr2line 0.26.0",
  "ark-serialize 0.5.0",
