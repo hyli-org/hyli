@@ -95,6 +95,16 @@ impl MempoolTestCtx {
                 crypto: Arc::new(crypto),
                 metrics: MempoolMetrics::global(),
                 lanes,
+                proof_verifiers: Arc::new(
+                    crate::verifier_workers::ProofVerifierService::from_config(
+                        &crate::utils::conf::VerifierWorkersConf {
+                            enabled: false,
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .expect("Failed to build ProofVerifierService"),
+                ),
                 inner: MempoolStore::default(),
             },
             dissemination_manager,
