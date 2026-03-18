@@ -1,6 +1,6 @@
 use anyhow::Result;
 use jolt_sdk::guest::program::Program;
-use sdk::{Calldata, ProgramId, Proof, ProofData};
+use hyli_model::{Calldata, ProgramId, Proof, ProofData};
 use sha3::Digest;
 
 pub use hyli_jolt_model::{BorshMemoryConfig, BorshableJoltProverPreprocessing, JoltRegistryEntry};
@@ -62,7 +62,7 @@ impl JoltProver {
         calldatas: Vec<Calldata>,
     ) -> Result<Proof> {
         use jolt_sdk::Serializable;
-        use sdk::ProofMetadata;
+        use hyli_model::ProofMetadata;
 
         let mut input_bytes = Vec::new();
         input_bytes.append(&mut jolt_sdk::postcard::to_stdvec(&commitment_metadata).unwrap());
@@ -107,7 +107,7 @@ impl JoltProver {
             .serialize_to_bytes()
             .map_err(|e| anyhow::anyhow!("serializing Jolt proof: {e}"))?;
 
-        let data: ProofData = sdk::verifiers::jolt::JoltProofData {
+        let data: ProofData = hyli_model::verifiers::jolt::JoltProofData {
             input: input_bytes,
             output: output_bytes,
             proof,

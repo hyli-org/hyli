@@ -5764,8 +5764,8 @@ name = "hyli-jolt-prover"
 version = "0.14.0"
 dependencies = [
  "anyhow",
- "hyli-contract-sdk",
  "hyli-jolt-model",
+ "hyli-model",
  "jolt-sdk",
  "sha3",
  "tempfile",

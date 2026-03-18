@@ -8,12 +8,9 @@ homepage = { workspace = true }
 repository = { workspace = true }
 rust-version = { workspace = true }
 
-[lib]
-test = false
-
 [dependencies]
 hyli-jolt-model = { workspace = true }
-sdk = { workspace = true, default-features = false, features = ["full-model"] }
+hyli-model = { workspace = true, features = ["full"] }
 
 anyhow = { workspace = true }
 jolt-sdk = { workspace = true, features = ["host"] }
