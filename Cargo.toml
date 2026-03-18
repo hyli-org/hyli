@@ -297,6 +297,7 @@ ignored = ["zip", "bytes", "tokio-util", "native-tls"]
 [patch.crates-io]
 sha2 = { git = "https://github.com/risc0/RustCrypto-hashes", tag = "sha2-v0.10.9-risczero.0" }
 
+# Patches for jolt
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
@@ -343,7 +344,7 @@ risc0-zkvm = { workspace = true, default-features = false, features = [
 signal-child = "1.0.6"
 
 [features]
-default = ["instrumentation"]
+default = ["risc0", "instrumentation"]
 
 turmoil = [
   "hyli-net/turmoil",

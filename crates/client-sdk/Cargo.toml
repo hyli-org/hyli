@@ -44,7 +44,6 @@ test-log = { workspace = true, features = [
 ], default-features = false }
 
 [features]
-default = ["jolt"]
 turmoil = ["hyli-net/turmoil"]
 rest = []
 axum = ["dep:axum"]

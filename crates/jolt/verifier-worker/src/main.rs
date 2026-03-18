@@ -68,7 +68,6 @@ async fn verify_jolt(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<Hy
         input,
         output,
         proof,
-        // verifier_preprocessing,
     } = proof
         .try_into()
         .context("decoding Jolt proof payload from ProofData")?;
