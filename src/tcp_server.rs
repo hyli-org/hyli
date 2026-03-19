@@ -7,7 +7,7 @@ use hyli_modules::{
     log_error, module_handle_messages,
     modules::{module_bus_client, Module},
 };
-use hyli_net::tcp::TcpEvent;
+use hyli_net::tcp::{TcpEvent, TcpServerLike};
 use tracing::{info, warn};
 
 module_bus_client! {
