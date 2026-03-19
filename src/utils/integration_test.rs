@@ -20,6 +20,7 @@ use crate::{
     single_node_consensus::SingleNodeConsensus,
     tcp_server::TcpServer,
     utils::conf::Conf,
+    verifier_workers::ProofVerifierService,
 };
 use anyhow::{bail, Context, Result};
 use axum::Router;
@@ -266,6 +267,13 @@ impl NodeIntegrationCtx {
             crypto,
             start_height: None,
             start_timestamp: hyli_model::utils::TimestampMs(1000000),
+            proof_verifiers: Arc::new(
+                ProofVerifierService::from_config(&crate::utils::conf::VerifierWorkersConf {
+                    enabled: false,
+                    ..Default::default()
+                })
+                .await?,
+            ),
         };
 
         let mut handler = ModulesHandler::new(

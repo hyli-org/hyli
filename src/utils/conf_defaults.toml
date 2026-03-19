@@ -115,3 +115,17 @@ index_tx_events = true
 suffixes = ["default"]
 default_blob_suffix = "default"
 default_proof_suffix = "default"
+
+[verifier_workers]
+enabled = true
+default_request_timeout_ms = 30000
+default_restart_backoff_ms = 1000
+
+[verifier_workers.backends.jolt]
+enabled = false
+command = "hyli-jolt-verifier"
+args = []
+verifiers = ["jolt-0.1"]
+startup_timeout_ms = 5000
+request_timeout_ms = 30000
+auto_restart = true

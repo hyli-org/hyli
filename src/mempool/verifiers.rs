@@ -2,7 +2,10 @@ use anyhow::{Context, Result};
 use hyli_contract_sdk::{HyliOutput, ProgramId, Verifier};
 use hyli_model::ProofData;
 
-pub fn verify_proof(
+use crate::verifier_workers::ProofVerifierService;
+
+pub async fn verify_proof(
+    proof_verifiers: &ProofVerifierService,
     proof: &ProofData,
     verifier: &Verifier,
     #[allow(unused_variables)] program_id: &ProgramId,
@@ -16,6 +19,9 @@ pub fn verify_proof(
             std::thread::sleep(std::time::Duration::from_secs(2));
             tracing::info!("Woke up from sleep");
             Ok(serde_json::from_slice(&proof.0)?)
+        }
+        _ if proof_verifiers.handles(verifier) => {
+            proof_verifiers.verify(verifier, proof, program_id).await
         }
         _ => hyli_verifiers::verify(verifier, proof, program_id),
     }?;
@@ -31,7 +37,8 @@ pub fn verify_proof(
     Ok(hyli_outputs)
 }
 
-pub fn verify_recursive_proof(
+pub async fn verify_recursive_proof(
+    _proof_verifiers: &ProofVerifierService,
     proof: &ProofData,
     verifier: &Verifier,
     program_id: &ProgramId,

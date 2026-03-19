@@ -33,7 +33,11 @@ hyli-net-traits = { workspace = true, optional = true }
 [features]
 # disable default feature if you want minimalist definitions for contracts
 default = ["std", "full"]
-std = ["borsh/std", "serde/std", "hex/std"]
+std = [
+  "borsh/std",
+  "serde/std",
+  "hex/std",
+]
 full = [
   "std",
   "dep:sha3",

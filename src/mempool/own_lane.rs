@@ -506,11 +506,13 @@ impl super::Mempool {
     }
 
     pub(super) fn enqueue_processing_tx_proof(&mut self, arc_tx: Arc<Transaction>) {
+        let proof_verifiers = self.proof_verifiers.clone();
         let handle = self.inner.long_tasks_runtime.handle();
         self.inner.processing_txs.spawn_on(
             async move {
                 arc_tx.hashed();
-                let tx = Self::process_proof_tx((*arc_tx).clone())
+                let tx = Self::process_proof_tx(proof_verifiers, (*arc_tx).clone())
+                    .await
                     .context("Processing proof tx in blocker")?;
                 Ok(tx)
             },
@@ -526,7 +528,10 @@ impl super::Mempool {
         arc_tx
     }
 
-    pub(super) fn process_proof_tx(mut tx: Transaction) -> Result<Transaction> {
+    pub(super) async fn process_proof_tx(
+        proof_verifiers: Arc<crate::verifier_workers::ProofVerifierService>,
+        mut tx: Transaction,
+    ) -> Result<Transaction> {
         let TransactionData::Proof(proof_transaction) = tx.transaction_data else {
             bail!("Can only process ProofTx");
         };
@@ -535,18 +540,22 @@ impl super::Mempool {
 
         let (hyli_outputs, program_ids) = if is_recursive {
             let (program_ids, hyli_outputs) = verify_recursive_proof(
+                &proof_verifiers,
                 &proof_transaction.proof,
                 &proof_transaction.verifier,
                 &proof_transaction.program_id,
             )
+            .await
             .context("verify_rec_proof")?;
             (hyli_outputs, program_ids)
         } else {
             let hyli_outputs = verify_proof(
+                &proof_verifiers,
                 &proof_transaction.proof,
                 &proof_transaction.verifier,
                 &proof_transaction.program_id,
             )
+            .await
             .context("verify_proof")?;
             let len = hyli_outputs.len();
             (

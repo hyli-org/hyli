@@ -9,6 +9,7 @@ use crate::{
         HeaderSignableData, HeaderSigner, IntoHeaderSignableData, MsgWithHeader, OutboundMessage,
     },
     utils::{conf::SharedConf, serialize::BorshableIndexMap},
+    verifier_workers::ProofVerifierService,
 };
 use anyhow::{bail, Context, Result};
 use api::RestApiMessage;
@@ -137,6 +138,7 @@ pub struct Mempool {
     crypto: SharedBlstCrypto,
     metrics: MempoolMetrics,
     lanes: LanesStorage,
+    proof_verifiers: Arc<ProofVerifierService>,
     inner: MempoolStore,
 }
 

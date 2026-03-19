@@ -8,6 +8,7 @@ pub const CAIRO_M: &str = "cairo-m";
 pub const RISC0_3: &str = "risc0-3";
 pub const NOIR: &str = "noir";
 pub const SP1_4: &str = "sp1-4";
+pub const JOLT_0_1: &str = "jolt-0.1";
 
 #[derive(Debug, Copy, Clone)]
 pub enum NativeVerifiers {
@@ -46,6 +47,38 @@ impl From<NativeVerifiers> for Verifier {
             NativeVerifiers::Blst => Self("blst".into()),
             NativeVerifiers::Sha3_256 => Self("sha3_256".into()),
             NativeVerifiers::Secp256k1 => Self("secp256k1".into()),
+        }
+    }
+}
+
+#[cfg(feature = "full")]
+pub mod jolt {
+    use crate::ProofData;
+
+    #[derive(borsh::BorshSerialize, borsh::BorshDeserialize)]
+    pub struct JoltProofData {
+        pub input: Vec<u8>,
+        pub output: Vec<u8>,
+        pub proof: Vec<u8>,
+    }
+
+    impl TryFrom<JoltProofData> for ProofData {
+        type Error = anyhow::Error;
+
+        fn try_from(jolt_proof_data: JoltProofData) -> Result<Self, Self::Error> {
+            let data = borsh::to_vec(&jolt_proof_data)
+                .map_err(|e| anyhow::anyhow!("serializing Jolt proof data: {e}"))?;
+
+            Ok(ProofData(data))
+        }
+    }
+
+    impl TryFrom<&ProofData> for JoltProofData {
+        type Error = anyhow::Error;
+
+        fn try_from(proof_data: &ProofData) -> Result<Self, Self::Error> {
+            borsh::from_slice(&proof_data.0)
+                .map_err(|e| anyhow::anyhow!("deserializing Jolt proof data: {e}"))
         }
     }
 }

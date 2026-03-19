@@ -17,6 +17,7 @@ use crate::{
         conf::{self, P2pMode},
         modules::ModulesHandler,
     },
+    verifier_workers::ProofVerifierService,
 };
 use anyhow::{bail, Context, Result};
 use axum::Router;
@@ -77,11 +78,19 @@ impl RunPg {
         }
 
         info!("🐘 Starting postgres DB with default settings for the indexer");
-        let pg = Postgres::default()
-            .with_tag("17-alpine")
-            .with_cmd(["postgres", "-c", "log_statement=all"])
-            .start()
-            .await?;
+        let fixed_port: Option<u16> = std::env::var("HYLI_PG_HOST_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok());
+        let mut pg_builder = Postgres::default().with_tag("17-alpine").with_cmd([
+            "postgres",
+            "-c",
+            "log_statement=all",
+        ]);
+        if let Some(port) = fixed_port {
+            info!("🐘 Using fixed postgres host port {}", port);
+            pg_builder = pg_builder.with_mapped_port(port, 5432u16.into());
+        }
+        let pg = pg_builder.start().await?;
 
         config.database_url = format!(
             "postgres://postgres:postgres@localhost:{}/postgres",
@@ -556,6 +565,11 @@ pub async fn common_main(
     }
 
     if config.p2p.mode != conf::P2pMode::None {
+        let proof_verifiers = Arc::new(
+            ProofVerifierService::from_config(&config.verifier_workers)
+                .await
+                .context("initializing verifier workers")?,
+        );
         let ctx = SharedRunContext {
             config: config.clone(),
             api: build_api_ctx.clone(),
@@ -567,6 +581,7 @@ pub async fn common_main(
                 .as_ref()
                 .map(|node_state| node_state.current_height),
             start_timestamp,
+            proof_verifiers,
         };
 
         handler

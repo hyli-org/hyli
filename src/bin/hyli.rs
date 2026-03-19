@@ -26,6 +26,9 @@ pub struct Args {
 
     #[clap(long, action)]
     pub pg: bool,
+
+    #[clap(long, action)]
+    pub jolt: bool,
 }
 
 #[cfg(feature = "dhat")]
@@ -105,6 +108,14 @@ async fn inner_main() -> Result<()> {
     } else {
         None
     };
+
+    if args.jolt {
+        if let Some(backend) = config.verifier_workers.backends.get_mut("jolt") {
+            backend.enabled = true;
+        } else {
+            anyhow::bail!("Jolt verifier worker backend not found in config");
+        }
+    }
 
     #[cfg(feature = "sp1")]
     {
