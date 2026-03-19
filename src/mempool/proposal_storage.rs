@@ -2,8 +2,8 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    path::Path,
-    sync::{Arc, RwLock},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex, OnceLock, RwLock},
 };
 
 use anyhow::Result;
@@ -16,6 +16,8 @@ use crate::model::{DataProposal, DataProposalHash, Hashed};
 type ProposalKey = (LaneId, DataProposalHash);
 type Proofs = Vec<(u64, ProofData)>;
 type SharedProofs = Arc<Proofs>;
+
+static SHARED_PROPOSALS: OnceLock<Mutex<HashMap<PathBuf, Arc<ProposalStorage>>>> = OnceLock::new();
 
 pub trait KvEncode: Send + Sync + 'static {
     fn encode(&self) -> Result<Vec<u8>>;
@@ -33,6 +35,7 @@ where
 pub trait KvBackend: Send + Sync {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>>;
     fn put(&self, key: &[u8], value: Arc<dyn KvEncode>) -> Result<()>;
+    fn contains_key(&self, key: &[u8]) -> Result<bool>;
     fn delete(&self, key: &[u8]) -> Result<()>;
     fn persist(&self) -> Result<()>;
 }
@@ -59,6 +62,10 @@ impl KvBackend for InMemoryKvBackend {
             .unwrap()
             .insert(key.to_vec(), value.encode()?);
         Ok(())
+    }
+
+    fn contains_key(&self, key: &[u8]) -> Result<bool> {
+        Ok(self.data.read().unwrap().contains_key(key))
     }
 
     fn delete(&self, key: &[u8]) -> Result<()> {
@@ -131,6 +138,10 @@ impl KvBackend for FjallKvBackend {
         Ok(())
     }
 
+    fn contains_key(&self, key: &[u8]) -> Result<bool> {
+        Ok(self.keyspace_for_key(key).contains_key(key)?)
+    }
+
     fn delete(&self, key: &[u8]) -> Result<()> {
         self.keyspace_for_key(key).remove(key)?;
         Ok(())
@@ -149,6 +160,21 @@ pub struct ProposalStorage {
 }
 
 impl ProposalStorage {
+    pub fn shared(path: &Path) -> Result<Arc<Self>> {
+        let registry = SHARED_PROPOSALS.get_or_init(|| Mutex::new(HashMap::new()));
+        let mut guard = registry
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        if let Some(existing) = guard.get(path) {
+            return Ok(Arc::clone(existing));
+        }
+
+        let storage = Arc::new(Self::new(path)?);
+        guard.insert(path.to_path_buf(), Arc::clone(&storage));
+        Ok(storage)
+    }
+
     pub fn new(path: &Path) -> Result<Self> {
         Ok(Self {
             backend: Box::new(FjallKvBackend::new(path)?),
