@@ -129,3 +129,12 @@ verifiers = ["jolt-0.1"]
 startup_timeout_ms = 5000
 request_timeout_ms = 30000
 auto_restart = true
+
+[verifier_workers.backends.sp1]
+enabled = false
+command = "hyli-sp1-verifier"
+args = []
+verifiers = ["sp1-4"]
+startup_timeout_ms = 5000
+request_timeout_ms = 30000
+auto_restart = true

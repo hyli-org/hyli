@@ -5,8 +5,6 @@ use anyhow::{bail, Context, Error};
 use hyli_model::{HyliOutput, ProgramId, ProofData, Verifier};
 use rand::Rng;
 
-#[cfg(feature = "sp1")]
-use sp1_sdk::{ProverClient, SP1ProofWithPublicValues, SP1VerifyingKey};
 use tracing::debug;
 
 pub mod noir_utils;
@@ -25,8 +23,6 @@ pub fn verify(
         #[cfg(feature = "risc0")]
         hyli_model::verifiers::RISC0_3 => risc0_1::verify(proof, program_id),
         hyli_model::verifiers::NOIR => noir::verify(proof, program_id),
-        #[cfg(feature = "sp1")]
-        hyli_model::verifiers::SP1_4 => sp1_4::verify(proof, program_id),
         #[cfg(feature = "reth")]
         hyli_model::verifiers::RETH => reth::verify(proof, program_id),
         _ => Err(anyhow::anyhow!("{} verifier not implemented yet", verifier)),
@@ -226,60 +222,6 @@ pub mod noir {
     }
 }
 
-/// The following environment variables are used to configure the prover:
-/// - `SP1_PROVER`: The type of prover to use. Must be one of `mock`, `local`, `cuda`, or `network`.
-#[cfg(feature = "sp1")]
-pub mod sp1_4 {
-    use super::*;
-    use once_cell::sync::Lazy;
-
-    static SP1_CLIENT: Lazy<sp1_sdk::EnvProver> = Lazy::new(|| {
-        tracing::trace!("Setup sp1 prover client from env");
-        ProverClient::from_env()
-    });
-
-    pub fn init() {
-        tracing::info!("Initializing sp1 verifier");
-        let _client = &*SP1_CLIENT;
-    }
-
-    pub fn verify(
-        proof_bin: &ProofData,
-        verification_key: &ProgramId,
-    ) -> Result<Vec<HyliOutput>, Error> {
-        let client = &*SP1_CLIENT;
-
-        let proof: SP1ProofWithPublicValues =
-            bincode::deserialize(&proof_bin.0).context("Error while decoding SP1 proof.")?;
-
-        // Deserialize verification key from JSON
-        let vk: SP1VerifyingKey =
-            serde_json::from_slice(&verification_key.0).context("Invalid SP1 image ID")?;
-
-        // Verify the proof.
-        tracing::trace!("Verifying SP1 proof");
-        client
-            .verify(&proof, &vk)
-            .context("SP1 proof verification failed")?;
-
-        tracing::trace!("Extract HyliOutput");
-        let hyli_outputs =
-            match borsh::from_slice::<Vec<HyliOutput>>(proof.public_values.as_slice()) {
-                Ok(outputs) => outputs,
-                Err(_) => {
-                    debug!("Failed to decode Vec<HyliOutput>, trying to decode as HyliOutput");
-                    vec![
-                        borsh::from_slice::<HyliOutput>(proof.public_values.as_slice())
-                            .context("Failed to extract HyliOuput from SP1 proof")?,
-                    ]
-                }
-            };
-
-        tracing::info!("✅ SP1 proof verified.",);
-
-        Ok(hyli_outputs)
-    }
-}
 
 #[cfg(test)]
 mod tests {
