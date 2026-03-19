@@ -71,7 +71,6 @@ hyli-turmoil-shims = { workspace = true, features = ["otlp"] }
 
 [features]
 risc0 = ["client-sdk/risc0"]
-sp1 = ["client-sdk/sp1"]
 otlp = ["hyli-turmoil-shims/otlp"]
 turmoil = ["hyli-turmoil-shims/turmoil", "hyli-bus/turmoil"]
 test = ["dep:test-log"]
