@@ -8,11 +8,11 @@ use client_sdk::tcp_client::TcpServerMessage;
 use hyli_turmoil_shims::collections::HashMap;
 use tracing::{debug, info, trace};
 
+use super::api::RestApiMessage;
 use super::verifiers::{verify_proof, verify_recursive_proof};
 use super::DisseminationEvent;
 #[cfg(test)]
 use super::MempoolNetMessage;
-use super::{api::RestApiMessage, storage::Storage};
 use indexmap::IndexMap;
 use std::{collections::HashSet, sync::Arc};
 use tokio::task::Id as TaskId;
