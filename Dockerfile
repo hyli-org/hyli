@@ -27,7 +27,7 @@ COPY --from=builder /usr/src/hyli/target/release/gcs_uploader              ./
 COPY --from=builder /usr/src/hyli/target/release/smt_auto_prover           ./
 COPY --from=builder /usr/src/hyli/target/release/health_check              ./
 COPY --from=builder /usr/src/hyli/target/release/rate_limiter_proxy        ./
-COPY --from=builder /usr/src/hyli/target/release/hyli-jolt-verifier-worker ./
+COPY --from=builder /usr/src/hyli/target/release/hyli-jolt-verifier        ./
 
 VOLUME /hyli/data
 
