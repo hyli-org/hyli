@@ -1,14 +1,23 @@
 use anyhow::Result;
 use hyli_model::{Calldata, ProgramId, Proof, ProofData};
-use jolt_sdk::guest::program::Program;
+use jolt_sdk::{guest::program::Program, Serializable};
 use sha3::Digest;
 
 pub use hyli_jolt_model::{BorshMemoryConfig, BorshableJoltProverPreprocessing, JoltRegistryEntry};
 
-pub fn verifier_preprocessing_to_program_id(verifier_preprocessing: &[u8]) -> ProgramId {
+pub fn verifier_preprocessing_to_program_id(
+    verifier_preprocessing: &jolt_sdk::JoltVerifierPreprocessing<
+        jolt_sdk::F,
+        jolt_sdk::Curve,
+        jolt_sdk::PCS,
+    >,
+) -> Result<ProgramId> {
+    let verifier_preprocessing = verifier_preprocessing
+        .serialize_to_bytes()
+        .map_err(|e| anyhow::anyhow!("serializing Jolt verifier preprocessing: {e}"))?;
     let mut hasher = sha3::Sha3_256::new();
     hasher.update(verifier_preprocessing);
-    ProgramId(hasher.finalize().to_vec())
+    Ok(ProgramId(hasher.finalize().to_vec()))
 }
 
 type Handler = Box<dyn Fn(Vec<u8>, Vec<Calldata>) + Send + Sync>;
