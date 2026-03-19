@@ -38,15 +38,14 @@ pub async fn verify_proof(
 }
 
 pub async fn verify_recursive_proof(
-    _proof_verifiers: &ProofVerifierService,
+    proof_verifiers: &ProofVerifierService,
     proof: &ProofData,
     verifier: &Verifier,
     program_id: &ProgramId,
 ) -> Result<(Vec<ProgramId>, Vec<HyliOutput>)> {
     let outputs: (Vec<ProgramId>, Vec<HyliOutput>) = match verifier.0.as_str() {
-        #[cfg(feature = "risc0")]
-        hyli_model::verifiers::RISC0_3 => {
-            hyli_verifiers::risc0_1::verify_recursive(proof, program_id)
+        _ if proof_verifiers.handles(verifier) => {
+            proof_verifiers.verify_recursive(verifier, proof, program_id).await
         }
         _ => Err(anyhow::anyhow!(
             "{} recursive verifier not implemented yet (or feature disabled)",
