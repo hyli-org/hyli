@@ -103,6 +103,7 @@ impl StoredSignedBlock {
                     .map(|dp_hash| {
                         proposals
                             .get_dp_by_hash(&lane_id, &dp_hash)?
+                            .map(Arc::unwrap_or_clone)
                             .with_context(|| {
                                 format!(
                                     "missing proposal {dp_hash} for lane {} while hydrating block {}",

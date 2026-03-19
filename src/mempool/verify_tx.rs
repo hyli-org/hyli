@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use hyli_model::{DataProposalHash, DataSized, LaneBytesSize, LaneId};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tokio::time::timeout;
 use tracing::{debug, trace, warn};
 
@@ -227,7 +228,7 @@ impl super::Mempool {
                 self.buffered_entries
                     .entry(lane_id.clone())
                     .or_default()
-                    .insert(data_proposal_hash.clone(), (vec![vote], data_proposal));
+                    .insert(data_proposal_hash.clone(), (vec![vote], Arc::new(data_proposal)));
             }
             DataProposalVerdict::Refuse => {
                 self.cached_dp_votes.insert(

@@ -43,7 +43,7 @@ pub enum CanBePutOnTop {
 #[derive(Debug)]
 #[expect(clippy::large_enum_variant)]
 pub enum EntryOrMissingHash {
-    Entry(LaneEntryMetadata, DataProposal),
+    Entry(LaneEntryMetadata, Arc<DataProposal>),
     MissingHash(DataProposalHash),
 }
 
@@ -192,8 +192,9 @@ impl LanesStorage {
     pub fn put_no_verification(
         &self,
         lane_id: LaneId,
-        (lane_entry, data_proposal): (LaneEntryMetadata, DataProposal),
+        (lane_entry, data_proposal): (LaneEntryMetadata, impl Into<Arc<DataProposal>>),
     ) -> Result<()> {
+        let data_proposal = data_proposal.into();
         let dp_hash = data_proposal.hashed();
         self.proposals
             .put_no_verification(lane_id.clone(), data_proposal)?;
@@ -266,7 +267,7 @@ impl LanesStorage {
         &self,
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
-    ) -> Result<Option<(DataProposalHash, (LaneEntryMetadata, DataProposal))>> {
+    ) -> Result<Option<(DataProposalHash, (LaneEntryMetadata, Arc<DataProposal>))>> {
         let Some(data_proposal) = self.proposals.remove_by_hash(lane_id, dp_hash)? else {
             return Ok(None);
         };
@@ -377,8 +378,9 @@ impl LanesStorage {
         &mut self,
         crypto: &BlstCrypto,
         lane_id: &LaneId,
-        data_proposal: DataProposal,
+        data_proposal: impl Into<Arc<DataProposal>>,
     ) -> Result<(DataProposalHash, LaneBytesSize)> {
+        let data_proposal = data_proposal.into();
         // Add DataProposal to validator's lane
         let data_proposal_hash = data_proposal.hashed();
 
@@ -426,7 +428,7 @@ impl LanesStorage {
                             signatures,
                             cached_poda: None,
                         },
-                        data_proposal,
+                        Arc::clone(&data_proposal),
                     ),
                 )?;
                 // We optimistically update our lane tip here, we'll potentially clean this later.
@@ -451,7 +453,7 @@ impl LanesStorage {
                             signatures,
                             cached_poda: None,
                         },
-                        data_proposal,
+                        Arc::clone(&data_proposal),
                     ),
                 )?;
                 cumul_size
@@ -739,7 +741,7 @@ mod tests {
                 .get_dp_by_hash(lane_id, &dp_hash)
                 .unwrap()
                 .unwrap(),
-            data_proposal
+            Arc::new(data_proposal)
         );
     }
 
@@ -808,7 +810,7 @@ mod tests {
         assert_eq!(proofs.first(), Some(&(0u64, proof.clone())));
 
         // Hydration should restore proofs back into the DP for broadcasting
-        let mut to_broadcast = stored_dp.clone();
+        let mut to_broadcast = Arc::unwrap_or_clone(stored_dp.clone());
         to_broadcast.hydrate_proofs(proofs);
         match &to_broadcast.txs.first().unwrap().transaction_data {
             TransactionData::VerifiedProof(v) => {
@@ -919,7 +921,7 @@ mod tests {
     fn unwrap_entry(entry: &EntryOrMissingHash) -> (LaneEntryMetadata, DataProposal) {
         match entry {
             EntryOrMissingHash::Entry(metadata, data_proposal) => {
-                (metadata.clone(), data_proposal.clone())
+                (metadata.clone(), Arc::unwrap_or_clone(data_proposal.clone()))
             }
             EntryOrMissingHash::MissingHash(_) => panic!("Expected an entry, got missing hash"),
         }

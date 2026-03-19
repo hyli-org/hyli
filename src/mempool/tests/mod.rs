@@ -388,7 +388,7 @@ impl MempoolTestCtx {
     pub fn last_lane_entry(
         &self,
         lane_id: &LaneId,
-    ) -> ((LaneEntryMetadata, DataProposal), DataProposalHash) {
+    ) -> ((LaneEntryMetadata, Arc<DataProposal>), DataProposalHash) {
         let last_dp_hash = self.current_hash(lane_id).unwrap();
         let last_metadata = self
             .mempool

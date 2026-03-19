@@ -15,6 +15,7 @@ use super::{
 };
 use anyhow::{bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
+use std::sync::Arc;
 use tracing::{debug, error, info, trace, warn};
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
@@ -58,12 +59,13 @@ impl super::Mempool {
         #[cfg(test)]
         {
             let dp_hash = data_proposal.hashed();
-            self.on_hashed_sync_reply(lane_id.clone(), signatures, data_proposal, dp_hash)
+            self.on_hashed_sync_reply(lane_id.clone(), signatures, Arc::new(data_proposal), dp_hash)
                 .await?;
         }
         #[cfg(not(test))]
         {
             let lane_id_clone = lane_id.clone();
+            let data_proposal = Arc::new(data_proposal);
             let handle = self.inner.long_tasks_runtime.handle();
             self.inner.processing_dps.spawn_on(
                 async move {
@@ -86,7 +88,7 @@ impl super::Mempool {
         &mut self,
         lane_id: LaneId,
         signatures: Vec<ValidatorDAG>,
-        data_proposal: DataProposal,
+        data_proposal: Arc<DataProposal>,
         dp_hash: DataProposalHash,
     ) -> Result<()> {
         // We don't check if we already have stored the DP just in case
@@ -154,7 +156,7 @@ impl super::Mempool {
         &mut self,
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
-    ) -> Option<(Vec<ValidatorDAG>, DataProposal)> {
+    ) -> Option<(Vec<ValidatorDAG>, Arc<DataProposal>)> {
         if let Some((signatures, data_proposal)) = self
             .buffered_entries
             .get_mut(lane_id)
@@ -269,7 +271,7 @@ impl super::Mempool {
         expected_top: &DataProposalHash,
         lane_size: LaneBytesSize,
         signatures: Vec<ValidatorDAG>,
-        data_proposal: DataProposal,
+        data_proposal: Arc<DataProposal>,
     ) -> Result<Option<(DataProposalHash, LaneBytesSize)>> {
         let lane_operator = lane_id.operator();
         let dp_hash = data_proposal.hashed();
@@ -469,7 +471,8 @@ impl super::Mempool {
 
             while let Some(entry) = entries.next().await {
                 match entry {
-                    Ok(EntryOrMissingHash::Entry(_, mut dp)) => {
+                    Ok(EntryOrMissingHash::Entry(_, dp)) => {
+                        let mut dp = Arc::unwrap_or_clone(dp);
                         dp.remove_proofs();
                         dps.push(dp);
                     }

@@ -1,7 +1,7 @@
 //! Dissemination manager: routes data proposals, tracks peer knowledge, and schedules sync/reply.
 //! It consumes events from mempool/consensus and emits outbound network messages.
 
-use std::{collections::HashSet, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
@@ -628,10 +628,11 @@ impl DisseminationManager {
             };
 
             let mut send_succeeded = false;
-            if let Ok(Some(mut data_proposal)) = log_error!(
+            if let Ok(Some(data_proposal)) = log_error!(
                 self.lanes.get_dp_by_hash(&lane_id, &dp_hash),
                 "Getting data proposal to prepare a SyncReply"
             ) {
+                let mut data_proposal = Arc::unwrap_or_clone(data_proposal);
                 if let Ok(Some(proofs)) = log_error!(
                     self.lanes.get_proofs_by_hash(&lane_id, &dp_hash),
                     "Getting proofs to prepare a SyncReply"
@@ -857,9 +858,10 @@ impl DisseminationManager {
             return Ok(false);
         }
 
-        let Some(mut data_proposal) = self.lanes.get_dp_by_hash(lane_id, dp_hash)? else {
+        let Some(data_proposal) = self.lanes.get_dp_by_hash(lane_id, dp_hash)? else {
             bail!("Can't find DataProposal {} in lane {}", dp_hash, lane_id);
         };
+        let mut data_proposal = Arc::unwrap_or_clone(data_proposal);
 
         let Some(proofs) = self.lanes.get_proofs_by_hash(lane_id, dp_hash)? else {
             warn!(

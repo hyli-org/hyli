@@ -85,7 +85,7 @@ impl<T: BorshDeserialize> BorshDeserialize for ArcBorsh<T> {
 /// It acts as proof the validator committed to making this DP available.
 /// We don't actually sign the Lane ID itself, assuming DPs are unique enough across lanes, as BLS signatures are slow.
 pub type ValidatorDAG = SignedByValidator<(DataProposalHash, LaneBytesSize)>;
-pub type BufferedEntry = (Vec<ValidatorDAG>, DataProposal);
+pub type BufferedEntry = (Vec<ValidatorDAG>, Arc<DataProposal>);
 
 #[derive(Default, BorshSerialize, BorshDeserialize)]
 pub struct MempoolStore {
@@ -225,7 +225,7 @@ impl IntoHeaderSignableData for MempoolNetMessage {
 pub enum ProcessedDPEvent {
     OnHashedDataProposal((LaneId, DataProposal, ValidatorDAG)),
     OnProcessedDataProposal((LaneId, DataProposalVerdict, DataProposal, bool)),
-    OnHashedSyncReply((LaneId, Vec<ValidatorDAG>, DataProposal, DataProposalHash)),
+    OnHashedSyncReply((LaneId, Vec<ValidatorDAG>, Arc<DataProposal>, DataProposalHash)),
 }
 
 impl Mempool {

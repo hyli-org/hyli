@@ -367,7 +367,7 @@ impl super::Mempool {
 
         let (data_proposal_hash, cumul_size) =
             self.lanes
-                .store_data_proposal(&self.crypto, &lane_id, data_proposal)?;
+                .store_data_proposal(&self.crypto, &lane_id, Arc::new(data_proposal))?;
 
         self.send_dissemination_event(DisseminationEvent::NewDpCreated {
             lane_id: lane_id.clone(),

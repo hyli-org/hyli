@@ -199,7 +199,7 @@ impl ProposalStorage {
         &self,
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
-    ) -> Result<Option<DataProposal>> {
+    ) -> Result<Option<Arc<DataProposal>>> {
         let key = proposal_key(lane_id, dp_hash);
         let data_proposal =
             if let Some(data_proposal) = self.data_cache.read().unwrap().get(&key).cloned() {
@@ -220,7 +220,7 @@ impl ProposalStorage {
                 data_proposal
             };
 
-        Ok(Some(data_proposal.as_ref().clone()))
+        Ok(Some(data_proposal))
     }
 
     pub fn get_proofs_by_hash(
@@ -255,7 +255,7 @@ impl ProposalStorage {
         &self,
         lane_id: &LaneId,
         dp_hash: &DataProposalHash,
-    ) -> Result<Option<(DataProposalHash, DataProposal)>> {
+    ) -> Result<Option<(DataProposalHash, Arc<DataProposal>)>> {
         let Some(data_proposal) = self.get_dp_by_hash(lane_id, dp_hash)? else {
             return Ok(None);
         };
@@ -269,23 +269,28 @@ impl ProposalStorage {
         Ok(Some((dp_hash.clone(), data_proposal)))
     }
 
-    pub fn put_no_verification(&self, lane_id: LaneId, data_proposal: DataProposal) -> Result<()> {
+    pub fn put_no_verification(
+        &self,
+        lane_id: LaneId,
+        data_proposal: impl Into<Arc<DataProposal>>,
+    ) -> Result<()> {
+        let data_proposal = data_proposal.into();
         let dp_hash = data_proposal.hashed();
         let key = (lane_id, dp_hash);
-        let mut data_to_store = data_proposal;
+        let mut data_to_store = Arc::unwrap_or_clone(Arc::clone(&data_proposal));
         let proofs = data_to_store.take_proofs();
-        let data = Arc::new(data_to_store);
+        let data_to_store = Arc::new(data_to_store);
         let proofs = Arc::new(proofs);
 
         self.backend.put(
             &data_key(&key.0, &key.1)?,
-            Arc::clone(&data) as Arc<dyn KvEncode>,
+            Arc::clone(&data_to_store) as Arc<dyn KvEncode>,
         )?;
         self.backend.put(
             &proofs_key(&key.0, &key.1)?,
             Arc::clone(&proofs) as Arc<dyn KvEncode>,
         )?;
-        self.data_cache.write().unwrap().insert(key.clone(), data);
+        self.data_cache.write().unwrap().insert(key.clone(), data_proposal);
         self.proofs_cache.write().unwrap().insert(key, proofs);
         Ok(())
     }
