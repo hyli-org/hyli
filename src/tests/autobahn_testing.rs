@@ -2397,16 +2397,24 @@ async fn autobahn_same_view_timeout_first_nil_then_prepare_qc_should_not_vote() 
         message_matches: ConsensusNetMessage::Confirm(..)
     };
 
-    node1
+    let confirm_ack_1 = node1
         .consensus_ctx
         .assert_send(&node0.consensus_ctx.validator_pubkey(), "ConfirmAck from node1")
         .await;
     node2
         .consensus_ctx
         .assert_no_broadcast("node2 should not emit messages after timing out in the same view");
-    node3
+    let confirm_ack_3 = node3
         .consensus_ctx
         .assert_send(&node0.consensus_ctx.validator_pubkey(), "ConfirmAck from node3")
+        .await;
+    node0
+        .consensus_ctx
+        .handle_msg(&confirm_ack_1, "Handle ConfirmAck from node1")
+        .await;
+    node0
+        .consensus_ctx
+        .handle_msg(&confirm_ack_3, "Handle ConfirmAck from node3")
         .await;
 
     ConsensusTestCtx::timeout(&mut [&mut node2.consensus_ctx]).await;

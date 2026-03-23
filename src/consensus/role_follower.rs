@@ -297,6 +297,14 @@ impl Consensus {
             .timeout
             .update_highest_seen_prepare_qc(slot, prepare_quorum_certificate.clone());
 
+        if self.is_in_timeout_phase() {
+            info!(
+                "🕒 Already timed out for slot {} view {}, not sending ConfirmAck",
+                self.bft_round_state.slot, self.bft_round_state.view
+            );
+            return Ok(());
+        }
+
         // Responds ConfirmAck to leader
         if self.is_part_of_consensus(self.crypto.validator_pubkey()) {
             debug!(
