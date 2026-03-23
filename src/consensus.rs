@@ -1522,6 +1522,202 @@ pub mod test {
     }
 
     #[test_log::test(tokio::test)]
+    async fn commit_certificate_construction_deduplicates_signers() {
+        let (node1, node2, _node3, node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        let proposal_hash = ConsensusProposalHash::from(b"commit-qc-dedup");
+        let ack_1 = node1
+            .consensus
+            .crypto
+            .sign((proposal_hash.clone(), ConfirmAckMarker))
+            .expect("sign confirm ack 1");
+        let ack_2 = node2
+            .consensus
+            .crypto
+            .sign((proposal_hash.clone(), ConfirmAckMarker))
+            .expect("sign confirm ack 2");
+
+        let commit_qc = QuorumCertificate(
+            node4
+                .consensus
+                .crypto
+                .sign_aggregate(
+                    (proposal_hash.clone(), ConfirmAckMarker),
+                    &[&ack_1, &ack_1, &ack_2],
+                )
+                .expect("construct commit qc")
+                .signature,
+            ConfirmAckMarker,
+        );
+
+        assert_eq!(
+            commit_qc.validators,
+            vec![node1.pubkey(), node2.pubkey(), node4.pubkey()]
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn timeout_certificate_construction_deduplicates_signers() {
+        let (node1, node2, _node3, node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        let slot = node4.slot();
+        let view = node4.view();
+        let parent_hash = node4.consensus.bft_round_state.parent_hash.clone();
+
+        let timeout_1 = node1
+            .consensus
+            .crypto
+            .sign((slot, view, parent_hash.clone(), ConsensusTimeoutMarker))
+            .expect("sign timeout 1");
+        let timeout_2 = node2
+            .consensus
+            .crypto
+            .sign((slot, view, parent_hash.clone(), ConsensusTimeoutMarker))
+            .expect("sign timeout 2");
+
+        let timeout_qc = QuorumCertificate(
+            node4
+                .consensus
+                .crypto
+                .sign_aggregate(
+                    (slot, view, parent_hash, ConsensusTimeoutMarker),
+                    &[&timeout_1, &timeout_1, &timeout_2],
+                )
+                .expect("construct timeout qc")
+                .signature,
+            ConsensusTimeoutMarker,
+        );
+
+        assert_eq!(
+            timeout_qc.validators,
+            vec![node1.pubkey(), node2.pubkey(), node4.pubkey()]
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn commit_certificate_with_repeated_signers_does_not_reach_quorum() {
+        let (node1, node2, _node3, node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        let proposal_hash = ConsensusProposalHash::from(b"commit-qc-with-duplicates");
+        let signed_ack_1 = node1
+            .consensus
+            .crypto
+            .sign((proposal_hash.clone(), ConfirmAckMarker))
+            .expect("sign confirm ack 1");
+        let signed_ack_2 = node2
+            .consensus
+            .crypto
+            .sign((proposal_hash.clone(), ConfirmAckMarker))
+            .expect("sign confirm ack 2");
+        let repeated_signer_commit_qc = QuorumCertificate(
+            BlstCrypto::aggregate(
+                (proposal_hash.clone(), ConfirmAckMarker),
+                &[&signed_ack_1, &signed_ack_1, &signed_ack_2],
+            )
+            .expect("aggregate confirm ack")
+            .signature,
+            ConfirmAckMarker,
+        );
+
+        let err = node4
+            .consensus
+            .verify_quorum_certificate(
+                (proposal_hash.clone(), ConfirmAckMarker),
+                &repeated_signer_commit_qc,
+            )
+            .expect_err("duplicate signers must not inflate commit voting power");
+
+        assert_contains!(
+            format!("{err:#}"),
+            "Quorum Certificate does not contain enough voting power"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn timeout_certificate_with_repeated_signers_does_not_reach_quorum() {
+        let (node1, node2, _node3, node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        let slot = node4.slot();
+        let view = node4.view();
+        let parent_hash = node4.consensus.bft_round_state.parent_hash.clone();
+
+        let timeout_1 = node1
+            .consensus
+            .crypto
+            .sign((slot, view, parent_hash.clone(), ConsensusTimeoutMarker))
+            .expect("sign timeout 1");
+        let timeout_2 = node2
+            .consensus
+            .crypto
+            .sign((slot, view, parent_hash.clone(), ConsensusTimeoutMarker))
+            .expect("sign timeout 2");
+        let nil_1 = node1
+            .consensus
+            .crypto
+            .sign((slot, view, parent_hash.clone(), NilConsensusTimeoutMarker))
+            .expect("sign nil timeout 1");
+        let nil_2 = node2
+            .consensus
+            .crypto
+            .sign((slot, view, parent_hash.clone(), NilConsensusTimeoutMarker))
+            .expect("sign nil timeout 2");
+        let repeated_signer_timeout_qc = QuorumCertificate(
+            BlstCrypto::aggregate(
+                (slot, view, parent_hash.clone(), ConsensusTimeoutMarker),
+                &[&timeout_1, &timeout_1, &timeout_2],
+            )
+            .expect("aggregate timeout qc")
+            .signature,
+            ConsensusTimeoutMarker,
+        );
+        let repeated_signer_nil_qc = QuorumCertificate(
+            BlstCrypto::aggregate(
+                (slot, view, parent_hash.clone(), NilConsensusTimeoutMarker),
+                &[&nil_1, &nil_1, &nil_2],
+            )
+            .expect("aggregate nil qc")
+            .signature,
+            NilConsensusTimeoutMarker,
+        );
+
+        let err = node4
+            .consensus
+            .verify_tc(
+                &repeated_signer_timeout_qc,
+                &TCKind::NilProposal(repeated_signer_nil_qc),
+                slot,
+                view,
+                parent_hash,
+            )
+            .expect_err("duplicate signers must not inflate timeout voting power");
+
+        assert_contains!(
+            format!("{err:#}"),
+            "Quorum Certificate does not contain enough voting power"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
     async fn basic_commit_4() {
         let (mut node1, mut node2, mut node3, mut node4): (
             ConsensusTestCtx,

@@ -28,6 +28,7 @@
 //!
 #![allow(dead_code, unused_variables)]
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Error, Result};
@@ -298,8 +299,13 @@ impl BlstCrypto {
         T: borsh::BorshSerialize + Clone,
     {
         let mut accu = Aggregates::default();
+        let mut seen_validators = BTreeSet::new();
 
         for s in aggregates {
+            if !seen_validators.insert(s.signature.validator.clone()) {
+                continue;
+            }
+
             let sig = BlstSignature::uncompress(&s.signature.signature.0)
                 .map_err(|_| anyhow!("Could not parse Signature"))?;
             let pk = PublicKey::uncompress(&s.signature.validator.0)
@@ -439,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sign_aggregate_overlap() {
+    fn test_sign_aggregate_deduplicates_signers() {
         let (s1, pk1) = new_signed(Data::default());
         let (s2, pk2) = new_signed(Data::default());
         let (s3, pk3) = new_signed(Data::default());
@@ -458,11 +464,20 @@ mod tests {
                 pk1.clone(),
                 pk2.clone(),
                 pk3.clone(),
-                pk2.clone(),
-                pk3.clone(),
                 pk4.clone(),
                 crypto.validator_pubkey.clone(),
             ]
         )
+    }
+
+    #[test]
+    fn test_aggregate_deduplicates_signers_without_self_signature() {
+        let (s1, pk1) = new_signed(Data::default());
+        let (s2, pk2) = new_signed(Data::default());
+
+        let signed = BlstCrypto::aggregate(Data::default(), &[&s1, &s1, &s2]).unwrap();
+
+        BlstCrypto::verify_aggregate(&signed).unwrap();
+        assert_eq!(signed.signature.validators, vec![pk1, pk2]);
     }
 }
