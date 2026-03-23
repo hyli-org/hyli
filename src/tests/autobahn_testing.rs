@@ -2350,7 +2350,7 @@ async fn autobahn_commit_prepare_qc_across_multiple_views() {
 }
 
 #[test_log::test(tokio::test)]
-async fn autobahn_same_view_timeout_first_nil_then_prepare_qc() {
+async fn autobahn_same_view_timeout_first_nil_then_prepare_qc_should_not_vote() {
     let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
 
     ConsensusTestCtx::setup_for_round(
@@ -2368,13 +2368,10 @@ async fn autobahn_same_view_timeout_first_nil_then_prepare_qc() {
         .start_round_with_cut_from_mempool(TimestampMs(1000))
         .await;
 
-    let initial_cp;
     broadcast! {
         description: "Prepare reaches everyone",
         from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
-        message_matches: ConsensusNetMessage::Prepare(cp, ..) => {
-            initial_cp = cp.clone();
-        }
+        message_matches: ConsensusNetMessage::Prepare(..)
     };
 
     send! {
@@ -2400,11 +2397,17 @@ async fn autobahn_same_view_timeout_first_nil_then_prepare_qc() {
         message_matches: ConsensusNetMessage::Confirm(..)
     };
 
-    send! {
-        description: "ConfirmAck",
-        from: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx], to: node0.consensus_ctx,
-        message_matches: ConsensusNetMessage::ConfirmAck(_)
-    };
+    node1
+        .consensus_ctx
+        .assert_send(&node0.consensus_ctx.validator_pubkey(), "ConfirmAck from node1")
+        .await;
+    node2
+        .consensus_ctx
+        .assert_no_broadcast("node2 should not emit messages after timing out in the same view");
+    node3
+        .consensus_ctx
+        .assert_send(&node0.consensus_ctx.validator_pubkey(), "ConfirmAck from node3")
+        .await;
 
     ConsensusTestCtx::timeout(&mut [&mut node2.consensus_ctx]).await;
 
@@ -2414,7 +2417,7 @@ async fn autobahn_same_view_timeout_first_nil_then_prepare_qc() {
         message_matches: ConsensusNetMessage::Timeout((signed_timeout, TimeoutKind::PrepareQC((_, cp)))) => {
             assert_eq!(signed_timeout.msg.0, 5);
             assert_eq!(signed_timeout.msg.1, 0);
-            assert_eq!(cp, &initial_cp);
+            assert_eq!(cp.slot, 5);
         }
     };
 
