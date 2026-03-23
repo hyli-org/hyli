@@ -187,7 +187,10 @@ impl Consensus {
                     self.bft_round_state.slot, self.bft_round_state.view
                 );
                 let (timeout, kind) = self.get_timeout_message()?;
-                self.store.bft_round_state.timeout.own_timeout_had_current_proposal = self
+                self.store
+                    .bft_round_state
+                    .timeout
+                    .own_timeout_had_current_proposal = self
                     .bft_round_state
                     .current_proposal
                     .as_ref()
@@ -363,7 +366,10 @@ impl Consensus {
             self.store.bft_round_state.view = *received_view;
 
             let (timeout, kind) = self.get_timeout_message()?;
-            self.store.bft_round_state.timeout.own_timeout_had_current_proposal = self
+            self.store
+                .bft_round_state
+                .timeout
+                .own_timeout_had_current_proposal = self
                 .bft_round_state
                 .current_proposal
                 .as_ref()

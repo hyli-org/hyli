@@ -297,7 +297,11 @@ impl Consensus {
             .timeout
             .update_highest_seen_prepare_qc(slot, prepare_quorum_certificate.clone());
 
-        if self.is_in_timeout_phase() && self.bft_round_state.timeout.own_timeout_had_current_proposal
+        if self.is_in_timeout_phase()
+            && self
+                .bft_round_state
+                .timeout
+                .own_timeout_had_current_proposal
         {
             info!(
                 "🕒 Already timed out for slot {} view {}, not sending ConfirmAck",
