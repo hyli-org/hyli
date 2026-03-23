@@ -1543,7 +1543,8 @@ pub mod test {
             .expect("sign confirm ack 2");
 
         let commit_qc = QuorumCertificate(
-            node4.consensus
+            node4
+                .consensus
                 .crypto
                 .sign_aggregate(
                     (proposal_hash.clone(), ConfirmAckMarker),
@@ -1585,7 +1586,8 @@ pub mod test {
             .expect("sign timeout 2");
 
         let timeout_qc = QuorumCertificate(
-            node4.consensus
+            node4
+                .consensus
                 .crypto
                 .sign_aggregate(
                     (slot, view, parent_hash, ConsensusTimeoutMarker),
