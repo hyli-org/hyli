@@ -2399,14 +2399,20 @@ async fn autobahn_same_view_timeout_first_nil_then_prepare_qc_should_not_vote() 
 
     let confirm_ack_1 = node1
         .consensus_ctx
-        .assert_send(&node0.consensus_ctx.validator_pubkey(), "ConfirmAck from node1")
+        .assert_send(
+            &node0.consensus_ctx.validator_pubkey(),
+            "ConfirmAck from node1",
+        )
         .await;
     node2
         .consensus_ctx
         .assert_no_broadcast("node2 should not emit messages after timing out in the same view");
     let confirm_ack_3 = node3
         .consensus_ctx
-        .assert_send(&node0.consensus_ctx.validator_pubkey(), "ConfirmAck from node3")
+        .assert_send(
+            &node0.consensus_ctx.validator_pubkey(),
+            "ConfirmAck from node3",
+        )
         .await;
     node0
         .consensus_ctx
