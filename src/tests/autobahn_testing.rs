@@ -2350,6 +2350,82 @@ async fn autobahn_commit_prepare_qc_across_multiple_views() {
 }
 
 #[test_log::test(tokio::test)]
+async fn autobahn_same_view_timeout_first_nil_then_prepare_qc() {
+    let (mut node0, mut node1, mut node2, mut node3) = build_nodes!(4).await;
+
+    ConsensusTestCtx::setup_for_round(
+        &mut [
+            &mut node0.consensus_ctx,
+            &mut node1.consensus_ctx,
+            &mut node2.consensus_ctx,
+            &mut node3.consensus_ctx,
+        ],
+        5,
+        0,
+    );
+
+    node0
+        .start_round_with_cut_from_mempool(TimestampMs(1000))
+        .await;
+
+    let initial_cp;
+    broadcast! {
+        description: "Prepare reaches everyone",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Prepare(cp, ..) => {
+            initial_cp = cp.clone();
+        }
+    };
+
+    send! {
+        description: "PrepareVote",
+        from: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx], to: node0.consensus_ctx,
+        message_matches: ConsensusNetMessage::PrepareVote(_)
+    };
+
+    ConsensusTestCtx::timeout(&mut [&mut node2.consensus_ctx]).await;
+
+    broadcast! {
+        description: "node2 first timeout in view0 is nil",
+        from: node2.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::Timeout((signed_timeout, TimeoutKind::NilProposal(_))) => {
+            assert_eq!(signed_timeout.msg.0, 5);
+            assert_eq!(signed_timeout.msg.1, 0);
+        }
+    };
+
+    broadcast! {
+        description: "Confirm reaches everyone after node2 already timed out once",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Confirm(..)
+    };
+
+    send! {
+        description: "ConfirmAck",
+        from: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx], to: node0.consensus_ctx,
+        message_matches: ConsensusNetMessage::ConfirmAck(_)
+    };
+
+    ConsensusTestCtx::timeout(&mut [&mut node2.consensus_ctx]).await;
+
+    broadcast! {
+        description: "node2 second timeout stays in view0 and carries prepare qc",
+        from: node2.consensus_ctx, to: [],
+        message_matches: ConsensusNetMessage::Timeout((signed_timeout, TimeoutKind::PrepareQC((_, cp)))) => {
+            assert_eq!(signed_timeout.msg.0, 5);
+            assert_eq!(signed_timeout.msg.1, 0);
+            assert_eq!(cp, &initial_cp);
+        }
+    };
+
+    broadcast! {
+        description: "Commit still happens",
+        from: node0.consensus_ctx, to: [node1.consensus_ctx, node2.consensus_ctx, node3.consensus_ctx],
+        message_matches: ConsensusNetMessage::Commit(..)
+    };
+}
+
+#[test_log::test(tokio::test)]
 async fn follower_commits_cut_then_mempool_sends_stale_lane() {
     // This test checks the following case:
     // - Node1 gets a 2 DPs on its lane
