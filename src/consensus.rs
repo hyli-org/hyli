@@ -1522,6 +1522,87 @@ pub mod test {
     }
 
     #[test_log::test(tokio::test)]
+    async fn commit_certificate_construction_deduplicates_signers() {
+        let (node1, node2, _node3, node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        let proposal_hash = ConsensusProposalHash::from(b"commit-qc-dedup");
+        let ack_1 = node1
+            .consensus
+            .crypto
+            .sign((proposal_hash.clone(), ConfirmAckMarker))
+            .expect("sign confirm ack 1");
+        let ack_2 = node2
+            .consensus
+            .crypto
+            .sign((proposal_hash.clone(), ConfirmAckMarker))
+            .expect("sign confirm ack 2");
+
+        let commit_qc = QuorumCertificate(
+            node4.consensus
+                .crypto
+                .sign_aggregate(
+                    (proposal_hash.clone(), ConfirmAckMarker),
+                    &[&ack_1, &ack_1, &ack_2],
+                )
+                .expect("construct commit qc")
+                .signature,
+            ConfirmAckMarker,
+        );
+
+        assert_eq!(
+            commit_qc.validators,
+            vec![node1.pubkey(), node2.pubkey(), node4.pubkey()]
+        );
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn timeout_certificate_construction_deduplicates_signers() {
+        let (node1, node2, _node3, node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        let slot = node4.slot();
+        let view = node4.view();
+        let parent_hash = node4.consensus.bft_round_state.parent_hash.clone();
+
+        let timeout_1 = node1
+            .consensus
+            .crypto
+            .sign((slot, view, parent_hash.clone(), ConsensusTimeoutMarker))
+            .expect("sign timeout 1");
+        let timeout_2 = node2
+            .consensus
+            .crypto
+            .sign((slot, view, parent_hash.clone(), ConsensusTimeoutMarker))
+            .expect("sign timeout 2");
+
+        let timeout_qc = QuorumCertificate(
+            node4.consensus
+                .crypto
+                .sign_aggregate(
+                    (slot, view, parent_hash, ConsensusTimeoutMarker),
+                    &[&timeout_1, &timeout_1, &timeout_2],
+                )
+                .expect("construct timeout qc")
+                .signature,
+            ConsensusTimeoutMarker,
+        );
+
+        assert_eq!(
+            timeout_qc.validators,
+            vec![node1.pubkey(), node2.pubkey(), node4.pubkey()]
+        );
+    }
+
+    #[test_log::test(tokio::test)]
     async fn commit_certificate_with_repeated_signers_does_not_reach_quorum() {
         let (node1, node2, _node3, node4): (
             ConsensusTestCtx,
