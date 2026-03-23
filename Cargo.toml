@@ -158,7 +158,7 @@ tempfile = { version = "3.20.0", default-features = false }
 test-log = { version = "0.2.18", default-features = false }
 testcontainers-modules = { version = "0.15.0", default-features = false }
 tracing-opentelemetry = "0.29.0"
-tokio = { version = "1.47.1" }
+tokio = { version = "1.50.0" }
 tokio-util = { version = "0.7.16" }
 toml = { version = "0.9.11", default-features = false }
 tower-http = { version = "0.6.5", default-features = false, features = [
