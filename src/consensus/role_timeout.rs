@@ -64,6 +64,7 @@ pub(super) struct TimeoutRoleState {
     pub(super) requests: HashSet<ConsensusTimeout>,
     pub(super) state: TimeoutState,
     pub(super) highest_seen_prepare_qc: Option<(Slot, PrepareQC)>,
+    pub(super) own_timeout_had_current_proposal: bool,
 }
 
 impl TimeoutRoleState {
@@ -186,6 +187,12 @@ impl Consensus {
                     self.bft_round_state.slot, self.bft_round_state.view
                 );
                 let (timeout, kind) = self.get_timeout_message()?;
+                self.store.bft_round_state.timeout.own_timeout_had_current_proposal = self
+                    .bft_round_state
+                    .current_proposal
+                    .as_ref()
+                    .map(|cp| cp.slot == self.bft_round_state.slot)
+                    .unwrap_or(false);
 
                 self.on_timeout(timeout.clone(), kind.clone())?;
 
@@ -356,6 +363,12 @@ impl Consensus {
             self.store.bft_round_state.view = *received_view;
 
             let (timeout, kind) = self.get_timeout_message()?;
+            self.store.bft_round_state.timeout.own_timeout_had_current_proposal = self
+                .bft_round_state
+                .current_proposal
+                .as_ref()
+                .map(|cp| cp.slot == self.bft_round_state.slot)
+                .unwrap_or(false);
 
             // Because we're keeping a mutable borrow on timeout requests, we need to redo that.
             // Use this sort of weird pattern to avoid borrowing issues.

@@ -302,6 +302,7 @@ impl Consensus {
         // Reset some state
         self.bft_round_state.leader = LeaderState::default();
         self.bft_round_state.timeout.requests.clear();
+        self.bft_round_state.timeout.own_timeout_had_current_proposal = false;
 
         match ticket {
             // We finished the round with a committed proposal for the slot
