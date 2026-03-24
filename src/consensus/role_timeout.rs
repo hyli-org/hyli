@@ -295,13 +295,22 @@ impl Consensus {
             }
         }
 
-        if !self
+        let new_timeout_metadata = self
             .store
             .bft_round_state
             .timeout
             .requests
-            .insert(received_timeout.clone())
-        {
+            .insert(received_timeout.clone());
+        let new_nil = match &received_tk {
+            TimeoutKind::NilProposal(signed_nil) => self
+                .store
+                .bft_round_state
+                .timeout
+                .nils
+                .insert(signed_nil.clone()),
+            TimeoutKind::PrepareQC(..) => false,
+        };
+        if !new_timeout_metadata && !new_nil {
             info!("Timeout has already been processed");
             return Ok(());
         }
