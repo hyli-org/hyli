@@ -8,7 +8,7 @@ use crate::{
     consensus::role_follower::TicketVerificationError,
     model::{Slot, View},
 };
-use hyli_model::{utils::TimestampMs, ConsensusProposalHash, Hashed, Signed, SignedByValidator};
+use hyli_model::{utils::TimestampMs, ConsensusProposalHash, Hashed, Signed};
 use hyli_net::clock::TimestampMsClock;
 
 #[derive(Debug, BorshSerialize, BorshDeserialize, Default)]
@@ -61,7 +61,8 @@ impl TimeoutState {
 
 #[derive(BorshSerialize, BorshDeserialize, Default)]
 pub(super) struct TimeoutRoleState {
-    pub(super) requests: HashSet<ConsensusTimeout>,
+    pub(super) requests: HashSet<TimeoutMetadata>,
+    pub(super) nils: HashSet<NilTimeout>,
     pub(super) state: TimeoutState,
     pub(super) highest_seen_prepare_qc: Option<(Slot, PrepareQC)>,
 }
@@ -206,12 +207,7 @@ impl Consensus {
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub(super) fn on_timeout(
         &mut self,
-        received_timeout: SignedByValidator<(
-            Slot,
-            View,
-            ConsensusProposalHash,
-            ConsensusTimeoutMarker,
-        )>,
+        received_timeout: TimeoutMetadata,
         received_tk: TimeoutKind,
     ) -> Result<()> {
         // Only timeout if it is in consensus
@@ -299,37 +295,58 @@ impl Consensus {
             }
         }
 
-        // Insert timeout request and if already present notify
-        if !self
+        let new_timeout_metadata = self
             .store
             .bft_round_state
             .timeout
             .requests
-            .insert((received_timeout.clone(), received_tk.clone()))
-        {
+            .insert(received_timeout.clone());
+        let new_nil = match &received_tk {
+            TimeoutKind::NilProposal(signed_nil) => self
+                .store
+                .bft_round_state
+                .timeout
+                .nils
+                .insert(signed_nil.clone()),
+            TimeoutKind::PrepareQC(..) => false,
+        };
+        if !new_timeout_metadata && !new_nil {
             info!("Timeout has already been processed");
             return Ok(());
         }
 
         let f = self.bft_round_state.staking.compute_f();
 
-        // At this point we must select both NIL and QC timeouts.
-        let (mut relevant_timeout_messages, mut tc_kinds) = self
+        // At this point we must select the timeout metadata that can form the main timeout QC.
+        let mut relevant_timeout_messages = self
             .store
             .bft_round_state
             .timeout
             .requests
             .iter()
-            .filter_map(|(signed_message, tc_kind)| {
+            .filter(|signed_message| {
                 if signed_message.msg.0 != *received_slot
                     || signed_message.msg.1 != *received_view
                     || signed_message.msg.2 != self.bft_round_state.parent_hash
                 {
-                    return None; // Skip messages that won't be aggregated with this one
+                    return false; // Skip messages that won't be aggregated with this one
                 }
-                Some((signed_message, tc_kind))
+                true
             })
-            .collect::<(Vec<_>, Vec<_>)>();
+            .collect::<Vec<_>>();
+
+        let mut relevant_nil_messages = self
+            .store
+            .bft_round_state
+            .timeout
+            .nils
+            .iter()
+            .filter(|signed_nil| {
+                signed_nil.msg.0 == *received_slot
+                    && signed_nil.msg.1 == *received_view
+                    && signed_nil.msg.2 == self.bft_round_state.parent_hash
+            })
+            .collect::<Vec<_>>();
 
         let mut len = relevant_timeout_messages.len();
 
@@ -359,12 +376,19 @@ impl Consensus {
 
             // Because we're keeping a mutable borrow on timeout requests, we need to redo that.
             // Use this sort of weird pattern to avoid borrowing issues.
-            (relevant_timeout_messages, tc_kinds) = {
+            (relevant_timeout_messages, relevant_nil_messages) = {
+                let signed_nil = match &kind {
+                    TimeoutKind::NilProposal(signed_nil) => Some(signed_nil.clone()),
+                    TimeoutKind::PrepareQC(..) => None,
+                };
                 self.store
                     .bft_round_state
                     .timeout
                     .requests
-                    .insert((timeout.clone(), kind.clone()));
+                    .insert(timeout.clone());
+                if let Some(signed_nil) = signed_nil {
+                    self.store.bft_round_state.timeout.nils.insert(signed_nil);
+                }
 
                 // Broadcast a timeout message
                 self.broadcast_net_message((timeout, kind).into())
@@ -374,21 +398,34 @@ impl Consensus {
                         self.bft_round_state.view, // should match timeout
                     ))?;
 
-                self.store
-                    .bft_round_state
-                    .timeout
-                    .requests
-                    .iter()
-                    .filter_map(|(signed_message, tc_kind)| {
-                        if signed_message.msg.0 != *received_slot
-                            || signed_message.msg.1 != *received_view
-                            || signed_message.msg.2 != self.bft_round_state.parent_hash
-                        {
-                            return None; // Skip messages that won't be aggregated with this one
-                        }
-                        Some((signed_message, tc_kind))
-                    })
-                    .collect::<(Vec<_>, Vec<_>)>()
+                (
+                    self.store
+                        .bft_round_state
+                        .timeout
+                        .requests
+                        .iter()
+                        .filter(|signed_message| {
+                            if signed_message.msg.0 != *received_slot
+                                || signed_message.msg.1 != *received_view
+                                || signed_message.msg.2 != self.bft_round_state.parent_hash
+                            {
+                                return false; // Skip messages that won't be aggregated with this one
+                            }
+                            true
+                        })
+                        .collect::<Vec<_>>(),
+                    self.store
+                        .bft_round_state
+                        .timeout
+                        .nils
+                        .iter()
+                        .filter(|signed_nil| {
+                            signed_nil.msg.0 == *received_slot
+                                && signed_nil.msg.1 == *received_view
+                                && signed_nil.msg.2 == self.bft_round_state.parent_hash
+                        })
+                        .collect::<Vec<_>>(),
+                )
             };
 
             len += 1;
@@ -445,9 +482,16 @@ impl Consensus {
                 }
                 _ => {
                     // Simple case - we will aggregate a 'nil' certificate. We need 2f+1 NIL signed messages
-                    // In principle we can't be here unless they're all NIL.
-                    if !matches!(received_tk, TimeoutKind::NilProposal(_)) {
-                        bail!("Received timeout message with PrepareQC, but highest seen PrepareQC is not for this slot");
+                    let nil_voting_power = self.store.bft_round_state.staking.compute_voting_power(
+                        &relevant_nil_messages
+                            .iter()
+                            .map(|signed_nil| signed_nil.signature.validator.clone())
+                            .collect::<Vec<_>>(),
+                    );
+                    if nil_voting_power <= 2 * f {
+                        bail!(
+                            "Not enough nil timeout voting power to build a NilProposal TC: {nil_voting_power}"
+                        );
                     }
                     // Ergo, this should successfully aggregate.
                     let nil_quorum = QuorumCertificate(
@@ -459,14 +503,7 @@ impl Consensus {
                                     self.bft_round_state.parent_hash.clone(),
                                     NilConsensusTimeoutMarker,
                                 ),
-                                tc_kinds
-                                    .iter()
-                                    .map(|tk| match tk {
-                                        TimeoutKind::NilProposal(signed_nil) => Ok(signed_nil),
-                                        _ => bail!("Expected NilProposal, got {:?}", tk),
-                                    })
-                                    .collect::<Result<Vec<_>>>()?
-                                    .as_slice(),
+                                relevant_nil_messages.as_slice(),
                             )?
                             .signature,
                         NilConsensusTimeoutMarker,

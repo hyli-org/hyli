@@ -289,8 +289,12 @@ mod tests {
 /// This first message will be used in the TC to generate a proof of timeout
 /// Here we add the parent hash purely to avoid replay attacks
 /// The TimeoutKind is used to pick a specific TC type
+pub type TimeoutMetadata =
+    SignedByValidator<(Slot, View, ConsensusProposalHash, ConsensusTimeoutMarker)>;
+pub type NilTimeout =
+    SignedByValidator<(Slot, View, ConsensusProposalHash, NilConsensusTimeoutMarker)>;
 pub type ConsensusTimeout = (
-    SignedByValidator<(Slot, View, ConsensusProposalHash, ConsensusTimeoutMarker)>,
+    TimeoutMetadata,
     TimeoutKind,
 );
 

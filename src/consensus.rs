@@ -221,9 +221,9 @@ impl Consensus {
 
     fn is_in_timeout_phase(&self) -> bool {
         self.bft_round_state.timeout.requests.iter().any(|r| {
-            r.0.msg.0 == self.bft_round_state.slot
-                && r.0.msg.1 == self.bft_round_state.view
-                && &r.0.signature.validator == self.crypto.validator_pubkey()
+            r.msg.0 == self.bft_round_state.slot
+                && r.msg.1 == self.bft_round_state.view
+                && &r.signature.validator == self.crypto.validator_pubkey()
         })
     }
 
@@ -302,6 +302,8 @@ impl Consensus {
         // Reset some state
         self.bft_round_state.leader = LeaderState::default();
         self.bft_round_state.timeout.requests.clear();
+        self.bft_round_state.timeout.nils.clear();
+        self.bft_round_state.timeout.highest_seen_prepare_qc = None;
 
         match ticket {
             // We finished the round with a committed proposal for the slot
