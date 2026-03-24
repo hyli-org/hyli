@@ -450,16 +450,17 @@ impl Consensus {
             );
 
             let tqc = QuorumCertificate(
-                BlstCrypto::aggregate(
-                    (
-                        self.bft_round_state.slot,
-                        self.bft_round_state.view,
-                        self.bft_round_state.parent_hash.clone(),
-                        ConsensusTimeoutMarker,
-                    ),
-                    relevant_timeout_messages.as_slice(),
-                )?
-                .signature,
+                self.crypto
+                    .sign_aggregate(
+                        (
+                            self.bft_round_state.slot,
+                            self.bft_round_state.view,
+                            self.bft_round_state.parent_hash.clone(),
+                            ConsensusTimeoutMarker,
+                        ),
+                        relevant_timeout_messages.as_slice(),
+                    )?
+                    .signature,
                 ConsensusTimeoutMarker,
             );
             let tqc_kind = match &self.bft_round_state.timeout.highest_seen_prepare_qc {
@@ -494,16 +495,17 @@ impl Consensus {
                     }
                     // Ergo, this should successfully aggregate.
                     let nil_quorum = QuorumCertificate(
-                        BlstCrypto::aggregate(
-                            (
-                                self.bft_round_state.slot,
-                                self.bft_round_state.view,
-                                self.bft_round_state.parent_hash.clone(),
-                                NilConsensusTimeoutMarker,
-                            ),
-                            relevant_nil_messages.as_slice(),
-                        )?
-                        .signature,
+                        self.crypto
+                            .sign_aggregate(
+                                (
+                                    self.bft_round_state.slot,
+                                    self.bft_round_state.view,
+                                    self.bft_round_state.parent_hash.clone(),
+                                    NilConsensusTimeoutMarker,
+                                ),
+                                relevant_nil_messages.as_slice(),
+                            )?
+                            .signature,
                         NilConsensusTimeoutMarker,
                     );
                     TCKind::NilProposal(nil_quorum)

@@ -218,8 +218,15 @@ impl BlstCrypto {
     where
         T: borsh::BorshSerialize + Clone,
     {
-        let self_signed = self.sign(msg.clone())?;
-        Self::aggregate(msg, &[aggregates, &[&self_signed]].concat())
+        if aggregates
+            .iter()
+            .any(|signed| signed.signature.validator == self.validator_pubkey)
+        {
+            Self::aggregate(msg, aggregates)
+        } else {
+            let self_signed = self.sign(msg.clone())?;
+            Self::aggregate(msg, &[aggregates, &[&self_signed]].concat())
+        }
     }
 
     pub fn aggregate<T>(
@@ -420,6 +427,22 @@ mod tests {
             crypto.validator_pubkey.clone(),
         ];
         assert!(BlstCrypto::verify_aggregate(&signed).is_err());
+    }
+
+    #[test]
+    fn test_sign_aggregate_does_not_duplicate_self_when_already_present() {
+        let msg = Data::default();
+        let crypto = BlstCrypto::new_random().unwrap();
+        let self_signed = crypto.sign(msg.clone()).unwrap();
+        let (s1, pk1) = new_signed(msg.clone());
+
+        let signed = crypto.sign_aggregate(msg, &[&s1, &self_signed]).unwrap();
+
+        assert_eq!(
+            signed.signature.validators,
+            vec![pk1, crypto.validator_pubkey.clone()]
+        );
+        BlstCrypto::verify_aggregate(&signed).unwrap();
     }
 
     #[test]
