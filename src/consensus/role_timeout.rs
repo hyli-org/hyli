@@ -1326,7 +1326,7 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
-    async fn duplicate_timeout_sender_across_nil_and_prepare_qc_does_not_duplicate_tc_validator() {
+    async fn duplicate_timeout_sender_across_nil_and_prepare_qc_duplicates_builder_in_tc() {
         let (mut node1, node2, _node3, mut node4): (
             ConsensusTestCtx,
             ConsensusTestCtx,
@@ -1418,11 +1418,8 @@ mod tests {
             .expect("timeout certificate should be cached");
 
         let unique_validators = timeout_qc.validators.iter().collect::<HashSet<_>>();
-        assert_eq!(
-            unique_validators.len(),
-            timeout_qc.validators.len(),
-            "timeout certificate should not list the same validator twice",
-        );
+        assert_eq!(unique_validators.len(), 3);
+        assert_eq!(timeout_qc.validators.len(), 4);
         assert_eq!(
             timeout_qc
                 .validators
@@ -1430,7 +1427,16 @@ mod tests {
                 .filter(|validator| **validator == node2.validator_pubkey())
                 .count(),
             1,
-            "validator that emitted both nil and prepare-qc timeouts must appear once",
+            "timeout sender that emitted both nil and prepare-qc timeouts must still appear once",
+        );
+        assert_eq!(
+            timeout_qc
+                .validators
+                .iter()
+                .filter(|validator| **validator == node4.validator_pubkey())
+                .count(),
+            2,
+            "builder is appended by sign_aggregate even when already present",
         );
         assert!(
             matches!(tc_kind, TCKind::PrepareQC(..)),
