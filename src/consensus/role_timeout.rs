@@ -604,9 +604,14 @@ mod tests {
             }
         };
 
+        node2.assert_no_send(
+            &node1.validator_pubkey(),
+            "Timed out follower must not PrepareVote",
+        );
+
         send! {
             description: "Follower - PrepareVote",
-            from: [node2, node3, node4], to: node1,
+            from: [node3, node4], to: node1,
             message_matches: ConsensusNetMessage::PrepareVote(_)
         };
 
