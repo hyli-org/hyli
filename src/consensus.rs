@@ -303,7 +303,6 @@ impl Consensus {
         self.bft_round_state.leader = LeaderState::default();
         self.bft_round_state.timeout.requests.clear();
         self.bft_round_state.timeout.nils.clear();
-        self.bft_round_state.timeout.highest_seen_prepare_qc = None;
 
         match ticket {
             // We finished the round with a committed proposal for the slot
@@ -318,6 +317,7 @@ impl Consensus {
                     Ticket::ForcedCommitQC(view) => view,
                     _ => unreachable!(),
                 };
+                self.bft_round_state.timeout.highest_seen_prepare_qc = None;
                 self.bft_round_state.parent_hash = committed_proposal.hashed();
                 self.bft_round_state.parent_timestamp = committed_proposal.timestamp.clone();
                 self.bft_round_state.parent_cut = committed_proposal.cut.clone();

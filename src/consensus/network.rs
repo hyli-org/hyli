@@ -293,10 +293,7 @@ pub type TimeoutMetadata =
     SignedByValidator<(Slot, View, ConsensusProposalHash, ConsensusTimeoutMarker)>;
 pub type NilTimeout =
     SignedByValidator<(Slot, View, ConsensusProposalHash, NilConsensusTimeoutMarker)>;
-pub type ConsensusTimeout = (
-    TimeoutMetadata,
-    TimeoutKind,
-);
+pub type ConsensusTimeout = (TimeoutMetadata, TimeoutKind);
 
 impl From<ConsensusTimeout> for ConsensusNetMessage {
     fn from(timeout: ConsensusTimeout) -> Self {
