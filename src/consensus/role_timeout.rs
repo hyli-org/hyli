@@ -459,7 +459,7 @@ impl Consensus {
                     ),
                     relevant_timeout_messages.as_slice(),
                 )?
-                    .signature,
+                .signature,
                 ConsensusTimeoutMarker,
             );
             let tqc_kind = match &self.bft_round_state.timeout.highest_seen_prepare_qc {
@@ -503,7 +503,7 @@ impl Consensus {
                             ),
                             relevant_nil_messages.as_slice(),
                         )?
-                            .signature,
+                        .signature,
                         NilConsensusTimeoutMarker,
                     );
                     TCKind::NilProposal(nil_quorum)
@@ -1374,8 +1374,8 @@ mod tests {
                 (cp.hashed(), PrepareVoteMarker),
                 prepare_votes.iter().collect::<Vec<_>>().as_slice(),
             )
-                .expect("aggregate prepare votes")
-                .signature,
+            .expect("aggregate prepare votes")
+            .signature,
             PrepareVoteMarker,
         );
 
