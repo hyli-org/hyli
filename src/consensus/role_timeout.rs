@@ -325,13 +325,9 @@ impl Consensus {
             .requests
             .iter()
             .filter(|signed_message| {
-                if signed_message.msg.0 != *received_slot
-                    || signed_message.msg.1 != *received_view
-                    || signed_message.msg.2 != self.bft_round_state.parent_hash
-                {
-                    return false; // Skip messages that won't be aggregated with this one
-                }
-                true
+                signed_message.msg.0 == *received_slot
+                    && signed_message.msg.1 == *received_view
+                    && signed_message.msg.2 == self.bft_round_state.parent_hash
             })
             .collect::<Vec<_>>();
 
@@ -377,18 +373,19 @@ impl Consensus {
             // Because we're keeping a mutable borrow on timeout requests, we need to redo that.
             // Use this sort of weird pattern to avoid borrowing issues.
             (relevant_timeout_messages, relevant_nil_messages) = {
-                let signed_nil = match &kind {
-                    TimeoutKind::NilProposal(signed_nil) => Some(signed_nil.clone()),
-                    TimeoutKind::PrepareQC(..) => None,
-                };
+                if let TimeoutKind::NilProposal(signed_nil) = &kind {
+                    self.store
+                        .bft_round_state
+                        .timeout
+                        .nils
+                        .insert(signed_nil.clone());
+                }
+
                 self.store
                     .bft_round_state
                     .timeout
                     .requests
                     .insert(timeout.clone());
-                if let Some(signed_nil) = signed_nil {
-                    self.store.bft_round_state.timeout.nils.insert(signed_nil);
-                }
 
                 // Broadcast a timeout message
                 self.broadcast_net_message((timeout, kind).into())
@@ -405,13 +402,9 @@ impl Consensus {
                         .requests
                         .iter()
                         .filter(|signed_message| {
-                            if signed_message.msg.0 != *received_slot
-                                || signed_message.msg.1 != *received_view
-                                || signed_message.msg.2 != self.bft_round_state.parent_hash
-                            {
-                                return false; // Skip messages that won't be aggregated with this one
-                            }
-                            true
+                            signed_message.msg.0 == *received_slot
+                                && signed_message.msg.1 == *received_view
+                                && signed_message.msg.2 == self.bft_round_state.parent_hash
                         })
                         .collect::<Vec<_>>(),
                     self.store
@@ -482,17 +475,12 @@ impl Consensus {
                 }
                 _ => {
                     // Simple case - we will aggregate a 'nil' certificate. We need 2f+1 NIL signed messages
-                    let nil_voting_power = self.store.bft_round_state.staking.compute_voting_power(
-                        &relevant_nil_messages
-                            .iter()
-                            .map(|signed_nil| signed_nil.signature.validator.clone())
-                            .collect::<Vec<_>>(),
-                    );
-                    if nil_voting_power <= 2 * f {
-                        bail!(
-                            "Not enough nil timeout voting power to build a NilProposal TC: {nil_voting_power}"
-                        );
+                    // In principle we can't be here unless they're all NIL.
+
+                    if relevant_timeout_messages.len() != relevant_nil_messages.len() {
+                        warn!("We have a different number of timeout messages and nil messages for the same slot and view. This should not happen");
                     }
+
                     // Ergo, this should successfully aggregate.
                     let nil_quorum = QuorumCertificate(
                         self.crypto
