@@ -450,16 +450,15 @@ impl Consensus {
             );
 
             let tqc = QuorumCertificate(
-                self.crypto
-                    .sign_aggregate(
-                        (
-                            self.bft_round_state.slot,
-                            self.bft_round_state.view,
-                            self.bft_round_state.parent_hash.clone(),
-                            ConsensusTimeoutMarker,
-                        ),
-                        relevant_timeout_messages.as_slice(),
-                    )?
+                BlstCrypto::aggregate(
+                    (
+                        self.bft_round_state.slot,
+                        self.bft_round_state.view,
+                        self.bft_round_state.parent_hash.clone(),
+                        ConsensusTimeoutMarker,
+                    ),
+                    relevant_timeout_messages.as_slice(),
+                )?
                     .signature,
                 ConsensusTimeoutMarker,
             );
@@ -495,16 +494,15 @@ impl Consensus {
                     }
                     // Ergo, this should successfully aggregate.
                     let nil_quorum = QuorumCertificate(
-                        self.crypto
-                            .sign_aggregate(
-                                (
-                                    self.bft_round_state.slot,
-                                    self.bft_round_state.view,
-                                    self.bft_round_state.parent_hash.clone(),
-                                    NilConsensusTimeoutMarker,
-                                ),
-                                relevant_nil_messages.as_slice(),
-                            )?
+                        BlstCrypto::aggregate(
+                            (
+                                self.bft_round_state.slot,
+                                self.bft_round_state.view,
+                                self.bft_round_state.parent_hash.clone(),
+                                NilConsensusTimeoutMarker,
+                            ),
+                            relevant_nil_messages.as_slice(),
+                        )?
                             .signature,
                         NilConsensusTimeoutMarker,
                     );
@@ -607,6 +605,7 @@ impl Consensus {
 mod tests {
     use crate::consensus::test::*;
     use crate::tests::autobahn_testing_macros::{broadcast, send, simple_commit_round};
+    use std::collections::HashSet;
 
     use super::*;
 
@@ -1334,5 +1333,118 @@ mod tests {
             StateTag::Joining
         ));
         assert_eq!(node1.consensus.bft_round_state.slot, 1);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn duplicate_timeout_sender_across_nil_and_prepare_qc_does_not_duplicate_tc_validator() {
+        let (mut node1, node2, _node3, mut node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        node1.start_round().await;
+        let cp = node1
+            .consensus
+            .bft_round_state
+            .current_proposal
+            .clone()
+            .expect("leader should have current proposal after start_round");
+
+        let prepare_votes = [
+            node1
+                .consensus
+                .crypto
+                .sign((cp.hashed(), PrepareVoteMarker))
+                .expect("node1 prepare vote"),
+            node2
+                .consensus
+                .crypto
+                .sign((cp.hashed(), PrepareVoteMarker))
+                .expect("node2 prepare vote"),
+            node4
+                .consensus
+                .crypto
+                .sign((cp.hashed(), PrepareVoteMarker))
+                .expect("node4 prepare vote"),
+        ];
+        let prepare_qc = QuorumCertificate(
+            BlstCrypto::aggregate(
+                (cp.hashed(), PrepareVoteMarker),
+                prepare_votes.iter().collect::<Vec<_>>().as_slice(),
+            )
+                .expect("aggregate prepare votes")
+                .signature,
+            PrepareVoteMarker,
+        );
+
+        let slot = node4.consensus.bft_round_state.slot;
+        let view = node4.consensus.bft_round_state.view;
+        let parent_hash = node4.consensus.bft_round_state.parent_hash.clone();
+
+        let node2_timeout = node2
+            .consensus
+            .crypto
+            .sign((slot, view, parent_hash.clone(), ConsensusTimeoutMarker))
+            .expect("node2 timeout");
+        let node2_nil = node2
+            .consensus
+            .crypto
+            .sign((slot, view, parent_hash.clone(), NilConsensusTimeoutMarker))
+            .expect("node2 nil timeout");
+
+        node4
+            .consensus
+            .on_timeout(
+                node2_timeout.clone(),
+                TimeoutKind::NilProposal(node2_nil.clone()),
+            )
+            .expect("node4 should accept node2 nil timeout");
+        node4
+            .consensus
+            .on_timeout(
+                node2_timeout,
+                TimeoutKind::PrepareQC((prepare_qc.clone(), cp.clone())),
+            )
+            .expect("node4 should accept node2 prepare-qc timeout");
+
+        let node1_timeout = node1
+            .consensus
+            .crypto
+            .sign((slot, view, parent_hash, ConsensusTimeoutMarker))
+            .expect("node1 timeout");
+        node4
+            .consensus
+            .on_timeout(
+                node1_timeout,
+                TimeoutKind::PrepareQC((prepare_qc.clone(), cp)),
+            )
+            .expect("node4 should build a timeout certificate");
+
+        let (timeout_qc, tc_kind) = node4
+            .consensus
+            .cached_timeout_certificate(slot, view)
+            .expect("timeout certificate should be cached");
+
+        let unique_validators = timeout_qc.validators.iter().collect::<HashSet<_>>();
+        assert_eq!(
+            unique_validators.len(),
+            timeout_qc.validators.len(),
+            "timeout certificate should not list the same validator twice",
+        );
+        assert_eq!(
+            timeout_qc
+                .validators
+                .iter()
+                .filter(|validator| **validator == node2.validator_pubkey())
+                .count(),
+            1,
+            "validator that emitted both nil and prepare-qc timeouts must appear once",
+        );
+        assert!(
+            matches!(tc_kind, TCKind::PrepareQC(..)),
+            "highest seen prepare qc should be used for the timeout certificate",
+        );
     }
 }
