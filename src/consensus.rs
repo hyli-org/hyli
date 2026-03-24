@@ -1377,6 +1377,24 @@ pub mod test {
             }
         }
 
+        #[track_caller]
+        pub(crate) fn assert_no_send(&mut self, to: &ValidatorPublicKey, description: &str) {
+            #[allow(clippy::expect_fun_call)]
+            let rec = self.out_receiver.try_recv().map(|msg| msg.into_message());
+
+            match rec {
+                Ok(OutboundMessage::SendMessage {
+                    validator_id,
+                    msg: NetMessage::ConsensusMessage(net_msg),
+                }) if &validator_id == to => {
+                    panic!("{description}: Send message found: {net_msg:?}")
+                }
+                els => {
+                    info!("{description}: Got {:?}", els);
+                }
+            }
+        }
+
         pub(crate) fn assert_send(
             &mut self,
             to: &ValidatorPublicKey,
