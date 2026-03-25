@@ -57,9 +57,11 @@ pub fn verify(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutpu
         evm_config,
     )
     .context("stateless validation failed")?;
-    ensure_successful_receipts(block_hash, &block_execution_output.result.receipts)?;
+    let (success, program_outputs) =
+        check_receipts(block_hash, &block_execution_output.result.receipts);
     tracing::debug!(
         target: "hyli::verifiers::reth",
+        success,
         "Stateless validation passed"
     );
 
@@ -79,11 +81,11 @@ pub fn verify(proof: &ProofData, program_id: &ProgramId) -> Result<Vec<HyliOutpu
         blobs: calldata.blobs.clone(),
         tx_blob_count: calldata.tx_blob_count,
         tx_hash: calldata.tx_hash.clone(),
-        success: true,
+        success,
         state_reads: Vec::new(),
         tx_ctx: calldata.tx_ctx.clone(),
         onchain_effects: Vec::new(),
-        program_outputs: Vec::new(),
+        program_outputs,
     };
 
     tracing::info!(
@@ -279,25 +281,20 @@ fn recover_public_keys(block: &Block) -> Result<Vec<UncompressedPublicKey>, Erro
         .collect()
 }
 
-fn ensure_successful_receipts(block_hash: B256, receipts: &[EthereumReceipt]) -> Result<(), Error> {
+fn check_receipts(block_hash: B256, receipts: &[EthereumReceipt]) -> (bool, Vec<u8>) {
     if let Some((index, receipt)) = receipts
         .iter()
         .enumerate()
         .find(|(_, receipt)| !receipt.success)
     {
-        tracing::warn!(
-            target: "hyli::verifiers::reth",
-            block_hash = %block_hash,
-            tx_index = index,
-            cumulative_gas_used = receipt.cumulative_gas_used,
-            "stateless validation produced a failing receipt"
-        );
-        bail!(
-            "stateless validation returned failing receipt for tx #{index} in block {block_hash}: status=false cumulative_gas_used={}",
+        let msg = format!(
+            "EVM tx #{index} reverted in block {block_hash} (cumulative_gas_used={})",
             receipt.cumulative_gas_used
         );
+        tracing::warn!(target: "hyli::verifiers::reth", "{msg}");
+        return (false, msg.into_bytes());
     }
-    Ok(())
+    (true, Vec::new())
 }
 
 fn validate_blob_matches_block(
@@ -765,7 +762,7 @@ mod tests {
     }
 
     #[test]
-    fn receipts_with_failure_error() {
+    fn receipts_with_failure_returns_false() {
         let receipts = vec![
             EthereumReceipt {
                 tx_type: TxType::Legacy,
@@ -781,11 +778,10 @@ mod tests {
             },
         ];
 
-        let err = ensure_successful_receipts(B256::ZERO, &receipts).unwrap_err();
-        assert!(
-            err.to_string().contains("failing receipt"),
-            "expected failing receipt error, got: {err}"
-        );
+        let (success, output) = check_receipts(B256::ZERO, &receipts);
+        assert!(!success);
+        let msg = String::from_utf8(output).unwrap();
+        assert!(msg.contains("reverted"), "unexpected message: {msg}");
     }
 
     #[test]
@@ -797,6 +793,8 @@ mod tests {
             logs: Vec::new(),
         }];
 
-        ensure_successful_receipts(B256::ZERO, &receipts).expect("all receipts succeeded");
+        let (success, output) = check_receipts(B256::ZERO, &receipts);
+        assert!(success);
+        assert!(output.is_empty());
     }
 }
