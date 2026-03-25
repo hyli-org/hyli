@@ -92,9 +92,9 @@ receiver(ConsensusCommand),
 receiver(GenesisEvent),
 receiver(NodeStateEvent),
 receiver(MsgWithHeader<ConsensusNetMessage>),
-receiver(Query<QueryConsensusInfo, ConsensusInfo>),
-receiver(Query<QueryConsensusStakingState, Staking>),
-receiver(Query<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse>),
+query(QueryConsensusInfo, ConsensusInfo),
+query(QueryConsensusStakingState, Staking),
+query(QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse),
 }
 }
 
