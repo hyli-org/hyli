@@ -94,9 +94,9 @@ receiver(ConsensusCommand),
 receiver(GenesisEvent),
 receiver(NodeStateEvent),
 receiver(MsgWithHeader<ConsensusNetMessage>),
-receiver(Query<QueryConsensusInfo, ConsensusInfo>),
-receiver(Query<QueryConsensusStakingState, Staking>),
-receiver(Query<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse>),
+query(QueryConsensusInfo, ConsensusInfo),
+query(QueryConsensusStakingState, Staking),
+query(QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse),
 }
 }
 
@@ -1370,6 +1370,24 @@ pub mod test {
             match rec {
                 Ok(OutboundMessage::BroadcastMessage(net_msg)) => {
                     panic!("{description}: Broadcast message found: {net_msg:?}")
+                }
+                els => {
+                    info!("{description}: Got {:?}", els);
+                }
+            }
+        }
+
+        #[track_caller]
+        pub(crate) fn assert_no_send(&mut self, to: &ValidatorPublicKey, description: &str) {
+            #[allow(clippy::expect_fun_call)]
+            let rec = self.out_receiver.try_recv().map(|msg| msg.into_message());
+
+            match rec {
+                Ok(OutboundMessage::SendMessage {
+                    validator_id,
+                    msg: NetMessage::ConsensusMessage(net_msg),
+                }) if &validator_id == to => {
+                    panic!("{description}: Send message found: {net_msg:?}")
                 }
                 els => {
                     info!("{description}: Got {:?}", els);

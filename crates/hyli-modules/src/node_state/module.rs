@@ -2,8 +2,8 @@
 
 use super::metrics::NodeStateMetrics;
 use super::{NodeState, NodeStateStore};
+use crate::bus::BusClientSender;
 use crate::bus::SharedMessageBus;
-use crate::bus::{command_response::Query, BusClientSender};
 use crate::module_handle_messages;
 use crate::modules::admin::{QueryNodeStateStore, QueryNodeStateStoreResponse};
 use crate::modules::files::NODE_STATE_BIN;
@@ -44,12 +44,12 @@ module_bus_client! {
 pub struct NodeStateBusClient {
     sender(NodeStateEvent),
     receiver(DataEvent),
-    receiver(Query<ContractName, (BlockHeight, Contract)>),
-    receiver(Query<QuerySettledHeight, BlockHeight>),
-    receiver(Query<QueryUnsettledTxCount, u64>),
-    receiver(Query<QueryBlockHeight , BlockHeight>),
-    receiver(Query<QueryUnsettledTx, UnsettledBlobTransaction>),
-    receiver(Query<QueryNodeStateStore, QueryNodeStateStoreResponse>),
+    query(ContractName, (BlockHeight, Contract)),
+    query(QuerySettledHeight, BlockHeight),
+    query(QueryUnsettledTxCount, u64),
+    query(QueryBlockHeight, BlockHeight),
+    query(QueryUnsettledTx, UnsettledBlobTransaction),
+    query(QueryNodeStateStore, QueryNodeStateStoreResponse),
 }
 }
 

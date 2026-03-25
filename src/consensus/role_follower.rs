@@ -230,6 +230,14 @@ impl Consensus {
             return self.on_prepare(prepare.0, prepare.1, prepare.2, prepare.3);
         }
 
+        if self.is_in_timeout_phase() {
+            info!(
+                "🕒 Already timed out for slot {} view {}, not sending PrepareVote",
+                self.bft_round_state.slot, self.bft_round_state.view
+            );
+            return Ok(());
+        }
+
         // Responds PrepareVote message to leader with validator's vote on this proposal
         if self.is_part_of_consensus(self.crypto.validator_pubkey()) {
             debug!(
@@ -296,6 +304,14 @@ impl Consensus {
         self.bft_round_state
             .timeout
             .update_highest_seen_prepare_qc(slot, prepare_quorum_certificate.clone());
+
+        if self.is_in_timeout_phase() {
+            info!(
+                "🕒 Already timed out for slot {} view {}, not sending ConfirmAck",
+                self.bft_round_state.slot, self.bft_round_state.view
+            );
+            return Ok(());
+        }
 
         // Responds ConfirmAck to leader
         if self.is_part_of_consensus(self.crypto.validator_pubkey()) {

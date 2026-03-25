@@ -589,11 +589,50 @@ mod tests {
         node2.assert_broadcast("Timeout message").await;
 
         // Slot 1 - leader = node1
-        // Ensuring one slot commits correctly before a timeout
+        // A node that already timed out in this view must not later vote on Confirm.
+        let cp;
+        let ticket;
+        let cp_view;
 
-        let (cp, ticket, cp_view) = simple_commit_round! {
-            leader: node1,
-            followers: [node2, node3, node4]
+        broadcast! {
+            description: "Leader - Prepare",
+            from: node1, to: [node2, node3, node4],
+            message_matches: ConsensusNetMessage::Prepare(round_cp, round_ticket, round_view) => {
+                cp = round_cp.clone();
+                ticket = round_ticket.clone();
+                cp_view = *round_view;
+            }
+        };
+
+        node2.assert_no_send(
+            &node1.validator_pubkey(),
+            "Timed out follower must not PrepareVote",
+        );
+
+        send! {
+            description: "Follower - PrepareVote",
+            from: [node3, node4], to: node1,
+            message_matches: ConsensusNetMessage::PrepareVote(_)
+        };
+
+        broadcast! {
+            description: "Leader - Confirm",
+            from: node1, to: [node2, node3, node4],
+            message_matches: ConsensusNetMessage::Confirm(..)
+        };
+
+        node2.assert_no_broadcast("Timed out follower must not ConfirmAck");
+
+        send! {
+            description: "Follower - Confirm Ack",
+            from: [node3, node4], to: node1,
+            message_matches: ConsensusNetMessage::ConfirmAck(_)
+        };
+
+        broadcast! {
+            description: "Leader - Commit",
+            from: node1, to: [node2, node3, node4],
+            message_matches: ConsensusNetMessage::Commit(..)
         };
 
         assert_eq!(cp.slot, 1);
