@@ -78,6 +78,35 @@ impl TimeoutRoleState {
 }
 
 impl Consensus {
+    fn is_relevant_timeout(
+        &self,
+        signed_message: &SignedByValidator<(
+            Slot,
+            View,
+            ConsensusProposalHash,
+            ConsensusTimeoutMarker,
+        )>,
+        slot: Slot,
+        view: View,
+    ) -> bool {
+        signed_message.msg.0 == slot
+            && signed_message.msg.1 == view
+            && signed_message.msg.2 == self.bft_round_state.parent_hash
+    }
+
+    fn relevant_timeout_requests(
+        &self,
+        slot: Slot,
+        view: View,
+    ) -> impl Iterator<Item = &ConsensusTimeout> {
+        self.store
+            .bft_round_state
+            .timeout
+            .requests
+            .iter()
+            .filter(move |(signed_message, _)| self.is_relevant_timeout(signed_message, slot, view))
+    }
+
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub(super) fn verify_tc(
         &self,
@@ -320,37 +349,26 @@ impl Consensus {
 
         let f = self.bft_round_state.staking.compute_f();
 
-        // At this point we must select both NIL and QC timeouts.
-        let (relevant_timeout_messages, tc_kinds) = self
-            .store
-            .bft_round_state
-            .timeout
-            .requests
-            .iter()
-            .filter_map(|(signed_message, tc_kind)| {
-                if signed_message.msg.0 != *received_slot
-                    || signed_message.msg.1 != *received_view
-                    || signed_message.msg.2 != self.bft_round_state.parent_hash
-                {
-                    return None; // Skip messages that won't be aggregated with this one
-                }
-                Some((signed_message.clone(), tc_kind.clone()))
-            })
-            .collect::<(Vec<_>, Vec<_>)>();
-
-        let mut len = relevant_timeout_messages.len();
-
         let own_timeout_counts = self.is_in_timeout_phase()
             && *received_slot == self.bft_round_state.slot
             && *received_view == self.bft_round_state.view;
 
-        // TODO: rework function to avoid cloning
-        let mut voting_power = self.store.bft_round_state.staking.compute_voting_power(
-            &relevant_timeout_messages
-                .iter()
-                .map(|s| s.signature.validator.clone())
-                .collect::<Vec<_>>(),
-        );
+        let (mut len, mut voting_power) = {
+            let relevant_timeout_messages = self
+                .relevant_timeout_requests(*received_slot, *received_view)
+                .map(|(signed_message, _)| signed_message)
+                .collect::<Vec<_>>();
+
+            (
+                relevant_timeout_messages.len(),
+                self.store.bft_round_state.staking.compute_voting_power(
+                    &relevant_timeout_messages
+                        .iter()
+                        .map(|s| s.signature.validator.clone())
+                        .collect::<Vec<_>>(),
+                ),
+            )
+        };
         if own_timeout_counts {
             len += 1;
             voting_power += self.get_own_voting_power();
@@ -392,8 +410,10 @@ impl Consensus {
                 "⏲️ ⏲️ Creating a timeout certificate with {len} timeout requests and {voting_power} voting power"
             );
 
-            let relevant_timeout_message_refs =
-                relevant_timeout_messages.iter().collect::<Vec<_>>();
+            let relevant_timeout_message_refs = self
+                .relevant_timeout_requests(*received_slot, *received_view)
+                .map(|(signed_message, _)| signed_message)
+                .collect::<Vec<_>>();
             let tqc = QuorumCertificate(
                 self.crypto
                     .sign_aggregate(
@@ -441,8 +461,8 @@ impl Consensus {
                                     self.bft_round_state.parent_hash.clone(),
                                     NilConsensusTimeoutMarker,
                                 ),
-                                tc_kinds
-                                    .iter()
+                                self.relevant_timeout_requests(*received_slot, *received_view)
+                                    .map(|(_, tk)| tk)
                                     .map(|tk| match tk {
                                         TimeoutKind::NilProposal(signed_nil) => Ok(signed_nil),
                                         _ => bail!("Expected NilProposal, got {:?}", tk),
@@ -653,6 +673,10 @@ mod tests {
             .iter()
             .all(|(timeout, _)| timeout.signature.validator != node2.validator_pubkey()));
         assert_eq!(node2.consensus.bft_round_state.view, 0);
+        assert!(
+            node2.consensus.cached_timeout_certificate(1, 0).is_none(),
+            "one external timeout plus our local timeout must not be enough to form a TC"
+        );
 
         broadcast! {
             description: "Follower - Timeout",
