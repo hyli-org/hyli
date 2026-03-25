@@ -1,3 +1,19 @@
+//! Synchronous-style request/response over the async message bus.
+//!
+//! While the bus is fundamentally a publish/subscribe system, many interactions are
+//! naturally request/response: "give me the next batch", "is this transaction valid?".
+//! This module provides [`Query<Cmd, Res>`](Query) and [`CmdRespClient`] to express that
+//! pattern without introducing a separate RPC layer.
+//!
+//! ## How it works
+//!
+//! 1. The caller sends a [`Query<Cmd, Res>`](Query) on the bus via [`CmdRespClient::request`].
+//! 2. The handler receives it with `command_response<Cmd, Res>` inside [`handle_messages!`](crate::handle_messages).
+//! 3. The handler calls [`InnerQuery::answer`] (or [`InnerQuery::bail`]) to return the result
+//!    through a `tokio::sync::oneshot` channel.
+//! 4. The caller's `request` future resolves with the result (or times out after
+//!    [`CLIENT_TIMEOUT_SECONDS`] seconds).
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,11 +33,40 @@ use crate::utils::static_type_map::Pick;
 
 pub use hyli_turmoil_shims;
 
+/// Seconds before [`CmdRespClient::request`] gives up waiting for a response.
 pub const CLIENT_TIMEOUT_SECONDS: u64 = 10;
 
+/// A broadcast-safe, single-use request/response envelope.
+///
+/// `Query<Type, Answer>` is the message type that travels on the bus for
+/// synchronous-style request/response exchanges. Because broadcast channels
+/// deliver the same message to *all* subscribers, `Query` wraps the inner
+/// payload in an `Arc<Mutex<Option<…>>>` so that only the **first** receiver
+/// that calls [`take`](Query::take) gets to answer — subsequent calls return an error.
+///
+/// You declare queries in your bus client with `query(Type, Answer)` inside
+/// [`module_bus_client!`](crate::module_bus_client) and handle them with
+/// `command_response<Type, Answer>` inside [`handle_messages!`](crate::handle_messages).
+/// The [`CmdRespClient::request`] method is how callers send a query and await the answer.
+///
+/// # Typical flow
+///
+/// ```text
+///  caller                       handler module
+///    │                               │
+///    │  bus.send(Query<Cmd, Res>)    │
+///    │──────────────────────────────▶│
+///    │                               │  query.take() → InnerQuery
+///    │                               │  inner.answer(result)
+///    │◀─────── oneshot channel ──────│
+///    │  caller.request(cmd).await    │
+/// ```
 #[derive(Clone, Debug)]
 pub struct Query<Type, Answer>(Arc<Mutex<Option<InnerQuery<Type, Answer>>>>);
 impl<Type, Answer> Query<Type, Answer> {
+    /// Consume this query, returning the inner payload so you can call [`InnerQuery::answer`].
+    ///
+    /// Returns `Err` if the query was already taken (i.e. another subscriber answered first).
     pub fn take(self) -> Result<InnerQuery<Type, Answer>> {
         match self.0.try_lock() {
             Ok(mut guard) => match guard.take() {
@@ -35,17 +80,23 @@ impl<Type, Answer> Query<Type, Answer> {
 
 impl<Type, Answer> BusMessage for Query<Type, Answer> {}
 
+/// The unwrapped contents of a [`Query`] after it has been [`taken`](Query::take).
+///
+/// `data` is the request payload; call [`answer`](InnerQuery::answer) or
+/// [`bail`](InnerQuery::bail) to send the response back to the caller.
 #[derive(Debug)]
 pub struct InnerQuery<Type, Answer> {
     pub callback: tokio::sync::oneshot::Sender<Result<Answer>>,
     pub data: Type,
 }
 impl<Cmd, Res> InnerQuery<Cmd, Res> {
+    /// Send a successful response to the caller.
     pub fn answer(self, data: Res) -> Result<()> {
         self.callback
             .send(Ok(data))
             .map_err(|_| anyhow::anyhow!("Error while sending response"))
     }
+    /// Send an error response to the caller.
     pub fn bail<T>(self, error: T) -> Result<()>
     where
         T: Into<anyhow::Error>,
@@ -160,6 +211,49 @@ pub mod handle_messages_helpers {
     }
 }
 
+/// Build a `tokio::select!`-based event loop for a bus client.
+///
+/// `handle_messages!` translates a declarative list of message handlers into a
+/// `loop { tokio::select! { … } }` that runs until one of the handlers calls `break`.
+///
+/// # Syntax
+///
+/// ```rust,ignore
+/// handle_messages! {
+///     on_bus my_client,
+///
+///     // Listen to a broadcast event
+///     listen<EventType> event => { /* handle event */ }
+///
+///     // Carry the distributed-tracing context into the handler
+///     listen<EventType> event, span(ctx) => {
+///         let _span = info_span_ctx!("handle_event", ctx);
+///     }
+///
+///     // Handle a synchronous query and return a response
+///     command_response<QueryType, ResponseType> query => {
+///         Ok(ResponseType { /* … */ })
+///     }
+///
+///     // Any other tokio-compatible future (timers, channels, …)
+///     _ = interval.tick() => { /* periodic work */ }
+/// }
+/// ```
+///
+/// # Observability
+///
+/// For every branch, `handle_messages!` records:
+/// - An OpenTelemetry gauge tracking which branch was last selected (`event_loop_branch_gauge`)
+/// - A histogram of per-branch latency (`event_loop_latency`)
+///
+/// # Notes
+///
+/// - **`on_bus`** must be a bus client generated by [`bus_client!`](crate::bus_client) or
+///   [`module_bus_client!`](crate::module_bus_client).
+/// - For modules, prefer [`module_handle_messages!`](crate::module_handle_messages) which
+///   automatically handles `ShutdownModule` and `PersistModule`.
+/// - The loop uses `biased` selection (via `hyli_turmoil_shims`), so branch order matters
+///   for priority.
 #[macro_export]
 macro_rules! handle_messages {
     (on_bus $bus:expr, $($rest:tt)*) => {

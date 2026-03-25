@@ -1,4 +1,15 @@
-//! Event bus used for messaging across components asynchronously.
+//! Core message bus primitives.
+//!
+//! This module provides:
+//! - [`SharedMessageBus`] — the central hub shared by all modules
+//! - [`BusMessage`] — marker trait for messages that travel on the bus
+//! - [`BusClientSender`] / [`BusClientReceiver`] — auto-implemented send/receive traits
+//! - [`bus_client!`] — macro to declare a module's typed message contract
+//! - `handle_messages!` — macro to build a `tokio::select!`-based event loop
+//!
+//! In normal usage you never interact with [`SharedMessageBus`] directly.
+//! Instead you create a typed client with [`bus_client!`] or [`module_bus_client!`](crate::module_bus_client)
+//! and use it inside `handle_messages!`.
 
 use crate::utils::static_type_map::Pick;
 use anymap::{any::Any, Map};
@@ -11,11 +22,36 @@ pub use tracing_opentelemetry::OpenTelemetrySpanExt;
 pub mod command_response;
 pub mod metrics;
 
+/// Default broadcast-channel capacity for message types that do not override [`BusMessage::CAPACITY`].
+///
+/// When the channel is full, [`BusClientSender::send`] returns an error instead of blocking.
+/// Use [`BusClientSender::send_waiting_if_full`] if you need back-pressure.
 pub const DEFAULT_CAPACITY: usize = 100000;
+
+/// Alternative capacity for high-throughput message types that don't need a deep backlog.
 pub const LOW_CAPACITY: usize = 10000;
 
+/// Marker trait for types that can be sent over the [`SharedMessageBus`].
+///
+/// Every message type needs `Clone` (broadcast channels clone messages for each subscriber)
+/// plus this trait, which lets you tune the channel capacity per type.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// #[derive(Clone)]
+/// struct MyEvent { data: u32 }
+///
+/// impl hyli_bus::BusMessage for MyEvent {
+///     // Optional: lower the capacity for low-volume types.
+///     const CAPACITY: usize = hyli_bus::LOW_CAPACITY;
+/// }
+/// ```
 pub trait BusMessage {
+    /// Number of messages that can be queued before senders start seeing errors.
     const CAPACITY: usize = DEFAULT_CAPACITY;
+    /// Threshold used by [`BusClientSender::send`] to detect a near-full channel
+    /// and return an error early, leaving a small safety margin.
     const CAPACITY_IF_WAITING: usize = Self::CAPACITY - 10;
 }
 impl BusMessage for () {}
@@ -25,6 +61,12 @@ impl BusMessage for usize {}
 
 type AnyMap = Map<dyn Any + Send + Sync>;
 
+/// Internal wrapper around a message that optionally carries an OpenTelemetry span context.
+///
+/// You rarely need to create or inspect `BusEnvelope` directly.
+/// [`BusClientSender`] and [`BusClientReceiver`] unwrap it transparently.
+/// The `span(ctx)` syntax in `handle_messages!` gives you access to the
+/// propagated context when the `instrumentation` feature is enabled.
 #[derive(Clone)]
 pub struct BusEnvelope<M> {
     message: M,
@@ -87,7 +129,23 @@ impl<M> BusEnvelope<M> {
 pub type BusSender<M> = broadcast::Sender<BusEnvelope<M>>;
 pub type BusReceiver<M> = broadcast::Receiver<BusEnvelope<M>>;
 
-/// Create an info span and optionally set its parent to the provided span/context.
+/// Create a `tracing::info_span` and, when the `instrumentation` feature is enabled,
+/// set its OpenTelemetry parent to `$ctx`.
+///
+/// This is a thin wrapper around [`tracing::info_span!`] that handles the
+/// conditional propagation of distributed-tracing context across bus boundaries.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// handle_messages! {
+///     on_bus self.bus,
+///     listen<SomeEvent> ev, span(ctx) => {
+///         let _span = info_span_ctx!("handle_some_event", ctx, event = ?ev);
+///         // ... process ev
+///     }
+/// }
+/// ```
 #[macro_export]
 macro_rules! info_span_ctx {
     ($name:expr, $ctx:expr $(, $($arg:tt)*)? ) => {{
@@ -104,12 +162,34 @@ macro_rules! info_span_ctx {
 }
 pub use info_span_ctx;
 
+/// Thread-safe, type-indexed collection of broadcast channels.
+///
+/// `SharedMessageBus` is the backbone of the whole system. It is an
+/// `Arc<Mutex<AnyMap>>` that lazily creates one [`tokio::sync::broadcast`]
+/// channel per message type the first time a sender or receiver is requested.
+///
+/// # Sharing handles
+///
+/// Call [`new_handle`](SharedMessageBus::new_handle) to get a cheap clone
+/// that shares the same underlying channel map. Every module typically holds
+/// its own handle, which it uses to subscribe to the channels it declared in
+/// its [`module_bus_client!`](crate::module_bus_client) struct.
+///
+/// # Lifecycle guarantee
+///
+/// Build *all* your modules with [`ModulesHandler::build_module`](crate::ModulesHandler::build_module)
+/// **before** calling [`start_modules`](crate::ModulesHandler::start_modules).
+/// This ensures every receiver is subscribed before any sender fires, so no
+/// message is silently dropped.
 pub struct SharedMessageBus {
     channels: Arc<Mutex<AnyMap>>,
     pub metrics: BusMetrics,
 }
 
 impl SharedMessageBus {
+    /// Returns a new handle that shares the same underlying channel map.
+    ///
+    /// This is cheap — it only clones an `Arc`.
     pub fn new_handle(&self) -> Self {
         SharedMessageBus {
             channels: Arc::clone(&self.channels),
@@ -117,6 +197,9 @@ impl SharedMessageBus {
         }
     }
 
+    /// Creates a fresh, empty bus.
+    ///
+    /// Typically called once in `main` and then passed to [`ModulesHandler::new`](crate::ModulesHandler::new).
     pub fn new() -> Self {
         Self {
             channels: Arc::new(Mutex::new(AnyMap::new())),
@@ -166,8 +249,28 @@ impl Default for SharedMessageBus {
     }
 }
 
+/// Sending capability automatically implemented for bus clients that own a [`BusSender<T>`].
+///
+/// You get this implementation for free when you declare `sender(T)` inside [`bus_client!`].
+/// The trait is auto-implemented — you never implement it manually.
+///
+/// # Behaviour
+///
+/// - [`send`](BusClientSender::send) is fire-and-forget. It returns `Ok(())` even when there are
+///   no receivers (messages are silently dropped). It returns `Err` only when the channel is
+///   at [`BusMessage::CAPACITY_IF_WAITING`], indicating back-pressure.
+/// - [`send_waiting_if_full`](BusClientSender::send_waiting_if_full) spins with 100 ms sleeps
+///   until space is available, logging a warning every ~10 s.
+/// - [`send_with_context`](BusClientSender::send_with_context) attaches a pre-built
+///   OpenTelemetry context instead of capturing the current span automatically.
 pub trait BusClientSender<T> {
+    /// Fire-and-forget send. Returns `Err` if the channel is near capacity.
     fn send(&mut self, message: T) -> anyhow::Result<()>;
+
+    /// Like [`send`](BusClientSender::send) but waits until the channel has room.
+    ///
+    /// Prefer this when you cannot afford to drop messages and the consumer may
+    /// be temporarily slower than the producer.
     fn send_waiting_if_full(
         &mut self,
         message: T,
@@ -176,22 +279,62 @@ pub trait BusClientSender<T> {
         Self: Send,
         T: Send;
 
+    /// Send with an explicit OpenTelemetry [`Context`](opentelemetry::Context) instead of
+    /// capturing the current tracing span.
     fn send_with_context(
         &mut self,
         message: T,
         context: opentelemetry::Context,
     ) -> anyhow::Result<()>;
 }
+
+/// Receiving capability automatically implemented for bus clients that own a [`BusReceiver<T>`].
+///
+/// You get this implementation for free when you declare `receiver(T)` inside [`bus_client!`].
+/// In practice you use the higher-level `handle_messages!` macro rather than calling
+/// these methods directly.
 pub trait BusClientReceiver<T> {
+    /// Await the next message of type `T`.
     fn recv(
         &mut self,
     ) -> impl std::future::Future<Output = Result<T, tokio::sync::broadcast::error::RecvError>> + Send;
+
+    /// Non-blocking receive. Returns [`TryRecvError::Empty`](tokio::sync::broadcast::error::TryRecvError) if no message is ready.
     fn try_recv(&mut self) -> Result<T, tokio::sync::broadcast::error::TryRecvError>;
 }
 
-/// Macro to create  a struct that registers sender/receiver using a shared bus.
-/// This can be used to ensure that channels are open without locking in a typesafe manner.
-/// It also serves as documentation for the types of messages used by each modules.
+/// Declare a typed bus client struct.
+///
+/// `bus_client!` generates a struct that:
+/// - holds one [`BusSender<T>`] for every `sender(T)` entry
+/// - holds one [`BusReceiver<T>`] for every `receiver(T)` entry
+/// - implements [`BusClientSender<T>`] and [`BusClientReceiver<T>`] automatically
+/// - implements `Clone` (receivers re-subscribe to the broadcast channel)
+/// - provides `new_from_bus(bus)` to construct itself from a [`SharedMessageBus`]
+///
+/// The generated struct is also a compile-time contract: the type system
+/// guarantees that a module can only send or receive the messages it declared.
+///
+/// For modules, prefer [`module_bus_client!`](crate::module_bus_client) which additionally
+/// subscribes to [`ShutdownModule`](crate::modules::signal::ShutdownModule) and
+/// [`PersistModule`](crate::modules::signal::PersistModule).
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use hyli_bus::bus_client;
+///
+/// bus_client! {
+///     pub struct MempoolBusClient {
+///         sender(MempoolStatusEvent),
+///         receiver(ConsensusEvent),
+///         receiver(NodeStateEvent),
+///     }
+/// }
+///
+/// // Later, in a test or main:
+/// let client = MempoolBusClient::new_from_bus(bus.new_handle()).await;
+/// ```
 #[macro_export]
 macro_rules! bus_client {
     (
