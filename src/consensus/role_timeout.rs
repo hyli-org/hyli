@@ -619,6 +619,54 @@ mod tests {
     }
 
     #[test_log::test(tokio::test)]
+    async fn own_timeout_is_not_stored_but_still_counts_for_tc() {
+        let (mut node1, mut node2, mut node3, mut node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        ConsensusTestCtx::timeout(&mut [&mut node2, &mut node3, &mut node4]).await;
+
+        assert!(matches!(
+            node2.consensus.bft_round_state.timeout.state,
+            TimeoutState::Timeout
+        ));
+        assert!(
+            node2.consensus.bft_round_state.timeout.requests.is_empty(),
+            "own timeout should not be stored in timeout.requests"
+        );
+
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node3, to: [node1, node2, node4],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+
+        assert_eq!(node2.consensus.bft_round_state.timeout.requests.len(), 1);
+        assert!(node2
+            .consensus
+            .bft_round_state
+            .timeout
+            .requests
+            .iter()
+            .all(|(timeout, _)| timeout.signature.validator != node2.validator_pubkey()));
+        assert_eq!(node2.consensus.bft_round_state.view, 0);
+
+        broadcast! {
+            description: "Follower - Timeout",
+            from: node4, to: [node1, node2, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+
+        assert_eq!(
+            node2.consensus.bft_round_state.view, 1,
+            "node should advance using its local timeout plus two external timeouts"
+        );
+    }
+
+    #[test_log::test(tokio::test)]
     async fn test_timeout_multi_view() {
         let (mut node1, mut node2, mut node3, mut node4): (
             ConsensusTestCtx,
