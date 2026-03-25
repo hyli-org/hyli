@@ -50,25 +50,19 @@ impl TimeoutState {
     }
 }
 
-pub(super) struct RuntimeTimeoutFuture(Pin<Box<dyn Future<Output = ()> + Send>>);
+pub(super) type TimeoutFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
-impl Default for RuntimeTimeoutFuture {
+pub(super) struct ScheduledTimeout(pub(super) TimeoutFuture);
+
+impl Default for ScheduledTimeout {
     fn default() -> Self {
         Self(Box::pin(std::future::pending()))
     }
 }
 
-impl RuntimeTimeoutFuture {
-    pub(super) fn pending() -> Self {
-        Self::default()
-    }
-
+impl ScheduledTimeout {
     pub(super) fn sleep(duration: std::time::Duration) -> Self {
         Self(Box::pin(tokio::time::sleep(duration)))
-    }
-
-    pub(super) fn as_mut(&mut self) -> Pin<&mut (dyn Future<Output = ()> + Send)> {
-        self.0.as_mut()
     }
 }
 
@@ -77,7 +71,7 @@ pub(super) struct TimeoutRoleState {
     pub(super) requests: HashSet<ConsensusTimeout>,
     pub(super) state: TimeoutState,
     #[borsh(skip)]
-    pub(super) next_scheduled: RuntimeTimeoutFuture,
+    pub(super) next_scheduled: ScheduledTimeout,
     pub(super) highest_seen_prepare_qc: Option<(Slot, PrepareQC)>,
 }
 
@@ -86,7 +80,7 @@ impl Default for TimeoutRoleState {
         Self {
             requests: HashSet::new(),
             state: TimeoutState::Voting,
-            next_scheduled: RuntimeTimeoutFuture::pending(),
+            next_scheduled: ScheduledTimeout::default(),
             highest_seen_prepare_qc: None,
         }
     }
@@ -96,7 +90,7 @@ impl TimeoutRoleState {
     pub(super) fn reset_for_new_round(&mut self) {
         self.requests.clear();
         self.state = TimeoutState::Voting;
-        self.next_scheduled = RuntimeTimeoutFuture::pending();
+        self.next_scheduled = ScheduledTimeout::default();
     }
 
     pub(super) fn update_highest_seen_prepare_qc(&mut self, slot: Slot, qc: PrepareQC) -> bool {
@@ -233,7 +227,6 @@ impl Consensus {
     }
 
     pub(super) fn on_timeout_trigger(&mut self) -> Result<()> {
-        self.bft_round_state.timeout.next_scheduled = RuntimeTimeoutFuture::pending();
         let _span = tracing::info_span!(
             "TimeoutTick",
             slot = self.bft_round_state.slot as i64,

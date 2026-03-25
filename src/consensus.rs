@@ -231,8 +231,7 @@ impl Consensus {
         } else {
             target - TimestampMsClock::now()
         };
-        self.bft_round_state.timeout.next_scheduled =
-            role_timeout::RuntimeTimeoutFuture::sleep(wait);
+        self.bft_round_state.timeout.next_scheduled = role_timeout::ScheduledTimeout::sleep(wait);
     }
 
     fn cache_timeout_certificate(
@@ -907,7 +906,7 @@ impl Consensus {
 
         module_handle_messages! {
             on_self self,
-            _ = self.bft_round_state.timeout.next_scheduled.as_mut(), if !self.is_round_leader() => {
+            _ = self.bft_round_state.timeout.next_scheduled.0.as_mut(), if !self.is_round_leader() => {
                 let _ = log_error!(self.on_timeout_trigger(), "Error while handling timeout tick");
             }
             listen<NodeStateEvent> event => {
@@ -1163,7 +1162,7 @@ pub mod test {
         pub async fn timeout(nodes: &mut [&mut ConsensusTestCtx]) {
             for n in nodes {
                 n.consensus.bft_round_state.timeout.next_scheduled =
-                    role_timeout::RuntimeTimeoutFuture::sleep(Duration::ZERO);
+                    role_timeout::ScheduledTimeout::sleep(Duration::ZERO);
                 n.consensus
                     .on_timeout_trigger()
                     .unwrap_or_else(|err| panic!("Timeout tick for node {}: {:?}", n.name, err));
