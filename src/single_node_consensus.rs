@@ -30,9 +30,9 @@ module_bus_client! {
 struct SingleNodeConsensusBusClient {
     sender(ConsensusEvent),
     sender(Query<QueryNewCut, Cut>),
-    receiver(Query<QueryConsensusInfo, ConsensusInfo>),
-    receiver(Query<QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse>),
     receiver(GenesisEvent),
+    query(QueryConsensusInfo, ConsensusInfo),
+    query(QueryConsensusCatchupStore, QueryConsensusCatchupStoreResponse),
 }
 }
 
