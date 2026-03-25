@@ -372,8 +372,7 @@ impl Consensus {
             self.broadcast_net_message((timeout, kind).into())
                 .context(format!(
                     "Sending timeout message for slot: {} view: {}",
-                    self.bft_round_state.slot,
-                    self.bft_round_state.view,
+                    self.bft_round_state.slot, self.bft_round_state.view,
                 ))?;
 
             len += 1;
@@ -393,7 +392,8 @@ impl Consensus {
                 "⏲️ ⏲️ Creating a timeout certificate with {len} timeout requests and {voting_power} voting power"
             );
 
-            let relevant_timeout_message_refs = relevant_timeout_messages.iter().collect::<Vec<_>>();
+            let relevant_timeout_message_refs =
+                relevant_timeout_messages.iter().collect::<Vec<_>>();
             let tqc = QuorumCertificate(
                 self.crypto
                     .sign_aggregate(

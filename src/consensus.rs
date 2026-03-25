@@ -218,7 +218,10 @@ impl Consensus {
     }
 
     fn is_in_timeout_phase(&self) -> bool {
-        !matches!(self.bft_round_state.timeout.state, role_timeout::TimeoutState::Voting)
+        !matches!(
+            self.bft_round_state.timeout.state,
+            role_timeout::TimeoutState::Voting
+        )
     }
 
     fn schedule_timeout_at(&mut self, from: TimestampMs, duration: Duration) {
@@ -898,17 +901,15 @@ impl Consensus {
         module_handle_messages! {
             on_self self,
             _ = tokio::time::sleep({
-                let next_scheduled = self
-                    .bft_round_state
-                    .timeout
-                    .next_scheduled
-                    .clone()
-                    .expect("timeout.next_scheduled must be set while consensus is running");
-                let now = TimestampMsClock::now();
-                if next_scheduled <= now {
-                    Duration::ZERO
+                if let Some(next_scheduled) = self.bft_round_state.timeout.next_scheduled.clone() {
+                    let now = TimestampMsClock::now();
+                    if next_scheduled <= now {
+                        Duration::ZERO
+                    } else {
+                        next_scheduled - now
+                    }
                 } else {
-                    next_scheduled - now
+                    Duration::from_secs(365 * 24 * 60 * 60)
                 }
             }) => {
                 let _ = log_error!(self.on_timeout_tick(), "Error while handling timeout tick");
