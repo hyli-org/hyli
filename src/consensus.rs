@@ -225,7 +225,14 @@ impl Consensus {
     }
 
     fn schedule_timeout_at(&mut self, from: TimestampMs, duration: Duration) {
-        self.bft_round_state.timeout.next_scheduled = from + duration;
+        let target = from + duration;
+        let wait = if target <= TimestampMsClock::now() {
+            Duration::ZERO
+        } else {
+            target - TimestampMsClock::now()
+        };
+        self.bft_round_state.timeout.next_scheduled =
+            role_timeout::RuntimeTimeoutFuture::sleep(wait);
     }
 
     fn cache_timeout_certificate(
@@ -900,21 +907,8 @@ impl Consensus {
 
         module_handle_messages! {
             on_self self,
-            _ = async {
-                if self.is_round_leader() {
-                    std::future::pending::<()>().await;
-                } else {
-                    let next_scheduled = self.bft_round_state.timeout.next_scheduled.clone();
-                    let now = TimestampMsClock::now();
-                    let wait = if next_scheduled <= now {
-                        Duration::ZERO
-                    } else {
-                        next_scheduled - now
-                    };
-                    tokio::time::sleep(wait).await;
-                }
-            } => {
-                let _ = log_error!(self.on_timeout_tick(), "Error while handling timeout tick");
+            _ = self.bft_round_state.timeout.next_scheduled.as_mut(), if !self.is_round_leader() => {
+                let _ = log_error!(self.on_timeout_trigger(), "Error while handling timeout tick");
             }
             listen<NodeStateEvent> event => {
                 let _ = log_error!(self.handle_node_state_event(event).await, "Error while handling data event");
@@ -1168,10 +1162,10 @@ pub mod test {
 
         pub async fn timeout(nodes: &mut [&mut ConsensusTestCtx]) {
             for n in nodes {
-                let scheduled_at = TimestampMsClock::now() - Duration::from_secs(5);
-                n.consensus.bft_round_state.timeout.next_scheduled = scheduled_at;
+                n.consensus.bft_round_state.timeout.next_scheduled =
+                    role_timeout::RuntimeTimeoutFuture::sleep(Duration::ZERO);
                 n.consensus
-                    .on_timeout_tick()
+                    .on_timeout_trigger()
                     .unwrap_or_else(|err| panic!("Timeout tick for node {}: {:?}", n.name, err));
             }
         }

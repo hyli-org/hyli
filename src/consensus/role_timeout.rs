@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
-use std::collections::HashSet;
+use std::{collections::HashSet, future::Future, pin::Pin};
 use tracing::{debug, info, trace, warn};
 
 use super::*;
@@ -8,8 +8,7 @@ use crate::{
     consensus::role_follower::TicketVerificationError,
     model::{Slot, View},
 };
-use hyli_model::{utils::TimestampMs, ConsensusProposalHash, Hashed, Signed, SignedByValidator};
-use hyli_net::clock::TimestampMsClock;
+use hyli_model::{ConsensusProposalHash, Hashed, Signed, SignedByValidator};
 
 #[derive(Debug, BorshSerialize, BorshDeserialize, Default)]
 pub(super) enum TimeoutState {
@@ -51,19 +50,53 @@ impl TimeoutState {
     }
 }
 
-#[derive(BorshSerialize, BorshDeserialize, Default)]
+pub(super) struct RuntimeTimeoutFuture(Pin<Box<dyn Future<Output = ()> + Send>>);
+
+impl Default for RuntimeTimeoutFuture {
+    fn default() -> Self {
+        Self(Box::pin(std::future::pending()))
+    }
+}
+
+impl RuntimeTimeoutFuture {
+    pub(super) fn pending() -> Self {
+        Self::default()
+    }
+
+    pub(super) fn sleep(duration: std::time::Duration) -> Self {
+        Self(Box::pin(tokio::time::sleep(duration)))
+    }
+
+    pub(super) fn as_mut(&mut self) -> Pin<&mut (dyn Future<Output = ()> + Send)> {
+        self.0.as_mut()
+    }
+}
+
+#[derive(BorshSerialize, BorshDeserialize)]
 pub(super) struct TimeoutRoleState {
     pub(super) requests: HashSet<ConsensusTimeout>,
     pub(super) state: TimeoutState,
-    pub(super) next_scheduled: TimestampMs,
+    #[borsh(skip)]
+    pub(super) next_scheduled: RuntimeTimeoutFuture,
     pub(super) highest_seen_prepare_qc: Option<(Slot, PrepareQC)>,
+}
+
+impl Default for TimeoutRoleState {
+    fn default() -> Self {
+        Self {
+            requests: HashSet::new(),
+            state: TimeoutState::Voting,
+            next_scheduled: RuntimeTimeoutFuture::pending(),
+            highest_seen_prepare_qc: None,
+        }
+    }
 }
 
 impl TimeoutRoleState {
     pub(super) fn reset_for_new_round(&mut self) {
         self.requests.clear();
         self.state = TimeoutState::Voting;
-        self.next_scheduled = TimestampMs::ZERO;
+        self.next_scheduled = RuntimeTimeoutFuture::pending();
     }
 
     pub(super) fn update_highest_seen_prepare_qc(&mut self, slot: Slot, qc: PrepareQC) -> bool {
@@ -199,13 +232,8 @@ impl Consensus {
         Ok(())
     }
 
-    pub(super) fn on_timeout_tick(&mut self) -> Result<()> {
-        let timestamp = self.bft_round_state.timeout.next_scheduled.clone();
-        if TimestampMsClock::now() < timestamp {
-            return Ok(());
-        }
-
-        self.bft_round_state.timeout.next_scheduled = TimestampMs::ZERO;
+    pub(super) fn on_timeout_trigger(&mut self) -> Result<()> {
+        self.bft_round_state.timeout.next_scheduled = RuntimeTimeoutFuture::pending();
         let _span = tracing::info_span!(
             "TimeoutTick",
             slot = self.bft_round_state.slot as i64,
