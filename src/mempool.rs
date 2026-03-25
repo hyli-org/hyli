@@ -172,7 +172,7 @@ struct MempoolBusClient {
     receiver(ConsensusEvent),
     receiver(GenesisEvent),
     receiver(NodeStateEvent),
-    receiver(Query<QueryNewCut, Cut>),
+    query(QueryNewCut, Cut),
 }
 }
 

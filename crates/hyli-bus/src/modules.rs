@@ -388,6 +388,7 @@ macro_rules! module_bus_client {
         $pub:vis struct $name:ident $(< $( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+ >)? {
             $(sender($sender:ty),)*
             $(receiver($receiver:ty),)*
+            $(query($qtype:ty, $qresp:ty),)*
         }
     ) => {
         $crate::bus::bus_client!{
@@ -395,6 +396,7 @@ macro_rules! module_bus_client {
             $pub struct $name $(< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? {
                 $(sender($sender),)*
                 $(receiver($receiver),)*
+                $(receiver($crate::bus::command_response::Query<$qtype, $qresp>),)*
                 receiver($crate::modules::signal::ShutdownModule),
                 receiver($crate::modules::signal::PersistModule),
             }

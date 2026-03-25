@@ -44,12 +44,12 @@ module_bus_client! {
 pub struct NodeStateBusClient {
     sender(NodeStateEvent),
     receiver(DataEvent),
-    receiver(Query<ContractName, (BlockHeight, Contract)>),
-    receiver(Query<QuerySettledHeight, BlockHeight>),
-    receiver(Query<QueryUnsettledTxCount, u64>),
-    receiver(Query<QueryBlockHeight , BlockHeight>),
-    receiver(Query<QueryUnsettledTx, UnsettledBlobTransaction>),
-    receiver(Query<QueryNodeStateStore, QueryNodeStateStoreResponse>),
+    query(ContractName, (BlockHeight, Contract)),
+    query(QuerySettledHeight, BlockHeight),
+    query(QueryUnsettledTxCount, u64),
+    query(QueryBlockHeight, BlockHeight),
+    query(QueryUnsettledTx, UnsettledBlobTransaction),
+    query(QueryNodeStateStore, QueryNodeStateStoreResponse),
 }
 }
 
