@@ -3,7 +3,7 @@
 use super::metrics::NodeStateMetrics;
 use super::{NodeState, NodeStateStore};
 use crate::bus::SharedMessageBus;
-use crate::bus::{command_response::Query, BusClientSender};
+use crate::bus::BusClientSender;
 use crate::module_handle_messages;
 use crate::modules::admin::{QueryNodeStateStore, QueryNodeStateStoreResponse};
 use crate::modules::files::NODE_STATE_BIN;

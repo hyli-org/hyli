@@ -1,7 +1,7 @@
 //! Mempool logic & pending transaction management.
 
 use crate::{
-    bus::{command_response::Query, BusClientSender},
+    bus::BusClientSender,
     consensus::{CommittedConsensusProposal, ConsensusEvent},
     genesis::GenesisEvent,
     model::*,
