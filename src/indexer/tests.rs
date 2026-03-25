@@ -19,13 +19,10 @@ use hyli_model::api::{
     TransactionStatusDb,
 };
 use hyli_modules::node_state::test::{craft_signed_block, craft_signed_block_with_parent_dp_hash};
+use hyli_test_containers::{postgres::Postgres, runners::AsyncRunner, ContainerAsync, ImageExt};
 use serde_json::json;
 use sqlx::postgres::{PgListener, PgPoolOptions};
 use std::{future::IntoFuture, time::Duration};
-use testcontainers_modules::{
-    postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
-};
 use utils::TimestampMs;
 
 use super::*;

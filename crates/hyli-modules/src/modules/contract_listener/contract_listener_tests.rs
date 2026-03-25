@@ -14,13 +14,10 @@ use hyli_model::{
     api::{ContractChangeType, TransactionStatusDb},
     BlockHeight, ContractName, LaneId, TxHash,
 };
+use hyli_test_containers::{postgres::Postgres, runners::AsyncRunner, ContainerAsync, ImageExt};
 use sdk::{BlockHash, ConsensusProposalHash};
 use sqlx::{postgres::PgPoolOptions, types::chrono::Utc, PgPool};
 use tempfile::tempdir;
-use testcontainers_modules::{
-    postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
-};
 
 use tokio::{
     sync::broadcast::{error::RecvError, Receiver},

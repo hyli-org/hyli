@@ -46,6 +46,7 @@ use hyli_modules::{
     utils::db::use_fresh_db,
 };
 use hyli_net::clock::TimestampMsClock;
+use hyli_test_containers::{postgres::Postgres, runners::AsyncRunner, ContainerAsync, ImageExt};
 use hyllar::Hyllar;
 use smt_token::account::AccountSMT;
 use std::{
@@ -54,10 +55,6 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
     time::Duration,
-};
-use testcontainers_modules::{
-    postgres::Postgres,
-    testcontainers::{runners::AsyncRunner, ContainerAsync, ImageExt},
 };
 use tracing::{error, info, warn};
 use utoipa::OpenApi;
@@ -89,7 +86,7 @@ impl RunPg {
             .and_then(|v| v.parse().ok());
         if let Some(port) = fixed_port {
             info!("🐘 Using fixed postgres host port {}", port);
-            pg_builder = pg_builder.with_mapped_port(port, 5432u16.into());
+            pg_builder = pg_builder.with_mapped_port(port, 5432u16);
         }
 
         let pg = pg_builder.start().await?;
