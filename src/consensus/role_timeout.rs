@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
-use std::{collections::HashSet, time::Duration};
+use std::collections::HashSet;
 use tracing::{debug, info, trace, warn};
 
 use super::*;
@@ -14,48 +14,40 @@ use hyli_net::clock::TimestampMsClock;
 #[derive(Debug, BorshSerialize, BorshDeserialize, Default)]
 pub(super) enum TimeoutState {
     #[default]
-    // Initial state
-    Inactive,
-    // A new slot was created, and its (timeout) is scheduled
-    Scheduled {
-        timestamp: TimestampMs,
-    },
-    CertificateEmitted,
+    Voting,
+    Timeout,
+    Certificate,
 }
 
 impl TimeoutState {
-    pub fn schedule_next(&mut self, timestamp: TimestampMs, duration: Duration) {
+    pub fn timeout(&mut self) {
         match self {
-            TimeoutState::Inactive => {
-                trace!("⏲️ Scheduling timeout");
+            TimeoutState::Voting => {
+                trace!("⏲️ Entering timeout phase");
             }
-            TimeoutState::CertificateEmitted => {
-                trace!("⏲️ Rescheduling timeout after a certificate was emitted");
+            TimeoutState::Timeout => {
+                trace!("⏲️ Already in timeout phase");
             }
-            TimeoutState::Scheduled { .. } => {
-                trace!("⏲️ Rescheduling timeout");
+            TimeoutState::Certificate => {
+                warn!("⏲️ Try to re-enter timeout phase after a certificate was emitted");
             }
         }
-        *self = TimeoutState::Scheduled {
-            timestamp: timestamp + duration,
-        };
+        *self = TimeoutState::Timeout;
     }
-    pub fn certificate_emitted(&mut self) {
+
+    pub fn enter_certificate_phase(&mut self) {
         match self {
-            TimeoutState::CertificateEmitted => {
+            TimeoutState::Certificate => {
                 warn!("⏲️ Try to emit a certificate after it was already emitted");
             }
-            TimeoutState::Scheduled { timestamp } => {
-                warn!(
-                    "⏲️ Mark TimeoutCertificate as emitted while scheduled {}",
-                    timestamp
-                );
+            TimeoutState::Voting => {
+                warn!("⏲️ Mark TimeoutCertificate as emitted while still in voting phase");
             }
-            TimeoutState::Inactive => {
+            TimeoutState::Timeout => {
                 trace!("⏲️ Mark TimeoutCertificate as emitted");
             }
         }
-        *self = TimeoutState::CertificateEmitted;
+        *self = TimeoutState::Certificate;
     }
 }
 
@@ -63,10 +55,17 @@ impl TimeoutState {
 pub(super) struct TimeoutRoleState {
     pub(super) requests: HashSet<ConsensusTimeout>,
     pub(super) state: TimeoutState,
+    pub(super) next_scheduled: Option<TimestampMs>,
     pub(super) highest_seen_prepare_qc: Option<(Slot, PrepareQC)>,
 }
 
 impl TimeoutRoleState {
+    pub(super) fn reset_for_new_round(&mut self) {
+        self.requests.clear();
+        self.state = TimeoutState::Voting;
+        self.next_scheduled = None;
+    }
+
     pub(super) fn update_highest_seen_prepare_qc(&mut self, slot: Slot, qc: PrepareQC) -> bool {
         if let Some((s, _)) = &self.highest_seen_prepare_qc {
             if slot < *s {
@@ -172,35 +171,40 @@ impl Consensus {
     }
 
     pub(super) fn on_timeout_tick(&mut self) -> Result<()> {
-        match &self.bft_round_state.timeout.state {
-            TimeoutState::Scheduled { timestamp } if TimestampMsClock::now() >= *timestamp => {
-                let _span = tracing::info_span!(
-                    "TimeoutTick",
-                    slot = self.bft_round_state.slot as i64,
-                    view = self.bft_round_state.view as i64
-                )
-                .entered();
-                // Trigger state transition to mutiny
-                info!(
-                    "⏰ Trigger timeout for slot {} and view {}",
-                    self.bft_round_state.slot, self.bft_round_state.view
-                );
-                let (timeout, kind) = self.get_timeout_message()?;
+        let Some(timestamp) = self.bft_round_state.timeout.next_scheduled.clone() else {
+            return Ok(());
+        };
 
-                self.on_timeout(timeout.clone(), kind.clone())?;
-
-                self.broadcast_net_message((timeout, kind).into())?;
-
-                // Rescheduling broadcast of this same timeout message, but sooner than the regular waiting time
-                self.store.bft_round_state.timeout.state.schedule_next(
-                    TimestampMsClock::now(),
-                    self.config.consensus.timeout_after / 2,
-                );
-
-                Ok(())
-            }
-            _ => Ok(()),
+        if TimestampMsClock::now() < timestamp {
+            return Ok(());
         }
+
+        self.bft_round_state.timeout.next_scheduled = None;
+        let _span = tracing::info_span!(
+            "TimeoutTick",
+            slot = self.bft_round_state.slot as i64,
+            view = self.bft_round_state.view as i64
+        )
+        .entered();
+        // Trigger state transition to mutiny
+        info!(
+            "⏰ Trigger timeout for slot {} and view {}",
+            self.bft_round_state.slot, self.bft_round_state.view
+        );
+        let (timeout, kind) = self.get_timeout_message()?;
+        self.bft_round_state.timeout.state.timeout();
+
+        self.on_timeout(timeout.clone(), kind.clone())?;
+
+        self.broadcast_net_message((timeout, kind).into())?;
+
+        // Rescheduling broadcast of this same timeout message, but sooner than the regular waiting time
+        self.schedule_timeout_at(
+            TimestampMsClock::now(),
+            self.config.consensus.timeout_after / 2,
+        );
+
+        Ok(())
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
@@ -237,7 +241,7 @@ impl Consensus {
                 self.cached_timeout_certificate(*received_slot, *received_view)
             {
                 self.send_net_message(
-                    sender,
+                    sender.clone(),
                     ConsensusNetMessage::TimeoutCertificate(
                         timeout_qc,
                         tc_kind,
@@ -299,13 +303,16 @@ impl Consensus {
             }
         }
 
-        // Insert timeout request and if already present notify
-        if !self
-            .store
-            .bft_round_state
-            .timeout
-            .requests
-            .insert((received_timeout.clone(), received_tk.clone()))
+        let is_own_timeout = sender == *self.crypto.validator_pubkey();
+
+        // Keep external timeout votes only. Our local timeout state already tracks whether we joined.
+        if !is_own_timeout
+            && !self
+                .store
+                .bft_round_state
+                .timeout
+                .requests
+                .insert((received_timeout.clone(), received_tk.clone()))
         {
             info!("Timeout has already been processed");
             return Ok(());
@@ -314,7 +321,7 @@ impl Consensus {
         let f = self.bft_round_state.staking.compute_f();
 
         // At this point we must select both NIL and QC timeouts.
-        let (mut relevant_timeout_messages, mut tc_kinds) = self
+        let (relevant_timeout_messages, tc_kinds) = self
             .store
             .bft_round_state
             .timeout
@@ -327,11 +334,15 @@ impl Consensus {
                 {
                     return None; // Skip messages that won't be aggregated with this one
                 }
-                Some((signed_message, tc_kind))
+                Some((signed_message.clone(), tc_kind.clone()))
             })
             .collect::<(Vec<_>, Vec<_>)>();
 
         let mut len = relevant_timeout_messages.len();
+
+        let own_timeout_counts = self.is_in_timeout_phase()
+            && *received_slot == self.bft_round_state.slot
+            && *received_view == self.bft_round_state.view;
 
         // TODO: rework function to avoid cloning
         let mut voting_power = self.store.bft_round_state.staking.compute_voting_power(
@@ -340,78 +351,49 @@ impl Consensus {
                 .map(|s| s.signature.validator.clone())
                 .collect::<Vec<_>>(),
         );
+        if own_timeout_counts {
+            len += 1;
+            voting_power += self.get_own_voting_power();
+        }
 
         info!(
             "Got {voting_power} voting power with {len} timeout requests for the slot {received_slot} view {received_view}. f is {f}",
         );
 
         // Count requests and if f+1 requests, and not already part of it, join the mutiny
-        if voting_power > f
-            && !relevant_timeout_messages
-                .iter()
-                .any(|s| &s.signature.validator == self.crypto.validator_pubkey())
-        {
+        if voting_power > f && !own_timeout_counts {
             info!("Joining timeout mutiny!");
 
             self.store.bft_round_state.view = *received_view;
+            self.store.bft_round_state.timeout.state.timeout();
 
             let (timeout, kind) = self.get_timeout_message()?;
 
-            // Because we're keeping a mutable borrow on timeout requests, we need to redo that.
-            // Use this sort of weird pattern to avoid borrowing issues.
-            (relevant_timeout_messages, tc_kinds) = {
-                self.store
-                    .bft_round_state
-                    .timeout
-                    .requests
-                    .insert((timeout.clone(), kind.clone()));
-
-                // Broadcast a timeout message
-                self.broadcast_net_message((timeout, kind).into())
-                    .context(format!(
-                        "Sending timeout message for slot: {} view: {}",
-                        self.bft_round_state.slot, // should match timeout
-                        self.bft_round_state.view, // should match timeout
-                    ))?;
-
-                self.store
-                    .bft_round_state
-                    .timeout
-                    .requests
-                    .iter()
-                    .filter_map(|(signed_message, tc_kind)| {
-                        if signed_message.msg.0 != *received_slot
-                            || signed_message.msg.1 != *received_view
-                            || signed_message.msg.2 != self.bft_round_state.parent_hash
-                        {
-                            return None; // Skip messages that won't be aggregated with this one
-                        }
-                        Some((signed_message, tc_kind))
-                    })
-                    .collect::<(Vec<_>, Vec<_>)>()
-            };
+            self.broadcast_net_message((timeout, kind).into())
+                .context(format!(
+                    "Sending timeout message for slot: {} view: {}",
+                    self.bft_round_state.slot,
+                    self.bft_round_state.view,
+                ))?;
 
             len += 1;
             voting_power += self.get_own_voting_power();
 
-            self.store
-                .bft_round_state
-                .timeout
-                .state
-                .schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
+            self.schedule_timeout_at(TimestampMsClock::now(), self.config.consensus.timeout_after);
         }
 
         // Create TC if applicable
         if voting_power > 2 * f
             && !matches!(
                 self.bft_round_state.timeout.state,
-                TimeoutState::CertificateEmitted
+                TimeoutState::Certificate
             )
         {
             debug!(
                 "⏲️ ⏲️ Creating a timeout certificate with {len} timeout requests and {voting_power} voting power"
             );
 
+            let relevant_timeout_message_refs = relevant_timeout_messages.iter().collect::<Vec<_>>();
             let tqc = QuorumCertificate(
                 self.crypto
                     .sign_aggregate(
@@ -421,7 +403,7 @@ impl Consensus {
                             self.bft_round_state.parent_hash.clone(),
                             ConsensusTimeoutMarker,
                         ),
-                        relevant_timeout_messages.as_slice(),
+                        relevant_timeout_message_refs.as_slice(),
                     )?
                     .signature,
                 ConsensusTimeoutMarker,
@@ -483,11 +465,7 @@ impl Consensus {
                 ticket.1.clone(),
             );
 
-            self.store
-                .bft_round_state
-                .timeout
-                .state
-                .schedule_next(TimestampMsClock::now(), self.config.consensus.timeout_after);
+            self.schedule_timeout_at(TimestampMsClock::now(), self.config.consensus.timeout_after);
 
             let round_leader = self.next_view_leader()?;
             if &round_leader == self.crypto.validator_pubkey() {
@@ -509,7 +487,7 @@ impl Consensus {
                     *received_slot,
                     *received_view,
                 ))?;
-                self.bft_round_state.timeout.state.certificate_emitted();
+                self.bft_round_state.timeout.state.enter_certificate_phase();
             }
             self.advance_round(Ticket::TimeoutQC(ticket.0, ticket.1))?;
         }
