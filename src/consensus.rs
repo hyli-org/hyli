@@ -480,7 +480,7 @@ impl Consensus {
         let voting_power = self
             .bft_round_state
             .staking
-            .compute_voting_power(quorum_certificate.validators.as_slice());
+            .compute_voting_power(quorum_certificate.validators.iter());
 
         let f = self.bft_round_state.staking.compute_f();
 

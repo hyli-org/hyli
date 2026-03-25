@@ -189,7 +189,7 @@ async fn autobahn_basic_flow() {
                 .expect("expected lane entry in cut");
             assert_eq!(entry.1, data_proposal_hash_node1);
             assert_eq!(entry.2, node1_l_size);
-            let voting_power = staking.compute_voting_power(entry.3.validators.as_slice());
+            let voting_power = staking.compute_voting_power(entry.3.validators.iter());
             assert!(voting_power > f);
         }
     };

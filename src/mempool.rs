@@ -310,7 +310,7 @@ impl Mempool {
         if let Some(cached_poda) = &metadata.cached_poda {
             let cached_voting_power = self
                 .staking
-                .compute_voting_power(cached_poda.validators.as_slice());
+                .compute_voting_power(cached_poda.validators.iter());
             if cached_voting_power >= threshold {
                 return Ok(());
             }
