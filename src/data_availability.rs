@@ -926,7 +926,7 @@ impl DataAvailability {
                 // Mempool-produced blocks are local tip updates, not catchup-stream progress.
                 // Feeding them into catchup progress can prematurely complete backfill.
                 _ = self
-                    .handle_signed_block(signed_block, tcp_server, catchup_joinset)
+                    .handle_signed_block(signed_block.into(), tcp_server, catchup_joinset)
                     .await;
             }
             MempoolBlockEvent::StartedBuildingBlocks(height) => {
@@ -1414,7 +1414,7 @@ pub mod tests {
         // Feed Da with blocks, should stream them to the client
         for block in blocks {
             block_sender
-                .send(MempoolBlockEvent::BuiltSignedBlock(block))
+                .send(MempoolBlockEvent::BuiltSignedBlock(block.into()))
                 .unwrap();
         }
 
@@ -1448,11 +1448,14 @@ pub mod tests {
             ccp.consensus_proposal.parent_hash = ccp.consensus_proposal.hashed();
             ccp.consensus_proposal.slot = i;
             block_sender
-                .send(MempoolBlockEvent::BuiltSignedBlock(SignedBlock {
-                    data_proposals: vec![(LaneId::default(), vec![])],
-                    certificate: ccp.certificate.clone(),
-                    consensus_proposal: ccp.consensus_proposal.clone(),
-                }))
+                .send(MempoolBlockEvent::BuiltSignedBlock(
+                    SignedBlock {
+                        data_proposals: vec![(LaneId::default(), vec![])],
+                        certificate: ccp.certificate.clone(),
+                        consensus_proposal: ccp.consensus_proposal.clone(),
+                    }
+                    .into(),
+                ))
                 .unwrap();
         }
 
@@ -1641,7 +1644,9 @@ pub mod tests {
 
         // Waiting a bit to push the block ten in the middle of all other 1..9 blocks
         tokio::time::sleep(Duration::from_millis(200)).await;
-        _ = block_sender.send(MempoolBlockEvent::BuiltSignedBlock(block_ten.clone()));
+        _ = block_sender.send(MempoolBlockEvent::BuiltSignedBlock(
+            block_ten.clone().into(),
+        ));
 
         let mut received_blocks = vec![];
         while let Some(streamed_block) = rx.recv().await {
@@ -1674,11 +1679,14 @@ pub mod tests {
             ccp.consensus_proposal.parent_hash = ccp.consensus_proposal.hashed();
             ccp.consensus_proposal.slot = i;
             block_sender
-                .send(MempoolBlockEvent::BuiltSignedBlock(SignedBlock {
-                    data_proposals: vec![(LaneId::default(), vec![])],
-                    certificate: ccp.certificate.clone(),
-                    consensus_proposal: ccp.consensus_proposal.clone(),
-                }))
+                .send(MempoolBlockEvent::BuiltSignedBlock(
+                    SignedBlock {
+                        data_proposals: vec![(LaneId::default(), vec![])],
+                        certificate: ccp.certificate.clone(),
+                        consensus_proposal: ccp.consensus_proposal.clone(),
+                    }
+                    .into(),
+                ))
                 .unwrap();
         }
 
@@ -1714,11 +1722,14 @@ pub mod tests {
             ccp.consensus_proposal.parent_hash = ccp.consensus_proposal.hashed();
             ccp.consensus_proposal.slot = i;
             block_sender
-                .send(MempoolBlockEvent::BuiltSignedBlock(SignedBlock {
-                    data_proposals: vec![(LaneId::default(), vec![])],
-                    certificate: ccp.certificate.clone(),
-                    consensus_proposal: ccp.consensus_proposal.clone(),
-                }))
+                .send(MempoolBlockEvent::BuiltSignedBlock(
+                    SignedBlock {
+                        data_proposals: vec![(LaneId::default(), vec![])],
+                        certificate: ccp.certificate.clone(),
+                        consensus_proposal: ccp.consensus_proposal.clone(),
+                    }
+                    .into(),
+                ))
                 .unwrap();
         }
 
@@ -1801,7 +1812,9 @@ pub mod tests {
 
         // Initial fast catchup starts at floor and remains unbounded until mempool starts building.
         _ = da_receiver.da.catchupper.ensure_started(BlockHeight(0));
-        _ = block_sender.send(MempoolBlockEvent::BuiltSignedBlock(block_ten.clone()));
+        _ = block_sender.send(MempoolBlockEvent::BuiltSignedBlock(
+            block_ten.clone().into(),
+        ));
 
         let mut received_blocks = vec![];
         while let Some(streamed_block) = rx.recv().await {

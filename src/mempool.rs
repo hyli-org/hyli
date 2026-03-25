@@ -18,6 +18,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use client_sdk::tcp_client::TcpServerMessage;
 use hyli_crypto::BlstCrypto;
 use hyli_crypto::SharedBlstCrypto;
+pub use hyli_model::ArcBorsh;
 use hyli_modules::{bus::BusMessage, module_bus_client};
 use hyli_net::ordered_join_set::OrderedJoinSet;
 use hyli_net_traits::TcpMessageLabel;
@@ -28,7 +29,6 @@ use staking::state::Staking;
 use std::{
     collections::{BTreeMap, VecDeque},
     fmt::Display,
-    io::{Read, Write},
     ops::{Deref, DerefMut},
     path::PathBuf,
     sync::Arc,
@@ -53,32 +53,6 @@ pub mod verify_tx;
 pub mod tests;
 
 pub use dissemination::DisseminationEvent;
-
-#[derive(Clone, Debug)]
-pub(super) struct ArcBorsh<T>(Arc<T>);
-
-impl<T> ArcBorsh<T> {
-    pub(super) fn new(value: Arc<T>) -> Self {
-        Self(value)
-    }
-
-    pub(super) fn arc(&self) -> Arc<T> {
-        Arc::clone(&self.0)
-    }
-}
-
-impl<T: BorshSerialize> BorshSerialize for ArcBorsh<T> {
-    fn serialize<W: Write>(&self, writer: &mut W) -> std::io::Result<()> {
-        self.0.serialize(writer)
-    }
-}
-
-impl<T: BorshDeserialize> BorshDeserialize for ArcBorsh<T> {
-    fn deserialize_reader<R: Read>(reader: &mut R) -> std::io::Result<Self> {
-        let value = T::deserialize_reader(reader)?;
-        Ok(Self(Arc::new(value)))
-    }
-}
 
 /// Validator Data Availability Guarantee
 /// This is a signed message that contains the hash of the data proposal and the size of the lane (DP included)
@@ -185,10 +159,15 @@ struct MempoolBusClient {
     TcpMessageLabel,
 )]
 pub enum MempoolNetMessage {
-    DataProposal(LaneId, DataProposalHash, DataProposal, ValidatorDAG),
+    DataProposal(
+        LaneId,
+        DataProposalHash,
+        ArcBorsh<DataProposal>,
+        ValidatorDAG,
+    ),
     DataVote(LaneId, ValidatorDAG),
     SyncRequest(LaneId, Option<DataProposalHash>, Option<DataProposalHash>),
-    SyncReply(LaneId, Vec<ValidatorDAG>, DataProposal),
+    SyncReply(LaneId, Vec<ValidatorDAG>, ArcBorsh<DataProposal>),
 }
 
 impl BusMessage for MempoolNetMessage {}
@@ -484,7 +463,7 @@ impl Mempool {
             }
             MempoolNetMessage::SyncReply(lane_id, sigs, data_proposal) => {
                 // Don't bother checking the signatures for sync replies, we trust our internal bookkeeping.
-                self.on_sync_reply(&lane_id, validator, sigs, data_proposal)
+                self.on_sync_reply(&lane_id, validator, sigs, data_proposal.arc())
                     .await?;
             }
         }

@@ -4,6 +4,7 @@ use alloc::{
     vec::Vec,
 };
 use core::{
+    fmt,
     ops::{Add, Sub},
     time::Duration,
 };
@@ -11,6 +12,9 @@ use core::{
 use borsh::{BorshDeserialize, BorshSerialize};
 use derive_more::Display;
 use serde::{Deserialize, Serialize};
+
+#[cfg(feature = "full")]
+use std::{ops::Deref, sync::Arc};
 
 pub mod hex_bytes {
     use alloc::{string::String, vec::Vec};
@@ -45,6 +49,85 @@ fn normalize_hex_string(s: &str) -> String {
 pub fn decode_hex_string_checked(s: &str) -> Result<Vec<u8>, hex::FromHexError> {
     let normalized = normalize_hex_string(s);
     hex::decode(&normalized)
+}
+
+#[cfg(feature = "full")]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct ArcBorsh<T>(Arc<T>);
+
+#[cfg(feature = "full")]
+impl<T> ArcBorsh<T> {
+    pub fn new(value: Arc<T>) -> Self {
+        Self(value)
+    }
+
+    pub fn arc(&self) -> Arc<T> {
+        Arc::clone(&self.0)
+    }
+}
+
+#[cfg(feature = "full")]
+impl<T> fmt::Debug for ArcBorsh<T>
+where
+    T: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[cfg(feature = "full")]
+impl<T> Deref for ArcBorsh<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref()
+    }
+}
+
+#[cfg(feature = "full")]
+impl<T> From<Arc<T>> for ArcBorsh<T> {
+    fn from(value: Arc<T>) -> Self {
+        Self::new(value)
+    }
+}
+
+#[cfg(feature = "full")]
+impl<T> From<T> for ArcBorsh<T> {
+    fn from(value: T) -> Self {
+        Self::new(Arc::new(value))
+    }
+}
+
+#[cfg(feature = "full")]
+impl<T> PartialEq<T> for ArcBorsh<T>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &T) -> bool {
+        self.0.as_ref() == other
+    }
+}
+
+#[cfg(feature = "full")]
+impl<T> BorshSerialize for ArcBorsh<T>
+where
+    T: BorshSerialize,
+{
+    fn serialize<W: borsh::io::Write>(&self, writer: &mut W) -> Result<(), borsh::io::Error> {
+        self.0.serialize(writer)
+    }
+}
+
+#[cfg(feature = "full")]
+impl<T> BorshDeserialize for ArcBorsh<T>
+where
+    T: BorshDeserialize,
+{
+    fn deserialize_reader<R: borsh::io::Read>(reader: &mut R) -> Result<Self, borsh::io::Error> {
+        Ok(Self(Arc::new(T::deserialize_reader(reader)?)))
+    }
 }
 
 #[derive(

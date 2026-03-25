@@ -5,6 +5,7 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use anyhow::{bail, Context, Result};
 use futures::StreamExt;
+use hyli_model::ArcBorsh;
 use hyli_model::{
     utils::TimestampMs, DataProposalHash, DataSized, LaneBytesSize, LaneId, NodeStateEvent,
     ValidatorPublicKey,
@@ -645,7 +646,7 @@ impl DisseminationManager {
                     .sign_msg_with_header(MempoolNetMessage::SyncReply(
                         lane_id.clone(),
                         metadata.signatures.clone(),
-                        data_proposal,
+                        ArcBorsh::new(data_proposal.into()),
                     ));
 
                 if let Ok(signed_reply) = signed_reply {
@@ -883,8 +884,12 @@ impl DisseminationManager {
             })
             .cloned()
             .unwrap_or(self.crypto.sign(expected_msg)?);
-        let net_message =
-            MempoolNetMessage::DataProposal(lane_id.clone(), dp_hash.clone(), data_proposal, vote);
+        let net_message = MempoolNetMessage::DataProposal(
+            lane_id.clone(),
+            dp_hash.clone(),
+            ArcBorsh::new(data_proposal.into()),
+            vote,
+        );
 
         if filtered_targets.len() == bonded_validators_len && there_are_other_validators {
             self.metrics

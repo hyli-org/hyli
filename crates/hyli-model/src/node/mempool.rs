@@ -21,7 +21,7 @@ pub enum MempoolStatusEvent {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum MempoolBlockEvent {
-    BuiltSignedBlock(SignedBlock),
+    BuiltSignedBlock(ArcSignedBlock),
     StartedBuildingBlocks(BlockHeight),
 }
 

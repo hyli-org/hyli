@@ -197,7 +197,7 @@ impl LanesStorage {
         let data_proposal = data_proposal.into();
         let dp_hash = data_proposal.hashed();
         self.proposals
-            .put_no_verification(lane_id.clone(), data_proposal)?;
+            .put_no_verification(lane_id.clone(), Arc::unwrap_or_clone(data_proposal))?;
         #[allow(clippy::unwrap_used, reason = "RwLock cannot be poisoned in our usage")]
         self.lane_entries
             .write()
@@ -286,7 +286,7 @@ impl LanesStorage {
             );
         };
 
-        Ok(Some((data_proposal.0, (metadata, data_proposal.1))))
+        Ok(Some((data_proposal.0, (metadata, data_proposal.1.into()))))
     }
 
     pub fn get_latest_car(
@@ -482,7 +482,7 @@ impl LanesStorage {
                     MetadataOrMissingHash::Metadata(metadata, dp_hash) => {
                         match self.get_dp_by_hash(lane_id, &dp_hash)? {
                             Some(data_proposal) => {
-                                yield EntryOrMissingHash::Entry(metadata, data_proposal);
+                                yield EntryOrMissingHash::Entry(metadata, data_proposal.into());
                             }
                             None => {
                                 yield EntryOrMissingHash::MissingHash(dp_hash);
@@ -782,12 +782,13 @@ mod tests {
         };
         let dp_hash = dp.hashed();
 
-        // Store DP: implementation should strip proofs and store them separately
+        // Store DP: implementation keeps the shared DP intact in cache and persists proofs
+        // separately for later hydration/reload.
         storage
             .put_no_verification(lane_id.clone(), (entry.clone(), dp.clone()))
             .unwrap();
 
-        // Stored DP must have proofs removed
+        // Cached DP can still retain proofs on the write path.
         let stored_dp = storage
             .proposals
             .get_dp_by_hash(lane_id, &dp_hash)
@@ -795,7 +796,7 @@ mod tests {
             .expect("stored dp");
         match &stored_dp.txs.first().unwrap().transaction_data {
             TransactionData::VerifiedProof(v) => {
-                assert!(v.proof.is_none(), "proof should be stripped in storage");
+                assert_eq!(v.proof.as_ref(), Some(&proof));
                 assert_eq!(v.proof_size, proof.0.len());
             }
             _ => panic!("expected VerifiedProof tx"),
@@ -920,9 +921,10 @@ mod tests {
 
     fn unwrap_entry(entry: &EntryOrMissingHash) -> (LaneEntryMetadata, DataProposal) {
         match entry {
-            EntryOrMissingHash::Entry(metadata, data_proposal) => {
-                (metadata.clone(), Arc::unwrap_or_clone(data_proposal.clone()))
-            }
+            EntryOrMissingHash::Entry(metadata, data_proposal) => (
+                metadata.clone(),
+                Arc::unwrap_or_clone(data_proposal.clone()),
+            ),
             EntryOrMissingHash::MissingHash(_) => panic!("Expected an entry, got missing hash"),
         }
     }

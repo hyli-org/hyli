@@ -15,6 +15,7 @@ use super::{
 };
 use anyhow::{bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
+use hyli_model::{ArcBorsh, ArcSignedBlock};
 use std::sync::Arc;
 use tracing::{debug, error, info, trace, warn};
 
@@ -44,8 +45,9 @@ impl super::Mempool {
         lane_id: &LaneId,
         sender_validator: &ValidatorPublicKey,
         signatures: Vec<ValidatorDAG>,
-        data_proposal: DataProposal,
+        data_proposal: impl Into<Arc<DataProposal>>,
     ) -> Result<()> {
+        let data_proposal = data_proposal.into();
         debug!("SyncReply from validator {sender_validator}");
 
         self.metrics
@@ -59,13 +61,12 @@ impl super::Mempool {
         #[cfg(test)]
         {
             let dp_hash = data_proposal.hashed();
-            self.on_hashed_sync_reply(lane_id.clone(), signatures, Arc::new(data_proposal), dp_hash)
+            self.on_hashed_sync_reply(lane_id.clone(), signatures, data_proposal, dp_hash)
                 .await?;
         }
         #[cfg(not(test))]
         {
             let lane_id_clone = lane_id.clone();
-            let data_proposal = Arc::new(data_proposal);
             let handle = self.inner.long_tasks_runtime.handle();
             self.inner.processing_dps.spawn_on(
                 async move {
@@ -169,7 +170,7 @@ impl super::Mempool {
             self.lanes.get_metadata_by_hash(lane_id, dp_hash),
             self.lanes.get_dp_by_hash(lane_id, dp_hash),
         ) {
-            return Some((metadata.signatures, data_proposal));
+            return Some((metadata.signatures, data_proposal.into()));
         }
 
         None
@@ -450,7 +451,7 @@ impl super::Mempool {
     async fn get_full_data_for_signed_block(
         &mut self,
         buc: &BlockUnderConstruction,
-    ) -> Result<Vec<(LaneId, Vec<DataProposal>)>> {
+    ) -> Result<Vec<(LaneId, Vec<ArcBorsh<DataProposal>>)>> {
         let mut result = vec![];
 
         for (lane_id, to_hash, _, _) in buc.ccp.consensus_proposal.cut.iter() {
@@ -472,9 +473,7 @@ impl super::Mempool {
             while let Some(entry) = entries.next().await {
                 match entry {
                     Ok(EntryOrMissingHash::Entry(_, dp)) => {
-                        let mut dp = Arc::unwrap_or_clone(dp);
-                        dp.remove_proofs();
-                        dps.push(dp);
+                        dps.push(ArcBorsh::new(dp));
                     }
                     Ok(EntryOrMissingHash::MissingHash(hash)) => {
                         bail!("Unexpected missing data proposal {hash} for lane {lane_id}");
@@ -559,7 +558,7 @@ impl super::Mempool {
         }
 
         self.bus
-            .send(MempoolBlockEvent::BuiltSignedBlock(SignedBlock {
+            .send(MempoolBlockEvent::BuiltSignedBlock(ArcSignedBlock {
                 data_proposals: block_data,
                 certificate: buc.ccp.certificate.clone(),
                 consensus_proposal: buc.ccp.consensus_proposal.clone(),
@@ -802,7 +801,7 @@ pub mod test {
                 assert_eq!(sb.consensus_proposal.cut, cut);
                 assert_eq!(
                     sb.data_proposals,
-                    vec![(LaneId::new(key.clone()), vec![dp_orig])]
+                    vec![(LaneId::new(key.clone()), vec![dp_orig.into()])]
                 );
             }
         );
@@ -931,7 +930,10 @@ pub mod test {
                 assert_eq!(sb.consensus_proposal.cut, cut);
                 assert_eq!(
                     sb.data_proposals,
-                    vec![(LaneId::new(key.clone()), vec![dp_orig, dp_orig2, dp_orig3])]
+                    vec![(
+                        LaneId::new(key.clone()),
+                        vec![dp_orig.into(), dp_orig2.into(), dp_orig3.into()]
+                    )]
                 );
             }
         );
@@ -1112,11 +1114,17 @@ pub mod test {
                 assert_eq!(signed_block.data_proposals.len(), 2);
                 assert_eq!(
                     signed_block.data_proposals[0],
-                    (LaneId::new(crypto1.validator_pubkey().clone()), vec![dp1, dp2])
+                    (
+                        LaneId::new(crypto1.validator_pubkey().clone()),
+                        vec![dp1.into(), dp2.into()]
+                    )
                 );
                 assert_eq!(
                     signed_block.data_proposals[1],
-                    (LaneId::new(crypto2.validator_pubkey().clone()), vec![dp3, dp4])
+                    (
+                        LaneId::new(crypto2.validator_pubkey().clone()),
+                        vec![dp3.into(), dp4.into()]
+                    )
                 );
             }
         );

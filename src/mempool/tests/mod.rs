@@ -930,7 +930,7 @@ async fn test_sync_reply_buffered_without_buc() -> Result<()> {
             .crypto
             .sign((dp1.hashed(), cumul_size1))
             .expect("should sign")],
-        dp1.clone(),
+        dp1.clone().into(),
     ))?;
     let handle = ctx.mempool.handle_net_message(signed_msg).await;
     assert_ok!(handle, "Should handle net message");
@@ -997,7 +997,7 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
                 .crypto
                 .sign((dp.hashed(), size))
                 .expect("should sign")],
-            dp,
+            dp.into(),
         ))?;
         let handle = ctx.mempool.handle_net_message(signed_msg).await;
         assert_ok!(handle, "Should handle net message");
@@ -1012,7 +1012,7 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
             .crypto
             .sign((dp_other.hashed(), other_size))
             .expect("should sign")],
-        dp_other.clone(),
+        dp_other.clone().into(),
     ))?;
     let handle = ctx.mempool.handle_net_message(signed_msg).await;
     assert_ok!(handle, "Should handle net message");
@@ -1043,7 +1043,7 @@ async fn test_sync_reply_fills_buffered_chain_and_preserves_unrelated_buffer() -
             .crypto
             .sign((dp3.hashed(), cumul_size3))
             .expect("should sign")],
-        dp3.clone(),
+        dp3.clone().into(),
     ))?;
     let handle = ctx.mempool.handle_net_message(signed_msg).await;
     assert_ok!(handle, "Should handle net message");
@@ -1130,7 +1130,7 @@ async fn test_sync_reply_materialize_holes_consumes_buffered_latest_cut() -> Res
                 .crypto
                 .sign((dp.hashed(), size))
                 .expect("should sign")],
-            dp,
+            dp.into(),
         ))?;
         let handle = ctx.mempool.handle_net_message(signed_msg).await;
         assert_ok!(handle, "Should handle net message");

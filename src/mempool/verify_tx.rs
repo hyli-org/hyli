@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use hyli_model::{DataProposalHash, DataSized, LaneBytesSize, LaneId};
+use hyli_model::{ArcBorsh, DataProposalHash, DataSized, LaneBytesSize, LaneId};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::time::timeout;
@@ -33,7 +33,7 @@ impl super::Mempool {
         &mut self,
         lane_id: &LaneId,
         received_hash: DataProposalHash,
-        data_proposal: DataProposal,
+        data_proposal: ArcBorsh<DataProposal>,
         vote: super::ValidatorDAG,
     ) -> Result<()> {
         debug!(
@@ -103,12 +103,13 @@ impl super::Mempool {
                     data_proposal.hashed()
                 );
             }
-            self.on_hashed_data_proposal(lane_id, data_proposal, vote)
+            self.on_hashed_data_proposal(lane_id, Arc::unwrap_or_clone(data_proposal.arc()), vote)
                 .await?;
         }
         #[cfg(not(test))]
         {
             let lane_id_clone = lane_id.clone();
+            let data_proposal = data_proposal.arc();
             let handle = self.inner.long_tasks_runtime.handle();
             self.inner.processing_dps.spawn_on(
                 async move {
@@ -122,7 +123,7 @@ impl super::Mempool {
                     }
                     Ok(ProcessedDPEvent::OnHashedDataProposal((
                         lane_id_clone,
-                        data_proposal,
+                        Arc::unwrap_or_clone(data_proposal),
                         vote,
                     )))
                 },
@@ -228,7 +229,7 @@ impl super::Mempool {
                 self.buffered_entries
                     .entry(lane_id.clone())
                     .or_default()
-                    .insert(data_proposal_hash.clone(), (vec![vote], Arc::new(data_proposal)));
+                    .insert(data_proposal_hash.clone(), (vec![vote], data_proposal.into()));
             }
             DataProposalVerdict::Refuse => {
                 self.cached_dp_votes.insert(
@@ -681,7 +682,7 @@ pub mod test {
                 .sign_msg_with_header(MempoolNetMessage::DataProposal(
                     lane_id,
                     hash.clone(),
-                    data_proposal.clone(),
+                    data_proposal.clone().into(),
                     ctx.mempool.crypto.sign((hash.clone(), size))?,
                 ))?;
 
