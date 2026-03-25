@@ -34,14 +34,11 @@ members = [
 ]
 default-members = [
   "crates/contracts",
-  "crates/contracts/hydentity",
-  "crates/hyli-loadtest",
   "crates/hyli-model",
   "crates/hyli-crypto",
   "crates/hyli-turmoil-shims",
   "crates/hyli-net",
   "crates/hyli-modules",
-  "crates/hyli-tools",
   ".",
 ]
 resolver = "2"
@@ -108,7 +105,10 @@ alloy-signer-local = { version = "1.0.41", default-features = false, features = 
   "mnemonic",
 ] }
 chrono = { version = "0.4", default-features = false }
-clap = { version = "4.5.48", default-features = false, features = ["derive"] }
+clap = { version = "4.5.48", default-features = false, features = [
+  "derive",
+  "std",
+] }
 config = { version = "0.15.13", default-features = false }
 crc32fast = { version = "1.4" }
 crossterm = { version = "0.29.0" }
@@ -234,7 +234,6 @@ hyli-turmoil-shims = { workspace = true, features = ["opentelemetry"] }
 hydentity = { workspace = true, features = ["client"] }
 hyllar = { workspace = true, features = ["client"] }
 smt-token = { workspace = true, features = ["client"] }
-risc0-recursion = { workspace = true }
 hyli-verifiers = { workspace = true }
 hyli-contracts = { workspace = true }
 hyli-modules = { workspace = true, features = [
@@ -318,11 +317,7 @@ zkhash = { git = "https://github.com/AntoineFONDEUR/poseidon2", branch = "poseid
 hyli-net = { workspace = true, features = ["test-utils"] }
 amm = { workspace = true, features = ["client"] }
 uuid-tld = { workspace = true, features = ["client"] }
-smt-token = { workspace = true, features = ["client", "risc0"] }
-client-sdk = { workspace = true, default-features = false, features = [
-  "rest",
-  "risc0",
-] }
+smt-token = { workspace = true, features = ["client"] }
 hyli-modules = { workspace = true, default-features = false, features = [
   "test",
   "db",
@@ -342,9 +337,6 @@ tokio-stream = "0.1.17"
 tempfile = "3.20.0"
 assert-json-diff = "2.0.2"
 risc0-recursion = { workspace = true }
-risc0-zkvm = { workspace = true, default-features = false, features = [
-  "client",
-] }
 signal-child = "1.0.6"
 
 [features]
@@ -359,6 +351,7 @@ turmoil = [
 
 cairo-m = ["hyli-verifiers/cairo-m"]
 reth = ["hyli-verifiers/reth"]
+risc0 = []
 
 # Disable dependency keyring by default, as it requires libdbus
 keyring = ["hyli-crypto/keyring"]

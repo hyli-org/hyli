@@ -1,7 +1,6 @@
 use anyhow::Result;
-use client_sdk::{
-    helpers::risc0::Risc0Prover,
-    transaction_builder::{ProvableBlobTx, StateUpdater, TxExecutorBuilder, TxExecutorHandler},
+use client_sdk::transaction_builder::{
+    ProvableBlobTx, StateUpdater, TxExecutorBuilder, TxExecutorHandler,
 };
 use sdk::{
     api::{APIFees, APIFeesBalance, APIStaking},
@@ -55,10 +54,11 @@ impl Staking {
         contract_name: ContractName,
         builder: &mut TxExecutorBuilder<S>,
     ) {
-        builder.init_with(
-            contract_name,
-            Risc0Prover::new(STAKING_ELF.to_vec(), PROGRAM_ID),
-        );
+        #[cfg(feature = "risc0")]
+        let prover = client_sdk::helpers::risc0::Risc0Prover::new(STAKING_ELF.to_vec(), PROGRAM_ID);
+        #[cfg(not(feature = "risc0"))]
+        let prover = client_sdk::helpers::NoopProver::<Staking>::new(&PROGRAM_ID);
+        builder.init_with(contract_name, prover);
     }
 }
 

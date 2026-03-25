@@ -11,8 +11,12 @@ pub async fn verify_proof(
     #[allow(unused_variables)] program_id: &ProgramId,
 ) -> Result<Vec<HyliOutput>> {
     let hyli_outputs = match verifier.0.as_str() {
-        // TODO: add #[cfg(test)]
-        "test" => borsh::from_slice::<Vec<HyliOutput>>(&proof.0).context("parsing test proof"),
+        "test" => {
+            tracing::warn!(
+                "🚨 🚨 Using test verifier which does no actual verification! Only for testing purposes."
+            );
+            borsh::from_slice::<Vec<HyliOutput>>(&proof.0).context("parsing test proof")
+        }
         #[cfg(test)]
         "test-slow" => {
             tracing::info!("Sleeping for 2 seconds to simulate a slow verifier");

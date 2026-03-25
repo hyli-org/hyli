@@ -1,8 +1,8 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
-use client_sdk::helpers::risc0::Risc0Prover;
 use client_sdk::helpers::test::{MockProver, TxExecutorTestProver};
+use client_sdk::helpers::NoopProver;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use client_sdk::tcp_client::{TcpApiClient, TcpServerMessage};
 use client_sdk::transaction_builder::{
@@ -16,7 +16,6 @@ use hyli_contract_sdk::{
     Identity, RegisterContractAction, StateCommitment, TimeoutWindow, Transaction, TxHash,
     ZkContract,
 };
-use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
 use hyllar::client::tx_executor_handler::transfer;
 use hyllar::erc20::ERC20;
 use hyllar::{Hyllar, FAUCET_ID};
@@ -499,15 +498,18 @@ pub async fn long_running_test(node_url: String, use_test_verifier: bool) -> Res
                 TxExecutorTestProver::<Hyllar>::new(),
             );
     } else {
-        // Replace prover binaries for non-reproducible mode.
         tx_ctx = tx_ctx
             .with_prover(
                 random_hydentity_contract.clone(),
-                Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
+                NoopProver::<Hydentity>::new(
+                    &hydentity::client::tx_executor_handler::metadata::PROGRAM_ID,
+                ),
             )
             .with_prover(
                 random_hyllar_contract.clone(),
-                Risc0Prover::new(HYLLAR_ELF.to_vec(), HYLLAR_ID),
+                NoopProver::<Hyllar>::new(
+                    &hyllar::client::tx_executor_handler::metadata::PROGRAM_ID,
+                ),
             );
     }
     let mut tx_ctx = tx_ctx.build();

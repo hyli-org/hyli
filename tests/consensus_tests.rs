@@ -9,7 +9,7 @@ mod fixtures;
 
 mod e2e_consensus {
 
-    use client_sdk::helpers::risc0::Risc0Prover;
+    use client_sdk::helpers::NoopProver;
     use client_sdk::rest_client::NodeApiClient;
     use client_sdk::transaction_builder::{ProvableBlobTx, TxExecutor, TxExecutorBuilder};
     use fixtures::test_helpers::send_transaction;
@@ -18,9 +18,6 @@ mod e2e_consensus {
     use hyli::genesis::States;
     use hyli_contract_sdk::Identity;
     use hyli_contract_sdk::ZkContract;
-    use hyli_contracts::{
-        HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID, STAKING_ELF, STAKING_ID,
-    };
     use hyli_model::{ContractName, StateCommitment, TxHash};
     use hyllar::client::tx_executor_handler::transfer;
     use hyllar::erc20::ERC20;
@@ -97,15 +94,21 @@ mod e2e_consensus {
             // Replace prover binaries for non-reproducible mode.
             .with_prover(
                 "hydentity".into(),
-                Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
+                NoopProver::<Hydentity>::new(
+                    &hydentity::client::tx_executor_handler::metadata::PROGRAM_ID,
+                ),
             )
             .with_prover(
                 "hyllar".into(),
-                Risc0Prover::new(HYLLAR_ELF.to_vec(), HYLLAR_ID),
+                NoopProver::<Hyllar>::new(
+                    &hyllar::client::tx_executor_handler::metadata::PROGRAM_ID,
+                ),
             )
             .with_prover(
                 "staking".into(),
-                Risc0Prover::new(STAKING_ELF.to_vec(), STAKING_ID),
+                NoopProver::<Staking>::new(
+                    &staking::client::tx_executor_handler::metadata::PROGRAM_ID,
+                ),
             )
             .build();
 
@@ -295,16 +298,19 @@ mod e2e_consensus {
             // Replace prover binaries for non-reproducible mode.
             .with_prover(
                 "hydentity".into(),
-                Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
+                NoopProver::<Hydentity>::new(
+                    &hydentity::client::tx_executor_handler::metadata::PROGRAM_ID,
+                ),
             )
             .with_prover(
                 "hyllar".into(),
-                Risc0Prover::new(HYLLAR_ELF.to_vec(), HYLLAR_ID),
+                NoopProver::<Hyllar>::new(
+                    &hyllar::client::tx_executor_handler::metadata::PROGRAM_ID,
+                ),
             )
             .build()
     }
 
-    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn can_restart_single_node_after_txs() -> Result<()> {
         let mut ctx = E2ECtx::new_single_with_indexer(500).await?;
@@ -369,7 +375,6 @@ mod e2e_consensus {
         Ok(())
     }
 
-    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn can_restart_multi_node_after_txs() -> Result<()> {
         let mut ctx = E2ECtx::new_multi_with_indexer_and_timestamp_checks(
@@ -384,8 +389,10 @@ mod e2e_consensus {
         // Gen a few txs
         let mut tx_ctx = init_states(&mut ctx).await;
 
+        let mut tx_hashes = vec![];
         for i in 0..2 {
-            _ = gen_txs(&mut ctx, &mut tx_ctx, format!("alex{i}"), 100 + i).await?;
+            let a = gen_txs(&mut ctx, &mut tx_ctx, format!("alex{i}"), 100 + i).await?;
+            tx_hashes.extend(a);
         }
 
         // Wait until it's processed.
@@ -400,6 +407,11 @@ mod e2e_consensus {
                 if state.balance_of("alex1@hydentity").is_ok() {
                     break;
                 }
+            }
+
+            for tx_hash in &tx_hashes {
+                let s = ctx.indexer_client().get_transaction_events(tx_hash).await;
+                info!("Checking tx events for {:?}: {:?}", tx_hash, s);
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
         }
@@ -445,7 +457,6 @@ mod e2e_consensus {
         Ok(())
     }
 
-    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn multiple_nonconsecutive_timeouts() -> Result<()> {
         let mut ctx = E2ECtx::new_multi(8, 500).await?;

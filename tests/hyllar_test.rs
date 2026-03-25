@@ -9,7 +9,7 @@ use anyhow::Result;
 mod e2e_hyllar {
     use client_sdk::{
         contract_states,
-        helpers::risc0::Risc0Prover,
+        helpers::NoopProver,
         rest_client::NodeApiClient,
         transaction_builder::{ProvableBlobTx, TxExecutorBuilder, TxExecutorHandler},
     };
@@ -18,7 +18,6 @@ mod e2e_hyllar {
         Hydentity,
     };
     use hyli_contract_sdk::{Calldata, ContractName, HyliOutput};
-    use hyli_contracts::{HYDENTITY_ELF, HYDENTITY_ID, HYLLAR_ELF, HYLLAR_ID};
     use hyllar::{client::tx_executor_handler::transfer, erc20::ERC20, Hyllar, FAUCET_ID};
 
     use super::*;
@@ -45,11 +44,15 @@ mod e2e_hyllar {
             // Replace prover binaries for non-reproducible mode.
             .with_prover(
                 "hydentity".into(),
-                Risc0Prover::new(HYDENTITY_ELF.to_vec(), HYDENTITY_ID),
+                NoopProver::<Hydentity>::new(
+                    &hydentity::client::tx_executor_handler::metadata::PROGRAM_ID,
+                ),
             )
             .with_prover(
                 "hyllar".into(),
-                Risc0Prover::new(HYLLAR_ELF.to_vec(), HYLLAR_ID),
+                NoopProver::<Hyllar>::new(
+                    &hyllar::client::tx_executor_handler::metadata::PROGRAM_ID,
+                ),
             )
             .build();
 
@@ -111,7 +114,6 @@ mod e2e_hyllar {
         Ok(ctx)
     }
 
-    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn hyllar_single_node() -> Result<()> {
         let ctx = E2ECtx::new_single_with_indexer(500).await?;
@@ -119,7 +121,6 @@ mod e2e_hyllar {
         Ok(())
     }
 
-    #[ignore = "will be enabled back in #1993"]
     #[test_log::test(tokio::test)]
     async fn hyllar_multi_nodes() -> Result<()> {
         let ctx = E2ECtx::new_multi_with_indexer(2, 500).await?;

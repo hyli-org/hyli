@@ -80,6 +80,63 @@ pub trait ClientSdkProver<T: BorshSerialize + Send> {
     fn verifier(&self) -> Verifier;
 }
 
+/// In-process prover used when a real ZK prover (e.g. risc0) is not available.
+/// Executes the contract logic directly and returns borsh-serialized `Vec<HyliOutput>`
+/// as the proof, compatible with the `"test"` verifier.
+pub struct NoopProver<Z> {
+    program_id: ProgramId,
+    phantom: std::marker::PhantomData<Z>,
+}
+
+impl<Z> NoopProver<Z> {
+    pub fn new(program_id: &[u8]) -> Self {
+        Self {
+            program_id: ProgramId(program_id.to_vec()),
+            phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<
+        Z: sdk::ZkContract + sdk::TransactionalZkContract + borsh::BorshDeserialize + 'static + Send,
+    > ClientSdkProver<Vec<Calldata>> for NoopProver<Z>
+{
+    fn prove(
+        &self,
+        commitment_metadata: Vec<u8>,
+        calldatas: Vec<Calldata>,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<Proof>> + Send + '_>> {
+        tracing::warn!("🚨🚨🚨 Using NoopProver which executes contract logic directly without generating real proofs. This should only be used for testing with the 'test' verifier.");
+        let outputs = sdk::guest::execute::<Z>(&commitment_metadata, &calldatas);
+        Box::pin(async move {
+            Ok(Proof {
+                data: ProofData(borsh::to_vec(&outputs).expect("serializing noop proof outputs")),
+                metadata: sdk::ProofMetadata {
+                    cycles: None,
+                    prover: Some("noop".to_string()),
+                    id: None,
+                },
+            })
+        })
+    }
+
+    fn info(&self) -> ProverInfo {
+        ProverInfo {
+            name: "noop".to_string(),
+            zkvm: "noop".to_string(),
+            version: "0".to_string(),
+        }
+    }
+
+    fn program_id(&self) -> ProgramId {
+        self.program_id.clone()
+    }
+
+    fn verifier(&self) -> Verifier {
+        "test".into()
+    }
+}
+
 #[cfg(feature = "risc0")]
 pub mod risc0 {
 
