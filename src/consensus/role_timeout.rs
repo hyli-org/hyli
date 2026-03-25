@@ -357,10 +357,6 @@ impl Consensus {
 
         let f = self.bft_round_state.staking.compute_f();
 
-        let own_timeout_counts = self.is_in_timeout_phase()
-            && *received_slot == self.bft_round_state.slot
-            && *received_view == self.bft_round_state.view;
-
         let (mut len, mut voting_power) = {
             let relevant_timeout_messages = self
                 .relevant_timeout_requests(*received_slot, *received_view)
@@ -377,7 +373,7 @@ impl Consensus {
                 ),
             )
         };
-        if own_timeout_counts {
+        if self.is_in_timeout_phase() {
             len += 1;
             voting_power += self.get_own_voting_power();
         }
@@ -387,7 +383,7 @@ impl Consensus {
         );
 
         // Count requests and if f+1 requests, and not already part of it, join the mutiny
-        if voting_power > f && !own_timeout_counts {
+        if voting_power > f && !self.is_in_timeout_phase() {
             info!("Joining timeout mutiny!");
 
             self.store.bft_round_state.view = *received_view;
