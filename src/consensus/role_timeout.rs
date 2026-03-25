@@ -51,19 +51,30 @@ impl TimeoutState {
     }
 }
 
-#[derive(BorshSerialize, BorshDeserialize, Default)]
+#[derive(BorshSerialize, BorshDeserialize)]
 pub(super) struct TimeoutRoleState {
     pub(super) requests: HashSet<ConsensusTimeout>,
     pub(super) state: TimeoutState,
-    pub(super) next_scheduled: Option<TimestampMs>,
+    pub(super) next_scheduled: TimestampMs,
     pub(super) highest_seen_prepare_qc: Option<(Slot, PrepareQC)>,
+}
+
+impl Default for TimeoutRoleState {
+    fn default() -> Self {
+        Self {
+            requests: HashSet::new(),
+            state: TimeoutState::Voting,
+            next_scheduled: TimestampMs::ZERO,
+            highest_seen_prepare_qc: None,
+        }
+    }
 }
 
 impl TimeoutRoleState {
     pub(super) fn reset_for_new_round(&mut self) {
         self.requests.clear();
         self.state = TimeoutState::Voting;
-        self.next_scheduled = None;
+        self.next_scheduled = TimestampMs::ZERO;
     }
 
     pub(super) fn update_highest_seen_prepare_qc(&mut self, slot: Slot, qc: PrepareQC) -> bool {
@@ -200,15 +211,12 @@ impl Consensus {
     }
 
     pub(super) fn on_timeout_tick(&mut self) -> Result<()> {
-        let Some(timestamp) = self.bft_round_state.timeout.next_scheduled.clone() else {
-            return Ok(());
-        };
-
+        let timestamp = self.bft_round_state.timeout.next_scheduled.clone();
         if TimestampMsClock::now() < timestamp {
             return Ok(());
         }
 
-        self.bft_round_state.timeout.next_scheduled = None;
+        self.bft_round_state.timeout.next_scheduled = TimestampMs::ZERO;
         let _span = tracing::info_span!(
             "TimeoutTick",
             slot = self.bft_round_state.slot as i64,

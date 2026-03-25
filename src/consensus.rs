@@ -225,7 +225,7 @@ impl Consensus {
     }
 
     fn schedule_timeout_at(&mut self, from: TimestampMs, duration: Duration) {
-        self.bft_round_state.timeout.next_scheduled = Some(from + duration);
+        self.bft_round_state.timeout.next_scheduled = from + duration;
     }
 
     fn cache_timeout_certificate(
@@ -386,12 +386,12 @@ impl Consensus {
             .at_round(self.bft_round_state.slot, self.bft_round_state.view);
 
         let round_leader = self.round_leader()?;
+        self.schedule_timeout_at(TimestampMsClock::now(), self.config.consensus.timeout_after);
         if round_leader == *self.crypto.validator_pubkey() {
             self.set_state_tag(StateTag::Leader);
             debug!("👑 I'm the new leader! 👑")
         } else {
             self.set_state_tag(StateTag::Follower);
-            self.schedule_timeout_at(TimestampMsClock::now(), self.config.consensus.timeout_after);
         }
 
         Ok(())
@@ -900,18 +900,20 @@ impl Consensus {
 
         module_handle_messages! {
             on_self self,
-            _ = tokio::time::sleep({
-                if let Some(next_scheduled) = self.bft_round_state.timeout.next_scheduled.clone() {
+            _ = async {
+                if self.is_round_leader() {
+                    std::future::pending::<()>().await;
+                } else {
+                    let next_scheduled = self.bft_round_state.timeout.next_scheduled.clone();
                     let now = TimestampMsClock::now();
-                    if next_scheduled <= now {
+                    let wait = if next_scheduled <= now {
                         Duration::ZERO
                     } else {
                         next_scheduled - now
-                    }
-                } else {
-                    Duration::from_secs(365 * 24 * 60 * 60)
+                    };
+                    tokio::time::sleep(wait).await;
                 }
-            }) => {
+            } => {
                 let _ = log_error!(self.on_timeout_tick(), "Error while handling timeout tick");
             }
             listen<NodeStateEvent> event => {
@@ -1167,7 +1169,7 @@ pub mod test {
         pub async fn timeout(nodes: &mut [&mut ConsensusTestCtx]) {
             for n in nodes {
                 let scheduled_at = TimestampMsClock::now() - Duration::from_secs(5);
-                n.consensus.bft_round_state.timeout.next_scheduled = Some(scheduled_at);
+                n.consensus.bft_round_state.timeout.next_scheduled = scheduled_at;
                 n.consensus
                     .on_timeout_tick()
                     .unwrap_or_else(|err| panic!("Timeout tick for node {}: {:?}", n.name, err));
