@@ -222,7 +222,6 @@ pub mod noir {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::{fs::File, io::Read};
