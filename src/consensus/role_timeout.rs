@@ -94,22 +94,6 @@ impl TimeoutRoleState {
 }
 
 impl Consensus {
-    fn is_relevant_timeout(
-        &self,
-        signed_message: &SignedByValidator<(
-            Slot,
-            View,
-            ConsensusProposalHash,
-            ConsensusTimeoutMarker,
-        )>,
-        slot: Slot,
-        view: View,
-    ) -> bool {
-        signed_message.msg.0 == slot
-            && signed_message.msg.1 == view
-            && signed_message.msg.2 == self.bft_round_state.parent_hash
-    }
-
     fn relevant_timeout_requests(
         &self,
         slot: Slot,
@@ -120,7 +104,11 @@ impl Consensus {
             .timeout
             .requests
             .iter()
-            .filter(move |(signed_message, _)| self.is_relevant_timeout(signed_message, slot, view))
+            .filter(move |(signed_message, _)| {
+                signed_message.msg.0 == slot
+                    && signed_message.msg.1 == view
+                    && signed_message.msg.2 == self.bft_round_state.parent_hash
+            })
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
