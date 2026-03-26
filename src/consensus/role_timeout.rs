@@ -28,7 +28,7 @@ impl TimeoutState {
                 trace!("⏲️ Already in timeout phase");
             }
             TimeoutState::Certificate => {
-                warn!("⏲️ Try to re-enter timeout phase after a certificate was emitted");
+                debug!("⏲️ Re-enter timeout phase after a certificate was emitted, reemits the certificate.");
             }
         }
         *self = TimeoutState::Timeout;
@@ -821,6 +821,62 @@ mod tests {
         assert_eq!(node2.consensus.bft_round_state.view, 2);
         assert_eq!(node3.consensus.bft_round_state.view, 2);
         assert_eq!(node4.consensus.bft_round_state.view, 2);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn timeout_certificate_can_be_reemitted_after_a_new_timeout() {
+        let (mut node1, mut node2, mut node3, node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        ConsensusTestCtx::timeout(&mut [&mut node1, &mut node2, &mut node3]).await;
+
+        broadcast! {
+            description: "Follower - Timeout round 1",
+            from: node1, to: [node2, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout round 1",
+            from: node2, to: [node1, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout round 1",
+            from: node3, to: [node2, node1],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+
+        node1.assert_broadcast("Timeout certificate round 1").await;
+        node3.assert_broadcast("Timeout certificate round 1").await;
+        assert_eq!(node1.consensus.bft_round_state.view, 1);
+
+        ConsensusTestCtx::timeout(&mut [&mut node1, &mut node2, &mut node3]).await;
+
+        broadcast! {
+            description: "Follower - Timeout round 2",
+            from: node1, to: [node2, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout round 2",
+            from: node2, to: [node1, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout round 2",
+            from: node3, to: [node2, node1],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+
+        node1.assert_broadcast("Timeout certificate round 2").await;
+        assert_eq!(node1.consensus.bft_round_state.view, 2);
+        assert_eq!(node2.consensus.bft_round_state.view, 2);
+        assert_eq!(node3.consensus.bft_round_state.view, 2);
+        assert_eq!(node4.consensus.bft_round_state.view, 0);
     }
 
     #[test_log::test(tokio::test)]
