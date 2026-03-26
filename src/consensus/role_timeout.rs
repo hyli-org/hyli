@@ -850,8 +850,35 @@ mod tests {
             message_matches: ConsensusNetMessage::Timeout(..)
         };
 
-        node1.assert_broadcast("Timeout certificate round 1").await;
-        node3.assert_broadcast("Timeout certificate round 1").await;
+        let round_1_tc_from_node1 = node1.assert_broadcast("Timeout certificate round 1").await;
+        let round_1_tc_from_node3 = node3.assert_broadcast("Timeout certificate round 1").await;
+        let (
+            ConsensusNetMessage::TimeoutCertificate(round_1_timeout_qc_1, round_1_kind_1, 1, 0),
+            ConsensusNetMessage::TimeoutCertificate(round_1_timeout_qc_3, round_1_kind_3, 1, 0),
+        ) = (&round_1_tc_from_node1.msg, &round_1_tc_from_node3.msg)
+        else {
+            panic!("Expected timeout certificate broadcasts for slot 1 view 0");
+        };
+        assert_eq!(
+            round_1_timeout_qc_1.signature,
+            round_1_timeout_qc_3.signature
+        );
+        let mut round_1_timeout_validators_1 = round_1_timeout_qc_1.validators.clone();
+        let mut round_1_timeout_validators_3 = round_1_timeout_qc_3.validators.clone();
+        round_1_timeout_validators_1.sort();
+        round_1_timeout_validators_3.sort();
+        assert_eq!(round_1_timeout_validators_1, round_1_timeout_validators_3);
+        let (TCKind::NilProposal(round_1_nil_qc_1), TCKind::NilProposal(round_1_nil_qc_3)) =
+            (round_1_kind_1, round_1_kind_3)
+        else {
+            panic!("Expected nil timeout certificates for slot 1 view 0");
+        };
+        assert_eq!(round_1_nil_qc_1.signature, round_1_nil_qc_3.signature);
+        let mut round_1_nil_validators_1 = round_1_nil_qc_1.validators.clone();
+        let mut round_1_nil_validators_3 = round_1_nil_qc_3.validators.clone();
+        round_1_nil_validators_1.sort();
+        round_1_nil_validators_3.sort();
+        assert_eq!(round_1_nil_validators_1, round_1_nil_validators_3);
         assert_eq!(node1.consensus.bft_round_state.view, 1);
 
         ConsensusTestCtx::timeout(&mut [&mut node1, &mut node2, &mut node3]).await;
@@ -872,7 +899,11 @@ mod tests {
             message_matches: ConsensusNetMessage::Timeout(..)
         };
 
-        node1.assert_broadcast("Timeout certificate round 2").await;
+        let round_2_tc = node1.assert_broadcast("Timeout certificate round 2").await;
+        assert!(matches!(
+            round_2_tc.msg,
+            ConsensusNetMessage::TimeoutCertificate(_, _, 1, 1)
+        ));
         assert_eq!(node1.consensus.bft_round_state.view, 2);
         assert_eq!(node2.consensus.bft_round_state.view, 2);
         assert_eq!(node3.consensus.bft_round_state.view, 2);
