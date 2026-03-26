@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
-use std::collections::HashSet;
+use std::{collections::HashSet, future::Future, pin::Pin};
 use tracing::{debug, info, trace, warn};
 
 use super::*;
@@ -8,8 +8,7 @@ use crate::{
     consensus::role_follower::TicketVerificationError,
     model::{Slot, View},
 };
-use hyli_model::{utils::TimestampMs, ConsensusProposalHash, Hashed, Signed, SignedByValidator};
-use hyli_net::clock::TimestampMsClock;
+use hyli_model::{ConsensusProposalHash, Hashed, Signed, SignedByValidator};
 
 #[derive(Debug, BorshSerialize, BorshDeserialize, Default)]
 pub(super) enum TimeoutState {
@@ -29,7 +28,7 @@ impl TimeoutState {
                 trace!("⏲️ Already in timeout phase");
             }
             TimeoutState::Certificate => {
-                warn!("⏲️ Try to re-enter timeout phase after a certificate was emitted");
+                debug!("⏲️ Re-enter timeout phase after a certificate was emitted, reemits the certificate.");
             }
         }
         *self = TimeoutState::Timeout;
@@ -51,11 +50,28 @@ impl TimeoutState {
     }
 }
 
+pub(super) type TimeoutFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+pub(super) struct ScheduledTimeout(pub(super) TimeoutFuture);
+
+impl Default for ScheduledTimeout {
+    fn default() -> Self {
+        Self(Box::pin(std::future::pending()))
+    }
+}
+
+impl ScheduledTimeout {
+    pub(super) fn sleep(duration: std::time::Duration) -> Self {
+        Self(Box::pin(tokio::time::sleep(duration)))
+    }
+}
+
 #[derive(BorshSerialize, BorshDeserialize, Default)]
 pub(super) struct TimeoutRoleState {
     pub(super) requests: HashSet<ConsensusTimeout>,
     pub(super) state: TimeoutState,
-    pub(super) next_scheduled: TimestampMs,
+    #[borsh(skip)]
+    pub(super) next_scheduled: ScheduledTimeout,
     pub(super) highest_seen_prepare_qc: Option<(Slot, PrepareQC)>,
 }
 
@@ -63,7 +79,7 @@ impl TimeoutRoleState {
     pub(super) fn reset_for_new_round(&mut self) {
         self.requests.clear();
         self.state = TimeoutState::Voting;
-        self.next_scheduled = TimestampMs::ZERO;
+        self.next_scheduled = ScheduledTimeout::default();
     }
 
     pub(super) fn update_highest_seen_prepare_qc(&mut self, slot: Slot, qc: PrepareQC) -> bool {
@@ -78,22 +94,6 @@ impl TimeoutRoleState {
 }
 
 impl Consensus {
-    fn is_relevant_timeout(
-        &self,
-        signed_message: &SignedByValidator<(
-            Slot,
-            View,
-            ConsensusProposalHash,
-            ConsensusTimeoutMarker,
-        )>,
-        slot: Slot,
-        view: View,
-    ) -> bool {
-        signed_message.msg.0 == slot
-            && signed_message.msg.1 == view
-            && signed_message.msg.2 == self.bft_round_state.parent_hash
-    }
-
     fn relevant_timeout_requests(
         &self,
         slot: Slot,
@@ -104,7 +104,11 @@ impl Consensus {
             .timeout
             .requests
             .iter()
-            .filter(move |(signed_message, _)| self.is_relevant_timeout(signed_message, slot, view))
+            .filter(move |(signed_message, _)| {
+                signed_message.msg.0 == slot
+                    && signed_message.msg.1 == view
+                    && signed_message.msg.2 == self.bft_round_state.parent_hash
+            })
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
@@ -199,13 +203,7 @@ impl Consensus {
         Ok(())
     }
 
-    pub(super) fn on_timeout_tick(&mut self) -> Result<()> {
-        let timestamp = self.bft_round_state.timeout.next_scheduled.clone();
-        if TimestampMsClock::now() < timestamp {
-            return Ok(());
-        }
-
-        self.bft_round_state.timeout.next_scheduled = TimestampMs::ZERO;
+    pub(super) fn on_timeout_trigger(&mut self) -> Result<()> {
         let _span = tracing::info_span!(
             "TimeoutTick",
             slot = self.bft_round_state.slot as i64,
@@ -225,11 +223,8 @@ impl Consensus {
         self.broadcast_net_message((timeout, kind).into())?;
 
         // Rescheduling broadcast of this same timeout message, but sooner than the regular waiting time
-        self.schedule_timeout_at(
-            TimestampMsClock::now(),
-            self.config.consensus.timeout_after / 2,
-        );
-
+        self.bft_round_state.timeout.next_scheduled =
+            ScheduledTimeout::sleep(self.config.consensus.timeout_after / 2);
         Ok(())
     }
 
@@ -388,8 +383,7 @@ impl Consensus {
 
             len += 1;
             voting_power += self.get_own_voting_power();
-
-            self.schedule_timeout_at(TimestampMsClock::now(), self.config.consensus.timeout_after);
+            self.schedule_next_timeout();
         }
 
         // Create TC if applicable
@@ -477,9 +471,6 @@ impl Consensus {
                 ticket.0.clone(),
                 ticket.1.clone(),
             );
-
-            self.schedule_timeout_at(TimestampMsClock::now(), self.config.consensus.timeout_after);
-
             let round_leader = self.next_view_leader()?;
             if &round_leader == self.crypto.validator_pubkey() {
                 // This TC is for our current slot and view (by construction), so we can leave Joining mode
@@ -825,6 +816,93 @@ mod tests {
         assert_eq!(node2.consensus.bft_round_state.view, 2);
         assert_eq!(node3.consensus.bft_round_state.view, 2);
         assert_eq!(node4.consensus.bft_round_state.view, 2);
+    }
+
+    #[test_log::test(tokio::test)]
+    async fn timeout_certificate_can_be_reemitted_after_a_new_timeout() {
+        let (mut node1, mut node2, mut node3, node4): (
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+            ConsensusTestCtx,
+        ) = build_nodes!(4).await;
+
+        ConsensusTestCtx::timeout(&mut [&mut node1, &mut node2, &mut node3]).await;
+
+        broadcast! {
+            description: "Follower - Timeout round 1",
+            from: node1, to: [node2, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout round 1",
+            from: node2, to: [node1, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout round 1",
+            from: node3, to: [node2, node1],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+
+        let round_1_tc_from_node1 = node1.assert_broadcast("Timeout certificate round 1").await;
+        let round_1_tc_from_node3 = node3.assert_broadcast("Timeout certificate round 1").await;
+        let (
+            ConsensusNetMessage::TimeoutCertificate(round_1_timeout_qc_1, round_1_kind_1, 1, 0),
+            ConsensusNetMessage::TimeoutCertificate(round_1_timeout_qc_3, round_1_kind_3, 1, 0),
+        ) = (&round_1_tc_from_node1.msg, &round_1_tc_from_node3.msg)
+        else {
+            panic!("Expected timeout certificate broadcasts for slot 1 view 0");
+        };
+        assert_eq!(
+            round_1_timeout_qc_1.signature,
+            round_1_timeout_qc_3.signature
+        );
+        let mut round_1_timeout_validators_1 = round_1_timeout_qc_1.validators.clone();
+        let mut round_1_timeout_validators_3 = round_1_timeout_qc_3.validators.clone();
+        round_1_timeout_validators_1.sort();
+        round_1_timeout_validators_3.sort();
+        assert_eq!(round_1_timeout_validators_1, round_1_timeout_validators_3);
+        let (TCKind::NilProposal(round_1_nil_qc_1), TCKind::NilProposal(round_1_nil_qc_3)) =
+            (round_1_kind_1, round_1_kind_3)
+        else {
+            panic!("Expected nil timeout certificates for slot 1 view 0");
+        };
+        assert_eq!(round_1_nil_qc_1.signature, round_1_nil_qc_3.signature);
+        let mut round_1_nil_validators_1 = round_1_nil_qc_1.validators.clone();
+        let mut round_1_nil_validators_3 = round_1_nil_qc_3.validators.clone();
+        round_1_nil_validators_1.sort();
+        round_1_nil_validators_3.sort();
+        assert_eq!(round_1_nil_validators_1, round_1_nil_validators_3);
+        assert_eq!(node1.consensus.bft_round_state.view, 1);
+
+        ConsensusTestCtx::timeout(&mut [&mut node1, &mut node2, &mut node3]).await;
+
+        broadcast! {
+            description: "Follower - Timeout round 2",
+            from: node1, to: [node2, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout round 2",
+            from: node2, to: [node1, node3],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+        broadcast! {
+            description: "Follower - Timeout round 2",
+            from: node3, to: [node2, node1],
+            message_matches: ConsensusNetMessage::Timeout(..)
+        };
+
+        let round_2_tc = node1.assert_broadcast("Timeout certificate round 2").await;
+        assert!(matches!(
+            round_2_tc.msg,
+            ConsensusNetMessage::TimeoutCertificate(_, _, 1, 1)
+        ));
+        assert_eq!(node1.consensus.bft_round_state.view, 2);
+        assert_eq!(node2.consensus.bft_round_state.view, 2);
+        assert_eq!(node3.consensus.bft_round_state.view, 2);
+        assert_eq!(node4.consensus.bft_round_state.view, 0);
     }
 
     #[test_log::test(tokio::test)]

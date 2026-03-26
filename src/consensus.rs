@@ -224,8 +224,9 @@ impl Consensus {
         )
     }
 
-    fn schedule_timeout_at(&mut self, from: TimestampMs, duration: Duration) {
-        self.bft_round_state.timeout.next_scheduled = from + duration;
+    fn schedule_next_timeout(&mut self) {
+        self.bft_round_state.timeout.next_scheduled =
+            role_timeout::ScheduledTimeout::sleep(self.config.consensus.timeout_after);
     }
 
     fn cache_timeout_certificate(
@@ -386,7 +387,7 @@ impl Consensus {
             .at_round(self.bft_round_state.slot, self.bft_round_state.view);
 
         let round_leader = self.round_leader()?;
-        self.schedule_timeout_at(TimestampMsClock::now(), self.config.consensus.timeout_after);
+        self.schedule_next_timeout();
         if round_leader == *self.crypto.validator_pubkey() {
             self.set_state_tag(StateTag::Leader);
             debug!("👑 I'm the new leader! 👑")
@@ -841,10 +842,7 @@ impl Consensus {
                         }
 
                         // Schedule timeout for both leader and follower to ensure recovery from stuck states
-                        self.schedule_timeout_at(
-                            TimestampMsClock::now(),
-                            self.config.consensus.timeout_after,
-                        );
+                        self.schedule_next_timeout();
 
                         // Send a CommitConsensusProposal for the genesis block
                         _ = log_error!(self
@@ -870,10 +868,7 @@ impl Consensus {
                         // TODO: this logic can be improved.
                         self.set_state_tag(StateTag::Joining);
                         // Set up an initial timeout to ensure we don't get stuck if we miss commits
-                        self.schedule_timeout_at(
-                            TimestampMsClock::now(),
-                            self.config.consensus.timeout_after,
-                        );
+                        self.schedule_next_timeout();
 
                         break;
                     },
@@ -900,21 +895,8 @@ impl Consensus {
 
         module_handle_messages! {
             on_self self,
-            _ = async {
-                if self.is_round_leader() {
-                    std::future::pending::<()>().await;
-                } else {
-                    let next_scheduled = self.bft_round_state.timeout.next_scheduled.clone();
-                    let now = TimestampMsClock::now();
-                    let wait = if next_scheduled <= now {
-                        Duration::ZERO
-                    } else {
-                        next_scheduled - now
-                    };
-                    tokio::time::sleep(wait).await;
-                }
-            } => {
-                let _ = log_error!(self.on_timeout_tick(), "Error while handling timeout tick");
+            _ = self.bft_round_state.timeout.next_scheduled.0.as_mut(), if !self.is_round_leader() => {
+                let _ = log_error!(self.on_timeout_trigger(), "Error while handling timeout tick");
             }
             listen<NodeStateEvent> event => {
                 let _ = log_error!(self.handle_node_state_event(event).await, "Error while handling data event");
@@ -1168,10 +1150,10 @@ pub mod test {
 
         pub async fn timeout(nodes: &mut [&mut ConsensusTestCtx]) {
             for n in nodes {
-                let scheduled_at = TimestampMsClock::now() - Duration::from_secs(5);
-                n.consensus.bft_round_state.timeout.next_scheduled = scheduled_at;
+                n.consensus.bft_round_state.timeout.next_scheduled =
+                    role_timeout::ScheduledTimeout::sleep(Duration::ZERO);
                 n.consensus
-                    .on_timeout_tick()
+                    .on_timeout_trigger()
                     .unwrap_or_else(|err| panic!("Timeout tick for node {}: {:?}", n.name, err));
             }
         }
