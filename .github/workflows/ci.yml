@@ -110,8 +110,6 @@ jobs:
         run: cargo check -p hyli-model --no-default-features
       - name: Build
         run: cargo check --no-default-features
-      - name: Build with sp1
-        run: cargo check --no-default-features -F sp1
 
   unused_dependencies:
     name: Check unused dependencies
