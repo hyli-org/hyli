@@ -30,7 +30,7 @@
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context, Error, Result};
+use anyhow::{anyhow, bail, Error, Result};
 use blst::min_pk::{
     AggregatePublicKey, AggregateSignature as BlstAggregateSignature, PublicKey, SecretKey,
     Signature as BlstSignature,
@@ -230,7 +230,7 @@ impl BlstCrypto {
         aggregates: I,
     ) -> Result<Signed<T, AggregateSignature>, Error>
     where
-        T: borsh::BorshSerialize + Clone + 'a,
+        T: borsh::BorshSerialize + 'a,
         I: IntoIterator<Item = &'a SignedByValidator<T>>,
     {
         let mut aggregates = aggregates.into_iter();
@@ -265,15 +265,14 @@ impl BlstCrypto {
         let aggregated_sig = BlstAggregateSignature::aggregate(&sigs_refs, true)
             .map_err(|e| anyhow!("could not aggregate signatures: {:?}", e))?;
         let aggregated_signature: hyli_model::Signature = aggregated_sig.to_signature().into();
-
-        Self::verify_aggregate(&Signed {
-            msg: msg.clone(),
-            signature: AggregateSignature {
-                signature: aggregated_signature.clone(),
-                validators: vec![as_validator_pubkey(aggregated_pk.to_public_key())],
-            },
-        })
-        .context("Failed to aggregate signatures into valid one. Messages might be different")?;
+        let encoded = borsh::to_vec(&msg)?;
+        if !Self::verify_bytes(
+            encoded.as_slice(),
+            &aggregated_sig.to_signature(),
+            &aggregated_pk.to_public_key(),
+        ) {
+            bail!("Failed to aggregate signatures into valid one. Messages might be different");
+        }
 
         Ok(Signed {
             msg,
@@ -302,10 +301,10 @@ impl BlstCrypto {
         matches!(err, blst::BLST_ERROR::BLST_SUCCESS)
     }
 
-    fn push_aggregate<T>(aggregates: &mut Aggregates, signed: &SignedByValidator<T>) -> Result<()>
-    where
-        T: borsh::BorshSerialize + Clone,
-    {
+    fn push_aggregate<T: borsh::BorshSerialize>(
+        aggregates: &mut Aggregates,
+        signed: &SignedByValidator<T>,
+    ) -> Result<()> {
         let sig = BlstSignature::uncompress(&signed.signature.signature.0)
             .map_err(|_| anyhow!("Could not parse Signature"))?;
         let pk = PublicKey::uncompress(&signed.signature.validator.0)
