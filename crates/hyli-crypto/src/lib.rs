@@ -220,9 +220,12 @@ impl BlstCrypto {
         I: IntoIterator<Item = &'a SignedByValidator<T>>,
     {
         let self_signed = self.sign(msg.clone())?;
-        let mut aggregates = aggregates.into_iter().collect::<Vec<_>>();
-        aggregates.push(&self_signed);
-        Self::aggregate(msg, aggregates)
+        let mut extracted = Aggregates::default();
+        for signed in aggregates {
+            Self::push_aggregate(&mut extracted, signed)?;
+        }
+        Self::push_aggregate(&mut extracted, &self_signed)?;
+        Self::aggregate_from_extracted(msg, extracted)
     }
 
     pub fn aggregate<'a, T, I>(
@@ -256,6 +259,16 @@ impl BlstCrypto {
             Self::push_aggregate(&mut extracted, signed)?;
         }
 
+        Self::aggregate_from_extracted(msg, extracted)
+    }
+
+    fn aggregate_from_extracted<T>(
+        msg: T,
+        extracted: Aggregates,
+    ) -> Result<Signed<T, AggregateSignature>, Error>
+    where
+        T: borsh::BorshSerialize,
+    {
         let pks_refs: Vec<&PublicKey> = extracted.pks.iter().collect();
         let sigs_refs: Vec<&BlstSignature> = extracted.sigs.iter().collect();
 
