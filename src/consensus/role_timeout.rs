@@ -217,14 +217,11 @@ impl Consensus {
         );
         let (timeout, kind) = self.get_timeout_message()?;
         self.bft_round_state.timeout.state.timeout();
+        self.schedule_next_timeout();
 
         self.on_timeout(timeout.clone(), kind.clone())?;
 
         self.broadcast_net_message((timeout, kind).into())?;
-
-        // Rescheduling broadcast of this same timeout message, but sooner than the regular waiting time
-        self.bft_round_state.timeout.next_scheduled =
-            ScheduledTimeout::sleep(self.config.consensus.timeout_after / 2);
         Ok(())
     }
 
@@ -383,7 +380,6 @@ impl Consensus {
 
             len += 1;
             voting_power += self.get_own_voting_power();
-            self.schedule_next_timeout();
         }
 
         // Create TC if applicable
