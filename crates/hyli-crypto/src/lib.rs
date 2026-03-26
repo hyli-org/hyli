@@ -210,25 +210,31 @@ impl BlstCrypto {
         }
     }
 
-    pub fn sign_aggregate<T>(
+    pub fn sign_aggregate<'a, T, I>(
         &self,
         msg: T,
-        aggregates: &[&SignedByValidator<T>],
+        aggregates: I,
     ) -> Result<Signed<T, AggregateSignature>, Error>
     where
-        T: borsh::BorshSerialize + Clone,
+        T: borsh::BorshSerialize + Clone + 'a,
+        I: IntoIterator<Item = &'a SignedByValidator<T>>,
     {
         let self_signed = self.sign(msg.clone())?;
-        Self::aggregate(msg, &[aggregates, &[&self_signed]].concat())
+        let mut aggregates = aggregates.into_iter().collect::<Vec<_>>();
+        aggregates.push(&self_signed);
+        Self::aggregate(msg, aggregates)
     }
 
-    pub fn aggregate<T>(
+    pub fn aggregate<'a, T, I>(
         msg: T,
-        aggregates: &[&SignedByValidator<T>],
+        aggregates: I,
     ) -> Result<Signed<T, AggregateSignature>, Error>
     where
-        T: borsh::BorshSerialize + Clone,
+        T: borsh::BorshSerialize + Clone + 'a,
+        I: IntoIterator<Item = &'a SignedByValidator<T>>,
     {
+        let aggregates = aggregates.into_iter().collect::<Vec<_>>();
+
         match aggregates.len() {
             0 => bail!("No signatures to aggregate"),
             1 => Ok(Signed {
@@ -240,7 +246,7 @@ impl BlstCrypto {
                 },
             }),
             _ => {
-                let Aggregates { sigs, pks, val } = Self::extract_aggregates(aggregates)?;
+                let Aggregates { sigs, pks, val } = Self::extract_aggregates(&aggregates)?;
 
                 let pks_refs: Vec<&PublicKey> = pks.iter().collect();
                 let sigs_refs: Vec<&BlstSignature> = sigs.iter().collect();
@@ -377,9 +383,9 @@ mod tests {
         let (_, pk4) = new_signed(Data::default());
 
         let crypto = BlstCrypto::new_random().unwrap();
-        let aggregates = vec![&s1, &s2, &s3];
+        let aggregates = [&s1, &s2, &s3];
         let mut signed = crypto
-            .sign_aggregate(Data::default(), aggregates.as_slice())
+            .sign_aggregate(Data::default(), aggregates.iter().copied())
             .unwrap();
 
         assert_eq!(
@@ -429,8 +435,8 @@ mod tests {
         let (s3, pk3) = new_signed("Other data".to_string()); // different message
 
         let crypto = BlstCrypto::new_random().unwrap();
-        let aggregates = vec![&s1, &s2, &s3];
-        let signed = crypto.sign_aggregate(Data::default(), aggregates.as_slice());
+        let aggregates = [&s1, &s2, &s3];
+        let signed = crypto.sign_aggregate(Data::default(), aggregates.iter().copied());
 
         assert!(signed.is_err_and(|e| {
             e.to_string()
@@ -446,9 +452,9 @@ mod tests {
         let (s4, pk4) = new_signed(Data::default());
 
         let crypto = BlstCrypto::new_random().unwrap();
-        let aggregates = vec![&s1, &s2, &s3, &s2, &s3, &s4];
+        let aggregates = [&s1, &s2, &s3, &s2, &s3, &s4];
         let signed = crypto
-            .sign_aggregate(Data::default(), aggregates.as_slice())
+            .sign_aggregate(Data::default(), aggregates.iter().copied())
             .unwrap();
         BlstCrypto::verify_aggregate(&signed).unwrap();
 

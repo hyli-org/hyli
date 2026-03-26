@@ -1109,7 +1109,7 @@ mod tests {
         msg: T,
     ) -> AggregateSignature {
         let signed = crypto.sign(msg.clone()).expect("sign");
-        BlstCrypto::aggregate(msg, &[&signed])
+        BlstCrypto::aggregate(msg, std::iter::once(&signed))
             .expect("aggregate")
             .signature
     }

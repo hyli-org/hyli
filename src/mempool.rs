@@ -333,7 +333,7 @@ impl Mempool {
 
         let aggregated = BlstCrypto::aggregate(
             (data_proposal_hash.clone(), metadata.cumul_size),
-            filtered.as_slice(),
+            filtered.iter().copied(),
         )?;
         self.lanes
             .set_cached_poda(lane_id, data_proposal_hash, aggregated.signature)?;

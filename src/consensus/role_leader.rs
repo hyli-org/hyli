@@ -334,15 +334,12 @@ impl Consensus {
         );
 
         if voting_power > 2 * f {
-            // Get all received signatures
-            let aggregates: &Vec<&PrepareVote> =
-                &self.bft_round_state.leader.prepare_votes.iter().collect();
-
             let proposal_hash_hint = current_proposal.hashed();
             // Aggregates them into a *Prepare* Quorum Certificate
-            let prepvote_signed_aggregation = self
-                .crypto
-                .sign_aggregate((proposal_hash_hint.clone(), PrepareVoteMarker), aggregates)?;
+            let prepvote_signed_aggregation = self.crypto.sign_aggregate(
+                (proposal_hash_hint.clone(), PrepareVoteMarker),
+                self.bft_round_state.leader.prepare_votes.iter(),
+            )?;
 
             // Process the Confirm message locally, then send it to peers.
             self.bft_round_state.leader.step = Step::ConfirmAck;
@@ -444,14 +441,11 @@ impl Consensus {
         );
 
         if voting_power > 2 * f {
-            // Get all signatures received and change ValidatorPublicKey for ValidatorPubKey
-            let aggregates: &Vec<&ConfirmAck> =
-                &self.bft_round_state.leader.confirm_ack.iter().collect();
-
             // Aggregates them into a *Commit* Quorum Certificate
-            let commit_signed_aggregation = self
-                .crypto
-                .sign_aggregate((current_proposal.hashed(), ConfirmAckMarker), aggregates)?;
+            let commit_signed_aggregation = self.crypto.sign_aggregate(
+                (current_proposal.hashed(), ConfirmAckMarker),
+                self.bft_round_state.leader.confirm_ack.iter(),
+            )?;
 
             // Buffers the *Commit* Quorum Certificate
             let commit_quorum_certificate =
