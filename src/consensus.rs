@@ -224,14 +224,9 @@ impl Consensus {
         )
     }
 
-    fn schedule_timeout_at(&mut self, from: TimestampMs, duration: Duration) {
-        let target = from + duration;
-        let wait = if target <= TimestampMsClock::now() {
-            Duration::ZERO
-        } else {
-            target - TimestampMsClock::now()
-        };
-        self.bft_round_state.timeout.next_scheduled = role_timeout::ScheduledTimeout::sleep(wait);
+    fn schedule_next_timeout(&mut self) {
+        self.bft_round_state.timeout.next_scheduled =
+            role_timeout::ScheduledTimeout::sleep(self.config.consensus.timeout_after);
     }
 
     fn cache_timeout_certificate(
@@ -392,7 +387,7 @@ impl Consensus {
             .at_round(self.bft_round_state.slot, self.bft_round_state.view);
 
         let round_leader = self.round_leader()?;
-        self.schedule_timeout_at(TimestampMsClock::now(), self.config.consensus.timeout_after);
+        self.schedule_next_timeout();
         if round_leader == *self.crypto.validator_pubkey() {
             self.set_state_tag(StateTag::Leader);
             debug!("👑 I'm the new leader! 👑")
@@ -847,10 +842,7 @@ impl Consensus {
                         }
 
                         // Schedule timeout for both leader and follower to ensure recovery from stuck states
-                        self.schedule_timeout_at(
-                            TimestampMsClock::now(),
-                            self.config.consensus.timeout_after,
-                        );
+                        self.schedule_next_timeout();
 
                         // Send a CommitConsensusProposal for the genesis block
                         _ = log_error!(self
@@ -876,10 +868,7 @@ impl Consensus {
                         // TODO: this logic can be improved.
                         self.set_state_tag(StateTag::Joining);
                         // Set up an initial timeout to ensure we don't get stuck if we miss commits
-                        self.schedule_timeout_at(
-                            TimestampMsClock::now(),
-                            self.config.consensus.timeout_after,
-                        );
+                        self.schedule_next_timeout();
 
                         break;
                     },
