@@ -221,7 +221,7 @@ impl SingleNodeConsensus {
         self.store.last_consensus_proposal_hash = consensus_proposal.hashed();
 
         let certificate = self.crypto.sign_aggregate(
-            (consensus_proposal.hashed(), ConfirmAckMarker),
+            &(consensus_proposal.hashed(), ConfirmAckMarker),
             std::iter::empty(),
         )?;
 
@@ -229,7 +229,7 @@ impl SingleNodeConsensus {
             CommittedConsensusProposal {
                 staking: Staking::default(),
                 consensus_proposal,
-                certificate: certificate.signature,
+                certificate,
             },
         ))?;
 

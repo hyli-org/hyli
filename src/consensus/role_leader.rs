@@ -337,7 +337,7 @@ impl Consensus {
             let proposal_hash_hint = current_proposal.hashed();
             // Aggregates them into a *Prepare* Quorum Certificate
             let prepvote_signed_aggregation = self.crypto.sign_aggregate(
-                (proposal_hash_hint.clone(), PrepareVoteMarker),
+                &(proposal_hash_hint.clone(), PrepareVoteMarker),
                 self.bft_round_state.leader.prepare_votes.iter(),
             )?;
 
@@ -353,7 +353,7 @@ impl Consensus {
                 self.bft_round_state.slot
             );
             self.broadcast_net_message(ConsensusNetMessage::Confirm(
-                QuorumCertificate(prepvote_signed_aggregation.signature, PrepareVoteMarker),
+                QuorumCertificate(prepvote_signed_aggregation, PrepareVoteMarker),
                 proposal_hash_hint,
             ))?;
         }
@@ -443,13 +443,13 @@ impl Consensus {
         if voting_power > 2 * f {
             // Aggregates them into a *Commit* Quorum Certificate
             let commit_signed_aggregation = self.crypto.sign_aggregate(
-                (current_proposal.hashed(), ConfirmAckMarker),
+                &(current_proposal.hashed(), ConfirmAckMarker),
                 self.bft_round_state.leader.confirm_ack.iter(),
             )?;
 
             // Buffers the *Commit* Quorum Certificate
             let commit_quorum_certificate =
-                QuorumCertificate(commit_signed_aggregation.signature, ConfirmAckMarker);
+                QuorumCertificate(commit_signed_aggregation, ConfirmAckMarker);
 
             // Broadcast the *Commit* Quorum Certificate to all validators
             self.broadcast_net_message(ConsensusNetMessage::Commit(
