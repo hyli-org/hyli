@@ -66,24 +66,13 @@ impl ScheduledTimeout {
     }
 }
 
-#[derive(BorshSerialize, BorshDeserialize)]
+#[derive(BorshSerialize, BorshDeserialize, Default)]
 pub(super) struct TimeoutRoleState {
     pub(super) requests: HashSet<ConsensusTimeout>,
     pub(super) state: TimeoutState,
     #[borsh(skip)]
     pub(super) next_scheduled: ScheduledTimeout,
     pub(super) highest_seen_prepare_qc: Option<(Slot, PrepareQC)>,
-}
-
-impl Default for TimeoutRoleState {
-    fn default() -> Self {
-        Self {
-            requests: HashSet::new(),
-            state: TimeoutState::Voting,
-            next_scheduled: ScheduledTimeout::default(),
-            highest_seen_prepare_qc: None,
-        }
-    }
 }
 
 impl TimeoutRoleState {
