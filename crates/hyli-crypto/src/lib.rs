@@ -183,10 +183,7 @@ impl BlstCrypto {
     where
         T: borsh::BorshSerialize,
     {
-        let pk = PublicKey::uncompress(&msg.signature.validator.0)
-            .map_err(|e| anyhow!("Could not parse PublicKey: {:?}", e))?;
-        let sig = BlstSignature::uncompress(&msg.signature.signature.0)
-            .map_err(|e| anyhow!("Could not parse Signature: {:?}", e))?;
+        let (sig, pk) = Self::parse_signed_by_validator(msg)?;
         let encoded = borsh::to_vec(&msg.msg)?;
         if BlstCrypto::verify_bytes(encoded.as_slice(), &sig, &pk) {
             Ok(())
@@ -314,14 +311,21 @@ impl BlstCrypto {
         matches!(err, blst::BLST_ERROR::BLST_SUCCESS)
     }
 
+    fn parse_signed_by_validator<T: borsh::BorshSerialize>(
+        signed: &SignedByValidator<T>,
+    ) -> Result<(BlstSignature, PublicKey)> {
+        let sig = BlstSignature::uncompress(&signed.signature.signature.0)
+            .map_err(|e| anyhow!("Could not parse Signature: {:?}", e))?;
+        let pk = PublicKey::uncompress(&signed.signature.validator.0)
+            .map_err(|e| anyhow!("Could not parse PublicKey: {:?}", e))?;
+        Ok((sig, pk))
+    }
+
     fn push_aggregate<T: borsh::BorshSerialize>(
         aggregates: &mut Aggregates,
         signed: &SignedByValidator<T>,
     ) -> Result<()> {
-        let sig = BlstSignature::uncompress(&signed.signature.signature.0)
-            .map_err(|_| anyhow!("Could not parse Signature"))?;
-        let pk = PublicKey::uncompress(&signed.signature.validator.0)
-            .map_err(|_| anyhow!("Could not parse Public Key"))?;
+        let (sig, pk) = Self::parse_signed_by_validator(signed)?;
 
         aggregates.sigs.push(sig);
         aggregates.pks.push(pk);
