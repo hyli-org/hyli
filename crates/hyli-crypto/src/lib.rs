@@ -50,7 +50,7 @@ pub type SharedBlstCrypto = Arc<BlstCrypto>;
 struct Aggregates {
     sigs: Vec<BlstSignature>,
     pks: Vec<PublicKey>,
-    val: Vec<ValidatorPublicKey>,
+    validators: Vec<ValidatorPublicKey>,
 }
 
 const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
@@ -278,7 +278,7 @@ impl BlstCrypto {
             msg,
             signature: AggregateSignature {
                 signature: aggregated_signature,
-                validators: extracted.val,
+                validators: extracted.validators,
             },
         })
     }
@@ -312,13 +312,18 @@ impl BlstCrypto {
 
         aggregates.sigs.push(sig);
         aggregates.pks.push(pk);
-        aggregates.val.push(signed.signature.validator.clone());
+        aggregates
+            .validators
+            .push(signed.signature.validator.clone());
         Ok(())
     }
 
-    fn aggregate_validators_pk(validators: &[ValidatorPublicKey]) -> Result<PublicKey> {
+    fn aggregate_validators_pk<'a, I>(validators: I) -> Result<PublicKey>
+    where
+        I: IntoIterator<Item = &'a ValidatorPublicKey>,
+    {
         let pks = validators
-            .iter()
+            .into_iter()
             .map(|v| {
                 PublicKey::uncompress(v.0.as_slice())
                     .map_err(|e| anyhow!("Could not parse PublicKey: {:?}", e))
