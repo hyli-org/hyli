@@ -44,19 +44,105 @@ fn is_mount_point(_path: &Path) -> Result<bool> {
     Ok(false)
 }
 
+/// Files saved to disk by [`Module::persist`], paired with their CRC32 checksums.
+///
+/// The [`ModulesHandler`] collects these entries from all modules during a clean
+/// shutdown and writes them to a [`CHECKSUMS_MANIFEST`] file. On the next startup,
+/// [`Module::load_from_disk`] uses the manifest to verify file integrity before
+/// deserialising.
 pub type ModulePersistOutput = Vec<(PathBuf, u32)>;
 
-/// Module trait to define startup dependencies
+/// A long-running component of the application.
+///
+/// A `Module` is the hyli-bus equivalent of a micro-service. It:
+/// - has its own async event loop ([`run`](Module::run))
+/// - declares which messages it sends and receives via [`module_bus_client!`](crate::module_bus_client)
+/// - can optionally persist state to disk ([`persist`](Module::persist))
+/// - responds to lifecycle signals ([`ShutdownModule`](signal::ShutdownModule),
+///   [`PersistModule`](signal::PersistModule)) automatically via
+///   [`module_handle_messages!`](crate::module_handle_messages)
+///
+/// # Lifecycle
+///
+/// ```text
+///  ModulesHandler::build_module::<M>(ctx)
+///       │
+///       ▼
+///  M::build(bus, ctx)  ← set up subscriptions, load state from disk
+///       │
+///       ▼  (all modules built before this point)
+///  ModulesHandler::start_modules()
+///       │
+///       ▼
+///  M::run()            ← event loop, runs until ShutdownModule received
+///       │
+///       ▼
+///  M::persist()        ← save state, return checksums
+/// ```
+///
+/// # Implementing a module
+///
+/// ```rust,ignore
+/// use hyli_bus::{Module, SharedMessageBus, module_bus_client, module_handle_messages};
+///
+/// module_bus_client! {
+///     struct MyModuleBusClient {
+///         sender(MyEvent),
+///         receiver(OtherEvent),
+///     }
+/// }
+///
+/// struct MyModule {
+///     bus: MyModuleBusClient,
+///     state: u64,
+/// }
+///
+/// impl Module for MyModule {
+///     type Context = ();
+///
+///     async fn build(bus: SharedMessageBus, _ctx: ()) -> anyhow::Result<Self> {
+///         Ok(Self {
+///             bus: MyModuleBusClient::new_from_bus(bus).await,
+///             state: 0,
+///         })
+///     }
+///
+///     async fn run(&mut self) -> anyhow::Result<()> {
+///         module_handle_messages! {
+///             on_self self,
+///             listen<OtherEvent> ev => {
+///                 self.state += 1;
+///             }
+///         }
+///         Ok(())
+///     }
+/// }
+/// ```
 pub trait Module
 where
     Self: Sized,
 {
+    /// Module-specific build-time configuration.
+    ///
+    /// This is passed to [`build`](Module::build) by [`ModulesHandler::build_module`].
+    /// Use it for anything that isn't available via the bus (CLI flags, config files, …).
     type Context;
 
+    /// Construct the module and subscribe to the bus.
+    ///
+    /// Called once by [`ModulesHandler::build_module`] before any module is started.
+    /// This is the right place to subscribe to channels and optionally restore persisted
+    /// state with [`load_from_disk`](Module::load_from_disk).
     fn build(
         bus: SharedMessageBus,
         ctx: Self::Context,
     ) -> impl futures::Future<Output = Result<Self>> + Send;
+
+    /// Run the module's event loop until a shutdown signal is received.
+    ///
+    /// Implement this with [`module_handle_messages!`](crate::module_handle_messages),
+    /// which automatically handles [`ShutdownModule`](signal::ShutdownModule) and
+    /// [`PersistModule`](signal::PersistModule) signals.
     fn run(&mut self) -> impl futures::Future<Output = Result<()>> + Send;
 
     /// Load data from disk with checksum verification from manifest.
@@ -153,7 +239,16 @@ where
     }
 
     /// Persist module state to disk.
-    /// Returns `Some(vec)` if data was saved, `None` if module doesn't persist.
+    ///
+    /// Called automatically by [`module_handle_messages!`](crate::module_handle_messages) when a
+    /// [`PersistModule`](signal::PersistModule) signal is received, and once more by the
+    /// [`ModulesHandler`] after [`run`](Module::run) returns.
+    ///
+    /// The default implementation logs a "not implemented" message and returns an empty list.
+    /// Override it and call [`save_on_disk`](Module::save_on_disk) to opt in to persistence.
+    ///
+    /// Returns a list of `(relative_path, crc32_checksum)` pairs for every file written.
+    /// These are collected by [`ModulesHandler`] and written to the manifest.
     fn persist(&mut self) -> impl futures::Future<Output = Result<ModulePersistOutput>> + Send {
         async {
             info!(
@@ -164,9 +259,26 @@ where
         }
     }
 
-    /// Save data to disk and return the CRC32 checksum.
-    /// `file` is relative to `data_dir`.
-    /// The checksum should be collected by ModulesHandler and written to a manifest file.
+    /// Atomically serialize `store` to `data_dir/file` and return the CRC32 checksum.
+    ///
+    /// The write is atomic: data is first written to a temporary file, then renamed
+    /// into place. The CRC32 checksum is computed while writing so no extra I/O pass
+    /// is needed.
+    ///
+    /// `file` **must** be a relative path. It will be joined with `data_dir`.
+    ///
+    /// The returned checksum must be included in the value returned by [`persist`](Module::persist)
+    /// so that [`ModulesHandler`] can write it to the manifest.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// async fn persist(&mut self) -> anyhow::Result<ModulePersistOutput> {
+    ///     let file = Path::new(files::NODE_STATE_BIN);
+    ///     let checksum = Self::save_on_disk(&self.data_dir, file, &self.state)?;
+    ///     Ok(vec![(file.to_path_buf(), checksum)])
+    /// }
+    /// ```
     fn save_on_disk<S>(data_dir: &Path, file: &Path, store: &S) -> Result<u32>
     where
         S: borsh::BorshSerialize,
@@ -220,8 +332,13 @@ where
     }
 }
 
+/// Well-known file names used for module persistence.
+///
+/// Pass these to [`Module::save_on_disk`] and [`Module::load_from_disk`].
 pub mod files {
+    /// Default persistence file for `NodeState`.
     pub const NODE_STATE_BIN: &str = "node_state.bin";
+    /// Default persistence file for `Consensus`.
     pub const CONSENSUS_BIN: &str = "consensus.bin";
 }
 
@@ -233,19 +350,39 @@ struct ModuleStarter {
     starter: ModuleStarterFuture,
 }
 
+/// Lifecycle signals broadcast on the bus to coordinate module shutdown and persistence.
+///
+/// These are added automatically to every client generated by [`module_bus_client!`](crate::module_bus_client)
+/// and handled by [`module_handle_messages!`](crate::module_handle_messages).
+/// You generally don't need to use them directly.
 pub mod signal {
     use std::any::TypeId;
 
     use crate::{bus::BusMessage, modules::ModuleShutdownStatus, utils::static_type_map::Pick};
 
+    /// Broadcast by [`ModulesHandler`](super::ModulesHandler) to ask modules to flush
+    /// state to disk without stopping.
+    ///
+    /// [`module_handle_messages!`](crate::module_handle_messages) calls [`Module::persist`](super::Module::persist)
+    /// automatically when this signal is received.
     #[derive(Clone, Debug)]
     pub struct PersistModule {}
 
+    /// Broadcast by [`ModulesHandler`](super::ModulesHandler) to ask a specific module to stop.
+    ///
+    /// Only the module whose Rust type name matches [`module`](ShutdownModule::module) will act on this;
+    /// others ignore it.
     #[derive(Clone, Debug)]
     pub struct ShutdownModule {
+        /// Fully-qualified Rust type name of the module to shut down
+        /// (e.g. `"my_crate::node::NodeState"`).
         pub module: String,
     }
 
+    /// Sent by each module's watchdog task after the module has exited.
+    ///
+    /// [`ModulesHandler::shutdown_loop`](super::ModulesHandler::shutdown_loop) listens for
+    /// this signal to track shutdown progress and trigger the next module in the sequence.
     #[derive(Clone, Debug)]
     pub struct ShutdownCompleted {
         pub module: String,
@@ -335,6 +472,44 @@ pub mod signal {
     }
 }
 
+/// Event loop macro for modules.
+///
+/// A thin wrapper around [`handle_messages!`](crate::handle_messages) that automatically:
+/// - Handles [`PersistModule`](signal::PersistModule) by calling `self.persist().await`
+/// - Handles [`ShutdownModule`](signal::ShutdownModule) by breaking the loop
+///
+/// **`self.bus`** must be a bus client with receivers for expected events, provided by default by [`module_bus_client!`](crate::module_bus_client).
+///
+/// # Variants
+///
+/// ## Standard shutdown
+///
+/// ```rust,ignore
+/// module_handle_messages! {
+///     on_self self,
+///     listen<SomeEvent> ev => { /* … */ }
+///     command_response<QueryFoo, Foo> q => { Ok(Foo) }
+/// }
+/// ```
+///
+/// ## Deferred shutdown (`delay_shutdown_until`)
+///
+/// Use this variant when the module must finish some in-progress work before it is safe
+/// to stop (e.g. flush a write batch, finish a TCP handshake).
+///
+/// ```rust,ignore
+/// module_handle_messages! {
+///     on_self self,
+///     delay_shutdown_until { self.pending_writes == 0 },
+///     listen<WriteRequest> req => {
+///         self.pending_writes += 1;
+///         self.process(req).await;
+///         self.pending_writes -= 1;
+///     }
+/// }
+/// ```
+///
+/// The block must evaluate to `bool`. The loop breaks only when it returns `true`.
 #[macro_export]
 macro_rules! module_handle_messages {
     (on_self $self:expr, delay_shutdown_until  $lay_shutdow_until:block, $($rest:tt)*) => {
@@ -381,6 +556,30 @@ macro_rules! module_handle_messages {
     };
 }
 
+/// Declare a typed bus client struct for a [`Module`].
+///
+/// Identical to [`bus_client!`](crate::bus_client) but automatically adds receivers for:
+/// - [`ShutdownModule`](signal::ShutdownModule) — handled by [`module_handle_messages!`]
+/// - [`PersistModule`](signal::PersistModule) — handled by [`module_handle_messages!`]
+///
+/// Use `query(CmdType, RespType)` to declare a synchronous request/response channel.
+/// This generates a receiver for [`Query<CmdType, RespType>`](crate::bus::command_response::Query)
+/// and can be handled with `command_response<CmdType, RespType>` inside the event loop.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// module_bus_client! {
+///     pub struct MempoolBusClient {
+///         sender(MempoolStatusEvent),    // this module emits these
+///
+///         receiver(ConsensusEvent),      // this module listens to these
+///         receiver(NodeStateEvent),
+///
+///         query(QueryNewCut, Cut),       // synchronous request/response
+///     }
+/// }
+/// ```
 #[macro_export]
 macro_rules! module_bus_client {
     (
@@ -388,6 +587,7 @@ macro_rules! module_bus_client {
         $pub:vis struct $name:ident $(< $( $lt:tt $( : $clt:tt $(+ $dlt:tt )* )? ),+ >)? {
             $(sender($sender:ty),)*
             $(receiver($receiver:ty),)*
+            $(query($qtype:ty, $qresp:ty),)*
         }
     ) => {
         $crate::bus::bus_client!{
@@ -395,6 +595,7 @@ macro_rules! module_bus_client {
             $pub struct $name $(< $( $lt $( : $clt $(+ $dlt )* )? ),+ >)? {
                 $(sender($sender),)*
                 $(receiver($receiver),)*
+                $(receiver($crate::bus::command_response::Query<$qtype, $qresp>),)*
                 receiver($crate::modules::signal::ShutdownModule),
                 receiver($crate::modules::signal::PersistModule),
             }
@@ -413,6 +614,38 @@ bus_client! {
     }
 }
 
+/// Manages the lifecycle of all [`Module`]s in the application.
+///
+/// `ModulesHandler` is the orchestrator: it builds modules, starts their event loops,
+/// and coordinates a graceful, ordered shutdown.
+///
+/// # Shutdown order
+///
+/// Modules are shut down in **reverse startup order** (last started, first stopped).
+/// This mirrors the typical dependency direction: if module B depends on module A,
+/// you start A first and stop B first.
+///
+/// # Persistence and manifest integrity
+///
+/// After all modules have stopped cleanly, `ModulesHandler` writes a
+/// [`CHECKSUMS_MANIFEST`] file. On the next startup, [`Module::load_from_disk`]
+/// validates every persisted file against this manifest. If the manifest is missing
+/// or empty (e.g. after a crash), the data directory is either backed up or removed
+/// depending on [`ModulesHandlerOptions::backup_on_invalid_manifest`].
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let bus = SharedMessageBus::new();
+/// let mut handler = ModulesHandler::new(&bus, "data".into(), ModulesHandlerOptions::default())?;
+///
+/// handler.build_module::<NodeState>(node_ctx).await?;
+/// handler.build_module::<Mempool>(mempool_ctx).await?;
+/// handler.build_module::<Consensus>(consensus_ctx).await?;
+///
+/// handler.start_modules().await?;
+/// handler.exit_process().await?; // blocks until SIGINT / SIGTERM
+/// ```
 pub struct ModulesHandler {
     bus: SharedMessageBus,
     modules: Vec<ModuleStarter>,
@@ -424,20 +657,32 @@ pub struct ModulesHandler {
     module_shutdown_order: Vec<String>,
 }
 
+/// Configuration for [`ModulesHandler`].
 #[derive(Clone, Debug, Default)]
 pub struct ModulesHandlerOptions {
-    /// If true, back up a non-empty data directory when the checksum manifest is missing or empty.
-    /// If false, remove that invalid directory and recreate it empty.
+    /// What to do with a non-empty data directory that has no valid manifest.
+    ///
+    /// - `true` — move the directory to `<data_dir>.backup_<timestamp>` (safe, keeps the data).
+    /// - `false` — delete the directory and start fresh (default, simpler ops).
+    ///
+    /// A missing or empty manifest typically indicates a crash during a previous shutdown.
+    /// The persisted files may be inconsistent, so hyli-bus refuses to load them and
+    /// resets the directory instead.
     pub backup_on_invalid_manifest: bool,
 }
 
+/// Outcome of a module's shutdown sequence.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModuleShutdownStatus {
+    /// The module did not respond within the 5-second shutdown timeout.
     TimedOut,
+    /// The module exited but [`Module::persist`] returned an error.
     PersistenceFailed { reason: String },
+    /// The module exited cleanly and persisted the listed files.
     PersistedEntries(ModulePersistOutput),
 }
 
+/// Tracks whether a module is still running or has completed its shutdown.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModuleStatus {
     Running,
@@ -536,6 +781,19 @@ impl ModulesHandler {
         Ok(module_handler)
     }
 
+    /// Spawn all registered modules as Tokio tasks.
+    ///
+    /// Each module runs in its own task. A watchdog task is also spawned per module:
+    /// it sends a timeout error if the module hasn't finished within
+    /// 5 seconds after receiving its [`ShutdownModule`](signal::ShutdownModule)
+    /// signal.
+    ///
+    /// **Call this only after all modules have been built.** Channels are created on
+    /// first subscription, so any module built after this point might miss messages
+    /// that were sent before it subscribed.
+    ///
+    /// Also removes the previous manifest file so that an incomplete run cannot be
+    /// mistaken for a clean shutdown.
     pub async fn start_modules(&mut self) -> Result<()> {
         if self.has_running_modules() {
             bail!("Modules are already running!");
@@ -786,6 +1044,10 @@ impl ModulesHandler {
         Ok(())
     }
 
+    /// Trigger a graceful shutdown of all running modules and wait for them to finish.
+    ///
+    /// Modules are stopped in reverse startup order. Equivalent to calling
+    /// `shutdown_next_module` and then [`shutdown_loop`](Self::shutdown_loop).
     pub async fn shutdown_modules(&mut self) -> Result<()> {
         self.shutdown_next_module().await?;
         self.shutdown_loop().await?;
@@ -793,6 +1055,11 @@ impl ModulesHandler {
         Ok(())
     }
 
+    /// Wait for all modules to finish (without initiating a shutdown) and then shut down any
+    /// remaining ones.
+    ///
+    /// Useful when a module exits on its own (e.g. after processing a finite workload) and
+    /// you want to cascade the shutdown to the rest.
     pub async fn exit_loop(&mut self) -> Result<()> {
         _ = log_error!(self.shutdown_loop().await, "Shutdown Loop triggered");
         _ = self.shutdown_modules().await;
@@ -843,6 +1110,12 @@ impl ModulesHandler {
         module.persist().await
     }
 
+    /// Build a module and register it for startup.
+    ///
+    /// Calls [`Module::build`] with a new bus handle and the provided context,
+    /// then internally calls [`add_module`](Self::add_module).
+    ///
+    /// This must be called **before** [`start_modules`](Self::start_modules).
     pub async fn build_module<M>(&mut self, ctx: M::Context) -> Result<()>
     where
         M: Module + 'static + Send,
@@ -852,6 +1125,12 @@ impl ModulesHandler {
         self.add_module(module)
     }
 
+    /// Register an already-built module instance for startup.
+    ///
+    /// Use [`build_module`](Self::build_module) when you want the handler to call
+    /// [`Module::build`] for you. Use `add_module` when you need to construct the
+    /// module yourself (e.g. to pass non-`Send` context or to share state between modules
+    /// during setup).
     pub fn add_module<M>(&mut self, module: M) -> Result<()>
     where
         M: Module + 'static + Send,
