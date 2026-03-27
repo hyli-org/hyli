@@ -378,16 +378,18 @@ impl Consensus {
             debug!("⏲️ ⏲️ Creating a timeout certificate with {voting_power} voting power");
 
             let tqc = QuorumCertificate(
-                self.crypto.sign_aggregate(
-                    &(
-                        self.bft_round_state.slot,
-                        self.bft_round_state.view,
-                        self.bft_round_state.parent_hash.clone(),
-                        ConsensusTimeoutMarker,
-                    ),
-                    self.relevant_timeout_requests(*received_slot, *received_view)
-                        .map(|(signed_message, _)| signed_message),
-                )?,
+                self.crypto
+                    .sign_aggregate(
+                        (
+                            self.bft_round_state.slot,
+                            self.bft_round_state.view,
+                            self.bft_round_state.parent_hash.clone(),
+                            ConsensusTimeoutMarker,
+                        ),
+                        self.relevant_timeout_requests(*received_slot, *received_view)
+                            .map(|(signed_message, _)| signed_message),
+                    )?
+                    .signature,
                 ConsensusTimeoutMarker,
             );
             let tqc_kind = match &self.bft_round_state.timeout.highest_seen_prepare_qc {
@@ -415,20 +417,22 @@ impl Consensus {
                     }
                     // Ergo, this should successfully aggregate.
                     let nil_quorum = QuorumCertificate(
-                        self.crypto.sign_aggregate(
-                            &(
-                                self.bft_round_state.slot,
-                                self.bft_round_state.view,
-                                self.bft_round_state.parent_hash.clone(),
-                                NilConsensusTimeoutMarker,
-                            ),
-                            self.relevant_timeout_requests(*received_slot, *received_view)
-                                .map(|(_, tk)| match tk {
-                                    TimeoutKind::NilProposal(signed_nil) => Ok(signed_nil),
-                                    _ => bail!("Expected NilProposal, got {:?}", tk),
-                                })
-                                .collect::<Result<Vec<_>>>()?,
-                        )?,
+                        self.crypto
+                            .sign_aggregate(
+                                (
+                                    self.bft_round_state.slot,
+                                    self.bft_round_state.view,
+                                    self.bft_round_state.parent_hash.clone(),
+                                    NilConsensusTimeoutMarker,
+                                ),
+                                self.relevant_timeout_requests(*received_slot, *received_view)
+                                    .map(|(_, tk)| match tk {
+                                        TimeoutKind::NilProposal(signed_nil) => Ok(signed_nil),
+                                        _ => bail!("Expected NilProposal, got {:?}", tk),
+                                    })
+                                    .collect::<Result<Vec<_>>>()?,
+                            )?
+                            .signature,
                         NilConsensusTimeoutMarker,
                     );
                     TCKind::NilProposal(nil_quorum)
