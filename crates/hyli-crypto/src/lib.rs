@@ -216,11 +216,10 @@ impl BlstCrypto {
         T: borsh::BorshSerialize + 'a,
         I: IntoIterator<Item = &'a SignedByValidator<T>>,
     {
-        let mut extracted = Aggregates::default();
-        for signed in aggregates {
-            Self::push_aggregate(&mut extracted, signed)?;
-        }
-        self.push_own_aggregate(&mut extracted, msg)?;
+        let mut extracted = Self::extract_aggregates(aggregates)?;
+        extracted.sigs.push(self.sign_msg(msg)?);
+        extracted.pks.push(self.sk.sk_to_pk());
+        extracted.validators.push(self.validator_pubkey.clone());
         Self::aggregate_signature_from_extracted(msg, extracted)
     }
 
@@ -248,12 +247,11 @@ impl BlstCrypto {
             });
         };
 
-        let mut extracted = Aggregates::default();
-        Self::push_aggregate(&mut extracted, first)?;
-        Self::push_aggregate(&mut extracted, second)?;
-        for signed in aggregates {
-            Self::push_aggregate(&mut extracted, signed)?;
-        }
+        let extracted = Self::extract_aggregates(
+            std::iter::once(first)
+                .chain(std::iter::once(second))
+                .chain(aggregates),
+        )?;
 
         Ok(Signed {
             signature: Self::aggregate_signature_from_extracted(&msg, extracted)?,
@@ -320,29 +318,23 @@ impl BlstCrypto {
         Ok((sig, pk))
     }
 
-    fn push_aggregate<T: borsh::BorshSerialize>(
-        aggregates: &mut Aggregates,
-        signed: &SignedByValidator<T>,
-    ) -> Result<()> {
-        let (sig, pk) = Self::parse_signed_by_validator(signed)?;
+    fn extract_aggregates<'a, T, I>(aggregates: I) -> Result<Aggregates>
+    where
+        T: borsh::BorshSerialize + 'a,
+        I: IntoIterator<Item = &'a SignedByValidator<T>>,
+    {
+        let mut extracted = Aggregates::default();
 
-        aggregates.sigs.push(sig);
-        aggregates.pks.push(pk);
-        aggregates
-            .validators
-            .push(signed.signature.validator.clone());
-        Ok(())
-    }
+        for signed in aggregates {
+            let (sig, pk) = Self::parse_signed_by_validator(signed)?;
+            extracted.sigs.push(sig);
+            extracted.pks.push(pk);
+            extracted
+                .validators
+                .push(signed.signature.validator.clone());
+        }
 
-    fn push_own_aggregate<T: borsh::BorshSerialize>(
-        &self,
-        aggregates: &mut Aggregates,
-        msg: &T,
-    ) -> Result<()> {
-        aggregates.sigs.push(self.sign_msg(msg)?);
-        aggregates.pks.push(self.sk.sk_to_pk());
-        aggregates.validators.push(self.validator_pubkey.clone());
-        Ok(())
+        Ok(extracted)
     }
 
     fn aggregate_validators_pk<'a, I>(validators: I) -> Result<PublicKey>
