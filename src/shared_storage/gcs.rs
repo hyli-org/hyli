@@ -10,12 +10,12 @@ use anyhow::{anyhow, Context, Result};
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytes::Bytes;
 use google_cloud_storage::client::Storage as GcsStorageClient;
-use hyli_model::LaneId;
+use hyli_model::{BlockHeight, LaneId};
 use tokio::sync::OnceCell;
 
 use crate::{
-    model::DataProposalHash, shared_storage::durability::DurabilityBackend,
-    utils::conf::DataProposalDurabilityConf,
+    data_availability::block_storage::Blocks, model::DataProposalHash,
+    shared_storage::durability::DurabilityBackend, utils::conf::DataProposalDurabilityConf,
 };
 
 #[derive(Clone)]
@@ -133,14 +133,21 @@ fn bucket_path(bucket: &str) -> String {
 }
 
 fn object_name(runtime: &DpGcsRuntime, lane_id: &LaneId, dp_hash: &DataProposalHash) -> String {
-    let prefix = match runtime.genesis_timestamp_folder.as_deref() {
-        Some(genesis_timestamp_folder) => {
-            format!("{}/{genesis_timestamp_folder}", runtime.conf.gcs_prefix)
-        }
-        None => runtime.conf.gcs_prefix.clone(),
-    };
+    let prefix = effective_prefix(
+        &runtime.conf.gcs_prefix,
+        runtime.genesis_timestamp_folder.as_deref(),
+    );
 
     format!("{}/data_proposals/{}/{}.bin", prefix, lane_id, dp_hash)
+}
+
+fn effective_prefix(gcs_prefix: &str, genesis_timestamp_folder: Option<&str>) -> String {
+    match genesis_timestamp_folder {
+        Some(genesis_timestamp_folder) => {
+            format!("{gcs_prefix}/{genesis_timestamp_folder}")
+        }
+        None => gcs_prefix.to_string(),
+    }
 }
 
 #[derive(Debug, Clone, BorshSerialize, BorshDeserialize)]
@@ -154,7 +161,9 @@ fn load_genesis_timestamp_folder(data_directory: &Path) -> Result<Option<String>
     let full_path = data_directory.join(PathBuf::from(GENESIS_TIMESTAMP_FILE));
     let mut handle = match File::open(&full_path) {
         Ok(handle) => handle,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return load_genesis_timestamp_folder_from_blocks(data_directory)
+        }
         Err(err) => return Err(err).context("Opening genesis timestamp file"),
     };
 
@@ -165,4 +174,57 @@ fn load_genesis_timestamp_folder(data_directory: &Path) -> Result<Option<String>
         .context("Parsing genesis timestamp")?;
 
     Ok(Some(store.timestamp_folder))
+}
+
+fn load_genesis_timestamp_folder_from_blocks(data_directory: &Path) -> Result<Option<String>> {
+    let blocks = Blocks::new(data_directory)?;
+    let Some(genesis_block) = blocks.get_by_height(BlockHeight(0))? else {
+        return Ok(None);
+    };
+
+    Ok(Some(timestamp_to_folder_name(
+        genesis_block.consensus_proposal.timestamp.0,
+    )))
+}
+
+fn timestamp_to_folder_name(timestamp_ms: u128) -> String {
+    let secs = (timestamp_ms / 1000) as i64;
+    let datetime =
+        chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0).expect("Invalid timestamp");
+    datetime.format("%Y-%m-%dT%H-%M-%SZ").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyli_model::{utils::TimestampMs, SignedBlock};
+
+    #[test]
+    fn load_genesis_timestamp_folder_falls_back_to_local_blocks() -> Result<()> {
+        let tmpdir = tempfile::tempdir()?;
+        {
+            let mut blocks = Blocks::new(tmpdir.path())?;
+            let mut genesis = SignedBlock::default();
+            genesis.consensus_proposal.timestamp = TimestampMs(1_743_336_506_000);
+            blocks.put(genesis)?;
+        }
+
+        let timestamp_folder = load_genesis_timestamp_folder(tmpdir.path())?;
+
+        assert_eq!(timestamp_folder.as_deref(), Some("2025-03-30T12-08-26Z"));
+        Ok(())
+    }
+
+    #[test]
+    fn effective_prefix_uses_genesis_timestamp_folder_when_available() {
+        let lane_id = LaneId::default();
+        let dp_hash = DataProposalHash::from_hex("deadbeef").unwrap();
+        let prefix = effective_prefix("camelot", Some("2026-03-30T12-08-26Z"));
+        let object_name = format!("{}/data_proposals/{}/{}.bin", prefix, lane_id, dp_hash);
+
+        assert_eq!(
+            object_name,
+            format!("camelot/2026-03-30T12-08-26Z/data_proposals/{lane_id}/{dp_hash}.bin")
+        );
+    }
 }
